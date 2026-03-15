@@ -12,7 +12,17 @@
  *   help                            Print usage
  */
 
-import type { IArchAnalysisPort, IASTPort, IFileSystemPort, ASTSummary } from '../../core/ports/index.js';
+import type {
+  IArchAnalysisPort,
+  IASTPort,
+  ICodeGenerationPort,
+  IFileSystemPort,
+  ISummaryPort,
+  IWorkplanPort,
+  ASTSummary,
+  Language,
+  Specification,
+} from '../../core/ports/index.js';
 
 /** Minimal context needed by the CLI — uses port interfaces only */
 export interface AppContext {
@@ -20,6 +30,9 @@ export interface AppContext {
   archAnalyzer: IArchAnalysisPort;
   ast: IASTPort;
   fs: IFileSystemPort;
+  codeGenerator?: ICodeGenerationPort | null;
+  workplanExecutor?: IWorkplanPort | null;
+  summaryService?: ISummaryPort;
 }
 
 /** Result from runCLI — captures output for testing */
@@ -95,6 +108,10 @@ export class CLIAdapter {
           return await this.analyze(args);
         case 'summarize':
           return await this.summarize(args);
+        case 'generate':
+          return await this.generate(args);
+        case 'plan':
+          return await this.plan(args);
         case 'status':
           return await this.status();
         case 'init':
@@ -223,6 +240,86 @@ export class CLIAdapter {
     return 0;
   }
 
+  // ── generate ────────────────────────────────────────
+
+  private async generate(args: ParsedArgs): Promise<number> {
+    if (!this.ctx.codeGenerator) {
+      this.writeLn('LLM not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.');
+      return 1;
+    }
+
+    const specFile = args.positional[0];
+    if (!specFile) {
+      this.writeLn('Usage: hex-intf generate <spec-file> [--adapter <name>] [--lang ts|go|rust]');
+      return 1;
+    }
+
+    const langStr = args.flags.get('lang') ?? 'ts';
+    const langMap: Record<string, Language> = { ts: 'typescript', go: 'go', rust: 'rust' };
+    const lang = langMap[langStr];
+    if (!lang) {
+      this.writeLn(`Invalid language: ${langStr}. Must be one of: ts, go, rust`);
+      return 1;
+    }
+
+    const adapterName = args.flags.get('adapter');
+
+    const content = await this.ctx.fs.read(specFile);
+    const spec: Specification = {
+      title: specFile,
+      requirements: content.split('\n').filter((line) => line.trim().length > 0),
+      constraints: [],
+      targetLanguage: lang,
+      targetAdapter: adapterName,
+    };
+
+    const result = await this.ctx.codeGenerator.generateFromSpec(spec, lang);
+
+    this.writeLn(`Generated: ${result.filePath}`);
+    this.writeLn(`Language:  ${result.language}`);
+    this.writeLn('');
+    this.writeLn(result.content);
+
+    return 0;
+  }
+
+  // ── plan ───────────────────────────────────────────
+
+  private async plan(args: ParsedArgs): Promise<number> {
+    if (!this.ctx.workplanExecutor) {
+      this.writeLn('LLM not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.');
+      return 1;
+    }
+
+    const requirements = args.positional;
+    if (requirements.length === 0) {
+      this.writeLn('Usage: hex-intf plan <requirements...>');
+      return 1;
+    }
+
+    const langStr = args.flags.get('lang') ?? 'ts';
+    const langMap: Record<string, Language> = { ts: 'typescript', go: 'go', rust: 'rust' };
+    const lang = langMap[langStr] ?? 'typescript' as Language;
+
+    const workplan = await this.ctx.workplanExecutor.createPlan(requirements, lang);
+
+    this.writeLn(`Workplan: ${workplan.title}`);
+    this.writeLn(`ID:       ${workplan.id}`);
+    this.writeLn(`Steps:    ${workplan.steps.length}`);
+    this.writeLn(`Budget:   ~${workplan.estimatedTokenBudget} tokens`);
+    this.writeLn('');
+
+    for (const step of workplan.steps) {
+      const deps = step.dependencies.length > 0
+        ? ` (depends on: ${step.dependencies.join(', ')})`
+        : '';
+      this.writeLn(`  [${step.id}] ${step.description}`);
+      this.writeLn(`    adapter: ${step.adapter}${deps}`);
+    }
+
+    return 0;
+  }
+
   // ── status ──────────────────────────────────────────
 
   private async status(): Promise<number> {
@@ -271,6 +368,10 @@ export class CLIAdapter {
     this.writeLn('Commands:');
     this.writeLn('  analyze [path]                  Analyze architecture health');
     this.writeLn('  summarize <file> [--level L]     Print AST summary (L0-L3)');
+    this.writeLn('  generate <spec> [--adapter N]    Generate code from a spec file');
+    this.writeLn('    [--lang ts|go|rust]');
+    this.writeLn('  plan <requirements...>           Create a workplan from requirements');
+    this.writeLn('    [--lang ts|go|rust]');
     this.writeLn('  status                          Show swarm progress');
     this.writeLn('  init [--lang ts|go|rust]        Scaffold a hex project');
     this.writeLn('  help                            Show this help');
@@ -278,6 +379,8 @@ export class CLIAdapter {
     this.writeLn('Examples:');
     this.writeLn('  hex-intf analyze ./src');
     this.writeLn('  hex-intf summarize src/core/ports/index.ts --level L2');
+    this.writeLn('  hex-intf generate spec.txt --adapter redis --lang ts');
+    this.writeLn('  hex-intf plan "add caching layer" "implement retry logic"');
     this.writeLn('  hex-intf status');
     this.writeLn('  hex-intf init --lang ts');
 

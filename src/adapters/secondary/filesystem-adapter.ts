@@ -8,6 +8,13 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import type { IFileSystemPort } from '../../core/ports/index.js';
 
+export class PathTraversalError extends Error {
+  constructor(filePath: string, root: string) {
+    super(`Path traversal blocked: "${filePath}" resolves outside root "${root}"`);
+    this.name = 'PathTraversalError';
+  }
+}
+
 export class FileSystemAdapter implements IFileSystemPort {
   private readonly root: string;
 
@@ -16,19 +23,20 @@ export class FileSystemAdapter implements IFileSystemPort {
   }
 
   async read(filePath: string): Promise<string> {
-    const abs = this.resolve(filePath);
+    const abs = this.safePath(filePath);
     return readFile(abs, { encoding: 'utf-8' });
   }
 
   async write(filePath: string, content: string): Promise<void> {
-    const abs = this.resolve(filePath);
+    const abs = this.safePath(filePath);
     await mkdir(dirname(abs), { recursive: true });
     await writeFile(abs, content, { encoding: 'utf-8' });
   }
 
   async exists(filePath: string): Promise<boolean> {
+    const abs = this.safePath(filePath); // throws PathTraversalError before try
     try {
-      await access(this.resolve(filePath));
+      await access(abs);
       return true;
     } catch {
       return false;
@@ -36,6 +44,10 @@ export class FileSystemAdapter implements IFileSystemPort {
   }
 
   async glob(pattern: string): Promise<string[]> {
+    // Glob patterns are constrained to root via cwd option
+    if (pattern.includes('..')) {
+      throw new PathTraversalError(pattern, this.root);
+    }
     const g = new Bun.Glob(pattern);
     const matches: string[] = [];
     for await (const entry of g.scan({ cwd: this.root, absolute: false })) {
@@ -44,7 +56,12 @@ export class FileSystemAdapter implements IFileSystemPort {
     return matches.sort();
   }
 
-  private resolve(filePath: string): string {
-    return join(this.root, filePath);
+  /** Resolve path and verify it stays within root — prevents directory traversal */
+  private safePath(filePath: string): string {
+    const abs = resolve(join(this.root, filePath));
+    if (!abs.startsWith(this.root)) {
+      throw new PathTraversalError(filePath, this.root);
+    }
+    return abs;
   }
 }

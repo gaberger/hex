@@ -10,14 +10,21 @@ import type {
   IASTPort,
   IArchAnalysisPort,
   IBuildPort,
+  ICodeGenerationPort,
   IFileSystemPort,
   IGitPort,
+  ILLMPort,
+  ISummaryPort,
+  IWorkplanPort,
   IWorktreePort,
 } from './core/ports/index.js';
 import type { IEventBusPort } from './core/ports/event-bus.js';
 import type { INotificationEmitPort } from './core/ports/notification.js';
 import { ArchAnalyzer } from './core/usecases/arch-analyzer.js';
 import { NotificationOrchestrator } from './core/usecases/notification-orchestrator.js';
+import { CodeGenerator } from './core/usecases/code-generator.js';
+import { WorkplanExecutor } from './core/usecases/workplan-executor.js';
+import { SummaryService } from './core/usecases/summary-service.js';
 
 // ── Secondary Adapters (the ONLY adapter imports in the entire project) ──
 import { FileSystemAdapter } from './adapters/secondary/filesystem-adapter.js';
@@ -27,6 +34,8 @@ import { GitAdapter } from './adapters/secondary/git-adapter.js';
 import { WorktreeAdapter } from './adapters/secondary/worktree-adapter.js';
 import { BuildAdapter } from './adapters/secondary/build-adapter.js';
 import { RufloAdapter } from './adapters/secondary/ruflo-adapter.js';
+import { LLMAdapter } from './adapters/secondary/llm-adapter.js';
+import type { LLMAdapterConfig } from './adapters/secondary/llm-adapter.js';
 
 // ── AppContext ───────────────────────────────────────────
 
@@ -36,6 +45,12 @@ export interface AppContext {
   // Use cases (primary ports)
   archAnalyzer: IArchAnalysisPort;
   notificationOrchestrator: NotificationOrchestrator;
+
+  // LLM-powered use cases (null when no API key is configured)
+  llm: ILLMPort | null;
+  codeGenerator: ICodeGenerationPort | null;
+  workplanExecutor: IWorkplanPort | null;
+  summaryService: ISummaryPort;
 
   // Secondary adapters
   fs: IFileSystemPort;
@@ -91,11 +106,33 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   // Use cases
   const archAnalyzer = new ArchAnalyzer(ast, fs);
   const notificationOrchestrator = new NotificationOrchestrator(notifier);
+  const summaryService = new SummaryService(ast, fs);
+
+  // LLM: graceful degradation — null when no API key is configured
+  let llm: ILLMPort | null = null;
+  let codeGenerator: ICodeGenerationPort | null = null;
+  let workplanExecutor: IWorkplanPort | null = null;
+
+  const anthropicKey = process.env['ANTHROPIC_API_KEY'];
+  const openaiKey = process.env['OPENAI_API_KEY'];
+
+  if (anthropicKey || openaiKey) {
+    const provider: LLMAdapterConfig['provider'] = anthropicKey ? 'anthropic' : 'openai';
+    const apiKey = (anthropicKey ?? openaiKey)!;
+    const model = anthropicKey ? 'claude-sonnet-4-20250514' : 'gpt-4o';
+    llm = new LLMAdapter({ provider, apiKey, model });
+    codeGenerator = new CodeGenerator(llm, ast, build, fs);
+    workplanExecutor = new WorkplanExecutor(llm, ast, fs, swarm);
+  }
 
   return {
     rootPath: projectPath,
     archAnalyzer,
     notificationOrchestrator,
+    llm,
+    codeGenerator,
+    workplanExecutor,
+    summaryService,
     fs,
     git,
     worktree,

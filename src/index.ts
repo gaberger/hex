@@ -32,6 +32,13 @@ export type {
 export type { IEventBusPort } from './core/ports/event-bus.js';
 
 export type {
+  ISwarmPort,
+  SwarmConfig,
+  SwarmStatus,
+  SwarmTask,
+} from './core/ports/swarm.js';
+
+export type {
   INotificationEmitPort,
   INotificationQueryPort,
   Notification,

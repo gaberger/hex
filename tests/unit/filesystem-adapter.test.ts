@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { FileSystemAdapter } from '../../src/adapters/secondary/filesystem-adapter.js';
+import { FileSystemAdapter, PathTraversalError } from '../../src/adapters/secondary/filesystem-adapter.js';
 
 let tempDir: string;
 let fs: FileSystemAdapter;
@@ -52,5 +52,25 @@ describe('FileSystemAdapter', () => {
     expect(tsFiles).toHaveLength(2);
     expect(tsFiles).toContain('src/a.ts');
     expect(tsFiles).toContain('src/b.ts');
+  });
+
+  it('blocks path traversal on read', async () => {
+    await setup();
+    expect(fs.read('../../../etc/passwd')).rejects.toThrow(PathTraversalError);
+  });
+
+  it('blocks path traversal on write', async () => {
+    await setup();
+    expect(fs.write('../../escape.txt', 'pwned')).rejects.toThrow(PathTraversalError);
+  });
+
+  it('blocks path traversal on exists', async () => {
+    await setup();
+    expect(fs.exists('../../../etc/shadow')).rejects.toThrow(PathTraversalError);
+  });
+
+  it('blocks path traversal in glob patterns', async () => {
+    await setup();
+    expect(fs.glob('../../**/*.ts')).rejects.toThrow(PathTraversalError);
   });
 });
