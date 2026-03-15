@@ -472,8 +472,61 @@ export class CLIAdapter {
       if (found) this.writeLn(`    ${foundAt}`);
     }
 
+    // Install skills and agents into Claude Code
+    const { mkdir, copyFile, readdir } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+
     this.writeLn('');
-    this.writeLn('Setup complete. Run "hex-intf analyze ." to verify.');
+    this.writeLn('Installing Claude Code skills and agents...');
+
+    const claudeDir = resolve(this.ctx.rootPath, '.claude');
+    const skillsTarget = join(claudeDir, 'skills');
+    const agentsTarget = join(claudeDir, 'agents', 'hex-intf');
+
+    // Find hex-intf's own skills/ and agents/ directories
+    const skillsSrc = resolve(hexIntfRoot, 'skills');
+    const agentsSrc = resolve(hexIntfRoot, 'agents');
+
+    try {
+      await mkdir(skillsTarget, { recursive: true });
+      await mkdir(agentsTarget, { recursive: true });
+
+      // Copy skills
+      let skillCount = 0;
+      try {
+        const skillFiles = await readdir(skillsSrc);
+        for (const f of skillFiles) {
+          if (f.endsWith('.yml') || f.endsWith('.yaml')) {
+            await copyFile(join(skillsSrc, f), join(skillsTarget, f));
+            skillCount++;
+          }
+        }
+      } catch { /* skills dir may not exist */ }
+      this.writeLn(`  Skills: ${skillCount} installed to .claude/skills/`);
+
+      // Copy agent definitions
+      let agentCount = 0;
+      try {
+        const agentFiles = await readdir(agentsSrc);
+        for (const f of agentFiles) {
+          if (f.endsWith('.yml') || f.endsWith('.yaml')) {
+            await copyFile(join(agentsSrc, f), join(agentsTarget, f));
+            agentCount++;
+          }
+        }
+      } catch { /* agents dir may not exist */ }
+      this.writeLn(`  Agents: ${agentCount} installed to .claude/agents/hex-intf/`);
+
+    } catch (err) {
+      this.writeLn(`  Failed to install skills/agents: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    this.writeLn('');
+    this.writeLn('Setup complete. Available commands:');
+    this.writeLn('  hex-intf analyze .     Check architecture health');
+    this.writeLn('  hex-intf summarize     AST summary of a file');
+    this.writeLn('  hex-intf init          Scaffold a new hex project');
+    this.writeLn('  hex-intf help          Show all commands');
     return 0;
   }
 }
