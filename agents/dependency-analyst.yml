@@ -67,7 +67,17 @@ analysis_phases:
       - bundle_size: "For frontend: < 50KB gzipped preferred"
       - test_coverage: "Library's own test suite quality"
 
-  4_communication_pattern:
+  4_runtime_requirements:
+    description: "Identify hosting, serving, and build requirements per target platform"
+    checks:
+      - browser_typescript: "If any component targets the browser with TypeScript, a dev server (Vite, Bun) or bundler is REQUIRED. Browsers cannot run .ts files. Recommend Vite for dev + build."
+      - static_assets: "If the project serves HTML, identify whether a static file server suffices or a dev server with HMR is needed."
+      - server_runtime: "If backend components exist, identify the runtime (Node, Bun, Go binary, Rust binary) and any process manager needs."
+      - database: "If persistence is needed beyond localStorage, recommend DB + migration tool."
+      - deployment_target: "Recommend deployment: static hosting (Vercel/Netlify) for frontend, container/binary for backend."
+    output: "runtime_requirements section in recommendation report — must include exact commands to run the project"
+
+  5_communication_pattern:
     description: "Recommend how components talk to each other"
     patterns:
       rest_api:
@@ -99,7 +109,7 @@ analysis_phases:
         pros: "Zero-copy possible, no serialization"
         cons: "Unsafe boundary, complex build chain"
 
-  5_risk_assessment:
+  6_risk_assessment:
     description: "Flag dependency conflicts, license issues, ecosystem gaps"
 
 constraints:

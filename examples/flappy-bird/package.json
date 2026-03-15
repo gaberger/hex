@@ -3,6 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "bunx vite",
+    "build": "bunx vite build",
+    "preview": "bunx vite preview",
     "test": "bun test"
+  },
+  "devDependencies": {
+    "vite": "^6.3.0"
   }
 }
