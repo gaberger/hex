@@ -33,7 +33,7 @@ describe('resolveImportPath', () => {
       'src/core/usecases/foo.ts',
       'node:path',
     );
-    expect(result).toBe('node:path.ts');
+    expect(result).toBe('node:path');
   });
 
   it('handles index imports via ../', () => {

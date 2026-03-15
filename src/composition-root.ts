@@ -66,7 +66,9 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
       astIsStub = true;
     }
     ast = treeSitter;
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[hex-intf] WARNING: Tree-sitter init failed: ${msg}. Analysis will return empty results.\n`);
     astIsStub = true;
     ast = {
       async extractSummary(filePath, level) {

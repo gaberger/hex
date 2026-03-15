@@ -40,7 +40,11 @@ export function normalizePath(filePath: string): string {
     p = p.slice(0, -3) + '.ts';
   } else if (p.endsWith('.jsx')) {
     p = p.slice(0, -4) + '.tsx';
-  } else if (!p.endsWith('.ts') && !p.endsWith('.tsx')) {
+  } else if (p.endsWith('/')) {
+    // Explicit directory import: '../ports/' → '../ports/index.ts'
+    p = p + 'index.ts';
+  } else if (!p.endsWith('.ts') && !p.endsWith('.tsx') && !p.includes(':')) {
+    // No extension and not a node: specifier — add .ts
     p = p + '.ts';
   }
 

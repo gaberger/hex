@@ -20,7 +20,10 @@ import type {
 import { classifyLayer, getViolationRule } from './layer-classifier.js';
 import { resolveImportPath, normalizePath } from './path-normalizer.js';
 
-const ENTRY_POINTS = ['index.ts', 'cli.ts', 'main.ts'];
+const ENTRY_POINTS = ['index.ts', 'cli.ts', 'main.ts', 'composition-root.ts'];
+
+/** Exported functions that serve as entry points (not dead despite no importers) */
+const ENTRY_EXPORTS = new Set(['runCLI', 'startDashboard', 'createAppContext']);
 
 function matchesExclude(filePath: string, patterns: string[]): boolean {
   return patterns.some((p) => {
@@ -104,7 +107,7 @@ export class ArchAnalyzer implements IArchAnalysisPort {
 
       const importedFromThis = importedByModule.get(normalizedFile) ?? new Set();
       for (const exp of summary.exports) {
-        if (!importedFromThis.has(exp.name)) {
+        if (!importedFromThis.has(exp.name) && !ENTRY_EXPORTS.has(exp.name)) {
           dead.push({
             filePath: normalizedFile,
             exportName: exp.name,
@@ -191,14 +194,13 @@ export class ArchAnalyzer implements IArchAnalysisPort {
   }
 
   async analyzeArchitecture(_rootPath: string): Promise<ArchAnalysisResult> {
+    // Collect summaries ONCE and pass to all sub-analyses to avoid 5x re-parsing
     const summaries = await this.collectSummaries();
-    const edges = await this.buildDependencyGraph('');
+    const edges = this.buildEdgesFromSummaries(summaries);
 
-    const [deadExports, violations, circularDeps] = await Promise.all([
-      this.findDeadExports(''),
-      this.validateHexBoundaries(''),
-      this.detectCircularDeps(''),
-    ]);
+    const deadExports = this.findDeadFromSummaries(summaries);
+    const violations = this.findViolationsFromEdges(edges);
+    const circularDeps = this.findCyclesFromEdges(edges);
 
     // Orphan files: no incoming or outgoing edges
     const connected = new Set<string>();
@@ -239,6 +241,97 @@ export class ArchAnalyzer implements IArchAnalysisPort {
         healthScore,
       },
     };
+  }
+
+  // ── Internal methods that operate on pre-collected summaries ──────
+
+  private buildEdgesFromSummaries(summaries: ASTSummary[]): ImportEdge[] {
+    const edges: ImportEdge[] = [];
+    for (const summary of summaries) {
+      const fromFile = normalizePath(summary.filePath);
+      for (const imp of summary.imports) {
+        edges.push({
+          from: fromFile,
+          to: resolveImportPath(summary.filePath, imp.from),
+          names: imp.names,
+        });
+      }
+    }
+    return edges;
+  }
+
+  private findDeadFromSummaries(summaries: ASTSummary[]): DeadExport[] {
+    const importedByModule = new Map<string, Set<string>>();
+    for (const summary of summaries) {
+      for (const imp of summary.imports) {
+        const target = resolveImportPath(summary.filePath, imp.from);
+        if (!importedByModule.has(target)) importedByModule.set(target, new Set());
+        for (const name of imp.names) {
+          importedByModule.get(target)!.add(name);
+        }
+      }
+    }
+
+    const dead: DeadExport[] = [];
+    for (const summary of summaries) {
+      const normalizedFile = normalizePath(summary.filePath);
+      if (isEntryPoint(normalizedFile)) continue;
+      if (hasReExports(summary)) continue;
+
+      const importedFromThis = importedByModule.get(normalizedFile) ?? new Set();
+      for (const exp of summary.exports) {
+        if (!importedFromThis.has(exp.name)) {
+          dead.push({ filePath: normalizedFile, exportName: exp.name, kind: exp.kind });
+        }
+      }
+    }
+    return dead;
+  }
+
+  private findViolationsFromEdges(edges: ImportEdge[]): DependencyViolation[] {
+    const violations: DependencyViolation[] = [];
+    for (const edge of edges) {
+      const fromLayer = classifyLayer(edge.from);
+      const toLayer = classifyLayer(edge.to);
+      if (fromLayer === 'unknown' || toLayer === 'unknown') continue;
+      const rule = getViolationRule(fromLayer as DependencyDirection, toLayer as DependencyDirection);
+      if (rule !== null) {
+        violations.push({
+          from: edge.from, to: edge.to,
+          fromLayer: fromLayer as DependencyDirection,
+          toLayer: toLayer as DependencyDirection,
+          rule,
+        });
+      }
+    }
+    return violations;
+  }
+
+  private findCyclesFromEdges(edges: ImportEdge[]): string[][] {
+    const graph = new Map<string, Set<string>>();
+    for (const edge of edges) {
+      if (!graph.has(edge.from)) graph.set(edge.from, new Set());
+      graph.get(edge.from)!.add(edge.to);
+    }
+    const cycles: string[][] = [];
+    const visited = new Set<string>();
+    const inStack = new Set<string>();
+    const stack: string[] = [];
+    const dfs = (node: string): void => {
+      visited.add(node); inStack.add(node); stack.push(node);
+      const neighbors = graph.get(node);
+      if (neighbors) {
+        for (const neighbor of neighbors) {
+          if (!visited.has(neighbor)) dfs(neighbor);
+          else if (inStack.has(neighbor)) cycles.push(stack.slice(stack.indexOf(neighbor)));
+        }
+      }
+      stack.pop(); inStack.delete(node);
+    };
+    for (const node of graph.keys()) {
+      if (!visited.has(node)) dfs(node);
+    }
+    return cycles;
   }
 
   /**

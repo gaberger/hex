@@ -178,6 +178,25 @@ export class TreeSitterAdapter implements IASTPort {
     for (let i = 0; i < root.childCount; i++) {
       const node = root.child(i)!;
       if (node.type !== 'export_statement') continue;
+
+      // Handle re-exports: `export type { X, Y } from './foo.js'`
+      // and `export { X, Y } from './foo.js'`
+      const exportClause = node.namedChildren.find((c) => c.type === 'export_clause');
+      if (exportClause) {
+        for (let j = 0; j < exportClause.namedChildCount; j++) {
+          const spec = exportClause.namedChild(j)!;
+          if (spec.type === 'export_specifier') {
+            const alias = spec.childForFieldName('alias');
+            const name = spec.childForFieldName('name');
+            const exportName = (alias ?? name)?.text;
+            if (exportName) {
+              results.push({ name: exportName, kind: 'type' });
+            }
+          }
+        }
+        continue;
+      }
+
       const decl = node.namedChildren.find((c) => c.type !== 'comment');
       if (!decl) continue;
       const kind = TS_NODE_KIND_MAP[decl.type] as ExportEntry['kind'] | undefined;
