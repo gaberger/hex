@@ -17,18 +17,7 @@ import type {
   Language,
   Specification,
 } from '../../core/ports/index.js';
-import type { AppContext as FullAppContext } from '../../composition-root.js';
-
-/**
- * CLIAppContext — the subset of AppContext the CLI adapter needs.
- * Derived from the canonical AppContext in composition-root via Pick,
- * ensuring a single source of truth with no contract divergence.
- * The dashboard command casts to FullAppContext for the HTTP server.
- */
-export type AppContext = Pick<
-  FullAppContext,
-  'rootPath' | 'archAnalyzer' | 'ast' | 'astIsStub' | 'fs' | 'codeGenerator' | 'workplanExecutor' | 'summaryService'
->;
+import type { AppContext } from '../../core/ports/app-context.js';
 
 /** Result from runCLI — captures output for testing */
 export interface CLIResult {
@@ -336,7 +325,7 @@ export class CLIAdapter {
 
     // Dynamic import to avoid loading http server when not needed
     const { startDashboard } = await import('./dashboard-adapter.js');
-    const { url } = await startDashboard(this.ctx as FullAppContext, port);
+    const { url } = await startDashboard(this.ctx as AppContext, port);
     this.writeLn(`Dashboard running at ${url}`);
     this.writeLn('Press Ctrl+C to stop.');
 
@@ -420,7 +409,6 @@ export class CLIAdapter {
     this.writeLn('Setting up hex-intf...');
     this.writeLn('');
 
-    const searchPaths = ['config/grammars', 'node_modules/tree-sitter-wasms/out'];
     const languages = ['typescript', 'go', 'rust'];
 
     // Install tree-sitter-wasms if not present

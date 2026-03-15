@@ -22,10 +22,8 @@ import type {
 export class ScaffoldService implements IScaffoldPort {
   constructor(private readonly fs: IFileSystemPort) {}
 
-  async analyzeRuntime(rootPath: string, language: Language): Promise<RuntimeRequirements> {
+  async analyzeRuntime(_rootPath: string, language: Language): Promise<RuntimeRequirements> {
     const hasHtml = (await this.fs.glob('**/*.html')).length > 0;
-    const hasTsConfig = await this.fs.exists('tsconfig.json');
-    const hasPackageJson = await this.fs.exists('package.json');
 
     const targets: RuntimeTarget[] = [];
     if (hasHtml) targets.push('browser');
@@ -93,7 +91,7 @@ export class ScaffoldService implements IScaffoldPort {
     if (runtime.envVars.length > 0) {
       sections.splice(1, 0, {
         heading: 'Environment Variables',
-        content: this.formatEnvVars(runtime.envVars),
+        content: '```\n' + this.generateEnvExample(runtime.envVars) + '\n```',
       });
     }
 

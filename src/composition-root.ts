@@ -6,20 +6,9 @@
  * returns a fully assembled AppContext.
  */
 
-import type {
-  IASTPort,
-  IArchAnalysisPort,
-  IBuildPort,
-  ICodeGenerationPort,
-  IFileSystemPort,
-  IGitPort,
-  ILLMPort,
-  ISummaryPort,
-  IWorkplanPort,
-  IWorktreePort,
-} from './core/ports/index.js';
+import type { AppContext } from './core/ports/app-context.js';
+import type { IASTPort, ILLMPort, ICodeGenerationPort, IWorkplanPort } from './core/ports/index.js';
 import type { IEventBusPort } from './core/ports/event-bus.js';
-import type { INotificationEmitPort } from './core/ports/notification.js';
 import { ArchAnalyzer } from './core/usecases/arch-analyzer.js';
 import { NotificationOrchestrator } from './core/usecases/notification-orchestrator.js';
 import { CodeGenerator } from './core/usecases/code-generator.js';
@@ -37,32 +26,8 @@ import { RufloAdapter } from './adapters/secondary/ruflo-adapter.js';
 import { LLMAdapter } from './adapters/secondary/llm-adapter.js';
 import type { LLMAdapterConfig } from './adapters/secondary/llm-adapter.js';
 
-// ── AppContext ───────────────────────────────────────────
-
-export interface AppContext {
-  rootPath: string;
-
-  // Use cases (primary ports)
-  archAnalyzer: IArchAnalysisPort;
-  notificationOrchestrator: NotificationOrchestrator;
-
-  // LLM-powered use cases (null when no API key is configured)
-  llm: ILLMPort | null;
-  codeGenerator: ICodeGenerationPort | null;
-  workplanExecutor: IWorkplanPort | null;
-  summaryService: ISummaryPort;
-
-  // Secondary adapters
-  fs: IFileSystemPort;
-  git: IGitPort;
-  worktree: IWorktreePort;
-  build: IBuildPort;
-  ast: IASTPort;
-  astIsStub: boolean;
-  eventBus: IEventBusPort | null;
-  notifier: INotificationEmitPort;
-  swarm: import('./core/ports/swarm.js').ISwarmPort;
-}
+// Re-export AppContext from the port (canonical definition)
+export type { AppContext } from './core/ports/app-context.js';
 
 // ── Null Event Bus (only remaining stub — real impl comes with hive-mind) ──
 

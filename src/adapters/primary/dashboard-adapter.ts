@@ -20,22 +20,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AppContext as FullAppContext } from '../../composition-root.js';
+import type { AppContext } from '../../core/ports/app-context.js';
 import type { ImportEdge } from '../../core/ports/index.js';
-
-// Subset of AppContext this adapter requires
-export type AppContext = Pick<
-  FullAppContext,
-  | 'rootPath'
-  | 'archAnalyzer'
-  | 'ast'
-  | 'astIsStub'
-  | 'fs'
-  | 'swarm'
-  | 'notificationOrchestrator'
-  | 'notifier'
-  | 'eventBus'
->;
 
 // ── Cache helper ────────────────────────────────────────
 
@@ -296,7 +282,7 @@ export class DashboardAdapter {
       return this.json(res, 400, { error: 'Missing selectedOption' });
     }
 
-    await this.ctx.notificationOrchestrator.respondToDecision({
+    await this.ctx.notificationOrchestrator?.respondToDecision({
       requestId: decisionId,
       selectedOption: parsed.selectedOption,
       respondedBy: 'human',
