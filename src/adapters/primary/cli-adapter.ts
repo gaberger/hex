@@ -496,7 +496,7 @@ export class CLIAdapter {
       try {
         const skillFiles = await readdir(skillsSrc);
         for (const f of skillFiles) {
-          if (f.endsWith('.yml') || f.endsWith('.yaml')) {
+          if (f.endsWith('.md') || f.endsWith('.yml') || f.endsWith('.yaml')) {
             await copyFile(join(skillsSrc, f), join(skillsTarget, f));
             skillCount++;
           }
