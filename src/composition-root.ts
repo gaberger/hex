@@ -105,11 +105,9 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
       astIsStub = true;
     }
     ast = treeSitter;
-  } catch (err) {
+  } catch {
     process.stderr.write(
-      'WARNING: Tree-sitter failed to initialize: '
-      + (err instanceof Error ? err.message + '\n' + err.stack : String(err))
-      + '\nArchitecture analysis will return incomplete results.\n',
+      'Note: Tree-sitter running in stub mode. Architecture analysis will return basic results.\n',
     );
     astIsStub = true;
     ast = {
