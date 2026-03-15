@@ -420,18 +420,12 @@ export class CLIAdapter {
     this.writeLn('Setting up hex-intf...');
     this.writeLn('');
 
-    const grammarDir = 'config/grammars';
+    const searchPaths = ['config/grammars', 'node_modules/tree-sitter-wasms/out'];
     const languages = ['typescript', 'go', 'rust'];
 
-    this.writeLn('Checking tree-sitter grammars...');
-    for (const lang of languages) {
-      const exists = await this.ctx.fs.exists(`${grammarDir}/tree-sitter-${lang}.wasm`);
-      this.writeLn(`  ${lang}: ${exists ? 'found' : 'not found'}`);
-    }
-
+    // Install tree-sitter-wasms if not present
     const hasWasms = await this.ctx.fs.exists('node_modules/tree-sitter-wasms/out');
     if (!hasWasms) {
-      this.writeLn('');
       this.writeLn('Installing tree-sitter WASM grammars...');
       const { execFile: execFileCb } = await import('child_process');
       const { promisify } = await import('util');
@@ -443,8 +437,23 @@ export class CLIAdapter {
         this.writeLn('  Failed. Run manually: bun add tree-sitter-wasms');
         return 1;
       }
-    } else {
-      this.writeLn('  tree-sitter-wasms: installed');
+    }
+
+    // Check grammar availability across all search paths
+    this.writeLn('');
+    this.writeLn('Tree-sitter grammars:');
+    for (const lang of languages) {
+      let found = false;
+      let foundAt = '';
+      for (const dir of searchPaths) {
+        const path = `${dir}/tree-sitter-${lang}.wasm`;
+        if (await this.ctx.fs.exists(path)) {
+          found = true;
+          foundAt = path;
+          break;
+        }
+      }
+      this.writeLn(`  ${lang}: ${found ? `found (${foundAt})` : 'not found'}`);
     }
 
     this.writeLn('');
