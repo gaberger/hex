@@ -443,10 +443,15 @@ export class CLIAdapter {
     // may be in hex-intf's own node_modules or the project's
     const { access } = await import('node:fs/promises');
     const { resolve } = await import('node:path');
+    // Resolve from: 1) project's config, 2) project's node_modules,
+    // 3) hex-intf's own node_modules (for global install via npm link)
+    const { dirname } = await import('node:path');
+    const cliDir = typeof import.meta.dir === 'string' ? import.meta.dir : dirname(import.meta.url.replace('file://', ''));
+    const hexIntfRoot = resolve(cliDir, '..');  // dist/ -> project root
     const checkDirs = [
       resolve(this.ctx.rootPath, 'config/grammars'),
       resolve(this.ctx.rootPath, 'node_modules/tree-sitter-wasms/out'),
-      resolve(__dirname ?? '.', '../../node_modules/tree-sitter-wasms/out'),
+      resolve(hexIntfRoot, 'node_modules/tree-sitter-wasms/out'),
     ];
 
     this.writeLn('');
