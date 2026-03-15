@@ -98,17 +98,10 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     ];
     const treeSitter = await TreeSitterAdapter.create(grammarDirs, fs, projectPath);
     if (treeSitter.isStub()) {
-      process.stderr.write(
-        'WARNING: Tree-sitter grammars not found. Run \'hex-intf setup\' to download. '
-        + 'Architecture analysis will return incomplete results.\n',
-      );
       astIsStub = true;
     }
     ast = treeSitter;
   } catch {
-    process.stderr.write(
-      'Note: Tree-sitter running in stub mode. Architecture analysis will return basic results.\n',
-    );
     astIsStub = true;
     ast = {
       async extractSummary(filePath, level) {
