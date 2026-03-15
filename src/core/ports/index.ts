@@ -210,3 +210,61 @@ export interface IFileSystemPort {
   exists(filePath: string): Promise<boolean>;
   glob(pattern: string): Promise<string[]>;
 }
+
+// ─── Analysis Ports ──────────────────────────────────────
+
+export type DependencyDirection = 'domain' | 'ports' | 'usecases' | 'adapters/primary' | 'adapters/secondary' | 'infrastructure';
+
+export interface ImportEdge {
+  from: string;       // file path
+  to: string;         // file path
+  names: string[];    // imported symbols
+}
+
+export interface DeadExport {
+  filePath: string;
+  exportName: string;
+  kind: ExportEntry['kind'];
+}
+
+export interface DependencyViolation {
+  from: string;       // file path
+  to: string;         // file path
+  fromLayer: DependencyDirection;
+  toLayer: DependencyDirection;
+  rule: string;       // which hex rule is broken
+}
+
+export interface ArchAnalysisResult {
+  deadExports: DeadExport[];
+  orphanFiles: string[];
+  dependencyViolations: DependencyViolation[];
+  circularDeps: string[][];  // each array is a cycle
+  unusedPorts: string[];     // port interface names with no adapter
+  unusedAdapters: string[];  // adapter files implementing unused ports
+  summary: {
+    totalFiles: number;
+    totalExports: number;
+    deadExportCount: number;
+    violationCount: number;
+    circularCount: number;
+    healthScore: number;      // 0-100, penalized by violations
+  };
+}
+
+export interface IArchAnalysisPort {
+  /** Build the full import/export dependency graph from L1 summaries */
+  buildDependencyGraph(rootPath: string): Promise<ImportEdge[]>;
+
+  /** Find exports that no other file imports */
+  findDeadExports(rootPath: string): Promise<DeadExport[]>;
+
+  /** Validate hexagonal dependency direction rules */
+  validateHexBoundaries(rootPath: string): Promise<DependencyViolation[]>;
+
+  /** Detect circular import chains */
+  detectCircularDeps(rootPath: string): Promise<string[][]>;
+
+  /** Full analysis: dead code + hex validation + circular detection */
+  analyzeArchitecture(rootPath: string): Promise<ArchAnalysisResult>;
+}
