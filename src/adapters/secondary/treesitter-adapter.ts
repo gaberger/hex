@@ -14,7 +14,16 @@ import type {
   Language,
   StructuralDiff,
 } from '../../core/ports/index.js';
-import { TS_NODE_KIND_MAP } from '../../infrastructure/treesitter/queries.js';
+
+/** Maps tree-sitter node types to ExportEntry.kind values. */
+const TS_NODE_KIND_MAP: Record<string, string> = {
+  function_declaration: 'function',
+  class_declaration: 'class',
+  interface_declaration: 'interface',
+  type_alias_declaration: 'type',
+  enum_declaration: 'enum',
+  lexical_declaration: 'const',
+};
 
 export class TreeSitterAdapter implements IASTPort {
   private parser: Parser | undefined;

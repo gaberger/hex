@@ -47,6 +47,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@claude-flow/cli": "^3.5.15",
     "web-tree-sitter": "^0.26.7"
   }
 }
