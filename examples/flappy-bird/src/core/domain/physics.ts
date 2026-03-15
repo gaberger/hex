@@ -6,8 +6,8 @@ export function applyGravity(velocity: number, gravity: number, deltaMs: number)
   return velocity + gravity * (deltaMs / 1000);
 }
 
-export function applyFlap(velocity: number, flapStrength: number): number {
-  return -flapStrength;
+export function applyFlap(_velocity: number, flapStrength: number): number {
+  return flapStrength;
 }
 
 export function updatePosition(pos: Vec2, velocity: number, deltaMs: number): Vec2 {
@@ -40,7 +40,7 @@ export function checkCollision(bird: Rect, pipe: PipeState, config: GameConfig):
 }
 
 export function checkBounds(bird: Vec2, canvasHeight: number): boolean {
-  return bird.y <= 0 || bird.y + BIRD_SIZE >= canvasHeight;
+  return bird.y + BIRD_SIZE >= canvasHeight - 20; // ground is 20px tall
 }
 
 export function generatePipeGapY(canvasHeight: number, pipeGap: number): number {

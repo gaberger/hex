@@ -28,14 +28,17 @@ storage.loadHighScore().then(hs => { state = { ...state, highScore: hs }; });
 
 input.onFlap(() => {
   if (state.phase === 'ready') {
+    // Transition to playing FIRST, then flap works since flapState checks phase
     state = { ...state, phase: 'playing' };
-    audio.playFlap();
     state = flapState(state, config);
+    audio.playFlap();
   } else if (state.phase === 'playing') {
-    audio.playFlap();
     state = flapState(state, config);
+    audio.playFlap();
   } else {
+    // Game over — restart
     state = resetState(state, config);
+    prevScore = 0;
   }
 });
 

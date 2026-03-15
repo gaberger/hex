@@ -21,8 +21,8 @@ describe('applyGravity', () => {
 
 describe('applyFlap', () => {
   it('sets negative velocity (goes up)', () => {
-    expect(applyFlap(200, 300)).toBeLessThan(0);
-    expect(applyFlap(200, 300)).toBe(-300);
+    expect(applyFlap(200, -280)).toBeLessThan(0);
+    expect(applyFlap(200, -280)).toBe(-280);
   });
 });
 
@@ -63,11 +63,11 @@ describe('checkCollision', () => {
 });
 
 describe('checkBounds', () => {
-  it('true when bird below floor', () => {
-    expect(checkBounds({ x: 80, y: 590 }, 600)).toBe(true);
+  it('true when bird hits ground (600h - 20 ground)', () => {
+    expect(checkBounds({ x: 80, y: 565 }, 600)).toBe(true); // 565 + 20(BIRD_SIZE) >= 580(ground)
   });
-  it('true when bird above ceiling', () => {
-    expect(checkBounds({ x: 80, y: -1 }, 600)).toBe(true);
+  it('false when bird above ceiling (allowed)', () => {
+    expect(checkBounds({ x: 80, y: -1 }, 600)).toBe(false); // can fly above
   });
   it('false when bird in bounds', () => {
     expect(checkBounds({ x: 80, y: 300 }, 600)).toBe(false);

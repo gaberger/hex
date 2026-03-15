@@ -6,7 +6,7 @@ import type { GameConfig } from '../../src/core/ports/index.js';
 
 const cfg: GameConfig = {
   canvasWidth: 400, canvasHeight: 600, gravity: 980,
-  flapStrength: 300, pipeSpeed: 150, pipeGap: 120,
+  flapStrength: -300, pipeSpeed: 150, pipeGap: 120,
   pipeWidth: 50, pipeSpawnInterval: 90,
 };
 
