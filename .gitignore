@@ -18,8 +18,12 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Claude tooling (scaffolded, not project code)
-.claude/
+# Claude tooling — track skills + agents (framework integration with Claude Code)
+.claude/*
+!.claude/skills/
+!.claude/agents/
+.claude/agents/*
+!.claude/agents/hex-intf/
 .claude-flow/
 .mcp.json
 

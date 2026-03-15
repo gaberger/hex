@@ -1,188 +1,134 @@
-# Claude Code Configuration - RuFlo V3
+# hex-intf — Hexagonal Architecture for LLM-Driven Development
 
-## Behavioral Rules (Always Enforced)
+## What This Project Is
+
+hex-intf is a framework + CLI tool for building software using hexagonal architecture (ports & adapters) optimized for AI agent code generation. It provides token-efficient code summaries via tree-sitter, swarm coordination via ruflo, and a specs-first development pipeline.
+
+## Behavioral Rules
 
 - Do what has been asked; nothing more, nothing less
-- NEVER create files unless they're absolutely necessary for achieving your goal
-- ALWAYS prefer editing an existing file to creating a new one
-- NEVER proactively create documentation files (*.md) or README files unless explicitly requested
-- NEVER save working files, text/mds, or tests to the root folder
-- Never continuously check status after spawning a swarm — wait for results
 - ALWAYS read a file before editing it
+- NEVER save files to the root folder — use the directories below
 - NEVER commit secrets, credentials, or .env files
+- ALWAYS run `bun test` after making code changes
+- ALWAYS run `bun run build` before committing
+
+## Hexagonal Architecture Rules (ENFORCED)
+
+These rules are checked by `hex-intf analyze .` and the dead-code-analyzer agent:
+
+1. **domain/** must only import from **domain/** (value-objects, entities)
+2. **ports/** may import from **domain/** (for value types) but nothing else
+3. **usecases/** may import from **domain/** and **ports/** only
+4. **adapters/primary/** may import from **ports/** only
+5. **adapters/secondary/** may import from **ports/** only
+6. **adapters must NEVER import other adapters** (cross-adapter coupling)
+7. **composition-root.ts** is the ONLY file that imports from adapters — this is by design
+8. All relative imports MUST use `.js` extensions (NodeNext module resolution)
 
 ## File Organization
 
-- NEVER save to root folder — use the directories below
-- Use `/src` for source code files
-- Use `/tests` for test files
-- Use `/docs` for documentation and markdown files
-- Use `/config` for configuration files
-- Use `/scripts` for utility scripts
-- Use `/examples` for example code
-
-## Project Architecture
-
-- Follow Domain-Driven Design with bounded contexts
-- Keep files under 500 lines
-- Use typed interfaces for all public APIs
-- Prefer TDD London School (mock-first) for new code
-- Use event sourcing for state changes
-- Ensure input validation at system boundaries
-
-### Project Config
-
-- **Topology**: hierarchical-mesh
-- **Max Agents**: 15
-- **Memory**: hybrid
-- **HNSW**: Enabled
-- **Neural**: Enabled
+```
+src/
+  core/
+    domain/          # Pure business logic, zero external deps
+      value-objects.ts  # Shared types (Language, ASTSummary, etc.)
+      entities.ts       # Domain events, QualityScore, FeedbackLoop, TaskGraph
+    ports/           # Typed interfaces — contracts between layers
+    usecases/        # Application logic composing ports
+  adapters/
+    primary/         # Driving adapters (CLI, MCP, dashboard, browser input)
+    secondary/       # Driven adapters (FS, Git, LLM, tree-sitter, ruflo)
+  infrastructure/    # Cross-cutting (tree-sitter queries)
+  composition-root.ts  # Wires adapters → ports (single DI point)
+  cli.ts              # CLI entry point
+  index.ts            # Library public API
+tests/
+  unit/              # London-school mock-first tests
+  integration/       # Real adapter tests
+examples/            # Example applications (Flappy Bird, etc.)
+docs/
+  architecture/      # Architecture specs and research
+  adrs/              # Architecture Decision Records
+  analysis/          # Adversarial review reports
+config/              # Language configs, tree-sitter settings
+scripts/             # Build and setup scripts
+.claude/
+  skills/            # Claude Code skills (.md) — /hex-scaffold, /hex-generate, etc.
+  agents/hex-intf/   # Agent definitions (.yml) — planner, hex-coder, etc.
+agents/              # Agent source definitions (YAML, shipped in npm package)
+skills/              # Skill source definitions (.md, shipped in npm package)
+```
 
 ## Build & Test
 
 ```bash
-# Build
-npm run build
-
-# Test
-npm test
-
-# Lint
-npm run lint
+bun run build        # Bundle CLI + library to dist/
+bun test             # Run all tests (unit + property + smoke)
+bun run check        # TypeScript type check (no emit)
+hex-intf analyze .   # Architecture health check
+hex-intf setup       # Install grammars + skills + agents
 ```
 
-- ALWAYS run tests after making code changes
-- ALWAYS verify build succeeds before committing
+## Development Pipeline (Specs-First)
 
-## Security Rules
+When building new features or example applications, follow this order:
 
-- NEVER hardcode API keys, secrets, or credentials in source files
-- NEVER commit .env files or any file containing secrets
-- Always validate user input at system boundaries
-- Always sanitize file paths to prevent directory traversal
-- Run `npx @claude-flow/cli@latest security scan` after security-related changes
+1. **Specify** — Write behavioral specs BEFORE code (what "correct" looks like)
+2. **Build** — Generate code following hex architecture rules
+3. **Test** — Unit tests + property tests + smoke tests (3 levels)
+4. **Validate** — Run `hex-intf analyze` + validation judge
+5. **Ship** — README + start scripts + commit
 
-## Concurrency: 1 MESSAGE = ALL RELATED OPERATIONS
+## Available Skills (Claude Code slash commands)
 
-- All operations MUST be concurrent/parallel in a single message
-- Use Claude Code's Task tool for spawning agents, not just MCP
-- ALWAYS batch ALL todos in ONE TodoWrite call (5-10+ minimum)
-- ALWAYS spawn ALL agents in ONE message with full instructions via Task tool
-- ALWAYS batch ALL file reads/writes/edits in ONE message
-- ALWAYS batch ALL Bash commands in ONE message
+| Skill | Trigger |
+|-------|---------|
+| `/hex-scaffold` | Scaffold a new hex project |
+| `/hex-generate` | Generate code within an adapter boundary |
+| `/hex-summarize` | Token-efficient AST summaries (L0-L3) |
+| `/hex-analyze-deps` | Dependency analysis + tech stack recommendation |
+| `/hex-analyze-arch` | Architecture health check |
+| `/hex-validate` | Post-build semantic validation |
 
-## Swarm Orchestration
+## Available Agents
 
-- MUST initialize the swarm using CLI tools when starting complex tasks
-- MUST spawn concurrent agents using Claude Code's Task tool
-- Never use CLI tools alone for execution — Task tool agents do the actual work
-- MUST call CLI tools AND Task tool in ONE message for complex work
+| Agent | Role |
+|-------|------|
+| `planner` | Decomposes requirements into adapter-bounded tasks |
+| `hex-coder` | Codes within one adapter with TDD loop |
+| `integrator` | Merges worktrees, integration tests |
+| `swarm-coordinator` | Orchestrates full lifecycle via ruflo |
+| `dependency-analyst` | Recommends tech stack + runtime requirements |
+| `dead-code-analyzer` | Finds dead exports + hex boundary violations |
+| `scaffold-validator` | Ensures projects are runnable (README, scripts, dev server) |
+| `behavioral-spec-writer` | Writes acceptance specs before code generation |
+| `validation-judge` | Post-build semantic validation (BLOCKING gate) |
+| `status-monitor` | Swarm progress monitoring |
 
-### 3-Tier Model Routing (ADR-026)
+## Key Lessons (from adversarial review)
 
-| Tier | Handler | Latency | Cost | Use Cases |
-|------|---------|---------|------|-----------|
-| **1** | Agent Booster (WASM) | <1ms | $0 | Simple transforms (var→const, add types) — Skip LLM |
-| **2** | Haiku | ~500ms | $0.0002 | Simple tasks, low complexity (<30%) |
-| **3** | Sonnet/Opus | 2-5s | $0.003-0.015 | Complex reasoning, architecture, security (>30%) |
+- **Tests can mirror bugs**: When the same LLM writes code AND tests, tests may encode the LLM's misunderstanding. Use property tests and behavioral specs as independent oracles.
+- **Sign conventions matter**: For physics/math domains, document coordinate systems explicitly. `flapStrength` must be NEGATIVE (upward force in screen coords).
+- **"It compiles" ≠ "it works"**: Always include runtime validation — can a user actually start the app?
+- **Browser TypeScript needs a dev server**: Any project with HTML + TypeScript MUST include Vite (or equivalent).
 
-- Always check for `[AGENT_BOOSTER_AVAILABLE]` or `[TASK_MODEL_RECOMMENDATION]` before spawning agents
-- Use Edit tool directly when `[AGENT_BOOSTER_AVAILABLE]`
+## Swarm Coordination (ruflo)
 
-## Swarm Configuration & Anti-Drift
-
-- ALWAYS use hierarchical topology for coding swarms
-- Keep maxAgents at 6-8 for tight coordination
-- Use specialized strategy for clear role boundaries
-- Use `raft` consensus for hive-mind (leader maintains authoritative state)
-- Run frequent checkpoints via `post-task` hooks
-- Keep shared memory namespace for all agents
+ruflo (`@claude-flow/cli`) is a required dependency. Used for:
+- Task tracking: `ISwarmPort.createTask/completeTask`
+- Agent lifecycle: `ISwarmPort.spawnAgent/terminateAgent`
+- Swarm topology: `ISwarmPort.init` (hierarchical/mesh)
+- Persistent memory: `ISwarmPort.memoryStore/Retrieve`
 
 ```bash
-npx @claude-flow/cli@latest swarm init --topology hierarchical --max-agents 8 --strategy specialized
+# Always use background agents with bypassPermissions for file writes
+Agent tool: { subagent_type: "coder", mode: "bypassPermissions", run_in_background: true }
 ```
 
-## Swarm Execution Rules
+## Security
 
-- ALWAYS use `run_in_background: true` for all agent Task calls
-- ALWAYS put ALL agent Task calls in ONE message for parallel execution
-- After spawning, STOP — do NOT add more tool calls or check status
-- Never poll TaskOutput or check swarm status — trust agents to return
-- When agent results arrive, review ALL results before proceeding
-
-## V3 CLI Commands
-
-### Core Commands
-
-| Command | Subcommands | Description |
-|---------|-------------|-------------|
-| `init` | 4 | Project initialization |
-| `agent` | 8 | Agent lifecycle management |
-| `swarm` | 6 | Multi-agent swarm coordination |
-| `memory` | 11 | AgentDB memory with HNSW search |
-| `task` | 6 | Task creation and lifecycle |
-| `session` | 7 | Session state management |
-| `hooks` | 17 | Self-learning hooks + 12 workers |
-| `hive-mind` | 6 | Byzantine fault-tolerant consensus |
-
-### Quick CLI Examples
-
-```bash
-npx @claude-flow/cli@latest init --wizard
-npx @claude-flow/cli@latest agent spawn -t coder --name my-coder
-npx @claude-flow/cli@latest swarm init --v3-mode
-npx @claude-flow/cli@latest memory search --query "authentication patterns"
-npx @claude-flow/cli@latest doctor --fix
-```
-
-## Available Agents (60+ Types)
-
-### Core Development
-`coder`, `reviewer`, `tester`, `planner`, `researcher`
-
-### Specialized
-`security-architect`, `security-auditor`, `memory-specialist`, `performance-engineer`
-
-### Swarm Coordination
-`hierarchical-coordinator`, `mesh-coordinator`, `adaptive-coordinator`
-
-### GitHub & Repository
-`pr-manager`, `code-review-swarm`, `issue-tracker`, `release-manager`
-
-### SPARC Methodology
-`sparc-coord`, `sparc-coder`, `specification`, `pseudocode`, `architecture`
-
-## Memory Commands Reference
-
-```bash
-# Store (REQUIRED: --key, --value; OPTIONAL: --namespace, --ttl, --tags)
-npx @claude-flow/cli@latest memory store --key "pattern-auth" --value "JWT with refresh" --namespace patterns
-
-# Search (REQUIRED: --query; OPTIONAL: --namespace, --limit, --threshold)
-npx @claude-flow/cli@latest memory search --query "authentication patterns"
-
-# List (OPTIONAL: --namespace, --limit)
-npx @claude-flow/cli@latest memory list --namespace patterns --limit 10
-
-# Retrieve (REQUIRED: --key; OPTIONAL: --namespace)
-npx @claude-flow/cli@latest memory retrieve --key "pattern-auth" --namespace patterns
-```
-
-## Quick Setup
-
-```bash
-claude mcp add claude-flow -- npx -y @claude-flow/cli@latest
-npx @claude-flow/cli@latest daemon start
-npx @claude-flow/cli@latest doctor --fix
-```
-
-## Claude Code vs CLI Tools
-
-- Claude Code's Task tool handles ALL execution: agents, file ops, code generation, git
-- CLI tools handle coordination via Bash: swarm init, memory, hooks, routing
-- NEVER use CLI tools as a substitute for Task tool agents
-
-## Support
-
-- Documentation: https://github.com/ruvnet/claude-flow
-- Issues: https://github.com/ruvnet/claude-flow/issues
+- `FileSystemAdapter` has path traversal protection via `safePath()`
+- `RufloAdapter` uses `execFile` (not `exec`) — no shell injection
+- API keys loaded only in `composition-root.ts` from env vars
+- Never commit `.env` files — use `.env.example`
