@@ -90,8 +90,11 @@ export class DashboardAdapter {
     const url = new URL(req.url ?? '/', `http://localhost:${this.port}`);
     const path = url.pathname;
 
-    // CORS headers for local development
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // CORS headers — restrict to localhost origins only
+    const origin = req.headers.origin ?? '';
+    if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1') || !origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin || 'http://localhost');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
@@ -168,7 +171,9 @@ export class DashboardAdapter {
 
     const allFiles = await this.ctx.fs.glob('**/*.ts');
     const sourceFiles = allFiles.filter(
-      (f) => !f.includes('node_modules') && !f.includes('dist') && !f.includes('/tests/'),
+      (f) => !f.includes('node_modules') && !f.includes('dist')
+        && !f.includes('.test.ts') && !f.includes('.spec.ts')
+        && !f.includes('examples'),
     );
 
     const files = await Promise.all(
@@ -195,13 +200,26 @@ export class DashboardAdapter {
   // ── GET /api/tokens/:file ──────────────────────────
 
   private async handleTokenDetail(res: ServerResponse, file: string): Promise<void> {
+    // Path traversal guard: reject paths with .. or absolute paths
+    if (file.includes('..') || file.startsWith('/')) {
+      return this.json(res, 400, { error: 'Invalid file path' });
+    }
+    // Verify file exists before extracting summaries
+    if (!(await this.ctx.fs.exists(file))) {
+      return this.json(res, 404, { error: 'File not found' });
+    }
     const [l0, l1, l2, l3] = await Promise.all([
       this.ctx.ast.extractSummary(file, 'L0'),
       this.ctx.ast.extractSummary(file, 'L1'),
       this.ctx.ast.extractSummary(file, 'L2'),
       this.ctx.ast.extractSummary(file, 'L3'),
     ]);
-    this.json(res, 200, { l0, l1, l2, l3 });
+    this.json(res, 200, {
+      l0: { tokens: l0.tokenEstimate, exports: l0.exports.length, imports: l0.imports.length, lines: l0.lineCount },
+      l1: { tokens: l1.tokenEstimate, exports: l1.exports.length, imports: l1.imports.length, lines: l1.lineCount },
+      l2: { tokens: l2.tokenEstimate, exports: l2.exports.length, imports: l2.imports.length, lines: l2.lineCount },
+      l3: { tokens: l3.tokenEstimate, exports: l3.exports.length, imports: l3.imports.length, lines: l3.lineCount },
+    });
   }
 
   // ── GET /api/swarm ─────────────────────────────────
@@ -311,10 +329,21 @@ export class DashboardAdapter {
 
 // ── Body reader ─────────────────────────────────────────
 
+const MAX_BODY_SIZE = 1024; // 1KB — decisions are tiny JSON objects
+
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((ok, fail) => {
     const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
+    let size = 0;
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > MAX_BODY_SIZE) {
+        req.destroy();
+        fail(new Error('Request body too large'));
+        return;
+      }
+      chunks.push(c);
+    });
     req.on('end', () => ok(Buffer.concat(chunks).toString('utf-8')));
     req.on('error', fail);
   });
