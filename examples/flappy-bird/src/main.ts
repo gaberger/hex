@@ -1,73 +1,71 @@
-import { createInitialState, tickState, flapState, resetState } from './core/domain/game-state.js';
+/**
+ * Flappy Bird — Composition Root
+ *
+ * Wires ports to adapters and runs the game loop.
+ */
+
+import type { GameConfig } from './core/ports/index.js';
+import { GameEngine } from './core/usecases/game-engine.js';
 import { CanvasRenderer } from './adapters/secondary/canvas-renderer.js';
 import { BrowserAudio } from './adapters/secondary/browser-audio.js';
 import { LocalStorageAdapter } from './adapters/secondary/localstorage-adapter.js';
 import { BrowserInput } from './adapters/primary/browser-input.js';
-import type { GameConfig, GameState } from './core/ports/index.js';
+
+// ---------------------------------------------------------------------------
+// Configuration — sign convention enforced here
+// ---------------------------------------------------------------------------
 
 const config: GameConfig = {
   canvasWidth: 400,
   canvasHeight: 600,
-  gravity: 980,
-  flapStrength: -280,
-  pipeSpeed: 120,
-  pipeGap: 150,
-  pipeWidth: 60,
-  pipeSpawnInterval: 90,
+  gravity: 980,             // POSITIVE: accelerates bird downward
+  flapStrength: -280,       // NEGATIVE: sets velocity upward
+  pipeWidth: 52,
+  pipeGap: 140,
+  pipeSpeed: 160,
+  pipeSpawnInterval: 1.8,
+  groundHeight: 80,
+  birdSize: 24,
+  birdX: 80,
 };
 
-const audio = new BrowserAudio();
-const storage = new LocalStorageAdapter();
-const renderer = new CanvasRenderer();
-const input = new BrowserInput();
+// ---------------------------------------------------------------------------
+// Bootstrap
+// ---------------------------------------------------------------------------
 
-let state: GameState = createInitialState(config);
-let prevScore = 0;
+function main(): void {
+  const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
+  if (!canvas) throw new Error('Canvas element #game-canvas not found');
 
-storage.loadHighScore().then(hs => { state = { ...state, highScore: hs }; });
+  canvas.width = config.canvasWidth;
+  canvas.height = config.canvasHeight;
 
-input.onFlap(() => {
-  if (state.phase === 'ready') {
-    // Transition to playing FIRST, then flap works since flapState checks phase
-    state = { ...state, phase: 'playing' };
-    state = flapState(state, config);
-    audio.playFlap();
-  } else if (state.phase === 'playing') {
-    state = flapState(state, config);
-    audio.playFlap();
-  } else {
-    // Game over — restart
-    state = resetState(state, config);
-    prevScore = 0;
-  }
-});
+  const renderer = new CanvasRenderer(canvas);
+  const audio = new BrowserAudio();
+  const storage = new LocalStorageAdapter();
+  const engine = new GameEngine(config, renderer, audio, storage);
+  const input = new BrowserInput(canvas);
 
-await renderer.init(config);
-input.start();
+  engine.start();
+  input.onAction(() => engine.flap());
 
-let lastTime = performance.now();
-prevScore = 0;
+  // Game loop
+  let lastTime = 0;
+  const MAX_DT = 1 / 30; // Cap delta to prevent physics tunneling
 
-function loop(now: number): void {
-  const delta = now - lastTime;
-  lastTime = now;
-
-  state = tickState(state, config, delta);
-
-  if (state.score > prevScore) {
-    audio.playScore();
-    prevScore = state.score;
+  function loop(timestamp: number): void {
+    const dt = lastTime === 0 ? 1 / 60 : Math.min((timestamp - lastTime) / 1000, MAX_DT);
+    lastTime = timestamp;
+    engine.tick(dt);
+    requestAnimationFrame(loop);
   }
 
-  if (state.phase === 'gameover' && !state.bird.alive) {
-    audio.playHit();
-    storage.saveHighScore(state.highScore);
-    // Mark alive to avoid repeated hit sounds
-    state = { ...state, bird: { ...state.bird, alive: true } };
-  }
-
-  renderer.render(state, config);
   requestAnimationFrame(loop);
 }
 
-requestAnimationFrame(loop);
+// Start when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', main);
+} else {
+  main();
+}

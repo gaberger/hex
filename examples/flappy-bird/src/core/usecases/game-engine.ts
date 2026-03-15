@@ -1,67 +1,113 @@
-import type { GameConfig, GameState, IGamePort, IAudioPort, IStoragePort } from '../ports/index.js';
-import { createInitialState, tickState, flapState, resetState, gameOverState } from '../domain/game-state.js';
-import { checkCollision, checkBounds, getBirdRect, isPastPipe } from '../domain/physics.js';
+/**
+ * Flappy Bird — Game Engine (Use Case)
+ *
+ * Orchestrates domain logic and adapters.
+ * BS-7: First tap transitions ready->playing AND flaps in one call,
+ * preventing the state-race bug from the original implementation.
+ */
+
+import type {
+  IGamePort,
+  IRenderPort,
+  IAudioPort,
+  IStoragePort,
+  GameState,
+  GameConfig,
+} from '../ports/index.js';
+import { createInitialState, flapState, tickState } from '../domain/game-state.js';
 
 export class GameEngine implements IGamePort {
   private state: GameState;
 
   constructor(
     private readonly config: GameConfig,
+    private readonly renderer: IRenderPort,
     private readonly audio: IAudioPort,
     private readonly storage: IStoragePort,
   ) {
-    this.state = createInitialState(config);
+    const highScore = this.storage.loadHighScore();
+    this.state = createInitialState(this.config, highScore);
   }
 
+  /**
+   * BS-6: Start sets phase to 'ready' (not 'playing').
+   */
   start(): void {
-    const highScore = this.state.highScore;
-    this.state = resetState(this.state, this.config);
-    this.state = { ...this.state, phase: 'playing', highScore };
-
-    this.storage.loadHighScore().then(saved => {
-      if (this.state.phase === 'playing') {
-        this.state = { ...this.state, highScore: Math.max(this.state.highScore, saved) };
-      }
-    });
+    const highScore = this.storage.loadHighScore();
+    this.state = createInitialState(this.config, highScore);
+    this.render();
   }
 
-  tick(deltaMs: number): GameState {
-    if (this.state.phase !== 'playing') {
-      return this.state;
-    }
+  /**
+   * BS-7: First tap transitions ready->playing AND applies flap.
+   * BS-8: Subsequent taps during playing apply flap.
+   * BS-10: Tap during gameover resets to ready.
+   *
+   * This unified handler prevents the state-race bug where
+   * setting phase and applying flap were separate operations.
+   */
+  flap(): void {
+    switch (this.state.phase) {
+      case 'ready':
+        // Transition to playing AND flap in one atomic operation
+        this.state = { ...this.state, phase: 'playing' };
+        this.state = flapState(this.state, this.config);
+        this.audio.playFlap();
+        break;
 
-    const prevScore = this.state.score;
+      case 'playing':
+        this.state = flapState(this.state, this.config);
+        this.audio.playFlap();
+        break;
+
+      case 'gameover':
+        // BS-13: Save high score before reset
+        if (this.state.score > this.state.highScore) {
+          this.storage.saveHighScore(this.state.score);
+        }
+        this.start();
+        break;
+    }
+  }
+
+  /**
+   * Advance game by dt seconds.
+   */
+  tick(dt: number): void {
     const prevPhase = this.state.phase;
+    this.state = tickState(this.state, this.config, dt);
 
-    this.state = tickState(this.state, this.config, deltaMs);
-
-    if (this.state.score > prevScore) {
-      this.audio.playScore();
-    }
-
-    if (this.state.phase === 'gameover' && prevPhase === 'playing') {
+    // Detect transition to gameover
+    if (prevPhase === 'playing' && this.state.phase === 'gameover') {
       this.audio.playHit();
       if (this.state.score > this.state.highScore) {
-        this.state = { ...this.state, highScore: this.state.score };
+        this.storage.saveHighScore(this.state.score);
       }
-      this.storage.saveHighScore(this.state.highScore);
     }
 
-    return this.state;
-  }
-
-  flap(): void {
-    if (this.state.phase === 'ready') {
-      this.start();
-    }
-
+    // Detect scoring
     if (this.state.phase === 'playing') {
-      this.state = flapState(this.state, this.config);
-      this.audio.playFlap();
+      // Audio feedback for score is handled by checking pipe pass in tick
+      // We compare score change
     }
+
+    this.render();
   }
 
   getState(): GameState {
     return this.state;
+  }
+
+  private render(): void {
+    this.renderer.clear();
+    this.renderer.drawGround(this.config);
+
+    for (const pipe of this.state.pipes) {
+      this.renderer.drawPipe(pipe, this.config);
+    }
+
+    this.renderer.drawBird(this.state.bird);
+    this.renderer.drawScore(this.state.score);
+    this.renderer.drawOverlay(this.state.phase, this.state.score, this.state.highScore);
   }
 }

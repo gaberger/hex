@@ -1,12 +1,11 @@
 # Flappy Bird — hex-intf Example
 
-A complete Flappy Bird game demonstrating hexagonal architecture with the hex-intf framework. Pure domain logic is fully testable with zero browser dependencies.
+A Flappy Bird clone built with hexagonal architecture (ports and adapters), demonstrating the **behavioral-specification-first** pipeline.
 
 ## Prerequisites
 
-- bun (or node >= 20)
-- modern browser
-- git
+- [Bun](https://bun.sh/) >= 1.0
+- Node.js >= 20 (for Vite)
 
 ## Quick Start
 
@@ -16,61 +15,68 @@ bun install
 bun run dev
 ```
 
-This opens the game in your browser at http://localhost:5173.
+## Scripts
 
-## Available Scripts
-
-| Command | Description |
-|---------|-------------|
-| `bun install` | Install dependencies |
-| `bun run dev` | Start Vite dev server with HMR (port 5173) |
-| `bun run build` | Build for production to `dist/` |
+| Script | Description |
+|--------|-------------|
+| `bun run dev` | Start Vite dev server (port 3000) |
+| `bun run build` | Production build to `dist/` |
 | `bun run preview` | Preview production build |
-| `bun test` | Run 30 unit tests (physics, game state, game engine) |
-
-## How to Play
-
-- **Click**, **tap**, or press **Space** to flap
-- Avoid the pipes
-- Score increments each time you pass through a gap
-- High score persists in localStorage
+| `bun test tests/` | Run all tests |
+| `bun test tests/unit/` | Run unit tests only |
+| `bun test tests/property/` | Run property-based tests only |
+| `bun test tests/smoke/` | Run smoke tests only |
+| `bun run typecheck` | TypeScript type checking |
 
 ## Architecture
 
-This project uses [hex-intf](https://github.com/ruvnet/hex-intf) hexagonal architecture:
-
 ```
 src/
-├── core/
-│   ├── ports/index.ts        # 5 ports: Game, Render, Audio, Storage, Input
-│   ├── domain/
-│   │   ├── physics.ts        # Pure functions: gravity, collision, pipe gen
-│   │   └── game-state.ts     # Immutable state transitions
-│   └── usecases/
-│       └── game-engine.ts    # Orchestrates game loop via port injection
-├── adapters/
-│   ├── primary/
-│   │   └── browser-input.ts  # Click/touch/spacebar listener
-│   └── secondary/
-│       ├── canvas-renderer.ts     # HTML5 Canvas 2D rendering
-│       ├── browser-audio.ts       # Web Audio oscillator beeps
-│       └── localstorage-adapter.ts # High score persistence
-└── main.ts                   # Composition root + game loop
+  core/
+    ports/index.ts          # Interfaces: IGamePort, IRenderPort, IAudioPort, IStoragePort, IInputPort
+    domain/
+      physics.ts            # Pure physics functions (gravity, flap, collision)
+      game-state.ts         # Immutable state transitions
+    usecases/
+      game-engine.ts        # Game engine orchestrating domain + ports
+  adapters/
+    primary/
+      browser-input.ts      # Click/touch/keyboard input
+    secondary/
+      canvas-renderer.ts    # HTML5 Canvas 2D rendering
+      browser-audio.ts      # Web Audio API oscillators
+      localstorage-adapter.ts # localStorage for high scores
+  main.ts                   # Composition root + game loop
+
+specs/
+  behavioral-specs.md       # Acceptance criteria (written BEFORE code)
+
+tests/
+  unit/                     # Unit tests for domain functions
+  property/                 # Property-based tests for invariants
+  smoke/                    # Integration smoke tests simulating gameplay
 ```
 
-### Why This Architecture?
+## Behavioral Specs Drive Validation
 
-- **Domain is 100% testable**: `physics.ts` and `game-state.ts` have zero browser deps — tests run in Bun in 8ms
-- **Adapters are swappable**: Replace `canvas-renderer.ts` with a WebGL or Phaser adapter without touching game logic
-- **Composition root is the only wiring point**: `main.ts` is the single file that imports both ports and adapters
+The `specs/behavioral-specs.md` file defines **what the game does** before any code is written. Each spec (BS-1 through BS-13) becomes an acceptance criterion:
 
-## Tests
+- **Unit tests** reference spec IDs (e.g., "BS-4: ceiling does NOT kill")
+- **Property tests** verify invariants (e.g., "flap always produces negative velocity")
+- **Smoke tests** simulate real play sequences (e.g., "flap 3 times, bird stays alive")
 
-```bash
-bun test
-```
+This pipeline prevents the three bugs found in the original implementation:
 
-30 tests covering:
-- **Physics** (13 tests): gravity, flap, collision detection, bounds checking, pipe generation
-- **Game State** (10 tests): immutable transitions, scoring, game over, reset
-- **Game Engine** (7 tests): use case with mocked audio/storage ports
+1. **Double-negation bug** -- caught by property test "applyFlap always returns negative"
+2. **Ceiling-kills bug** -- caught by spec BS-4 driving the correct test assertion
+3. **State-race bug** -- caught by smoke test "first flap transitions AND applies velocity"
+
+## Sign Convention
+
+| Quantity | Sign | Meaning |
+|----------|------|---------|
+| Y-axis | + downward | Screen coordinates |
+| Gravity | + (980) | Accelerates bird downward |
+| Flap strength | - (-280) | Sets velocity upward |
+| Velocity > 0 | falling | Bird descending |
+| Velocity < 0 | rising | Bird ascending |

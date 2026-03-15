@@ -1,74 +1,75 @@
-// ─── Value Objects ──────────────────────────
+/**
+ * Flappy Bird — Ports (Hexagonal Architecture)
+ *
+ * Sign Convention Contract (screen coordinates):
+ *   +Y = downward
+ *   Gravity = positive (adds to velocity, bird falls)
+ *   Flap strength = NEGATIVE (sets velocity negative, bird rises)
+ *   Velocity: positive = falling, negative = rising
+ */
 
-export interface Vec2 {
+// ---------------------------------------------------------------------------
+// Value types
+// ---------------------------------------------------------------------------
+
+export type Phase = 'ready' | 'playing' | 'gameover';
+
+export interface Bird {
   x: number;
   y: number;
-}
-
-export interface Rect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface GameConfig {
-  canvasWidth: number;
-  canvasHeight: number;
-  gravity: number;
-  flapStrength: number;
-  pipeSpeed: number;
-  pipeGap: number;
-  pipeWidth: number;
-  pipeSpawnInterval: number;
-}
-
-// ─── Game State (immutable snapshots) ──────
-
-export interface BirdState {
-  position: Vec2;
   velocity: number;
   rotation: number;
-  alive: boolean;
 }
 
-export interface PipeState {
+export interface Pipe {
   x: number;
   gapY: number;
   scored: boolean;
 }
 
 export interface GameState {
-  bird: BirdState;
-  pipes: PipeState[];
+  bird: Bird;
+  pipes: Pipe[];
+  phase: Phase;
   score: number;
   highScore: number;
-  phase: 'ready' | 'playing' | 'gameover';
-  tick: number;
+  elapsed: number;
 }
 
-// ─── Input Port (Primary / Driving) ────────
+export interface GameConfig {
+  canvasWidth: number;
+  canvasHeight: number;
+  /** Downward acceleration. MUST BE POSITIVE. */
+  gravity: number;
+  /** Upward force applied on flap. MUST BE NEGATIVE (screen Y-axis points down). */
+  flapStrength: number;
+  pipeWidth: number;
+  pipeGap: number;
+  pipeSpeed: number;
+  pipeSpawnInterval: number;
+  groundHeight: number;
+  birdSize: number;
+  birdX: number;
+}
+
+// ---------------------------------------------------------------------------
+// Ports
+// ---------------------------------------------------------------------------
 
 export interface IGamePort {
-  /** Start or restart the game */
   start(): void;
-  /** Process one game tick (called every frame) */
-  tick(deltaMs: number): GameState;
-  /** Bird flaps (player input) */
   flap(): void;
-  /** Get current state without advancing */
+  tick(dt: number): void;
   getState(): GameState;
 }
 
-// ─── Output Ports (Secondary / Driven) ─────
-
 export interface IRenderPort {
-  /** Initialize the rendering surface */
-  init(config: GameConfig): Promise<void>;
-  /** Render a frame from game state */
-  render(state: GameState, config: GameConfig): void;
-  /** Clean up resources */
-  destroy(): void;
+  clear(): void;
+  drawBird(bird: Bird): void;
+  drawPipe(pipe: Pipe, config: GameConfig): void;
+  drawGround(config: GameConfig): void;
+  drawScore(score: number): void;
+  drawOverlay(phase: Phase, score: number, highScore: number): void;
 }
 
 export interface IAudioPort {
@@ -78,15 +79,11 @@ export interface IAudioPort {
 }
 
 export interface IStoragePort {
-  loadHighScore(): Promise<number>;
-  saveHighScore(score: number): Promise<void>;
+  loadHighScore(): number;
+  saveHighScore(score: number): void;
 }
 
 export interface IInputPort {
-  /** Register a callback for player input (tap/click/spacebar) */
-  onFlap(callback: () => void): void;
-  /** Start listening for input */
-  start(): void;
-  /** Stop listening */
-  stop(): void;
+  onAction(callback: () => void): void;
+  destroy(): void;
 }

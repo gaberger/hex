@@ -1,14 +1,20 @@
 {
-  "name": "flappy-bird-example",
+  "name": "flappy-bird-hex-intf",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bunx vite",
-    "build": "bunx vite build",
-    "preview": "bunx vite preview",
-    "test": "bun test"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "bun test tests/",
+    "test:unit": "bun test tests/unit/",
+    "test:property": "bun test tests/property/",
+    "test:smoke": "bun test tests/smoke/",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "vite": "^6.3.0"
+    "typescript": "^5.9.3",
+    "vite": "^6.3.5"
   }
 }

@@ -1,149 +1,131 @@
-import type { IRenderPort, GameState, GameConfig, BirdState, PipeState } from '../../core/ports/index.js';
+/**
+ * Canvas Renderer — Secondary Adapter
+ * Implements IRenderPort using HTML5 Canvas 2D.
+ */
 
-const BIRD_SIZE = 20;
+import type { IRenderPort, Bird, Pipe, Phase, GameConfig } from '../../core/ports/index.js';
 
 export class CanvasRenderer implements IRenderPort {
-  private ctx: CanvasRenderingContext2D | null = null;
-  private canvas: HTMLCanvasElement | null = null;
+  private readonly ctx: CanvasRenderingContext2D;
 
-  async init(config: GameConfig): Promise<void> {
-    this.canvas = document.getElementById('game-canvas') as HTMLCanvasElement
-      ?? document.createElement('canvas');
-    this.canvas.id = 'game-canvas';
-    this.canvas.width = config.canvasWidth;
-    this.canvas.height = config.canvasHeight;
-    if (!this.canvas.parentElement) document.body.appendChild(this.canvas);
-    this.ctx = this.canvas.getContext('2d')!;
+  constructor(private readonly canvas: HTMLCanvasElement) {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas 2D context not available');
+    this.ctx = ctx;
   }
 
-  render(state: GameState, config: GameConfig): void {
-    const ctx = this.ctx!;
-    const { canvasWidth: w, canvasHeight: h } = config;
-
-    // Background — sky gradient
-    const bg = ctx.createLinearGradient(0, 0, 0, h);
-    bg.addColorStop(0, '#87CEEB');
-    bg.addColorStop(1, '#E0F0FF');
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, w, h);
-
-    // Ground line
-    ctx.fillStyle = '#8B5E3C';
-    ctx.fillRect(0, h - 20, w, 20);
-    ctx.fillStyle = '#4CAF50';
-    ctx.fillRect(0, h - 20, w, 4);
-
-    // Pipes
-    this.drawPipes(ctx, state.pipes, config);
-
-    // Bird
-    this.drawBird(ctx, state.bird);
-
-    // Score
-    this.drawScore(ctx, state.score, w);
-
-    // Overlays
-    if (state.phase === 'ready') {
-      this.drawCenteredText(ctx, w, h, 'TAP TO START', 'rgba(0,0,0,0.3)');
-    } else if (state.phase === 'gameover') {
-      ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillRect(0, 0, w, h);
-      this.drawCenteredText(ctx, w, h, 'GAME OVER', 'transparent');
-      ctx.font = '20px sans-serif';
-      ctx.fillStyle = '#FFF';
-      ctx.textAlign = 'center';
-      ctx.fillText('TAP TO RESTART', w / 2, h / 2 + 40);
-      ctx.fillText(`High Score: ${state.highScore}`, w / 2, h / 2 + 70);
-    }
+  clear(): void {
+    // Sky gradient
+    const grad = this.ctx.createLinearGradient(0, 0, 0, this.canvas.height);
+    grad.addColorStop(0, '#4dc9f6');
+    grad.addColorStop(1, '#a7e8f0');
+    this.ctx.fillStyle = grad;
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
-  destroy(): void {
-    this.canvas?.remove();
-    this.canvas = null;
-    this.ctx = null;
-  }
-
-  // ── Private helpers ──
-
-  private drawPipes(ctx: CanvasRenderingContext2D, pipes: PipeState[], config: GameConfig): void {
-    const { pipeWidth, pipeGap, canvasHeight } = config;
-    const halfGap = pipeGap / 2;
-
-    for (const pipe of pipes) {
-      const topH = pipe.gapY - halfGap;
-      const bottomY = pipe.gapY + halfGap;
-
-      // Top pipe
-      ctx.fillStyle = '#388E3C';
-      ctx.fillRect(pipe.x, 0, pipeWidth, topH);
-      ctx.fillStyle = '#2E7D32';
-      ctx.fillRect(pipe.x - 3, topH - 20, pipeWidth + 6, 20);
-
-      // Bottom pipe
-      ctx.fillStyle = '#388E3C';
-      ctx.fillRect(pipe.x, bottomY, pipeWidth, canvasHeight - bottomY);
-      ctx.fillStyle = '#2E7D32';
-      ctx.fillRect(pipe.x - 3, bottomY, pipeWidth + 6, 20);
-    }
-  }
-
-  private drawBird(ctx: CanvasRenderingContext2D, bird: BirdState): void {
-    const cx = bird.position.x + BIRD_SIZE / 2;
-    const cy = bird.position.y + BIRD_SIZE / 2;
-    const r = BIRD_SIZE / 2;
-
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(bird.rotation);
+  drawBird(bird: Bird): void {
+    this.ctx.save();
+    this.ctx.translate(bird.x + 12, bird.y + 12);
+    this.ctx.rotate(bird.rotation);
 
     // Body
-    ctx.fillStyle = '#FFD600';
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.fill();
+    this.ctx.fillStyle = '#f5c542';
+    this.ctx.beginPath();
+    this.ctx.ellipse(0, 0, 14, 10, 0, 0, Math.PI * 2);
+    this.ctx.fill();
+    this.ctx.strokeStyle = '#d4a017';
+    this.ctx.lineWidth = 1.5;
+    this.ctx.stroke();
 
     // Eye
-    ctx.fillStyle = '#000';
-    ctx.beginPath();
-    ctx.arc(r * 0.35, -r * 0.2, r * 0.18, 0, Math.PI * 2);
-    ctx.fill();
+    this.ctx.fillStyle = '#fff';
+    this.ctx.beginPath();
+    this.ctx.arc(6, -3, 4, 0, Math.PI * 2);
+    this.ctx.fill();
+    this.ctx.fillStyle = '#000';
+    this.ctx.beginPath();
+    this.ctx.arc(7, -3, 2, 0, Math.PI * 2);
+    this.ctx.fill();
 
     // Beak
-    ctx.fillStyle = '#FF6D00';
-    ctx.beginPath();
-    ctx.moveTo(r * 0.6, 0);
-    ctx.lineTo(r * 1.3, -r * 0.15);
-    ctx.lineTo(r * 1.3, r * 0.25);
-    ctx.closePath();
-    ctx.fill();
+    this.ctx.fillStyle = '#e87d2f';
+    this.ctx.beginPath();
+    this.ctx.moveTo(12, -1);
+    this.ctx.lineTo(18, 2);
+    this.ctx.lineTo(12, 5);
+    this.ctx.closePath();
+    this.ctx.fill();
 
-    ctx.restore();
+    // Wing
+    this.ctx.fillStyle = '#e8b732';
+    this.ctx.beginPath();
+    this.ctx.ellipse(-4, 3, 8, 5, -0.3, 0, Math.PI * 2);
+    this.ctx.fill();
+
+    this.ctx.restore();
   }
 
-  private drawScore(ctx: CanvasRenderingContext2D, score: number, width: number): void {
-    ctx.font = 'bold 48px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 4;
-    ctx.strokeText(String(score), width / 2, 60);
-    ctx.fillStyle = '#FFF';
-    ctx.fillText(String(score), width / 2, 60);
+  drawPipe(pipe: Pipe, config: GameConfig): void {
+    const { pipeWidth, pipeGap } = config;
+    const gapTop = pipe.gapY;
+    const gapBottom = pipe.gapY + pipeGap;
+
+    // Top pipe
+    this.ctx.fillStyle = '#73bf2e';
+    this.ctx.fillRect(pipe.x, 0, pipeWidth, gapTop);
+    this.ctx.fillStyle = '#5a9e1e';
+    this.ctx.fillRect(pipe.x - 3, gapTop - 24, pipeWidth + 6, 24);
+
+    // Bottom pipe
+    this.ctx.fillStyle = '#73bf2e';
+    this.ctx.fillRect(pipe.x, gapBottom, pipeWidth, this.canvas.height - gapBottom);
+    this.ctx.fillStyle = '#5a9e1e';
+    this.ctx.fillRect(pipe.x - 3, gapBottom, pipeWidth + 6, 24);
   }
 
-  private drawCenteredText(
-    ctx: CanvasRenderingContext2D, w: number, h: number,
-    text: string, overlayColor: string,
-  ): void {
-    if (overlayColor !== 'transparent') {
-      ctx.fillStyle = overlayColor;
-      ctx.fillRect(0, 0, w, h);
+  drawGround(config: GameConfig): void {
+    const groundY = config.canvasHeight - config.groundHeight;
+    this.ctx.fillStyle = '#deb887';
+    this.ctx.fillRect(0, groundY, config.canvasWidth, config.groundHeight);
+    this.ctx.fillStyle = '#8fce00';
+    this.ctx.fillRect(0, groundY, config.canvasWidth, 4);
+  }
+
+  drawScore(score: number): void {
+    this.ctx.fillStyle = '#fff';
+    this.ctx.strokeStyle = '#000';
+    this.ctx.lineWidth = 3;
+    this.ctx.font = 'bold 36px Arial';
+    this.ctx.textAlign = 'center';
+    const text = String(score);
+    this.ctx.strokeText(text, this.canvas.width / 2, 50);
+    this.ctx.fillText(text, this.canvas.width / 2, 50);
+  }
+
+  drawOverlay(phase: Phase, score: number, highScore: number): void {
+    if (phase === 'ready') {
+      this.drawCenteredText('TAP TO START', this.canvas.height / 2);
+    } else if (phase === 'gameover') {
+      this.drawCenteredText('GAME OVER', this.canvas.height / 2 - 40);
+      this.ctx.font = 'bold 20px Arial';
+      this.ctx.fillStyle = '#fff';
+      this.ctx.strokeStyle = '#000';
+      this.ctx.lineWidth = 2;
+      this.ctx.strokeText(`Score: ${score}`, this.canvas.width / 2, this.canvas.height / 2);
+      this.ctx.fillText(`Score: ${score}`, this.canvas.width / 2, this.canvas.height / 2);
+      this.ctx.strokeText(`Best: ${highScore}`, this.canvas.width / 2, this.canvas.height / 2 + 30);
+      this.ctx.fillText(`Best: ${highScore}`, this.canvas.width / 2, this.canvas.height / 2 + 30);
+      this.drawCenteredText('TAP TO RESTART', this.canvas.height / 2 + 70);
     }
-    ctx.font = 'bold 36px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 3;
-    ctx.strokeText(text, w / 2, h / 2);
-    ctx.fillStyle = '#FFF';
-    ctx.fillText(text, w / 2, h / 2);
+  }
+
+  private drawCenteredText(text: string, y: number): void {
+    this.ctx.font = 'bold 24px Arial';
+    this.ctx.textAlign = 'center';
+    this.ctx.fillStyle = '#fff';
+    this.ctx.strokeStyle = '#000';
+    this.ctx.lineWidth = 3;
+    this.ctx.strokeText(text, this.canvas.width / 2, y);
+    this.ctx.fillText(text, this.canvas.width / 2, y);
   }
 }

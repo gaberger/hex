@@ -1,94 +1,148 @@
-import { describe, it, expect } from 'bun:test';
-import {
-  createInitialState, tickState, flapState, gameOverState, resetState,
-} from '../../src/core/domain/game-state.js';
-import type { GameConfig } from '../../src/core/ports/index.js';
+/**
+ * Unit Tests — Game State
+ *
+ * Uses NEGATIVE flapStrength matching production config.
+ */
 
-const cfg: GameConfig = {
-  canvasWidth: 400, canvasHeight: 600, gravity: 980,
-  flapStrength: -300, pipeSpeed: 150, pipeGap: 120,
-  pipeWidth: 50, pipeSpawnInterval: 90,
+import { describe, it, expect } from 'bun:test';
+import { createInitialState, flapState, tickState } from '../../src/core/domain/game-state.js';
+import type { GameConfig, GameState } from '../../src/core/ports/index.js';
+
+const config: GameConfig = {
+  canvasWidth: 400,
+  canvasHeight: 600,
+  gravity: 980,
+  flapStrength: -280,     // NEGATIVE — production value
+  pipeWidth: 52,
+  pipeGap: 140,
+  pipeSpeed: 160,
+  pipeSpawnInterval: 1.8,
+  groundHeight: 80,
+  birdSize: 24,
+  birdX: 80,
 };
 
+// ---------------------------------------------------------------------------
+// createInitialState — BS-6
+// ---------------------------------------------------------------------------
+
 describe('createInitialState', () => {
-  it('bird at starting position, score 0, phase ready', () => {
-    const s = createInitialState(cfg);
-    expect(s.bird.position).toEqual({ x: 80, y: 300 });
-    expect(s.score).toBe(0);
-    expect(s.phase).toBe('ready');
-    expect(s.pipes).toEqual([]);
+  it('starts in ready phase', () => {
+    const state = createInitialState(config, 0);
+    expect(state.phase).toBe('ready');
+  });
+
+  it('places bird at center height', () => {
+    const state = createInitialState(config, 0);
+    expect(state.bird.y).toBe(config.canvasHeight / 2);
+  });
+
+  it('starts with zero velocity', () => {
+    const state = createInitialState(config, 0);
+    expect(state.bird.velocity).toBe(0);
+  });
+
+  it('preserves high score', () => {
+    const state = createInitialState(config, 42);
+    expect(state.highScore).toBe(42);
+  });
+
+  it('starts with zero score and no pipes', () => {
+    const state = createInitialState(config, 0);
+    expect(state.score).toBe(0);
+    expect(state.pipes).toEqual([]);
   });
 });
 
-describe('tickState', () => {
-  const playing = { ...createInitialState(cfg), phase: 'playing' as const };
-
-  it('bird falls due to gravity when playing', () => {
-    const next = tickState(playing, cfg, 16);
-    expect(next.bird.velocity).toBeGreaterThan(0);
-  });
-
-  it('pipes move left', () => {
-    const withPipe = { ...playing, pipes: [{ x: 300, gapY: 300, scored: false }] };
-    const next = tickState(withPipe, cfg, 16);
-    expect(next.pipes[0].x).toBeLessThan(300);
-  });
-
-  it('score increments when bird passes pipe', () => {
-    const withPipe = {
-      ...playing,
-      bird: { ...playing.bird, position: { x: 200, y: 300 } },
-      pipes: [{ x: 100, gapY: 310, scored: false }],
-    };
-    const next = tickState(withPipe, cfg, 16);
-    expect(next.score).toBe(1);
-  });
-
-  it('transitions to gameover on collision', () => {
-    const withPipe = {
-      ...playing,
-      pipes: [{ x: 75, gapY: 200, scored: false }],
-    };
-    const next = tickState(withPipe, cfg, 16);
-    expect(next.phase).toBe('gameover');
-  });
-
-  it('returns same state if not playing', () => {
-    const ready = createInitialState(cfg);
-    expect(tickState(ready, cfg, 16)).toBe(ready);
-  });
-});
+// ---------------------------------------------------------------------------
+// flapState — BS-7, BS-8
+// ---------------------------------------------------------------------------
 
 describe('flapState', () => {
-  const playing = { ...createInitialState(cfg), phase: 'playing' as const };
-
-  it('bird velocity becomes negative (upward)', () => {
-    const next = flapState(playing, cfg);
-    expect(next.bird.velocity).toBe(-300);
+  it('sets negative velocity when playing (bird rises)', () => {
+    const state = createInitialState(config, 0);
+    const playing: GameState = { ...state, phase: 'playing' };
+    const result = flapState(playing, config);
+    expect(result.bird.velocity).toBe(-280);
+    expect(result.bird.velocity).toBeLessThan(0);
   });
 
-  it('only works in playing phase', () => {
-    const ready = createInitialState(cfg);
-    expect(flapState(ready, cfg)).toBe(ready);
+  it('does nothing when phase is ready', () => {
+    const state = createInitialState(config, 0);
+    const result = flapState(state, config);
+    expect(result).toBe(state); // same reference — no change
+  });
+
+  it('does nothing when phase is gameover', () => {
+    const state = createInitialState(config, 0);
+    const gameover: GameState = { ...state, phase: 'gameover' };
+    const result = flapState(gameover, config);
+    expect(result).toBe(gameover);
+  });
+
+  it('overrides positive velocity with negative on flap', () => {
+    const state = createInitialState(config, 0);
+    const falling: GameState = {
+      ...state,
+      phase: 'playing',
+      bird: { ...state.bird, velocity: 200 },
+    };
+    const result = flapState(falling, config);
+    expect(result.bird.velocity).toBe(-280);
   });
 });
 
-describe('gameOverState', () => {
-  it('preserves score, sets phase', () => {
-    const s = { ...createInitialState(cfg), score: 5, phase: 'playing' as const };
-    const over = gameOverState(s);
-    expect(over.phase).toBe('gameover');
-    expect(over.score).toBe(5);
-    expect(over.bird.alive).toBe(false);
-  });
-});
+// ---------------------------------------------------------------------------
+// tickState
+// ---------------------------------------------------------------------------
 
-describe('resetState', () => {
-  it('returns to initial with high score preserved', () => {
-    const s = { ...createInitialState(cfg), highScore: 10, phase: 'gameover' as const };
-    const next = resetState(s, cfg);
-    expect(next.phase).toBe('ready');
-    expect(next.score).toBe(0);
-    expect(next.highScore).toBe(10);
+describe('tickState', () => {
+  it('does nothing when not playing', () => {
+    const state = createInitialState(config, 0);
+    const result = tickState(state, config, 1 / 60);
+    expect(result).toBe(state);
+  });
+
+  it('applies gravity when playing (velocity increases)', () => {
+    const state = createInitialState(config, 0);
+    const playing: GameState = { ...state, phase: 'playing' };
+    const result = tickState(playing, config, 1 / 60);
+    expect(result.bird.velocity).toBeGreaterThan(0);
+  });
+
+  it('clamps bird to ceiling (y >= 0) without dying — BS-4', () => {
+    const state = createInitialState(config, 0);
+    const atCeiling: GameState = {
+      ...state,
+      phase: 'playing',
+      bird: { ...state.bird, y: 5, velocity: -500 },
+    };
+    const result = tickState(atCeiling, config, 1 / 60);
+    expect(result.bird.y).toBeGreaterThanOrEqual(0);
+    expect(result.phase).toBe('playing'); // NOT gameover
+  });
+
+  it('transitions to gameover when bird hits ground — BS-4', () => {
+    const state = createInitialState(config, 0);
+    const nearGround: GameState = {
+      ...state,
+      phase: 'playing',
+      bird: { ...state.bird, y: 490, velocity: 300 },
+    };
+    const result = tickState(nearGround, config, 0.1);
+    expect(result.phase).toBe('gameover');
+  });
+
+  it('updates high score on gameover — BS-13', () => {
+    const state = createInitialState(config, 5);
+    const scored: GameState = {
+      ...state,
+      phase: 'playing',
+      score: 10,
+      bird: { ...state.bird, y: 490, velocity: 300 },
+    };
+    const result = tickState(scored, config, 0.1);
+    expect(result.phase).toBe('gameover');
+    expect(result.highScore).toBe(10);
   });
 });
