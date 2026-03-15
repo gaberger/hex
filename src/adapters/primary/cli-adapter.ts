@@ -439,21 +439,32 @@ export class CLIAdapter {
       }
     }
 
-    // Check grammar availability across all search paths
+    // Check grammar availability — use absolute paths since grammars
+    // may be in hex-intf's own node_modules or the project's
+    const { access } = await import('node:fs/promises');
+    const { resolve } = await import('node:path');
+    const checkDirs = [
+      resolve(this.ctx.rootPath, 'config/grammars'),
+      resolve(this.ctx.rootPath, 'node_modules/tree-sitter-wasms/out'),
+      resolve(__dirname ?? '.', '../../node_modules/tree-sitter-wasms/out'),
+    ];
+
     this.writeLn('');
     this.writeLn('Tree-sitter grammars:');
     for (const lang of languages) {
       let found = false;
       let foundAt = '';
-      for (const dir of searchPaths) {
-        const path = `${dir}/tree-sitter-${lang}.wasm`;
-        if (await this.ctx.fs.exists(path)) {
+      for (const dir of checkDirs) {
+        const fullPath = resolve(dir, `tree-sitter-${lang}.wasm`);
+        try {
+          await access(fullPath);
           found = true;
-          foundAt = path;
+          foundAt = fullPath;
           break;
-        }
+        } catch { /* not here */ }
       }
-      this.writeLn(`  ${lang}: ${found ? `found (${foundAt})` : 'not found'}`);
+      this.writeLn(`  ${lang}: ${found ? 'found' : 'not found'}`);
+      if (found) this.writeLn(`    ${foundAt}`);
     }
 
     this.writeLn('');
