@@ -1,0 +1,190 @@
+# hex-summarize — Generate tree-sitter AST summaries for LLM context
+# Usage: "summarize project", "ast summary", "token context"
+
+name: hex-summarize
+version: "1.0.0"
+description: >
+  Generates tree-sitter AST summaries at configurable detail levels (L0-L3).
+  Compresses source files to ~10% token count while preserving structural information
+  needed by LLM agents for code generation and navigation.
+
+triggers:
+  - "summarize project"
+  - "ast summary"
+  - "token context"
+  - "generate context"
+  - "project overview"
+  - "what does this project do"
+
+parameters:
+  target:
+    type: string
+    default: "."
+    description: File or directory path to summarize (relative to project root)
+  level:
+    type: string
+    enum: [L0, L1, L2, L3]
+    default: L1
+    description: |
+      Summary detail level:
+        L0 (Index)      — ~5 tokens/file: filename, language, line count
+        L1 (Skeleton)   — ~50 tokens/file: exports, imports, dependencies
+        L2 (Signatures) — ~200 tokens/file: full type signatures, params, returns
+        L3 (Full)       — ~2000 tokens/file: complete source (use sparingly)
+  format:
+    type: string
+    enum: [text, json, markdown]
+    default: text
+    description: Output format for the summary
+  filter:
+    type: string
+    required: false
+    description: Glob pattern to filter files (e.g. "**/*.ts", "src/adapters/**")
+  max_tokens:
+    type: integer
+    default: 50000
+    description: Maximum total tokens for the summary output
+  include_tests:
+    type: boolean
+    default: false
+    description: Whether to include test files in the summary
+
+context:
+  required: []
+  level: L0
+
+steps:
+  - id: discover-files
+    description: Find all source files in target path
+    action: bash
+    command: |
+      find {{target}} -type f \
+        -name "*.ts" -o -name "*.go" -o -name "*.rs" \
+        | grep -v node_modules \
+        | grep -v dist \
+        | grep -v target \
+        {{#unless include_tests}}| grep -v test{{/unless}} \
+        | sort
+
+  - id: parse-ast
+    description: Run tree-sitter parser on each discovered file
+    depends_on: [discover-files]
+    action: treesitter
+    parallel: true
+    per_file:
+      - Parse AST using language-appropriate tree-sitter grammar
+      - Extract nodes based on level parameter
+    extraction_rules:
+      L0:
+        nodes: []
+        output: "FILE: {{path}} | LANG: {{lang}} | LINES: {{lines}}"
+      L1:
+        nodes:
+          - export_statement
+          - import_statement
+          - type_alias_declaration
+          - interface_declaration
+          - class_declaration (name only)
+          - function_declaration (name only)
+        output: |
+          FILE: {{path}}
+          LANG: {{lang}}
+          EXPORTS: {{exports}}
+          IMPORTS: {{imports}}
+          DEPS: {{dependencies}}
+          LINES: {{lines}}
+      L2:
+        nodes:
+          - export_statement (with full signature)
+          - import_statement
+          - type_alias_declaration (with body)
+          - interface_declaration (with methods)
+          - class_declaration (with method signatures)
+          - function_declaration (with params and return type)
+        output: |
+          FILE: {{path}}
+          LANG: {{lang}}
+          EXPORTS:
+          {{#each exports}}
+            {{kind}} {{name}}{{signature}}
+          {{/each}}
+          IMPORTS: {{imports}}
+          DEPS: {{dependencies}}
+          LINES: {{lines}}
+      L3:
+        nodes: [all]
+        output: "{{raw_source}}"
+
+  - id: estimate-tokens
+    description: Calculate token estimates and enforce budget
+    depends_on: [parse-ast]
+    action: analyze
+    logic: |
+      For each file summary:
+        1. Estimate tokens using (word_count * 1.3) heuristic
+        2. If total exceeds max_tokens, reduce detail:
+           - Drop L2 files to L1
+           - Drop L1 files to L0
+           - Prioritize: ports > domain > adapters > infrastructure
+        3. Report actual vs budget
+
+  - id: format-output
+    description: Render summaries in requested format
+    depends_on: [estimate-tokens]
+    action: format
+    formats:
+      text:
+        separator: "\n---\n"
+        header: |
+          # Project Summary — Level {{level}}
+          # Files: {{file_count}} | Estimated tokens: {{token_count}}
+          # Generated: {{timestamp}}
+      json:
+        schema:
+          project: string
+          level: string
+          generated: string
+          token_estimate: number
+          files:
+            - filePath: string
+              language: string
+              level: string
+              exports: ExportEntry[]
+              imports: ImportEntry[]
+              dependencies: string[]
+              lineCount: number
+              tokenEstimate: number
+      markdown:
+        template: |
+          # {{project}} — {{level}} Summary
+
+          | File | Language | Lines | Tokens | Exports |
+          |------|----------|-------|--------|---------|
+          {{#each files}}
+          | `{{path}}` | {{lang}} | {{lines}} | ~{{tokens}} | {{export_count}} |
+          {{/each}}
+
+          **Total**: {{file_count}} files, ~{{token_count}} tokens
+
+          {{#if level_gte_L1}}
+          ## Port Interfaces
+          {{#each port_files}}
+          ### {{name}}
+          {{summary}}
+          {{/each}}
+          {{/if}}
+
+  - id: write-output
+    description: Write summary to file or stdout
+    depends_on: [format-output]
+    action: output
+    destinations:
+      - stdout
+      - file: "docs/context/{{level}}-summary.{{ext}}"
+        condition: "{{format != 'text'}}"
+
+output:
+  summary: "{{level}} summary of {{file_count}} files (~{{token_count}} tokens)"
+  token_savings: "{{original_tokens}} -> {{summary_tokens}} ({{compression_ratio}}% reduction)"
+  files_created:
+    - "docs/context/{{level}}-summary.{{ext}}"

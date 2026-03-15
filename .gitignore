@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude tooling (scaffolded, not project code)
+.claude/
+.claude-flow/
+.mcp.json
+
+# Bun
+bun.lockb
+
+# Coverage
+coverage/
+
+# Logs
+*.log
+.hex-intf/

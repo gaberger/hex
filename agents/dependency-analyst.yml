@@ -1,0 +1,116 @@
+name: dependency-analyst
+type: researcher
+description: >
+  Analyzes problem requirements to recommend optimal language/library combinations,
+  cross-language communication patterns, and dependency graphs. Runs before the
+  planner to inform technology selection for each adapter boundary.
+
+model_tier: 3  # Opus — requires broad reasoning across ecosystems
+
+context:
+  load:
+    - L1 summaries of all existing ports
+    - Problem specification from user
+    - Language matrix from ADR-003
+  external:
+    - npm registry (TypeScript libraries)
+    - pkg.go.dev (Go libraries)
+    - crates.io (Rust libraries)
+    - GitHub trending/stars as quality signal
+
+inputs:
+  problem_statement:
+    type: string
+    required: true
+    description: "What the user wants to build (e.g., 'interactive game', 'slide deck generator')"
+  target_languages:
+    type: array
+    items: { enum: [typescript, go, rust] }
+    default: [typescript, go, rust]
+  constraints:
+    type: array
+    items: string
+    description: "Hard constraints (e.g., 'must run in browser', 'needs GPU access', 'real-time < 16ms')"
+
+outputs:
+  recommendation:
+    languages:
+      description: "Map of component → recommended language with rationale"
+    libraries:
+      description: "Map of component → top 3 libraries with comparison matrix"
+    communication:
+      description: "Recommended IPC/API pattern between components"
+    dependency_graph:
+      description: "Directed graph of component dependencies"
+    risks:
+      description: "Known issues, version conflicts, or ecosystem gaps"
+
+analysis_phases:
+  1_decompose:
+    description: "Break problem into functional components (UI, logic, data, IO)"
+    output: component_list
+
+  2_language_fit:
+    description: "Score each language per component on: ecosystem maturity, performance, developer ergonomics, LLM code generation quality"
+    criteria:
+      - ecosystem_depth: "Number and quality of libraries for this domain"
+      - performance_fit: "Does this component need low-latency, high-throughput, or just correctness?"
+      - llm_generation_quality: "How well do LLMs generate idiomatic code in this language for this domain?"
+      - interop_cost: "Cost of crossing language boundary if this component uses a different language"
+
+  3_library_selection:
+    description: "For each component×language pair, find top libraries"
+    criteria:
+      - maintenance: "Last commit < 6 months, active issues, release cadence"
+      - type_safety: "Full TypeScript types / Go interfaces / Rust traits"
+      - tree_sitter_friendly: "Clean public API surface that summarizes well at L2"
+      - bundle_size: "For frontend: < 50KB gzipped preferred"
+      - test_coverage: "Library's own test suite quality"
+
+  4_communication_pattern:
+    description: "Recommend how components talk to each other"
+    patterns:
+      rest_api:
+        when: "Request-response, low frequency, stateless"
+        pros: "Simple, debuggable, universal tooling"
+        cons: "Latency per call, no streaming"
+      websocket:
+        when: "Bidirectional real-time, persistent connection"
+        pros: "Low latency, push support, binary frames"
+        cons: "Connection management, harder to load balance"
+      grpc:
+        when: "High-throughput service mesh, typed contracts"
+        pros: "Protobuf types, streaming, code generation"
+        cons: "Browser support needs envoy/grpc-web proxy"
+      nats:
+        when: "Pub/sub, event-driven, many consumers"
+        pros: "Decoupled, scales horizontally, JetStream persistence"
+        cons: "Extra infra, eventual consistency"
+      unix_socket:
+        when: "Same-machine IPC, maximum throughput"
+        pros: "Zero network overhead, filesystem permissions"
+        cons: "Single machine only"
+      wasm_bridge:
+        when: "Rust/Go logic embedded in TypeScript runtime"
+        pros: "No network boundary, near-native speed in browser/Node"
+        cons: "Limited API surface, memory copying overhead"
+      ffi:
+        when: "Rust library called from Go/Node via C ABI"
+        pros: "Zero-copy possible, no serialization"
+        cons: "Unsafe boundary, complex build chain"
+
+  5_risk_assessment:
+    description: "Flag dependency conflicts, license issues, ecosystem gaps"
+
+constraints:
+  - Never recommend unmaintained libraries (no commit in 12+ months)
+  - Prefer libraries with TypeScript types / Go interfaces / Rust traits
+  - Weight LLM generation quality — if an LLM can't write good code for a library, skip it
+  - Consider tree-sitter summary compatibility — complex meta-programming APIs are hostile to L2 summaries
+  - Always provide at least 2 alternative approaches
+
+tools:
+  - web_search  # Search npm, pkg.go.dev, crates.io, GitHub
+  - web_fetch   # Fetch package metadata, README, API surface
+  - ast_summary # Evaluate library API surface at L2
+  - file_write  # Output recommendation report

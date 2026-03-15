@@ -1,0 +1,210 @@
+# hex-generate — Generate code within a hexagonal adapter boundary
+# Usage: "generate adapter", "implement port", "create adapter"
+
+name: hex-generate
+version: "1.0.0"
+description: >
+  Generates production code for a specific adapter within the hexagonal architecture.
+  Loads port contracts as context, implements the adapter, then runs the compile-lint-test
+  feedback loop until all quality gates pass.
+
+triggers:
+  - "generate adapter"
+  - "implement port"
+  - "create adapter"
+  - "code adapter"
+  - "implement interface"
+
+parameters:
+  adapter:
+    type: string
+    required: true
+    description: >
+      Target adapter path relative to src/adapters/ (e.g. "secondary/git-adapter",
+      "primary/cli-adapter")
+  port:
+    type: string
+    required: false
+    description: >
+      Specific port interface to implement (e.g. "IGitPort"). If omitted, inferred
+      from the adapter name.
+  language:
+    type: string
+    enum: [typescript, go, rust]
+    default: typescript
+    description: Target language for code generation
+  spec:
+    type: string
+    required: false
+    description: Path to a specification file with additional requirements
+  max_iterations:
+    type: integer
+    default: 5
+    description: Maximum feedback loop iterations before escalating
+  test_style:
+    type: string
+    enum: [london, chicago]
+    default: london
+    description: Unit test methodology (London = mock-first, Chicago = state-based)
+
+context:
+  load_strategy:
+    - level: L1
+      scope: "src/core/ports/**"
+      description: Load skeleton of all port interfaces for contract awareness
+    - level: L2
+      scope: "src/core/ports/index.ts"
+      description: Load full signatures of port being implemented
+    - level: L2
+      scope: "src/adapters/{{adapter}}/**"
+      description: Load signatures of existing adapter code if any
+    - level: L1
+      scope: "src/core/domain/**"
+      description: Load domain entity skeletons for type references
+    - level: L3
+      scope: "src/adapters/{{adapter}}/{{target_file}}"
+      description: Load full source of file being edited (on-demand)
+
+  token_budget:
+    max_tokens: 100000
+    reserved_for_response: 20000
+    port_context: 5000
+    adapter_context: 10000
+    error_context: 5000
+
+steps:
+  - id: resolve-port
+    description: Determine which port interface this adapter implements
+    action: analyze
+    logic: |
+      If port parameter provided, use it directly.
+      Otherwise, infer from adapter path:
+        secondary/git-adapter    -> IGitPort + IWorktreePort
+        secondary/llm-adapter    -> ILLMPort
+        secondary/build-adapter  -> IBuildPort
+        secondary/fs-adapter     -> IFileSystemPort
+        secondary/ast-adapter    -> IASTPort
+        primary/cli-adapter      -> ICodeGenerationPort + IWorkplanPort
+        primary/http-adapter     -> ICodeGenerationPort + ISummaryPort
+        primary/agent-adapter    -> ICodeGenerationPort + IWorkplanPort + ISummaryPort
+
+  - id: load-context
+    description: Load port interfaces and existing adapter code as AST summaries
+    depends_on: [resolve-port]
+    action: summarize
+    targets:
+      - path: "src/core/ports/index.ts"
+        level: L2
+      - path: "src/adapters/{{adapter}}/"
+        level: L2
+      - path: "src/core/domain/"
+        level: L1
+
+  - id: generate-test
+    description: Write failing unit tests first (TDD Red phase)
+    depends_on: [load-context]
+    action: generate
+    template: adapter-test
+    style: "{{test_style}}"
+    output: "tests/unit/{{adapter_name}}.test.{{ext}}"
+    requirements:
+      - Test every method defined in the port interface
+      - Mock all dependencies (other ports)
+      - Include happy path and error cases
+      - Include edge cases (empty input, null, timeout)
+      - Assert on return types matching port contract
+
+  - id: verify-tests-fail
+    description: Run tests to confirm they fail (TDD Red verification)
+    depends_on: [generate-test]
+    action: bash
+    command: "npm test -- --run tests/unit/{{adapter_name}}.test.ts"
+    expect: failure
+    on_pass: |
+      WARNING: Tests pass before implementation exists. Tests may be trivial.
+      Review test assertions for correctness.
+
+  - id: generate-adapter
+    description: Implement the adapter to satisfy port interface (TDD Green phase)
+    depends_on: [verify-tests-fail]
+    action: generate
+    template: adapter-implementation
+    output: "src/adapters/{{adapter}}/index.{{ext}}"
+    requirements:
+      - Implement every method from the resolved port interface
+      - Use dependency injection for all external dependencies
+      - Include proper error handling with domain-specific error types
+      - Add JSDoc/godoc/rustdoc for all public methods
+      - Keep file under 500 lines; split if needed
+
+  - id: feedback-loop
+    description: Run compile-lint-test cycle and refine until all pass
+    depends_on: [generate-adapter]
+    action: feedback-loop
+    max_iterations: "{{max_iterations}}"
+    quality_gates:
+      - name: compile
+        command:
+          typescript: "npx tsc --noEmit"
+          go: "go build ./..."
+          rust: "cargo check"
+        timeout: 10000
+        required: true
+
+      - name: lint
+        command:
+          typescript: "npx eslint src/adapters/{{adapter}}/ --ext .ts"
+          go: "golangci-lint run ./src/adapters/{{adapter}}/..."
+          rust: "cargo clippy -p {{adapter_name}} -- -D warnings"
+        timeout: 10000
+        required: true
+
+      - name: unit-test
+        command:
+          typescript: "npx vitest run tests/unit/{{adapter_name}}.test.ts"
+          go: "go test ./tests/unit/{{adapter_name}}_test.go -v"
+          rust: "cargo test --lib {{adapter_name}}"
+        timeout: 30000
+        required: true
+
+      - name: ast-diff
+        command: "npx hex-intf summarize --file src/adapters/{{adapter}}/index.ts --level L2"
+        timeout: 5000
+        required: false
+        description: Verify structural changes match expectations
+
+    on_failure:
+      action: refine
+      strategy: |
+        1. Parse structured error output from the failing gate
+        2. Load L3 context of the failing file
+        3. Apply targeted fix using Edit tool (not full rewrite)
+        4. Re-run only the failing gate before full cycle
+      escalation:
+        after: "{{max_iterations}}"
+        action: report
+        message: >
+          Adapter {{adapter}} failed quality gates after {{max_iterations}} iterations.
+          Last errors attached. Requires human review or architecture change.
+
+  - id: refactor
+    description: Clean up implementation (TDD Refactor phase)
+    depends_on: [feedback-loop]
+    action: refactor
+    checks:
+      - No code duplication (DRY)
+      - Single responsibility per function
+      - Consistent naming with project conventions
+      - Error messages are descriptive
+      - All public API has documentation
+    verify_after: true
+
+output:
+  summary: "Adapter {{adapter}} implementing {{port}} — all quality gates passed"
+  files_created: auto
+  files_modified: auto
+  quality_report:
+    compile: pass/fail
+    lint: pass/fail
+    test: "{{passed}}/{{total}} tests passing"
+    iterations: "{{iteration_count}}"

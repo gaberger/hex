@@ -1,0 +1,240 @@
+# hex-scaffold — Scaffold a new hexagonal architecture project
+# Usage: "create hex project", "scaffold hexagonal", "new ports and adapters"
+
+name: hex-scaffold
+version: "1.0.0"
+description: >
+  Scaffolds a new hexagonal architecture (ports & adapters) project optimized
+  for LLM-driven development with tree-sitter AST summaries and swarm coordination.
+
+triggers:
+  - "create hex project"
+  - "scaffold hexagonal"
+  - "new ports and adapters"
+  - "hex-intf init"
+  - "init hexagonal project"
+
+parameters:
+  language:
+    type: string
+    enum: [typescript, go, rust]
+    default: typescript
+    description: Target language for the project
+  name:
+    type: string
+    required: true
+    description: Project name (used for directory and package naming)
+  adapters:
+    type: array
+    items: string
+    default: [cli, http, filesystem, git]
+    description: List of adapters to scaffold (primary and secondary)
+  with_swarm:
+    type: boolean
+    default: true
+    description: Include Ruflo swarm coordination infrastructure
+  with_treesitter:
+    type: boolean
+    default: true
+    description: Include tree-sitter AST summary infrastructure
+
+context:
+  required:
+    - docs/architecture/ARCHITECTURE.md
+    - src/core/ports/index.ts
+  level: L1
+
+steps:
+  - id: create-directory-structure
+    description: Create the full hexagonal directory layout
+    action: bash
+    commands:
+      - |
+        mkdir -p {{name}}/src/core/{domain,ports,usecases}
+        mkdir -p {{name}}/src/adapters/{primary,secondary}
+        mkdir -p {{name}}/src/infrastructure/{treesitter,swarm,worktree}
+        mkdir -p {{name}}/tests/{unit,integration}
+        mkdir -p {{name}}/docs/{architecture,adrs,skills}
+        mkdir -p {{name}}/config
+        mkdir -p {{name}}/scripts
+        mkdir -p {{name}}/skills
+        mkdir -p {{name}}/agents
+        mkdir -p {{name}}/examples
+
+  - id: generate-port-interfaces
+    description: Generate typed port interfaces from the hex-intf spec
+    depends_on: [create-directory-structure]
+    action: generate
+    template: ports
+    language: "{{language}}"
+    outputs:
+      typescript:
+        - src/core/ports/index.ts
+      go:
+        - src/core/ports/ports.go
+        - src/core/ports/types.go
+      rust:
+        - src/core/ports/mod.rs
+        - src/core/ports/types.rs
+    ports:
+      input:
+        - name: ICodeGenerationPort
+          methods:
+            - "generateFromSpec(spec: Specification, lang: Language): Promise<CodeUnit>"
+            - "refineFromFeedback(unit: CodeUnit, errors: LintError[]): Promise<CodeUnit>"
+        - name: IWorkplanPort
+          methods:
+            - "createPlan(requirements: string[], lang: Language): Promise<Workplan>"
+            - "executePlan(plan: Workplan): AsyncGenerator<StepResult>"
+        - name: ISummaryPort
+          methods:
+            - "summarizeFile(filePath: string, level: SummaryLevel): Promise<ASTSummary>"
+            - "summarizeProject(rootPath: string, level: SummaryLevel): Promise<ASTSummary[]>"
+      output:
+        - name: IASTPort
+          methods:
+            - "extractSummary(filePath: string, level: SummaryLevel): Promise<ASTSummary>"
+            - "diffStructural(before: ASTSummary, after: ASTSummary): StructuralDiff"
+        - name: ILLMPort
+          methods:
+            - "prompt(budget: TokenBudget, messages: Message[]): Promise<LLMResponse>"
+            - "streamPrompt(budget: TokenBudget, messages: Message[]): AsyncGenerator<string>"
+        - name: IBuildPort
+          methods:
+            - "compile(project: Project): Promise<BuildResult>"
+            - "lint(project: Project): Promise<LintResult>"
+            - "test(project: Project, suite: TestSuite): Promise<TestResult>"
+        - name: IWorktreePort
+          methods:
+            - "create(branchName: string): Promise<WorktreePath>"
+            - "merge(worktree: WorktreePath, target: string): Promise<MergeResult>"
+            - "cleanup(worktree: WorktreePath): Promise<void>"
+            - "list(): Promise<WorktreePath[]>"
+        - name: IGitPort
+          methods:
+            - "commit(message: string): Promise<string>"
+            - "createBranch(name: string): Promise<void>"
+            - "diff(base: string, head: string): Promise<string>"
+            - "currentBranch(): Promise<string>"
+        - name: IFileSystemPort
+          methods:
+            - "read(filePath: string): Promise<string>"
+            - "write(filePath: string, content: string): Promise<void>"
+            - "exists(filePath: string): Promise<boolean>"
+            - "glob(pattern: string): Promise<string[]>"
+
+  - id: generate-domain-entities
+    description: Generate domain entity stubs and value objects
+    depends_on: [generate-port-interfaces]
+    action: generate
+    template: domain
+    language: "{{language}}"
+    entities:
+      - Project
+      - CodeUnit
+      - TestSuite
+      - BuildResult
+    value_objects:
+      - Language
+      - ASTSummary
+      - TokenBudget
+      - QualityScore
+
+  - id: scaffold-adapters
+    description: Generate adapter stubs that implement port interfaces
+    depends_on: [generate-port-interfaces]
+    action: generate
+    template: adapter-stubs
+    language: "{{language}}"
+    adapters: "{{adapters}}"
+    per_adapter:
+      - adapter implementation file (implements port interface)
+      - adapter unit test file (London-school mocks)
+      - adapter README with port contract documentation
+
+  - id: setup-build-config
+    description: Configure language-specific build toolchain
+    depends_on: [create-directory-structure]
+    action: configure
+    language: "{{language}}"
+    configs:
+      typescript:
+        - file: tsconfig.json
+          template: strict-tsconfig
+          options:
+            strict: true
+            noUncheckedIndexedAccess: true
+            outDir: dist
+        - file: package.json
+          template: package-json
+          scripts:
+            build: "tsc"
+            lint: "eslint src/ --ext .ts"
+            test: "vitest run"
+            "test:watch": "vitest"
+        - file: .eslintrc.yml
+          template: eslint-strict
+        - file: vitest.config.ts
+          template: vitest-config
+      go:
+        - file: go.mod
+          template: go-mod
+        - file: Makefile
+          template: go-makefile
+        - file: .golangci.yml
+          template: golangci-lint
+      rust:
+        - file: Cargo.toml
+          template: cargo-toml
+        - file: clippy.toml
+          template: clippy-config
+        - file: rust-toolchain.toml
+          template: rust-toolchain
+
+  - id: setup-swarm-config
+    description: Configure Ruflo swarm coordination layer
+    depends_on: [create-directory-structure]
+    condition: "{{with_swarm}}"
+    action: generate
+    template: swarm-config
+    files:
+      - agents/planner.yml
+      - agents/hex-coder.yml
+      - agents/integrator.yml
+      - agents/swarm-coordinator.yml
+
+  - id: setup-treesitter
+    description: Configure tree-sitter AST extraction
+    depends_on: [create-directory-structure]
+    condition: "{{with_treesitter}}"
+    action: generate
+    template: treesitter-config
+    language: "{{language}}"
+
+  - id: verify-scaffold
+    description: Run build and lint to verify scaffold integrity
+    depends_on:
+      - generate-port-interfaces
+      - generate-domain-entities
+      - scaffold-adapters
+      - setup-build-config
+    action: feedback-loop
+    max_iterations: 3
+    commands:
+      typescript:
+        compile: "npx tsc --noEmit"
+        lint: "npx eslint src/ --ext .ts"
+      go:
+        compile: "go build ./..."
+        lint: "golangci-lint run"
+      rust:
+        compile: "cargo check"
+        lint: "cargo clippy -- -D warnings"
+
+output:
+  summary: "Hexagonal project '{{name}}' scaffolded for {{language}}"
+  files_created: auto
+  next_steps:
+    - "Run: cd {{name}} && npm install (or go mod tidy / cargo build)"
+    - "Generate adapters: use hex-generate skill"
+    - "View structure: use hex-summarize skill at L1"

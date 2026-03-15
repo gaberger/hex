@@ -1,0 +1,33 @@
+name: hex-analyze-deps
+description: >
+  Analyze a problem statement to recommend optimal language/library combinations
+  and cross-language communication patterns for hexagonal architecture projects.
+
+triggers:
+  - "analyze dependencies"
+  - "what libraries should I use"
+  - "recommend tech stack"
+  - "language selection"
+  - "how should components communicate"
+
+parameters:
+  problem:
+    type: string
+    required: true
+    description: "Problem statement or feature description"
+  languages:
+    type: string
+    default: "typescript,go,rust"
+    description: "Comma-separated target languages"
+
+steps:
+  - name: decompose
+    action: "Break problem into UI, logic, data, and IO components"
+  - name: research
+    action: "Search package registries for each component domain"
+    agent: dependency-analyst
+  - name: score
+    action: "Score language×library combinations against criteria"
+  - name: recommend
+    action: "Output recommendation with communication pattern and dependency graph"
+    output: "docs/analysis/{problem-slug}-deps.md"

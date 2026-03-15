@@ -1,0 +1,184 @@
+FILE: src/core/ports/mod.rs
+LANG: rust
+EXPORTS:
+  enum Language
+    TypeScript
+    Go
+    Rust
+  struct ASTSummary
+    + file_path: String
+    + language: Language
+    + level: SummaryLevel
+    + exports: Vec<ExportEntry>
+    + imports: Vec<ImportEntry>
+    + dependencies: Vec<String>
+    + line_count: usize
+    + token_estimate: usize
+    + raw: Option<String>
+  enum SummaryLevel
+    L0
+    L1
+    L2
+    L3
+  struct ExportEntry
+    + name: String
+    + kind: ExportKind
+    + signature: Option<String>
+  enum ExportKind
+    Function
+    Struct
+    Trait
+    Type
+    Const
+    Enum
+  struct ImportEntry
+    + names: Vec<String>
+    + from: String
+  struct TokenBudget
+    + max_tokens: usize
+    + reserved_for_response: usize
+    + available: usize
+  struct CodeUnit
+    + file_path: String
+    + language: Language
+    + content: String
+    + ast_summary: ASTSummary
+  struct Specification
+    + title: String
+    + requirements: Vec<String>
+    + constraints: Vec<String>
+    + target_language: Language
+    + target_adapter: Option<String>
+  struct Workplan
+    + id: String
+    + title: String
+    + steps: Vec<WorkplanStep>
+    + estimated_token_budget: usize
+  struct WorkplanStep
+    + id: String
+    + description: String
+    + adapter: String
+    + dependencies: Vec<String>
+    + assignee: Option<String>
+  struct StepResult
+    + step_id: String
+    + status: StepStatus
+    + output: Option<CodeUnit>
+    + errors: Option<Vec<String>>
+  enum StepStatus
+    Pending
+    Running
+    Passed
+    Failed
+  struct LintError
+    + file_path: String
+    + line: usize
+    + column: usize
+    + severity: Severity
+    + message: String
+    + rule: String
+  enum Severity
+    Error
+    Warning
+  struct BuildResult
+    + success: bool
+    + errors: Vec<String>
+    + duration: Duration
+  struct LintResult
+    + success: bool
+    + errors: Vec<LintError>
+    + warning_count: usize
+    + error_count: usize
+  struct TestResult
+    + success: bool
+    + passed: usize
+    + failed: usize
+    + skipped: usize
+    + duration: Duration
+    + failures: Vec<TestFailure>
+  struct TestFailure
+    + test_name: String
+    + message: String
+    + expected: Option<String>
+    + actual: Option<String>
+  struct StructuralDiff
+    + added: Vec<ExportEntry>
+    + removed: Vec<ExportEntry>
+    + modified: Vec<ModifiedEntry>
+  struct ModifiedEntry
+    + before: ExportEntry
+    + after: ExportEntry
+  struct WorktreePath
+    + absolute_path: String
+    + branch: String
+  struct MergeResult
+    + success: bool
+    + conflicts: Vec<String>
+    + commit_hash: Option<String>
+  struct Message
+    + role: MessageRole
+    + content: String
+  enum MessageRole
+    System
+    User
+    Assistant
+  struct LLMResponse
+    + content: String
+    + token_usage: TokenUsage
+    + model: String
+  struct TokenUsage
+    + input: usize
+    + output: usize
+  struct TestSuite
+    + name: String
+    + file_paths: Vec<String>
+    + suite_type: TestSuiteType
+  enum TestSuiteType
+    Unit
+    Integration
+  struct Project
+    + name: String
+    + root_path: String
+    + language: Language
+    + adapters: Vec<String>
+  trait CodeGenerationPort
+    async fn generate_from_spec(&self, spec: Specification, lang: Language) -> Result<CodeUnit>
+    async fn refine_from_feedback(&self, unit: CodeUnit, errors: Vec<LintError>) -> Result<CodeUnit>
+  trait WorkplanPort
+    async fn create_plan(&self, requirements: Vec<String>, lang: Language) -> Result<Workplan>
+    fn execute_plan(&self, plan: Workplan) -> Pin<Box<dyn Stream<Item = StepResult>>>
+  trait SummaryPort
+    async fn summarize_file(&self, file_path: &str, level: SummaryLevel) -> Result<ASTSummary>
+    async fn summarize_project(&self, root_path: &str, level: SummaryLevel) -> Result<Vec<ASTSummary>>
+  trait ASTPort
+    async fn extract_summary(&self, file_path: &str, level: SummaryLevel) -> Result<ASTSummary>
+    fn diff_structural(&self, before: &ASTSummary, after: &ASTSummary) -> StructuralDiff
+  trait LLMPort
+    async fn prompt(&self, budget: TokenBudget, messages: Vec<Message>) -> Result<LLMResponse>
+    fn stream_prompt(&self, budget: TokenBudget, messages: Vec<Message>) -> Pin<Box<dyn Stream<Item = String>>>
+  trait BuildPort
+    async fn compile(&self, project: &Project) -> Result<BuildResult>
+    async fn lint(&self, project: &Project) -> Result<LintResult>
+    async fn test(&self, project: &Project, suite: &TestSuite) -> Result<TestResult>
+  trait WorktreePort
+    async fn create(&self, branch_name: &str) -> Result<WorktreePath>
+    async fn merge(&self, worktree: &WorktreePath, target: &str) -> Result<MergeResult>
+    async fn cleanup(&self, worktree: &WorktreePath) -> Result<()>
+    async fn list(&self) -> Result<Vec<WorktreePath>>
+  trait GitPort
+    async fn commit(&self, message: &str) -> Result<String>
+    async fn create_branch(&self, name: &str) -> Result<()>
+    async fn diff(&self, base: &str, head: &str) -> Result<String>
+    async fn current_branch(&self) -> Result<String>
+  trait FileSystemPort
+    async fn read(&self, file_path: &str) -> Result<String>
+    async fn write(&self, file_path: &str, content: &str) -> Result<()>
+    async fn exists(&self, file_path: &str) -> Result<bool>
+    async fn glob(&self, pattern: &str) -> Result<Vec<String>>
+IMPORTS: [Duration] from std::time
+  [Pin, Box] from std::pin
+  [Stream] from futures::stream
+  [Result] from anyhow
+DEPS: anyhow, futures
+LINES: 280
+TOKENS: ~640
