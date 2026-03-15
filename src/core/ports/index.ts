@@ -122,6 +122,19 @@ export interface IFileSystemPort {
   glob(pattern: string): Promise<string[]>;
 }
 
+// ─── Validation Ports ────────────────────────────────────
+
+export type {
+  BehavioralSpec,
+  BehavioralAssertion,
+  PropertySpec,
+  SmokeScenario,
+  SmokeStep,
+  SignConvention,
+  ValidationVerdict,
+  IValidationPort,
+} from './validation.js';
+
 // ─── Analysis Ports ──────────────────────────────────────
 
 export interface IArchAnalysisPort {

@@ -111,6 +111,8 @@ export class CLIAdapter {
           return await this.dashboard(args);
         case 'status':
           return await this.status();
+        case 'setup':
+          return await this.setup();
         case 'init':
           return this.init(args);
         case 'help':
@@ -395,6 +397,7 @@ export class CLIAdapter {
     this.writeLn('    [--lang ts|go|rust]');
     this.writeLn('  plan <requirements...>           Create a workplan from requirements');
     this.writeLn('    [--lang ts|go|rust]');
+    this.writeLn('  setup                           Download tree-sitter grammars');
     this.writeLn('  dashboard [--port N]             Open web dashboard (default: 3847)');
     this.writeLn('  status                          Show swarm progress');
     this.writeLn('  init [--lang ts|go|rust]        Scaffold a hex project');
@@ -411,4 +414,41 @@ export class CLIAdapter {
     return 0;
   }
 
+  // ── setup ──────────────────────────────────────────
+
+  private async setup(): Promise<number> {
+    this.writeLn('Setting up hex-intf...');
+    this.writeLn('');
+
+    const grammarDir = 'config/grammars';
+    const languages = ['typescript', 'go', 'rust'];
+
+    this.writeLn('Checking tree-sitter grammars...');
+    for (const lang of languages) {
+      const exists = await this.ctx.fs.exists(`${grammarDir}/tree-sitter-${lang}.wasm`);
+      this.writeLn(`  ${lang}: ${exists ? 'found' : 'not found'}`);
+    }
+
+    const hasWasms = await this.ctx.fs.exists('node_modules/tree-sitter-wasms/out');
+    if (!hasWasms) {
+      this.writeLn('');
+      this.writeLn('Installing tree-sitter WASM grammars...');
+      const { execFile: execFileCb } = await import('child_process');
+      const { promisify } = await import('util');
+      const run = promisify(execFileCb);
+      try {
+        await run('bun', ['add', 'tree-sitter-wasms'], { cwd: this.ctx.rootPath, timeout: 30000 });
+        this.writeLn('  tree-sitter-wasms installed.');
+      } catch {
+        this.writeLn('  Failed. Run manually: bun add tree-sitter-wasms');
+        return 1;
+      }
+    } else {
+      this.writeLn('  tree-sitter-wasms: installed');
+    }
+
+    this.writeLn('');
+    this.writeLn('Setup complete. Run "hex-intf analyze ." to verify.');
+    return 0;
+  }
 }
