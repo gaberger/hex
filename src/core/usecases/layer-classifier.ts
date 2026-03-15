@@ -5,7 +5,7 @@
  * keeping rule logic testable independently of the analyzer.
  */
 
-import type { DependencyDirection } from '../ports/index.js';
+import type { DependencyDirection } from '../domain/value-objects.js';
 
 const LAYER_PATTERNS: Array<[string, DependencyDirection]> = [
   ['/domain/', 'domain'],
@@ -18,7 +18,7 @@ const LAYER_PATTERNS: Array<[string, DependencyDirection]> = [
 
 /** Allowed import targets for each layer */
 const ALLOWED_IMPORTS: Record<DependencyDirection, ReadonlySet<DependencyDirection>> = {
-  'domain':             new Set<DependencyDirection>(['ports']),
+  'domain':             new Set<DependencyDirection>([]),
   'ports':              new Set<DependencyDirection>(['domain']),
   'usecases':           new Set<DependencyDirection>(['domain', 'ports']),
   'adapters/primary':   new Set<DependencyDirection>(['ports']),
@@ -27,6 +27,7 @@ const ALLOWED_IMPORTS: Record<DependencyDirection, ReadonlySet<DependencyDirecti
 };
 
 const VIOLATION_RULES: Record<string, string> = {
+  'domain->ports':              'domain must not import from ports (use domain/value-objects)',
   'domain->usecases':           'domain must not import from usecases',
   'domain->adapters/primary':   'domain must not import from adapters',
   'domain->adapters/secondary': 'domain must not import from adapters',

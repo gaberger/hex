@@ -12,7 +12,7 @@ import type {
   BuildResult,
   TestResult,
   WorkplanStep,
-} from '../ports/index.js';
+} from './value-objects.js';
 
 // ─── Domain Events ───────────────────────────────────────
 

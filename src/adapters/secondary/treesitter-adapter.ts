@@ -28,17 +28,28 @@ const TS_NODE_KIND_MAP: Record<string, string> = {
 export class TreeSitterAdapter implements IASTPort {
   private parser: Parser | undefined;
   private langMap = new Map<Language, TSLanguage>();
+  private _isStub = false;
 
   private constructor(
-    private readonly grammarDir: string,
+    private readonly grammarDirs: string[],
     private readonly fs: IFileSystemPort,
   ) {}
 
-  /** Factory -- initialises web-tree-sitter and loads the TS grammar. */
-  static async create(grammarDir: string, fs: IFileSystemPort): Promise<TreeSitterAdapter> {
-    const adapter = new TreeSitterAdapter(grammarDir, fs);
+  /**
+   * Factory -- initialises web-tree-sitter and loads grammars from multiple
+   * candidate directories (project-local config/grammars, tree-sitter-wasms
+   * npm package, legacy web-tree-sitter directory).
+   */
+  static async create(grammarDirs: string | string[], fs: IFileSystemPort): Promise<TreeSitterAdapter> {
+    const dirs = Array.isArray(grammarDirs) ? grammarDirs : [grammarDirs];
+    const adapter = new TreeSitterAdapter(dirs, fs);
     await adapter.init();
     return adapter;
+  }
+
+  /** Returns true if no grammars were loaded (all analysis returns empty). */
+  isStub(): boolean {
+    return this._isStub;
   }
 
   private async init(): Promise<void> {
@@ -46,11 +57,33 @@ export class TreeSitterAdapter implements IASTPort {
     const ParserClass = mod.Parser;
     await ParserClass.init();
     this.parser = new ParserClass();
-    const wasmPath = `${this.grammarDir}/tree-sitter-typescript.wasm`;
-    if (await this.fs.exists(wasmPath)) {
-      const tsLang = await mod.Language.load(wasmPath);
-      this.langMap.set('typescript', tsLang);
+
+    const grammarFiles: [Language, string][] = [
+      ['typescript', 'tree-sitter-typescript.wasm'],
+      ['go', 'tree-sitter-go.wasm'],
+      ['rust', 'tree-sitter-rust.wasm'],
+    ];
+
+    for (const [lang, filename] of grammarFiles) {
+      const wasmPath = await this.findGrammar(filename);
+      if (wasmPath) {
+        const loaded = await mod.Language.load(wasmPath);
+        this.langMap.set(lang, loaded);
+      }
     }
+
+    this._isStub = this.langMap.size === 0;
+  }
+
+  /** Search candidate directories for a grammar WASM file. */
+  private async findGrammar(filename: string): Promise<string | null> {
+    for (const dir of this.grammarDirs) {
+      const candidate = `${dir}/${filename}`;
+      if (await this.fs.exists(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   // ── IASTPort ──────────────────────────────────────────────

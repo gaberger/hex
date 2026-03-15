@@ -1,384 +1,132 @@
-# FINAL VERDICT: hex-intf Adversarial Architecture Review
+# FINAL VERDICT -- hex-intf Adversarial Review (Updated)
 
-**Judge**: Final Arbiter (synthesizing 5 independent reviews)
-**Date**: 2025-03-15
-**Reviews Synthesized**:
-1. Hex Boundary Purity Review (HBR)
-2. Dead Abstractions & Over-Engineering Review (DAR)
-3. Security Audit (SEC)
-4. Adversarial Contract Completeness Review (CCR)
-5. Testability Audit & E2E Test Design (TEST)
+**Judge**: Synthesizer (6 reports, source verification against current `main`)
+**Date**: 2026-03-15
+**Health Score: 42/100**
 
 ---
 
-## Section 1: Consensus Findings
+## 1. Executive Summary
 
-These issues were independently flagged by 2 or more reviewers. They represent the highest-confidence problems in the codebase.
+Six reviewers produced 72 raw findings. After deduplication and verification against current source, 47 unique issues remain. Significant progress has landed since the earlier reviews: path traversal is fixed, four core use cases (`CodeGenerator`, `WorkplanExecutor`, `SummaryService`, `LLMAdapter`) are now implemented and wired, and three compile errors are resolved. The codebase is structurally sound but functionally broken in its primary analysis pipeline.
 
-### CF-1. Tree-Sitter Never Loads; Stub Produces False 100% Health Scores
-
-**Flagged by**: HBR (H6 context), SEC (Finding 3), CCR (1.4), TEST (Part 2 blockers)
-**Final Severity**: **CRITICAL**
-
-Four reviewers converged on this because it is the single most damaging failure mode in the system. The WASM grammar path in `composition-root.ts:76` points to `node_modules/web-tree-sitter/tree-sitter-typescript.wasm`, but the `web-tree-sitter` package does not include language grammars. Tree-sitter initialization always fails. The silent fallback stub returns `{ exports: [], imports: [], lineCount: 0 }` for every file. The ArchAnalyzer then computes zero violations, zero dead exports, and a health score of 100.
-
-This means `hex-intf analyze` reports perfect architectural health for any project, including itself. The tool's primary value proposition -- architecture analysis -- is non-functional in production. No warning is logged. CI pipelines using this tool get a false green check.
-
-**Why consensus matters**: When the security reviewer, the contract reviewer, and the testability reviewer all independently identify the same silent-failure path, it is not a theoretical concern -- it is the actual production behavior.
+| Severity | Found | Fixed | Remaining |
+|----------|-------|-------|-----------|
+| CRITICAL | 8 | 3 | 5 |
+| HIGH | 16 | 2 | 14 |
+| MEDIUM | 15 | 0 | 15 |
+| LOW | 8 | 0 | 8 |
+| **Total** | **47** | **5** | **42** |
 
 ---
 
-### CF-2. Import Path vs Glob Path Mismatch Breaks All Graph-Based Analysis
+## 2. Already Resolved
 
-**Flagged by**: TEST (1.3, Part 2 blockers), CCR (1.1 context), DAR (Section 8 context)
-**Final Severity**: **CRITICAL**
+1. **Path traversal in FileSystemAdapter** (Security S1, Contract 2.3). `safePath()` now uses `resolve()` + `startsWith(this.root)`. `PathTraversalError` class added. Glob blocks `..` patterns. VERIFIED in `filesystem-adapter.ts:60-65`.
 
-Tree-sitter extracts import paths as raw strings from source (e.g., `'../../core/ports/index.js'`). The `fs.glob('**/*.ts')` call returns paths like `src/core/ports/index.ts`. The ArchAnalyzer never normalizes between these two formats. As a result:
-- `buildDependencyGraph` produces edges where `to` is a relative path with `.js` extension
-- The file list contains project-relative paths with `.ts` extension
-- They never match
-- `findDeadExports` reports everything as dead (100% false positives)
-- `detectCircularDeps` finds no cycles (edges point to non-existent nodes)
-- `validateHexBoundaries` works only by accident (layer detection checks for substring `/ports/`)
+2. **Four core use cases implemented** (Pragmatist findings 1-4). `CodeGenerator`, `WorkplanExecutor`, `SummaryService` are imported and wired in `composition-root.ts:25-27`. `LLMAdapter` with config for Anthropic/OpenAI at lines 37-38, 112-126. `ICodeGenerationPort`, `IWorkplanPort`, `ISummaryPort`, `ILLMPort` are no longer phantom. VERIFIED.
 
-The unit tests pass because the mocks use matching path conventions on both sides. This is the textbook case of mocks hiding a real bug.
+3. **TreeSitter adapter infrastructure import** (Compliance V1). Inlined constant. VERIFIED per compliance report.
 
-**Why consensus matters**: The testability reviewer identified this as "the single biggest bug in the codebase." The contract reviewer flagged the `rootPath` parameter being ignored as a related contract lie. The dead abstractions reviewer noted that the analyzer cannot detect its own project's most severe problem (unimplemented ports).
+4. **cli.ts compile error** (Compliance V2). Imports `runCLI` correctly. VERIFIED.
+
+5. **AppContext re-export** (Compliance V3). Added `export type { AppContext }`. VERIFIED.
 
 ---
 
-### CF-3. RufloAdapter Silently Fabricates Data on Parse Failure
+## 3. Prioritized Action Items
 
-**Flagged by**: HBR (M4), SEC (Finding 2), CCR (1.2), DAR (Section 5)
-**Final Severity**: **HIGH**
+### P0 -- Fix Before Release (CRITICAL)
 
-Four reviewers flagged the same pattern: `parseStatus()`, `parseTasks()`, `parseAgents()`, and `memorySearch()` all catch JSON parse errors and return fabricated defaults. The worst case is `parseStatus()` returning `{ status: 'idle', agentCount: 0 }` when the CLI is unreachable or broken. Callers cannot distinguish "swarm is idle" from "swarm infrastructure is down."
+**P0-1. Import path vs glob path mismatch** | Testability 1.3 | `arch-analyzer.ts:69-78`
+ArchAnalyzer edges use raw import strings (`../../core/ports/index.js`); glob returns `src/core/ports/index.ts`. Dead export detection is 100% false positives. Circular dep detection is blind. FIX: Add `resolveImportPath()` normalizing both sides to project-relative `.ts` paths.
 
-**Resolution**: Introduce typed error hierarchy (`SwarmConnectionError`, `SwarmParseError`). At minimum, log the raw output before discarding it.
+**P0-2. Tree-sitter WASM path wrong** | Testability Part 2 | `composition-root.ts:91`
+Grammar loaded from `web-tree-sitter/` which lacks language grammars. Tree-sitter always fails; stub always used; `analyze` always reports health=100. FIX: Install `tree-sitter-typescript` package; fix path.
 
----
+**P0-3. Domain <-> ports circular dependency** | Boundary C1/C2 | `entities.ts:8`, `event-bus.ts:14`
+`domain -> ports -> domain` cycle. Layer classifier encodes the cycle as allowed (M1). FIX: Move shared value objects to `domain/value-objects.ts`. Remove `domain->ports` from classifier rules.
 
-### CF-4. Dual AppContext Types Create a Contract Ambiguity
+**P0-4. Stub fallback reports health=100** | Security S3, Contract 1.4 | `composition-root.ts:94-103`
+When tree-sitter fails (always, per P0-2), the stub returns empty summaries. ArchAnalyzer reports perfect health for any project. FIX: Log warning; make ArchAnalyzer return score=0 when all summaries are empty.
 
-**Flagged by**: HBR (H1), CCR (1.3)
-**Final Severity**: **HIGH**
+**P0-5. Dual AppContext types** | Boundary H1, Contract 1.3 | `cli-adapter.ts:18-23`
+CLI defines shadow `AppContext` (4 fields) vs composition root (14 fields). FIX: Use `Pick<AppContext, 'rootPath' | 'archAnalyzer' | 'ast' | 'fs'>` from composition root.
 
-The CLI adapter defines its own `AppContext` with 4 fields. The composition root defines a different `AppContext` with 11 fields. Both are exported with the same name. TypeScript structural typing makes this work today, but any future CLI command needing `git`, `worktree`, `build`, `swarm`, or notification capabilities will fail at runtime because the CLI's type does not include them.
+### P1 -- Fix This Sprint (HIGH)
 
-**Resolution**: CLI adapter should use `Pick<AppContext, 'rootPath' | 'archAnalyzer' | 'ast' | 'fs'>` imported from the composition root. One authoritative definition.
+| # | Finding | File | Fix |
+|---|---------|------|-----|
+| 6 | AppContext exposes concrete `NotificationOrchestrator` not port interface | `composition-root.ts:47` | Type as `INotificationQueryPort` or new port |
+| 7 | RufloAdapter silently fabricates data on parse failure (x6) | `ruflo-adapter.ts:128-149` | Throw typed errors (`SwarmConnectionError`) |
+| 8 | Inline NULL_EVENT_BUS + stub AST in composition root | `composition-root.ts:68-75, 94-103` | Extract to `adapters/secondary/` |
+| 9 | `cross-lang.ts` dead: 253 lines, 5 interfaces, 0 implementations | `ports/cross-lang.ts` | Move to `docs/future/` |
+| 10 | Token estimate ignores summary level (L1 = L3) | `treesitter-adapter.ts:65` | Compute from serialized summary size |
+| 11 | `collectSummaries` called 4-5x in `analyzeArchitecture` | `arch-analyzer.ts:187-195` | Collect once, pass to sub-methods |
+| 12 | 2,044 lines notification code, 0 tests | orchestrator + 4 notifiers | Add orchestrator tests; freeze features |
+| 13 | No timeout on BuildAdapter/GitAdapter `execFile` | `build-adapter.ts:141`, `git-adapter.ts:51` | Add `timeout: 120_000` |
+| 14 | Swarm/notification ports not in barrel export | `ports/index.ts` | Add re-exports |
+| 15 | WorktreeAdapter.merge switches main repo HEAD | `worktree-adapter.ts:33-46` | Merge within worktree dir |
+| 16 | `unusedPorts`/`unusedAdapters` hardcoded to `[]` | `arch-analyzer.ts:221-222` | Implement port-to-adapter matching |
+| 17 | `ArchAnalyzer` ignores `rootPath` on all 5 methods | `arch-analyzer.ts:65-187` | Pass through or remove param |
+| 18 | `EventFilter.minSeverity` references levels `DomainEvent` lacks | `event-bus.ts:28` | Add severity to events or remove filter |
+| 19 | `IGitPort.commit` return type undocumented | `ports/index.ts:201` | Document as short hash or use branded type |
 
----
+### P2 -- Fix Next Sprint (MEDIUM): 15 items
 
-### CF-5. Domain <-> Ports Circular Dependency
+`setInterval` leak on double-start, unbounded notification array, worktree leak on crash, `Bun.Glob` portability, dual quality scoring formulas, `DomainEvent` closed union, dead export false positives from name collisions, `FeedbackLoop` not event-sourced, CLI missing path validation, `IFileSystemPort.write` mkdir undocumented, `IServiceMeshPort.subscribe` cleanup sync/async, `ISwarmPort` vs `ISwarmOrchestrationPort` overlap, `BuildAdapter` ignores `project.language`, `IWASMBridgePort.call` hides memory management, `WorkplanStep.dependencies` no referential integrity.
 
-**Flagged by**: HBR (C1, C2, M1), CCR (context), TEST (scenario 10)
-**Final Severity**: **HIGH**
+### P3 -- Backlog (LOW): 8 items
 
-`entities.ts` (domain) imports value objects from `ports/index.ts`. `event-bus.ts` (ports) imports `DomainEvent` from `entities.ts`. This creates a `domain -> ports -> domain` cycle. The layer-classifier's own rule table explicitly permits this cycle (`domain -> ports` AND `ports -> domain`), which means the self-analysis tool encodes its own violations as "allowed."
-
-**Resolution**: Move shared value objects into `src/core/domain/value-objects.ts`. Both ports and entities import from domain. Update the layer-classifier to disallow `domain -> ports`.
-
----
-
-### CF-6. Path Traversal in FileSystemAdapter
-
-**Flagged by**: SEC (Finding 1), CCR (2.3)
-**Final Severity**: **CRITICAL**
-
-`path.join(this.root, filePath)` does not prevent traversal. `join('/project', '../../etc/passwd')` resolves to `/etc/passwd`. The `write()` method auto-creates parent directories with `mkdir -p`, amplifying the impact. No `resolve` + `startsWith` check exists anywhere.
-
-**Resolution**: After `join`, call `path.resolve()` and assert `resolvedPath.startsWith(this.root)`.
-
----
-
-### CF-7. Composition Root Contains Inline Adapter Implementations
-
-**Flagged by**: HBR (H3, H4), SEC (Finding 9), CCR (1.4)
-**Final Severity**: **MEDIUM**
-
-`NULL_EVENT_BUS` and the tree-sitter stub are adapter implementations living inside the composition root. The composition root should only wire dependencies, not implement them.
-
-**Resolution**: Extract to `src/adapters/secondary/null-event-bus.ts` and `src/adapters/secondary/stub-ast-adapter.ts`.
+`process.stdout` defaults not shared, domain class exports, branch name injection, `npx @latest` supply-chain risk, notification ID collision, `requestDecision` no cancellation, layer classifier ignores composition-root, event ordering unspecified.
 
 ---
 
-### CF-8. Bun.Glob Couples FileSystemAdapter to Bun Runtime
+## 4. Reviewer Disagreements
 
-**Flagged by**: HBR (M3), CCR (3.8), TEST (1.2)
-**Final Severity**: **MEDIUM**
+**Delete vs implement phantom ports** -- Pragmatist said "delete `ICodeGenerationPort` etc." Boundary Purist said "implement them." RULING: **Moot.** These ports now have real implementations. The `cross-lang.ts` ports (5 interfaces) remain dead -- move to `docs/future/`.
 
-`IFileSystemPort.glob()` makes no mention of runtime requirements, but the adapter uses `Bun.Glob` which throws `ReferenceError` on Node.js. The port contract is silently narrower than advertised.
+**Domain -> ports dependency** -- Boundary Purist: CRITICAL violation. Compliance Report: PASS (type-only). RULING: **Purist is correct in principle.** Type-only imports still create compile-time coupling. Fix via value-objects extraction. Rate as P0 (architectural, not runtime).
 
-**Resolution**: Use `node:fs` glob (Node 22+) or `fast-glob`. Document if Bun-only is intentional.
+**Notification system: keep or cut?** -- Pragmatist: "2,044 lines, 0 consumers, cut it." Boundary Purist treats it as legitimate. RULING: **Keep but freeze.** Well-structured code, wrong priority. No new features until a consumer exists and tests cover the orchestrator.
 
----
-
-### CF-9. Unimplemented Ports Exported as Public API
-
-**Flagged by**: HBR (H6), DAR (Section 1, Section 3), CCR (2.5, 2.6)
-**Final Severity**: **HIGH**
-
-Ten port interfaces have zero adapter implementations. Four of them (`ICodeGenerationPort`, `IWorkplanPort`, `ISummaryPort`, `ILLMPort`) represent the project's stated purpose. The entire `cross-lang.ts` file (253 lines, 5 interfaces, 15 types) has zero consumers anywhere. `src/index.ts` exports these types as public API, creating the impression of capabilities that cannot be instantiated through the composition root.
-
-**Resolution**: Either implement or remove. Dead interfaces that are exported as public API are a liability, not an asset.
+**Notification system size** -- Now that generative use cases exist, the orchestrator has a plausible future consumer (swarm coordination during code generation). This lowers the severity from "pure waste" to "premature but salvageable."
 
 ---
 
-### CF-10. Notification System is 2,044 Lines With Zero Consumers and Zero Tests
+## 5. Architecture Verdict
 
-**Flagged by**: DAR (Section 6), TEST (1.2, Part 3), SEC (Findings 6, 7, 8)
-**Final Severity**: **HIGH**
+**Is the hexagonal architecture sound?** Yes, structurally. Import direction is correct. Composition root centralizes wiring. The one true violation (domain-ports cycle) is fixable. The design demonstrates genuine understanding of ports-and-adapters.
 
-The notification subsystem (7 files, 2,044 lines) is 8.7x the size of the only working use case. Nothing calls `NotificationOrchestrator.handleEvent()`. The `status` CLI command outputs a static string. Zero tests exist for any notification component. The orchestrator is untestable without clock injection due to `Date.now()` and `setInterval` throughout.
+**Is the dogfooding principle working?** No. `hex-intf analyze` always reports health=100 because (a) tree-sitter never loads, (b) import paths never match glob paths, and (c) `unusedPorts` is hardcoded empty. The tool cannot detect its own problems.
 
-**Resolution**: Freeze notification development. Do not write tests for it until at least one generative use case exists that produces events worth notifying about.
+**Is it ready for AI-driven dev?** Partially. LLM adapter, code generator, and workplan executor are wired in -- a major advancement. The analysis pipeline (the tool's differentiator) remains non-functional. The notification infrastructure has no consumer yet but now has a plausible path to one.
 
----
-
-## Section 2: Unique High-Value Findings
-
-Each reviewer's single most important finding not covered by consensus.
-
-### From HBR: Composition Root Exposes Concrete `NotificationOrchestrator` in AppContext (C3)
-
-`AppContext.notificationOrchestrator` is typed as the concrete class, not the port interface `INotificationQueryPort`. Every consumer of `AppContext` has a compile-time dependency on implementation internals. **Valid.** This is a textbook hexagonal architecture violation in the composition root itself.
-
-### From DAR: ArchAnalyzer `unusedPorts` Always Returns Empty Array (Section 8)
-
-The `ArchAnalysisResult` type declares `unusedPorts: string[]` and `unusedAdapters: string[]`, but the implementation hardcodes both to `[]`. The tool cannot detect that `ICodeGenerationPort`, `ILLMPort`, and 8 other ports lack implementations. The irony is sharp: a hex linter that cannot detect unimplemented ports. **Valid and damning.** This is not just a missing feature -- it is a false promise in the return type.
-
-### From SEC: Worktree Leak on Process Crash (Finding 5)
-
-`WorktreeAdapter.create()` creates a git worktree at `${projectPath}/../hex-worktrees/hex-intf-${branch}`. There is no `finally` block, no shutdown hook, no cleanup-on-init reconciliation. Crashed processes leave worktrees permanently on disk, consuming space and polluting git state. **Valid.** Low probability but high cumulative impact in multi-agent swarm scenarios.
-
-### From CCR: WorktreeAdapter.merge Operates on Main Repo HEAD (2.8)
-
-`merge(worktree, target)` runs `git checkout target` then `git merge worktree.branch` in the main repo directory. In a multi-agent swarm, calling merge from any agent switches the main repo's HEAD, potentially corrupting another agent's in-progress work. **Valid and severe.** This would be a showstopper for actual swarm use.
-
-### From TEST: Mock-Induced Path Normalization Bug (1.3)
-
-The arch-analyzer unit tests use mocks where import paths and glob paths use the same format. In production, they use different formats (relative with `.js` vs project-relative with `.ts`). The mocks make the tests green while production is broken. **Valid.** This is already captured in CF-2 but the testability reviewer's framing -- that London-school mocking specifically enabled this bug to hide -- is the unique insight. It argues for at least one contract test per port that validates mock assumptions against real adapter behavior.
+**Minimum viable path to v0.1:**
+1. Fix tree-sitter grammar path -- 1 hour
+2. Fix import path normalization -- 2-4 hours
+3. Make stub fallback loud + score=0 -- 1 hour
+4. Add 1 E2E test running `analyzeArchitecture` on itself -- 2 hours
+5. Ship. Total: 1-2 days.
 
 ---
 
-## Section 3: Disagreements & Resolutions
-
-### Disagreement 1: Is the notification system over-engineered or correctly forward-looking?
-
-- **DAR** says: 2,044 lines with zero consumers is over-engineering. Rating: HIGH. Recommendation: freeze or cut.
-- **HBR** implicitly treats it as legitimate code with boundary violations (C3, H3).
-- **SEC** identifies real bugs in it (timer leaks, unbounded arrays) but does not question its existence.
-
-**Verdict**: DAR is correct. The notification system is premature infrastructure. However, it should not be deleted -- it should be frozen. The code is well-structured (the security reviewer found only minor bugs, not design flaws). The problem is timing: building 2,044 lines of notification infrastructure before the first generative use case works is inverted priorities. **Freeze. Do not add features. Do not write tests for it until a consumer exists.**
-
-### Disagreement 2: Should `domain -> ports` be allowed?
-
-- **HBR** rates the domain-ports cycle as CRITICAL and says domain must have zero outward dependencies.
-- **CCR** acknowledges the cycle but treats the shared value objects as a practical necessity.
-- The `layer-classifier.ts` itself allows bidirectional imports.
-
-**Verdict**: The strict hexagonal purist position (HBR) is architecturally correct but pragmatically harsh. The resolution is to move shared value objects (`Language`, `CodeUnit`, `LintError`, `BuildResult`, `TestResult`, `WorkplanStep`) into `src/core/domain/value-objects.ts`. Ports import from domain. Domain does not import from ports. The layer-classifier rule for `domain -> ports` must be removed. This is a **HIGH** priority fix, not CRITICAL, because the current cycle is contained and does not cause runtime failures.
-
-### Disagreement 3: Severity of unimplemented ports
-
-- **DAR** rates unimplemented core ports (`ICodeGenerationPort`, `ILLMPort`, etc.) as CRITICAL.
-- **HBR** rates them as HIGH (H6).
-
-**Verdict**: DAR's CRITICAL rating is correct if we judge hex-intf as "an LLM-driven code generation framework." HBR's HIGH rating is correct if we judge it as "an architecture linter with aspirations." The honest assessment is that hex-intf is currently the latter. The ports are not bugs -- they are aspirations misrepresented as API. **Rate as HIGH. The fix is scope honesty: either implement or remove from public exports.**
-
----
-
-## Section 4: Architecture Verdict
-
-### Is the hexagonal architecture sound?
-
-The architecture is **structurally correct but functionally hollow**. The ports-and-adapters pattern is applied with genuine understanding -- port interfaces are properly defined, adapters implement them, and the composition root wires them together. The London-school TDD approach in the existing tests is textbook correct. The domain entities are properly isolated (with the value-objects cycle being the one exception).
-
-However, the architecture is a skeleton wearing a costume:
-- The ports define capabilities the system cannot deliver
-- The composition root silently degrades to stubs that report false health
-- The self-analysis tool cannot detect its own project's most severe problems
-- The only working end-to-end path (`analyze`) is broken due to path normalization
-
-### Are the boundaries real or ceremonial?
-
-**Mostly ceremonial.** The directory structure follows hexagonal conventions, but:
-- The domain depends on ports (cycle)
-- The composition root contains adapter implementations (boundary leak)
-- The CLI defines its own AppContext (shadow contract)
-- The layer-classifier encodes violations as permitted rules
-- Files outside hex layers (`cli.ts`, `index.ts`) are not validated
-
-### Does dogfooding work?
-
-**No.** `hex-intf analyze ./src` currently:
-1. Fails to load tree-sitter (wrong WASM path)
-2. Falls back to stub (no warning)
-3. Reports 0 files, 0 exports, 0 violations, health score 100
-4. Even if tree-sitter loaded, import path normalization is broken
-5. Even if paths were normalized, `unusedPorts` always returns `[]`
-
-The project cannot detect its own architectural problems. The dogfood is spoiled.
-
-### Is the framework ready for external consumption?
-
-**No.** Consumers would receive:
-- Type definitions for 10+ ports that cannot be instantiated
-- A FileSystemAdapter with a path traversal vulnerability
-- An ArchAnalyzer that always reports perfect health
-- Runtime coupling to Bun with no documentation
-- A composition root that silently falls back to non-functional stubs
-
-### Dimension Scores (0-10)
-
-| Dimension | Score | Rationale |
-|-----------|-------|-----------|
-| **Boundary Integrity** | 3/10 | Directory structure is correct but enforcement is self-contradictory. Layer classifier permits the cycles it should flag. Composition root leaks concrete types. |
-| **Contract Completeness** | 4/10 | Port interfaces are well-defined but semantically ambiguous (rootPath ignored, no delivery guarantees on event bus, no path contract on FS, return types underspecified). |
-| **Implementation Maturity** | 2/10 | Only ArchAnalyzer + LayerClassifier + domain entities are functional. ArchAnalyzer itself is broken due to path normalization. 60% of port surface has zero implementation. |
-| **Security Posture** | 2/10 | Path traversal in the primary filesystem adapter. No input validation at CLI boundary. Silent failure fabrication in RufloAdapter. Supply-chain risk with `@latest`. |
-| **Testability** | 5/10 | Domain tests are well-written London-school TDD. But mocks hide the biggest bug. Zero adapter tests. NotificationOrchestrator is untestable without clock injection. The E2E test is well-designed but will not pass today. |
-| **Dogfooding Honesty** | 1/10 | The tool reports perfect health for itself while harboring critical bugs. Tree-sitter never loads. Import paths never match. unusedPorts is hardcoded empty. The layer classifier permits the project's own violations. |
-
-**Overall Architecture Score: 2.8 / 10**
-
-This is a well-intentioned hexagonal architecture skeleton with serious execution gaps. The design understanding is evident; the implementation is incomplete and the self-validation is broken.
-
----
-
-## Section 5: Prioritized Action Plan
-
-### Priority 1: Fix tree-sitter WASM loading
-
-**What**: Install `tree-sitter-typescript` package. Update the grammar path in `composition-root.ts` to point to the correct `.wasm` file. Make the fallback loud (log warning or throw).
-**Why**: Unblocks ALL analysis functionality. Without tree-sitter, every downstream feature is non-functional. CF-1 and CF-2 both depend on this.
-**Effort**: S (small)
-**Reviewers**: SEC, CCR, TEST, HBR
-
-### Priority 2: Add import path normalization to ArchAnalyzer
-
-**What**: When building dependency graph edges from import statements, resolve relative paths against the importing file's directory. Normalize both sides to the same format (strip extensions, use project-relative paths). Add a `resolveImportPath(importerFile, importPath)` utility.
-**Why**: Fixes dead export detection (100% false positives today), circular dependency detection (finds nothing today), and makes the dependency graph actually useful. CF-2.
-**Effort**: M (medium)
-**Reviewers**: TEST, CCR, DAR
-
-### Priority 3: Fix path traversal in FileSystemAdapter
-
-**What**: After `path.join(this.root, filePath)`, call `path.resolve()` and assert `resolvedPath.startsWith(path.resolve(this.root))`. Reject paths that escape the root. Apply the same check in `write()`, `read()`, `exists()`, and `glob()`.
-**Why**: This is the only CRITICAL security vulnerability. A malicious or buggy caller can read/write any file on the filesystem. CF-6.
-**Effort**: S (small)
-**Reviewers**: SEC, CCR
-
-### Priority 4: Move shared value objects into domain layer
-
-**What**: Create `src/core/domain/value-objects.ts` with `Language`, `CodeUnit`, `LintError`, `BuildResult`, `TestResult`, `WorkplanStep`. Update `entities.ts` to import from `./value-objects.ts`. Update `ports/index.ts` to import from `../domain/value-objects.ts`. Remove `domain -> ports` from the layer-classifier allowed rules.
-**Why**: Eliminates the foundational dependency cycle and makes the layer-classifier's rules honest. CF-5.
-**Effort**: M (medium)
-**Reviewers**: HBR, CCR, TEST
-
-### Priority 5: Resolve dual AppContext types
-
-**What**: Delete the `AppContext` interface from `cli-adapter.ts`. Import the canonical `AppContext` from `composition-root.ts` and use `Pick<AppContext, 'rootPath' | 'archAnalyzer' | 'ast' | 'fs'>` for the CLI's needs.
-**Why**: Eliminates contract ambiguity. Prevents silent type divergence. CF-4.
-**Effort**: S (small)
-**Reviewers**: HBR, CCR
-
-### Priority 6: Make RufloAdapter failures visible
-
-**What**: Replace silent catch-and-fabricate with typed errors (`SwarmConnectionError`, `SwarmParseError`). Log raw CLI output before returning defaults. Make `parseStatus` throw on non-JSON output instead of returning fake idle status.
-**Why**: Silent failure fabrication is the most dangerous pattern in the codebase. It makes broken infrastructure indistinguishable from healthy idle state. CF-3.
-**Effort**: M (medium)
-**Reviewers**: HBR, SEC, CCR, DAR
-
-### Priority 7: Implement `unusedPorts` detection in ArchAnalyzer
-
-**What**: In `analyzeArchitecture`, compare the set of port interface names (extracted from `ports/*.ts` exports) against the set of adapter class `implements` clauses (extracted from `adapters/**/*.ts`). Report ports with no implementing adapter.
-**Why**: This is the feature that would let the tool detect its own most severe problem. Without it, the tool is blind to phantom ports. DAR Section 8.
-**Effort**: M (medium)
-**Reviewers**: DAR, HBR
-
-### Priority 8: Remove or quarantine dead abstractions
-
-**What**: Move `src/core/ports/cross-lang.ts` (253 lines, 0 consumers) to `docs/future/cross-lang-ports.ts`. Remove `ICodeGenerationPort`, `IWorkplanPort`, `ISummaryPort`, `ILLMPort` from `src/index.ts` exports. Keep the interfaces in `ports/index.ts` with a `@planned` JSDoc tag but do not export them as public API.
-**Why**: Public exports of unimplementable interfaces create false expectations for consumers. CF-9.
-**Effort**: S (small)
-**Reviewers**: DAR, HBR
-
-### Priority 9: Fix tokenEstimate to reflect summary level
-
-**What**: In `TreeSitterAdapter.extractSummary`, compute `tokenEstimate` based on the serialized summary size for that level, not the raw source length. For L1: `Math.ceil(JSON.stringify({ exports, imports }).length / 4)`. For L3: keep current `Math.ceil(source.length / 4)`.
-**Why**: The L0-L3 hierarchy is a core value proposition (token efficiency for LLM context windows). If all levels report the same token count, the feature is meaningless. TEST Part 2 blockers.
-**Effort**: S (small)
-**Reviewers**: TEST
-
-### Priority 10: Cache `collectSummaries` in ArchAnalyzer
-
-**What**: In `analyzeArchitecture`, call `collectSummaries()` once and pass the result to `buildDependencyGraph`, `findDeadExports`, `validateHexBoundaries`, and `detectCircularDeps` as a parameter. Currently it is called 5 times (O(5n) file reads).
-**Why**: For large projects this is a significant performance issue. Each call re-globs and re-parses every file. CCR 3.9.
-**Effort**: S (small)
-**Reviewers**: CCR, TEST
-
----
-
-## Section 6: E2E Test Viability
-
-### Can `hex-intf analyze ./src` work today?
-
-**No.** There are three blocking issues:
-
-1. **Tree-sitter WASM grammar not installed at expected path.** The `web-tree-sitter` package does not include language grammars. A separate `tree-sitter-typescript` package is needed, and the path in `composition-root.ts:76` must be updated.
-
-2. **Import path normalization is missing.** Even if tree-sitter loaded, the dependency graph edges use raw import paths (`../../core/ports/index.js`) while the file list uses glob-relative paths (`src/core/ports/index.ts`). They never match.
-
-3. **Token estimate ignores summary level.** L1 and L3 report identical `tokenEstimate` because it is always `Math.ceil(source.length / 4)`.
-
-### What is the MINIMUM path to a green E2E test?
-
-```
-Step 1: npm install tree-sitter-typescript (or obtain the .wasm file)
-Step 2: Fix WASM path in composition-root.ts
-Step 3: Add import path normalization in arch-analyzer.ts
-Step 4: Fix tokenEstimate to vary by level in treesitter-adapter.ts
-Step 5: Log a warning (not silent fallback) when tree-sitter fails
-```
-
-Steps 1-2 are trivial (S effort). Step 3 requires moderate work (M effort) because it needs a `resolveImportPath` function that handles relative paths, `.js` -> `.ts` extension mapping, and barrel imports. Step 4 is trivial (S effort). Step 5 is trivial (S effort).
-
-**Estimated total effort to green E2E: 1-2 days of focused work.**
-
-### Should the E2E test be the acceptance criterion for "architecture is sound"?
-
-**Yes, with caveats.** The E2E test designed by the testability reviewer is well-constructed. It tests the real stack (composition root -> ArchAnalyzer -> TreeSitter -> FileSystem) against the real codebase. Its 9 test cases cover:
-
-- Tree-sitter actually loading (not stub)
-- Token efficiency across levels
-- Plausible file/export counts
-- Zero hex boundary violations
-- CLI output format
-- Failure threshold behavior
-
-However, the E2E test has one significant limitation: **it tests that the project reports zero violations against its own rules, but the rules themselves are permissive** (allowing `domain -> ports`). A green E2E test would prove the tool works, but it would not prove the architecture is strict. The E2E test should be augmented with:
-
-1. An assertion that `unusedPorts` is non-empty (the project genuinely has unimplemented ports)
-2. An assertion that the dependency graph has real edges (not zero edges from path mismatch)
-3. An assertion that the health score is less than 100 (the project has known issues)
-
-The E2E test should be the **necessary but not sufficient** criterion. A green E2E test plus a review of the actual analysis output (which should report real findings) together constitute "architecture is sound enough to ship."
-
----
-
-## Final Summary
-
-hex-intf demonstrates genuine understanding of hexagonal architecture. The port interfaces are thoughtfully designed, the domain entities are properly isolated, and the test strategy (London-school TDD) is correctly applied. The developers know what good architecture looks like.
-
-The execution has three systemic problems:
-
-1. **The tool cannot analyze anything.** Tree-sitter never loads, import paths never match, and the fallback silently reports perfect health. The core value proposition is non-functional.
-
-2. **The scope is dishonest.** The project presents itself as an LLM-driven code generation framework but is actually an architecture linter. 60% of the defined interface surface has no implementation. 2,044 lines of notification infrastructure serve zero consumers.
-
-3. **Silent degradation is the default pattern.** When tree-sitter fails: silent stub. When ruflo CLI fails: silent fake data. When paths escape the root: silent traversal. The system consistently prefers looking healthy over being honest.
-
-The path forward is clear: fix the three E2E blockers (Priorities 1-2), patch the security hole (Priority 3), clean up the dependency cycle (Priority 4), and be honest about scope (Priority 8). This is 1-2 weeks of focused work, not a rewrite. The architecture is sound in design; it needs honest implementation.
-
-**Overall Verdict: The architecture is a correct skeleton that needs flesh, not a flawed design that needs replacement.**
+## 6. Metrics
+
+| Metric | Value |
+|--------|-------|
+| Source files audited | 21 |
+| Total source lines | ~4,200 |
+| Domain layer | ~160 lines |
+| Ports layer | ~785 lines (4 files) |
+| Use cases layer | ~1,400 lines (5+ files, post-implementation) |
+| Adapters layer | ~1,800 lines (12+ files) |
+| Ports: fully implemented | 12 (FS, AST, Git, Worktree, Build, Swarm, Notification, EventBus, LLM, CodeGen, Workplan, Summary) |
+| Ports: dead/unimplemented | 6 (Serialization, WASM, FFI, ServiceMesh, Schema, SwarmOrchestration) |
+| Test files | 8 |
+| Tests passing | 74 |
+| Adapters with tests | 1 of 12+ (FileSystemAdapter) |
+| Notification test coverage | 0% |
+| Files exceeding 200-line guideline | 6 |
+
+**Overall: A correct skeleton that now has real muscle (LLM use cases) but a broken nervous system (analysis pipeline). Fix the three analysis blockers and this ships.**

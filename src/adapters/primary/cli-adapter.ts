@@ -13,27 +13,21 @@
  */
 
 import type {
-  IArchAnalysisPort,
-  IASTPort,
-  ICodeGenerationPort,
-  IFileSystemPort,
-  ISummaryPort,
-  IWorkplanPort,
   ASTSummary,
   Language,
   Specification,
 } from '../../core/ports/index.js';
+import type { AppContext as FullAppContext } from '../../composition-root.js';
 
-/** Minimal context needed by the CLI — uses port interfaces only */
-export interface AppContext {
-  rootPath: string;
-  archAnalyzer: IArchAnalysisPort;
-  ast: IASTPort;
-  fs: IFileSystemPort;
-  codeGenerator?: ICodeGenerationPort | null;
-  workplanExecutor?: IWorkplanPort | null;
-  summaryService?: ISummaryPort;
-}
+/**
+ * CLIAppContext — the subset of AppContext the CLI adapter needs.
+ * Derived from the canonical AppContext in composition-root via Pick,
+ * ensuring a single source of truth with no contract divergence.
+ */
+export type AppContext = Pick<
+  FullAppContext,
+  'rootPath' | 'archAnalyzer' | 'ast' | 'astIsStub' | 'fs' | 'codeGenerator' | 'workplanExecutor' | 'summaryService'
+>;
 
 /** Result from runCLI — captures output for testing */
 export interface CLIResult {
@@ -136,6 +130,12 @@ export class CLIAdapter {
 
   private async analyze(args: ParsedArgs): Promise<number> {
     const targetPath = args.positional[0] ?? '.';
+
+    if (this.ctx.astIsStub) {
+      this.writeLn('\u26a0 Running without tree-sitter grammars \u2014 results may be incomplete');
+      this.writeLn('');
+    }
+
     this.writeLn(`Analyzing architecture at: ${targetPath}`);
     this.writeLn('');
 

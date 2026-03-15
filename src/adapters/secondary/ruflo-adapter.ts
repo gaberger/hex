@@ -21,6 +21,30 @@ import type {
 
 const execFile = promisify(execFileCb);
 
+// ─── Typed Errors ────────────────────────────────────────
+
+export class SwarmConnectionError extends Error {
+  constructor(
+    message: string,
+    readonly command: string[],
+    readonly cause?: Error,
+  ) {
+    super(message);
+    this.name = 'SwarmConnectionError';
+  }
+}
+
+export class SwarmParseError extends Error {
+  constructor(
+    message: string,
+    readonly rawOutput: string,
+    readonly cause?: Error,
+  ) {
+    super(message);
+    this.name = 'SwarmParseError';
+  }
+}
+
 const CLI_BIN = 'npx';
 const CLI_PKG = '@claude-flow/cli@latest';
 
@@ -114,10 +138,18 @@ export class RufloAdapter implements ISwarmPort {
   // ─── Private Helpers ─────────────────────────────────────
 
   private async run(args: string[]): Promise<{ stdout: string; stderr: string }> {
-    return execFile(CLI_BIN, [CLI_PKG, ...args], {
-      cwd: this.projectPath,
-      timeout: 30000,
-    });
+    try {
+      return await execFile(CLI_BIN, [CLI_PKG, ...args], {
+        cwd: this.projectPath,
+        timeout: 30000,
+      });
+    } catch (err) {
+      throw new SwarmConnectionError(
+        `CLI command failed: ${CLI_BIN} ${CLI_PKG} ${args.join(' ')}`,
+        args,
+        err instanceof Error ? err : undefined,
+      );
+    }
   }
 
   private extractId(output: string): string {
@@ -128,23 +160,36 @@ export class RufloAdapter implements ISwarmPort {
   private parseStatus(output: string): SwarmStatus {
     try {
       return JSON.parse(output) as SwarmStatus;
-    } catch {
-      return {
-        id: `swarm-${Date.now()}`,
-        topology: 'hierarchical',
-        agentCount: 0,
-        activeTaskCount: 0,
-        completedTaskCount: 0,
-        status: 'idle',
-      };
+    } catch (err) {
+      throw new SwarmParseError(
+        'Failed to parse swarm status response as JSON',
+        output,
+        err instanceof Error ? err : undefined,
+      );
     }
   }
 
   private parseTasks(output: string): SwarmTask[] {
-    try { return JSON.parse(output) as SwarmTask[]; } catch { return []; }
+    try {
+      return JSON.parse(output) as SwarmTask[];
+    } catch (err) {
+      throw new SwarmParseError(
+        'Failed to parse task list response as JSON',
+        output,
+        err instanceof Error ? err : undefined,
+      );
+    }
   }
 
   private parseAgents(output: string): SwarmAgent[] {
-    try { return JSON.parse(output) as SwarmAgent[]; } catch { return []; }
+    try {
+      return JSON.parse(output) as SwarmAgent[];
+    } catch (err) {
+      throw new SwarmParseError(
+        'Failed to parse agent list response as JSON',
+        output,
+        err instanceof Error ? err : undefined,
+      );
+    }
   }
 }

@@ -58,6 +58,7 @@ export interface AppContext {
   worktree: IWorktreePort;
   build: IBuildPort;
   ast: IASTPort;
+  astIsStub: boolean;
   eventBus: IEventBusPort | null;
   notifier: INotificationEmitPort;
   swarm: import('./core/ports/swarm.js').ISwarmPort;
@@ -85,12 +86,30 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   const notifier = new TerminalNotifier();
   const swarm = new RufloAdapter(projectPath);
 
-  // Tree-sitter: best-effort — falls back to a stub if WASM grammars missing
+  // Tree-sitter: search multiple candidate directories for WASM grammars
   let ast: IASTPort;
+  let astIsStub = false;
   try {
-    const grammarDir = `${projectPath}/node_modules/web-tree-sitter`;
-    ast = await TreeSitterAdapter.create(grammarDir, fs);
+    const grammarDirs = [
+      `${projectPath}/config/grammars`,
+      `${projectPath}/node_modules/tree-sitter-wasms/out`,
+      `${projectPath}/node_modules/web-tree-sitter`,
+    ];
+    const treeSitter = await TreeSitterAdapter.create(grammarDirs, fs);
+    if (treeSitter.isStub()) {
+      process.stderr.write(
+        'WARNING: Tree-sitter grammars not found. Run \'hex-intf setup\' to download. '
+        + 'Architecture analysis will return incomplete results.\n',
+      );
+      astIsStub = true;
+    }
+    ast = treeSitter;
   } catch {
+    process.stderr.write(
+      'WARNING: Tree-sitter failed to initialize. '
+      + 'Architecture analysis will return incomplete results.\n',
+    );
+    astIsStub = true;
     ast = {
       async extractSummary(filePath, level) {
         return {
@@ -138,6 +157,7 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     worktree,
     build,
     ast,
+    astIsStub,
     eventBus: NULL_EVENT_BUS,
     notifier,
     swarm,

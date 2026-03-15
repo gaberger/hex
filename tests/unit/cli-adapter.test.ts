@@ -52,7 +52,14 @@ function mockContext(overrides: Partial<{
     read: async () => '', write: async () => {},
     exists: async () => true, glob: async () => [],
   };
-  return { archAnalyzer, ast, fs, rootPath: '/test' };
+  return {
+    archAnalyzer, ast, fs, rootPath: '/test',
+    astIsStub: false, codeGenerator: null, workplanExecutor: null,
+    summaryService: {
+      summarizeFile: async (fp, lvl) => mockSummary(fp, lvl),
+      summarizeProject: async () => [],
+    },
+  };
 }
 
 // ─── Tests ──────────────────────────────────────────────

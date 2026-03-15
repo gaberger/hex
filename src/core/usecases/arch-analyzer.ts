@@ -18,6 +18,7 @@ import type {
   DependencyDirection,
 } from '../ports/index.js';
 import { classifyLayer, getViolationRule } from './layer-classifier.js';
+import { resolveImportPath, normalizePath } from './path-normalizer.js';
 
 const ENTRY_POINTS = ['index.ts', 'cli.ts', 'main.ts'];
 
@@ -67,10 +68,11 @@ export class ArchAnalyzer implements IArchAnalysisPort {
     const edges: ImportEdge[] = [];
 
     for (const summary of summaries) {
+      const fromFile = normalizePath(summary.filePath);
       for (const imp of summary.imports) {
         edges.push({
-          from: summary.filePath,
-          to: imp.from,
+          from: fromFile,
+          to: resolveImportPath(summary.filePath, imp.from),
           names: imp.names,
         });
       }
@@ -82,25 +84,29 @@ export class ArchAnalyzer implements IArchAnalysisPort {
   async findDeadExports(_rootPath: string): Promise<DeadExport[]> {
     const summaries = await this.collectSummaries();
 
-    // Build set of all imported names, keyed by source module
-    const importedNames = new Set<string>();
+    // Build set of all imported (name, normalizedTarget) tuples
+    const importedByModule = new Map<string, Set<string>>();
     for (const summary of summaries) {
       for (const imp of summary.imports) {
+        const target = resolveImportPath(summary.filePath, imp.from);
+        if (!importedByModule.has(target)) importedByModule.set(target, new Set());
         for (const name of imp.names) {
-          importedNames.add(name);
+          importedByModule.get(target)!.add(name);
         }
       }
     }
 
     const dead: DeadExport[] = [];
     for (const summary of summaries) {
-      if (isEntryPoint(summary.filePath)) continue;
+      const normalizedFile = normalizePath(summary.filePath);
+      if (isEntryPoint(normalizedFile)) continue;
       if (hasReExports(summary)) continue;
 
+      const importedFromThis = importedByModule.get(normalizedFile) ?? new Set();
       for (const exp of summary.exports) {
-        if (!importedNames.has(exp.name)) {
+        if (!importedFromThis.has(exp.name)) {
           dead.push({
-            filePath: summary.filePath,
+            filePath: normalizedFile,
             exportName: exp.name,
             kind: exp.kind,
           });
@@ -201,7 +207,7 @@ export class ArchAnalyzer implements IArchAnalysisPort {
       connected.add(edge.to);
     }
     const orphanFiles = summaries
-      .map((s) => s.filePath)
+      .map((s) => normalizePath(s.filePath))
       .filter((f) => !connected.has(f));
 
     const totalExports = summaries.reduce((sum, s) => sum + s.exports.length, 0);

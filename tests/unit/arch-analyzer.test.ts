@@ -59,7 +59,7 @@ describe('ArchAnalyzer.findDeadExports', () => {
         exports: [{ name: 'usedFn', kind: 'function' }],
       }),
       'src/core/usecases/bar.ts': makeSummary('src/core/usecases/bar.ts', {
-        imports: [{ names: ['usedFn'], from: 'src/core/domain/foo.ts' }],
+        imports: [{ names: ['usedFn'], from: '../domain/foo.js' }],
       }),
     };
     const analyzer = new ArchAnalyzer(mockAST(summaries), mockFS(files));
@@ -83,11 +83,11 @@ describe('ArchAnalyzer.findDeadExports', () => {
 // ─── validateHexBoundaries ──────────────────────────────
 
 describe('ArchAnalyzer.validateHexBoundaries', () => {
-  it('passes for correct hex imports (adapter -> port)', async () => {
+  it('passes for correct hex imports (adapter -> port) with relative .js path', async () => {
     const files = ['src/adapters/secondary/db.ts'];
     const summaries = {
       'src/adapters/secondary/db.ts': makeSummary('src/adapters/secondary/db.ts', {
-        imports: [{ names: ['IFSPort'], from: 'src/core/ports/index.ts' }],
+        imports: [{ names: ['IFSPort'], from: '../../core/ports/index.js' }],
       }),
       'src/core/ports/index.ts': makeSummary('src/core/ports/index.ts'),
     };
@@ -96,11 +96,11 @@ describe('ArchAnalyzer.validateHexBoundaries', () => {
     expect(violations).toHaveLength(0);
   });
 
-  it('catches domain importing from adapter', async () => {
+  it('catches domain importing from adapter with relative .js path', async () => {
     const files = ['src/core/domain/entity.ts'];
     const summaries = {
       'src/core/domain/entity.ts': makeSummary('src/core/domain/entity.ts', {
-        imports: [{ names: ['DB'], from: 'src/adapters/secondary/db.ts' }],
+        imports: [{ names: ['DB'], from: '../../adapters/secondary/db.js' }],
       }),
       'src/adapters/secondary/db.ts': makeSummary('src/adapters/secondary/db.ts'),
     };
@@ -110,11 +110,11 @@ describe('ArchAnalyzer.validateHexBoundaries', () => {
     expect(violations[0].fromLayer).toBe('domain');
   });
 
-  it('catches cross-adapter imports', async () => {
+  it('catches cross-adapter imports with relative path', async () => {
     const files = ['src/adapters/secondary/db.ts'];
     const summaries = {
       'src/adapters/secondary/db.ts': makeSummary('src/adapters/secondary/db.ts', {
-        imports: [{ names: ['CLI'], from: 'src/adapters/primary/cli.ts' }],
+        imports: [{ names: ['CLI'], from: '../primary/cli.js' }],
       }),
       'src/adapters/primary/cli.ts': makeSummary('src/adapters/primary/cli.ts'),
     };
@@ -128,34 +128,46 @@ describe('ArchAnalyzer.validateHexBoundaries', () => {
 // ─── detectCircularDeps ─────────────────────────────────
 
 describe('ArchAnalyzer.detectCircularDeps', () => {
-  it('detects A->B->A cycle', async () => {
-    const files = ['a.ts', 'b.ts'];
+  it('detects A->B->A cycle with relative .js imports', async () => {
+    const files = ['src/core/usecases/a.ts', 'src/core/usecases/b.ts'];
     const summaries = {
-      'a.ts': makeSummary('a.ts', { imports: [{ names: ['B'], from: 'b.ts' }] }),
-      'b.ts': makeSummary('b.ts', { imports: [{ names: ['A'], from: 'a.ts' }] }),
+      'src/core/usecases/a.ts': makeSummary('src/core/usecases/a.ts', {
+        imports: [{ names: ['B'], from: './b.js' }],
+      }),
+      'src/core/usecases/b.ts': makeSummary('src/core/usecases/b.ts', {
+        imports: [{ names: ['A'], from: './a.js' }],
+      }),
     };
     const analyzer = new ArchAnalyzer(mockAST(summaries), mockFS(files));
     const cycles = await analyzer.detectCircularDeps('/root');
     expect(cycles.length).toBeGreaterThan(0);
   });
 
-  it('detects A->B->C->A cycle', async () => {
-    const files = ['a.ts', 'b.ts', 'c.ts'];
+  it('detects A->B->C->A cycle with relative .js imports', async () => {
+    const files = ['src/core/usecases/a.ts', 'src/core/usecases/b.ts', 'src/core/domain/c.ts'];
     const summaries = {
-      'a.ts': makeSummary('a.ts', { imports: [{ names: ['B'], from: 'b.ts' }] }),
-      'b.ts': makeSummary('b.ts', { imports: [{ names: ['C'], from: 'c.ts' }] }),
-      'c.ts': makeSummary('c.ts', { imports: [{ names: ['A'], from: 'a.ts' }] }),
+      'src/core/usecases/a.ts': makeSummary('src/core/usecases/a.ts', {
+        imports: [{ names: ['B'], from: './b.js' }],
+      }),
+      'src/core/usecases/b.ts': makeSummary('src/core/usecases/b.ts', {
+        imports: [{ names: ['C'], from: '../domain/c.js' }],
+      }),
+      'src/core/domain/c.ts': makeSummary('src/core/domain/c.ts', {
+        imports: [{ names: ['A'], from: '../usecases/a.js' }],
+      }),
     };
     const analyzer = new ArchAnalyzer(mockAST(summaries), mockFS(files));
     const cycles = await analyzer.detectCircularDeps('/root');
     expect(cycles.length).toBeGreaterThan(0);
   });
 
-  it('returns empty for acyclic graph', async () => {
-    const files = ['a.ts', 'b.ts'];
+  it('returns empty for acyclic graph with relative imports', async () => {
+    const files = ['src/core/usecases/a.ts', 'src/core/usecases/b.ts'];
     const summaries = {
-      'a.ts': makeSummary('a.ts', { imports: [{ names: ['B'], from: 'b.ts' }] }),
-      'b.ts': makeSummary('b.ts'),
+      'src/core/usecases/a.ts': makeSummary('src/core/usecases/a.ts', {
+        imports: [{ names: ['B'], from: './b.js' }],
+      }),
+      'src/core/usecases/b.ts': makeSummary('src/core/usecases/b.ts'),
     };
     const analyzer = new ArchAnalyzer(mockAST(summaries), mockFS(files));
     const cycles = await analyzer.detectCircularDeps('/root');
@@ -166,11 +178,11 @@ describe('ArchAnalyzer.detectCircularDeps', () => {
 // ─── analyzeArchitecture ────────────────────────────────
 
 describe('ArchAnalyzer.analyzeArchitecture', () => {
-  it('computes healthScore 100 for clean project', async () => {
+  it('computes healthScore 100 for clean project with relative .js imports', async () => {
     const files = ['src/core/usecases/uc.ts', 'src/core/ports/index.ts'];
     const summaries = {
       'src/core/usecases/uc.ts': makeSummary('src/core/usecases/uc.ts', {
-        imports: [{ names: ['IPort'], from: 'src/core/ports/index.ts' }],
+        imports: [{ names: ['IPort'], from: '../ports/index.js' }],
       }),
       'src/core/ports/index.ts': makeSummary('src/core/ports/index.ts', {
         exports: [{ name: 'IPort', kind: 'interface' }],
@@ -181,11 +193,11 @@ describe('ArchAnalyzer.analyzeArchitecture', () => {
     expect(result.summary.healthScore).toBe(100);
   });
 
-  it('penalizes violations in healthScore', async () => {
+  it('penalizes violations in healthScore with relative .js imports', async () => {
     const files = ['src/core/domain/e.ts', 'src/adapters/secondary/db.ts'];
     const summaries = {
       'src/core/domain/e.ts': makeSummary('src/core/domain/e.ts', {
-        imports: [{ names: ['DB'], from: 'src/adapters/secondary/db.ts' }],
+        imports: [{ names: ['DB'], from: '../../adapters/secondary/db.js' }],
       }),
       'src/adapters/secondary/db.ts': makeSummary('src/adapters/secondary/db.ts', {
         exports: [{ name: 'DB', kind: 'class' }],

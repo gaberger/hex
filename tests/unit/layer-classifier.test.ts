@@ -33,8 +33,12 @@ describe('classifyLayer', () => {
 });
 
 describe('isAllowedImport', () => {
-  it('domain -> ports is allowed', () => {
-    expect(isAllowedImport('domain', 'ports')).toBe(true);
+  it('domain -> ports is forbidden (domain has no outward deps)', () => {
+    expect(isAllowedImport('domain', 'ports')).toBe(false);
+  });
+
+  it('ports -> domain is allowed (ports re-export domain value objects)', () => {
+    expect(isAllowedImport('ports', 'domain')).toBe(true);
   });
 
   it('domain -> adapters/secondary is forbidden', () => {
@@ -77,8 +81,14 @@ describe('isAllowedImport', () => {
 
 describe('getViolationRule', () => {
   it('returns null for allowed imports', () => {
-    expect(getViolationRule('domain', 'ports')).toBeNull();
+    expect(getViolationRule('ports', 'domain')).toBeNull();
     expect(getViolationRule('usecases', 'domain')).toBeNull();
+  });
+
+  it('returns violation for domain -> ports', () => {
+    const rule = getViolationRule('domain', 'ports');
+    expect(rule).toBeTypeOf('string');
+    expect(rule).toContain('domain must not import from ports');
   });
 
   it('returns descriptive string for violations', () => {
