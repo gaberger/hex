@@ -23,6 +23,7 @@ import type { AppContext as FullAppContext } from '../../composition-root.js';
  * CLIAppContext — the subset of AppContext the CLI adapter needs.
  * Derived from the canonical AppContext in composition-root via Pick,
  * ensuring a single source of truth with no contract divergence.
+ * The dashboard command casts to FullAppContext for the HTTP server.
  */
 export type AppContext = Pick<
   FullAppContext,
@@ -106,6 +107,8 @@ export class CLIAdapter {
           return await this.generate(args);
         case 'plan':
           return await this.plan(args);
+        case 'dashboard':
+          return await this.dashboard(args);
         case 'status':
           return await this.status();
         case 'init':
@@ -320,6 +323,26 @@ export class CLIAdapter {
     return 0;
   }
 
+  // ── dashboard ───────────────────────────────────────
+
+  private async dashboard(args: ParsedArgs): Promise<number> {
+    const port = parseInt(args.flags.get('port') ?? '3847', 10);
+    if (isNaN(port) || port < 1 || port > 65535) {
+      this.writeLn('Invalid port number. Must be 1-65535.');
+      return 1;
+    }
+
+    // Dynamic import to avoid loading http server when not needed
+    const { startDashboard } = await import('./dashboard-adapter.js');
+    const { url } = await startDashboard(this.ctx as FullAppContext, port);
+    this.writeLn(`Dashboard running at ${url}`);
+    this.writeLn('Press Ctrl+C to stop.');
+
+    // Keep the process alive until interrupted
+    await new Promise(() => {});
+    return 0;
+  }
+
   // ── status ──────────────────────────────────────────
 
   private async status(): Promise<number> {
@@ -372,6 +395,7 @@ export class CLIAdapter {
     this.writeLn('    [--lang ts|go|rust]');
     this.writeLn('  plan <requirements...>           Create a workplan from requirements');
     this.writeLn('    [--lang ts|go|rust]');
+    this.writeLn('  dashboard [--port N]             Open web dashboard (default: 3847)');
     this.writeLn('  status                          Show swarm progress');
     this.writeLn('  init [--lang ts|go|rust]        Scaffold a hex project');
     this.writeLn('  help                            Show this help');

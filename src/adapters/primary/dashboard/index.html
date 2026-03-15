@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>hex-intf Dashboard</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#1a1a2e;--card:#16213e;--border:#0f3460;
+  --accent:#4fc3f7;--green:#66bb6a;--yellow:#ffa726;--red:#ef5350;
+  --purple:#ab47bc;--text:#e0e0e0;--text2:#9e9e9e;
+  --radius:8px;--gap:16px;
+}
+html{font-size:14px}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-width:1024px;padding:0}
+a{color:var(--accent);text-decoration:none}
+
+/* Header */
+.header{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;background:var(--card);border-bottom:1px solid var(--border)}
+.header h1{font-size:1.25rem;font-weight:600;letter-spacing:.5px}
+.header h1 span{color:var(--accent)}
+.header-right{display:flex;align-items:center;gap:16px;font-size:.85rem;color:var(--text2)}
+.conn-badge{display:flex;align-items:center;gap:6px}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block}
+.conn-dot.disconnected{background:var(--red);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* Grid */
+.grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto auto;gap:var(--gap);padding:var(--gap) 24px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;overflow:hidden}
+.card-title{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);margin-bottom:16px;font-weight:600}
+
+/* Health Panel */
+.health-top{display:flex;align-items:center;gap:24px;margin-bottom:20px}
+.health-ring{position:relative;width:120px;height:120px;flex-shrink:0}
+.health-ring svg{transform:rotate(-90deg)}
+.health-ring-bg{fill:none;stroke:var(--border);stroke-width:8}
+.health-ring-fg{fill:none;stroke-width:8;stroke-linecap:round;transition:stroke-dashoffset .8s ease,stroke .4s}
+.health-score{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:2rem;font-weight:700;line-height:1}
+.health-score small{font-size:.7rem;color:var(--text2);font-weight:400;margin-top:2px}
+.health-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.health-stat{display:flex;align-items:center;gap:6px;font-size:.85rem}
+.health-stat .num{font-weight:700;font-size:1.1rem;min-width:28px}
+.health-stat .lbl{color:var(--text2)}
+.violations-list,.unused-list{margin-top:12px;max-height:120px;overflow-y:auto;font-size:.8rem}
+.section-heading{color:var(--text2);font-size:.75rem;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;font-weight:600}
+.violation-item{padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04);color:var(--red)}
+.violation-rule{color:var(--yellow);font-size:.75rem}
+.unused-item{padding:2px 0;color:var(--yellow)}
+
+/* Token Panel */
+.file-selector{width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:.85rem;margin-bottom:16px;outline:none}
+.file-selector:focus{border-color:var(--accent)}
+.token-bars{display:flex;flex-direction:column;gap:10px}
+.token-row{display:flex;align-items:center;gap:10px;font-size:.85rem}
+.token-label{width:32px;font-weight:600;color:var(--accent);flex-shrink:0}
+.token-count{width:70px;text-align:right;color:var(--text2);font-size:.8rem;flex-shrink:0}
+.token-bar-track{flex:1;height:18px;background:var(--bg);border-radius:4px;overflow:hidden;position:relative}
+.token-bar-fill{height:100%;border-radius:4px;transition:width .5s ease;min-width:2px}
+.token-bar-pct{width:40px;text-align:right;font-weight:600;font-size:.85rem;flex-shrink:0}
+.token-summary{margin-top:16px;padding-top:12px;border-top:1px solid var(--border);font-size:.85rem;color:var(--text2);display:flex;justify-content:space-between}
+.token-summary .val{color:var(--text);font-weight:600}
+
+/* Swarm Panel */
+.swarm-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.status-badge{padding:4px 12px;border-radius:12px;font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.status-idle{background:rgba(158,158,158,.15);color:var(--text2)}
+.status-running{background:rgba(79,195,247,.15);color:var(--accent)}
+.status-completed{background:rgba(102,187,106,.15);color:var(--green)}
+.status-failed{background:rgba(239,83,80,.15);color:var(--red)}
+.swarm-counts{display:flex;gap:20px;margin-bottom:16px;font-size:.85rem}
+.swarm-counts .num{font-weight:700;font-size:1.2rem}
+.swarm-counts .lbl{color:var(--text2)}
+.agent-list,.task-list{max-height:140px;overflow-y:auto}
+.agent-item,.task-item{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:.8rem}
+.agent-role{color:var(--accent);min-width:60px}
+.task-status{font-size:.7rem;padding:2px 8px;border-radius:8px}
+
+/* Event Log */
+.event-controls{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.event-controls button{padding:4px 12px;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--text2);font-size:.75rem;cursor:pointer;transition:all .2s}
+.event-controls button:hover,.event-controls button.active{background:var(--border);color:var(--text)}
+.event-log-list{max-height:220px;overflow-y:auto;font-family:'JetBrains Mono','Fira Code',monospace;font-size:.78rem;line-height:1.7}
+.event-entry{display:flex;gap:8px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.03)}
+.event-time{color:var(--text2);flex-shrink:0;min-width:50px}
+.event-icon{flex-shrink:0;width:16px;text-align:center}
+.event-msg{word-break:break-word}
+.ev-info .event-icon{color:var(--accent)}
+.ev-success .event-icon{color:var(--green)}
+.ev-warning .event-icon{color:var(--yellow)}
+.ev-error .event-icon{color:var(--red)}
+.ev-decision .event-icon{color:var(--yellow)}
+.ev-milestone .event-icon{color:var(--purple)}
+.pause-btn{margin-left:auto;font-size:.7rem;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--text2);cursor:pointer}
+.pause-btn:hover{background:var(--border);color:var(--text)}
+
+/* Dependency Graph */
+.graph-section{margin:0 24px var(--gap);background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.graph-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;cursor:pointer;user-select:none}
+.graph-header:hover{background:rgba(255,255,255,.02)}
+.graph-header h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);font-weight:600}
+.graph-toggle{color:var(--text2);font-size:.85rem;transition:transform .3s}
+.graph-toggle.open{transform:rotate(180deg)}
+.graph-body{max-height:0;overflow:hidden;transition:max-height .4s ease}
+.graph-body.open{max-height:500px}
+.graph-canvas{display:block;width:100%;height:360px;background:var(--bg);border-top:1px solid var(--border)}
+.graph-legend{display:flex;gap:16px;padding:10px 20px;font-size:.75rem;color:var(--text2);border-top:1px solid var(--border)}
+.legend-item{display:flex;align-items:center;gap:4px}
+.legend-dot{width:10px;height:10px;border-radius:50%}
+
+/* Decision Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:1000}
+.modal-overlay.show{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;max-width:420px;width:90%}
+.modal h3{margin-bottom:12px;font-size:1rem}
+.modal p{color:var(--text2);font-size:.85rem;margin-bottom:16px}
+.modal-options{display:flex;flex-direction:column;gap:8px}
+.modal-option{padding:10px 16px;border:1px solid var(--border);border-radius:var(--radius);background:transparent;color:var(--text);font-size:.85rem;cursor:pointer;text-align:left;transition:all .2s}
+.modal-option:hover{background:var(--border);border-color:var(--accent)}
+.modal-cancel{margin-top:12px;padding:8px;background:transparent;border:none;color:var(--text2);font-size:.8rem;cursor:pointer;width:100%;text-align:center}
+.modal-cancel:hover{color:var(--text)}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg);border-radius:3px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+
+/* Empty state */
+.empty{color:var(--text2);font-size:.8rem;font-style:italic;padding:8px 0}
+</style>
+</head>
+<body>
+
+<header class="header">
+  <h1><span>hex-intf</span> Dashboard</h1>
+  <div class="header-right">
+    <div class="conn-badge">
+      <span class="conn-dot" id="connDot"></span>
+      <span id="connLabel">Connecting...</span>
+    </div>
+    <span id="versionLabel">v0.1.0</span>
+  </div>
+</header>
+
+<div class="grid">
+  <!-- Architecture Health -->
+  <div class="card" id="healthPanel">
+    <div class="card-title">Architecture Health</div>
+    <div class="health-top">
+      <div class="health-ring">
+        <svg viewBox="0 0 120 120" width="120" height="120">
+          <circle class="health-ring-bg" cx="60" cy="60" r="52"/>
+          <circle class="health-ring-fg" id="healthArc" cx="60" cy="60" r="52"
+            stroke-dasharray="326.73" stroke-dashoffset="326.73"/>
+        </svg>
+        <div class="health-score">
+          <span id="healthNum">--</span>
+          <small>/ 100</small>
+        </div>
+      </div>
+      <div class="health-stats" id="healthStats">
+        <div class="health-stat"><span class="num" id="hFiles">--</span><span class="lbl">files</span></div>
+        <div class="health-stat"><span class="num" id="hExports">--</span><span class="lbl">exports</span></div>
+        <div class="health-stat"><span class="num" id="hViolations">--</span><span class="lbl">violations</span></div>
+        <div class="health-stat"><span class="num" id="hUnused">--</span><span class="lbl">unused ports</span></div>
+        <div class="health-stat"><span class="num" id="hDead">--</span><span class="lbl">dead exports</span></div>
+      </div>
+    </div>
+    <div class="violations-list" id="violationsList"></div>
+    <div class="unused-list" id="unusedList"></div>
+  </div>
+
+  <!-- Token Efficiency -->
+  <div class="card" id="tokenPanel">
+    <div class="card-title">Token Efficiency</div>
+    <select class="file-selector" id="fileSelector">
+      <option value="">Loading files...</option>
+    </select>
+    <div class="token-bars" id="tokenBars">
+      <div class="token-row">
+        <span class="token-label">L0</span>
+        <span class="token-count" id="tokL0">--</span>
+        <div class="token-bar-track"><div class="token-bar-fill" id="barL0" style="width:0;background:var(--green)"></div></div>
+        <span class="token-bar-pct" id="pctL0">--%</span>
+      </div>
+      <div class="token-row">
+        <span class="token-label">L1</span>
+        <span class="token-count" id="tokL1">--</span>
+        <div class="token-bar-track"><div class="token-bar-fill" id="barL1" style="width:0;background:var(--accent)"></div></div>
+        <span class="token-bar-pct" id="pctL1">--%</span>
+      </div>
+      <div class="token-row">
+        <span class="token-label">L2</span>
+        <span class="token-count" id="tokL2">--</span>
+        <div class="token-bar-track"><div class="token-bar-fill" id="barL2" style="width:0;background:var(--yellow)"></div></div>
+        <span class="token-bar-pct" id="pctL2">--%</span>
+      </div>
+      <div class="token-row">
+        <span class="token-label">L3</span>
+        <span class="token-count" id="tokL3">--</span>
+        <div class="token-bar-track"><div class="token-bar-fill" id="barL3" style="width:0;background:var(--red)"></div></div>
+        <span class="token-bar-pct" id="pctL3">--%</span>
+      </div>
+    </div>
+    <div class="token-summary">
+      <span>Avg compression: <span class="val" id="avgCompression">--%</span></span>
+      <span>Files: <span class="val" id="totalFiles">--</span></span>
+    </div>
+  </div>
+
+  <!-- Swarm Status -->
+  <div class="card" id="swarmPanel">
+    <div class="card-title">Swarm Status</div>
+    <div class="swarm-header">
+      <span class="status-badge status-idle" id="swarmBadge">idle</span>
+    </div>
+    <div class="swarm-counts">
+      <div><span class="num" id="agentCount">0</span><br><span class="lbl">agents</span></div>
+      <div><span class="num" id="taskProgress">0/0</span><br><span class="lbl">tasks</span></div>
+    </div>
+    <div class="agent-list" id="agentList"></div>
+    <div class="task-list" id="taskList" style="margin-top:10px"></div>
+  </div>
+
+  <!-- Event Log -->
+  <div class="card" id="eventPanel">
+    <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+      <span>Event Log</span>
+      <button class="pause-btn" id="pauseBtn" title="Pause auto-scroll">&#9208; Pause</button>
+    </div>
+    <div class="event-controls" id="eventFilters">
+      <button class="active" data-filter="all">All</button>
+      <button data-filter="error">Errors</button>
+      <button data-filter="decision">Decisions</button>
+      <button data-filter="milestone">Milestones</button>
+    </div>
+    <div class="event-log-list" id="eventLog">
+      <div class="empty">Waiting for events...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Dependency Graph -->
+<div class="graph-section">
+  <div class="graph-header" id="graphToggle">
+    <h3>Dependency Graph</h3>
+    <span class="graph-toggle" id="graphArrow">&#9660;</span>
+  </div>
+  <div class="graph-body" id="graphBody">
+    <canvas class="graph-canvas" id="graphCanvas"></canvas>
+    <div class="graph-legend">
+      <div class="legend-item"><span class="legend-dot" style="background:#42a5f5"></span> Domain</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#66bb6a"></span> Ports</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#ffa726"></span> Adapters</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#ab47bc"></span> Use Cases</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#ef5350"></span> Violation</div>
+    </div>
+  </div>
+</div>
+
+<!-- Decision Modal -->
+<div class="modal-overlay" id="decisionModal">
+  <div class="modal">
+    <h3 id="modalTitle">Decision Required</h3>
+    <p id="modalDesc"></p>
+    <div class="modal-options" id="modalOptions"></div>
+    <button class="modal-cancel" id="modalCancel">Dismiss</button>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // --- State ---
+  var state = {
+    connected: false,
+    autoScroll: true,
+    eventFilter: 'all',
+    events: [],
+    tokenOverview: null,
+    currentDecisionId: null,
+    sseRetryTimer: null,
+    pollTimer: null,
+    evtSource: null,
+  };
+
+  // --- DOM Helpers ---
+  function $(sel) { return document.querySelector(sel); }
+  function $$(sel) { return document.querySelectorAll(sel); }
+
+  function escapeHtml(str) {
+    var d = document.createElement('div');
+    d.textContent = String(str);
+    return d.innerHTML;
+  }
+
+  function setText(el, text) {
+    if (typeof el === 'string') el = $(el);
+    if (el) el.textContent = String(text);
+  }
+
+  function clearChildren(el) {
+    if (typeof el === 'string') el = $(el);
+    while (el && el.firstChild) el.removeChild(el.firstChild);
+  }
+
+  function createEl(tag, attrs, children) {
+    var el = document.createElement(tag);
+    if (attrs) {
+      Object.keys(attrs).forEach(function(k) {
+        if (k === 'className') el.className = attrs[k];
+        else if (k === 'textContent') el.textContent = attrs[k];
+        else if (k.indexOf('data-') === 0) el.setAttribute(k, attrs[k]);
+        else el.setAttribute(k, attrs[k]);
+      });
+    }
+    if (children) {
+      children.forEach(function(c) {
+        if (typeof c === 'string') el.appendChild(document.createTextNode(c));
+        else if (c) el.appendChild(c);
+      });
+    }
+    return el;
+  }
+
+  // --- Connection Status ---
+  function setConnected(val) {
+    state.connected = val;
+    var dot = $('#connDot');
+    if (val) {
+      dot.classList.remove('disconnected');
+      setText('#connLabel', 'Connected');
+    } else {
+      dot.classList.add('disconnected');
+      setText('#connLabel', 'Disconnected');
+    }
+  }
+
+  // --- API Fetch ---
+  function apiFetch(url) {
+    return fetch(url).then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      setConnected(true);
+      return res.json();
+    }).catch(function(e) {
+      setConnected(false);
+      console.warn('API fetch failed: ' + url, e);
+      return null;
+    });
+  }
+
+  // --- Utilities ---
+  function formatTime(ts) {
+    if (!ts) return '--:--';
+    var d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  }
+
+  function scoreColor(score) {
+    if (score >= 80) return '#66bb6a';
+    if (score >= 50) return '#ffa726';
+    return '#ef5350';
+  }
+
+  // --- Health Panel ---
+  function loadHealth() {
+    apiFetch('/api/health').then(function(data) {
+      if (!data) return;
+
+      var score = typeof data.score === 'number' ? data.score : (data.healthScore || 0);
+      var circumference = 326.73;
+      var offset = circumference - (circumference * Math.min(score, 100) / 100);
+      var arc = $('#healthArc');
+      arc.style.strokeDashoffset = String(offset);
+      arc.style.stroke = scoreColor(score);
+      setText('#healthNum', Math.round(score));
+
+      setText('#hFiles', data.totalFiles || data.files || '--');
+      setText('#hExports', data.totalExports || data.exports || '--');
+
+      var violations = data.violations || data.boundaryViolations || [];
+      var violationCount = Array.isArray(violations) ? violations.length : (violations || 0);
+      setText('#hViolations', violationCount);
+      $('#hViolations').style.color = violationCount > 0 ? '#ef5350' : '#66bb6a';
+
+      var unused = data.unusedPorts || [];
+      var unusedCount = Array.isArray(unused) ? unused.length : (unused || 0);
+      setText('#hUnused', unusedCount);
+
+      var dead = data.deadExports || data.unusedExports || [];
+      var deadCount = Array.isArray(dead) ? dead.length : (dead || 0);
+      setText('#hDead', deadCount);
+
+      // Violations list
+      var vList = $('#violationsList');
+      clearChildren(vList);
+      if (Array.isArray(violations) && violations.length > 0) {
+        vList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Violations' }));
+        violations.forEach(function(v) {
+          var item = createEl('div', { className: 'violation-item' });
+          item.appendChild(document.createTextNode(
+            (v.from || v.source || '') + ' \u2192 ' + (v.to || v.target || '') + ' '
+          ));
+          item.appendChild(createEl('span', { className: 'violation-rule', textContent: v.rule || v.type || '' }));
+          vList.appendChild(item);
+        });
+      }
+
+      // Unused ports
+      var uList = $('#unusedList');
+      clearChildren(uList);
+      if (Array.isArray(unused) && unused.length > 0) {
+        uList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Unused Ports' }));
+        unused.forEach(function(u) {
+          var label = typeof u === 'string' ? u : (u.name || u.port || JSON.stringify(u));
+          uList.appendChild(createEl('div', { className: 'unused-item', textContent: label }));
+        });
+      }
+    });
+  }
+
+  // --- Token Panel ---
+  function loadTokenOverview() {
+    apiFetch('/api/tokens/overview').then(function(data) {
+      if (!data) return;
+
+      state.tokenOverview = data;
+      var files = data.files || [];
+      var sel = $('#fileSelector');
+      clearChildren(sel);
+      sel.appendChild(createEl('option', { value: '', textContent: '-- Select a file --' }));
+      files.forEach(function(f) {
+        sel.appendChild(createEl('option', { value: f.path, textContent: f.path }));
+      });
+
+      // Compute average compression
+      if (files.length > 0) {
+        var total = 0;
+        files.forEach(function(f) {
+          var ratio = typeof f.ratio === 'number' ? f.ratio : (f.l1Tokens && f.l3Tokens ? (1 - f.l1Tokens / f.l3Tokens) : 0);
+          total += ratio;
+        });
+        setText('#avgCompression', Math.round((total / files.length) * 100) + '%');
+      }
+      setText('#totalFiles', files.length);
+
+      if (files.length > 0) {
+        sel.value = files[0].path;
+        loadFileTokens(files[0].path);
+      }
+    });
+  }
+
+  function loadFileTokens(filePath) {
+    if (!filePath) return;
+    apiFetch('/api/tokens/' + encodeURIComponent(filePath)).then(function(data) {
+      if (!data) return;
+
+      var levels = [
+        { key: 'l0', el: 'L0' },
+        { key: 'l1', el: 'L1' },
+        { key: 'l2', el: 'L2' },
+        { key: 'l3', el: 'L3' },
+      ];
+      var maxTok = Math.max(data.l0 || 0, data.l1 || 0, data.l2 || 0, data.l3 || 0, 1);
+
+      levels.forEach(function(lv) {
+        var val = data[lv.key] || 0;
+        setText('#tok' + lv.el, val + ' tok');
+        var pct = maxTok > 0 ? (val / maxTok) * 100 : 0;
+        $('#bar' + lv.el).style.width = pct + '%';
+
+        var l3 = data.l3 || 1;
+        if (lv.key === 'l3') {
+          setText('#pct' + lv.el, 'base');
+        } else {
+          var ratio = Math.round((1 - val / l3) * 100);
+          setText('#pct' + lv.el, ratio + '%');
+        }
+      });
+    });
+  }
+
+  // --- Swarm Panel ---
+  function loadSwarm() {
+    apiFetch('/api/swarm').then(function(data) {
+      if (!data) return;
+
+      var status = (data.status || 'idle').toLowerCase();
+      var badge = $('#swarmBadge');
+      badge.textContent = status;
+      badge.className = 'status-badge status-' + status;
+
+      var agents = data.agents || [];
+      var tasks = data.tasks || [];
+      setText('#agentCount', agents.length);
+
+      var completed = tasks.filter(function(t) {
+        return t.status === 'completed' || t.status === 'done';
+      }).length;
+      setText('#taskProgress', completed + '/' + tasks.length);
+
+      // Agent list
+      var aList = $('#agentList');
+      clearChildren(aList);
+      aList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Agents' }));
+      if (agents.length > 0) {
+        agents.forEach(function(a) {
+          var item = createEl('div', { className: 'agent-item' }, [
+            createEl('span', { className: 'agent-role', textContent: a.role || a.type || 'agent' }),
+            createEl('span', { textContent: a.name || a.id || '--' }),
+            createEl('span', {
+              className: 'status-badge status-' + (a.status || 'idle').toLowerCase(),
+              textContent: a.status || 'idle',
+              style: 'font-size:.65rem;padding:2px 6px',
+            }),
+          ]);
+          if (a.currentTask) {
+            item.appendChild(createEl('span', {
+              textContent: a.currentTask,
+              style: 'color:var(--text2);margin-left:auto;font-size:.75rem',
+            }));
+          }
+          aList.appendChild(item);
+        });
+      } else {
+        aList.appendChild(createEl('div', { className: 'empty', textContent: 'No agents active' }));
+      }
+
+      // Task list
+      var tList = $('#taskList');
+      clearChildren(tList);
+      tList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Tasks' }));
+      if (tasks.length > 0) {
+        tasks.forEach(function(t) {
+          var ts = (t.status || 'pending').toLowerCase();
+          var badgeClass = 'status-idle';
+          if (ts === 'completed' || ts === 'done') badgeClass = 'status-completed';
+          else if (ts === 'running' || ts === 'in-progress') badgeClass = 'status-running';
+          else if (ts === 'failed') badgeClass = 'status-failed';
+
+          var item = createEl('div', { className: 'task-item' }, [
+            createEl('span', {
+              className: 'task-status status-badge ' + badgeClass,
+              textContent: t.status || 'pending',
+              style: 'font-size:.65rem;padding:2px 6px',
+            }),
+            createEl('span', { textContent: t.title || t.name || t.id || '--' }),
+          ]);
+          if (t.assignee) {
+            item.appendChild(createEl('span', {
+              textContent: t.assignee,
+              style: 'color:var(--text2);margin-left:auto;font-size:.75rem',
+            }));
+          }
+          tList.appendChild(item);
+        });
+      } else {
+        tList.appendChild(createEl('div', { className: 'empty', textContent: 'No tasks registered' }));
+      }
+    });
+  }
+
+  // --- Event Log ---
+  var LEVEL_ICONS = {
+    info: '\u25CF',
+    success: '\u2713',
+    warning: '\u25B2',
+    error: '\u2716',
+    decision: '?',
+    milestone: '\u2605',
+  };
+  var LEVEL_CLASSES = {
+    info: 'ev-info',
+    success: 'ev-success',
+    warning: 'ev-warning',
+    error: 'ev-error',
+    decision: 'ev-decision',
+    milestone: 'ev-milestone',
+  };
+
+  function addEvent(evt) {
+    state.events.push(evt);
+    if (state.events.length > 500) state.events.shift();
+    renderEvents();
+  }
+
+  function renderEvents() {
+    var log = $('#eventLog');
+    var filtered = state.eventFilter === 'all'
+      ? state.events
+      : state.events.filter(function(e) { return e.level === state.eventFilter; });
+
+    clearChildren(log);
+
+    if (filtered.length === 0) {
+      log.appendChild(createEl('div', { className: 'empty', textContent: 'No matching events' }));
+      return;
+    }
+
+    filtered.forEach(function(e) {
+      var cls = LEVEL_CLASSES[e.level] || LEVEL_CLASSES.info;
+      var icon = LEVEL_ICONS[e.level] || LEVEL_ICONS.info;
+      var msg = e.message || e.msg || JSON.stringify(e);
+
+      var entry = createEl('div', { className: 'event-entry ' + cls }, [
+        createEl('span', { className: 'event-time', textContent: formatTime(e.timestamp || e.ts) }),
+        createEl('span', { className: 'event-icon', textContent: icon }),
+        createEl('span', { className: 'event-msg', textContent: msg }),
+      ]);
+      log.appendChild(entry);
+    });
+
+    if (state.autoScroll) {
+      log.scrollTop = log.scrollHeight;
+    }
+  }
+
+  // --- SSE ---
+  function connectSSE() {
+    if (state.evtSource) {
+      state.evtSource.close();
+    }
+    var es;
+    try {
+      es = new EventSource('/api/events');
+    } catch (e) {
+      setConnected(false);
+      state.sseRetryTimer = setTimeout(connectSSE, 5000);
+      return;
+    }
+    state.evtSource = es;
+
+    es.onopen = function() {
+      setConnected(true);
+      clearTimeout(state.sseRetryTimer);
+    };
+
+    es.onmessage = function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        if (data.level === 'decision') {
+          showDecisionModal(data);
+        }
+        addEvent(data);
+      } catch (err) {
+        addEvent({ level: 'info', message: e.data, timestamp: new Date().toISOString() });
+      }
+    };
+
+    es.onerror = function() {
+      setConnected(false);
+      es.close();
+      state.sseRetryTimer = setTimeout(connectSSE, 5000);
+    };
+  }
+
+  // --- Decision Modal ---
+  function showDecisionModal(evt) {
+    state.currentDecisionId = evt.id || evt.decisionId;
+    setText('#modalTitle', evt.title || 'Decision Required');
+    setText('#modalDesc', evt.message || evt.description || '');
+
+    var options = evt.options || [];
+    var container = $('#modalOptions');
+    clearChildren(container);
+    options.forEach(function(opt) {
+      var label = typeof opt === 'string' ? opt : (opt.label || opt.name || JSON.stringify(opt));
+      var value = typeof opt === 'string' ? opt : (opt.value || opt.name);
+      var btn = createEl('button', { className: 'modal-option', textContent: label });
+      btn.addEventListener('click', function() { submitDecision(value); });
+      container.appendChild(btn);
+    });
+
+    $('#decisionModal').classList.add('show');
+  }
+
+  function submitDecision(selectedOption) {
+    if (!state.currentDecisionId) return;
+    fetch('/api/decisions/' + encodeURIComponent(state.currentDecisionId), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selectedOption: selectedOption }),
+    }).catch(function(e) {
+      console.warn('Decision submit failed', e);
+    });
+    $('#decisionModal').classList.remove('show');
+    state.currentDecisionId = null;
+  }
+
+  // --- Dependency Graph (Canvas) ---
+  var LAYER_COLORS = {
+    domain: '#42a5f5',
+    ports: '#66bb6a',
+    port: '#66bb6a',
+    adapters: '#ffa726',
+    adapter: '#ffa726',
+    usecases: '#ab47bc',
+    usecase: '#ab47bc',
+  };
+
+  function loadGraph() {
+    apiFetch('/api/graph').then(function(data) {
+      if (!data) return;
+
+      var nodes = data.nodes || [];
+      var edges = data.edges || [];
+      if (nodes.length === 0) return;
+
+      var canvas = $('#graphCanvas');
+      var rect = canvas.getBoundingClientRect();
+      var width = rect.width || 800;
+      var height = 360;
+      canvas.width = width * (window.devicePixelRatio || 1);
+      canvas.height = height * (window.devicePixelRatio || 1);
+      canvas.style.width = width + 'px';
+      canvas.style.height = height + 'px';
+
+      var ctx = canvas.getContext('2d');
+      ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+      ctx.clearRect(0, 0, width, height);
+
+      // Group nodes by layer
+      var layerGroups = {};
+      nodes.forEach(function(n) {
+        var layer = (n.layer || 'unknown').toLowerCase();
+        if (!layerGroups[layer]) layerGroups[layer] = [];
+        layerGroups[layer].push(n);
+      });
+
+      var layerOrder = ['domain', 'usecases', 'usecase', 'ports', 'port', 'adapters', 'adapter'];
+      var usedLayers = [];
+      var seen = {};
+      nodes.forEach(function(n) {
+        var l = (n.layer || 'unknown').toLowerCase();
+        if (!seen[l]) { seen[l] = true; usedLayers.push(l); }
+      });
+      usedLayers.sort(function(a, b) {
+        var ai = layerOrder.indexOf(a);
+        var bi = layerOrder.indexOf(b);
+        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      });
+
+      var positions = {};
+      var colWidth = width / (usedLayers.length + 1);
+      usedLayers.forEach(function(layer, li) {
+        var group = layerGroups[layer] || [];
+        var rowHeight = height / (group.length + 1);
+        group.forEach(function(n, ni) {
+          positions[n.id] = {
+            x: colWidth * (li + 1),
+            y: rowHeight * (ni + 1),
+          };
+        });
+      });
+
+      // Draw edges
+      edges.forEach(function(e) {
+        var from = positions[e.from];
+        var to = positions[e.to];
+        if (!from || !to) return;
+        var isViolation = e.violation || e.isViolation;
+
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.strokeStyle = isViolation ? '#ef5350' : 'rgba(255,255,255,0.12)';
+        ctx.lineWidth = isViolation ? 2 : 1;
+        ctx.stroke();
+
+        // Arrowhead
+        var angle = Math.atan2(to.y - from.y, to.x - from.x);
+        var headLen = 8;
+        var nodeRadius = 6 + Math.min((nodes.find(function(n) { return n.id === e.to; }) || {}).exports || 0, 20);
+        var endX = to.x - Math.cos(angle) * nodeRadius;
+        var endY = to.y - Math.sin(angle) * nodeRadius;
+        ctx.beginPath();
+        ctx.moveTo(endX, endY);
+        ctx.lineTo(endX - headLen * Math.cos(angle - Math.PI / 6), endY - headLen * Math.sin(angle - Math.PI / 6));
+        ctx.moveTo(endX, endY);
+        ctx.lineTo(endX - headLen * Math.cos(angle + Math.PI / 6), endY - headLen * Math.sin(angle + Math.PI / 6));
+        ctx.strokeStyle = isViolation ? '#ef5350' : 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = isViolation ? 2 : 1;
+        ctx.stroke();
+      });
+
+      // Draw nodes
+      nodes.forEach(function(n) {
+        var pos = positions[n.id];
+        if (!pos) return;
+        var layer = (n.layer || 'unknown').toLowerCase();
+        var color = LAYER_COLORS[layer] || '#9e9e9e';
+        var r = 6 + Math.min(n.exports || 0, 20);
+
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.85;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        // Label
+        var label = n.id.split('/').pop();
+        ctx.font = '10px system-ui, sans-serif';
+        ctx.fillStyle = '#9e9e9e';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, pos.x, pos.y + r + 14);
+      });
+    });
+  }
+
+  // --- Init ---
+  function init() {
+    // File selector
+    $('#fileSelector').addEventListener('change', function(e) {
+      if (e.target.value) loadFileTokens(e.target.value);
+    });
+
+    // Event filter buttons
+    $$('#eventFilters button').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        $$('#eventFilters button').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        state.eventFilter = btn.getAttribute('data-filter');
+        renderEvents();
+      });
+    });
+
+    // Pause button
+    $('#pauseBtn').addEventListener('click', function() {
+      state.autoScroll = !state.autoScroll;
+      setText('#pauseBtn', state.autoScroll ? '\u23F8 Pause' : '\u25B6 Resume');
+    });
+
+    // Graph toggle
+    $('#graphToggle').addEventListener('click', function() {
+      var body = $('#graphBody');
+      var arrow = $('#graphArrow');
+      body.classList.toggle('open');
+      arrow.classList.toggle('open');
+      if (body.classList.contains('open') && !body.getAttribute('data-loaded')) {
+        body.setAttribute('data-loaded', '1');
+        loadGraph();
+      }
+    });
+
+    // Modal cancel
+    $('#modalCancel').addEventListener('click', function() {
+      $('#decisionModal').classList.remove('show');
+      state.currentDecisionId = null;
+    });
+
+    // Overlay click to close
+    $('#decisionModal').addEventListener('click', function(e) {
+      if (e.target === e.currentTarget) {
+        $('#decisionModal').classList.remove('show');
+        state.currentDecisionId = null;
+      }
+    });
+
+    // Populate initial empty states
+    var aList = $('#agentList');
+    aList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Agents' }));
+    aList.appendChild(createEl('div', { className: 'empty', textContent: 'No agents active' }));
+    var tList = $('#taskList');
+    tList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Tasks' }));
+    tList.appendChild(createEl('div', { className: 'empty', textContent: 'No tasks registered' }));
+
+    // Initial data load
+    loadHealth();
+    loadTokenOverview();
+    loadSwarm();
+
+    // SSE connection
+    connectSSE();
+
+    // Polling for health and swarm every 10s
+    state.pollTimer = setInterval(function() {
+      loadHealth();
+      loadSwarm();
+    }, 10000);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>
