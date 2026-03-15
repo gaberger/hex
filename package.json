@@ -49,6 +49,6 @@
   "dependencies": {
     "@claude-flow/cli": "^3.5.15",
     "tree-sitter-wasms": "^0.1.13",
-    "web-tree-sitter": "^0.26.7"
+    "web-tree-sitter": "0.25.10"
   }
 }

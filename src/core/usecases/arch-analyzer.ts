@@ -51,7 +51,7 @@ export class ArchAnalyzer implements IArchAnalysisPort {
     private readonly ast: IASTPort,
     private readonly fs: IFileSystemPort,
     private readonly excludePatterns: string[] = [
-      'node_modules', 'dist', '*.test.ts', '*.spec.ts',
+      'node_modules', 'dist', 'examples', '*.test.ts', '*.spec.ts',
     ],
   ) {}
 
@@ -212,11 +212,15 @@ export class ArchAnalyzer implements IArchAnalysisPort {
 
     const totalExports = summaries.reduce((sum, s) => sum + s.exports.length, 0);
 
-    // Health score
+    // Detect unused ports: port interfaces with no adapter implementing them
+    const { unusedPorts, unusedAdapters } = this.detectUnusedPorts(summaries);
+
+    // Health score — violations and cycles are severe, dead exports minor
     let healthScore = 100;
-    healthScore -= violations.length * 5;
-    healthScore -= deadExports.length * 2;
-    healthScore -= circularDeps.length * 10;
+    healthScore -= violations.length * 10;
+    healthScore -= circularDeps.length * 15;
+    healthScore -= Math.min(20, deadExports.length * 1);  // cap dead export penalty at 20
+    healthScore -= Math.min(10, unusedPorts.length * 1);   // cap unused port penalty at 10
     healthScore = Math.max(0, Math.min(100, healthScore));
 
     return {
@@ -224,8 +228,8 @@ export class ArchAnalyzer implements IArchAnalysisPort {
       orphanFiles,
       dependencyViolations: violations,
       circularDeps,
-      unusedPorts: [],   // Requires L2 port interface analysis (future)
-      unusedAdapters: [], // Requires L2 port interface analysis (future)
+      unusedPorts,
+      unusedAdapters,
       summary: {
         totalFiles: summaries.length,
         totalExports,
@@ -235,5 +239,59 @@ export class ArchAnalyzer implements IArchAnalysisPort {
         healthScore,
       },
     };
+  }
+
+  /**
+   * Detect port interfaces that have no adapter implementation.
+   *
+   * Strategy: collect all interface exports from ports/ files whose names
+   * start with 'I' and end with 'Port'. Then check if any adapter file
+   * imports that interface name — if not, the port is unused.
+   */
+  private detectUnusedPorts(summaries: ASTSummary[]): {
+    unusedPorts: string[];
+    unusedAdapters: string[];
+  } {
+    // Collect port interface names from port files
+    const portInterfaces = new Set<string>();
+    for (const s of summaries) {
+      const normalized = normalizePath(s.filePath);
+      if (!normalized.includes('/ports/')) continue;
+      for (const exp of s.exports) {
+        if (exp.kind === 'interface' && exp.name.startsWith('I') && exp.name.endsWith('Port')) {
+          portInterfaces.add(exp.name);
+        }
+      }
+    }
+
+    // Collect all interface names imported by adapter files
+    const implementedPorts = new Set<string>();
+    const adapterFiles: string[] = [];
+    for (const s of summaries) {
+      const normalized = normalizePath(s.filePath);
+      if (!normalized.includes('/adapters/')) continue;
+      adapterFiles.push(normalized);
+      for (const imp of s.imports) {
+        for (const name of imp.names) {
+          if (portInterfaces.has(name)) {
+            implementedPorts.add(name);
+          }
+        }
+      }
+    }
+
+    const unusedPorts = Array.from(portInterfaces).filter(
+      (name) => !implementedPorts.has(name),
+    );
+
+    // Adapter files that don't import any port interface are potentially unused
+    const unusedAdapters = adapterFiles.filter((f) => {
+      const s = summaries.find((s) => normalizePath(s.filePath) === f);
+      if (!s) return false;
+      const importedPorts = s.imports.flatMap((i) => i.names).filter((n) => portInterfaces.has(n));
+      return importedPorts.length === 0;
+    });
+
+    return { unusedPorts, unusedAdapters };
   }
 }

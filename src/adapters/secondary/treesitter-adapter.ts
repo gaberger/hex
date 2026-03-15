@@ -4,6 +4,7 @@
  * Uses web-tree-sitter (WASM) to parse TypeScript files and produce
  * L0-L3 AST summaries as defined in docs/architecture/treesitter-format.md.
  */
+import { resolve as pathResolve } from 'node:path';
 import type { Parser, Language as TSLanguage, Node as TSNode, Tree } from 'web-tree-sitter';
 import type {
   ASTSummary,
@@ -33,6 +34,7 @@ export class TreeSitterAdapter implements IASTPort {
   private constructor(
     private readonly grammarDirs: string[],
     private readonly fs: IFileSystemPort,
+    private readonly rootPath: string,
   ) {}
 
   /**
@@ -40,9 +42,9 @@ export class TreeSitterAdapter implements IASTPort {
    * candidate directories (project-local config/grammars, tree-sitter-wasms
    * npm package, legacy web-tree-sitter directory).
    */
-  static async create(grammarDirs: string | string[], fs: IFileSystemPort): Promise<TreeSitterAdapter> {
+  static async create(grammarDirs: string | string[], fs: IFileSystemPort, rootPath?: string): Promise<TreeSitterAdapter> {
     const dirs = Array.isArray(grammarDirs) ? grammarDirs : [grammarDirs];
-    const adapter = new TreeSitterAdapter(dirs, fs);
+    const adapter = new TreeSitterAdapter(dirs, fs, rootPath ?? process.cwd());
     await adapter.init();
     return adapter;
   }
@@ -75,12 +77,16 @@ export class TreeSitterAdapter implements IASTPort {
     this._isStub = this.langMap.size === 0;
   }
 
-  /** Search candidate directories for a grammar WASM file. */
+  /**
+   * Search candidate directories for a grammar WASM file.
+   * Returns an ABSOLUTE path because Language.load() needs a real filesystem path,
+   * but uses fs.exists() with relative paths for safe traversal checking.
+   */
   private async findGrammar(filename: string): Promise<string | null> {
     for (const dir of this.grammarDirs) {
-      const candidate = `${dir}/${filename}`;
-      if (await this.fs.exists(candidate)) {
-        return candidate;
+      const relative = `${dir}/${filename}`;
+      if (await this.fs.exists(relative)) {
+        return pathResolve(this.rootPath, relative);
       }
     }
     return null;
@@ -91,21 +97,48 @@ export class TreeSitterAdapter implements IASTPort {
   async extractSummary(filePath: string, level: ASTSummary['level']): Promise<ASTSummary> {
     const source = await this.fs.read(filePath);
     const lang = detectLanguage(filePath);
+    const lineCount = source.split('\n').length;
+    const fullTokenEstimate = Math.ceil(source.length / 4);
+
+    if (level === 'L0') {
+      return {
+        filePath, language: lang, level,
+        exports: [], imports: [], dependencies: [],
+        lineCount,
+        tokenEstimate: Math.ceil((filePath.length + 20) / 4), // ~filename + metadata
+      };
+    }
+
+    if (level === 'L3') {
+      return {
+        filePath, language: lang, level,
+        exports: [], imports: [], dependencies: [],
+        lineCount, tokenEstimate: fullTokenEstimate,
+        raw: source,
+      };
+    }
+
+    // L1 or L2 — parse and extract structural summary
+    const tree = this.parse(source, lang);
     const base: ASTSummary = {
       filePath, language: lang, level,
       exports: [], imports: [], dependencies: [],
-      lineCount: source.split('\n').length,
-      tokenEstimate: Math.ceil(source.length / 4),
+      lineCount, tokenEstimate: 0, // computed below
     };
-    if (level === 'L0') return base;
-    if (level === 'L3') return { ...base, raw: source };
-
-    const tree = this.parse(source, lang);
-    if (tree === null) return base;
+    if (tree === null) {
+      base.tokenEstimate = fullTokenEstimate;
+      return base;
+    }
 
     base.exports = this.extractExports(tree, level === 'L2');
     base.imports = this.extractImports(tree);
     base.dependencies = base.imports.filter((i) => !i.from.startsWith('.')).map((i) => i.from);
+
+    // Token estimate based on serialized summary size, not raw source
+    const summaryText = base.exports.map(e => `${e.kind} ${e.name}${e.signature ? ': ' + e.signature : ''}`).join('\n')
+      + '\n' + base.imports.map(i => `import {${i.names.join(',')}} from '${i.from}'`).join('\n');
+    base.tokenEstimate = Math.ceil(summaryText.length / 4);
+
     return base;
   }
 

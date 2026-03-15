@@ -179,13 +179,16 @@ describe('ArchAnalyzer.detectCircularDeps', () => {
 
 describe('ArchAnalyzer.analyzeArchitecture', () => {
   it('computes healthScore 100 for clean project with relative .js imports', async () => {
-    const files = ['src/core/usecases/uc.ts', 'src/core/ports/index.ts'];
+    const files = ['src/core/usecases/uc.ts', 'src/core/ports/index.ts', 'src/adapters/secondary/impl.ts'];
     const summaries = {
       'src/core/usecases/uc.ts': makeSummary('src/core/usecases/uc.ts', {
         imports: [{ names: ['IPort'], from: '../ports/index.js' }],
       }),
       'src/core/ports/index.ts': makeSummary('src/core/ports/index.ts', {
         exports: [{ name: 'IPort', kind: 'interface' }],
+      }),
+      'src/adapters/secondary/impl.ts': makeSummary('src/adapters/secondary/impl.ts', {
+        imports: [{ names: ['IPort'], from: '../../core/ports/index.js' }],
       }),
     };
     const analyzer = new ArchAnalyzer(mockAST(summaries), mockFS(files));

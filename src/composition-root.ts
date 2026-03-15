@@ -87,15 +87,16 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   const swarm = new RufloAdapter(projectPath);
 
   // Tree-sitter: search multiple candidate directories for WASM grammars
+  // Paths must be RELATIVE to project root — fs.exists() uses safePath()
   let ast: IASTPort;
   let astIsStub = false;
   try {
     const grammarDirs = [
-      `${projectPath}/config/grammars`,
-      `${projectPath}/node_modules/tree-sitter-wasms/out`,
-      `${projectPath}/node_modules/web-tree-sitter`,
+      'config/grammars',
+      'node_modules/tree-sitter-wasms/out',
+      'node_modules/web-tree-sitter',
     ];
-    const treeSitter = await TreeSitterAdapter.create(grammarDirs, fs);
+    const treeSitter = await TreeSitterAdapter.create(grammarDirs, fs, projectPath);
     if (treeSitter.isStub()) {
       process.stderr.write(
         'WARNING: Tree-sitter grammars not found. Run \'hex-intf setup\' to download. '
@@ -104,10 +105,11 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
       astIsStub = true;
     }
     ast = treeSitter;
-  } catch {
+  } catch (err) {
     process.stderr.write(
-      'WARNING: Tree-sitter failed to initialize. '
-      + 'Architecture analysis will return incomplete results.\n',
+      'WARNING: Tree-sitter failed to initialize: '
+      + (err instanceof Error ? err.message + '\n' + err.stack : String(err))
+      + '\nArchitecture analysis will return incomplete results.\n',
     );
     astIsStub = true;
     ast = {
