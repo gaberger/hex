@@ -141,15 +141,24 @@ export class DashboardAdapter {
   // ── GET / ───────────────────────────────────────────
 
   private serveIndex(res: ServerResponse): void {
+    // Search multiple locations: import.meta.url varies between source and bundled
     const dir = dirname(fileURLToPath(import.meta.url));
-    const htmlPath = resolve(dir, 'dashboard', 'index.html');
-    try {
-      const html = readFileSync(htmlPath, 'utf-8');
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(html);
-    } catch {
-      this.json(res, 500, { error: 'Dashboard HTML not found. Expected at: ' + htmlPath });
+    const candidates = [
+      resolve(dir, 'dashboard', 'index.html'),                           // source: src/adapters/primary/
+      resolve(dir, 'adapters', 'primary', 'dashboard', 'index.html'),    // bundled: dist/ or project root
+      resolve(dir, 'src', 'adapters', 'primary', 'dashboard', 'index.html'), // project root
+      resolve(this.ctx.rootPath, 'src', 'adapters', 'primary', 'dashboard', 'index.html'), // explicit rootPath
+      resolve(this.ctx.rootPath, 'dist', 'adapters', 'primary', 'dashboard', 'index.html'), // dist via rootPath
+    ];
+    for (const htmlPath of candidates) {
+      try {
+        const html = readFileSync(htmlPath, 'utf-8');
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(html);
+        return;
+      } catch { /* try next */ }
     }
+    this.json(res, 500, { error: 'Dashboard HTML not found. Searched:\n' + candidates.join('\n') });
   }
 
   // ── GET /api/health ─────────────────────────────────
