@@ -1536,20 +1536,33 @@ export class CLIAdapter {
       : review ? 'REVIEW (pause after each phase)'
       : 'DEFAULT (confirm before merge)';
 
+    // ── Connect to dashboard hub (best-effort) ──
+    let dashboard: { broadcast: (event: string, data: unknown) => void; stop: () => void } | null = null;
+    try {
+      const { DashboardAdapter } = await import('./dashboard-adapter.js');
+      const adapter = new DashboardAdapter(this.ctx);
+      await adapter.start();
+      dashboard = { broadcast: (e, d) => adapter.broadcast(e, d), stop: () => adapter.stop() };
+      dashboard.broadcast('go-started', { prompt, mode, branch: branchName, workDir, timestamp });
+    } catch {
+      // Hub not running — continue without dashboard
+    }
+
     this.writeLn('');
-    this.writeLn('┌─────────────────────────────────────────┐');
-    this.writeLn('│  hex go — autonomous coding             │');
-    this.writeLn('├─────────────────────────────────────────┤');
-    this.writeLn(`│  Prompt:  ${prompt.slice(0, 30).padEnd(30)}│`);
-    this.writeLn(`│  Mode:    ${mode.slice(0, 30).padEnd(30)}│`);
-    this.writeLn(`│  Branch:  ${(noWorktree ? '(current)' : branchName).slice(0, 30).padEnd(30)}│`);
-    this.writeLn(`│  ${secretsInfo.slice(0, 38).padEnd(38)} │`);
-    this.writeLn('└─────────────────────────────────────────┘');
+    this.writeLn('+-------------------------------------------+');
+    this.writeLn('|  hex go -- autonomous coding              |');
+    this.writeLn('+-------------------------------------------+');
+    this.writeLn(`|  Prompt:  ${prompt.slice(0, 30).padEnd(30)} |`);
+    this.writeLn(`|  Mode:    ${mode.slice(0, 30).padEnd(30)} |`);
+    this.writeLn(`|  Branch:  ${(noWorktree ? '(current)' : branchName).slice(0, 30).padEnd(30)} |`);
+    this.writeLn(`|  ${secretsInfo.slice(0, 39).padEnd(39)} |`);
+    this.writeLn('+-------------------------------------------+');
     this.writeLn('');
 
     // Dry-run: stop after setup (for testing and previewing)
     if (dryRun) {
       this.writeLn('[hex go] Dry run — stopping before agent launch.');
+      dashboard?.stop();
       return 0;
     }
 
@@ -1612,6 +1625,7 @@ export class CLIAdapter {
 
     // ── Phase 4: Launch Claude Code ──
     this.writeLn('[hex go] Launching Claude Code...');
+    dashboard?.broadcast('go-agent-launched', { prompt, workDir, timestamp: Date.now() });
     this.writeLn('');
 
     const { execFile: execFileCb } = await import('child_process');
@@ -1639,16 +1653,19 @@ export class CLIAdapter {
 
       this.writeLn('');
       this.writeLn('[hex go] Agent completed.');
+      dashboard?.broadcast('go-agent-completed', { prompt, workDir, timestamp: Date.now() });
     } catch (err: any) {
       if (err.stdout) this.writeLn(err.stdout);
       if (err.stderr) this.writeLn(err.stderr);
       this.writeLn(`[hex go] Agent exited with error: ${err.message ?? 'unknown'}`);
+      dashboard?.broadcast('go-agent-failed', { prompt, error: err.message ?? 'unknown', timestamp: Date.now() });
 
       if (!noWorktree) {
         this.writeLn(`[hex go] Worktree preserved at: ${workDir}`);
         this.writeLn(`[hex go] Branch: ${branchName}`);
         this.writeLn('[hex go] To resume: cd into the worktree and continue manually');
       }
+      dashboard?.stop();
       return 1;
     }
 
@@ -1662,15 +1679,19 @@ export class CLIAdapter {
 
       if (!buildResult.success) {
         this.writeLn(`[hex go] FAIL — ${buildResult.failed} test(s) failed`);
+        dashboard?.broadcast('go-validation', { result: 'fail', failed: buildResult.failed, timestamp: Date.now() });
         if (!noWorktree) {
           this.writeLn(`[hex go] Worktree preserved at: ${workDir}`);
         }
+        dashboard?.stop();
         return 1;
       }
 
       this.writeLn(`[hex go] PASS — ${buildResult.passed} tests passed`);
+      dashboard?.broadcast('go-validation', { result: 'pass', passed: buildResult.passed, timestamp: Date.now() });
     } catch {
       this.writeLn('[hex go] Validation skipped (no test runner found)');
+      dashboard?.broadcast('go-validation', { result: 'skipped', timestamp: Date.now() });
     }
 
     // ── Phase 6: Merge decision ──
@@ -1712,6 +1733,8 @@ export class CLIAdapter {
 
     this.writeLn('');
     this.writeLn('[hex go] Done.');
+    dashboard?.broadcast('go-done', { prompt, mode, timestamp: Date.now() });
+    dashboard?.stop();
     return 0;
   }
 
