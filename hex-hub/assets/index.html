@@ -105,7 +105,7 @@ a{color:var(--accent);text-decoration:none}
 .pause-btn:hover{background:var(--border);color:var(--text)}
 
 /* Dependency Graph */
-.graph-section{margin:0 24px var(--gap);background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;flex:1;min-height:0}
+.graph-section{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;flex:1;min-height:0}
 .graph-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;cursor:pointer;user-select:none;flex-shrink:0}
 .graph-header:hover{background:rgba(255,255,255,.02)}
 .graph-header h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);font-weight:600}
@@ -113,6 +113,7 @@ a{color:var(--accent);text-decoration:none}
 .graph-toggle.open{transform:rotate(180deg)}
 .graph-body{max-height:0;overflow:hidden;display:flex;flex-direction:column;min-height:0}
 .graph-body.open{max-height:none;flex:1;overflow:visible}
+.bottom-row .graph-section .graph-body{max-height:none;flex:1;overflow:visible}
 .graph-canvas{display:block;width:100%;flex:1;min-height:300px;background:var(--bg);border-top:1px solid var(--border);cursor:grab}
 .graph-canvas:active{cursor:grabbing}
 .graph-zoom-controls{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:4px;z-index:10}
@@ -162,6 +163,35 @@ a{color:var(--accent);text-decoration:none}
 
 /* Empty state */
 .empty{color:var(--text2);font-size:.8rem;font-style:italic;padding:8px 0}
+
+/* Bottom Row: Chat + Graph side by side */
+.bottom-row{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap);padding:0 24px var(--gap);min-height:420px}
+
+/* Command Chat Panel */
+.chat-section{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;flex-direction:column;max-height:500px;min-height:0}
+.chat-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--border)}
+.chat-header h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);font-weight:600;margin:0}
+.chat-ws-status{display:flex;align-items:center;gap:6px;font-size:.75rem;color:var(--text2)}
+.chat-ws-dot{width:6px;height:6px;border-radius:50%;background:var(--text2);display:inline-block}
+.chat-ws-dot.open{background:var(--green)}
+.chat-quick-actions{display:flex;gap:6px;padding:8px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.chat-quick-btn{padding:4px 10px;border:1px solid var(--border);border-radius:12px;background:transparent;color:var(--text2);font-size:.72rem;cursor:pointer;transition:all .15s}
+.chat-quick-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(88,166,255,.08)}
+.chat-messages{flex:1;overflow-y:auto;padding:12px 20px;display:flex;flex-direction:column;gap:8px;min-height:180px}
+.chat-msg{max-width:85%;padding:8px 12px;border-radius:10px;font-size:.82rem;line-height:1.45;word-break:break-word}
+.chat-msg.sent{align-self:flex-end;background:rgba(88,166,255,.15);color:var(--accent);border-bottom-right-radius:3px}
+.chat-msg.received{align-self:flex-start;background:rgba(63,185,80,.1);color:var(--text);border-bottom-left-radius:3px}
+.chat-msg.error{align-self:flex-start;background:rgba(248,81,73,.1);color:var(--red);border-bottom-left-radius:3px}
+.chat-msg.system{align-self:center;background:transparent;color:var(--text2);font-size:.75rem;font-style:italic;padding:4px 0}
+.chat-msg-meta{font-size:.65rem;color:var(--text2);margin-top:3px}
+.chat-msg pre{margin:6px 0 0;padding:8px;background:rgba(0,0,0,.3);border-radius:4px;overflow-x:auto;font-size:.75rem;font-family:'SF Mono',Consolas,monospace;white-space:pre-wrap}
+.chat-input-bar{display:flex;gap:8px;padding:12px 20px;border-top:1px solid var(--border)}
+.chat-input{flex:1;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:.85rem;font-family:inherit;outline:none;transition:border-color .15s}
+.chat-input:focus{border-color:var(--accent)}
+.chat-input::placeholder{color:var(--text2)}
+.chat-send-btn{padding:8px 16px;background:var(--accent);color:#0d1117;border:none;border-radius:6px;font-size:.82rem;font-weight:600;cursor:pointer;transition:opacity .15s}
+.chat-send-btn:hover{opacity:.85}
+.chat-send-btn:disabled{opacity:.4;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -288,6 +318,35 @@ a{color:var(--accent);text-decoration:none}
   </div>
 </div>
 
+<!-- Bottom Row: Chat + Graph side by side -->
+<div class="bottom-row">
+
+<!-- Command Chat -->
+<div class="chat-section" id="chatSection">
+  <div class="chat-header">
+    <h3>Command Chat</h3>
+    <div class="chat-ws-status">
+      <span class="chat-ws-dot" id="chatWsDot"></span>
+      <span id="chatWsLabel">Connecting...</span>
+    </div>
+  </div>
+  <div class="chat-quick-actions" id="chatQuickActions">
+    <button class="chat-quick-btn" data-cmd="ping">Ping</button>
+    <button class="chat-quick-btn" data-cmd="run-analyze">Analyze</button>
+    <button class="chat-quick-btn" data-cmd="run-build">Build</button>
+    <button class="chat-quick-btn" data-cmd="run-summarize">Summarize</button>
+    <button class="chat-quick-btn" data-cmd="spawn-agent" data-payload='{"name":"helper","role":"coder"}'>Spawn Agent</button>
+    <button class="chat-quick-btn" data-cmd="create-task" data-payload='{"title":"ad-hoc task","agentRole":"coder"}'>Create Task</button>
+  </div>
+  <div class="chat-messages" id="chatMessages">
+    <div class="chat-msg system">Select a project and send commands to its agents</div>
+  </div>
+  <div class="chat-input-bar">
+    <input class="chat-input" id="chatInput" type="text" placeholder="Type a command (e.g. ping, run-analyze, spawn-agent coder)..." autocomplete="off">
+    <button class="chat-send-btn" id="chatSendBtn">Send</button>
+  </div>
+</div>
+
 <!-- Dependency Graph -->
 <div class="graph-section">
   <div class="graph-header" id="graphToggle">
@@ -317,6 +376,8 @@ a{color:var(--accent);text-decoration:none}
     </div>
   </div>
 </div>
+
+</div><!-- /bottom-row -->
 
 <!-- Decision Modal -->
 <div class="modal-overlay" id="decisionModal">
@@ -503,6 +564,10 @@ a{color:var(--accent);text-decoration:none}
     selectedNode = null;
     selectedTransitive = {};
     camera = { x: 0, y: 0, zoom: 1 };
+
+    // Subscribe chat WebSocket to new project's topics and render its channel
+    chatSubscribe(projectId);
+    chatRenderChannel();
 
     // Reload all panels for the new project
     loadHealth();
@@ -1903,6 +1968,250 @@ a{color:var(--accent);text-decoration:none}
   }
 
   // --- Init ---
+  // --- Command Chat ---
+  var chatState = {
+    ws: null,
+    connected: false,
+    reconnectDelay: 1000,
+    reconnectTimer: null,
+    channels: {},       // projectId -> { messages: [], pendingCommands: {} }
+  };
+
+  function chatGetChannel(projectId) {
+    if (!projectId) return null;
+    if (!chatState.channels[projectId]) {
+      chatState.channels[projectId] = { messages: [], pendingCommands: {} };
+    }
+    return chatState.channels[projectId];
+  }
+
+  function chatRenderChannel() {
+    var container = $('#chatMessages');
+    clearChildren(container);
+    var channel = chatGetChannel(state.currentProject);
+    if (!channel || channel.messages.length === 0) {
+      container.appendChild(createEl('div', { className: 'chat-msg system', textContent: 'Select a project and send commands to its agents' }));
+      return;
+    }
+    channel.messages.forEach(function(m) {
+      var msg = createEl('div', { className: 'chat-msg ' + m.type });
+      var lines = m.text.split('\n');
+      msg.appendChild(document.createTextNode(lines[0]));
+      if (lines.length > 1) {
+        var pre = createEl('pre');
+        pre.textContent = lines.slice(1).join('\n');
+        msg.appendChild(pre);
+      }
+      var meta = createEl('div', { className: 'chat-msg-meta', textContent: m.time });
+      msg.appendChild(meta);
+      container.appendChild(msg);
+    });
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function chatConnect() {
+    if (chatState.ws) return;
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var wsUrl = proto + '//' + location.host + '/ws';
+    try { chatState.ws = new WebSocket(wsUrl); } catch(e) { chatScheduleReconnect(); return; }
+
+    chatState.ws.onopen = function() {
+      chatState.connected = true;
+      chatState.reconnectDelay = 1000;
+      chatSetStatus(true);
+      // Subscribe to results for all projects
+      if (state.currentProject) {
+        chatSubscribe(state.currentProject);
+      }
+    };
+
+    chatState.ws.onmessage = function(ev) {
+      try {
+        var envelope = JSON.parse(ev.data);
+        if (envelope.event === 'command-result' && envelope.data) {
+          chatHandleResult(envelope.data);
+        } else if (envelope.event === 'connected') {
+          // Welcome message — ignore
+        }
+      } catch(e) { /* ignore malformed */ }
+    };
+
+    chatState.ws.onclose = function() {
+      chatState.connected = false;
+      chatState.ws = null;
+      chatSetStatus(false);
+      chatScheduleReconnect();
+    };
+
+    chatState.ws.onerror = function() {
+      // close will fire after error
+    };
+  }
+
+  function chatSubscribe(projectId) {
+    if (chatState.ws && chatState.ws.readyState === WebSocket.OPEN) {
+      chatState.ws.send(JSON.stringify({ type: 'subscribe', topic: 'project:' + projectId + ':result' }));
+      chatState.ws.send(JSON.stringify({ type: 'subscribe', topic: 'project:' + projectId + ':command' }));
+    }
+  }
+
+  function chatScheduleReconnect() {
+    if (chatState.reconnectTimer) return;
+    chatState.reconnectTimer = setTimeout(function() {
+      chatState.reconnectTimer = null;
+      chatConnect();
+    }, chatState.reconnectDelay);
+    chatState.reconnectDelay = Math.min(chatState.reconnectDelay * 2, 30000);
+  }
+
+  function chatSetStatus(connected) {
+    var dot = $('#chatWsDot');
+    var label = $('#chatWsLabel');
+    if (connected) {
+      dot.classList.add('open');
+      label.textContent = 'Connected';
+    } else {
+      dot.classList.remove('open');
+      label.textContent = 'Disconnected';
+    }
+  }
+
+  function chatSendCommand(type, payload) {
+    if (!state.currentProject) {
+      chatAddMessage('system', 'No project selected');
+      return;
+    }
+
+    var displayText = type;
+    if (payload && Object.keys(payload).length > 0) {
+      displayText += ' ' + JSON.stringify(payload);
+    }
+    chatAddMessage('sent', displayText);
+
+    var targetProject = state.currentProject;
+    postJSON('/api/' + targetProject + '/command',
+      { type: type, payload: payload || {}, source: 'browser' }
+    ).then(function(data) {
+      if (data && data.commandId) {
+        var ch = chatGetChannel(targetProject);
+        if (ch) ch.pendingCommands[data.commandId] = { type: type, sentAt: Date.now(), projectId: targetProject };
+        chatAddMessage('system', 'Dispatched → ' + data.commandId.slice(0, 8) + '…', targetProject);
+      } else {
+        chatAddMessage('error', 'Failed to dispatch command', targetProject);
+      }
+    });
+  }
+
+  /** POST JSON to the hub — used by chat commands. */
+  function postJSON(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }).catch(function(e) {
+      console.warn('API POST failed:', url, e);
+      return null;
+    });
+  }
+
+  function chatHandleResult(result) {
+    var cmdId = result.commandId;
+    // Find which channel owns this command
+    var targetProject = null;
+    var pending = null;
+    Object.keys(chatState.channels).forEach(function(pid) {
+      var ch = chatState.channels[pid];
+      if (ch.pendingCommands[cmdId]) {
+        pending = ch.pendingCommands[cmdId];
+        targetProject = pid;
+        delete ch.pendingCommands[cmdId];
+      }
+    });
+    var label = pending ? pending.type : 'command';
+    targetProject = targetProject || result.projectId || state.currentProject;
+
+    if (result.status === 'completed') {
+      var text = label + ' completed';
+      if (result.data) {
+        var dataStr = typeof result.data === 'string' ? result.data : JSON.stringify(result.data, null, 2);
+        if (dataStr.length > 2000) dataStr = dataStr.slice(0, 2000) + '\n… (truncated)';
+        text += '\n' + dataStr;
+      }
+      chatAddMessage('received', text, targetProject);
+    } else if (result.status === 'failed') {
+      chatAddMessage('error', label + ' failed: ' + (result.error || 'unknown error'), targetProject);
+    } else {
+      chatAddMessage('system', label + ' → ' + result.status, targetProject);
+    }
+  }
+
+  function chatAddMessage(type, text, projectId) {
+    var pid = projectId || state.currentProject;
+    var timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+    // Store in channel
+    var channel = chatGetChannel(pid);
+    if (channel) {
+      channel.messages.push({ type: type, text: text, time: timeStr });
+      // Cap at 200 messages per channel
+      if (channel.messages.length > 200) channel.messages.shift();
+    }
+
+    // Only render if this is the active project
+    if (pid === state.currentProject) {
+      chatRenderChannel();
+    }
+  }
+
+  function chatParseInput(input) {
+    var trimmed = input.trim();
+    if (!trimmed) return null;
+
+    // Parse: "command-type key=value key=value" or "command-type {json}"
+    var parts = trimmed.split(/\s+/);
+    var type = parts[0];
+    var rest = trimmed.slice(type.length).trim();
+
+    var payload = {};
+    if (rest.charAt(0) === '{') {
+      try { payload = JSON.parse(rest); } catch(e) { /* treat as empty */ }
+    } else if (rest) {
+      // Parse key=value pairs
+      rest.split(/\s+/).forEach(function(pair) {
+        var eqIdx = pair.indexOf('=');
+        if (eqIdx > 0) {
+          payload[pair.slice(0, eqIdx)] = pair.slice(eqIdx + 1);
+        } else if (pair) {
+          // Shorthand: "spawn-agent coder" → { role: "coder" }
+          // "spawn-agent myname coder" → { name: "myname", role: "coder" }
+          if (type === 'spawn-agent') {
+            if (!payload.name) payload.name = pair;
+            else if (!payload.role) payload.role = pair;
+          } else if (type === 'create-task') {
+            if (!payload.title) payload.title = pair;
+            else if (!payload.agentRole) payload.agentRole = pair;
+          } else if (type === 'terminate-agent') {
+            payload.agentId = pair;
+          } else if (type === 'cancel-task') {
+            payload.taskId = pair;
+          } else if (type === 'run-summarize') {
+            payload.filePath = pair;
+          }
+        }
+      });
+      // Fix spawn-agent shorthand: if only name given, it's actually the role
+      if (type === 'spawn-agent' && payload.name && !payload.role) {
+        payload.role = payload.name;
+        payload.name = payload.role + '-' + Date.now().toString(36).slice(-4);
+      }
+    }
+
+    return { type: type, payload: payload };
+  }
+
   function init() {
     // File selector
     $('#fileSelector').addEventListener('change', function(e) {
@@ -1924,6 +2233,35 @@ a{color:var(--accent);text-decoration:none}
       state.autoScroll = !state.autoScroll;
       setText('#pauseBtn', state.autoScroll ? '\u23F8 Pause' : '\u25B6 Resume');
     });
+
+    // --- Chat panel ---
+    $('#chatSendBtn').addEventListener('click', function() {
+      var parsed = chatParseInput($('#chatInput').value);
+      if (parsed) {
+        chatSendCommand(parsed.type, parsed.payload);
+        $('#chatInput').value = '';
+      }
+    });
+
+    $('#chatInput').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        $('#chatSendBtn').click();
+      }
+    });
+
+    // Quick action buttons
+    $$('.chat-quick-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var cmd = btn.getAttribute('data-cmd');
+        var payloadStr = btn.getAttribute('data-payload');
+        var payload = payloadStr ? JSON.parse(payloadStr) : {};
+        chatSendCommand(cmd, payload);
+      });
+    });
+
+    // Connect chat WebSocket
+    chatConnect();
 
     // Graph toggle — recompute layout every time we open (canvas size changes)
     $('#graphToggle').addEventListener('click', function() {

@@ -322,8 +322,8 @@ describe('MCPAdapter', () => {
 // ── Tool Definition Tests ─────────────────────────────────
 
 describe('HEX_DASHBOARD_TOOLS', () => {
-  it('defines 5 dashboard tools', () => {
-    expect(HEX_DASHBOARD_TOOLS.length).toBe(5);
+  it('defines 8 dashboard tools', () => {
+    expect(HEX_DASHBOARD_TOOLS.length).toBe(8);
   });
 
   it('hex_dashboard_start requires rootPath', () => {
@@ -347,5 +347,32 @@ describe('HEX_DASHBOARD_TOOLS', () => {
   it('hex_dashboard_list requires no parameters', () => {
     const tool = HEX_DASHBOARD_TOOLS.find((t) => t.name === 'hex_dashboard_list');
     expect(tool!.inputSchema.required).toEqual([]);
+  });
+
+  it('hex_hub_command requires projectId and type', () => {
+    const tool = HEX_DASHBOARD_TOOLS.find((t) => t.name === 'hex_hub_command');
+    expect(tool).toBeDefined();
+    expect(tool!.inputSchema.required).toContain('projectId');
+    expect(tool!.inputSchema.required).toContain('type');
+  });
+
+  it('hex_hub_command defines valid command types enum', () => {
+    const tool = HEX_DASHBOARD_TOOLS.find((t) => t.name === 'hex_hub_command');
+    expect(tool!.inputSchema.properties.type.enum).toContain('spawn-agent');
+    expect(tool!.inputSchema.properties.type.enum).toContain('ping');
+    expect(tool!.inputSchema.properties.type.enum).toContain('run-analyze');
+  });
+
+  it('hex_hub_command_status requires projectId and commandId', () => {
+    const tool = HEX_DASHBOARD_TOOLS.find((t) => t.name === 'hex_hub_command_status');
+    expect(tool).toBeDefined();
+    expect(tool!.inputSchema.required).toContain('projectId');
+    expect(tool!.inputSchema.required).toContain('commandId');
+  });
+
+  it('hex_hub_commands_list requires projectId', () => {
+    const tool = HEX_DASHBOARD_TOOLS.find((t) => t.name === 'hex_hub_commands_list');
+    expect(tool).toBeDefined();
+    expect(tool!.inputSchema.required).toContain('projectId');
   });
 });

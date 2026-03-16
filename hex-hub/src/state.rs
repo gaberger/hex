@@ -9,6 +9,8 @@ pub type SharedState = Arc<AppState>;
 
 pub struct AppState {
     pub projects: RwLock<HashMap<String, ProjectEntry>>,
+    pub commands: RwLock<HashMap<String, HubCommand>>,       // commandId → command
+    pub results: RwLock<HashMap<String, HubCommandResult>>,  // commandId → result
     pub sse_tx: broadcast::Sender<SseEvent>,
     pub ws_tx: broadcast::Sender<WsEnvelope>,
     pub auth_token: Option<String>,
@@ -20,6 +22,8 @@ impl AppState {
         let (ws_tx, _) = broadcast::channel(256);
         Self {
             projects: RwLock::new(HashMap::new()),
+            commands: RwLock::new(HashMap::new()),
+            results: RwLock::new(HashMap::new()),
             sse_tx,
             ws_tx,
             auth_token,
@@ -77,6 +81,31 @@ pub struct WsEnvelope {
     pub topic: String,
     pub event: String,
     pub data: serde_json::Value,
+}
+
+// ── Command Types (Hub → Project) ───────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubCommand {
+    pub command_id: String,
+    pub project_id: String,
+    #[serde(rename = "type")]
+    pub command_type: String,
+    pub payload: serde_json::Value,
+    pub issued_at: String,
+    pub source: String,
+    pub status: String,  // pending, dispatched, running, completed, failed
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubCommandResult {
+    pub command_id: String,
+    pub status: String,
+    pub data: Option<serde_json::Value>,
+    pub error: Option<String>,
+    pub completed_at: String,
 }
 
 // ── Request/Response Types ──────────────────────────────

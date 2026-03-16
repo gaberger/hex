@@ -1,9 +1,10 @@
+pub mod commands;
+pub mod decisions;
 pub mod projects;
 pub mod push;
 pub mod query;
 pub mod sse;
 pub mod ws;
-pub mod decisions;
 
 use axum::{Router, routing::{get, post, delete}, extract::DefaultBodyLimit};
 use tower_http::cors::{CorsLayer, AllowOrigin};
@@ -50,6 +51,13 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/{project_id}/swarm", get(query::get_swarm))
         .route("/api/{project_id}/graph", get(query::get_graph))
         .route("/api/{project_id}/project", get(query::get_project))
+        // Commands (browser/MCP → hub → project, bidirectional)
+        .route("/api/{project_id}/command", post(commands::send_command)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/{project_id}/command/{command_id}", get(commands::get_command))
+        .route("/api/{project_id}/command/{command_id}/result", post(commands::report_result)
+            .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
+        .route("/api/{project_id}/commands", get(commands::list_commands))
         // Decisions (browser → hub → SSE)
         .route("/api/{project_id}/decisions/{decision_id}", post(decisions::handle_decision))
         // WebSocket

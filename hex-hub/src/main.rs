@@ -37,6 +37,45 @@ async fn main() {
     // Create shared state
     let state = Arc::new(state::AppState::new(token.clone()));
 
+    // Background task: evict completed commands older than 1 hour (every 60s)
+    let evict_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        let ttl = chrono::Duration::hours(1);
+        loop {
+            interval.tick().await;
+            let cutoff = chrono::Utc::now() - ttl;
+            let cutoff_str = cutoff.to_rfc3339();
+
+            // Evict completed/failed commands
+            let mut commands = evict_state.commands.write().await;
+            let before = commands.len();
+            commands.retain(|_, cmd| {
+                if cmd.status == "completed" || cmd.status == "failed" {
+                    cmd.issued_at > cutoff_str
+                } else {
+                    true // keep pending/dispatched/running
+                }
+            });
+            let evicted_cmds = before - commands.len();
+            drop(commands);
+
+            // Evict matching results
+            let mut results = evict_state.results.write().await;
+            let before = results.len();
+            results.retain(|_, res| res.completed_at > cutoff_str);
+            let evicted_results = before - results.len();
+            drop(results);
+
+            if evicted_cmds > 0 || evicted_results > 0 {
+                tracing::debug!(
+                    "Evicted {} commands, {} results (TTL 1h)",
+                    evicted_cmds, evicted_results
+                );
+            }
+        }
+    });
+
     // Build router
     let app = routes::build_router(state);
 
