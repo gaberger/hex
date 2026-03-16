@@ -13,6 +13,7 @@ import type { ISwarmPort, ISwarmOrchestrationPort } from './swarm.js';
 import type { IRegistryPort } from './registry.js';
 import type { IBroadcastPort } from './broadcast.js';
 import type { ISecretsPort } from './secrets.js';
+import type { ICheckpointPort } from './checkpoint.js';
 
 export interface AppContext {
   rootPath: string;
@@ -48,6 +49,9 @@ export interface AppContext {
 
   /** Secrets manager — Infisical when configured, env-var fallback otherwise */
   secrets: ISecretsPort;
+
+  /** Checkpoint persistence for crash-resilient state recovery */
+  checkpoint: ICheckpointPort;
 
   /** Local output directory for analysis reports, caches, and logs */
   outputDir: string; // defaults to '.hex/' — gitignored, project-scoped

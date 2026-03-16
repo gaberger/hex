@@ -43,12 +43,22 @@ export type {
 export type { IRegistryPort } from './core/ports/registry.js';
 
 export type {
+  ICheckpointPort,
+  CheckpointEntry,
+  TaskSnapshot,
+  FeatureProgress,
+} from './core/ports/checkpoint.js';
+
+export type {
   INotificationEmitPort,
   INotificationQueryPort,
   Notification,
   ProgressReport,
   StatusLine,
 } from './core/ports/notification.js';
+
+// ── Use Cases ──────────────────────────────────────────
+export { CheckpointOrchestrator } from './core/usecases/checkpoint-orchestrator.js';
 
 // ── Domain Entities ─────────────────────────────────────
 export { QualityScore, FeedbackLoop, TaskGraph } from './core/domain/entities.js';
