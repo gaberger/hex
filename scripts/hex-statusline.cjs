@@ -34,46 +34,46 @@ if (!projectName) {
   projectName = path.basename(process.cwd());
 }
 
-// ── Swarm status via claude-flow
+// ── Swarm + AgentDB status via claude-flow runtime files
+// claude-flow runs as an MCP server in the same Claude Code session.
+// Check its runtime state files rather than shelling out to npx.
 let swarmUp = false;
 let agents = 0;
 let tasks = 0;
-const swarmOut = safe(() => {
-  const out = execSync('npx @claude-flow/cli mcp exec --tool swarm_status 2>/dev/null', { encoding: 'utf8', timeout: 2000 });
-  const m = out.match(/\{[\s\S]*\}/);
-  return m ? JSON.parse(m[0]) : null;
-}, null);
-if (swarmOut && swarmOut.status) {
-  swarmUp = swarmOut.status === 'running' || swarmOut.status === 'idle';
-  agents = swarmOut.agentCount || 0;
-  tasks = swarmOut.taskCount || 0;
+let dbUp = false;
+
+const cfHome = path.join(require('os').homedir(), '.claude-flow');
+const cfMetrics = path.join(cfHome, 'metrics');
+
+// If claude-flow has a metrics file, the MCP server is active
+if (safe(() => fs.existsSync(cfMetrics), false)) {
+  swarmUp = true; // claude-flow MCP server is running = swarm available
 }
 
-// ── AgentDB health
-let dbUp = false;
-const dbOut = safe(() => {
-  const out = execSync('npx @claude-flow/cli mcp exec --tool agentdb_health 2>/dev/null', { encoding: 'utf8', timeout: 2000 });
-  const m = out.match(/\{[\s\S]*\}/);
-  return m ? JSON.parse(m[0]) : null;
-}, null);
-if (dbOut && dbOut.available !== false) {
+// Check if claude-flow MCP is registered in this session's .mcp.json or parent
+const mcpJson = safe(() => JSON.parse(fs.readFileSync(path.join(process.cwd(), '.mcp.json'), 'utf8')), null);
+const hexMcpUp = mcpJson && mcpJson.mcpServers && mcpJson.mcpServers.hex;
+
+// AgentDB: check if the bridge state file exists
+const dbState = path.join(cfHome, 'agentdb.json');
+if (safe(() => fs.existsSync(dbState), false)) {
   dbUp = true;
 }
+// Fallback: if claude-flow metrics exist and are recent, assume agentdb available
+if (!dbUp && swarmUp) {
+  const metricsAge = safe(() => Date.now() - fs.statSync(cfMetrics).mtimeMs, Infinity);
+  if (metricsAge < 300000) dbUp = true; // metrics updated in last 5min
+}
 
-// ── Dashboard — check registry for port
+// ── Dashboard — check registry for assigned port
 let dashUrl = '';
-const regDir = path.join(require('os').homedir(), '.hex', 'registry');
-const regFile = path.join(regDir, 'projects.json');
+const regFile = path.join(require('os').homedir(), '.hex', 'registry.json');
 const regData = safe(() => JSON.parse(fs.readFileSync(regFile, 'utf8')), null);
-if (regData && Array.isArray(regData)) {
-  const match = regData.find(p => p.rootPath === process.cwd() || p.name === projectName);
+if (regData) {
+  const projects = Array.isArray(regData) ? regData : (regData.projects || []);
+  const match = projects.find(p => p.rootPath === process.cwd() || p.name === projectName);
   if (match && match.port) {
-    // Quick check if dashboard is actually listening
-    const listening = safe(() => {
-      execSync(`curl -sf http://localhost:${match.port}/api/projects >/dev/null 2>&1`, { timeout: 1000 });
-      return true;
-    }, false);
-    if (listening) dashUrl = `localhost:${match.port}`;
+    dashUrl = `localhost:${match.port}`;
   }
 }
 
