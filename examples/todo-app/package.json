@@ -1,0 +1,14 @@
+{
+  "name": "hex-intf-todo-example",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "serve": "bun run src/cli.ts serve",
+    "test": "bun test",
+    "dev": "bun --watch run src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
