@@ -625,11 +625,14 @@ a{color:var(--accent);text-decoration:none}
         sel.appendChild(createEl('option', { value: f.path, textContent: f.path }));
       });
 
-      // Compute average compression
+      // Compute average compression (ratio is 0-1 fraction of tokens saved)
       if (files.length > 0) {
         var total = 0;
         files.forEach(function(f) {
           var ratio = typeof f.ratio === 'number' ? f.ratio : (f.l1Tokens && f.l3Tokens ? (1 - f.l1Tokens / f.l3Tokens) : 0);
+          // Normalize: ratio > 1 means old l3/l1 expansion format — convert to compression
+          if (ratio > 1) ratio = 1 - (1 / ratio);
+          if (ratio < 0) ratio = 0;
           total += ratio;
         });
         setText('#avgCompression', Math.round((total / files.length) * 100) + '%');

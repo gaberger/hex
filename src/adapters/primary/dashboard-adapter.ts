@@ -138,21 +138,45 @@ export class DashboardAdapter {
 
       const files = await Promise.all(
         sourceFiles.map(async (filePath) => {
-          const [l1, l3] = await Promise.all([
+          const [l0, l1, l2, l3] = await Promise.all([
+            this.ctx.ast.extractSummary(filePath, 'L0'),
             this.ctx.ast.extractSummary(filePath, 'L1'),
+            this.ctx.ast.extractSummary(filePath, 'L2'),
             this.ctx.ast.extractSummary(filePath, 'L3'),
           ]);
           return {
             path: filePath,
+            l0Tokens: l0.tokenEstimate,
             l1Tokens: l1.tokenEstimate,
+            l2Tokens: l2.tokenEstimate,
             l3Tokens: l3.tokenEstimate,
-            ratio: l1.tokenEstimate > 0 ? +(l3.tokenEstimate / l1.tokenEstimate).toFixed(3) : 0,
+            // Compression ratio: fraction of tokens saved (0-1).
+            // L1 is the summary, L3 is the full source.
+            ratio: l3.tokenEstimate > 0 ? +(1 - l1.tokenEstimate / l3.tokenEstimate).toFixed(3) : 0,
             lineCount: l1.lineCount,
           };
         }),
       );
 
+      // Push overview (file list with ratios)
       await this.pushState('tokens', { files });
+
+      // Push per-file token levels so the dashboard can render L0-L3 bars
+      await Promise.all(
+        files.map((f) =>
+          this.post('/api/push', {
+            projectId: this.projectId,
+            type: 'tokenFile',
+            filePath: f.path,
+            data: {
+              l0: { tokens: f.l0Tokens },
+              l1: { tokens: f.l1Tokens },
+              l2: { tokens: f.l2Tokens },
+              l3: { tokens: f.l3Tokens },
+            },
+          }),
+        ),
+      );
     } catch (err) {
       this.log('tokens push failed:', err);
     }

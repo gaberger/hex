@@ -13,7 +13,7 @@
   --radius:8px;--gap:16px;
 }
 html{font-size:14px}
-body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-width:1024px;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-width:1024px;padding:0;display:flex;flex-direction:column;min-height:100vh}
 a{color:var(--accent);text-decoration:none}
 
 /* Header */
@@ -104,21 +104,24 @@ a{color:var(--accent);text-decoration:none}
 .pause-btn:hover{background:var(--border);color:var(--text)}
 
 /* Dependency Graph */
-.graph-section{margin:0 24px var(--gap);background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
-.graph-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;cursor:pointer;user-select:none}
+.graph-section{margin:0 24px var(--gap);background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;flex:1;min-height:0}
+.graph-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;cursor:pointer;user-select:none;flex-shrink:0}
 .graph-header:hover{background:rgba(255,255,255,.02)}
 .graph-header h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);font-weight:600}
 .graph-toggle{color:var(--text2);font-size:.85rem;transition:transform .3s}
 .graph-toggle.open{transform:rotate(180deg)}
-.graph-body{max-height:0;overflow:hidden;transition:max-height .4s ease}
-.graph-body.open{max-height:500px}
-.graph-canvas{display:block;width:100%;height:460px;background:var(--bg);border-top:1px solid var(--border);cursor:grab}
+.graph-body{max-height:0;overflow:hidden;display:flex;flex-direction:column;min-height:0}
+.graph-body.open{max-height:none;flex:1;overflow:visible}
+.graph-canvas{display:block;width:100%;flex:1;min-height:300px;background:var(--bg);border-top:1px solid var(--border);cursor:grab}
 .graph-canvas:active{cursor:grabbing}
 .graph-zoom-controls{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:4px;z-index:10}
 .graph-zoom-controls button{width:28px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--text);font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1}
 .graph-zoom-controls button:hover{background:var(--border);color:var(--accent)}
-.graph-wrapper{position:relative}
-.graph-legend{display:flex;gap:16px;padding:10px 20px;font-size:.75rem;color:var(--text2);border-top:1px solid var(--border)}
+.graph-section.expanded{position:fixed;top:0;left:0;right:0;bottom:0;margin:0;border-radius:0;z-index:100;border:none}
+.graph-section.expanded .graph-body.open{flex:1}
+.graph-section.expanded .graph-header{background:var(--card);border-bottom:1px solid var(--border)}
+.graph-wrapper{position:relative;flex:1;display:flex;flex-direction:column;min-height:0}
+.graph-legend{display:flex;gap:16px;padding:10px 20px;font-size:.75rem;color:var(--text2);border-top:1px solid var(--border);flex-shrink:0}
 .legend-item{display:flex;align-items:center;gap:4px}
 .legend-dot{width:10px;height:10px;border-radius:50%}
 
@@ -298,6 +301,8 @@ a{color:var(--accent);text-decoration:none}
         <button id="zoomOut" title="Zoom out">-</button>
         <button id="zoomReset" title="Reset view">R</button>
         <button id="toggleExternal" title="Show/hide external deps" style="font-size:9px;margin-top:4px">EXT</button>
+        <button id="expandGraph" title="Expand fullscreen" style="font-size:12px;margin-top:4px">⛶</button>
+        <button id="simViolation" title="Simulate violation (demo)" style="font-size:8px;margin-top:4px;color:#ef5350">VIO</button>
       </div>
     </div>
     <div class="graph-legend">
@@ -494,6 +499,8 @@ a{color:var(--accent);text-decoration:none}
 
     // Clear graph state for new project
     graphState = { nodes: [], edges: [], positions: {} };
+    selectedNode = null;
+    selectedTransitive = {};
     camera = { x: 0, y: 0, zoom: 1 };
 
     // Reload all panels for the new project
@@ -623,11 +630,14 @@ a{color:var(--accent);text-decoration:none}
         sel.appendChild(createEl('option', { value: f.path, textContent: f.path }));
       });
 
-      // Compute average compression
+      // Compute average compression (ratio is 0-1 fraction of tokens saved)
       if (files.length > 0) {
         var total = 0;
         files.forEach(function(f) {
           var ratio = typeof f.ratio === 'number' ? f.ratio : (f.l1Tokens && f.l3Tokens ? (1 - f.l1Tokens / f.l3Tokens) : 0);
+          // Normalize: ratio > 1 means old l3/l1 expansion format — convert to compression
+          if (ratio > 1) ratio = 1 - (1 / ratio);
+          if (ratio < 0) ratio = 0;
           total += ratio;
         });
         setText('#avgCompression', Math.round((total / files.length) * 100) + '%');
@@ -1069,24 +1079,24 @@ a{color:var(--accent);text-decoration:none}
     other:             '#9e9e9e',
   };
 
-  // Ring fills — subtle transparent zones behind each ring
+  // Ring fills — more visible zones behind each ring
   var RING_FILLS = {
-    domain:            'rgba(66,165,245,0.06)',
-    ports:             'rgba(102,187,106,0.05)',
-    usecases:          'rgba(171,71,188,0.05)',
-    'primary-adapter': 'rgba(255,138,101,0.04)',
-    'secondary-adapter':'rgba(255,213,79,0.04)',
-    other:             'rgba(158,158,158,0.03)',
+    domain:            'rgba(66,165,245,0.12)',
+    ports:             'rgba(102,187,106,0.10)',
+    usecases:          'rgba(171,71,188,0.10)',
+    'primary-adapter': 'rgba(255,138,101,0.08)',
+    'secondary-adapter':'rgba(255,213,79,0.08)',
+    other:             'rgba(158,158,158,0.05)',
   };
 
-  // Ring border colors
+  // Ring border colors — sharper
   var RING_STROKES = {
-    domain:            'rgba(66,165,245,0.35)',
-    ports:             'rgba(102,187,106,0.25)',
-    usecases:          'rgba(171,71,188,0.25)',
-    'primary-adapter': 'rgba(255,138,101,0.20)',
-    'secondary-adapter':'rgba(255,213,79,0.20)',
-    other:             'rgba(158,158,158,0.15)',
+    domain:            'rgba(66,165,245,0.55)',
+    ports:             'rgba(102,187,106,0.45)',
+    usecases:          'rgba(171,71,188,0.45)',
+    'primary-adapter': 'rgba(255,138,101,0.40)',
+    'secondary-adapter':'rgba(255,213,79,0.40)',
+    other:             'rgba(158,158,158,0.25)',
   };
 
   // Canonical hex ring order: domain at center, adapters outermost
@@ -1106,14 +1116,64 @@ a{color:var(--accent);text-decoration:none}
   var camera = { x: 0, y: 0, zoom: 1 };
   var drag = { active: false, startX: 0, startY: 0, camStartX: 0, camStartY: 0 };
 
+  // Selection state — click a node to highlight transitive deps
+  var selectedNode = null;       // node id or null
+  var selectedTransitive = {};   // { nodeId: true } set of transitive deps (including selected)
+
+  function computeTransitiveDeps(nodeId) {
+    var result = {};
+    var queue = [nodeId];
+    result[nodeId] = true;
+    while (queue.length > 0) {
+      var current = queue.shift();
+      graphState.edges.forEach(function(e) {
+        // Follow edges FROM current (current imports/depends on e.to)
+        if (e.from === current && !result[e.to]) {
+          result[e.to] = true;
+          queue.push(e.to);
+        }
+      });
+    }
+    return result;
+  }
+
+  function nodeAtPoint(canvasX, canvasY) {
+    var positions = graphState.positions;
+    var nodes = graphState.nodes;
+    var best = null;
+    var bestDist = Infinity;
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      var pos = positions[n.id];
+      if (!pos) continue;
+      var r = 6 + Math.min(n.exports || 0, 20);
+      var dx = canvasX - pos.x;
+      var dy = canvasY - pos.y;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist <= r + 4 && dist < bestDist) {
+        best = n.id;
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
   function loadGraph() {
     apiFetch('/api/graph').then(function(data) {
       if (!data) return;
       graphState.nodes = data.nodes || [];
       graphState.edges = data.edges || [];
       if (graphState.nodes.length === 0) return;
-      computePositions();
-      renderGraph();
+      // Auto-open graph panel when data arrives
+      var body = $('#graphBody');
+      if (!body.classList.contains('open')) {
+        body.classList.add('open');
+        $('#graphArrow').classList.add('open');
+      }
+      setTimeout(function() {
+        computePositions();
+        renderGraph();
+      }, 50);
     });
   }
 
@@ -1149,13 +1209,42 @@ a{color:var(--accent);text-decoration:none}
     return nodeId;
   }
 
+  // Draw a flat-top hexagon path centered at (cx, cy) with given radius
+  function hexPath(ctx, cx, cy, radius) {
+    ctx.beginPath();
+    for (var i = 0; i < 6; i++) {
+      var angle = Math.PI / 3 * i - Math.PI / 6; // flat-top: start at -30deg
+      var hx = cx + radius * Math.cos(angle);
+      var hy = cy + radius * Math.sin(angle);
+      if (i === 0) ctx.moveTo(hx, hy);
+      else ctx.lineTo(hx, hy);
+    }
+    ctx.closePath();
+  }
+
+  // Distance from center to hex edge at a given angle (flat-top hexagon)
+  // For circumradius R: at vertex = R, at flat edge center = R*cos(30°)
+  function hexRadiusAtAngle(radius, angle) {
+    var a = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    // Flat-top hex: flat edge centers at 0°, 60°, 120°, 180°, 240°, 300°
+    // Vertices at 30°, 90°, 150°, 210°, 270°, 330°
+    var sectorWidth = Math.PI / 3; // 60 degrees
+    var halfSector = Math.PI / 6;  // 30 degrees
+    var sectorIndex = Math.floor((a + halfSector) / sectorWidth);
+    var edgeCenterAngle = sectorIndex * sectorWidth;
+    var offsetFromEdge = a - edgeCenterAngle;
+    // At edge center (offset=0): apothem = R*cos(30°)
+    // At vertex (offset=±30°): circumradius = R
+    return radius * Math.cos(halfSector) / Math.cos(offsetFromEdge);
+  }
+
   function computePositions() {
     var allNodes = graphState.nodes;
     var canvas = $('#graphCanvas');
     canvas.style.display = 'block';
     var rect = canvas.getBoundingClientRect();
     var width = Math.max(rect.width, 600);
-    var height = Math.max(rect.height, 460);
+    var height = Math.max(rect.height, 300);
     var pad = 60;
 
     // Filter: hide external nodes unless toggled on
@@ -1179,7 +1268,8 @@ a{color:var(--accent);text-decoration:none}
 
     var cx = width / 2;
     var cy = height / 2;
-    var maxRadius = Math.min(width - pad * 2, height - pad * 2) / 2;
+    var legendSpace = 220; // reserve space for right-side legend
+    var maxRadius = Math.min(width - pad * 2 - legendSpace, height - pad * 2) / 2;
     var positions = {};
     var ringRadii = [];
 
@@ -1265,14 +1355,20 @@ a{color:var(--accent);text-decoration:none}
 
         clusterNodes.forEach(function(n, ni) {
           var angle = currentAngle + angleStep * (ni + 0.5);
-          // Stagger radially: alternate inner/outer within the band for density
+          // Place on hex perimeter instead of circular arc
+          var hexMidR = hexRadiusAtAngle(midR, angle);
+          // Stagger radially within the hex band
           var radialOffset = 0;
           if (clusterNodes.length > 1) {
-            radialOffset = (ni % 3 - 1) * bandWidth * 0.22;
+            var hexBandInner = innerR > 0 ? hexRadiusAtAngle(innerR, angle) : 0;
+            var hexBandOuter = hexRadiusAtAngle(outerR, angle);
+            var hexBand = hexBandOuter - hexBandInner;
+            radialOffset = (ni % 3 - 1) * hexBand * 0.18;
           }
+          var placeDist = hexMidR + radialOffset;
           positions[n.id] = {
-            x: cx + (midR + radialOffset) * Math.cos(angle),
-            y: cy + (midR + radialOffset) * Math.sin(angle),
+            x: cx + placeDist * Math.cos(angle),
+            y: cy + placeDist * Math.sin(angle),
             ring: ring.key,
             cluster: ck,
           };
@@ -1305,9 +1401,29 @@ a{color:var(--accent);text-decoration:none}
       }
     }
 
-    // Clamp to visible area
+    // Clamp nodes to their hex ring boundaries
     nodeIds.forEach(function(id) {
       var p = positions[id];
+      var ring = ringRadii.find(function(r) { return r.key === p.ring; });
+      if (ring) {
+        var dx = p.x - cx;
+        var dy = p.y - cy;
+        var dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        var angle = Math.atan2(dy, dx);
+        // Compute hex-adjusted inner/outer at this angle
+        var hexInner = ring.inner > 0 ? hexRadiusAtAngle(ring.inner, angle) : 0;
+        var hexOuter = hexRadiusAtAngle(ring.outer, angle);
+        var margin = 8; // keep nodes slightly inside the hex edge
+        var minR = hexInner + margin;
+        var maxR = hexOuter - margin;
+        if (minR > maxR) minR = maxR = (hexInner + hexOuter) / 2;
+        if (dist < minR || dist > maxR) {
+          var clamped = Math.max(minR, Math.min(maxR, dist));
+          p.x = cx + (dx / dist) * clamped;
+          p.y = cy + (dy / dist) * clamped;
+        }
+      }
+      // Also clamp to visible area
       p.x = Math.max(pad, Math.min(width - pad, p.x));
       p.y = Math.max(pad, Math.min(height - pad, p.y));
     });
@@ -1315,6 +1431,9 @@ a{color:var(--accent);text-decoration:none}
     graphState.positions = positions;
     graphState.ringRadii = ringRadii;
   }
+
+  // Cached canvas dimensions to avoid reflow on every frame
+  var canvasDims = { w: 0, h: 0 };
 
   function renderGraph() {
     var nodes = graphState.nodes;
@@ -1324,16 +1443,21 @@ a{color:var(--accent);text-decoration:none}
     if (nodes.length === 0) return;
 
     var canvas = $('#graphCanvas');
+    var dpr = window.devicePixelRatio || 1;
+
+    // Only measure and resize when dimensions actually change
     var rect = canvas.getBoundingClientRect();
-    var width = Math.max(rect.width, 600);
-    var height = Math.max(rect.height, 460);
-    canvas.width = width * (window.devicePixelRatio || 1);
-    canvas.height = height * (window.devicePixelRatio || 1);
-    canvas.style.width = width + 'px';
-    canvas.style.height = height + 'px';
+    var width = Math.max(Math.round(rect.width), 600);
+    var height = Math.max(Math.round(rect.height), 300);
+
+    if (canvasDims.w !== width || canvasDims.h !== height) {
+      canvasDims.w = width;
+      canvasDims.h = height;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+    }
 
     var ctx = canvas.getContext('2d');
-    var dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
@@ -1347,31 +1471,165 @@ a{color:var(--accent);text-decoration:none}
     var now = Date.now();
     var pulse = 0.7 + 0.3 * Math.sin(now / 300);
 
-    // ── Draw hex architecture rings (background zones) ──
+    // ── Draw hexagonal architecture rings with color bands ──
     // Draw from outside in so inner rings paint over outer
+    var outermost = ringRadii.length > 0 ? ringRadii[ringRadii.length - 1].outer : 100;
+
     for (var ri = ringRadii.length - 1; ri >= 0; ri--) {
       var ring = ringRadii[ri];
+      var layerColor = LAYER_COLORS[ring.key] || '#9e9e9e';
 
-      // Filled zone
-      ctx.beginPath();
-      ctx.arc(cx, cy, ring.outer, 0, Math.PI * 2);
+      // Filled hexagonal zone
+      hexPath(ctx, cx, cy, ring.outer);
       ctx.fillStyle = RING_FILLS[ring.key] || 'rgba(158,158,158,0.03)';
       ctx.fill();
 
-      // Ring border (dashed)
+      // Colored band on outer hex edge — thick, translucent layer color
+      hexPath(ctx, cx, cy, ring.outer);
+      ctx.strokeStyle = layerColor;
+      ctx.globalAlpha = 0.35;
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      // Thin inner border
+      if (ring.inner > 0) {
+        hexPath(ctx, cx, cy, ring.inner);
+        ctx.strokeStyle = layerColor;
+        ctx.globalAlpha = 0.12;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // ── Stacked layer legend on the right ──
+    var legendX = cx + outermost + 40;
+    var bandHeight = 28;
+    var bandWidth = 150;
+    var stackGap = 3;
+    var totalStackH = ringRadii.length * (bandHeight + stackGap) - stackGap;
+    var legendStartY = cy - totalStackH / 2;
+
+    // Stack background
+    ctx.fillStyle = 'rgba(22,33,62,0.7)';
+    ctx.beginPath();
+    ctx.roundRect(legendX - 10, legendStartY - 10, bandWidth + 20, totalStackH + 20, 6);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Title
+    ctx.font = 'bold 9px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.textAlign = 'left';
+    ctx.fillText('LAYERS', legendX, legendStartY - 2);
+
+    for (var li = 0; li < ringRadii.length; li++) {
+      var lr = ringRadii[li];
+      var bandY = legendStartY + li * (bandHeight + stackGap);
+      var layerDotColor = LAYER_COLORS[lr.key] || '#9e9e9e';
+
+      // Color band rectangle
+      ctx.fillStyle = layerDotColor;
+      ctx.globalAlpha = 0.25;
       ctx.beginPath();
-      ctx.arc(cx, cy, ring.outer, 0, Math.PI * 2);
-      ctx.setLineDash([4, 6]);
-      ctx.strokeStyle = RING_STROKES[ring.key] || 'rgba(158,158,158,0.15)';
+      ctx.roundRect(legendX, bandY, bandWidth, bandHeight, 4);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Left color stripe
+      ctx.fillStyle = layerDotColor;
+      ctx.globalAlpha = 0.8;
+      ctx.beginPath();
+      ctx.roundRect(legendX, bandY, 4, bandHeight, [4, 0, 0, 4]);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Layer name
+      ctx.font = 'bold 11px system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.textAlign = 'left';
+      ctx.fillText(lr.label, legendX + 12, bandY + 12);
+
+      // Count
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.fillStyle = layerDotColor;
+      ctx.fillText(lr.count + ' files', legendX + 12, bandY + 24);
+
+      // (no pointer lines — clean look)
+    }
+
+    // Direction arrows between inner/outer labels
+    if (ringRadii.length >= 2) {
+      var arrowX = legendX + bandWidth + 14;
+      var topY = legendStartY + bandHeight / 2;
+      var botY = legendStartY + (ringRadii.length - 1) * (bandHeight + stackGap) + bandHeight / 2;
+      // Arrow line
+      ctx.beginPath();
+      ctx.moveTo(arrowX, topY + 4);
+      ctx.lineTo(arrowX, botY - 4);
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
       ctx.lineWidth = 1;
       ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Ring label — positioned at top of each ring
-      ctx.font = '11px system-ui, sans-serif';
-      ctx.fillStyle = RING_STROKES[ring.key] ? RING_STROKES[ring.key].replace(/[\d.]+\)$/, '0.7)') : 'rgba(255,255,255,0.4)';
+      // Labels
+      ctx.font = '8px system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
       ctx.textAlign = 'center';
-      ctx.fillText(ring.label + ' (' + ring.count + ')', cx, cy - ring.mid + 4);
+      ctx.fillText('CORE', arrowX, topY - 2);
+      ctx.fillText('EDGE', arrowX, botY + 10);
+      // Arrow heads
+      ctx.beginPath();
+      ctx.moveTo(arrowX, topY + 4);
+      ctx.lineTo(arrowX - 3, topY + 8);
+      ctx.moveTo(arrowX, topY + 4);
+      ctx.lineTo(arrowX + 3, topY + 8);
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(arrowX, botY - 4);
+      ctx.lineTo(arrowX - 3, botY - 8);
+      ctx.moveTo(arrowX, botY - 4);
+      ctx.lineTo(arrowX + 3, botY - 8);
+      ctx.stroke();
+    }
+
+    // ── Violation summary badge below legend ──
+    if (violationCount > 0) {
+      var vBadgeX = legendX;
+      var vBadgeY = legendStartY + totalStackH + 18;
+      var vText = '⚠ ' + violationCount + ' violation' + (violationCount !== 1 ? 's' : '');
+      ctx.font = 'bold 11px system-ui, sans-serif';
+      var vWidth = ctx.measureText(vText).width;
+
+      // Badge background
+      ctx.fillStyle = 'rgba(239,83,80,0.15)';
+      ctx.beginPath();
+      ctx.roundRect(vBadgeX, vBadgeY, vWidth + 20, 24, 4);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(239,83,80,' + (0.4 + 0.2 * pulse) + ')';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Badge text
+      ctx.fillStyle = '#ef5350';
+      ctx.textAlign = 'left';
+      ctx.fillText(vText, vBadgeX + 10, vBadgeY + 16);
+    } else {
+      var vBadgeX = legendX;
+      var vBadgeY = legendStartY + totalStackH + 18;
+      ctx.font = 'bold 11px system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(102,187,106,0.15)';
+      ctx.beginPath();
+      ctx.roundRect(vBadgeX, vBadgeY, 120, 24, 4);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(102,187,106,0.3)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = '#66bb6a';
+      ctx.textAlign = 'left';
+      ctx.fillText('✓ No violations', vBadgeX + 10, vBadgeY + 16);
     }
 
     // ── Draw adapter hemisphere divider ──
@@ -1380,28 +1638,46 @@ a{color:var(--accent);text-decoration:none}
     if (hasPA && hasSA) {
       var adapterRing = ringRadii.find(function(r) { return r.key === 'primary-adapter' || r.key === 'secondary-adapter'; });
       if (adapterRing) {
-        // Vertical divider line through center at adapter ring
         ctx.beginPath();
         ctx.moveTo(cx, cy - adapterRing.outer);
         ctx.lineTo(cx, cy + adapterRing.outer);
         ctx.setLineDash([2, 4]);
-        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)';
         ctx.lineWidth = 1;
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Labels for hemispheres
-        ctx.font = '9px system-ui, sans-serif';
-        ctx.fillStyle = 'rgba(255,138,101,0.5)';
-        ctx.textAlign = 'left';
-        ctx.fillText('DRIVING', cx - adapterRing.outer + 8, cy - adapterRing.outer + 14);
-        ctx.fillStyle = 'rgba(255,213,79,0.5)';
+        ctx.font = 'bold 9px system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(255,138,101,0.6)';
         ctx.textAlign = 'right';
-        ctx.fillText('DRIVEN', cx + adapterRing.outer - 8, cy - adapterRing.outer + 14);
+        ctx.fillText('DRIVING ←', cx - 6, cy - adapterRing.outer + 14);
+        ctx.fillStyle = 'rgba(255,213,79,0.6)';
+        ctx.textAlign = 'left';
+        ctx.fillText('→ DRIVEN', cx + 6, cy - adapterRing.outer + 14);
       }
     }
 
-    // ── Draw edges — curved beziers ──
+    // ── Hex architecture title ──
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.textAlign = 'center';
+    ctx.fillText('⬡ HEXAGONAL ARCHITECTURE', cx, cy + outermost + 22);
+
+    // ── Pre-compute violation data ──
+    var violationNodes = {};  // { nodeId: count } — nodes involved in violations
+    var violationCount = 0;
+    edges.forEach(function(e) {
+      if (e.violation || e.isViolation) {
+        violationCount++;
+        violationNodes[e.from] = (violationNodes[e.from] || 0) + 1;
+        violationNodes[e.to] = (violationNodes[e.to] || 0) + 1;
+      }
+    });
+    graphState._hasViolations = violationCount > 0;
+    if (violationCount > 0 && !graphAnimFrame) startGraphAnimation();
+
+    // ── Draw edges — direction-colored curved beziers ──
+    var hasSelection = selectedNode !== null;
     edges.forEach(function(e) {
       var from = positions[e.from];
       var to = positions[e.to];
@@ -1410,6 +1686,15 @@ a{color:var(--accent);text-decoration:none}
       var fromActive = isFileActive(e.from);
       var toActive = isFileActive(e.to);
       var edgeActive = fromActive || toActive;
+
+      // Selection: is this edge part of the selected subgraph?
+      var inSelection = hasSelection && selectedTransitive[e.from] && selectedTransitive[e.to];
+      var dimmed = hasSelection && !inSelection;
+
+      // Source node layer → edge color (shows where the import originates)
+      var fromNode = nodes.find(function(n) { return n.id === e.from; });
+      var fromLayer = normalizeLayer(fromNode ? fromNode.layer : 'other');
+      var layerColor = LAYER_COLORS[fromLayer] || '#9e9e9e';
 
       var mx = (from.x + to.x) / 2;
       var my = (from.y + to.y) / 2;
@@ -1420,39 +1705,74 @@ a{color:var(--accent);text-decoration:none}
       var cpx = mx + (-dy / dist) * curvature;
       var cpy = my + (dx / dist) * curvature;
 
+      if (isViolation) {
+        // Violation glow — wide translucent red stroke underneath
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.quadraticCurveTo(cpx, cpy, to.x, to.y);
+        ctx.strokeStyle = 'rgba(239,83,80,' + (0.15 + 0.15 * pulse) + ')';
+        ctx.lineWidth = 10;
+        ctx.stroke();
+      }
+
       ctx.beginPath();
       ctx.moveTo(from.x, from.y);
       ctx.quadraticCurveTo(cpx, cpy, to.x, to.y);
       if (isViolation) {
         ctx.strokeStyle = '#ef5350';
         ctx.lineWidth = 2.5;
-        ctx.setLineDash([6, 3]); // Dashed red for violations
+        ctx.setLineDash([6, 3]);
+      } else if (dimmed) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+        ctx.lineWidth = 0.4;
+        ctx.setLineDash([]);
+      } else if (inSelection) {
+        ctx.strokeStyle = layerColor;
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 0.9;
       } else if (edgeActive) {
         ctx.strokeStyle = 'rgba(79,195,247,' + (0.4 * pulse) + ')';
         ctx.lineWidth = 2;
         ctx.setLineDash([]);
       } else {
-        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-        ctx.lineWidth = 0.6;
+        // Default: tinted by source layer
+        ctx.strokeStyle = layerColor;
+        ctx.globalAlpha = 0.18;
+        ctx.lineWidth = 0.8;
         ctx.setLineDash([]);
       }
       ctx.stroke();
+      ctx.globalAlpha = 1;
       ctx.setLineDash([]);
 
-      // Arrowhead
+      // Violation label at midpoint
+      if (isViolation) {
+        ctx.font = 'bold 9px system-ui, sans-serif';
+        ctx.fillStyle = '#ef5350';
+        ctx.textAlign = 'center';
+        ctx.fillText('✕ violation', cpx, cpy - 6);
+      }
+
+      // Arrowhead — filled triangle for better visibility
       var angle = Math.atan2(to.y - cpy, to.x - cpx);
-      var headLen = 7;
+      var headLen = isViolation ? 11 : (inSelection ? 9 : 7);
       var nodeRadius = 6 + Math.min((nodes.find(function(n) { return n.id === e.to; }) || {}).exports || 0, 20);
       var endX = to.x - Math.cos(angle) * nodeRadius;
       var endY = to.y - Math.sin(angle) * nodeRadius;
-      ctx.beginPath();
-      ctx.moveTo(endX, endY);
-      ctx.lineTo(endX - headLen * Math.cos(angle - Math.PI / 6), endY - headLen * Math.sin(angle - Math.PI / 6));
-      ctx.moveTo(endX, endY);
-      ctx.lineTo(endX - headLen * Math.cos(angle + Math.PI / 6), endY - headLen * Math.sin(angle + Math.PI / 6));
-      ctx.strokeStyle = isViolation ? '#ef5350' : (edgeActive ? 'rgba(79,195,247,' + (0.5 * pulse) + ')' : 'rgba(255,255,255,0.20)');
-      ctx.lineWidth = isViolation ? 2.5 : (edgeActive ? 2 : 1);
-      ctx.stroke();
+      if (!dimmed || isViolation) {
+        ctx.beginPath();
+        ctx.moveTo(endX, endY);
+        ctx.lineTo(endX - headLen * Math.cos(angle - Math.PI / 6), endY - headLen * Math.sin(angle - Math.PI / 6));
+        ctx.lineTo(endX - headLen * Math.cos(angle + Math.PI / 6), endY - headLen * Math.sin(angle + Math.PI / 6));
+        ctx.closePath();
+        var arrowColor = isViolation ? '#ef5350' : layerColor;
+        var arrowAlpha = isViolation ? (0.7 + 0.3 * pulse) : (inSelection ? 0.9 : (edgeActive ? (0.5 * pulse) : 0.35));
+        ctx.fillStyle = arrowColor;
+        ctx.globalAlpha = arrowAlpha;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
     });
 
     // ── Draw nodes ──
@@ -1463,49 +1783,114 @@ a{color:var(--accent);text-decoration:none}
       var color = LAYER_COLORS[layer] || '#9e9e9e';
       var r = 6 + Math.min(n.exports || 0, 20);
       var active = isFileActive(n.id);
+      var isSelected = selectedNode === n.id;
+      var inSel = hasSelection && selectedTransitive[n.id];
+      var dimNode = hasSelection && !inSel;
 
-      // Glow ring for active nodes
-      if (active) {
+      // Violation warning ring — pulsing red halo
+      var hasViolation = violationNodes[n.id];
+      if (hasViolation) {
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, r + 6, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(79,195,247,' + (0.25 * pulse) + ')';
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, r + 10 * pulse, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(79,195,247,' + (0.3 * (1 - pulse + 0.4)) + ')';
+        ctx.arc(pos.x, pos.y, r + 8, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(239,83,80,' + (0.3 + 0.3 * pulse) + ')';
         ctx.lineWidth = 2;
         ctx.stroke();
+        // Red fill glow
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, r + 5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(239,83,80,' + (0.08 + 0.08 * pulse) + ')';
+        ctx.fill();
       }
 
-      // Node circle with subtle border
+      // Glow ring for active or selected nodes
+      if (active || isSelected) {
+        var glowColor = isSelected ? color : 'rgba(79,195,247,';
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, r + 6, 0, Math.PI * 2);
+        if (isSelected) {
+          ctx.fillStyle = color;
+          ctx.globalAlpha = 0.3;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          // Outer pulse ring for selected
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, r + 12 * pulse, 0, Math.PI * 2);
+          ctx.strokeStyle = color;
+          ctx.globalAlpha = 0.4 * (1 - pulse + 0.4);
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        } else {
+          ctx.fillStyle = 'rgba(79,195,247,' + (0.25 * pulse) + ')';
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, r + 10 * pulse, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(79,195,247,' + (0.3 * (1 - pulse + 0.4)) + ')';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
+      // Node circle
       ctx.beginPath();
       ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
       ctx.fillStyle = color;
-      ctx.globalAlpha = active ? 1.0 : 0.75;
+      ctx.globalAlpha = dimNode ? 0.15 : (active || inSel ? 1.0 : 0.75);
       ctx.fill();
       ctx.globalAlpha = 1;
 
-      // Border ring on all nodes (thin, same color darker)
+      // Border ring
       ctx.beginPath();
       ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
-      ctx.strokeStyle = active ? '#ffffff' : 'rgba(255,255,255,0.15)';
-      ctx.lineWidth = active ? 2 : 0.5;
+      if (isSelected) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3;
+      } else if (inSel) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+      } else {
+        ctx.strokeStyle = dimNode ? 'rgba(255,255,255,0.05)' : (active ? '#ffffff' : 'rgba(255,255,255,0.15)');
+        ctx.lineWidth = active ? 2 : 0.5;
+      }
       ctx.stroke();
 
       // Label
       var label = n.id.split('/').pop();
-      ctx.font = active ? 'bold 11px system-ui, sans-serif' : '10px system-ui, sans-serif';
-      ctx.fillStyle = active ? '#ffffff' : 'rgba(255,255,255,0.55)';
+      ctx.font = (active || isSelected) ? 'bold 11px system-ui, sans-serif' : (inSel ? '11px system-ui, sans-serif' : '10px system-ui, sans-serif');
+      ctx.fillStyle = dimNode ? 'rgba(255,255,255,0.12)' : (active || isSelected ? '#ffffff' : (inSel ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.55)'));
       ctx.textAlign = 'center';
       ctx.fillText(label, pos.x, pos.y + r + 14);
     });
+
+    // ── Draw dep count badge on selected node ──
+    if (hasSelection && positions[selectedNode]) {
+      var selPos = positions[selectedNode];
+      var depCount = Object.keys(selectedTransitive).length - 1; // exclude self
+      if (depCount > 0) {
+        var badgeText = depCount + ' dep' + (depCount !== 1 ? 's' : '');
+        ctx.font = 'bold 11px system-ui, sans-serif';
+        var tw = ctx.measureText(badgeText).width;
+        var bx = selPos.x;
+        var by = selPos.y - 22;
+        ctx.fillStyle = 'rgba(22,33,62,0.9)';
+        ctx.beginPath();
+        ctx.roundRect(bx - tw / 2 - 6, by - 8, tw + 12, 18, 4);
+        ctx.fill();
+        ctx.strokeStyle = LAYER_COLORS[normalizeLayer((nodes.find(function(n) { return n.id === selectedNode; }) || {}).layer)] || '#9e9e9e';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.fillText(badgeText, bx, by + 5);
+      }
+    }
 
     ctx.restore(); // End camera transform
   }
 
   function startGraphAnimation() {
     function frame() {
-      if (!hasActiveFiles()) {
+      if (!hasActiveFiles() && !selectedNode && !(graphState._hasViolations)) {
         graphAnimFrame = null;
         renderGraph(); // Final render to clear highlights
         return;
@@ -1590,7 +1975,7 @@ a{color:var(--accent);text-decoration:none}
       renderGraph();
     }, { passive: false });
 
-    // Mouse drag pan
+    // Mouse drag pan + click-to-select
     graphCanvas.addEventListener('mousedown', function(e) {
       drag.active = true;
       drag.startX = e.clientX;
@@ -1606,6 +1991,38 @@ a{color:var(--accent);text-decoration:none}
     });
     window.addEventListener('mouseup', function() {
       drag.active = false;
+    });
+
+    // Click to select/deselect a node for transitive dep highlighting
+    graphCanvas.addEventListener('click', function(e) {
+      // Ignore if this was a drag (moved more than 5px)
+      var movedX = Math.abs(e.clientX - drag.startX);
+      var movedY = Math.abs(e.clientY - drag.startY);
+      if (movedX > 5 || movedY > 5) return;
+
+      var rect = graphCanvas.getBoundingClientRect();
+      // Transform screen coords → graph coords (undo camera pan+zoom)
+      var screenX = e.clientX - rect.left;
+      var screenY = e.clientY - rect.top;
+      var graphX = (screenX - camera.x) / camera.zoom;
+      var graphY = (screenY - camera.y) / camera.zoom;
+
+      var hit = nodeAtPoint(graphX, graphY);
+      if (hit && hit === selectedNode) {
+        // Deselect on re-click
+        selectedNode = null;
+        selectedTransitive = {};
+      } else if (hit) {
+        selectedNode = hit;
+        selectedTransitive = computeTransitiveDeps(hit);
+      } else {
+        // Click on empty space → deselect
+        selectedNode = null;
+        selectedTransitive = {};
+      }
+      // Start animation for selected glow pulse
+      if (selectedNode && !graphAnimFrame) startGraphAnimation();
+      renderGraph();
     });
 
     // Zoom buttons
@@ -1646,6 +2063,84 @@ a{color:var(--accent);text-decoration:none}
     });
     // Start dimmed (externals hidden by default)
     $('#toggleExternal').style.opacity = '0.4';
+
+    // Expand/collapse fullscreen
+    $('#expandGraph').addEventListener('click', function() {
+      var section = document.querySelector('.graph-section');
+      var isExpanded = section.classList.toggle('expanded');
+      this.textContent = isExpanded ? '⛶' : '⛶';
+      this.title = isExpanded ? 'Exit fullscreen' : 'Expand fullscreen';
+      // Ensure graph body is open when expanding
+      var body = $('#graphBody');
+      if (isExpanded && !body.classList.contains('open')) {
+        body.classList.add('open');
+        $('#graphArrow').classList.add('open');
+      }
+      // Force canvas resize and recompute layout
+      canvasDims.w = 0; canvasDims.h = 0;
+      setTimeout(function() {
+        if (graphState.nodes.length > 0) {
+          computePositions();
+          camera = { x: 0, y: 0, zoom: 1 };
+          renderGraph();
+        }
+      }, 50);
+    });
+
+    // Simulate violation for demo/screenshot
+    $('#simViolation').addEventListener('click', function() {
+      if (graphState.nodes.length === 0) return;
+      // Find a domain node and a secondary adapter node
+      var domainNode = graphState.nodes.find(function(n) { return normalizeLayer(n.layer) === 'domain'; });
+      var adapterNode = graphState.nodes.find(function(n) { return normalizeLayer(n.layer) === 'secondary-adapter'; });
+      var portsNode = graphState.nodes.find(function(n) { return normalizeLayer(n.layer) === 'ports'; });
+      var simViolations = [];
+      if (domainNode && adapterNode) {
+        // Domain importing from adapter = violation
+        var v1 = { from: domainNode.id, to: adapterNode.id, violation: true };
+        graphState.edges.push(v1);
+        simViolations.push(v1);
+      }
+      if (portsNode && adapterNode) {
+        // Ports importing from adapter = violation
+        var v2 = { from: portsNode.id, to: adapterNode.id, violation: true };
+        graphState.edges.push(v2);
+        simViolations.push(v2);
+      }
+      computePositions();
+      renderGraph();
+
+      // Update health panel to reflect simulated violations
+      var currentScore = parseInt($('#healthNum').textContent) || 0;
+      var penalty = simViolations.length * 10;
+      var newScore = Math.max(0, currentScore - penalty);
+      var circ = 2 * Math.PI * 54;
+      var offset = circ * (1 - newScore / 100);
+      var arc = $('#healthArc');
+      arc.style.strokeDashoffset = String(offset);
+      arc.style.stroke = scoreColor(newScore);
+      setText('#healthNum', newScore);
+
+      // Update violation count
+      var prevCount = parseInt($('#hViolations').textContent) || 0;
+      var newCount = prevCount + simViolations.length;
+      setText('#hViolations', newCount);
+      $('#hViolations').style.color = '#ef5350';
+
+      // Add violations to the list
+      var vList = $('#violationsList');
+      if (prevCount === 0) clearChildren(vList);
+      simViolations.forEach(function(v) {
+        var item = createEl('div', { className: 'violation-item' });
+        item.appendChild(createEl('span', { textContent: v.from.split('/').pop() + ' \u2192 ' + v.to.split('/').pop() + ' ' }));
+        item.appendChild(createEl('span', { className: 'violation-rule', textContent: 'Inner layer must not import outer layer' }));
+        vList.appendChild(item);
+      });
+
+      setText('#healthUpdated', 'Updated: ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) + ' (simulated)');
+      this.textContent = '✕';
+      this.title = 'Violations simulated — reload to clear';
+    });
 
     // Project selector
     $('#projectSelector').addEventListener('change', function(e) {
