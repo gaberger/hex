@@ -107,6 +107,13 @@ export class DashboardAdapter {
       if (path === '/' && req.method === 'GET') {
         return this.serveIndex(res);
       }
+      if (path === '/api/project' && req.method === 'GET') {
+        return this.json(res, 200, {
+          rootPath: this.ctx.rootPath,
+          name: this.ctx.rootPath.split('/').pop(),
+          astIsStub: this.ctx.astIsStub,
+        });
+      }
       if (path === '/api/health' && req.method === 'GET') {
         return await this.handleHealth(res);
       }
@@ -167,7 +174,7 @@ export class DashboardAdapter {
     const hit = this.healthCache.get();
     if (hit) return this.json(res, 200, hit);
 
-    const result = await this.ctx.archAnalyzer.analyzeArchitecture(this.ctx.rootPath);
+    const result = await this.ctx.archAnalyzer.analyzeArchitecture('.');
     this.healthCache.set(result);
     this.json(res, 200, result);
   }
