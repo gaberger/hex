@@ -20,7 +20,10 @@ import type {
 import { classifyLayer, getViolationRule } from './layer-classifier.js';
 import { resolveImportPath, normalizePath } from './path-normalizer.js';
 
-const ENTRY_POINTS = ['index.ts', 'cli.ts', 'main.ts', 'composition-root.ts'];
+const ENTRY_POINTS = ['index.ts', 'cli.ts', 'main.ts', 'composition-root.ts', 'main.go', 'main.rs'];
+
+/** Glob patterns for all supported framework languages (ts, go, rust). */
+const SOURCE_GLOBS = ['**/*.ts', '**/*.go', '**/*.rs'];
 
 /** Exported functions that serve as entry points (not dead despite no importers) */
 const ENTRY_EXPORTS = new Set(['runCLI', 'startDashboard', 'createAppContext']);
@@ -54,12 +57,16 @@ export class ArchAnalyzer implements IArchAnalysisPort {
     private readonly ast: IASTPort,
     private readonly fs: IFileSystemPort,
     private readonly excludePatterns: string[] = [
-      'node_modules', 'dist', 'examples', '*.test.ts', '*.spec.ts',
+      'node_modules', 'dist', 'examples',
+      '*.test.ts', '*.spec.ts',   // TypeScript tests
+      '*_test.go',                 // Go tests
+      '*.test.rs',                 // Rust tests
     ],
   ) {}
 
   private async collectSummaries(): Promise<ASTSummary[]> {
-    const allFiles = await this.fs.glob('**/*.ts');
+    const results = await Promise.all(SOURCE_GLOBS.map((g) => this.fs.glob(g)));
+    const allFiles = results.flat();
     const sourceFiles = allFiles.filter((f) => !matchesExclude(f, this.excludePatterns));
     return Promise.all(
       sourceFiles.map((f) => this.ast.extractSummary(f, 'L1')),
@@ -280,7 +287,7 @@ export class ArchAnalyzer implements IArchAnalysisPort {
 
       const importedFromThis = importedByModule.get(normalizedFile) ?? new Set();
       for (const exp of summary.exports) {
-        if (!importedFromThis.has(exp.name)) {
+        if (!importedFromThis.has(exp.name) && !ENTRY_EXPORTS.has(exp.name)) {
           dead.push({ filePath: normalizedFile, exportName: exp.name, kind: exp.kind });
         }
       }

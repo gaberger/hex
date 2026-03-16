@@ -25,7 +25,13 @@ function mockFS(files: string[]): IFileSystemPort {
     read: async () => '',
     write: async () => {},
     exists: async () => true,
-    glob: async () => files,
+    glob: async (pattern: string) => {
+      // Filter files by the glob extension to match multi-language behavior
+      if (pattern.endsWith('*.ts')) return files.filter((f) => f.endsWith('.ts'));
+      if (pattern.endsWith('*.go')) return files.filter((f) => f.endsWith('.go'));
+      if (pattern.endsWith('*.rs')) return files.filter((f) => f.endsWith('.rs'));
+      return files;
+    },
   };
 }
 

@@ -15,6 +15,8 @@
  *   GET  /api/:projectId/tokens/overview  Token efficiency
  *   GET  /api/:projectId/tokens/:file     File token detail
  *   GET  /api/:projectId/swarm      Swarm status
+ *   GET  /api/:projectId/progress   Full progress report (tasks, agents, patterns)
+ *   GET  /api/:projectId/patterns   Learned patterns from AgentDB
  *   GET  /api/:projectId/graph      Dependency graph
  *   GET  /api/:projectId/project    Project info
  *   GET  /api/events?project=:id    SSE stream (scoped to project, or all)
@@ -143,7 +145,10 @@ export class DashboardHub {
 
   async registerProject(rootPath: string): Promise<ProjectSlot> {
     const absPath = resolve(rootPath);
-    const id = absPath.split('/').pop() ?? 'unknown';
+    // Use basename + hash suffix to prevent collisions between identically-named dirs
+    const basename = absPath.split('/').pop() ?? 'unknown';
+    const hash = Array.from(absPath).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+    const id = `${basename}-${(hash >>> 0).toString(36)}`;
 
     // Don't double-register
     if (this.projects.has(id)) {
@@ -295,10 +300,16 @@ export class DashboardHub {
     if (subPath === 'tokens/overview' && req.method === 'GET') {
       const hit = slot.tokensCache.get();
       if (hit) return this.json(res, 200, hit);
-      const allFiles = await ctx.fs.glob('**/*.ts');
+      const globResults = await Promise.all([
+        ctx.fs.glob('**/*.ts'),
+        ctx.fs.glob('**/*.go'),
+        ctx.fs.glob('**/*.rs'),
+      ]);
+      const allFiles = globResults.flat();
       const sourceFiles = allFiles.filter(
         (f) => !f.includes('node_modules') && !f.includes('dist')
           && !f.includes('.test.ts') && !f.includes('.spec.ts')
+          && !f.includes('_test.go') && !f.includes('.test.rs')
           && !f.includes('examples'),
       );
       const files = await Promise.all(
@@ -358,6 +369,29 @@ export class DashboardHub {
           tasks: [],
           agents: [],
         });
+      }
+    }
+
+    if (subPath === 'progress' && req.method === 'GET') {
+      try {
+        const report = await ctx.swarm.getProgressReport();
+        return this.json(res, 200, report);
+      } catch (err) {
+        console.error('[hub] progress query failed:', err);
+        return this.json(res, 200, {
+          swarmId: 'none', tasks: [], agents: [], patterns: { total: 0, recentlyUsed: 0 },
+          sessions: [], overallPercent: 0, phase: 'idle',
+        });
+      }
+    }
+
+    if (subPath === 'patterns' && req.method === 'GET') {
+      try {
+        const patterns = await ctx.swarm.patternSearch('*', undefined, 50);
+        return this.json(res, 200, { patterns });
+      } catch (err) {
+        console.error('[hub] pattern query failed:', err);
+        return this.json(res, 200, { patterns: [] });
       }
     }
 

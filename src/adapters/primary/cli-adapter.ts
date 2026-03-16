@@ -317,6 +317,16 @@ export class CLIAdapter {
 
   private async analyze(args: ParsedArgs): Promise<number> {
     const targetPath = args.positional[0] ?? '.';
+    const jsonMode = args.flags.has('json');
+
+    const result = await this.ctx.archAnalyzer.analyzeArchitecture(targetPath);
+    const s = result.summary;
+
+    // Machine-readable JSON output for CI/CD pipelines
+    if (jsonMode) {
+      this.writeLn(JSON.stringify(result, null, 2));
+      return s.healthScore >= 50 ? 0 : 1;
+    }
 
     if (this.ctx.astIsStub) {
       this.writeLn('\u26a0 Running without tree-sitter grammars \u2014 results may be incomplete');
@@ -325,9 +335,6 @@ export class CLIAdapter {
 
     this.writeLn(`Analyzing architecture at: ${targetPath}`);
     this.writeLn('');
-
-    const result = await this.ctx.archAnalyzer.analyzeArchitecture(targetPath);
-    const s = result.summary;
 
     this.writeLn(`Files scanned:    ${s.totalFiles}`);
     this.writeLn(`Total exports:    ${s.totalExports}`);
@@ -462,10 +469,17 @@ export class CLIAdapter {
 
     const result = await this.ctx.codeGenerator.generateFromSpec(spec, lang);
 
-    this.writeLn(`Generated: ${result.filePath}`);
-    this.writeLn(`Language:  ${result.language}`);
-    this.writeLn('');
-    this.writeLn(result.content);
+    const outputFile = args.flags.get('output');
+    if (outputFile) {
+      await this.ctx.fs.write(outputFile, result.content);
+      this.writeLn(`Generated: ${result.filePath}`);
+      this.writeLn(`Written to: ${outputFile}`);
+    } else {
+      this.writeLn(`Generated: ${result.filePath}`);
+      this.writeLn(`Language:  ${result.language}`);
+      this.writeLn('');
+      this.writeLn(result.content);
+    }
 
     return 0;
   }

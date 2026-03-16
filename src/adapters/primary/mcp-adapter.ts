@@ -10,7 +10,7 @@
  * monitoring dashboard and query project health data programmatically.
  */
 
-import type { IArchAnalysisPort, IASTPort, IFileSystemPort, ASTSummary } from '../../core/ports/index.js';
+import type { IArchAnalysisPort, IASTPort, IFileSystemPort, ICodeGenerationPort, IWorkplanPort, ASTSummary, Language, Specification } from '../../core/ports/index.js';
 import type { AppContextFactory } from '../../core/ports/app-context.js';
 import type { IRegistryPort } from '../../core/ports/registry.js';
 
@@ -108,6 +108,43 @@ export const HEX_INTF_TOOLS: MCPToolDefinition[] = [
       required: ['name'],
     },
   },
+  {
+    name: 'hex_generate',
+    description: 'Generate code from a specification file using LLM, following hex architecture rules',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        specContent: { type: 'string', description: 'Specification content (requirements, one per line)' },
+        language: { type: 'string', description: 'Target language', enum: ['typescript', 'go', 'rust'] },
+        adapter: { type: 'string', description: 'Target adapter name (e.g. "http-adapter", "db-adapter")' },
+        output: { type: 'string', description: 'Output file path (if omitted, returns code as text)' },
+      },
+      required: ['specContent'],
+    },
+  },
+  {
+    name: 'hex_plan',
+    description: 'Create an adapter-bounded workplan from requirements using LLM decomposition',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requirements: { type: 'string', description: 'Requirements (comma-separated or newline-separated)' },
+        language: { type: 'string', description: 'Target language', enum: ['typescript', 'go', 'rust'] },
+      },
+      required: ['requirements'],
+    },
+  },
+  {
+    name: 'hex_analyze_json',
+    description: 'Analyze hexagonal architecture health and return raw JSON (machine-readable for CI/CD)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Project root path to analyze' },
+      },
+      required: ['path'],
+    },
+  },
 ];
 
 // ─── Dashboard Hub Tool Definitions ───────────────────────
@@ -180,6 +217,10 @@ export interface MCPContext {
   contextFactory?: AppContextFactory;
   /** Optional: project registry for port allocation. When absent, falls back to port 3847. */
   registry?: IRegistryPort;
+  /** Optional: LLM code generation. When absent, generate tools return an error. */
+  codeGenerator?: ICodeGenerationPort | null;
+  /** Optional: LLM workplan creation. When absent, plan tools return an error. */
+  workplanExecutor?: IWorkplanPort | null;
 }
 
 export class MCPAdapter {
@@ -226,6 +267,20 @@ export class MCPAdapter {
             call.arguments.name as string,
             (call.arguments.language as string) ?? 'typescript',
           );
+        case 'hex_generate':
+          return await this.generate(
+            call.arguments.specContent as string,
+            (call.arguments.language as string) ?? 'typescript',
+            call.arguments.adapter as string | undefined,
+            call.arguments.output as string | undefined,
+          );
+        case 'hex_plan':
+          return await this.plan(
+            call.arguments.requirements as string,
+            (call.arguments.language as string) ?? 'typescript',
+          );
+        case 'hex_analyze_json':
+          return await this.analyzeJson(call.arguments.path as string);
         // ── Dashboard hub tools ──
         case 'hex_dashboard_start':
           return await this.dashboardStart(
@@ -291,7 +346,12 @@ export class MCPAdapter {
   }
 
   private async summarizeProject(rootPath: string, level: ASTSummary['level']): Promise<MCPToolResult> {
-    const files = await this.ctx.fs.glob(`${rootPath}/src/**/*.ts`);
+    const globResults = await Promise.all([
+      this.ctx.fs.glob(`${rootPath}/src/**/*.ts`),
+      this.ctx.fs.glob(`${rootPath}/src/**/*.go`),
+      this.ctx.fs.glob(`${rootPath}/src/**/*.rs`),
+    ]);
+    const files = globResults.flat();
     const summaries: string[] = [];
     for (const f of files) {
       const s = await this.ctx.ast.extractSummary(f, level);
@@ -346,6 +406,74 @@ export class MCPAdapter {
         text: `Scaffold for "${name}" (${language}):\n\nDirectories:\n${dirs.map((d) => `  mkdir -p ${d}`).join('\n')}\n\nNext: create port interfaces in src/core/ports/`,
       }],
     };
+  }
+
+  private async generate(
+    specContent: string,
+    language: string,
+    adapter?: string,
+    output?: string,
+  ): Promise<MCPToolResult> {
+    if (!this.ctx.codeGenerator) {
+      return { content: [{ type: 'text', text: 'LLM not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' }], isError: true };
+    }
+
+    const langMap: Record<string, Language> = { typescript: 'typescript', go: 'go', rust: 'rust', ts: 'typescript' };
+    const lang = langMap[language];
+    if (!lang) {
+      return { content: [{ type: 'text', text: `Invalid language: ${language}. Use: typescript, go, rust` }], isError: true };
+    }
+
+    const spec: Specification = {
+      title: adapter ?? 'generated',
+      requirements: specContent.split('\n').filter((line) => line.trim().length > 0),
+      constraints: [],
+      targetLanguage: lang,
+      targetAdapter: adapter,
+    };
+
+    const result = await this.ctx.codeGenerator.generateFromSpec(spec, lang);
+
+    if (output) {
+      await this.ctx.fs.write(output, result.content);
+      return { content: [{ type: 'text', text: `Generated ${result.filePath} (${lang})\nWritten to: ${output}` }] };
+    }
+
+    return { content: [{ type: 'text', text: `FILE: ${result.filePath}\nLANG: ${lang}\n\n${result.content}` }] };
+  }
+
+  private async plan(
+    requirements: string,
+    language: string,
+  ): Promise<MCPToolResult> {
+    if (!this.ctx.workplanExecutor) {
+      return { content: [{ type: 'text', text: 'LLM not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' }], isError: true };
+    }
+
+    const langMap: Record<string, Language> = { typescript: 'typescript', go: 'go', rust: 'rust', ts: 'typescript' };
+    const lang = langMap[language] ?? 'typescript' as Language;
+
+    const reqList = requirements.split(/[,\n]/).map((r) => r.trim()).filter(Boolean);
+    const workplan = await this.ctx.workplanExecutor.createPlan(reqList, lang);
+
+    const lines = [
+      `PLAN: ${workplan.title}`,
+      `ID: ${workplan.id}`,
+      `STEPS: ${workplan.steps.length}`,
+      `BUDGET: ~${workplan.estimatedTokenBudget} tokens`,
+      '',
+    ];
+    for (const step of workplan.steps) {
+      const deps = step.dependencies.length > 0 ? ` (deps: ${step.dependencies.join(', ')})` : '';
+      lines.push(`[${step.id}] ${step.description}`);
+      lines.push(`  adapter: ${step.adapter}${deps}`);
+    }
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
+  private async analyzeJson(path: string): Promise<MCPToolResult> {
+    const result = await this.ctx.archAnalyzer.analyzeArchitecture(path);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   }
 
   // ─── Dashboard Hub Tool Implementations ──────────────────
