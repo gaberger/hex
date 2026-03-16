@@ -1,6 +1,6 @@
 ---
 name: hex-analyze-arch
-description: Check hexagonal architecture health, find dead code, and validate boundary rules. Use when the user asks to "check architecture", "find dead code", "validate hex boundaries", "architecture health", "detect circular dependencies", or "hex-intf analyze".
+description: Check hexagonal architecture health, find dead code, and validate boundary rules. Use when the user asks to "check architecture", "find dead code", "validate hex boundaries", "architecture health", "detect circular dependencies", or "hex analyze".
 ---
 
 # Hex Analyze Arch — Architecture Health Check
@@ -15,13 +15,13 @@ Ask the user for:
 
 ## Execution Steps
 
-### 1. Run hex-intf analyze
+### 1. Run hex analyze
 
 ```bash
-npx hex-intf analyze {rootPath}
+npx hex analyze {rootPath}
 ```
 
-If hex-intf is not available, perform manual analysis as described below.
+If hex is not available, perform manual analysis as described below.
 
 ### 2. Collect File Inventory
 

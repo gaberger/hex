@@ -233,7 +233,7 @@ export class DaemonManager {
 
     let child: ChildProcess;
     try {
-      child = spawn(execPath, [entryPath], {
+      child = spawn(execPath, [entryPath, 'hub', '--daemon'], {
         detached: true,
         stdio: ['ignore', logFd, logFd],
         env: {

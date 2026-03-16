@@ -1,19 +1,19 @@
 ---
 name: hex-dashboard
-description: Start the hex-intf monitoring dashboard. Use when the user asks to "start dashboard", "open dashboard", "monitor project", "hex-intf dashboard", or "show swarm status".
+description: Start the hex monitoring dashboard. Use when the user asks to "start dashboard", "open dashboard", "monitor project", "hex dashboard", or "show swarm status".
 ---
 
 # Hex Dashboard — Project Monitoring
 
-Start the hex-intf dashboard for the **current project directory**.
+Start the hex dashboard for the **current project directory**.
 
-The `hex-intf dashboard` command auto-registers with the project registry at `~/.hex-intf/registry.json` and gets an assigned port (3848-3947). Port 3847 is reserved for the multi-project hub.
+The `hex dashboard` command auto-registers with the project registry at `~/.hex/registry.json` and gets an assigned port (3848-3947). Port 3847 is reserved for the multi-project hub.
 
 ## Steps
 
 1. **Check the registry** for an existing registration using the Read tool (NOT bash):
 
-Use the Read tool to read `~/.hex-intf/registry.json`. Look for an entry whose `rootPath` matches the current working directory. If found, note the assigned `port`.
+Use the Read tool to read `~/.hex/registry.json`. Look for an entry whose `rootPath` matches the current working directory. If found, note the assigned `port`.
 
 2. **If registered, check if already running** on the assigned port:
 
@@ -28,13 +28,13 @@ If a PID is returned, the dashboard is already running — report the URL `http:
 **CRITICAL**: Do NOT use `&`, `|`, `$(...)`, or any shell operators. Use ONLY the Bash tool's `run_in_background` parameter.
 
 ```
-Bash(command: "hex-intf dashboard", run_in_background: true)
+Bash(command: "hex dashboard", run_in_background: true)
 ```
 
 This will:
-- Register the project in `~/.hex-intf/registry.json` (if not already)
+- Register the project in `~/.hex/registry.json` (if not already)
 - Get an assigned port from the registry (3848-3947)
-- Write `.hex-intf/project.json` with the project's registry ID
+- Write `.hex/project.json` with the project's registry ID
 - Start the HTTP server on the assigned port
 
 4. **Wait and verify**:
@@ -43,7 +43,7 @@ This will:
 sleep 3
 ```
 
-Then read `.hex-intf/project.json` with the Read tool to confirm the registration.
+Then read `.hex/project.json` with the Read tool to confirm the registration.
 
 Report: `http://localhost:<assigned-port>`
 
@@ -68,4 +68,4 @@ Report: `http://localhost:<assigned-port>`
 - The dashboard runs as a background process — it stays alive until killed
 - SSE stream connects automatically when the page loads
 - To stop: find PID with `lsof -ti :<port>` then `kill <PID>`
-- Unregister: remove the entry from `~/.hex-intf/registry.json`
+- Unregister: remove the entry from `~/.hex/registry.json`

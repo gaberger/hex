@@ -1,11 +1,11 @@
-# swarm-coordinator — Orchestrates the full hex-intf development workflow
+# swarm-coordinator — Orchestrates the full hex development workflow
 # Manages the plan -> execute -> integrate -> package lifecycle
 
 name: swarm-coordinator
 type: hierarchical-coordinator
 version: "1.0.0"
 description: >
-  Top-level orchestrator for the hex-intf development workflow. Initializes the Ruflo
+  Top-level orchestrator for the hex development workflow. Initializes the Ruflo
   swarm, assigns tasks from the planner's workplan to hex-coder agents in parallel
   worktrees, monitors progress, handles failures, and triggers integration when all
   adapter tasks complete.
@@ -124,7 +124,7 @@ workflow:
             mode: bypassPermissions
             run_in_background: true
             prompt: |
-              You are the planner agent for a hex-intf project.
+              You are the planner agent for a hex project.
               Requirements: {{requirements}}
               Language: {{language}}
               Analyze the requirements and produce a workplan.
@@ -148,7 +148,7 @@ workflow:
         - id: create-worktrees
           action: bash
           per_task: |
-            git worktree add ../hex-intf-{{adapter_name}} feat/{{adapter_name}}
+            git worktree add ../hex-{{adapter_name}} feat/{{adapter_name}}
 
         - id: spawn-coders
           description: Spawn all hex-coder agents in parallel (ONE message)
@@ -161,7 +161,7 @@ workflow:
               You are a hex-coder agent working on adapter: {{task.adapter}}
               Port interface: {{task.port}}
               Language: {{language}}
-              Worktree: ../hex-intf-{{adapter_name}}
+              Worktree: ../hex-{{adapter_name}}
 
               Your task: {{task.description}}
 

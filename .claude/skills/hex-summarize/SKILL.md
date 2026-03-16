@@ -32,16 +32,16 @@ Ask the user for:
 
 Find all source files (`.ts`, `.go`, `.rs`) in the target path, excluding `node_modules`, `dist`, `target`, and optionally test files.
 
-### 2. Run hex-intf summarize
+### 2. Run hex summarize
 
 For a single file:
 ```bash
-npx hex-intf summarize <file> --level <L0|L1|L2|L3>
+npx hex summarize <file> --level <L0|L1|L2|L3>
 ```
 
 For a directory:
 ```bash
-npx hex-intf summarize <directory> --level <L0|L1|L2|L3>
+npx hex summarize <directory> --level <L0|L1|L2|L3>
 ```
 
 If a filter is specified, apply it to limit which files are summarized.

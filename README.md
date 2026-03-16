@@ -1,104 +1,87 @@
-# hex-intf
+<p align="center">
+  <img src=".github/assets/banner.svg" alt="hex — Hexagonal Architecture Harness for AI-Driven Development" width="900"/>
+</p>
 
-**Hexagonal Architecture Harness for AI-Driven Development**
+<p align="center">
+  <a href="#installation"><img src="https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen?style=flat-square&logo=node.js&logoColor=white" alt="Node >= 20"/></a>
+  <a href="https://www.npmjs.com/package/hex"><img src="https://img.shields.io/badge/npm-hex-cb3837?style=flat-square&logo=npm&logoColor=white" alt="npm"/></a>
+  <a href="#"><img src="https://img.shields.io/badge/bun-runtime-f9f1e1?style=flat-square&logo=bun&logoColor=black" alt="Bun"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License"/></a>
+  <a href="#multi-language-support"><img src="https://img.shields.io/badge/languages-TS%20%7C%20Go%20%7C%20Rust-informational?style=flat-square" alt="Languages"/></a>
+  <a href="#multi-agent-swarm-coordination"><img src="https://img.shields.io/badge/swarm-ruflo%20powered-blueviolet?style=flat-square" alt="Swarm"/></a>
+</p>
 
-hex-intf is a CLI tool and framework that gives AI coding agents something no prompt template can: **mechanical architecture enforcement**. Instead of hoping LLMs follow instructions, hex-intf enforces typed port contracts, detects boundary violations via static analysis, and coordinates multi-agent swarms with file-level isolation.
-
-```bash
-npx hex-intf scaffold my-app --lang typescript
-npx hex-intf analyze .
-npx hex-intf summarize src/ --level L1
-```
-
----
-
-## Why Harness Engineering?
-
-Traditional AI coding tools (SPECKit, BMAD) improve the *conversation* with AI. hex-intf improves the *output*.
-
-**The problem:** When AI agents generate code autonomously, they produce spaghetti. Adapters import other adapters. Domain logic leaks into HTTP handlers. Database queries appear in UI components. No amount of prompt engineering prevents this at scale.
-
-**The solution:** Hexagonal architecture provides mechanical guardrails. Every layer has typed interfaces (ports). Every implementation (adapter) is independently swappable. A single composition root wires everything together. And `hex-intf analyze` catches violations automatically.
-
-```
-                    ┌─────────────────────────────────────┐
-                    │         Primary Adapters             │
-                    │   CLI  ·  MCP  ·  Dashboard  ·  API │
-                    └──────────────┬──────────────────────┘
-                                   │ implements
-                    ┌──────────────▼──────────────────────┐
-                    │          Input Ports                  │
-                    │  ICodeGenerationPort · IWorkplanPort  │
-                    │  ISummaryPort · ISwarmOrchestrationPort│
-                    └──────────────┬──────────────────────┘
-                                   │ calls
-                    ┌──────────────▼──────────────────────┐
-                    │          Use Cases                    │
-                    │  CodeGenerator · WorkplanExecutor     │
-                    │  SummaryService · ArchAnalyzer        │
-                    └──────────────┬──────────────────────┘
-                                   │ depends on
-                    ┌──────────────▼──────────────────────┐
-                    │          Output Ports                 │
-                    │  IASTPort · ILLMPort · IBuildPort     │
-                    │  IFileSystemPort · IGitPort · ISwarmPort│
-                    └──────────────┬──────────────────────┘
-                                   │ implemented by
-                    ┌──────────────▼──────────────────────┐
-                    │        Secondary Adapters             │
-                    │  TreeSitter · Anthropic · Bun Build   │
-                    │  FileSystem · Git · Ruflo · Registry  │
-                    └─────────────────────────────────────┘
-```
+<p align="center">
+  <b>Give AI coding agents mechanical architecture enforcement — not just prompt templates.</b><br/>
+  <sub>Typed port contracts &nbsp;|&nbsp; Static boundary analysis &nbsp;|&nbsp; Multi-agent swarm coordination &nbsp;|&nbsp; Token-efficient AST summaries</sub>
+</p>
 
 ---
 
-## Installation
+<br/>
 
-```bash
-# Global install
-npm install -g hex-intf
+## The Problem
 
-# Or use directly
-npx hex-intf --help
-```
+> When AI agents generate code autonomously, they produce spaghetti. Adapters import other adapters. Domain logic leaks into HTTP handlers. Database queries appear in UI components. **No amount of prompt engineering prevents this at scale.**
 
-**Requirements:** Node.js >= 20, Bun (for build/test)
+Traditional AI coding tools improve the *conversation* with AI. hex improves the *output*.
 
----
+<br/>
+
+<p align="center">
+  <img src=".github/assets/comparison.svg" alt="SPECKit vs BMAD vs hex — what AI agents actually receive" width="800"/>
+</p>
+
+<br/>
 
 ## Quick Start
 
-### 1. Scaffold a New Project
-
 ```bash
-hex-intf scaffold my-api --lang typescript
-cd my-api
+# Scaffold a new hexagonal project
+npx hex scaffold my-app --lang typescript
+
+# Analyze architecture health
+npx hex analyze .
+
+# Generate token-efficient summaries for AI context
+npx hex summarize src/ --level L1
 ```
 
-This generates a complete hexagonal structure:
+<br/>
 
-```
-my-api/
-  src/
-    core/
-      domain/          # Pure business logic, zero dependencies
-      ports/           # Typed interfaces (contracts between layers)
-      usecases/        # Application logic composing ports
-    adapters/
-      primary/         # Driving: CLI, HTTP, MCP
-      secondary/       # Driven: DB, API, filesystem
-    composition-root.ts  # Single wiring point
-```
+---
 
-### 2. Generate Code Within Boundaries
+<br/>
 
-```bash
-# Generate an adapter that implements a port interface
-hex-intf generate --adapter secondary/cache --port IFileSystemPort --lang typescript
-```
+## Architecture
 
-The generator reads the port's typed interface and produces an adapter that satisfies it. The AI agent knows exactly what methods to implement because ports are explicit contracts:
+<p align="center">
+  <img src=".github/assets/architecture.svg" alt="Hexagonal Architecture Layers" width="800"/>
+</p>
+
+<details>
+<summary><b>How the layers work</b></summary>
+
+<br/>
+
+| Layer | May Import From | Purpose |
+|:------|:---------------|:--------|
+| `domain/` | `domain/` only | Pure business logic, zero external deps |
+| `ports/` | `domain/` only | Typed interfaces — contracts between layers |
+| `usecases/` | `domain/` + `ports/` | Application logic composing ports |
+| `adapters/primary/` | `ports/` only | Driving: CLI, HTTP, MCP, Dashboard |
+| `adapters/secondary/` | `ports/` only | Driven: FS, Git, LLM, TreeSitter, Ruflo |
+| `composition-root.ts` | Everything | The ONLY file that imports adapters |
+
+**The golden rule:** Adapters NEVER import other adapters. This is the most common mistake AI agents make, and `hex analyze` catches it every time.
+
+</details>
+
+<br/>
+
+### Port Contracts — What AI Agents Actually Implement
+
+Ports are typed interfaces. When an AI agent is told "implement this adapter against this port," it has clear input/output contracts — not prose descriptions:
 
 ```typescript
 // Port: the contract (what we need)
@@ -110,7 +93,7 @@ export interface IFileSystemPort {
 }
 
 // Adapter: the implementation (how we do it)
-// Generated by AI within this boundary — can't leak into other adapters
+// AI generates this within its boundary — can't leak into other adapters
 export class S3Adapter implements IFileSystemPort {
   async read(filePath: string): Promise<string> { /* S3 GetObject */ }
   async write(filePath: string, content: string): Promise<void> { /* S3 PutObject */ }
@@ -119,14 +102,11 @@ export class S3Adapter implements IFileSystemPort {
 }
 ```
 
-### 3. Validate Architecture
+### Architecture Validation
 
 ```bash
-hex-intf analyze .
-```
+$ hex analyze .
 
-Output:
-```
 Architecture Analysis
 =====================
 Dead exports:     0 found
@@ -136,138 +116,167 @@ Circular deps:    0 found
 ✓ All hexagonal boundary rules pass
 ```
 
-If an adapter imports another adapter (violation!):
-```
-Hex violations:   1 found
-  ✗ src/adapters/secondary/cache-adapter.ts imports from
-    src/adapters/secondary/filesystem-adapter.ts
-    Rule: adapters must NEVER import other adapters
-```
-
-### 4. Token-Efficient Summaries
-
-```bash
-# L0: file list only (minimal tokens)
-hex-intf summarize src/ --level L0
-
-# L1: exports + function signatures (ideal for AI context)
-hex-intf summarize src/ --level L1
-
-# L2: L1 + function bodies (detailed)
-hex-intf summarize src/ --level L2
-
-# L3: full source (maximum detail)
-hex-intf summarize src/ --level L3
+When an adapter imports another adapter:
+```diff
+- Hex violations:   1 found
+-   ✗ src/adapters/secondary/cache-adapter.ts imports from
+-     src/adapters/secondary/filesystem-adapter.ts
+-     Rule: adapters must NEVER import other adapters
 ```
 
-A 500-line adapter becomes a 30-line L1 summary. This is how AI agents understand your codebase without blowing their context window.
+<br/>
 
 ---
 
-## The Specs-First Workflow
+<br/>
 
-hex-intf enforces a five-phase development pipeline:
+## Specs-First Workflow
 
-```
-Specify → Build → Test → Validate → Ship
-```
+<p align="center">
+  <img src=".github/assets/workflow.svg" alt="Specify → Build → Test → Validate → Ship" width="800"/>
+</p>
 
-### Phase 1: Specify
+<br/>
 
-Write behavioral specs BEFORE code. Specs define what "correct" looks like:
+<table>
+<tr>
+<td width="50%">
+
+### 1. Specify
 
 ```bash
-hex-intf plan "User authentication with JWT tokens, rate limiting, and session management"
+hex plan "JWT auth with rate limiting"
 ```
 
-This decomposes requirements into adapter-bounded workplan steps:
+Decomposes into adapter-bounded steps:
 
 ```yaml
 steps:
   - adapter: secondary/auth
     port: IAuthPort
-    task: "Implement JWT token generation and validation"
-    language: typescript
+    task: "JWT generation + validation"
     tokenBudget: 4000
 
   - adapter: secondary/rate-limiter
     port: IRateLimitPort
-    task: "Implement sliding window rate limiter"
-    language: typescript
+    task: "Sliding window limiter"
     tokenBudget: 3000
-
-  - adapter: primary/http
-    port: IAuthMiddleware
-    task: "Wire auth + rate limiting into HTTP middleware"
-    language: typescript
-    tokenBudget: 2500
 ```
 
-### Phase 2: Build
+</td>
+<td width="50%">
 
-Each step generates code within its adapter boundary. The AI agent receives:
-- The port interface (typed contract)
-- L1 summaries of related code (token-efficient context)
-- The behavioral spec (acceptance criteria)
+### 2. Build
 
-### Phase 3: Test
+Each step generates code within its boundary.
 
-Three levels of testing, integrated into the workflow:
+The AI agent receives:
+- The **port interface** (typed contract)
+- **L1 summaries** of related code (token-efficient)
+- The **behavioral spec** (acceptance criteria)
 
 ```bash
-bun test                    # Unit tests (mock ports, test logic)
-bun test --property         # Property tests (fuzz inputs)
-hex-intf validate .         # Smoke tests (can it actually start?)
+hex generate \
+  --adapter secondary/auth \
+  --port IAuthPort \
+  --lang typescript
 ```
 
-### Phase 4: Validate
+</td>
+</tr>
+<tr>
+<td width="50%">
 
-The validation judge is a **blocking gate**. Code must pass:
-- Behavioral spec assertions
-- Property test invariants
-- Smoke scenarios (does `bun run dev` actually serve?)
-- Architecture analysis (`hex-intf analyze`)
+### 3. Test
 
-### Phase 5: Ship
+Three levels, integrated into the workflow:
 
-Only after validation passes:
 ```bash
-bun run build
-git commit -m "feat(auth): JWT + rate limiting via hex-intf workflow"
+# Unit tests (mock ports, test logic)
+bun test
+
+# Property tests (fuzz inputs)
+bun test --property
+
+# Smoke tests (can it start?)
+hex validate .
 ```
+
+</td>
+<td width="50%">
+
+### 4–5. Validate & Ship
+
+Validation is a **blocking gate**:
+
+- [ ] Behavioral spec assertions pass
+- [ ] Property test invariants hold
+- [ ] Smoke scenarios succeed
+- [ ] `hex analyze` finds no violations
+
+Only then:
+```bash
+bun run build && git commit
+```
+
+</td>
+</tr>
+</table>
+
+<br/>
 
 ---
 
+<br/>
+
 ## Multi-Agent Swarm Coordination
 
-hex-intf coordinates multiple AI agents working in parallel via [ruflo](https://github.com/ruvnet/claude-flow) (`@claude-flow/cli`), a required dependency.
+<p align="center">
+  <img src=".github/assets/swarm.svg" alt="Multi-Agent Swarm with Worktree Isolation" width="800"/>
+</p>
 
-### How It Works
+<br/>
 
+hex coordinates multiple AI agents working in parallel via [**ruflo**](https://github.com/ruvnet/claude-flow) (`@claude-flow/cli`).
+
+<table>
+<tr>
+<td width="50%">
+
+### Agent Roles
+
+| Role | Responsibility |
+|:-----|:--------------|
+| `planner` | Decomposes requirements into tasks |
+| `coder` | Implements one adapter boundary |
+| `tester` | Writes unit + property tests |
+| `reviewer` | Checks hex boundary violations |
+| `integrator` | Merges worktrees, integration tests |
+| `monitor` | Tracks progress, reports status |
+
+</td>
+<td width="50%">
+
+### Swarm Configuration
+
+```typescript
+interface SwarmConfig {
+  topology: 'hierarchical' | 'mesh'
+            | 'hierarchical-mesh';
+  maxAgents: number;       // default: 4
+  strategy: 'specialized' | 'generalist'
+            | 'adaptive';
+  consensus: 'raft' | 'pbft';
+  memoryNamespace: string;
+}
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Planner   │────▶│   Coder A   │     │   Coder B   │
-│  (workplan) │     │ (auth port) │     │ (cache port)│
-└─────────────┘     └──────┬──────┘     └──────┬──────┘
-                           │                    │
-                    ┌──────▼──────┐     ┌──────▼──────┐
-                    │  Worktree A │     │  Worktree B │
-                    │  (isolated) │     │  (isolated) │
-                    └──────┬──────┘     └──────┬──────┘
-                           │                    │
-                    ┌──────▼────────────────────▼──────┐
-                    │         Integrator               │
-                    │  (merge worktrees, run tests)    │
-                    └──────────────────────────────────┘
-```
 
-Each agent gets:
-- **Its own git worktree** — isolated branch, no merge conflicts during development
-- **A single adapter boundary** — can't touch other agents' code
-- **File-level claims** — ruflo prevents two agents editing the same file
-- **Pattern learning** — AgentDB stores what worked, avoids what failed
+</td>
+</tr>
+</table>
 
-### Swarm Port Interface
+<details>
+<summary><b>Swarm Port Interface (full)</b></summary>
 
 ```typescript
 interface ISwarmPort {
@@ -289,162 +298,294 @@ interface ISwarmPort {
   // Hierarchical memory (layer > namespace > key)
   hierarchicalStore(layer: string, namespace: string, key: string, value: string): Promise<void>;
   hierarchicalRecall(layer: string, namespace?: string): Promise<SwarmMemoryEntry[]>;
+
+  // Intelligence
+  consolidate(): Promise<{ merged: number; removed: number }>;
+  contextSynthesize(query: string, sources?: string[]): Promise<string>;
+  getProgressReport(): Promise<AgentDBProgressReport>;
 }
 ```
 
-### Swarm Configuration
-
-```typescript
-interface SwarmConfig {
-  topology: 'hierarchical' | 'mesh' | 'hierarchical-mesh';
-  maxAgents: number;        // default: 4
-  strategy: 'specialized' | 'generalist' | 'adaptive';
-  consensus: 'raft' | 'pbft';
-  memoryNamespace: string;  // e.g., 'hex-intf:my-project'
-}
-```
-
-### Agent Roles
-
-| Role | Responsibility |
-|------|---------------|
-| `planner` | Decomposes requirements into adapter-bounded tasks |
-| `coder` | Implements one adapter against its port interface |
-| `tester` | Writes unit + property tests for an adapter |
-| `reviewer` | Reviews code for hex boundary violations |
-| `integrator` | Merges worktrees, runs integration tests |
-| `monitor` | Tracks swarm progress, reports status |
+</details>
 
 ### Dashboard
 
 ```bash
-hex-intf dashboard --port 3456
+hex dashboard --port 3456
 ```
 
-Real-time web UI showing agent status, task progress, and architecture health via WebSocket updates.
+Real-time web UI with WebSocket updates showing agent status, task progress, and architecture health.
+
+<br/>
 
 ---
 
-## hex-intf vs SPECKit vs BMAD
+<br/>
 
-| Capability | SPECKit | BMAD | hex-intf |
-|---|---|---|---|
-| **Architecture enforcement** | None | Document-level only | Automated static analysis |
-| **Boundary violation detection** | None | None | Import-graph analysis |
-| **Adapter isolation** | None | None | Enforced: adapters can't import adapters |
-| **Multi-agent orchestration** | None | Manual persona switching | Real swarm with worktree isolation |
-| **Token efficiency** | No strategy | Document sharding | Tree-sitter L0-L3 AST summaries |
-| **Testing pipeline** | Spec-only | Separate TEA add-on | Integrated: unit + property + smoke |
-| **Parallel development** | Single-branch | Monolithic | Worktree-based with file claims |
-| **Code generation scope** | Feature-level prose | Full lifecycle docs | Adapter-bounded typed contracts |
-| **Dead code detection** | None | None | Dead-export analyzer |
-| **Pattern learning** | None | None | AgentDB feedback loops |
+## Token-Efficient Summaries
 
-### Why Architecture-First Beats Spec-First
+> A 500-line adapter becomes a 30-line L1 summary. This is how AI agents understand your codebase without blowing their context window.
 
-**SPECKit** gives AI agents prose descriptions ("implement user authentication"). The agent decides how to structure the code. Works for small features, produces spaghetti at scale.
+<table>
+<tr>
+<th>Level</th>
+<th>What's Included</th>
+<th>Tokens</th>
+<th>Use Case</th>
+</tr>
+<tr>
+<td><code>L0</code></td>
+<td>File list only</td>
+<td align="center">~2%</td>
+<td>Project overview, file discovery</td>
+</tr>
+<tr>
+<td><code>L1</code></td>
+<td>Exports + function signatures</td>
+<td align="center"><b>~6%</b></td>
+<td><b>Ideal for AI context</b> — the sweet spot</td>
+</tr>
+<tr>
+<td><code>L2</code></td>
+<td>L1 + function bodies</td>
+<td align="center">~40%</td>
+<td>Detailed understanding of logic</td>
+</tr>
+<tr>
+<td><code>L3</code></td>
+<td>Full source code</td>
+<td align="center">100%</td>
+<td>Complete file contents</td>
+</tr>
+</table>
 
-**BMAD** simulates an agile team with 12+ markdown personas. Impressive ceremony, but no real multi-agent orchestration — users manually invoke each persona. Architecture decisions live in documents, not enforced in code.
-
-**hex-intf** gives AI agents typed port interfaces. The agent knows exactly what methods to implement, what types to accept, and what boundary it's working within. The architecture is enforced mechanically, not hoped for.
-
+```bash
+# Generate L1 summaries for the whole project
+hex summarize src/ --level L1
 ```
-SPECKit:  "Please implement a cache"           → AI decides structure
-BMAD:     "As Architect, design a cache layer"  → Document describes structure
-hex-intf: IFileSystemPort { read, write, glob } → AI implements contract
-```
 
-The difference compounds. At 10 files, any approach works. At 100 files, only enforced boundaries prevent the codebase from collapsing into an unmaintainable graph of cross-cutting dependencies.
+Powered by [tree-sitter](https://tree-sitter.github.io/) (WASM) for language-agnostic AST extraction.
+
+<br/>
 
 ---
 
-## Architecture Rules (Enforced)
+<br/>
 
-These rules are checked by `hex-intf analyze` on every run:
+## hex vs SPECKit vs BMAD
 
-| Layer | May Import From | Rationale |
-|-------|----------------|-----------|
-| `domain/` | `domain/` only | Pure business logic, zero external deps |
-| `ports/` | `domain/` only | Contracts reference value types only |
-| `usecases/` | `domain/` + `ports/` | Application logic composes ports |
-| `adapters/primary/` | `ports/` only | Driving adapters call input ports |
-| `adapters/secondary/` | `ports/` only | Driven adapters implement output ports |
-| `composition-root.ts` | Everything | Single DI wiring point (the only exception) |
+<table>
+<tr>
+<th align="left">Capability</th>
+<th align="center">SPECKit</th>
+<th align="center">BMAD</th>
+<th align="center">hex</th>
+</tr>
+<tr>
+<td><b>Architecture enforcement</b></td>
+<td align="center">-</td>
+<td align="center">Docs only</td>
+<td align="center"><img src="https://img.shields.io/badge/-static%20analysis-3fb950?style=flat-square" alt="static analysis"/></td>
+</tr>
+<tr>
+<td><b>Boundary violation detection</b></td>
+<td align="center">-</td>
+<td align="center">-</td>
+<td align="center"><img src="https://img.shields.io/badge/-import--graph-3fb950?style=flat-square" alt="import-graph"/></td>
+</tr>
+<tr>
+<td><b>Adapter isolation</b></td>
+<td align="center">-</td>
+<td align="center">-</td>
+<td align="center"><img src="https://img.shields.io/badge/-enforced-3fb950?style=flat-square" alt="enforced"/></td>
+</tr>
+<tr>
+<td><b>Multi-agent orchestration</b></td>
+<td align="center">-</td>
+<td align="center">Manual</td>
+<td align="center"><img src="https://img.shields.io/badge/-swarm%20%2B%20worktrees-3fb950?style=flat-square" alt="swarm"/></td>
+</tr>
+<tr>
+<td><b>Token efficiency</b></td>
+<td align="center">-</td>
+<td align="center">Sharding</td>
+<td align="center"><img src="https://img.shields.io/badge/-tree--sitter%20L0--L3-3fb950?style=flat-square" alt="tree-sitter"/></td>
+</tr>
+<tr>
+<td><b>Testing pipeline</b></td>
+<td align="center">Spec-only</td>
+<td align="center">TEA add-on</td>
+<td align="center"><img src="https://img.shields.io/badge/-unit%20%2B%20property%20%2B%20smoke-3fb950?style=flat-square" alt="integrated"/></td>
+</tr>
+<tr>
+<td><b>Parallel development</b></td>
+<td align="center">Single branch</td>
+<td align="center">Monolithic</td>
+<td align="center"><img src="https://img.shields.io/badge/-worktree%20isolation-3fb950?style=flat-square" alt="worktrees"/></td>
+</tr>
+<tr>
+<td><b>Code gen scope</b></td>
+<td align="center">Prose</td>
+<td align="center">Lifecycle docs</td>
+<td align="center"><img src="https://img.shields.io/badge/-typed%20contracts-3fb950?style=flat-square" alt="typed contracts"/></td>
+</tr>
+<tr>
+<td><b>Dead code detection</b></td>
+<td align="center">-</td>
+<td align="center">-</td>
+<td align="center"><img src="https://img.shields.io/badge/-dead--export%20analyzer-3fb950?style=flat-square" alt="dead exports"/></td>
+</tr>
+<tr>
+<td><b>Pattern learning</b></td>
+<td align="center">-</td>
+<td align="center">-</td>
+<td align="center"><img src="https://img.shields.io/badge/-AgentDB%20feedback-3fb950?style=flat-square" alt="AgentDB"/></td>
+</tr>
+</table>
 
-**The golden rule:** Adapters NEVER import other adapters. This is the most common mistake AI agents make, and `hex-intf analyze` catches it every time.
+<br/>
+
+<details>
+<summary><b>Why architecture-first beats spec-first</b></summary>
+
+<br/>
+
+**SPECKit** gives AI agents prose descriptions. The agent decides how to structure the code. Works for small features, produces spaghetti at scale. Known issues: duplicative documentation, incomplete implementations that "look done" in specs.
+
+**BMAD** simulates an agile team with 12+ markdown personas. No real multi-agent orchestration — users manually invoke each persona. Architecture decisions are in documents, not enforced in code. Complexity grows with every persona added.
+
+**hex** gives AI agents typed port interfaces. The agent knows exactly what methods to implement, what types to accept, and what boundary it's working within. Architecture is enforced mechanically.
+
+The difference compounds:
+- At **10 files**, any approach works
+- At **100 files**, only enforced boundaries prevent collapse
+- At **1000 files**, hex's static analysis is the difference between a maintainable codebase and a rewrite
+
+</details>
+
+<br/>
 
 ---
+
+<br/>
+
+## Installation
+
+```bash
+# Global install
+npm install -g hex
+
+# Or use npx
+npx hex --help
+```
+
+**Requirements:** Node.js >= 20, [Bun](https://bun.sh/) (for build/test)
+
+<br/>
+
+---
+
+<br/>
 
 ## CLI Reference
 
 | Command | Description |
-|---------|-------------|
-| `hex-intf scaffold <name>` | Create a new hex project with full structure |
-| `hex-intf analyze <path>` | Architecture health check (dead code, violations, cycles) |
-| `hex-intf summarize <path> --level <L0-L3>` | Token-efficient AST summaries via tree-sitter |
-| `hex-intf generate` | Generate code within an adapter boundary |
-| `hex-intf plan <requirements>` | Decompose requirements into workplan steps |
-| `hex-intf validate <path>` | Post-build semantic validation (blocking gate) |
-| `hex-intf dashboard` | Start real-time monitoring web UI |
-| `hex-intf hub` | Start MCP server for Claude Code integration |
-| `hex-intf status` | Swarm progress report |
-| `hex-intf setup` | Install tree-sitter grammars + skills + agents |
-| `hex-intf init` | Initialize project with startup hooks |
+|:--------|:-----------|
+| `hex scaffold <name>` | Create a new hex project with full structure |
+| `hex analyze <path>` | Architecture health check (dead code, violations, cycles) |
+| `hex summarize <path> --level <L0-L3>` | Token-efficient AST summaries via tree-sitter |
+| `hex generate` | Generate code within an adapter boundary |
+| `hex plan <requirements>` | Decompose requirements into workplan steps |
+| `hex validate <path>` | Post-build semantic validation (blocking gate) |
+| `hex dashboard` | Start real-time monitoring web UI |
+| `hex hub` | Start MCP server for Claude Code integration |
+| `hex status` | Swarm progress report |
+| `hex setup` | Install tree-sitter grammars + skills + agents |
+| `hex init` | Initialize project with startup hooks |
+
+<br/>
 
 ---
+
+<br/>
 
 ## Claude Code Integration
 
-hex-intf ships with skills (slash commands) and agent definitions for Claude Code:
+<table>
+<tr>
+<td width="50%">
 
-### Skills
+### Skills (Slash Commands)
 
-| Skill | What It Does |
-|-------|-------------|
-| `/hex-scaffold` | Scaffold a new hex project interactively |
-| `/hex-generate` | Generate adapter code against a port interface |
-| `/hex-summarize` | Produce token-efficient AST summaries |
-| `/hex-analyze-arch` | Run architecture health check |
-| `/hex-analyze-deps` | Dependency analysis + tech stack recommendation |
-| `/hex-validate` | Post-build semantic validation |
-| `/hex-dashboard` | Start the monitoring web UI |
+| Skill | Description |
+|:------|:-----------|
+| `/hex-scaffold` | Scaffold new hex project |
+| `/hex-generate` | Generate adapter code |
+| `/hex-summarize` | Token-efficient summaries |
+| `/hex-analyze-arch` | Architecture health check |
+| `/hex-analyze-deps` | Dependency + tech stack analysis |
+| `/hex-validate` | Post-build validation |
+| `/hex-dashboard` | Start monitoring UI |
+
+</td>
+<td width="50%">
 
 ### MCP Tools
 
-When running as an MCP server (`hex-intf hub`), these tools are available:
+Available via `hex hub`:
 
-- `hex_generate` — Generate code from specification
-- `hex_plan` — Create workplan from requirements
-- `hex_orchestrate` — Run swarm orchestration
-- `hex_status` — Query swarm progress
+| Tool | Description |
+|:-----|:-----------|
+| `hex_generate` | Generate code from spec |
+| `hex_plan` | Create workplan |
+| `hex_orchestrate` | Run swarm orchestration |
+| `hex_status` | Query swarm progress |
+
+</td>
+</tr>
+</table>
 
 ### Agent Definitions
 
-Pre-built agent YAML definitions for swarm orchestration:
+Pre-built YAML agents for swarm orchestration:
 
-- `planner` — Requirement decomposition
-- `hex-coder` — TDD coding within adapter boundaries
-- `integrator` — Worktree merging + integration tests
-- `swarm-coordinator` — Full lifecycle orchestration
-- `dead-code-analyzer` — Dead export + boundary violation detection
-- `validation-judge` — Post-build semantic validation (blocking gate)
-- `behavioral-spec-writer` — Writes acceptance specs before code generation
+<table>
+<tr>
+<td><code>planner</code></td>
+<td><code>hex-coder</code></td>
+<td><code>integrator</code></td>
+<td><code>swarm-coordinator</code></td>
+</tr>
+<tr>
+<td><code>dead-code-analyzer</code></td>
+<td><code>validation-judge</code></td>
+<td><code>behavioral-spec-writer</code></td>
+<td><code>scaffold-validator</code></td>
+</tr>
+</table>
+
+<br/>
 
 ---
 
+<br/>
+
 ## Multi-Language Support
 
-hex-intf uses tree-sitter (WASM) for language-agnostic AST extraction. Currently supported:
+Powered by [tree-sitter](https://tree-sitter.github.io/) WASM for language-agnostic AST extraction:
 
 | Language | Summarize | Analyze | Generate |
-|----------|-----------|---------|----------|
-| TypeScript | L0-L3 | Full | Full |
-| Go | L0-L3 | Full | Full |
-| Rust | L0-L3 | Full | Full |
+|:---------|:---------:|:-------:|:--------:|
+| TypeScript | L0–L3 | Full | Full |
+| Go | L0–L3 | Full | Full |
+| Rust | L0–L3 | Full | Full |
 
-### Example: Go Backend
+<details>
+<summary><b>Example: Go Backend (Weather API)</b></summary>
 
-The `examples/weather/` directory demonstrates hex-intf applied to a Go project:
+<br/>
+
+The `examples/weather/` directory shows hex applied to a Go project:
 
 ```
 examples/weather/backend/src/
@@ -463,7 +604,13 @@ examples/weather/backend/src/
 
 Same hexagonal rules, different language. The architecture transfers.
 
+</details>
+
+<br/>
+
 ---
+
+<br/>
 
 ## Project Structure
 
@@ -472,9 +619,9 @@ src/
   core/
     domain/              # Value objects, entities, domain events
     ports/               # Typed interfaces (input + output)
-    usecases/            # Application logic (12 use case files)
+    usecases/            # Application logic
   adapters/
-    primary/             # CLI, MCP, Dashboard, Notification query
+    primary/             # CLI, MCP, Dashboard, Notifications
     secondary/           # FS, Git, TreeSitter, LLM, Ruflo, Build, Registry
   infrastructure/        # Tree-sitter query definitions
   composition-root.ts    # Single DI wiring point
@@ -483,17 +630,20 @@ src/
 tests/
   unit/                  # London-school mock-first tests
   integration/           # Real adapter tests
-examples/                # Reference applications (weather, flappy-bird, todo)
-agents/                  # Agent definitions (YAML, shipped in npm package)
-skills/                  # Skill definitions (Markdown, shipped in npm package)
+examples/                # Reference apps (weather, flappy-bird, todo)
+agents/                  # Agent definitions (YAML)
+skills/                  # Skill definitions (Markdown)
 config/                  # Language configs, tree-sitter settings
 docs/
-  architecture/          # Architecture specs
   adrs/                  # Architecture Decision Records
   analysis/              # Adversarial review reports
 ```
 
+<br/>
+
 ---
+
+<br/>
 
 ## Build & Test
 
@@ -501,44 +651,71 @@ docs/
 bun run build        # Bundle CLI + library to dist/
 bun test             # Run all tests (unit + property + smoke)
 bun run check        # TypeScript type check (no emit)
-hex-intf analyze .   # Architecture validation
-hex-intf setup       # Install grammars + skills + agents
+hex analyze .   # Architecture validation
+hex setup       # Install grammars + skills + agents
 ```
 
+<br/>
+
 ---
+
+<br/>
 
 ## Design Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| Tree-sitter over regex | WASM-based AST extraction works across languages; regex breaks on edge cases |
-| Ruflo as required dep | Swarm coordination is not optional; even single-agent workflows benefit from task tracking |
-| Single composition root | Only one file imports adapters; adapter swaps are one-line changes |
-| L0-L3 summary levels | AI agents need different detail at different phases; L1 is the sweet spot |
-| Worktree isolation | Each agent gets a git worktree, not just a branch; prevents merge conflicts |
-| `safePath()` protection | `FileSystemAdapter` prevents path traversal outside project root |
-| `execFile` not `exec` | `RufloAdapter` prevents shell injection from untrusted inputs |
-| London-school testing | Mock ports, test logic; hexagonal architecture makes this natural |
+<details>
+<summary><b>Why these choices?</b></summary>
 
----
+<br/>
+
+| Decision | Rationale |
+|:---------|:---------|
+| **Tree-sitter over regex** | WASM-based AST extraction works across languages; regex breaks on edge cases |
+| **Ruflo as required dep** | Swarm coordination is not optional; even solo workflows benefit from task tracking |
+| **Single composition root** | Only one file imports adapters; adapter swaps are one-line changes |
+| **L0-L3 summary levels** | AI agents need different detail at different phases; L1 is the sweet spot |
+| **Worktree isolation** | Each agent gets a git worktree, not just a branch; prevents merge conflicts |
+| **`safePath()` protection** | FileSystemAdapter prevents path traversal outside project root |
+| **`execFile` not `exec`** | RufloAdapter prevents shell injection from untrusted inputs |
+| **London-school testing** | Mock ports, test logic; hexagonal architecture makes this natural |
+
+</details>
+
+<br/>
 
 ## Security
 
-- Path traversal protection via `FileSystemAdapter.safePath()`
-- No shell injection — `RufloAdapter` uses `execFile` (not `exec`)
-- API keys loaded only in `composition-root.ts` from env vars
-- Primary adapters must not use `innerHTML` with external data
-- Never commit `.env` files — use `.env.example`
+| Protection | Implementation |
+|:-----------|:--------------|
+| Path traversal | `FileSystemAdapter.safePath()` blocks `../` escapes |
+| Shell injection | `RufloAdapter` uses `execFile` (not `exec`) |
+| Secret management | API keys loaded only in `composition-root.ts` from env vars |
+| XSS prevention | Primary adapters must not use `innerHTML` with external data |
+| Credential safety | `.env` files are gitignored; `.env.example` provided |
+
+<br/>
 
 ---
 
-## License
-
-MIT
-
----
+<br/>
 
 <p align="center">
-Built with hexagonal architecture principles.<br>
-Designed for AI agents that write code, not just chat about it.
+  <img src="https://img.shields.io/badge/architecture-hexagonal-58a6ff?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiPjxwb2x5Z29uIHBvaW50cz0iMTIgMiAyMiA4LjUgMjIgMTUuNSAxMiAyMiAyIDE1LjUgMiA4LjUiLz48L3N2Zz4=" alt="Hexagonal Architecture"/>
+  &nbsp;
+  <img src="https://img.shields.io/badge/agents-swarm%20powered-bc8cff?style=for-the-badge" alt="Swarm Powered"/>
+  &nbsp;
+  <img src="https://img.shields.io/badge/parsing-tree--sitter-3fb950?style=for-the-badge" alt="Tree-sitter"/>
+</p>
+
+<p align="center">
+  <sub>Built for AI agents that write code, not just chat about it.</sub>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a> &nbsp;&bull;&nbsp;
+  <a href="#architecture">Architecture</a> &nbsp;&bull;&nbsp;
+  <a href="#specs-first-workflow">Workflow</a> &nbsp;&bull;&nbsp;
+  <a href="#multi-agent-swarm-coordination">Swarm</a> &nbsp;&bull;&nbsp;
+  <a href="#cli-reference">CLI</a> &nbsp;&bull;&nbsp;
+  <a href="#claude-code-integration">Claude Code</a>
 </p>

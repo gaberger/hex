@@ -1,6 +1,6 @@
 ---
 name: hex-scaffold
-description: Scaffold a new hexagonal architecture project. Use when the user asks to "create hex project", "scaffold hexagonal", "new ports and adapters project", "hex-intf init", or "init hexagonal project".
+description: Scaffold a new hexagonal architecture project. Use when the user asks to "create hex project", "scaffold hexagonal", "new ports and adapters project", "hex init", or "init hexagonal project".
 ---
 
 # Hex Scaffold — Create a Hexagonal Architecture Project

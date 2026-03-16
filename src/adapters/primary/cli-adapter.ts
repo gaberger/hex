@@ -291,6 +291,8 @@ export class CLIAdapter {
           return await this.hub(args);
         case 'status':
           return await this.status();
+        case 'daemon':
+          return await this.daemon(args);
         case 'setup':
           return await this.setup();
         case 'init':
@@ -526,37 +528,90 @@ export class CLIAdapter {
   // ── dashboard ───────────────────────────────────────
 
   private async dashboard(args: ParsedArgs): Promise<number> {
-    const explicitPort = args.flags.get('port');
+    const { DaemonManager } = await import('./daemon-manager.js');
+    const daemon = new DaemonManager();
 
-    // Register with the project registry to get an assigned port
-    const ctx = this.ctx as AppContext;
-    const projectName = ctx.rootPath.split('/').pop() ?? 'unknown';
-    const registration = await ctx.registry.register(ctx.rootPath, projectName);
-    const port = explicitPort ? parseInt(explicitPort, 10) : registration.port;
+    // Check if a daemon is already running
+    const existing = await daemon.status();
+    if (existing.running) {
+      this.writeLn(`Dashboard already running at http://localhost:${existing.port}`);
+      this.writeLn(`  PID: ${existing.pid}  Uptime: ${Math.round((existing.uptime ?? 0) / 1000)}s  Projects: ${existing.projects}`);
+      this.writeLn(`  Open: http://localhost:${existing.port}`);
+      return 0;
+    }
 
-    if (isNaN(port) || port < 1 || port > 65535) {
-      this.writeLn('Invalid port number. Must be 1-65535.');
+    // No daemon running — start the hub directly (foreground mode)
+    // For background daemon, use: hex daemon start
+    return this.startHub(args, false);
+  }
+
+  // ── hub (multi-project dashboard) ───────────────────
+
+  private async hub(args: ParsedArgs): Promise<number> {
+    const isDaemon = process.env['HEX_DAEMON'] === '1' || args.flags.has('daemon');
+    return this.startHub(args, isDaemon);
+  }
+
+  /**
+   * Start the dashboard hub with broadcast adapter and WebSocket broker.
+   * Used by both `dashboard` and `hub` commands.
+   */
+  private async startHub(args: ParsedArgs, isDaemon: boolean): Promise<number> {
+    const port = parseInt(args.flags.get('port') ?? '0', 10);
+    if (isNaN(port) || port < 0 || port > 65535) {
+      this.writeLn('Invalid port number. Must be 0-65535 (0 = auto-assign).');
       return 1;
     }
 
-    // Write local identity so the project knows its registry ID
-    await ctx.registry.writeLocalIdentity(ctx.rootPath, {
-      id: registration.id,
-      name: registration.name,
-      createdAt: registration.createdAt,
-    });
+    const { DashboardHub } = await import('./dashboard-hub.js');
+    const { createAppContext: factory } = await import('../../composition-root.js');
 
-    // Dynamic import to avoid loading http server when not needed
-    const { DashboardAdapter } = await import('./dashboard-adapter.js');
-    const dashboard = new DashboardAdapter(ctx, port);
-    const { url } = await dashboard.start();
+    // Inject the broadcast adapter so the hub delegates to IBroadcastPort
+    const hub = new DashboardHub(factory, port || 3847, this.ctx.broadcaster);
+    const { url } = await hub.start();
+
+    // Attach WebSocket broker to the HTTP server
+    const httpServer = hub.httpServer;
+    if (httpServer) {
+      try {
+        const { WebSocketBroker } = await import('./ws-broker.js');
+        const wsBroker = new WebSocketBroker(httpServer);
+
+        // Forward inbound agent messages to the hub's broadcast
+        wsBroker.onPublish((topic, event, data) => {
+          const projectMatch = topic.match(/^project:([^:]+):/);
+          if (projectMatch) {
+            hub.broadcastToProject(projectMatch[1], event, data);
+          } else {
+            hub.broadcast(event, data);
+          }
+        });
+
+        this.writeLn(`WebSocket broker attached (ws://${url.replace('http://', '')})`);
+      } catch {
+        this.writeLn('WebSocket unavailable (ws package not installed — SSE only)');
+      }
+    }
+
+    // Register the current project
+    const slot = await hub.registerProject(this.ctx.rootPath);
     this.writeLn(`Dashboard running at ${url}`);
-    this.writeLn(`Registry: ${registration.id} (port ${registration.port})`);
+    this.writeLn(`Project: ${slot.id}`);
 
-    // Wire notification orchestrator → dashboard SSE broadcast
+    // Register additional projects from positional args
+    for (const projectPath of args.positional) {
+      try {
+        const s = await hub.registerProject(projectPath);
+        this.writeLn(`Project: ${s.id}`);
+      } catch (err) {
+        this.writeLn(`Failed: ${projectPath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Wire notification orchestrator → broadcast
     if (this.ctx.notificationOrchestrator) {
       this.ctx.notificationOrchestrator.addListener((notification) => {
-        dashboard.broadcast(notification.level, {
+        hub.broadcastToProject(slot.id, notification.level, {
           id: notification.id,
           level: notification.level,
           message: notification.title,
@@ -566,63 +621,126 @@ export class CLIAdapter {
           context: notification.context,
         });
       });
-      this.writeLn('Notifications connected to dashboard SSE.');
-    } else {
-      this.writeLn('No notification orchestrator — SSE events will be limited.');
     }
 
-    this.writeLn('Press Ctrl+C to stop.');
+    // If running as daemon, write lock file
+    if (isDaemon) {
+      const { DaemonManager } = await import('./daemon-manager.js');
+      const daemon = new DaemonManager();
+      const actualPort = parseInt(url.split(':').pop() ?? '3847', 10);
+      const token = process.env['HEX_DAEMON_TOKEN'] ?? '';
+      daemon.registerSelf(actualPort, token, '1.0.0');
 
-    // Keep the process alive until interrupted
+      // Persist state so projects survive daemon restart
+      const state = daemon.readState();
+      state.registeredProjects.push({ rootPath: this.ctx.rootPath, registeredAt: Date.now() });
+      daemon.persistState(state);
+
+      // Idle timeout
+      const idle = daemon.createIdleTimer(() => {
+        this.writeLn('[hex] Idle timeout — shutting down');
+        daemon.unregisterSelf();
+        process.exit(0);
+      });
+
+      // Reset idle on any HTTP activity (hub already handles requests)
+      process.on('SIGTERM', () => { daemon.unregisterSelf(); process.exit(0); });
+      process.on('SIGINT', () => { daemon.unregisterSelf(); process.exit(0); });
+    } else {
+      this.writeLn('Press Ctrl+C to stop.');
+    }
+
     await new Promise(() => {});
     return 0;
   }
 
-  // ── hub (multi-project dashboard) ───────────────────
+  // ── daemon ──────────────────────────────────────────
 
-  private async hub(args: ParsedArgs): Promise<number> {
-    const port = parseInt(args.flags.get('port') ?? '3847', 10);
-    if (isNaN(port) || port < 1 || port > 65535) {
-      this.writeLn('Invalid port number. Must be 1-65535.');
-      return 1;
-    }
+  private async daemon(args: ParsedArgs): Promise<number> {
+    const { DaemonManager } = await import('./daemon-manager.js');
+    const daemon = new DaemonManager();
+    const subCmd = args.positional[0] ?? 'status';
 
-    // Dynamic import to avoid loading http server when not needed
-    const { DashboardHub } = await import('./dashboard-hub.js');
-    // Inject the composition root factory — keeps the hub hex-clean
-    const { createAppContext: factory } = await import('../../composition-root.js');
-
-    const hub = new DashboardHub(factory, port);
-    const { url } = await hub.start();
-    this.writeLn(`Dashboard Hub running at ${url}`);
-
-    // Register the current project as the first project
-    const slot = await hub.registerProject(this.ctx.rootPath);
-    this.writeLn(`Registered project: ${slot.id} (${this.ctx.rootPath})`);
-
-    // Register additional projects from --project flags
-    const extraProjects = args.positional;
-    for (const projectPath of extraProjects) {
-      try {
-        const s = await hub.registerProject(projectPath);
-        this.writeLn(`Registered project: ${s.id} (${s.ctx.rootPath})`);
-      } catch (err) {
-        this.writeLn(`Failed to register ${projectPath}: ${err instanceof Error ? err.message : String(err)}`);
+    switch (subCmd) {
+      case 'status': {
+        const status = await daemon.status();
+        if (status.running) {
+          this.writeLn(`Dashboard daemon running`);
+          this.writeLn(`  PID:      ${status.pid}`);
+          this.writeLn(`  Port:     ${status.port}`);
+          this.writeLn(`  Uptime:   ${Math.round((status.uptime ?? 0) / 1000)}s`);
+          this.writeLn(`  Projects: ${status.projects}`);
+          this.writeLn(`  URL:      http://localhost:${status.port}`);
+        } else {
+          this.writeLn('Dashboard daemon is not running.');
+          this.writeLn('Start with: hex daemon start');
+        }
+        return 0;
       }
+
+      case 'start': {
+        const status = await daemon.status();
+        if (status.running) {
+          this.writeLn(`Already running at http://localhost:${status.port} (PID ${status.pid})`);
+          return 0;
+        }
+
+        // Spawn detached daemon using this same CLI
+        const entryPath = process.argv[1];
+        const result = await daemon.findOrStart(entryPath);
+        this.writeLn(`Dashboard daemon started at http://localhost:${result.port}`);
+        return 0;
+      }
+
+      case 'stop': {
+        const stopped = await daemon.stop();
+        this.writeLn(stopped ? 'Dashboard daemon stopped.' : 'No daemon running.');
+        return 0;
+      }
+
+      case 'logs': {
+        const { readFileSync } = await import('node:fs');
+        try {
+          const log = readFileSync(daemon.paths.log, 'utf-8');
+          const lines = log.split('\n').slice(-50);
+          this.writeLn(lines.join('\n'));
+        } catch {
+          this.writeLn('No logs found.');
+        }
+        return 0;
+      }
+
+      default:
+        this.writeLn(`Unknown daemon command: ${subCmd}`);
+        this.writeLn('Usage: hex daemon [status|start|stop|logs]');
+        return 1;
     }
-
-    this.writeLn('');
-    this.writeLn('Register more projects via POST /api/projects/register { "rootPath": "..." }');
-    this.writeLn('Press Ctrl+C to stop.');
-
-    await new Promise(() => {});
-    return 0;
   }
 
   // ── status ──────────────────────────────────────────
 
   private async status(): Promise<number> {
-    this.writeLn('Swarm status: use "hex analyze" to check project health.');
+    const { DaemonManager } = await import('./daemon-manager.js');
+    const daemon = new DaemonManager();
+    const daemonStatus = await daemon.status();
+
+    if (daemonStatus.running) {
+      this.writeLn(`Dashboard:  http://localhost:${daemonStatus.port} (PID ${daemonStatus.pid})`);
+      this.writeLn(`Projects:   ${daemonStatus.projects}`);
+      this.writeLn(`Uptime:     ${Math.round((daemonStatus.uptime ?? 0) / 1000)}s`);
+    } else {
+      this.writeLn('Dashboard:  not running (start with: hex dashboard)');
+    }
+
+    try {
+      const progress = await this.ctx.swarm.getProgressReport();
+      this.writeLn(`Tasks:      ${progress.tasks.length} (${progress.overallPercent}% complete)`);
+      this.writeLn(`Agents:     ${progress.agents.length}`);
+      this.writeLn(`Patterns:   ${progress.patterns.total} (${progress.patterns.recentlyUsed} recently used)`);
+    } catch {
+      this.writeLn('Swarm:      unavailable');
+    }
+
     return 0;
   }
 
@@ -644,7 +762,37 @@ export class CLIAdapter {
       swarmOrchestrator: this.ctx.swarmOrchestrator,
     });
 
-    const allTools = adapter.getTools();
+    const hexTools = adapter.getTools();
+
+    // ── Embed claude-flow tools (single MCP server for everything) ──
+    // claude-flow exports a programmatic API — no subprocess needed.
+    // hex is the agentic coding harness; claude-flow is an implementation detail.
+    type FlowToolDef = { name: string; description: string; inputSchema: Record<string, unknown> };
+    let flowTools: FlowToolDef[] = [];
+    let callFlowTool: ((name: string, input: Record<string, unknown>) => Promise<unknown>) | null = null;
+
+    try {
+      const flow = await import('@claude-flow/cli/dist/src/mcp-client.js');
+      const rawTools = flow.listMCPTools?.() ?? [];
+      flowTools = rawTools.map((t: any) => ({
+        name: t.name,
+        description: t.description ?? '',
+        inputSchema: t.inputSchema ?? { type: 'object', properties: {}, required: [] },
+      }));
+      callFlowTool = flow.callMCPTool?.bind(flow) ?? null;
+      process.stderr.write(`[hex] claude-flow embedded: ${flowTools.length} tools\n`);
+    } catch {
+      process.stderr.write(`[hex] claude-flow not available — hex tools only\n`);
+    }
+
+    // Merge all tools: hex tools first, then claude-flow tools
+    const allTools = [
+      ...hexTools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+      ...flowTools,
+    ];
+
+    // Build a set of hex tool names for routing
+    const hexToolNames = new Set(hexTools.map((t) => t.name));
 
     // JSON-RPC stdio MCP server — reads from stdin, writes to stdout
     const readline = await import('node:readline');
@@ -654,8 +802,7 @@ export class CLIAdapter {
       process.stdout.write(JSON.stringify(msg) + '\n');
     };
 
-    // Log to stderr so it doesn't interfere with MCP protocol on stdout
-    process.stderr.write(`[hex] MCP server started with ${allTools.length} tools\n`);
+    process.stderr.write(`[hex] MCP server started with ${allTools.length} tools (${hexTools.length} hex + ${flowTools.length} flow)\n`);
 
     rl.on('line', async (line: string) => {
       let request: { jsonrpc: string; id?: number | string; method: string; params?: Record<string, unknown> };
@@ -686,24 +833,34 @@ export class CLIAdapter {
         case 'tools/list':
           send({
             jsonrpc: '2.0', id,
-            result: {
-              tools: allTools.map((t) => ({
-                name: t.name,
-                description: t.description,
-                inputSchema: t.inputSchema,
-              })),
-            },
+            result: { tools: allTools },
           });
           break;
 
         case 'tools/call': {
           const toolName = (params as any)?.name as string;
           const toolArgs = (params as any)?.arguments as Record<string, unknown> ?? {};
-          const result = await adapter.handleToolCall({ name: toolName, arguments: toolArgs });
-          send({
-            jsonrpc: '2.0', id,
-            result: { content: result.content, isError: result.isError },
-          });
+
+          try {
+            if (hexToolNames.has(toolName)) {
+              // Route to hex adapter
+              const result = await adapter.handleToolCall({ name: toolName, arguments: toolArgs });
+              send({ jsonrpc: '2.0', id, result: { content: result.content, isError: result.isError } });
+            } else if (callFlowTool) {
+              // Route to embedded claude-flow
+              const result = await callFlowTool(toolName, toolArgs);
+              // Normalize claude-flow result to MCP format
+              const content = typeof result === 'object' && result !== null && 'content' in result
+                ? (result as any).content
+                : [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result) }];
+              send({ jsonrpc: '2.0', id, result: { content } });
+            } else {
+              send({ jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${toolName}` } });
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `Error: ${message}` }], isError: true } });
+          }
           break;
         }
 
@@ -1275,9 +1432,10 @@ export class CLIAdapter {
     this.writeLn('  plan <requirements...>           Create a workplan from requirements');
     this.writeLn('    [--lang ts|go|rust]');
     this.writeLn('  setup                           Download grammars + install skills/agents');
-    this.writeLn('  dashboard [--port N]             Open web dashboard (default: 3847)');
-    this.writeLn('  hub [paths...] [--port N]       Multi-project dashboard broker');
-    this.writeLn('  status                          Show swarm progress');
+    this.writeLn('  dashboard [--port N]             Start dashboard (auto-detects running daemon)');
+    this.writeLn('  hub [paths...] [--port N]       Multi-project dashboard with WebSocket');
+    this.writeLn('  daemon [status|start|stop|logs] Background dashboard service');
+    this.writeLn('  status                          Show dashboard, tasks, agents, patterns');
     this.writeLn('  init [--lang ts|go|rust]        Scaffold a hex project');
     this.writeLn('  help                            Show this help');
     this.writeLn('');
