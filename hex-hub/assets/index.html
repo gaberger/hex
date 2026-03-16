@@ -337,6 +337,8 @@ a{color:var(--accent);text-decoration:none}
     <button class="chat-quick-btn" data-cmd="run-analyze">Analyze</button>
     <button class="chat-quick-btn" data-cmd="run-build">Build</button>
     <button class="chat-quick-btn" data-cmd="run-summarize">Summarize</button>
+    <button class="chat-quick-btn" data-cmd="run-validate">Validate</button>
+    <button class="chat-quick-btn" data-cmd="run-generate">Generate</button>
     <button class="chat-quick-btn" data-cmd="spawn-agent" data-payload='{"name":"helper","role":"coder"}'>Spawn Agent</button>
     <button class="chat-quick-btn" data-cmd="create-task" data-payload='{"title":"ad-hoc task","agentRole":"coder"}'>Create Task</button>
   </div>
@@ -344,7 +346,7 @@ a{color:var(--accent);text-decoration:none}
     <div class="chat-msg system">Select a project and send commands to its agents</div>
   </div>
   <div class="chat-input-bar">
-    <input class="chat-input" id="chatInput" type="text" placeholder="Type a command (e.g. ping, run-analyze, spawn-agent coder)..." autocomplete="off">
+    <input class="chat-input" id="chatInput" type="text" placeholder="Type a command (e.g. hex analyze, hex build, hex validate, spawn-agent coder)..." autocomplete="off">
     <button class="chat-send-btn" id="chatSendBtn">Send</button>
   </div>
 </div>
@@ -403,9 +405,7 @@ a{color:var(--accent);text-decoration:none}
     events: [],
     tokenOverview: null,
     currentDecisionId: null,
-    sseRetryTimer: null,
     pollTimer: null,
-    evtSource: null,
     currentProject: null, // currently selected project ID
     projects: [],         // list of { id, name, rootPath, astIsStub }
   };
@@ -478,6 +478,14 @@ a{color:var(--accent);text-decoration:none}
         populateProjectSelector(data.projects);
         if (!state.currentProject) {
           switchProject(data.projects[0].id);
+        } else {
+          // If currentProject was set by hash routing, verify it exists and load panels
+          var exists = data.projects.some(function(p) { return p.id === state.currentProject; });
+          if (exists) {
+            switchProject(state.currentProject);
+          } else {
+            switchProject(data.projects[0].id);
+          }
         }
       } else {
         // No projects yet — show empty state
@@ -546,9 +554,15 @@ a{color:var(--accent);text-decoration:none}
   }
 
   function switchProject(projectId) {
+    var oldProject = state.currentProject;
     state.currentProject = projectId;
     var sel = $('#projectSelector');
     sel.value = projectId;
+
+    // Update URL hash for deep-linking
+    if (location.hash !== '#/project/' + projectId) {
+      location.hash = '#/project/' + projectId;
+    }
 
     // Update active tab
     $$('.project-tab').forEach(function(tab) {
@@ -574,6 +588,10 @@ a{color:var(--accent);text-decoration:none}
     selectedNode = null;
     selectedTransitive = {};
     camera = { x: 0, y: 0, zoom: 1 };
+
+    // Unsubscribe from old project WS topics, subscribe to new ones
+    wsUnsubscribeProject(oldProject);
+    wsSubscribeProject(projectId);
 
     // Subscribe chat WebSocket to new project's topics and render its channel
     chatSubscribe(projectId);
@@ -916,152 +934,9 @@ a{color:var(--accent);text-decoration:none}
     }
   }
 
-  // --- SSE ---
-  function connectSSE() {
-    if (state.evtSource) {
-      state.evtSource.close();
-    }
-    var es;
-    try {
-      es = new EventSource('/api/events');
-    } catch (e) {
-      setConnected(false);
-      state.sseRetryTimer = setTimeout(connectSSE, 5000);
-      return;
-    }
-    state.evtSource = es;
-
-    es.onopen = function() {
-      setConnected(true);
-      clearTimeout(state.sseRetryTimer);
-      addEvent({ level: 'success', message: 'Dashboard connected via SSE', timestamp: Date.now() });
-    };
-
-    // Named event listeners for typed server events
-    es.addEventListener('connected', function(e) {
-      setConnected(true);
-      try {
-        var data = JSON.parse(e.data);
-        if (data.projects && data.projects.length > 0) {
-          state.projects = data.projects;
-          populateProjectSelector(data.projects);
-          if (!state.currentProject) {
-            switchProject(data.projects[0].id);
-          }
-        }
-      } catch (err) { /* ignore */ }
-      addEvent({ level: 'info', message: 'SSE stream established', timestamp: Date.now() });
-    });
-
-    // State update — project pushed new data, refresh the relevant panel
-    es.addEventListener('state-update', function(e) {
-      try {
-        var data = JSON.parse(e.data);
-        if (data.projectId !== state.currentProject) return;
-        switch (data.type) {
-          case 'health': loadHealth(); break;
-          case 'tokens': loadTokenOverview(); break;
-          case 'swarm': loadSwarm(); break;
-          case 'graph': loadGraph(); break;
-        }
-      } catch (err) { /* ignore */ }
-    });
-
-    // Hub: project registered/unregistered
-    es.addEventListener('project-registered', function(e) {
-      try {
-        var data = JSON.parse(e.data);
-        addEvent({ level: 'milestone', message: 'Project registered: ' + data.id, timestamp: data.timestamp || Date.now() });
-        // Refresh project list
-        rawFetch('/api/projects').then(function(resp) {
-          if (resp && resp.projects) {
-            state.projects = resp.projects;
-            populateProjectSelector(resp.projects);
-          }
-        });
-      } catch (err) { /* ignore */ }
-    });
-
-    es.addEventListener('project-unregistered', function(e) {
-      try {
-        var data = JSON.parse(e.data);
-        addEvent({ level: 'warning', message: 'Project removed: ' + data.id, timestamp: data.timestamp || Date.now() });
-        rawFetch('/api/projects').then(function(resp) {
-          if (resp && resp.projects) {
-            state.projects = resp.projects;
-            populateProjectSelector(resp.projects);
-            // If current project was removed, switch to first available
-            if (state.currentProject === data.id && resp.projects.length > 0) {
-              switchProject(resp.projects[0].id);
-            }
-          }
-        });
-      } catch (err) { /* ignore */ }
-    });
-
-    // Notification events from the orchestrator (broadcast as their level name)
-    var levels = ['trace', 'info', 'success', 'warning', 'error', 'decision', 'milestone'];
-    levels.forEach(function(level) {
-      es.addEventListener(level, function(e) {
-        try {
-          var data = JSON.parse(e.data);
-          data.level = data.level || level;
-          data.timestamp = data.timestamp || Date.now();
-          if (data.level === 'decision') {
-            showDecisionModal(data);
-          }
-          addEvent(data);
-          // Refresh health/swarm panels on significant events
-          if (level === 'milestone' || level === 'error' || level === 'success') {
-            loadHealth();
-            loadSwarm();
-          }
-        } catch (err) {
-          addEvent({ level: level, message: e.data, timestamp: Date.now() });
-        }
-      });
-    });
-
-    // File change events — highlight graph nodes
-    es.addEventListener('file-change', function(e) {
-      try {
-        var data = JSON.parse(e.data);
-        if (data.path) {
-          markFileActive(data.path);
-          addEvent({
-            level: 'info',
-            message: 'File changed: ' + data.path + ' (' + (data.layer || 'unknown') + ')',
-            timestamp: data.timestamp || Date.now(),
-          });
-
-          // Reload graph data if not loaded yet
-          if (graphState.nodes.length === 0) {
-            loadGraph();
-          }
-        }
-      } catch (err) { /* ignore malformed */ }
-    });
-
-    // Fallback for unnamed events
-    es.onmessage = function(e) {
-      try {
-        var data = JSON.parse(e.data);
-        if (data.level === 'decision') {
-          showDecisionModal(data);
-        }
-        addEvent(data);
-      } catch (err) {
-        addEvent({ level: 'info', message: e.data, timestamp: new Date().toISOString() });
-      }
-    };
-
-    es.onerror = function() {
-      setConnected(false);
-      addEvent({ level: 'warning', message: 'SSE connection lost — reconnecting...', timestamp: Date.now() });
-      es.close();
-      state.sseRetryTimer = setTimeout(connectSSE, 5000);
-    };
-  }
+  // --- WebSocket Event Routing ---
+  // All real-time events flow through the unified /ws WebSocket connection.
+  // The chat WS (chatConnect) is reused — see chatState.ws.onmessage for routing.
 
   // --- Decision Modal ---
   function showDecisionModal(evt) {
@@ -2019,6 +1894,124 @@ a{color:var(--accent);text-decoration:none}
     container.scrollTop = container.scrollHeight;
   }
 
+  // --- Unified WebSocket connection (replaces both SSE and chat-only WS) ---
+
+  /** Subscribe to WS topics for a specific project (state + events + decisions). */
+  function wsSubscribeProject(projectId) {
+    if (!projectId) return;
+    var ws = chatState.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'subscribe', topic: 'project:' + projectId + ':state' }));
+    ws.send(JSON.stringify({ type: 'subscribe', topic: 'project:' + projectId + ':events' }));
+    ws.send(JSON.stringify({ type: 'subscribe', topic: 'project:' + projectId + ':decisions' }));
+  }
+
+  /** Unsubscribe from WS topics for a specific project. */
+  function wsUnsubscribeProject(projectId) {
+    if (!projectId) return;
+    var ws = chatState.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'unsubscribe', topic: 'project:' + projectId + ':state' }));
+    ws.send(JSON.stringify({ type: 'unsubscribe', topic: 'project:' + projectId + ':events' }));
+    ws.send(JSON.stringify({ type: 'unsubscribe', topic: 'project:' + projectId + ':decisions' }));
+  }
+
+  /** Handle incoming WS envelope for dashboard events (non-chat). */
+  function wsHandleDashboardMessage(envelope) {
+    var topic = envelope.topic || '';
+    var event = envelope.event || '';
+    var data = envelope.data || {};
+
+    // Hub-level: project list changes
+    if (topic === 'hub:projects') {
+      if (event === 'project-registered') {
+        addEvent({ level: 'milestone', message: 'Project registered: ' + data.id, timestamp: data.timestamp || Date.now() });
+        rawFetch('/api/projects').then(function(resp) {
+          if (resp && resp.projects) {
+            state.projects = resp.projects;
+            populateProjectSelector(resp.projects);
+          }
+        });
+      } else if (event === 'project-unregistered') {
+        addEvent({ level: 'warning', message: 'Project removed: ' + data.id, timestamp: data.timestamp || Date.now() });
+        rawFetch('/api/projects').then(function(resp) {
+          if (resp && resp.projects) {
+            state.projects = resp.projects;
+            populateProjectSelector(resp.projects);
+            if (state.currentProject === data.id && resp.projects.length > 0) {
+              switchProject(resp.projects[0].id);
+            }
+          }
+        });
+      }
+      return;
+    }
+
+    // Hub health: connected confirmation
+    if (topic === 'hub:health' && event === 'connected') {
+      setConnected(true);
+      addEvent({ level: 'info', message: 'WebSocket stream established', timestamp: Date.now() });
+      return;
+    }
+
+    // Project-scoped: state updates
+    if (event === 'state-update') {
+      if (data.projectId !== state.currentProject) return;
+      switch (data.type) {
+        case 'health': loadHealth(); break;
+        case 'tokens': loadTokenOverview(); break;
+        case 'swarm': loadSwarm(); break;
+        case 'graph': loadGraph(); break;
+      }
+      return;
+    }
+
+    // Project-scoped: file-change events
+    if (event === 'file-change') {
+      if (data.path) {
+        markFileActive(data.path);
+        addEvent({
+          level: 'info',
+          message: 'File changed: ' + data.path + ' (' + (data.layer || 'unknown') + ')',
+          timestamp: data.timestamp || Date.now(),
+        });
+        if (graphState.nodes.length === 0) {
+          loadGraph();
+        }
+      }
+      return;
+    }
+
+    // Project-scoped: decision responses
+    if (event === 'decision-response' || (data.level === 'decision')) {
+      showDecisionModal(data);
+      addEvent(data);
+      return;
+    }
+
+    // Notification-level events (info, success, warning, error, milestone, etc.)
+    var notificationLevels = { trace:1, info:1, success:1, warning:1, error:1, decision:1, milestone:1 };
+    if (notificationLevels[event]) {
+      data.level = data.level || event;
+      data.timestamp = data.timestamp || Date.now();
+      if (data.level === 'decision') {
+        showDecisionModal(data);
+      }
+      addEvent(data);
+      if (event === 'milestone' || event === 'error' || event === 'success') {
+        loadHealth();
+        loadSwarm();
+      }
+      return;
+    }
+
+    // Fallback: treat as generic event
+    if (data.level || data.message) {
+      data.timestamp = data.timestamp || Date.now();
+      addEvent(data);
+    }
+  }
+
   function chatConnect() {
     if (chatState.ws) return;
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -2029,20 +2022,43 @@ a{color:var(--accent);text-decoration:none}
       chatState.connected = true;
       chatState.reconnectDelay = 1000;
       chatSetStatus(true);
-      // Subscribe to results for all projects
+      setConnected(true);
+      addEvent({ level: 'success', message: 'Dashboard connected via WebSocket', timestamp: Date.now() });
+
+      // Subscribe to hub-level topics
+      chatState.ws.send(JSON.stringify({ type: 'subscribe', topic: 'hub:projects' }));
+      chatState.ws.send(JSON.stringify({ type: 'subscribe', topic: 'hub:health' }));
+
+      // Subscribe to current project topics
       if (state.currentProject) {
+        wsSubscribeProject(state.currentProject);
         chatSubscribe(state.currentProject);
       }
+
+      // Fetch initial project list (SSE used to send this on connect)
+      rawFetch('/api/projects').then(function(data) {
+        if (data && data.projects && data.projects.length > 0) {
+          state.projects = data.projects;
+          populateProjectSelector(data.projects);
+          if (!state.currentProject) {
+            switchProject(data.projects[0].id);
+          }
+        }
+      });
     };
 
     chatState.ws.onmessage = function(ev) {
       try {
         var envelope = JSON.parse(ev.data);
+
+        // Chat command results
         if (envelope.event === 'command-result' && envelope.data) {
           chatHandleResult(envelope.data);
-        } else if (envelope.event === 'connected') {
-          // Welcome message — ignore
+          return;
         }
+
+        // Route all other messages to the dashboard handler
+        wsHandleDashboardMessage(envelope);
       } catch(e) { /* ignore malformed */ }
     };
 
@@ -2050,6 +2066,8 @@ a{color:var(--accent);text-decoration:none}
       chatState.connected = false;
       chatState.ws = null;
       chatSetStatus(false);
+      setConnected(false);
+      addEvent({ level: 'warning', message: 'WebSocket connection lost — reconnecting...', timestamp: Date.now() });
       chatScheduleReconnect();
     };
 
@@ -2058,6 +2076,7 @@ a{color:var(--accent);text-decoration:none}
     };
   }
 
+  /** Subscribe chat-specific topics for a project (command results). */
   function chatSubscribe(projectId) {
     if (chatState.ws && chatState.ws.readyState === WebSocket.OPEN) {
       chatState.ws.send(JSON.stringify({ type: 'subscribe', topic: 'project:' + projectId + ':result' }));
@@ -2176,6 +2195,17 @@ a{color:var(--accent);text-decoration:none}
     }
   }
 
+  // Map "hex <subcommand>" to hub command types
+  var hexCommandAliases = {
+    'analyze':   'run-analyze',
+    'build':     'run-build',
+    'summarize': 'run-summarize',
+    'validate':  'run-validate',
+    'generate':  'run-generate',
+    'status':    'ping',
+    'ping':      'ping',
+  };
+
   function chatParseInput(input) {
     var trimmed = input.trim();
     if (!trimmed) return null;
@@ -2184,6 +2214,22 @@ a{color:var(--accent);text-decoration:none}
     var parts = trimmed.split(/\s+/);
     var type = parts[0];
     var rest = trimmed.slice(type.length).trim();
+
+    // Handle "hex <subcommand> [args]" → mapped command type
+    if (type === 'hex') {
+      var subCmd = (parts[1] || '').toLowerCase();
+      if (hexCommandAliases[subCmd]) {
+        type = hexCommandAliases[subCmd];
+        rest = parts.slice(2).join(' ');
+      } else if (!subCmd) {
+        // Bare "hex" → show available subcommands
+        chatAddMessage('system', 'hex commands: ' + Object.keys(hexCommandAliases).join(', '));
+        return null;
+      } else {
+        chatAddMessage('error', 'Unknown hex command: ' + escapeHtml(subCmd) + '. Available: ' + Object.keys(hexCommandAliases).join(', '));
+        return null;
+      }
+    }
 
     var payload = {};
     if (rest.charAt(0) === '{') {
@@ -2208,7 +2254,14 @@ a{color:var(--accent);text-decoration:none}
           } else if (type === 'cancel-task') {
             payload.taskId = pair;
           } else if (type === 'run-summarize') {
-            payload.filePath = pair;
+            if (!payload.filePath) payload.filePath = pair;
+            else if (!payload.level) payload.level = pair;
+          } else if (type === 'run-generate') {
+            if (!payload.adapter) payload.adapter = pair;
+            else if (!payload.portInterface) payload.portInterface = pair;
+            else if (!payload.language) payload.language = pair;
+          } else if (type === 'run-analyze') {
+            payload.rootPath = pair;
           }
         }
       });
@@ -2508,11 +2561,33 @@ a{color:var(--accent);text-decoration:none}
     loadVersion();
     loadProjects();
 
-    // SSE connection
-    connectSSE();
+    // Hash-based URL routing — deep-link to a project via #/project/{id}
+    function handleHashRoute() {
+      var match = location.hash.match(/^#\/project\/(.+)$/);
+      if (match) {
+        var targetId = decodeURIComponent(match[1]);
+        // Only switch if it differs from current (avoids loops)
+        if (targetId !== state.currentProject) {
+          // If projects are loaded, switch immediately; otherwise defer
+          if (state.projects.length > 0) {
+            var exists = state.projects.some(function(p) { return p.id === targetId; });
+            if (exists) switchProject(targetId);
+          } else {
+            // Projects not loaded yet — store desired project for loadProjects to pick up
+            state.currentProject = targetId;
+          }
+        }
+      }
+    }
+
+    // Apply hash route on initial load
+    handleHashRoute();
+
+    // Listen for back/forward navigation
+    window.addEventListener('hashchange', handleHashRoute);
 
     // Polling — refresh project list every 10s (picks up new registrations)
-    // Panel data is pushed by projects, but we poll as fallback
+    // Panel data is pushed via WS, but we poll as fallback
     state.pollTimer = setInterval(function() {
       rawFetch('/api/projects').then(function(data) {
         if (data && data.projects) {

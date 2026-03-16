@@ -37,8 +37,13 @@ pub async fn send_command(
     Path(project_id): Path<String>,
     Json(body): Json<SendCommandRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // Verify project exists
-    {
+    let command_id = Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let source = body.source.unwrap_or_else(|| "browser".to_string());
+    let payload = body.payload.unwrap_or(serde_json::Value::Object(Default::default()));
+
+    // Single write lock: verify project exists, insert command as "dispatched" atomically
+    let broadcast_data = {
         let projects = state.projects.read().await;
         if !projects.contains_key(&project_id) {
             return (
@@ -46,48 +51,39 @@ pub async fn send_command(
                 Json(json!({ "error": "Project not registered" })),
             );
         }
-    }
+        drop(projects);
 
-    let command_id = Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
+        let command = HubCommand {
+            command_id: command_id.clone(),
+            project_id: project_id.clone(),
+            command_type: body.command_type.clone(),
+            payload: payload.clone(),
+            issued_at: now.clone(),
+            source: source.clone(),
+            status: "dispatched".to_string(),
+        };
 
-    let command = HubCommand {
-        command_id: command_id.clone(),
-        project_id: project_id.clone(),
-        command_type: body.command_type.clone(),
-        payload: body.payload.unwrap_or(serde_json::Value::Object(Default::default())),
-        issued_at: now.clone(),
-        source: body.source.unwrap_or_else(|| "browser".to_string()),
-        status: "pending".to_string(),
-    };
-
-    // Store command
-    {
         let mut commands = state.commands.write().await;
-        commands.insert(command_id.clone(), command.clone());
-    }
-
-    // Broadcast to project via WebSocket (topic: project:{id}:command)
-    let topic = format!("project:{}:command", project_id);
-    let _ = state.ws_tx.send(WsEnvelope {
-        topic,
-        event: "command".to_string(),
-        data: json!({
+        commands.insert(command_id.clone(), command);
+        // Snapshot broadcast data before dropping lock
+        json!({
             "commandId": command_id,
             "projectId": project_id,
             "type": body.command_type,
-            "payload": command.payload,
+            "payload": payload,
             "issuedAt": now,
-            "source": command.source,
-        }),
-    });
+            "source": source,
+        })
+    };
 
-    // Update status to dispatched
-    {
-        let mut commands = state.commands.write().await;
-        if let Some(cmd) = commands.get_mut(&command_id) {
-            cmd.status = "dispatched".to_string();
-        }
+    // Broadcast AFTER releasing the lock
+    let topic = format!("project:{}:command", project_id);
+    if state.ws_tx.send(WsEnvelope {
+        topic,
+        event: "command".to_string(),
+        data: broadcast_data,
+    }).is_err() {
+        tracing::warn!("WS broadcast failed for command {}: no receivers", command_id);
     }
 
     (
@@ -112,13 +108,11 @@ pub async fn report_result(
         completed_at: now,
     };
 
-    // Store result
+    // Store result and update command status in one scope
     {
         let mut results = state.results.write().await;
         results.insert(command_id.clone(), result);
     }
-
-    // Update command status
     {
         let mut commands = state.commands.write().await;
         if let Some(cmd) = commands.get_mut(&command_id) {
@@ -128,7 +122,7 @@ pub async fn report_result(
 
     // Broadcast result to browser subscribers (topic: project:{id}:result)
     let topic = format!("project:{}:result", project_id);
-    let _ = state.ws_tx.send(WsEnvelope {
+    if state.ws_tx.send(WsEnvelope {
         topic,
         event: "command-result".to_string(),
         data: json!({
@@ -138,7 +132,9 @@ pub async fn report_result(
             "data": body.data,
             "error": body.error,
         }),
-    });
+    }).is_err() {
+        tracing::warn!("WS broadcast failed for result {}: no receivers", command_id);
+    }
 
     (StatusCode::OK, Json(json!({ "ok": true })))
 }

@@ -17,14 +17,13 @@
  *   GET  /api/:projectId/swarm          Stored swarm status
  *   GET  /api/:projectId/graph          Stored dependency graph
  *   GET  /api/:projectId/project        Project metadata
- *   GET  /api/events?project=:id        SSE event stream
  *
  * Project-facing (POST — projects push data IN):
  *   POST /api/projects/register         Register { name, rootPath }
  *   DELETE /api/projects/:id            Unregister
  *   POST /api/push                      Push state { projectId, type, data }
  *   POST /api/event                     Push event { projectId, event, data }
- *   POST /api/:projectId/decisions/:id  Decision response (forwarded to SSE)
+ *   POST /api/:projectId/decisions/:id  Decision response
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -52,12 +51,6 @@ interface ProjectEntry {
     graph: unknown | null;
     project: { rootPath: string; name: string; astIsStub?: boolean } | null;
   };
-}
-
-interface SSEClient {
-  res: ServerResponse;
-  projectFilter: string | null;
-  heartbeat: ReturnType<typeof setInterval>;
 }
 
 // ── CORS ─────────────────────────────────────────────────
@@ -97,7 +90,6 @@ function makeProjectId(rootPath: string): string {
 
 export class DashboardHub {
   private readonly projects = new Map<string, ProjectEntry>();
-  private readonly sseClients = new Set<SSEClient>();
   private server: ReturnType<typeof createServer> | null = null;
 
   constructor(private readonly port: number = HUB_PORT) {}
@@ -124,11 +116,6 @@ export class DashboardHub {
   }
 
   private shutdown(): void {
-    for (const client of this.sseClients) {
-      clearInterval(client.heartbeat);
-      client.res.end();
-    }
-    this.sseClients.clear();
     this.projects.clear();
     this.server?.close();
   }
@@ -162,10 +149,6 @@ export class DashboardHub {
       if (path === '/api/projects/register' && req.method === 'POST') return await this.handleRegister(req, res);
       if (path === '/api/push' && req.method === 'POST') return await this.handlePush(req, res);
       if (path === '/api/event' && req.method === 'POST') return await this.handleEvent(req, res);
-      if (path === '/api/events' && req.method === 'GET') {
-        return this.handleSSE(req, res, url.searchParams.get('project'));
-      }
-
       // ── DELETE /api/projects/:id ──
       if (path.startsWith('/api/projects/') && req.method === 'DELETE') {
         const id = path.slice('/api/projects/'.length);
@@ -225,7 +208,7 @@ export class DashboardHub {
         },
       });
 
-      this.broadcast('project-registered', { id, name, rootPath, timestamp: Date.now() });
+      // WS broadcasting handled by Rust hub
     } else {
       // Update metadata on re-register
       const entry = this.projects.get(id)!;
@@ -238,7 +221,7 @@ export class DashboardHub {
 
   private handleUnregister(res: ServerResponse, id: string): void {
     if (this.projects.delete(id)) {
-      this.broadcast('project-unregistered', { id, timestamp: Date.now() });
+      // WS broadcasting handled by Rust hub
       this.json(res, 200, { ok: true });
     } else {
       this.json(res, 404, { error: 'Not found' });
@@ -299,8 +282,7 @@ export class DashboardHub {
         return this.json(res, 400, { error: `Unknown state type: ${type}` });
     }
 
-    // Notify connected browsers
-    this.broadcastToProject(projectId, 'state-update', { projectId, type, timestamp: Date.now() });
+    // WS broadcasting handled by Rust hub
     this.json(res, 200, { ok: true });
   }
 
@@ -319,7 +301,7 @@ export class DashboardHub {
     }
 
     this.projects.get(projectId)!.lastPushAt = Date.now();
-    this.broadcastToProject(projectId, event, { ...(data as object), project: projectId });
+    // WS broadcasting handled by Rust hub
     this.json(res, 200, { ok: true });
   }
 
@@ -360,7 +342,7 @@ export class DashboardHub {
     this.json(res, 404, { error: 'Not found' });
   }
 
-  // ── Decision (browser → hub, forwarded via SSE) ────
+  // ── Decision (browser → hub) ────────────────────────
 
   private async handleDecision(
     req: IncomingMessage,
@@ -374,8 +356,8 @@ export class DashboardHub {
       return this.json(res, 400, { error: 'Missing selectedOption' });
     }
 
-    // Broadcast the decision response so the project client can pick it up
-    this.broadcastToProject(projectId, 'decision-response', {
+    // Log the decision (WS broadcasting handled by the Rust hub)
+    void ({
       decisionId,
       selectedOption: parsed.selectedOption,
       respondedBy: 'human',
@@ -383,49 +365,6 @@ export class DashboardHub {
     });
 
     this.json(res, 200, { ok: true });
-  }
-
-  // ── SSE ────────────────────────────────────────────
-
-  private handleSSE(req: IncomingMessage, res: ServerResponse, projectFilter: string | null): void {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    });
-
-    // Send current project list on connect
-    const projects = Array.from(this.projects.values()).map((p) => ({
-      id: p.id, name: p.name, rootPath: p.rootPath, astIsStub: p.state.project?.astIsStub ?? false,
-    }));
-    res.write(`event: connected\ndata: ${JSON.stringify({ projects })}\n\n`);
-
-    const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); }, 15_000);
-    const client: SSEClient = { res, projectFilter, heartbeat };
-    this.sseClients.add(client);
-
-    req.on('close', () => {
-      clearInterval(heartbeat);
-      this.sseClients.delete(client);
-    });
-  }
-
-  // ── Broadcast ──────────────────────────────────────
-
-  private broadcast(event: string, data: unknown): void {
-    const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    for (const client of this.sseClients) {
-      client.res.write(msg);
-    }
-  }
-
-  private broadcastToProject(projectId: string, event: string, data: unknown): void {
-    const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    for (const client of this.sseClients) {
-      if (client.projectFilter === null || client.projectFilter === projectId) {
-        client.res.write(msg);
-      }
-    }
   }
 
   // ── Static HTML ────────────────────────────────────

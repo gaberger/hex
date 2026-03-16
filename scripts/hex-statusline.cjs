@@ -65,6 +65,7 @@ const statusData = safe(() =>
 const swarmUp        = statusData ? !!statusData.swarm : false;
 const agentdbUp      = statusData ? !!statusData.agentdb : false;
 const dashUrl        = statusData ? (statusData.dashboard || '') : '';
+const dashProjectId  = statusData ? (statusData.projectId || '') : '';
 const activeAgents   = statusData ? (statusData.activeAgents || 0) : 0;
 const totalTasks     = statusData ? (statusData.tasks || 0) : 0;
 const completedTasks = statusData ? (statusData.completedTasks || 0) : 0;
@@ -127,8 +128,11 @@ if (activeAgents > 0) {
 // Services — compact dot indicators
 const dot = (on, label) => on ? `${P.on}● ${label}` : `${P.off}○ ${label}`;
 const hubActive = hubRunning || !!dashUrl;
+const hubPort = (hubLock && hubLock.port) || 5555;
+const hubHash = dashProjectId ? `#/project/${dashProjectId}` : '';
+const hubLink = `http://localhost:${hubPort}/${hubHash}`;
 const hubIndicator = hubActive
-  ? `${P.on}● ${ESC}]8;;http://localhost:5555${ESC}\\dashboard${ESC}]8;;${ESC}\\`
+  ? `${P.on}● ${ESC}]8;;${hubLink}${ESC}\\dashboard${ESC}]8;;${ESC}\\`
   : `${P.off}○ hub`;
 const svcs = [
   dot(dbShow, 'db'),

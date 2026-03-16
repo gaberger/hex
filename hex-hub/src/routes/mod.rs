@@ -3,7 +3,6 @@ pub mod decisions;
 pub mod projects;
 pub mod push;
 pub mod query;
-pub mod sse;
 pub mod ws;
 
 use axum::{Router, Json, routing::{get, post, delete}, extract::DefaultBodyLimit};
@@ -51,8 +50,6 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         .route("/api/event", post(push::push_event)
             .layer(DefaultBodyLimit::max(EVENT_BODY_LIMIT)))
-        // SSE (hub → browser)
-        .route("/api/events", get(sse::sse_handler))
         // Per-project queries (browser reads)
         .route("/api/{project_id}/health", get(query::get_health))
         .route("/api/{project_id}/tokens/overview", get(query::get_tokens_overview))
@@ -67,7 +64,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/{project_id}/command/{command_id}/result", post(commands::report_result)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         .route("/api/{project_id}/commands", get(commands::list_commands))
-        // Decisions (browser → hub → SSE)
+        // Decisions (browser → hub → WS)
         .route("/api/{project_id}/decisions/{decision_id}", post(decisions::handle_decision))
         // WebSocket
         .route("/ws", get(ws::ws_handler))

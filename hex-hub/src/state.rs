@@ -11,20 +11,17 @@ pub struct AppState {
     pub projects: RwLock<HashMap<String, ProjectEntry>>,
     pub commands: RwLock<HashMap<String, HubCommand>>,       // commandId → command
     pub results: RwLock<HashMap<String, HubCommandResult>>,  // commandId → result
-    pub sse_tx: broadcast::Sender<SseEvent>,
     pub ws_tx: broadcast::Sender<WsEnvelope>,
     pub auth_token: Option<String>,
 }
 
 impl AppState {
     pub fn new(auth_token: Option<String>) -> Self {
-        let (sse_tx, _) = broadcast::channel(256);
-        let (ws_tx, _) = broadcast::channel(256);
+        let (ws_tx, _) = broadcast::channel(512);
         Self {
             projects: RwLock::new(HashMap::new()),
             commands: RwLock::new(HashMap::new()),
             results: RwLock::new(HashMap::new()),
-            sse_tx,
             ws_tx,
             auth_token,
         }
@@ -63,15 +60,6 @@ pub struct ProjectMeta {
     pub name: String,
     #[serde(default)]
     pub ast_is_stub: bool,
-}
-
-// ── SSE Event ───────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-pub struct SseEvent {
-    pub project_id: Option<String>,
-    pub event_type: String,
-    pub data: serde_json::Value,
 }
 
 // ── WebSocket Envelope ──────────────────────────────────
@@ -134,10 +122,6 @@ pub struct DecisionRequest {
     pub selected_option: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SseParams {
-    pub project: Option<String>,
-}
 
 // ── Project ID (must match TypeScript implementation) ───
 

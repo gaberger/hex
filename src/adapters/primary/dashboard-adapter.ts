@@ -141,6 +141,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
   async startListening(): Promise<void> {
     if (!this.projectId || this._isListening) return;
+    this._isListening = true; // Set immediately to prevent concurrent calls (H2)
 
     const tokenParam = this.authToken ? `?token=${encodeURIComponent(this.authToken)}` : '';
     const wsUrl = `ws://127.0.0.1:${this.hubPort}/ws${tokenParam}`;
@@ -223,7 +224,8 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   }
 
   private scheduleReconnect(wsUrl: string): void {
-    if (this.stopped || this.wsReconnectTimer) return;
+    if (this.stopped) return; // Check stopped FIRST — prevents reconnect after shutdown (H3)
+    if (this.wsReconnectTimer) return;
 
     this.wsReconnectTimer = setTimeout(() => {
       this.wsReconnectTimer = null;
@@ -267,19 +269,11 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       }
     }
 
-    // Report result back to hub via HTTP POST
+    // Report result back to hub via HTTP POST (hub broadcasts to WS subscribers)
     await this.post(
       `/api/${this.projectId}/command/${command.commandId}/result`,
       result,
     );
-
-    // Also publish via WS for real-time subscribers
-    this.wsSend({
-      type: 'publish',
-      topic: `project:${this.projectId}:result`,
-      event: 'command-result',
-      data: result,
-    });
   }
 
   // ── Default command handlers ──────────────────────
@@ -364,6 +358,64 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
         status: result.success ? 'completed' : 'failed',
         data: result,
         error: result.success ? undefined : 'Build failed',
+        completedAt: new Date().toISOString(),
+      };
+    });
+
+    this.onCommand('run-validate', async (cmd) => {
+      const p = cmd.payload as { rootPath?: string };
+      // Validate = analyze + build combined check
+      const [analysis, buildResult] = await Promise.all([
+        this.ctx.archAnalyzer.analyzeArchitecture(p.rootPath ?? '.'),
+        this.ctx.build.compile({
+          rootPath: this.ctx.rootPath,
+          name: this.ctx.rootPath.split('/').pop() ?? 'unknown',
+          language: 'typescript',
+          adapters: [],
+        }),
+      ]);
+      const violations = (analysis as { summary?: { violationCount?: number } }).summary?.violationCount ?? 0;
+      const passed = buildResult.success && violations === 0;
+      return {
+        commandId: cmd.commandId,
+        status: passed ? 'completed' : 'failed',
+        data: { passed, build: buildResult.success, violations, analysis },
+        error: passed ? undefined : `Validation failed: build=${buildResult.success}, violations=${violations}`,
+        completedAt: new Date().toISOString(),
+      };
+    });
+
+    this.onCommand('run-generate', async (cmd) => {
+      const p = cmd.payload as { adapter?: string; portInterface?: string; language?: string };
+      if (!this.ctx.codeGenerator) {
+        return {
+          commandId: cmd.commandId,
+          status: 'failed',
+          error: 'Code generation requires an LLM API key (set ANTHROPIC_API_KEY)',
+          completedAt: new Date().toISOString(),
+        };
+      }
+      if (!p.adapter || !p.portInterface) {
+        return {
+          commandId: cmd.commandId,
+          status: 'failed',
+          error: 'Missing required payload: adapter and portInterface (e.g. run-generate my-adapter IMyPort)',
+          completedAt: new Date().toISOString(),
+        };
+      }
+      const lang = (p.language ?? 'typescript') as import('../../core/domain/value-objects.js').Language;
+      const spec: import('../../core/domain/value-objects.js').Specification = {
+        title: `Generate ${p.adapter} implementing ${p.portInterface}`,
+        requirements: [`Implement ${p.portInterface} adapter: ${p.adapter}`],
+        constraints: ['Follow hexagonal architecture rules', 'Only import from core/ports and core/domain'],
+        targetLanguage: lang,
+        targetAdapter: p.adapter,
+      };
+      const result = await this.ctx.codeGenerator.generateFromSpec(spec, lang);
+      return {
+        commandId: cmd.commandId,
+        status: 'completed',
+        data: result,
         completedAt: new Date().toISOString(),
       };
     });

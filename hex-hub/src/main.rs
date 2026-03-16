@@ -79,11 +79,7 @@ async fn main() {
     // Build router
     let app = routes::build_router(state);
 
-    // Write lock file
     let lock_token = token.unwrap_or_else(|| daemon::generate_token());
-    if let Err(e) = daemon::write_lock(port, &lock_token) {
-        tracing::warn!("Failed to write lock file: {}", e);
-    }
 
     // Setup graceful shutdown
     let ctrl_c = async {
@@ -112,11 +108,16 @@ async fn main() {
         daemon::remove_lock();
     };
 
-    // Bind and serve
+    // Bind FIRST, then write lock file — prevents clients from connecting before we're ready (H4)
     let addr = format!("127.0.0.1:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("Failed to bind");
+
+    // Write lock file AFTER bind succeeds — clients reading this file can now connect
+    if let Err(e) = daemon::write_lock(port, &lock_token) {
+        tracing::warn!("Failed to write lock file: {}", e);
+    }
 
     if is_daemon {
         tracing::info!("hex-hub daemon started on http://{}", addr);
