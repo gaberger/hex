@@ -865,12 +865,12 @@ export class MCPAdapter {
   private async ensureHub(): Promise<string> {
     if (this.hubRunning && this.hubUrl) return this.hubUrl;
 
-    const { HUB_PORT, DashboardHub } = await import('./dashboard-hub.js');
-    const hub = new DashboardHub(HUB_PORT);
-    const { url, close } = await hub.start();
+    const { HubLauncher } = await import('../secondary/hub-launcher.js');
+    const launcher = new HubLauncher();
+    const { url } = await launcher.start();
     this.hubRunning = true;
     this.hubUrl = url;
-    this.hubCloseFn = close;
+    this.hubCloseFn = () => { void launcher.stop(); };
     return url;
   }
 
@@ -909,8 +909,7 @@ export class MCPAdapter {
   }
 
   private async dashboardRegister(rootPath: string): Promise<MCPToolResult> {
-    const { HUB_PORT } = await import('./dashboard-hub.js');
-    const hubUrl = `http://localhost:${HUB_PORT}`;
+    const hubUrl = `http://localhost:5555`;
 
     try {
       const response = await fetch(`${hubUrl}/api/projects/register`, {
@@ -924,13 +923,12 @@ export class MCPAdapter {
       }
       return { content: [{ type: 'text', text: `Registered project: ${data.id} (${rootPath})` }] };
     } catch {
-      return { content: [{ type: 'text', text: `Hub not running on port ${HUB_PORT}. Call hex_dashboard_start first.` }], isError: true };
+      return { content: [{ type: 'text', text: `Hub not running on port 5555. Call hex_dashboard_start first.` }], isError: true };
     }
   }
 
   private async dashboardUnregister(projectId: string): Promise<MCPToolResult> {
-    const { HUB_PORT } = await import('./dashboard-hub.js');
-    const hubUrl = `http://localhost:${HUB_PORT}`;
+    const hubUrl = `http://localhost:5555`;
 
     try {
       const response = await fetch(`${hubUrl}/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' });
@@ -944,8 +942,7 @@ export class MCPAdapter {
   }
 
   private async dashboardList(): Promise<MCPToolResult> {
-    const { HUB_PORT } = await import('./dashboard-hub.js');
-    const hubUrl = `http://localhost:${HUB_PORT}`;
+    const hubUrl = `http://localhost:5555`;
 
     try {
       const response = await fetch(`${hubUrl}/api/projects`);
@@ -960,13 +957,12 @@ export class MCPAdapter {
       }
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     } catch {
-      return { content: [{ type: 'text', text: `Hub not running on port ${HUB_PORT}. Call hex_dashboard_start first.` }], isError: true };
+      return { content: [{ type: 'text', text: `Hub not running on port 5555. Call hex_dashboard_start first.` }], isError: true };
     }
   }
 
   private async dashboardQuery(projectId: string, query: string): Promise<MCPToolResult> {
-    const { HUB_PORT } = await import('./dashboard-hub.js');
-    const hubUrl = `http://localhost:${HUB_PORT}`;
+    const hubUrl = `http://localhost:5555`;
     const base = `${hubUrl}/api/${encodeURIComponent(projectId)}`;
 
     let endpoint: string;
@@ -988,7 +984,7 @@ export class MCPAdapter {
       const data = await response.json() as Record<string, unknown>;
       return { content: [{ type: 'text', text: this.formatQueryResult(query, data) }] };
     } catch {
-      return { content: [{ type: 'text', text: `Hub not running on port ${HUB_PORT}. Call hex_dashboard_start first.` }], isError: true };
+      return { content: [{ type: 'text', text: `Hub not running on port 5555. Call hex_dashboard_start first.` }], isError: true };
     }
   }
 
@@ -1053,8 +1049,7 @@ export class MCPAdapter {
     type: string,
     payload?: Record<string, unknown>,
   ): Promise<MCPToolResult> {
-    const { HUB_PORT } = await import('./dashboard-hub.js');
-    const hubUrl = `http://localhost:${HUB_PORT}`;
+    const hubUrl = `http://localhost:5555`;
 
     try {
       const response = await fetch(
@@ -1085,7 +1080,7 @@ export class MCPAdapter {
 
       return { content: [{ type: 'text', text: `Command dispatched: ${commandId}\nStatus: ${data.status}\n\nUse hex_hub_command_status to check result.` }] };
     } catch {
-      return { content: [{ type: 'text', text: `Hub not running on port ${HUB_PORT}. Call hex_dashboard_start first.` }], isError: true };
+      return { content: [{ type: 'text', text: `Hub not running on port 5555. Call hex_dashboard_start first.` }], isError: true };
     }
   }
 
@@ -1093,8 +1088,7 @@ export class MCPAdapter {
     projectId: string,
     commandId: string,
   ): Promise<MCPToolResult> {
-    const { HUB_PORT } = await import('./dashboard-hub.js');
-    const hubUrl = `http://localhost:${HUB_PORT}`;
+    const hubUrl = `http://localhost:5555`;
 
     try {
       const response = await fetch(
@@ -1114,8 +1108,7 @@ export class MCPAdapter {
     projectId: string,
     limit?: number,
   ): Promise<MCPToolResult> {
-    const { HUB_PORT } = await import('./dashboard-hub.js');
-    const hubUrl = `http://localhost:${HUB_PORT}`;
+    const hubUrl = `http://localhost:5555`;
     const qs = limit ? `?limit=${limit}` : '';
 
     try {

@@ -4,7 +4,9 @@
  * Uses `git worktree` commands via execFile (no shell) to manage isolated
  * working directories for parallel branch operations.
  */
-import { execFile as execFileCb } from 'node:child_process';
+import { createRequire } from 'node:module';
+const _require = createRequire(import.meta.url);
+const { execFile: execFileCb } = _require('node:child_process');
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { IWorktreePort, MergeResult, WorktreePath } from '../../core/ports/index.js';

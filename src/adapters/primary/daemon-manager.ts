@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { request } from 'node:http';
-import { HUB_PORT } from './dashboard-hub.js';
+const HUB_PORT = 5555;
 
 // ─── Types ───────────────────────────────────────────────
 

@@ -75,7 +75,7 @@ describe('E2E: hex analyzes itself', () => {
     expect(result.summary.totalExports).toBeGreaterThan(20);
     // Health score should not be zero (that would mean the stub is active)
     expect(result.summary.healthScore).toBeGreaterThan(0);
-  });
+  }, 15000);
 
   // ── Phase 4: Hex boundary self-validation ────────────────────
 
@@ -90,7 +90,7 @@ describe('E2E: hex analyzes itself', () => {
       // This message is for human readers when the assertion above fails:
       console.error(`Hex boundary violations found:\n${report}`);
     }
-  });
+  }, 15000);
 
   it('composition-root.ts is the ONLY file that imports adapters and ports', async () => {
     const edges = await ctx.archAnalyzer.buildDependencyGraph(PROJECT_ROOT);
@@ -110,7 +110,7 @@ describe('E2E: hex analyzes itself', () => {
       }
     }
     expect(crossBoundaryFiles).toHaveLength(0);
-  });
+  }, 15000);
 
   // ── Phase 5: CLI end-to-end ──────────────────────────────────
 

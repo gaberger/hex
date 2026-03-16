@@ -312,6 +312,55 @@ describe('MCPAdapter', () => {
     expect(parsed.summary.healthScore).toBe(92);
   });
 
+  // ── Hub Command Tools ──
+  // These tests verify the adapter handles hub-not-running gracefully.
+
+  it('hex_hub_command returns error when hub is not running', async () => {
+    const result = await adapter.handleToolCall({
+      name: 'hex_hub_command',
+      arguments: { projectId: 'test-project', type: 'ping' },
+    });
+    // Hub may or may not be running; either way we get an error for unregistered project
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/not running|not registered|failed/i);
+  });
+
+  it('hex_hub_command accepts optional payload', async () => {
+    const result = await adapter.handleToolCall({
+      name: 'hex_hub_command',
+      arguments: { projectId: 'test-project', type: 'run-analyze', payload: { rootPath: '.' } },
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/not running|not registered|failed/i);
+  });
+
+  it('hex_hub_command_status returns error for unknown command', async () => {
+    const result = await adapter.handleToolCall({
+      name: 'hex_hub_command_status',
+      arguments: { projectId: 'test-project', commandId: 'cmd-123' },
+    });
+    // Hub down → "not running"; hub up → "not found"
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/not running|not found/i);
+  });
+
+  it('hex_hub_commands_list returns a response', async () => {
+    const result = await adapter.handleToolCall({
+      name: 'hex_hub_commands_list',
+      arguments: { projectId: 'test-project' },
+    });
+    // Hub down → isError; hub up with no commands → success with "No commands"
+    expect(result.content[0].text.length).toBeGreaterThan(0);
+  });
+
+  it('hex_hub_commands_list accepts optional limit', async () => {
+    const result = await adapter.handleToolCall({
+      name: 'hex_hub_commands_list',
+      arguments: { projectId: 'test-project', limit: 5 },
+    });
+    expect(result.content[0].text.length).toBeGreaterThan(0);
+  });
+
   // ── shutdownHub ──
 
   it('shutdownHub is safe to call when hub is not running', () => {

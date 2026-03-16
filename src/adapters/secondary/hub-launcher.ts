@@ -12,7 +12,7 @@ import { join } from 'node:path';
 
 // ─── Constants ───────────────────────────────────────────
 
-const HUB_PORT = 5555;
+export const HUB_PORT = 5555;
 const HEALTH_TIMEOUT_MS = 2000;
 const SPAWN_TIMEOUT_MS = 5000;
 const SPAWN_POLL_MS = 100;

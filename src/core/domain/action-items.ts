@@ -47,7 +47,7 @@ function nextId(prefix: string): string {
   return `${prefix}-${actionCounter.toString().padStart(3, '0')}`;
 }
 
-function resetActionCounter(): void {
+export function resetActionCounter(): void {
   actionCounter = 0;
 }
 

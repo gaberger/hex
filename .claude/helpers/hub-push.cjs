@@ -39,7 +39,9 @@ try {
 const eventType = process.argv[2] || 'tool-use';
 
 // Build event payload from environment
-const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+// HEX_PROJECT_ROOT is set by `hex go` for target projects;
+// falls back to CLAUDE_PROJECT_DIR for direct sessions
+const projectDir = process.env.HEX_PROJECT_ROOT || process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const projectName = path.basename(projectDir);
 const toolName = process.env.CLAUDE_TOOL_NAME || 'unknown';
 const filePath = process.env.CLAUDE_FILE_PATH || '';

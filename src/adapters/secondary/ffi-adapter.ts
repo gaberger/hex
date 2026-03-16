@@ -7,7 +7,9 @@
  * serialized payloads as subsequent args. Stdout is parsed as JSON.
  */
 
-import { execFile as execFileCb } from 'node:child_process';
+import { createRequire } from 'node:module';
+const _require = createRequire(import.meta.url);
+const { execFile: execFileCb } = _require('node:child_process');
 import { access, constants } from 'node:fs/promises';
 import { promisify } from 'node:util';
 

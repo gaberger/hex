@@ -5,8 +5,11 @@
  * Bun/tsc/eslint via execFile (no shell injection). Designed for future
  * extension to Go and Rust.
  */
-import { execFile as execFileCb } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
+// Use createRequire to avoid Bun's ESM named-export race under parallel test load
+const _require = createRequire(import.meta.url);
+const { execFile: execFileCb } = _require('node:child_process');
 import type {
   BuildResult,
   IBuildPort,

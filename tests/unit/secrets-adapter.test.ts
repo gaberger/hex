@@ -5,22 +5,22 @@ import type { ISecretsPort } from '../../src/core/ports/secrets.js';
 
 describe('EnvSecretsAdapter', () => {
   let adapter: ISecretsPort;
-  const originalEnv = { ...process.env };
+  // Track only keys this test adds, to avoid deleting env vars set by parallel tests
+  const keysAdded: string[] = [];
 
   beforeEach(() => {
     adapter = new EnvSecretsAdapter();
+    keysAdded.length = 0;
   });
 
   afterEach(() => {
-    // Restore env
-    for (const key of Object.keys(process.env)) {
-      if (!(key in originalEnv)) delete process.env[key];
+    for (const key of keysAdded) {
+      delete process.env[key];
     }
-    Object.assign(process.env, originalEnv);
   });
 
   it('resolves an existing env var', async () => {
-    process.env['TEST_SECRET_KEY'] = 'test-value-123';
+    process.env['TEST_SECRET_KEY'] = 'test-value-123'; keysAdded.push('TEST_SECRET_KEY');
     const result = await adapter.resolveSecret('TEST_SECRET_KEY');
     expect(result).toEqual({ ok: true, value: 'test-value-123' });
   });
@@ -35,13 +35,13 @@ describe('EnvSecretsAdapter', () => {
   });
 
   it('returns error for empty env var', async () => {
-    process.env['EMPTY_VAR'] = '';
+    process.env['EMPTY_VAR'] = ''; keysAdded.push('EMPTY_VAR');
     const result = await adapter.resolveSecret('EMPTY_VAR');
     expect(result.ok).toBe(false);
   });
 
   it('hasSecret returns true for set vars', async () => {
-    process.env['HAS_SECRET_TEST'] = 'yes';
+    process.env['HAS_SECRET_TEST'] = 'yes'; keysAdded.push('HAS_SECRET_TEST');
     expect(await adapter.hasSecret('HAS_SECRET_TEST')).toBe(true);
   });
 

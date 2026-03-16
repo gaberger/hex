@@ -619,33 +619,24 @@ export class CLIAdapter {
    * Used by both `dashboard` and `hub` commands.
    */
   private async startHub(_args: ParsedArgs, isDaemon: boolean): Promise<number> {
-    const { DashboardHub, HUB_PORT } = await import('./dashboard-hub.js');
+    const { HubLauncher } = await import('../secondary/hub-launcher.js');
+    const launcher = new HubLauncher();
 
-    const hub = new DashboardHub(HUB_PORT);
-    const { url } = await hub.start();
+    const token = isDaemon ? (process.env['HEX_DAEMON_TOKEN'] ?? undefined) : undefined;
+    const { started, url } = await launcher.start(token);
 
-    // Attach WebSocket broker to the HTTP server
-    const httpServer = hub.httpServer;
-    if (httpServer) {
-      try {
-        const { WsBroker } = await import('./ws-broker.js');
-        const wsBroker = new WsBroker();
-        wsBroker.attach(httpServer);
-        this.writeLn(`WebSocket broker attached (ws://localhost:${HUB_PORT}/ws)`);
-      } catch {
-        this.writeLn('WebSocket unavailable (ws package not installed — SSE only)');
-      }
+    if (started) {
+      this.writeLn(`hex-hub started at ${url}`);
+    } else {
+      this.writeLn(`hex-hub already running at ${url}`);
     }
-
-    this.writeLn(`Dashboard hub running at ${url}`);
-    this.writeLn(`Projects push data to this hub on port ${HUB_PORT}.`);
+    this.writeLn(`Projects push data to this hub on port 5555.`);
 
     // If running as daemon, write lock file
     if (isDaemon) {
       const { DaemonManager } = await import('./daemon-manager.js');
       const daemon = new DaemonManager();
-      const token = process.env['HEX_DAEMON_TOKEN'] ?? '';
-      daemon.registerSelf(token, '1.0.0');
+      daemon.registerSelf(token ?? '', '1.0.0');
 
       process.on('SIGTERM', () => { daemon.unregisterSelf(); process.exit(0); });
       process.on('SIGINT', () => { daemon.unregisterSelf(); process.exit(0); });
@@ -1548,15 +1539,35 @@ export class CLIAdapter {
     // ── Phase 1: Worktree isolation ──
     let workDir = this.ctx.rootPath;
     if (!noWorktree) {
-      this.writeLn(`[hex go] Creating worktree: ${branchName}`);
-      try {
-        const wt = await this.ctx.worktree.create(branchName);
-        workDir = wt.absolutePath;
-        this.writeLn(`[hex go] Isolated at: ${workDir}`);
-      } catch (err) {
-        // Worktree creation failed — fall back to direct mode
-        const msg = err instanceof Error ? err.message : String(err);
-        this.writeLn(`[hex go] Worktree failed (${msg}) — working on current branch`);
+      // Try the base branch name first, then a timestamped variant on collision
+      const branchCandidates = [branchName, `${branchName}-${timestamp}`];
+      let worktreeCreated = false;
+
+      for (const candidate of branchCandidates) {
+        this.writeLn(`[hex go] Creating worktree: ${candidate}`);
+        try {
+          const wt = await this.ctx.worktree.create(candidate);
+          workDir = wt.absolutePath;
+          this.writeLn(`[hex go] Isolated at: ${workDir}`);
+          worktreeCreated = true;
+          break;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes('already exists') && candidate === branchName) {
+            this.writeLn(`[hex go] Branch exists, trying timestamped variant...`);
+            continue;
+          }
+          this.writeLn(`[hex go] Worktree failed: ${msg}`);
+          break;
+        }
+      }
+
+      if (!worktreeCreated) {
+        this.writeLn('[hex go] ERROR: Could not create worktree. Clean stale worktrees with:');
+        this.writeLn(`  git worktree remove --force <path> && git branch -D ${branchName}`);
+        this.writeLn('[hex go] Or use --no-worktree to work directly (not recommended)');
+        dashboard?.stop();
+        return 1;
       }
     } else {
       this.writeLn('[hex go] --no-worktree: working directly on current branch');
@@ -1677,6 +1688,37 @@ export class CLIAdapter {
       this.writeLn(`[hex go] Could not write prompt file: ${msg}`);
     }
 
+    // ── Phase 3b: Install hub-push hook into target project ──
+    try {
+      const { mkdir, writeFile, readFile } = await import('node:fs/promises');
+      const { resolve: resolvePath } = await import('node:path');
+      const hookSrc = resolvePath(this.ctx.rootPath, '.claude/helpers/hub-push.cjs');
+      const hookContent = await readFile(hookSrc, 'utf-8');
+      const targetHelpersDir = `${workDir}/.claude/helpers`;
+      await mkdir(targetHelpersDir, { recursive: true }).catch(() => {});
+      await writeFile(`${targetHelpersDir}/hub-push.cjs`, hookContent);
+
+      // Merge hub-push hooks into target project's settings.json
+      const targetSettingsPath = `${workDir}/.claude/settings.json`;
+      let settings: any = {};
+      try { settings = JSON.parse(await readFile(targetSettingsPath, 'utf-8')); } catch { /* new file */ }
+      if (!settings.hooks) settings.hooks = {};
+      if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
+
+      // Add hub-push hooks if not already present
+      const hasHubPush = JSON.stringify(settings.hooks).includes('hub-push.cjs');
+      if (!hasHubPush) {
+        settings.hooks.PostToolUse.push({
+          matcher: 'Write|Edit|MultiEdit|Bash|Read',
+          hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/.claude/helpers/hub-push.cjs" tool-use', timeout: 3000 }],
+        });
+        await writeFile(targetSettingsPath, JSON.stringify(settings, null, 2));
+        this.writeLn('[hex go] Hub-push hook installed in target project');
+      }
+    } catch {
+      // Non-critical — agent runs without dashboard events
+    }
+
     // ── Phase 4: Launch Claude Code ──
     this.writeLn('[hex go] Launching Claude Code...');
     dashboard?.broadcast('go-agent-launched', { prompt, workDir, timestamp: Date.now() });
@@ -1698,7 +1740,11 @@ export class CLIAdapter {
         cwd: workDir,
         maxBuffer: 50 * 1024 * 1024, // 50MB — agents produce a lot of output
         timeout: 30 * 60 * 1000, // 30 minute timeout
-        env: { ...process.env },
+        env: {
+          ...process.env,
+          HEX_PROJECT_ROOT: this.ctx.rootPath,
+          HEX_HUB_PORT: String(5555),
+        },
       });
 
       if (result.stdout) {
