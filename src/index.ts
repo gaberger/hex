@@ -33,10 +33,14 @@ export type { IEventBusPort } from './core/ports/event-bus.js';
 
 export type {
   ISwarmPort,
+  ISwarmOrchestrationPort,
   SwarmConfig,
   SwarmStatus,
   SwarmTask,
+  AgentDBProgressReport,
 } from './core/ports/swarm.js';
+
+export type { IRegistryPort } from './core/ports/registry.js';
 
 export type {
   INotificationEmitPort,

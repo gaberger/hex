@@ -13,6 +13,7 @@
 import type { IArchAnalysisPort, IASTPort, IFileSystemPort, ICodeGenerationPort, IWorkplanPort, ASTSummary, Language, Specification } from '../../core/ports/index.js';
 import type { AppContextFactory } from '../../core/ports/app-context.js';
 import type { IRegistryPort } from '../../core/ports/registry.js';
+import type { ISwarmOrchestrationPort } from '../../core/ports/swarm.js';
 
 // ─── MCP Tool Definitions ────────────────────────────────
 
@@ -145,6 +146,29 @@ export const HEX_INTF_TOOLS: MCPToolDefinition[] = [
       required: ['path'],
     },
   },
+  {
+    name: 'hex_orchestrate',
+    description: 'Execute a workplan using parallel swarm agents in isolated worktrees with dependency ordering',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requirements: { type: 'string', description: 'Requirements (comma-separated or newline-separated)' },
+        language: { type: 'string', description: 'Target language', enum: ['typescript', 'go', 'rust'] },
+        maxAgents: { type: 'string', description: 'Maximum parallel agents (default: 4)' },
+        topology: { type: 'string', description: 'Swarm topology', enum: ['hierarchical', 'mesh', 'hierarchical-mesh'] },
+      },
+      required: ['requirements'],
+    },
+  },
+  {
+    name: 'hex_status',
+    description: 'Get swarm progress report: tasks, agents, patterns, and overall completion percentage',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 // ─── Dashboard Hub Tool Definitions ───────────────────────
@@ -221,6 +245,8 @@ export interface MCPContext {
   codeGenerator?: ICodeGenerationPort | null;
   /** Optional: LLM workplan creation. When absent, plan tools return an error. */
   workplanExecutor?: IWorkplanPort | null;
+  /** Optional: swarm orchestration for parallel execution. */
+  swarmOrchestrator?: ISwarmOrchestrationPort | null;
 }
 
 export class MCPAdapter {
@@ -281,6 +307,15 @@ export class MCPAdapter {
           );
         case 'hex_analyze_json':
           return await this.analyzeJson(call.arguments.path as string);
+        case 'hex_orchestrate':
+          return await this.orchestrate(
+            call.arguments.requirements as string,
+            (call.arguments.language as string) ?? 'typescript',
+            call.arguments.maxAgents as string | undefined,
+            call.arguments.topology as string | undefined,
+          );
+        case 'hex_status':
+          return await this.swarmStatus();
         // ── Dashboard hub tools ──
         case 'hex_dashboard_start':
           return await this.dashboardStart(
@@ -474,6 +509,75 @@ export class MCPAdapter {
   private async analyzeJson(path: string): Promise<MCPToolResult> {
     const result = await this.ctx.archAnalyzer.analyzeArchitecture(path);
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+
+  private async orchestrate(
+    requirements: string,
+    language: string,
+    maxAgentsStr?: string,
+    topology?: string,
+  ): Promise<MCPToolResult> {
+    if (!this.ctx.workplanExecutor) {
+      return { content: [{ type: 'text', text: 'LLM not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' }], isError: true };
+    }
+    if (!this.ctx.swarmOrchestrator) {
+      return { content: [{ type: 'text', text: 'Swarm orchestrator not available.' }], isError: true };
+    }
+
+    const langMap: Record<string, Language> = { typescript: 'typescript', go: 'go', rust: 'rust', ts: 'typescript' };
+    const lang = langMap[language] ?? 'typescript' as Language;
+    const reqList = requirements.split(/[,\n]/).map((r) => r.trim()).filter(Boolean);
+
+    // Create workplan via LLM
+    const workplan = await this.ctx.workplanExecutor.createPlan(reqList, lang);
+
+    // Execute via swarm orchestrator
+    const maxAgents = maxAgentsStr ? parseInt(maxAgentsStr, 10) : undefined;
+    const config: Record<string, unknown> = {};
+    if (maxAgents && !isNaN(maxAgents)) config.maxAgents = maxAgents;
+    if (topology) config.topology = topology;
+
+    const status = await this.ctx.swarmOrchestrator.orchestrate(workplan.steps, config as any);
+
+    const lines = [
+      `SWARM: ${status.status}`,
+      `TOPOLOGY: ${status.topology}`,
+      `AGENTS: ${status.agentCount}`,
+      `TASKS: ${status.completedTaskCount}/${status.activeTaskCount + status.completedTaskCount}`,
+      '',
+      `PLAN: ${workplan.title} (${workplan.steps.length} steps)`,
+    ];
+    for (const step of workplan.steps) {
+      lines.push(`  [${step.id}] ${step.description} → ${step.adapter}`);
+    }
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
+  private async swarmStatus(): Promise<MCPToolResult> {
+    if (!this.ctx.swarmOrchestrator) {
+      return { content: [{ type: 'text', text: 'Swarm orchestrator not available.' }], isError: true };
+    }
+    const report = await this.ctx.swarmOrchestrator.getProgress();
+    const lines = [
+      `SWARM: ${report.swarmId}`,
+      `PHASE: ${report.phase}`,
+      `PROGRESS: ${report.overallPercent}%`,
+      `AGENTS: ${report.agents.length} | TASKS: ${report.tasks.length}`,
+      `PATTERNS: ${report.patterns.total} (${report.patterns.recentlyUsed} recent)`,
+    ];
+    if (report.tasks.length > 0) {
+      lines.push('', 'TASKS:');
+      for (const t of report.tasks.slice(0, 10)) {
+        lines.push(`  [${t.status}] ${t.title}${t.assignee ? ` → ${t.assignee}` : ''}`);
+      }
+    }
+    if (report.agents.length > 0) {
+      lines.push('', 'AGENTS:');
+      for (const a of report.agents) {
+        lines.push(`  ${a.name} (${a.role}) — ${a.status}`);
+      }
+    }
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 
   // ─── Dashboard Hub Tool Implementations ──────────────────
