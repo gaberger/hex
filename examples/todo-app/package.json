@@ -9,7 +9,7 @@
     "dev": "bun --watch run src/cli.ts serve"
   },
   "dependencies": {
-    "hex": "link:../../"
+    "hex": "file:../../"
   },
   "devDependencies": {
     "@types/bun": "latest"

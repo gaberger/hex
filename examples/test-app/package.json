@@ -10,7 +10,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "hex": "link:../../"
+    "hex": "file:../../"
   },
   "devDependencies": {
     "typescript": "^5.0.0"

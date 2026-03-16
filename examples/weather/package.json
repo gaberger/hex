@@ -12,7 +12,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "hex": "link:../../",
+    "hex": "file:../../",
     "tree-sitter-wasms": "^0.1.13"
   }
 }
