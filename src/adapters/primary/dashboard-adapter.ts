@@ -67,12 +67,12 @@ export class DashboardAdapter {
 
     this.projectId = regResult.id as string;
 
-    // Initial push of all state
-    await this.pushAll();
+    // Initial push — fire and forget (don't block registration)
+    void this.pushAll().catch((err) => this.log('initial push failed:', err));
 
     // Start periodic push (every 10s)
     this.pushTimer = setInterval(() => {
-      if (!this.stopped) void this.pushAll();
+      if (!this.stopped) void this.pushAll().catch((err) => this.log('periodic push failed:', err));
     }, 10_000);
     this.pushTimer.unref(); // Don't keep process alive
 
