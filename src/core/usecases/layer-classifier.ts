@@ -8,12 +8,45 @@
 import type { DependencyDirection } from '../domain/value-objects.js';
 
 const LAYER_PATTERNS: Array<[string, DependencyDirection]> = [
+  // Go conventional directories (more specific first)
+  ['/internal/domain/', 'domain'],
+  ['/internal/ports/', 'ports'],
+  ['/internal/usecases/', 'usecases'],
+  ['/internal/', 'usecases'],           // Go: internal/ catch-all → private business logic
+  ['/cmd/', 'adapters/primary'],        // Go: cmd/ is the CLI/HTTP entry point
+  ['/pkg/', 'ports'],                   // Go: pkg/ is the public API
+
+  // Rust conventional directories
+  ['/src/bin/', 'adapters/primary'],    // Rust: src/bin/ contains binary entry points
+  ['/src/routes/', 'adapters/primary'], // Rust: web route handlers (actix/axum convention)
+  ['/src/handlers/', 'adapters/primary'], // Rust/Go: HTTP handler modules
+  ['/src/middleware/', 'adapters/primary'], // Rust/Go: HTTP middleware
+
+  // Go naming conventions (suffix-based)
+  ['/handlers/', 'adapters/primary'],   // Go: handler packages
+
+  // Hex-standard patterns (generic, checked last)
   ['/domain/', 'domain'],
   ['/ports/', 'ports'],
   ['/usecases/', 'usecases'],
   ['/adapters/primary/', 'adapters/primary'],
   ['/adapters/secondary/', 'adapters/secondary'],
   ['/infrastructure/', 'infrastructure'],
+];
+
+/** Filename-based patterns for special files (checked after directory patterns) */
+const FILENAME_PATTERNS: Array<[RegExp, DependencyDirection | 'composition-root' | 'entry-point']> = [
+  // Rust special files
+  [/\/lib\.rs$/, 'composition-root'],
+  [/\/main\.rs$/, 'entry-point'],
+  [/\/embed\.rs$/, 'infrastructure'],
+  [/\/daemon\.rs$/, 'infrastructure'],
+
+  // Go special files
+  [/\/composition-root\.go$/, 'composition-root'],
+  [/_adapter\.go$/, 'adapters/primary'],          // *_adapter.go convention
+  [/_service\.go$/, 'usecases'],                  // *_service.go convention
+  [/\/handler_[^/]+\.go$/, 'adapters/primary'],  // handler_*.go convention
 ];
 
 /** Allowed import targets for each layer */
@@ -54,10 +87,43 @@ const VIOLATION_RULES: Record<string, string> = {
 };
 
 export function classifyLayer(filePath: string): DependencyDirection | 'unknown' {
+  // Prefix with / so patterns like /cmd/ match paths starting with cmd/
+  const normalized = '/' + filePath;
+
+  // Skip Go test files — they mirror the package they test, not a distinct layer
+  if (normalized.endsWith('_test.go')) return 'unknown';
+
+  // Check directory-based patterns first
   for (const [pattern, layer] of LAYER_PATTERNS) {
-    if (filePath.includes(pattern)) return layer;
+    if (normalized.includes(pattern)) return layer;
   }
+
+  // Check filename-based patterns (special files like lib.rs, main.rs, *_adapter.go)
+  for (const [regex, classification] of FILENAME_PATTERNS) {
+    if (regex.test(normalized)) {
+      // composition-root and entry-point are recognized but not hex layers
+      if (classification === 'composition-root' || classification === 'entry-point') {
+        return 'unknown';
+      }
+      return classification;
+    }
+  }
+
   return 'unknown';
+}
+
+export type SpecialFileRole = 'composition-root' | 'entry-point' | null;
+
+export function classifySpecialFile(filePath: string): SpecialFileRole {
+  const normalized = '/' + filePath;
+  for (const [regex, classification] of FILENAME_PATTERNS) {
+    if (regex.test(normalized)) {
+      if (classification === 'composition-root' || classification === 'entry-point') {
+        return classification;
+      }
+    }
+  }
+  return null;
 }
 
 export function isAllowedImport(

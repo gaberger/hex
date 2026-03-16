@@ -1,31 +1,34 @@
 /**
- * Path Normalizer — Pure functions for resolving relative import paths
- * to project-relative .ts paths.
+ * Path Normalizer — Pure functions for resolving import paths
+ * across TypeScript, Go, and Rust.
  *
- * Fixes the mismatch between tree-sitter's relative `.js` import paths
- * and the project-relative `.ts` paths from fs.glob().
+ * Each language has different import semantics:
+ * - TypeScript: relative paths with .js extensions → resolved to .ts
+ * - Go: module paths like "github.com/user/pkg" → kept as-is for external,
+ *        relative paths within project resolved normally
+ * - Rust: crate paths like "crate::core::ports" → converted to file paths
  */
 
 import { posix } from 'node:path';
 
 /**
- * Resolve a relative import path to a project-relative .ts path.
- * Example: given file 'src/adapters/secondary/git.ts' importing '../../core/ports/index.js'
- * returns 'src/core/ports/index.ts'
+ * Resolve an import path to a project-relative file path.
+ *
+ * TypeScript: './foo.js' from 'src/bar.ts' → 'src/foo.ts'
+ * Go: "../ports" from 'src/adapters/primary/cli.go' → 'src/ports'
+ * Go: "net/http" (stdlib) → 'net/http' (kept as-is)
+ * Rust: "crate::core::ports" → 'src/core/ports'
  */
-export function resolveImportPath(fromFile: string, importPath: string): string {
-  // Non-relative imports (bare specifiers) are returned as-is after normalization
-  if (!importPath.startsWith('.')) {
-    return normalizePath(importPath);
-  }
+export function resolveImportPath(fromFile: string, importPath: string, goModulePrefix?: string): string {
+  const lang = detectLang(fromFile);
 
-  const dir = posix.dirname(fromFile);
-  const resolved = posix.join(dir, importPath);
-  return normalizePath(resolved);
+  if (lang === 'go') return resolveGoImport(fromFile, importPath, goModulePrefix);
+  if (lang === 'rust') return resolveRustImport(importPath, fromFile);
+  return resolveTsImport(fromFile, importPath);
 }
 
 /**
- * Normalize a path for comparison: strip leading ./, ensure .ts extension.
+ * Normalize a path for comparison: strip leading ./, preserve original extension.
  */
 export function normalizePath(filePath: string): string {
   let p = filePath;
@@ -35,18 +38,113 @@ export function normalizePath(filePath: string): string {
     p = p.slice(2);
   }
 
-  // Replace .js/.jsx extension with .ts/.tsx
+  const lang = detectLang(p);
+
+  if (lang === 'go') {
+    // Go files keep .go extension; no transformation needed
+    return p;
+  }
+
+  if (lang === 'rust') {
+    // Rust files keep .rs extension; no transformation needed
+    return p;
+  }
+
+  // TypeScript: Replace .js/.jsx extension with .ts/.tsx
   if (p.endsWith('.js')) {
     p = p.slice(0, -3) + '.ts';
   } else if (p.endsWith('.jsx')) {
     p = p.slice(0, -4) + '.tsx';
   } else if (p.endsWith('/')) {
-    // Explicit directory import: '../ports/' → '../ports/index.ts'
     p = p + 'index.ts';
-  } else if (!p.endsWith('.ts') && !p.endsWith('.tsx') && !p.includes(':')) {
-    // No extension and not a node: specifier — add .ts
+  } else if (!p.endsWith('.ts') && !p.endsWith('.tsx') && !p.includes(':') && !p.endsWith('.go') && !p.endsWith('.rs')) {
     p = p + '.ts';
   }
 
   return p;
+}
+
+// ── Language-specific resolvers ─────────────────────────────
+
+function resolveTsImport(fromFile: string, importPath: string): string {
+  if (!importPath.startsWith('.')) {
+    return normalizePath(importPath);
+  }
+  const dir = posix.dirname(fromFile);
+  const resolved = posix.join(dir, importPath);
+  return normalizePath(resolved);
+}
+
+function resolveGoImport(_fromFile: string, importPath: string, modulePrefix?: string): string {
+  // Go imports are module paths, not file paths.
+  // Relative imports within the same project use relative directory paths.
+  // External imports (containing dots like "github.com") are kept as-is.
+  if (importPath.startsWith('.')) {
+    const dir = posix.dirname(_fromFile);
+    return posix.join(dir, importPath);
+  }
+  // Strip Go module prefix to get project-relative path for layer classification
+  if (modulePrefix && importPath.startsWith(modulePrefix + '/')) {
+    return importPath.slice(modulePrefix.length + 1);
+  }
+  // External or stdlib import — return as-is for boundary classification
+  return importPath;
+}
+
+/**
+ * Return both possible Rust module file candidates for a base path.
+ * Rust modules can be either `path.rs` or `path/mod.rs`.
+ * The caller (arch-analyzer) should match against actual files.
+ */
+export function rustModuleCandidates(basePath: string): string[] {
+  return [basePath + '.rs', basePath + '/mod.rs'];
+}
+
+/**
+ * Strip trailing item-name segment from a Rust path.
+ * If the path has 3+ segments and the last segment starts with an uppercase
+ * letter, it's an item name (type/function), not a file/module.
+ */
+function stripRustItemName(segments: string[]): string[] {
+  if (segments.length >= 3) {
+    const last = segments[segments.length - 1];
+    if (last.length > 0 && last[0] >= 'A' && last[0] <= 'Z') {
+      return segments.slice(0, -1);
+    }
+  }
+  return segments;
+}
+
+function resolveRustImport(importPath: string, fromFile: string): string {
+  // Rust crate:: paths map to src/ directory structure
+  // "crate::core::ports::IFoo" → "src/core/ports" (strip uppercase item name)
+  // "crate::adapters::primary::http_adapter" → "src/adapters/primary/http_adapter" (keep lowercase)
+  if (importPath.startsWith('crate::')) {
+    const segments = stripRustItemName(importPath.slice(7).split('::'));
+    return 'src/' + segments.join('/');
+  }
+
+  // "self::foo" — current module (resolve relative to importing file's directory)
+  if (importPath.startsWith('self::')) {
+    const dir = posix.dirname(fromFile);
+    const segments = importPath.slice(6).split('::');
+    return posix.join(dir, ...segments);
+  }
+
+  // "super::foo" — parent module
+  if (importPath.startsWith('super::')) {
+    return importPath.replace(/::/g, '/');
+  }
+
+  // External crate or std — return as-is
+  return importPath;
+}
+
+// ── Helpers ─────────────────────────────────────────────────
+
+function detectLang(filePath: string): 'typescript' | 'go' | 'rust' | 'unknown' {
+  if (filePath.endsWith('.ts') || filePath.endsWith('.tsx') || filePath.endsWith('.js') || filePath.endsWith('.jsx')) return 'typescript';
+  if (filePath.endsWith('.go')) return 'go';
+  if (filePath.endsWith('.rs')) return 'rust';
+  return 'unknown';
 }

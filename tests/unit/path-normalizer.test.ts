@@ -53,6 +53,64 @@ describe('resolveImportPath', () => {
   });
 });
 
+// ─── Go module prefix stripping ───────────────────────────
+
+describe('resolveImportPath — Go module prefix', () => {
+  it('strips simple module prefix from Go import', () => {
+    const result = resolveImportPath(
+      'src/composition-root.go',
+      'hex-f1/src/core/domain',
+      'hex-f1',
+    );
+    expect(result).toBe('src/core/domain');
+  });
+
+  it('strips long module prefix (github.com) to prevent layer misclassification', () => {
+    const result = resolveImportPath(
+      'src/composition-root.go',
+      'github.com/org/domain-service/src/core/ports',
+      'github.com/org/domain-service',
+    );
+    expect(result).toBe('src/core/ports');
+  });
+
+  it('keeps relative Go imports unchanged even with modulePrefix', () => {
+    const result = resolveImportPath(
+      'src/adapters/primary/http.go',
+      './handler',
+      'hex-f1',
+    );
+    expect(result).toBe('src/adapters/primary/handler');
+  });
+
+  it('keeps stdlib imports as-is when modulePrefix is set', () => {
+    const result = resolveImportPath(
+      'src/main.go',
+      'fmt',
+      'hex-f1',
+    );
+    expect(result).toBe('fmt');
+  });
+
+  it('keeps external imports as-is when they do not match modulePrefix', () => {
+    const result = resolveImportPath(
+      'src/main.go',
+      'github.com/other/pkg',
+      'hex-f1',
+    );
+    expect(result).toBe('github.com/other/pkg');
+  });
+
+  it('works without modulePrefix (backwards compatible)', () => {
+    const result = resolveImportPath(
+      'src/main.go',
+      'hex-f1/src/core/domain',
+    );
+    // Without prefix, returned as-is (existing behavior)
+    expect(result).toBe('hex-f1/src/core/domain');
+  });
+});
+
 // ─── normalizePath ─────────────────────────────────────
 
 describe('normalizePath', () => {

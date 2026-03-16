@@ -20,13 +20,21 @@ import type {
 import { classifyLayer, getViolationRule } from './layer-classifier.js';
 import { resolveImportPath, normalizePath } from './path-normalizer.js';
 
-const ENTRY_POINTS = ['index.ts', 'cli.ts', 'main.ts', 'composition-root.ts', 'main.go', 'main.rs'];
+const ENTRY_POINTS = [
+  'index.ts', 'cli.ts', 'main.ts', 'composition-root.ts',  // TypeScript
+  'main.go', 'cmd/main.go', 'composition-root.go',          // Go
+  'main.rs', 'lib.rs',                                       // Rust
+];
 
 /** Glob patterns for all supported framework languages (ts, go, rust). */
 const SOURCE_GLOBS = ['**/*.ts', '**/*.go', '**/*.rs'];
 
 /** Exported functions that serve as entry points (not dead despite no importers) */
-const ENTRY_EXPORTS = new Set(['runCLI', 'startDashboard', 'createAppContext']);
+const ENTRY_EXPORTS = new Set([
+  'runCLI', 'startDashboard', 'createAppContext',  // TypeScript
+  'main', 'init',                                    // Go: main() and init() are always entry points
+  'Main',                                            // Go: exported Main is sometimes used
+]);
 
 function matchesExclude(filePath: string, patterns: string[]): boolean {
   return patterns.some((p) => {
@@ -36,7 +44,9 @@ function matchesExclude(filePath: string, patterns: string[]): boolean {
 }
 
 function isEntryPoint(filePath: string): boolean {
-  return ENTRY_POINTS.some((ep) => filePath.endsWith(`/${ep}`) || filePath === ep);
+  return ENTRY_POINTS.some((ep) => filePath.endsWith(`/${ep}`) || filePath === ep)
+    || /\/cmd\/[^/]+\/main\.go$/.test(filePath)   // Go: cmd/appname/main.go
+    || /\/src\/bin\/[^/]+\.rs$/.test(filePath);    // Rust: src/bin/appname.rs
 }
 
 function hasReExports(summary: ASTSummary): boolean {
@@ -53,6 +63,8 @@ function hasReExports(summary: ASTSummary): boolean {
 }
 
 export class ArchAnalyzer implements IArchAnalysisPort {
+  private goModulePrefix: string | null = null;
+
   constructor(
     private readonly ast: IASTPort,
     private readonly fs: IFileSystemPort,
@@ -61,10 +73,31 @@ export class ArchAnalyzer implements IArchAnalysisPort {
       '*.test.ts', '*.spec.ts',   // TypeScript tests
       '*_test.go',                 // Go tests
       '*.test.rs',                 // Rust tests
+      '/tests/',                   // Rust integration test directory
+      '/target/',                  // Rust/Cargo build artifacts
     ],
   ) {}
 
+  /**
+   * Detect Go module name from go.mod in common locations.
+   * Returns the module path (e.g. "hex-f1" or "github.com/org/repo") or null.
+   */
+  private async detectGoModulePrefix(): Promise<string | null> {
+    for (const candidate of ['go.mod', 'backend/go.mod', 'src/go.mod', 'cmd/go.mod']) {
+      try {
+        const content = await this.fs.read(candidate);
+        const match = content.match(/^module\s+(\S+)/m);
+        if (match) return match[1];
+      } catch { /* not found */ }
+    }
+    return null;
+  }
+
   private async collectSummaries(): Promise<ASTSummary[]> {
+    // Auto-detect Go module prefix once per analysis run
+    if (this.goModulePrefix === null) {
+      this.goModulePrefix = await this.detectGoModulePrefix() ?? '';
+    }
     const results = await Promise.all(SOURCE_GLOBS.map((g) => this.fs.glob(g)));
     const allFiles = results.flat();
     const sourceFiles = allFiles.filter((f) => !matchesExclude(f, this.excludePatterns));
@@ -75,56 +108,12 @@ export class ArchAnalyzer implements IArchAnalysisPort {
 
   async buildDependencyGraph(_rootPath: string): Promise<ImportEdge[]> {
     const summaries = await this.collectSummaries();
-    const edges: ImportEdge[] = [];
-
-    for (const summary of summaries) {
-      const fromFile = normalizePath(summary.filePath);
-      for (const imp of summary.imports) {
-        edges.push({
-          from: fromFile,
-          to: resolveImportPath(summary.filePath, imp.from),
-          names: imp.names,
-        });
-      }
-    }
-
-    return edges;
+    return this.buildEdgesFromSummaries(summaries);
   }
 
   async findDeadExports(_rootPath: string): Promise<DeadExport[]> {
     const summaries = await this.collectSummaries();
-
-    // Build set of all imported (name, normalizedTarget) tuples
-    const importedByModule = new Map<string, Set<string>>();
-    for (const summary of summaries) {
-      for (const imp of summary.imports) {
-        const target = resolveImportPath(summary.filePath, imp.from);
-        if (!importedByModule.has(target)) importedByModule.set(target, new Set());
-        for (const name of imp.names) {
-          importedByModule.get(target)!.add(name);
-        }
-      }
-    }
-
-    const dead: DeadExport[] = [];
-    for (const summary of summaries) {
-      const normalizedFile = normalizePath(summary.filePath);
-      if (isEntryPoint(normalizedFile)) continue;
-      if (hasReExports(summary)) continue;
-
-      const importedFromThis = importedByModule.get(normalizedFile) ?? new Set();
-      for (const exp of summary.exports) {
-        if (!importedFromThis.has(exp.name) && !ENTRY_EXPORTS.has(exp.name)) {
-          dead.push({
-            filePath: normalizedFile,
-            exportName: exp.name,
-            kind: exp.kind,
-          });
-        }
-      }
-    }
-
-    return dead;
+    return this.findDeadFromSummaries(summaries);
   }
 
   async validateHexBoundaries(_rootPath: string): Promise<DependencyViolation[]> {
@@ -201,6 +190,8 @@ export class ArchAnalyzer implements IArchAnalysisPort {
   }
 
   async analyzeArchitecture(_rootPath: string): Promise<ArchAnalysisResult> {
+    // Reset Go module prefix for fresh detection on each analysis run
+    this.goModulePrefix = null;
     // Collect summaries ONCE and pass to all sub-analyses to avoid 5x re-parsing
     const summaries = await this.collectSummaries();
     const edges = this.buildEdgesFromSummaries(summaries);
@@ -253,13 +244,14 @@ export class ArchAnalyzer implements IArchAnalysisPort {
   // ── Internal methods that operate on pre-collected summaries ──────
 
   private buildEdgesFromSummaries(summaries: ASTSummary[]): ImportEdge[] {
+    const goMod = this.goModulePrefix || undefined;
     const edges: ImportEdge[] = [];
     for (const summary of summaries) {
       const fromFile = normalizePath(summary.filePath);
       for (const imp of summary.imports) {
         edges.push({
           from: fromFile,
-          to: resolveImportPath(summary.filePath, imp.from),
+          to: resolveImportPath(summary.filePath, imp.from, goMod),
           names: imp.names,
         });
       }
@@ -268,10 +260,11 @@ export class ArchAnalyzer implements IArchAnalysisPort {
   }
 
   private findDeadFromSummaries(summaries: ASTSummary[]): DeadExport[] {
+    const goMod = this.goModulePrefix || undefined;
     const importedByModule = new Map<string, Set<string>>();
     for (const summary of summaries) {
       for (const imp of summary.imports) {
-        const target = resolveImportPath(summary.filePath, imp.from);
+        const target = resolveImportPath(summary.filePath, imp.from, goMod);
         if (!importedByModule.has(target)) importedByModule.set(target, new Set());
         for (const name of imp.names) {
           importedByModule.get(target)!.add(name);
@@ -376,6 +369,45 @@ export class ArchAnalyzer implements IArchAnalysisPort {
           if (portInterfaces.has(name)) {
             implementedPorts.add(name);
           }
+        }
+      }
+    }
+
+    // Go structural interface matching: check if adapter methods match port interface methods
+    const portMethodSets = new Map<string, Set<string>>(); // portName -> method names
+    for (const s of summaries) {
+      if (!normalizePath(s.filePath).includes('/ports/')) continue;
+      for (const exp of s.exports) {
+        if (exp.kind === 'interface' && exp.name.startsWith('I') && exp.name.endsWith('Port')) {
+          // Collect method names from the interface signature
+          if (exp.signature) {
+            const methods = new Set<string>();
+            // Simple heuristic: look for method-like patterns in the signature
+            const methodMatches = exp.signature.matchAll(/\b([A-Z]\w+)\s*\(/g);
+            for (const m of methodMatches) {
+              methods.add(m[1]);
+            }
+            if (methods.size > 0) {
+              portMethodSets.set(exp.name, methods);
+            }
+          }
+        }
+      }
+    }
+
+    // Check adapter structs for method name overlap with port interfaces
+    for (const s of summaries) {
+      const normalized = normalizePath(s.filePath);
+      if (!normalized.includes('/adapters/') || !normalized.endsWith('.go')) continue;
+      const adapterMethods = new Set(
+        s.exports.filter((e) => e.kind === 'function').map((e) => e.name),
+      );
+      for (const [portName, portMethods] of portMethodSets) {
+        if (implementedPorts.has(portName)) continue;
+        // If all port methods are found in the adapter, it likely implements the port
+        const allMatch = [...portMethods].every((m) => adapterMethods.has(m));
+        if (allMatch && portMethods.size > 0) {
+          implementedPorts.add(portName);
         }
       }
     }
