@@ -165,6 +165,16 @@ a{color:var(--accent);text-decoration:none}
 /* Empty state */
 .empty{color:var(--text2);font-size:.8rem;font-style:italic;padding:8px 0}
 
+/* Loading skeleton shimmer */
+.loading-skeleton{background:linear-gradient(90deg,var(--card) 25%,rgba(88,166,255,.06) 50%,var(--card) 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:4px;height:16px;margin:6px 0}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.panel-loading{opacity:.5;pointer-events:none}
+
+/* Graph tooltip */
+.graph-tooltip{position:fixed;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:.78rem;color:var(--text);pointer-events:none;z-index:200;display:none;max-width:300px;box-shadow:0 4px 12px rgba(0,0,0,.4)}
+.graph-tooltip .tt-path{color:var(--accent);font-family:'SF Mono',monospace;font-size:.72rem;word-break:break-all}
+.graph-tooltip .tt-layer{color:var(--text2);font-size:.7rem;margin-top:2px}
+
 /* Bottom Row: Chat + Graph side by side */
 .bottom-row{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap);padding:0 24px var(--gap);min-height:420px}
 
@@ -364,7 +374,7 @@ a{color:var(--accent);text-decoration:none}
         <button id="zoomIn" title="Zoom in">+</button>
         <button id="zoomOut" title="Zoom out">-</button>
         <button id="zoomReset" title="Reset view">R</button>
-        <button id="toggleExternal" title="Show/hide external deps" style="font-size:9px;margin-top:4px">EXT</button>
+        <button id="toggleExternal" title="Toggle external dependencies" style="font-size:9px;margin-top:4px">Ext</button>
         <button id="expandGraph" title="Expand fullscreen" style="font-size:12px;margin-top:4px">⛶</button>
         <button id="simViolation" title="Simulate violation (demo)" style="font-size:8px;margin-top:4px;color:#f85149">VIO</button>
       </div>
@@ -380,6 +390,8 @@ a{color:var(--accent);text-decoration:none}
     </div>
   </div>
 </div>
+
+<div class="graph-tooltip" id="graphTooltip"></div>
 
 </div><!-- /bottom-row -->
 
@@ -597,6 +609,11 @@ a{color:var(--accent);text-decoration:none}
     chatSubscribe(projectId);
     chatRenderChannel();
 
+    // Show loading state on panels while data loads
+    ['#healthPanel','#tokenPanel','#swarmPanel','#eventPanel'].forEach(function(id) {
+      $(id).classList.add('panel-loading');
+    });
+
     // Reload all panels for the new project
     loadHealth();
     loadTokenOverview();
@@ -642,6 +659,7 @@ a{color:var(--accent);text-decoration:none}
   // --- Health Panel ---
   function loadHealth() {
     apiFetch('/api/health').then(function(data) {
+      $('#healthPanel').classList.remove('panel-loading');
       if (!data) return;
 
       // API may return { summary: { healthScore, totalFiles, ... }, deadExports, ... }
@@ -713,6 +731,7 @@ a{color:var(--accent);text-decoration:none}
   // --- Token Panel ---
   function loadTokenOverview() {
     apiFetch('/api/tokens/overview').then(function(data) {
+      $('#tokenPanel').classList.remove('panel-loading');
       if (!data) return;
 
       state.tokenOverview = data;
@@ -787,6 +806,7 @@ a{color:var(--accent);text-decoration:none}
   // --- Swarm Panel ---
   function loadSwarm() {
     apiFetch('/api/swarm').then(function(data) {
+      $('#swarmPanel').classList.remove('panel-loading');
       if (!data) {
         // Show unavailable message
         var panel = $('#swarmPanel');
@@ -1422,6 +1442,19 @@ a{color:var(--accent);text-decoration:none}
     var now = Date.now();
     var pulse = 0.7 + 0.3 * Math.sin(now / 300);
 
+    // ── Pre-compute violation data (must happen before ring/badge rendering) ──
+    var violationNodes = {};  // { nodeId: count } — nodes involved in violations
+    var violationCount = 0;
+    edges.forEach(function(e) {
+      if (e.violation || e.isViolation) {
+        violationCount++;
+        violationNodes[e.from] = (violationNodes[e.from] || 0) + 1;
+        violationNodes[e.to] = (violationNodes[e.to] || 0) + 1;
+      }
+    });
+    graphState._hasViolations = violationCount > 0;
+    if (violationCount > 0 && !graphAnimFrame) startGraphAnimation();
+
     // ── Draw hexagonal architecture rings with color bands ──
     // Draw from outside in so inner rings paint over outer
     var outermost = ringRadii.length > 0 ? ringRadii[ringRadii.length - 1].outer : 100;
@@ -1613,19 +1646,6 @@ a{color:var(--accent);text-decoration:none}
     ctx.fillStyle = 'rgba(255,255,255,0.18)';
     ctx.textAlign = 'center';
     ctx.fillText('⬡ HEXAGONAL ARCHITECTURE', cx, cy + outermost + 22);
-
-    // ── Pre-compute violation data ──
-    var violationNodes = {};  // { nodeId: count } — nodes involved in violations
-    var violationCount = 0;
-    edges.forEach(function(e) {
-      if (e.violation || e.isViolation) {
-        violationCount++;
-        violationNodes[e.from] = (violationNodes[e.from] || 0) + 1;
-        violationNodes[e.to] = (violationNodes[e.to] || 0) + 1;
-      }
-    });
-    graphState._hasViolations = violationCount > 0;
-    if (violationCount > 0 && !graphAnimFrame) startGraphAnimation();
 
     // ── Draw edges — direction-colored curved beziers ──
     var hasSelection = selectedNode !== null;
@@ -2457,6 +2477,8 @@ a{color:var(--accent);text-decoration:none}
     $('#toggleExternal').addEventListener('click', function() {
       graphState.showExternal = !graphState.showExternal;
       this.style.opacity = graphState.showExternal ? '1' : '0.4';
+      this.textContent = graphState.showExternal ? '\u25CF Ext' : 'Ext';
+      this.style.color = graphState.showExternal ? '#3fb950' : '';
       if (graphState.nodes.length > 0) {
         computePositions();
         camera = { x: 0, y: 0, zoom: 1 };
@@ -2465,6 +2487,43 @@ a{color:var(--accent);text-decoration:none}
     });
     // Start dimmed (externals hidden by default)
     $('#toggleExternal').style.opacity = '0.4';
+
+    // Graph tooltip on hover
+    var graphTooltip = $('#graphTooltip');
+    graphCanvas.addEventListener('mousemove', function(e) {
+      if (drag.active) { graphTooltip.style.display = 'none'; return; }
+      var rect = graphCanvas.getBoundingClientRect();
+      var gx = (e.clientX - rect.left - camera.x) / camera.zoom;
+      var gy = (e.clientY - rect.top - camera.y) / camera.zoom;
+      var hit = nodeAtPoint(gx, gy);
+      if (hit) {
+        var node = graphState.nodes.find(function(n) { return n.id === hit; });
+        var layer = node ? normalizeLayer(node.layer) : 'unknown';
+        var exports = node ? (node.exports || 0) : 0;
+        var hasVio = graphState.edges.some(function(ed) { return (ed.from === hit || ed.to === hit) && (ed.violation || ed.isViolation); });
+        // Build tooltip content safely using DOM APIs
+        while (graphTooltip.firstChild) graphTooltip.removeChild(graphTooltip.firstChild);
+        var pathDiv = createEl('div', { className: 'tt-path', textContent: hit });
+        graphTooltip.appendChild(pathDiv);
+        var layerText = 'Layer: ' + layer + ' \u00B7 Exports: ' + exports;
+        var layerDiv = createEl('div', { className: 'tt-layer', textContent: layerText });
+        if (hasVio) {
+          layerDiv.appendChild(document.createTextNode(' \u00B7 '));
+          layerDiv.appendChild(createEl('span', { textContent: 'has violations', style: 'color:var(--red)' }));
+        }
+        graphTooltip.appendChild(layerDiv);
+        graphTooltip.style.display = 'block';
+        graphTooltip.style.left = (e.clientX + 12) + 'px';
+        graphTooltip.style.top = (e.clientY + 12) + 'px';
+        graphCanvas.style.cursor = 'pointer';
+      } else {
+        graphTooltip.style.display = 'none';
+        graphCanvas.style.cursor = drag.active ? 'grabbing' : 'grab';
+      }
+    });
+    graphCanvas.addEventListener('mouseleave', function() {
+      graphTooltip.style.display = 'none';
+    });
 
     // Expand/collapse fullscreen
     $('#expandGraph').addEventListener('click', function() {
@@ -2516,7 +2575,7 @@ a{color:var(--accent);text-decoration:none}
       var currentScore = parseInt($('#healthNum').textContent) || 0;
       var penalty = simViolations.length * 10;
       var newScore = Math.max(0, currentScore - penalty);
-      var circ = 2 * Math.PI * 54;
+      var circ = 326.73; // must match healthArc stroke-dasharray
       var offset = circ * (1 - newScore / 100);
       var arc = $('#healthArc');
       arc.style.strokeDashoffset = String(offset);
@@ -2544,6 +2603,46 @@ a{color:var(--accent);text-decoration:none}
       this.title = 'Violations simulated — reload to clear';
     });
 
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+      // Skip if user is typing in an input/select
+      var tag = (e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+      if (e.key === 'Escape') {
+        // Deselect node
+        selectedNode = null;
+        selectedTransitive = {};
+        renderGraph();
+        // Close fullscreen graph if expanded
+        var section = document.querySelector('.graph-section');
+        if (section.classList.contains('expanded')) {
+          section.classList.remove('expanded');
+          canvasDims.w = 0; canvasDims.h = 0;
+          setTimeout(function() {
+            if (graphState.nodes.length > 0) { computePositions(); camera = { x: 0, y: 0, zoom: 1 }; renderGraph(); }
+          }, 50);
+        }
+        // Hide tooltip
+        $('#graphTooltip').style.display = 'none';
+      }
+
+      if (e.key === 'f' || e.key === 'F') {
+        // Toggle graph fullscreen
+        var section = document.querySelector('.graph-section');
+        var isExpanded = section.classList.toggle('expanded');
+        var body = $('#graphBody');
+        if (isExpanded && !body.classList.contains('open')) {
+          body.classList.add('open');
+          $('#graphArrow').classList.add('open');
+        }
+        canvasDims.w = 0; canvasDims.h = 0;
+        setTimeout(function() {
+          if (graphState.nodes.length > 0) { computePositions(); camera = { x: 0, y: 0, zoom: 1 }; renderGraph(); }
+        }, 50);
+      }
+    });
+
     // Project selector
     $('#projectSelector').addEventListener('change', function(e) {
       if (e.target.value) switchProject(e.target.value);
@@ -2560,6 +2659,8 @@ a{color:var(--accent);text-decoration:none}
     // Initial data load — detects hub vs single-project mode
     loadVersion();
     loadProjects();
+    // Auto-load graph immediately (will auto-open panel when data arrives)
+    loadGraph();
 
     // Hash-based URL routing — deep-link to a project via #/project/{id}
     function handleHashRoute() {

@@ -551,11 +551,26 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
   private async pushGraph(): Promise<void> {
     try {
-      const edges: ImportEdge[] = await this.ctx.archAnalyzer.buildDependencyGraph(this.ctx.rootPath);
+      const [edges, violations] = await Promise.all([
+        this.ctx.archAnalyzer.buildDependencyGraph(this.ctx.rootPath),
+        this.ctx.archAnalyzer.validateHexBoundaries(this.ctx.rootPath),
+      ]);
+      const violationSet = new Set(
+        violations.map((v) => `${v.from}::${v.to}`),
+      );
       const nodeSet = new Set<string>();
       for (const e of edges) { nodeSet.add(e.from); nodeSet.add(e.to); }
-      const nodes = Array.from(nodeSet).map((id) => ({ id, layer: classifyLayer(id) }));
-      const graphEdges = edges.map((e) => ({ from: e.from, to: e.to, names: e.names }));
+      const nodes = Array.from(nodeSet).map((id) => ({
+        id,
+        layer: classifyLayer(id),
+        exports: 0,
+      }));
+      const graphEdges = edges.map((e) => ({
+        from: e.from,
+        to: e.to,
+        names: e.names,
+        violation: violationSet.has(`${e.from}::${e.to}`),
+      }));
       await this.pushState('graph', { nodes, edges: graphEdges });
     } catch (err) {
       this.log('graph push failed:', err);
