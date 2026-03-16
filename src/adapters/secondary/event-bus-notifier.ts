@@ -22,10 +22,10 @@ import type {
 } from '../../core/ports/notification.js';
 
 /** Callback invoked when a matching notification arrives. */
-export type NotificationHandler = (notification: Notification) => void;
+type NotificationHandler = (notification: Notification) => void;
 
 /** Subscription filter: all fields are optional wildcards. */
-export interface SubscriptionFilter {
+interface SubscriptionFilter {
   agentName?: string;   // Exact agent name, or '*' for all
   level?: NotificationLevel | '*';
   adapter?: string;     // Exact adapter, or '*' for all

@@ -21,7 +21,7 @@ import type {
 
 const execFile = promisify(execFileCb);
 
-export class BuildError extends Error {
+class BuildError extends Error {
   override readonly name = 'BuildError';
   constructor(message: string, public readonly command: string) {
     super(message);

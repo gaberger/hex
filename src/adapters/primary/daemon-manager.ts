@@ -22,7 +22,7 @@ import { HUB_PORT } from './dashboard-hub.js';
 
 // ─── Types ───────────────────────────────────────────────
 
-export interface HubLockFile {
+interface HubLockFile {
   pid: number;
   port: number;
   token: string;
@@ -30,7 +30,7 @@ export interface HubLockFile {
   version: string;
 }
 
-export interface DaemonStatus {
+interface DaemonStatus {
   running: boolean;
   pid?: number;
   port?: number;

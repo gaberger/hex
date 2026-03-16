@@ -21,7 +21,7 @@ import type { AppContext } from '../../core/ports/app-context.js';
 import { formatArchReport } from '../../core/ports/index.js';
 
 /** Result from runCLI — captures output for testing */
-export interface CLIResult {
+interface CLIResult {
   exitCode: number;
   output: string;
 }

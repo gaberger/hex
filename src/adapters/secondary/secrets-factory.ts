@@ -20,7 +20,7 @@ import { LocalVaultAdapter } from './local-vault-adapter.js';
 /*  Config schema                                                      */
 /* ------------------------------------------------------------------ */
 
-export interface SecretsConfig {
+interface SecretsConfig {
   version: 1;
   backend: 'infisical' | 'local-vault' | 'env';
   infisical?: {
@@ -54,7 +54,7 @@ const CONFIG_FILENAME = '.hex/secrets.json';
  * Falls back to EnvSecretsAdapter when no config exists, config is
  * invalid, or the requested backend cannot be initialised.
  */
-export async function buildSecretsAdapter(projectRoot: string): Promise<EnvSecretsAdapter | CachingSecretsAdapter | LocalVaultAdapter> {
+async function buildSecretsAdapter(projectRoot: string): Promise<EnvSecretsAdapter | CachingSecretsAdapter | LocalVaultAdapter> {
   const configPath = resolve(projectRoot, CONFIG_FILENAME);
 
   if (!existsSync(configPath)) {
