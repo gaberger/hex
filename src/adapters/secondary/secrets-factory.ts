@@ -8,8 +8,11 @@
  * Placement: adapters/secondary/ (composition-layer peer, not a use case).
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+// Use createRequire to avoid Bun's ESM named-export race under parallel test load
+const _require = createRequire(import.meta.url);
+const { existsSync, readFileSync } = _require('node:fs') as typeof import('node:fs');
 
 import { CachingSecretsAdapter } from './caching-secrets-adapter.js';
 import { EnvSecretsAdapter } from './env-secrets-adapter.js';
@@ -54,7 +57,15 @@ const CONFIG_FILENAME = '.hex/secrets.json';
  * Falls back to EnvSecretsAdapter when no config exists, config is
  * invalid, or the requested backend cannot be initialised.
  */
-async function buildSecretsAdapter(projectRoot: string): Promise<EnvSecretsAdapter | CachingSecretsAdapter | LocalVaultAdapter> {
+export interface BuildSecretsOptions {
+  /** Override vault password instead of reading from process.env (useful for testing). */
+  vaultPassword?: string;
+}
+
+export async function buildSecretsAdapter(
+  projectRoot: string,
+  options?: BuildSecretsOptions,
+): Promise<EnvSecretsAdapter | CachingSecretsAdapter | LocalVaultAdapter> {
   const configPath = resolve(projectRoot, CONFIG_FILENAME);
 
   if (!existsSync(configPath)) {
@@ -75,7 +86,7 @@ async function buildSecretsAdapter(projectRoot: string): Promise<EnvSecretsAdapt
       return buildInfisical(config);
 
     case 'local-vault':
-      return buildLocalVault(config, projectRoot);
+      return buildLocalVault(config, projectRoot, options?.vaultPassword);
 
     case 'env':
     default:
@@ -106,7 +117,7 @@ function buildInfisical(config: SecretsConfig): CachingSecretsAdapter | EnvSecre
   return new CachingSecretsAdapter(adapter, ttl);
 }
 
-function buildLocalVault(config: SecretsConfig, projectRoot: string): LocalVaultAdapter | EnvSecretsAdapter {
+function buildLocalVault(config: SecretsConfig, projectRoot: string, passwordOverride?: string): LocalVaultAdapter | EnvSecretsAdapter {
   const vaultRelPath = config.localVault?.path ?? '.hex/vault.enc';
   const vaultPath = resolve(projectRoot, vaultRelPath);
 
@@ -115,7 +126,7 @@ function buildLocalVault(config: SecretsConfig, projectRoot: string): LocalVault
     return new EnvSecretsAdapter();
   }
 
-  const password = process.env['HEX_VAULT_PASSWORD'];
+  const password = passwordOverride ?? process.env['HEX_VAULT_PASSWORD'];
   if (!password) {
     // Interactive prompt is Phase 2 — for now, require env var
     console.warn('[hex] Warning: HEX_VAULT_PASSWORD not set — falling back to env secrets');

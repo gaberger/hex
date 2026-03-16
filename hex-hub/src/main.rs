@@ -37,14 +37,49 @@ async fn main() {
     // Create shared state
     let state = Arc::new(state::AppState::new(token.clone()));
 
+    // Background task: evict completed commands older than 1 hour (every 60s)
+    let evict_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        let ttl = chrono::Duration::hours(1);
+        loop {
+            interval.tick().await;
+            let cutoff = chrono::Utc::now() - ttl;
+            let cutoff_str = cutoff.to_rfc3339();
+
+            // Evict completed/failed commands
+            let mut commands = evict_state.commands.write().await;
+            let before = commands.len();
+            commands.retain(|_, cmd| {
+                if cmd.status == "completed" || cmd.status == "failed" {
+                    cmd.issued_at > cutoff_str
+                } else {
+                    true // keep pending/dispatched/running
+                }
+            });
+            let evicted_cmds = before - commands.len();
+            drop(commands);
+
+            // Evict matching results
+            let mut results = evict_state.results.write().await;
+            let before = results.len();
+            results.retain(|_, res| res.completed_at > cutoff_str);
+            let evicted_results = before - results.len();
+            drop(results);
+
+            if evicted_cmds > 0 || evicted_results > 0 {
+                tracing::debug!(
+                    "Evicted {} commands, {} results (TTL 1h)",
+                    evicted_cmds, evicted_results
+                );
+            }
+        }
+    });
+
     // Build router
     let app = routes::build_router(state);
 
-    // Write lock file
     let lock_token = token.unwrap_or_else(|| daemon::generate_token());
-    if let Err(e) = daemon::write_lock(port, &lock_token) {
-        tracing::warn!("Failed to write lock file: {}", e);
-    }
 
     // Setup graceful shutdown
     let ctrl_c = async {
@@ -73,11 +108,16 @@ async fn main() {
         daemon::remove_lock();
     };
 
-    // Bind and serve
+    // Bind FIRST, then write lock file — prevents clients from connecting before we're ready (H4)
     let addr = format!("127.0.0.1:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("Failed to bind");
+
+    // Write lock file AFTER bind succeeds — clients reading this file can now connect
+    if let Err(e) = daemon::write_lock(port, &lock_token) {
+        tracing::warn!("Failed to write lock file: {}", e);
+    }
 
     if is_daemon {
         tracing::info!("hex-hub daemon started on http://{}", addr);

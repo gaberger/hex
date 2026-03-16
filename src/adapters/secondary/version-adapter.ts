@@ -4,7 +4,9 @@
  * Resolves CLI version from package.json and hub version from the hex-hub binary.
  */
 
-import { execFile } from 'node:child_process';
+import { createRequire } from 'node:module';
+const _require = createRequire(import.meta.url);
+const { execFile } = _require('node:child_process');
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';

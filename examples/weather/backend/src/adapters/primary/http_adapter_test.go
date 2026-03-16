@@ -335,6 +335,41 @@ func TestHTTPAdapter_CalendarReturns200(t *testing.T) {
 	}
 }
 
+func TestHTTPAdapter_CalendarErrorReturns500(t *testing.T) {
+	mock := &mockF1QueryPort{
+		err: fmt.Errorf("calendar API error"),
+	}
+
+	adapter := primary.NewHTTPAdapter(mock)
+	handler := adapter.Handler()
+
+	req := httptest.NewRequest("GET", "/calendar", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on calendar error, got %d", w.Code)
+	}
+}
+
+func TestHTTPAdapter_HomeErrorGracefullyDegrades(t *testing.T) {
+	mock := &mockF1QueryPort{
+		err: fmt.Errorf("all APIs down"),
+	}
+
+	adapter := primary.NewHTTPAdapter(mock)
+	handler := adapter.Handler()
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	// Home page degrades gracefully (doesn't 500) — it logs errors but still renders
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 (graceful degradation), got %d", w.Code)
+	}
+}
+
 func TestHTTPAdapter_ScheduleErrorReturns500(t *testing.T) {
 	mock := &mockF1QueryPort{
 		err: fmt.Errorf("schedule API error"),

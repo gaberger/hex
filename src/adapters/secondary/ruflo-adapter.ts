@@ -7,8 +7,10 @@
  * CLI invocation without shell injection risk.
  */
 
-import { execFile as execFileCb } from 'child_process';
-import { promisify } from 'util';
+import { createRequire } from 'node:module';
+import { promisify } from 'node:util';
+const _require = createRequire(import.meta.url);
+const { execFile: execFileCb } = _require('node:child_process');
 import type {
   ISwarmPort,
   SwarmConfig,

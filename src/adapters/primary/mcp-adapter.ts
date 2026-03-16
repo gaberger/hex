@@ -240,6 +240,50 @@ export const HEX_DASHBOARD_TOOLS: MCPToolDefinition[] = [
       required: ['projectId', 'query'],
     },
   },
+  {
+    name: 'hex_hub_command',
+    description: 'Send a command to a project via the hub. Commands: spawn-agent, terminate-agent, create-task, cancel-task, run-analyze, run-build, run-summarize, ping',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: 'Target project ID' },
+        type: {
+          type: 'string',
+          description: 'Command type',
+          enum: ['spawn-agent', 'terminate-agent', 'create-task', 'cancel-task', 'run-analyze', 'run-build', 'run-validate', 'run-generate', 'run-summarize', 'ping'],
+        },
+        payload: {
+          type: 'object',
+          description: 'Command-specific payload (e.g. { name, role } for spawn-agent)',
+        },
+      },
+      required: ['projectId', 'type'],
+    },
+  },
+  {
+    name: 'hex_hub_command_status',
+    description: 'Check the status or result of a previously sent command',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: 'Project ID the command was sent to' },
+        commandId: { type: 'string', description: 'Command ID returned by hex_hub_command' },
+      },
+      required: ['projectId', 'commandId'],
+    },
+  },
+  {
+    name: 'hex_hub_commands_list',
+    description: 'List recent commands sent to a project',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: 'Project ID to list commands for' },
+        limit: { type: 'number', description: 'Max commands to return (default 20)' },
+      },
+      required: ['projectId'],
+    },
+  },
 ];
 
 // ─── MCP Adapter ─────────────────────────────────────────
@@ -345,6 +389,22 @@ export class MCPAdapter {
           return await this.dashboardQuery(
             call.arguments.projectId as string,
             call.arguments.query as string,
+          );
+        case 'hex_hub_command':
+          return await this.hubSendCommand(
+            call.arguments.projectId as string,
+            call.arguments.type as string,
+            call.arguments.payload as Record<string, unknown> | undefined,
+          );
+        case 'hex_hub_command_status':
+          return await this.hubCommandStatus(
+            call.arguments.projectId as string,
+            call.arguments.commandId as string,
+          );
+        case 'hex_hub_commands_list':
+          return await this.hubCommandsList(
+            call.arguments.projectId as string,
+            call.arguments.limit as number | undefined,
           );
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${call.name}` }], isError: true };
@@ -805,12 +865,12 @@ export class MCPAdapter {
   private async ensureHub(): Promise<string> {
     if (this.hubRunning && this.hubUrl) return this.hubUrl;
 
-    const { HUB_PORT, DashboardHub } = await import('./dashboard-hub.js');
-    const hub = new DashboardHub(HUB_PORT);
-    const { url, close } = await hub.start();
+    const { HubLauncher } = await import('../secondary/hub-launcher.js');
+    const launcher = new HubLauncher();
+    const { url } = await launcher.start();
     this.hubRunning = true;
     this.hubUrl = url;
-    this.hubCloseFn = close;
+    this.hubCloseFn = () => { void launcher.stop(); };
     return url;
   }
 
@@ -849,8 +909,7 @@ export class MCPAdapter {
   }
 
   private async dashboardRegister(rootPath: string): Promise<MCPToolResult> {
-    const { HUB_PORT } = await import('./dashboard-hub.js');
-    const hubUrl = `http://localhost:${HUB_PORT}`;
+    const hubUrl = `http://localhost:5555`;
 
     try {
       const response = await fetch(`${hubUrl}/api/projects/register`, {
@@ -864,13 +923,12 @@ export class MCPAdapter {
       }
       return { content: [{ type: 'text', text: `Registered project: ${data.id} (${rootPath})` }] };
     } catch {
-      return { content: [{ type: 'text', text: `Hub not running on port ${HUB_PORT}. Call hex_dashboard_start first.` }], isError: true };
+      return { content: [{ type: 'text', text: `Hub not running on port 5555. Call hex_dashboard_start first.` }], isError: true };
     }
   }
 
   private async dashboardUnregister(projectId: string): Promise<MCPToolResult> {
-    const { HUB_PORT } = await import('./dashboard-hub.js');
-    const hubUrl = `http://localhost:${HUB_PORT}`;
+    const hubUrl = `http://localhost:5555`;
 
     try {
       const response = await fetch(`${hubUrl}/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' });
@@ -884,8 +942,7 @@ export class MCPAdapter {
   }
 
   private async dashboardList(): Promise<MCPToolResult> {
-    const { HUB_PORT } = await import('./dashboard-hub.js');
-    const hubUrl = `http://localhost:${HUB_PORT}`;
+    const hubUrl = `http://localhost:5555`;
 
     try {
       const response = await fetch(`${hubUrl}/api/projects`);
@@ -900,13 +957,12 @@ export class MCPAdapter {
       }
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     } catch {
-      return { content: [{ type: 'text', text: `Hub not running on port ${HUB_PORT}. Call hex_dashboard_start first.` }], isError: true };
+      return { content: [{ type: 'text', text: `Hub not running on port 5555. Call hex_dashboard_start first.` }], isError: true };
     }
   }
 
   private async dashboardQuery(projectId: string, query: string): Promise<MCPToolResult> {
-    const { HUB_PORT } = await import('./dashboard-hub.js');
-    const hubUrl = `http://localhost:${HUB_PORT}`;
+    const hubUrl = `http://localhost:5555`;
     const base = `${hubUrl}/api/${encodeURIComponent(projectId)}`;
 
     let endpoint: string;
@@ -928,7 +984,7 @@ export class MCPAdapter {
       const data = await response.json() as Record<string, unknown>;
       return { content: [{ type: 'text', text: this.formatQueryResult(query, data) }] };
     } catch {
-      return { content: [{ type: 'text', text: `Hub not running on port ${HUB_PORT}. Call hex_dashboard_start first.` }], isError: true };
+      return { content: [{ type: 'text', text: `Hub not running on port 5555. Call hex_dashboard_start first.` }], isError: true };
     }
   }
 
@@ -984,5 +1040,119 @@ export class MCPAdapter {
       default:
         return JSON.stringify(data, null, 2);
     }
+  }
+
+  // ─── Hub Command Tools ──────────────────────────────────
+
+  private async hubSendCommand(
+    projectId: string,
+    type: string,
+    payload?: Record<string, unknown>,
+  ): Promise<MCPToolResult> {
+    const hubUrl = `http://localhost:5555`;
+
+    try {
+      const response = await fetch(
+        `${hubUrl}/api/${encodeURIComponent(projectId)}/command`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, payload: payload ?? {}, source: 'mcp' }),
+        },
+      );
+      const data = await response.json() as { commandId?: string; status?: string; error?: string };
+      if (!response.ok || data.error) {
+        return { content: [{ type: 'text', text: `Command failed: ${data.error ?? response.statusText}` }], isError: true };
+      }
+
+      // Poll for result (up to 30s for long-running commands)
+      const commandId = data.commandId!;
+      const result = await this.pollCommandResult(hubUrl, projectId, commandId, 30_000);
+      if (result) {
+        const lines = [
+          `Command ${type} → ${result.status}`,
+          `ID: ${commandId}`,
+        ];
+        if (result.error) lines.push(`Error: ${result.error}`);
+        if (result.data) lines.push('', JSON.stringify(result.data, null, 2));
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
+      }
+
+      return { content: [{ type: 'text', text: `Command dispatched: ${commandId}\nStatus: ${data.status}\n\nUse hex_hub_command_status to check result.` }] };
+    } catch {
+      return { content: [{ type: 'text', text: `Hub not running on port 5555. Call hex_dashboard_start first.` }], isError: true };
+    }
+  }
+
+  private async hubCommandStatus(
+    projectId: string,
+    commandId: string,
+  ): Promise<MCPToolResult> {
+    const hubUrl = `http://localhost:5555`;
+
+    try {
+      const response = await fetch(
+        `${hubUrl}/api/${encodeURIComponent(projectId)}/command/${encodeURIComponent(commandId)}`,
+      );
+      const data = await response.json() as Record<string, unknown>;
+      if (!response.ok) {
+        return { content: [{ type: 'text', text: `Command not found: ${commandId}` }], isError: true };
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+    } catch {
+      return { content: [{ type: 'text', text: 'Hub not running.' }], isError: true };
+    }
+  }
+
+  private async hubCommandsList(
+    projectId: string,
+    limit?: number,
+  ): Promise<MCPToolResult> {
+    const hubUrl = `http://localhost:5555`;
+    const qs = limit ? `?limit=${limit}` : '';
+
+    try {
+      const response = await fetch(
+        `${hubUrl}/api/${encodeURIComponent(projectId)}/commands${qs}`,
+      );
+      const data = await response.json() as { commands: Array<{ commandId: string; type: string; status: string; issuedAt: string }> };
+      if (!data.commands || data.commands.length === 0) {
+        return { content: [{ type: 'text', text: 'No commands found for this project.' }] };
+      }
+      const lines = [`${data.commands.length} command(s):`];
+      for (const c of data.commands) {
+        lines.push(`  ${c.commandId.slice(0, 8)}… ${c.type} [${c.status}] (${c.issuedAt})`);
+      }
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    } catch {
+      return { content: [{ type: 'text', text: 'Hub not running.' }], isError: true };
+    }
+  }
+
+  /** Poll hub for command result, with timeout. Returns null if not completed in time. */
+  private async pollCommandResult(
+    hubUrl: string,
+    projectId: string,
+    commandId: string,
+    timeoutMs: number,
+  ): Promise<{ status: string; data?: unknown; error?: string } | null> {
+    const start = Date.now();
+    const interval = 500; // poll every 500ms
+
+    while (Date.now() - start < timeoutMs) {
+      await new Promise((r) => setTimeout(r, interval));
+      try {
+        const response = await fetch(
+          `${hubUrl}/api/${encodeURIComponent(projectId)}/command/${encodeURIComponent(commandId)}`,
+        );
+        const data = await response.json() as { status: string; data?: unknown; error?: string };
+        if (data.status === 'completed' || data.status === 'failed') {
+          return data;
+        }
+      } catch {
+        // Hub may be temporarily unavailable
+      }
+    }
+    return null;
   }
 }

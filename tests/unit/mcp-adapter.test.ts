@@ -312,6 +312,55 @@ describe('MCPAdapter', () => {
     expect(parsed.summary.healthScore).toBe(92);
   });
 
+  // ── Hub Command Tools ──
+  // These tests verify the adapter handles hub-not-running gracefully.
+
+  it('hex_hub_command returns error when hub is not running', async () => {
+    const result = await adapter.handleToolCall({
+      name: 'hex_hub_command',
+      arguments: { projectId: 'test-project', type: 'ping' },
+    });
+    // Hub may or may not be running; either way we get an error for unregistered project
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/not running|not registered|failed/i);
+  });
+
+  it('hex_hub_command accepts optional payload', async () => {
+    const result = await adapter.handleToolCall({
+      name: 'hex_hub_command',
+      arguments: { projectId: 'test-project', type: 'run-analyze', payload: { rootPath: '.' } },
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/not running|not registered|failed/i);
+  });
+
+  it('hex_hub_command_status returns error for unknown command', async () => {
+    const result = await adapter.handleToolCall({
+      name: 'hex_hub_command_status',
+      arguments: { projectId: 'test-project', commandId: 'cmd-123' },
+    });
+    // Hub down → "not running"; hub up → "not found"
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/not running|not found/i);
+  });
+
+  it('hex_hub_commands_list returns a response', async () => {
+    const result = await adapter.handleToolCall({
+      name: 'hex_hub_commands_list',
+      arguments: { projectId: 'test-project' },
+    });
+    // Hub down → isError; hub up with no commands → success with "No commands"
+    expect(result.content[0].text.length).toBeGreaterThan(0);
+  });
+
+  it('hex_hub_commands_list accepts optional limit', async () => {
+    const result = await adapter.handleToolCall({
+      name: 'hex_hub_commands_list',
+      arguments: { projectId: 'test-project', limit: 5 },
+    });
+    expect(result.content[0].text.length).toBeGreaterThan(0);
+  });
+
   // ── shutdownHub ──
 
   it('shutdownHub is safe to call when hub is not running', () => {
@@ -322,8 +371,8 @@ describe('MCPAdapter', () => {
 // ── Tool Definition Tests ─────────────────────────────────
 
 describe('HEX_DASHBOARD_TOOLS', () => {
-  it('defines 5 dashboard tools', () => {
-    expect(HEX_DASHBOARD_TOOLS.length).toBe(5);
+  it('defines 8 dashboard tools', () => {
+    expect(HEX_DASHBOARD_TOOLS.length).toBe(8);
   });
 
   it('hex_dashboard_start requires rootPath', () => {
@@ -347,5 +396,32 @@ describe('HEX_DASHBOARD_TOOLS', () => {
   it('hex_dashboard_list requires no parameters', () => {
     const tool = HEX_DASHBOARD_TOOLS.find((t) => t.name === 'hex_dashboard_list');
     expect(tool!.inputSchema.required).toEqual([]);
+  });
+
+  it('hex_hub_command requires projectId and type', () => {
+    const tool = HEX_DASHBOARD_TOOLS.find((t) => t.name === 'hex_hub_command');
+    expect(tool).toBeDefined();
+    expect(tool!.inputSchema.required).toContain('projectId');
+    expect(tool!.inputSchema.required).toContain('type');
+  });
+
+  it('hex_hub_command defines valid command types enum', () => {
+    const tool = HEX_DASHBOARD_TOOLS.find((t) => t.name === 'hex_hub_command');
+    expect(tool!.inputSchema.properties.type.enum).toContain('spawn-agent');
+    expect(tool!.inputSchema.properties.type.enum).toContain('ping');
+    expect(tool!.inputSchema.properties.type.enum).toContain('run-analyze');
+  });
+
+  it('hex_hub_command_status requires projectId and commandId', () => {
+    const tool = HEX_DASHBOARD_TOOLS.find((t) => t.name === 'hex_hub_command_status');
+    expect(tool).toBeDefined();
+    expect(tool!.inputSchema.required).toContain('projectId');
+    expect(tool!.inputSchema.required).toContain('commandId');
+  });
+
+  it('hex_hub_commands_list requires projectId', () => {
+    const tool = HEX_DASHBOARD_TOOLS.find((t) => t.name === 'hex_hub_commands_list');
+    expect(tool).toBeDefined();
+    expect(tool!.inputSchema.required).toContain('projectId');
   });
 });

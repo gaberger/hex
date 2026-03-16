@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'bun:test';
 
-// Exact copy of makeProjectId from dashboard-hub.ts (line 90-94)
+// Exact copy of makeProjectId from Rust hex-hub state.rs (must stay in sync)
 function makeProjectId(rootPath: string): string {
   const basename = rootPath.split('/').pop() ?? 'unknown';
   const hash = Array.from(rootPath).reduce(

@@ -105,7 +105,7 @@ a{color:var(--accent);text-decoration:none}
 .pause-btn:hover{background:var(--border);color:var(--text)}
 
 /* Dependency Graph */
-.graph-section{margin:0 24px var(--gap);background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;flex:1;min-height:0}
+.graph-section{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;flex:1;min-height:0}
 .graph-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;cursor:pointer;user-select:none;flex-shrink:0}
 .graph-header:hover{background:rgba(255,255,255,.02)}
 .graph-header h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);font-weight:600}
@@ -113,6 +113,7 @@ a{color:var(--accent);text-decoration:none}
 .graph-toggle.open{transform:rotate(180deg)}
 .graph-body{max-height:0;overflow:hidden;display:flex;flex-direction:column;min-height:0}
 .graph-body.open{max-height:none;flex:1;overflow:visible}
+.bottom-row .graph-section .graph-body{max-height:none;flex:1;overflow:visible}
 .graph-canvas{display:block;width:100%;flex:1;min-height:300px;background:var(--bg);border-top:1px solid var(--border);cursor:grab}
 .graph-canvas:active{cursor:grabbing}
 .graph-zoom-controls{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:4px;z-index:10}
@@ -156,12 +157,42 @@ a{color:var(--accent);text-decoration:none}
 .project-tab .tab-dot.offline{background:var(--text2)}
 .no-projects{padding:10px 20px;color:var(--text2);font-size:.85rem;font-style:italic}
 .project-count{font-size:.7rem;color:var(--text2);padding:2px 8px;border-radius:10px;background:rgba(88,166,255,.1)}
+.version-badge{font-size:.65rem;color:var(--text2);padding:2px 8px;border-radius:10px;background:rgba(188,140,255,.1);font-family:'SF Mono',Consolas,monospace}
 
 /* Hidden dropdown (still used for programmatic access) */
 .project-selector{display:none}
 
 /* Empty state */
 .empty{color:var(--text2);font-size:.8rem;font-style:italic;padding:8px 0}
+
+/* Bottom Row: Chat + Graph side by side */
+.bottom-row{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap);padding:0 24px var(--gap);min-height:420px}
+
+/* Command Chat Panel */
+.chat-section{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;flex-direction:column;max-height:500px;min-height:0}
+.chat-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--border)}
+.chat-header h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);font-weight:600;margin:0}
+.chat-ws-status{display:flex;align-items:center;gap:6px;font-size:.75rem;color:var(--text2)}
+.chat-ws-dot{width:6px;height:6px;border-radius:50%;background:var(--text2);display:inline-block}
+.chat-ws-dot.open{background:var(--green)}
+.chat-quick-actions{display:flex;gap:6px;padding:8px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.chat-quick-btn{padding:4px 10px;border:1px solid var(--border);border-radius:12px;background:transparent;color:var(--text2);font-size:.72rem;cursor:pointer;transition:all .15s}
+.chat-quick-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(88,166,255,.08)}
+.chat-messages{flex:1;overflow-y:auto;padding:12px 20px;display:flex;flex-direction:column;gap:8px;min-height:180px}
+.chat-msg{max-width:85%;padding:8px 12px;border-radius:10px;font-size:.82rem;line-height:1.45;word-break:break-word}
+.chat-msg.sent{align-self:flex-end;background:rgba(88,166,255,.15);color:var(--accent);border-bottom-right-radius:3px}
+.chat-msg.received{align-self:flex-start;background:rgba(63,185,80,.1);color:var(--text);border-bottom-left-radius:3px}
+.chat-msg.error{align-self:flex-start;background:rgba(248,81,73,.1);color:var(--red);border-bottom-left-radius:3px}
+.chat-msg.system{align-self:center;background:transparent;color:var(--text2);font-size:.75rem;font-style:italic;padding:4px 0}
+.chat-msg-meta{font-size:.65rem;color:var(--text2);margin-top:3px}
+.chat-msg pre{margin:6px 0 0;padding:8px;background:rgba(0,0,0,.3);border-radius:4px;overflow-x:auto;font-size:.75rem;font-family:'SF Mono',Consolas,monospace;white-space:pre-wrap}
+.chat-input-bar{display:flex;gap:8px;padding:12px 20px;border-top:1px solid var(--border)}
+.chat-input{flex:1;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:.85rem;font-family:inherit;outline:none;transition:border-color .15s}
+.chat-input:focus{border-color:var(--accent)}
+.chat-input::placeholder{color:var(--text2)}
+.chat-send-btn{padding:8px 16px;background:var(--accent);color:#0d1117;border:none;border-radius:6px;font-size:.82rem;font-weight:600;cursor:pointer;transition:opacity .15s}
+.chat-send-btn:hover{opacity:.85}
+.chat-send-btn:disabled{opacity:.4;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -177,6 +208,7 @@ a{color:var(--accent);text-decoration:none}
       <span class="ast-badge" id="astBadge"></span>
     </div>
     <span class="project-count" id="projectCount"></span>
+    <span class="version-badge" id="versionBadge"></span>
     <div class="conn-badge">
       <span class="conn-dot" id="connDot"></span>
       <span id="connLabel">Connecting...</span>
@@ -288,6 +320,37 @@ a{color:var(--accent);text-decoration:none}
   </div>
 </div>
 
+<!-- Bottom Row: Chat + Graph side by side -->
+<div class="bottom-row">
+
+<!-- Command Chat -->
+<div class="chat-section" id="chatSection">
+  <div class="chat-header">
+    <h3>Command Chat</h3>
+    <div class="chat-ws-status">
+      <span class="chat-ws-dot" id="chatWsDot"></span>
+      <span id="chatWsLabel">Connecting...</span>
+    </div>
+  </div>
+  <div class="chat-quick-actions" id="chatQuickActions">
+    <button class="chat-quick-btn" data-cmd="ping">Ping</button>
+    <button class="chat-quick-btn" data-cmd="run-analyze">Analyze</button>
+    <button class="chat-quick-btn" data-cmd="run-build">Build</button>
+    <button class="chat-quick-btn" data-cmd="run-summarize">Summarize</button>
+    <button class="chat-quick-btn" data-cmd="run-validate">Validate</button>
+    <button class="chat-quick-btn" data-cmd="run-generate">Generate</button>
+    <button class="chat-quick-btn" data-cmd="spawn-agent" data-payload='{"name":"helper","role":"coder"}'>Spawn Agent</button>
+    <button class="chat-quick-btn" data-cmd="create-task" data-payload='{"title":"ad-hoc task","agentRole":"coder"}'>Create Task</button>
+  </div>
+  <div class="chat-messages" id="chatMessages">
+    <div class="chat-msg system">Select a project and send commands to its agents</div>
+  </div>
+  <div class="chat-input-bar">
+    <input class="chat-input" id="chatInput" type="text" placeholder="Type a command (e.g. hex analyze, hex build, hex validate, spawn-agent coder)..." autocomplete="off">
+    <button class="chat-send-btn" id="chatSendBtn">Send</button>
+  </div>
+</div>
+
 <!-- Dependency Graph -->
 <div class="graph-section">
   <div class="graph-header" id="graphToggle">
@@ -318,6 +381,8 @@ a{color:var(--accent);text-decoration:none}
   </div>
 </div>
 
+</div><!-- /bottom-row -->
+
 <!-- Decision Modal -->
 <div class="modal-overlay" id="decisionModal">
   <div class="modal">
@@ -340,9 +405,7 @@ a{color:var(--accent);text-decoration:none}
     events: [],
     tokenOverview: null,
     currentDecisionId: null,
-    sseRetryTimer: null,
     pollTimer: null,
-    evtSource: null,
     currentProject: null, // currently selected project ID
     projects: [],         // list of { id, name, rootPath, astIsStub }
   };
@@ -400,6 +463,14 @@ a{color:var(--accent);text-decoration:none}
   }
 
   // --- Project List & Switching ---
+  function loadVersion() {
+    rawFetch('/api/version').then(function(data) {
+      if (data && data.version) {
+        setText('#versionBadge', 'v' + data.version);
+      }
+    });
+  }
+
   function loadProjects() {
     rawFetch('/api/projects').then(function(data) {
       if (data && data.projects && data.projects.length > 0) {
@@ -407,6 +478,14 @@ a{color:var(--accent);text-decoration:none}
         populateProjectSelector(data.projects);
         if (!state.currentProject) {
           switchProject(data.projects[0].id);
+        } else {
+          // If currentProject was set by hash routing, verify it exists and load panels
+          var exists = data.projects.some(function(p) { return p.id === state.currentProject; });
+          if (exists) {
+            switchProject(state.currentProject);
+          } else {
+            switchProject(data.projects[0].id);
+          }
         }
       } else {
         // No projects yet — show empty state
@@ -475,9 +554,15 @@ a{color:var(--accent);text-decoration:none}
   }
 
   function switchProject(projectId) {
+    var oldProject = state.currentProject;
     state.currentProject = projectId;
     var sel = $('#projectSelector');
     sel.value = projectId;
+
+    // Update URL hash for deep-linking
+    if (location.hash !== '#/project/' + projectId) {
+      location.hash = '#/project/' + projectId;
+    }
 
     // Update active tab
     $$('.project-tab').forEach(function(tab) {
@@ -503,6 +588,14 @@ a{color:var(--accent);text-decoration:none}
     selectedNode = null;
     selectedTransitive = {};
     camera = { x: 0, y: 0, zoom: 1 };
+
+    // Unsubscribe from old project WS topics, subscribe to new ones
+    wsUnsubscribeProject(oldProject);
+    wsSubscribeProject(projectId);
+
+    // Subscribe chat WebSocket to new project's topics and render its channel
+    chatSubscribe(projectId);
+    chatRenderChannel();
 
     // Reload all panels for the new project
     loadHealth();
@@ -841,152 +934,9 @@ a{color:var(--accent);text-decoration:none}
     }
   }
 
-  // --- SSE ---
-  function connectSSE() {
-    if (state.evtSource) {
-      state.evtSource.close();
-    }
-    var es;
-    try {
-      es = new EventSource('/api/events');
-    } catch (e) {
-      setConnected(false);
-      state.sseRetryTimer = setTimeout(connectSSE, 5000);
-      return;
-    }
-    state.evtSource = es;
-
-    es.onopen = function() {
-      setConnected(true);
-      clearTimeout(state.sseRetryTimer);
-      addEvent({ level: 'success', message: 'Dashboard connected via SSE', timestamp: Date.now() });
-    };
-
-    // Named event listeners for typed server events
-    es.addEventListener('connected', function(e) {
-      setConnected(true);
-      try {
-        var data = JSON.parse(e.data);
-        if (data.projects && data.projects.length > 0) {
-          state.projects = data.projects;
-          populateProjectSelector(data.projects);
-          if (!state.currentProject) {
-            switchProject(data.projects[0].id);
-          }
-        }
-      } catch (err) { /* ignore */ }
-      addEvent({ level: 'info', message: 'SSE stream established', timestamp: Date.now() });
-    });
-
-    // State update — project pushed new data, refresh the relevant panel
-    es.addEventListener('state-update', function(e) {
-      try {
-        var data = JSON.parse(e.data);
-        if (data.projectId !== state.currentProject) return;
-        switch (data.type) {
-          case 'health': loadHealth(); break;
-          case 'tokens': loadTokenOverview(); break;
-          case 'swarm': loadSwarm(); break;
-          case 'graph': loadGraph(); break;
-        }
-      } catch (err) { /* ignore */ }
-    });
-
-    // Hub: project registered/unregistered
-    es.addEventListener('project-registered', function(e) {
-      try {
-        var data = JSON.parse(e.data);
-        addEvent({ level: 'milestone', message: 'Project registered: ' + data.id, timestamp: data.timestamp || Date.now() });
-        // Refresh project list
-        rawFetch('/api/projects').then(function(resp) {
-          if (resp && resp.projects) {
-            state.projects = resp.projects;
-            populateProjectSelector(resp.projects);
-          }
-        });
-      } catch (err) { /* ignore */ }
-    });
-
-    es.addEventListener('project-unregistered', function(e) {
-      try {
-        var data = JSON.parse(e.data);
-        addEvent({ level: 'warning', message: 'Project removed: ' + data.id, timestamp: data.timestamp || Date.now() });
-        rawFetch('/api/projects').then(function(resp) {
-          if (resp && resp.projects) {
-            state.projects = resp.projects;
-            populateProjectSelector(resp.projects);
-            // If current project was removed, switch to first available
-            if (state.currentProject === data.id && resp.projects.length > 0) {
-              switchProject(resp.projects[0].id);
-            }
-          }
-        });
-      } catch (err) { /* ignore */ }
-    });
-
-    // Notification events from the orchestrator (broadcast as their level name)
-    var levels = ['trace', 'info', 'success', 'warning', 'error', 'decision', 'milestone'];
-    levels.forEach(function(level) {
-      es.addEventListener(level, function(e) {
-        try {
-          var data = JSON.parse(e.data);
-          data.level = data.level || level;
-          data.timestamp = data.timestamp || Date.now();
-          if (data.level === 'decision') {
-            showDecisionModal(data);
-          }
-          addEvent(data);
-          // Refresh health/swarm panels on significant events
-          if (level === 'milestone' || level === 'error' || level === 'success') {
-            loadHealth();
-            loadSwarm();
-          }
-        } catch (err) {
-          addEvent({ level: level, message: e.data, timestamp: Date.now() });
-        }
-      });
-    });
-
-    // File change events — highlight graph nodes
-    es.addEventListener('file-change', function(e) {
-      try {
-        var data = JSON.parse(e.data);
-        if (data.path) {
-          markFileActive(data.path);
-          addEvent({
-            level: 'info',
-            message: 'File changed: ' + data.path + ' (' + (data.layer || 'unknown') + ')',
-            timestamp: data.timestamp || Date.now(),
-          });
-
-          // Reload graph data if not loaded yet
-          if (graphState.nodes.length === 0) {
-            loadGraph();
-          }
-        }
-      } catch (err) { /* ignore malformed */ }
-    });
-
-    // Fallback for unnamed events
-    es.onmessage = function(e) {
-      try {
-        var data = JSON.parse(e.data);
-        if (data.level === 'decision') {
-          showDecisionModal(data);
-        }
-        addEvent(data);
-      } catch (err) {
-        addEvent({ level: 'info', message: e.data, timestamp: new Date().toISOString() });
-      }
-    };
-
-    es.onerror = function() {
-      setConnected(false);
-      addEvent({ level: 'warning', message: 'SSE connection lost — reconnecting...', timestamp: Date.now() });
-      es.close();
-      state.sseRetryTimer = setTimeout(connectSSE, 5000);
-    };
-  }
+  // --- WebSocket Event Routing ---
+  // All real-time events flow through the unified /ws WebSocket connection.
+  // The chat WS (chatConnect) is reused — see chatState.ws.onmessage for routing.
 
   // --- Decision Modal ---
   function showDecisionModal(evt) {
@@ -1903,6 +1853,428 @@ a{color:var(--accent);text-decoration:none}
   }
 
   // --- Init ---
+  // --- Command Chat ---
+  var chatState = {
+    ws: null,
+    connected: false,
+    reconnectDelay: 1000,
+    reconnectTimer: null,
+    channels: {},       // projectId -> { messages: [], pendingCommands: {} }
+  };
+
+  function chatGetChannel(projectId) {
+    if (!projectId) return null;
+    if (!chatState.channels[projectId]) {
+      chatState.channels[projectId] = { messages: [], pendingCommands: {} };
+    }
+    return chatState.channels[projectId];
+  }
+
+  function chatRenderChannel() {
+    var container = $('#chatMessages');
+    clearChildren(container);
+    var channel = chatGetChannel(state.currentProject);
+    if (!channel || channel.messages.length === 0) {
+      container.appendChild(createEl('div', { className: 'chat-msg system', textContent: 'Select a project and send commands to its agents' }));
+      return;
+    }
+    channel.messages.forEach(function(m) {
+      var msg = createEl('div', { className: 'chat-msg ' + m.type });
+      var lines = m.text.split('\n');
+      msg.appendChild(document.createTextNode(lines[0]));
+      if (lines.length > 1) {
+        var pre = createEl('pre');
+        pre.textContent = lines.slice(1).join('\n');
+        msg.appendChild(pre);
+      }
+      var meta = createEl('div', { className: 'chat-msg-meta', textContent: m.time });
+      msg.appendChild(meta);
+      container.appendChild(msg);
+    });
+    container.scrollTop = container.scrollHeight;
+  }
+
+  // --- Unified WebSocket connection (replaces both SSE and chat-only WS) ---
+
+  /** Subscribe to WS topics for a specific project (state + events + decisions). */
+  function wsSubscribeProject(projectId) {
+    if (!projectId) return;
+    var ws = chatState.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'subscribe', topic: 'project:' + projectId + ':state' }));
+    ws.send(JSON.stringify({ type: 'subscribe', topic: 'project:' + projectId + ':events' }));
+    ws.send(JSON.stringify({ type: 'subscribe', topic: 'project:' + projectId + ':decisions' }));
+  }
+
+  /** Unsubscribe from WS topics for a specific project. */
+  function wsUnsubscribeProject(projectId) {
+    if (!projectId) return;
+    var ws = chatState.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'unsubscribe', topic: 'project:' + projectId + ':state' }));
+    ws.send(JSON.stringify({ type: 'unsubscribe', topic: 'project:' + projectId + ':events' }));
+    ws.send(JSON.stringify({ type: 'unsubscribe', topic: 'project:' + projectId + ':decisions' }));
+  }
+
+  /** Handle incoming WS envelope for dashboard events (non-chat). */
+  function wsHandleDashboardMessage(envelope) {
+    var topic = envelope.topic || '';
+    var event = envelope.event || '';
+    var data = envelope.data || {};
+
+    // Hub-level: project list changes
+    if (topic === 'hub:projects') {
+      if (event === 'project-registered') {
+        addEvent({ level: 'milestone', message: 'Project registered: ' + data.id, timestamp: data.timestamp || Date.now() });
+        rawFetch('/api/projects').then(function(resp) {
+          if (resp && resp.projects) {
+            state.projects = resp.projects;
+            populateProjectSelector(resp.projects);
+          }
+        });
+      } else if (event === 'project-unregistered') {
+        addEvent({ level: 'warning', message: 'Project removed: ' + data.id, timestamp: data.timestamp || Date.now() });
+        rawFetch('/api/projects').then(function(resp) {
+          if (resp && resp.projects) {
+            state.projects = resp.projects;
+            populateProjectSelector(resp.projects);
+            if (state.currentProject === data.id && resp.projects.length > 0) {
+              switchProject(resp.projects[0].id);
+            }
+          }
+        });
+      }
+      return;
+    }
+
+    // Hub health: connected confirmation
+    if (topic === 'hub:health' && event === 'connected') {
+      setConnected(true);
+      addEvent({ level: 'info', message: 'WebSocket stream established', timestamp: Date.now() });
+      return;
+    }
+
+    // Project-scoped: state updates
+    if (event === 'state-update') {
+      if (data.projectId !== state.currentProject) return;
+      switch (data.type) {
+        case 'health': loadHealth(); break;
+        case 'tokens': loadTokenOverview(); break;
+        case 'swarm': loadSwarm(); break;
+        case 'graph': loadGraph(); break;
+      }
+      return;
+    }
+
+    // Project-scoped: file-change events
+    if (event === 'file-change') {
+      if (data.path) {
+        markFileActive(data.path);
+        addEvent({
+          level: 'info',
+          message: 'File changed: ' + data.path + ' (' + (data.layer || 'unknown') + ')',
+          timestamp: data.timestamp || Date.now(),
+        });
+        if (graphState.nodes.length === 0) {
+          loadGraph();
+        }
+      }
+      return;
+    }
+
+    // Project-scoped: decision responses
+    if (event === 'decision-response' || (data.level === 'decision')) {
+      showDecisionModal(data);
+      addEvent(data);
+      return;
+    }
+
+    // Notification-level events (info, success, warning, error, milestone, etc.)
+    var notificationLevels = { trace:1, info:1, success:1, warning:1, error:1, decision:1, milestone:1 };
+    if (notificationLevels[event]) {
+      data.level = data.level || event;
+      data.timestamp = data.timestamp || Date.now();
+      if (data.level === 'decision') {
+        showDecisionModal(data);
+      }
+      addEvent(data);
+      if (event === 'milestone' || event === 'error' || event === 'success') {
+        loadHealth();
+        loadSwarm();
+      }
+      return;
+    }
+
+    // Fallback: treat as generic event
+    if (data.level || data.message) {
+      data.timestamp = data.timestamp || Date.now();
+      addEvent(data);
+    }
+  }
+
+  function chatConnect() {
+    if (chatState.ws) return;
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var wsUrl = proto + '//' + location.host + '/ws';
+    try { chatState.ws = new WebSocket(wsUrl); } catch(e) { chatScheduleReconnect(); return; }
+
+    chatState.ws.onopen = function() {
+      chatState.connected = true;
+      chatState.reconnectDelay = 1000;
+      chatSetStatus(true);
+      setConnected(true);
+      addEvent({ level: 'success', message: 'Dashboard connected via WebSocket', timestamp: Date.now() });
+
+      // Subscribe to hub-level topics
+      chatState.ws.send(JSON.stringify({ type: 'subscribe', topic: 'hub:projects' }));
+      chatState.ws.send(JSON.stringify({ type: 'subscribe', topic: 'hub:health' }));
+
+      // Subscribe to current project topics
+      if (state.currentProject) {
+        wsSubscribeProject(state.currentProject);
+        chatSubscribe(state.currentProject);
+      }
+
+      // Fetch initial project list (SSE used to send this on connect)
+      rawFetch('/api/projects').then(function(data) {
+        if (data && data.projects && data.projects.length > 0) {
+          state.projects = data.projects;
+          populateProjectSelector(data.projects);
+          if (!state.currentProject) {
+            switchProject(data.projects[0].id);
+          }
+        }
+      });
+    };
+
+    chatState.ws.onmessage = function(ev) {
+      try {
+        var envelope = JSON.parse(ev.data);
+
+        // Chat command results
+        if (envelope.event === 'command-result' && envelope.data) {
+          chatHandleResult(envelope.data);
+          return;
+        }
+
+        // Route all other messages to the dashboard handler
+        wsHandleDashboardMessage(envelope);
+      } catch(e) { /* ignore malformed */ }
+    };
+
+    chatState.ws.onclose = function() {
+      chatState.connected = false;
+      chatState.ws = null;
+      chatSetStatus(false);
+      setConnected(false);
+      addEvent({ level: 'warning', message: 'WebSocket connection lost — reconnecting...', timestamp: Date.now() });
+      chatScheduleReconnect();
+    };
+
+    chatState.ws.onerror = function() {
+      // close will fire after error
+    };
+  }
+
+  /** Subscribe chat-specific topics for a project (command results). */
+  function chatSubscribe(projectId) {
+    if (chatState.ws && chatState.ws.readyState === WebSocket.OPEN) {
+      chatState.ws.send(JSON.stringify({ type: 'subscribe', topic: 'project:' + projectId + ':result' }));
+      chatState.ws.send(JSON.stringify({ type: 'subscribe', topic: 'project:' + projectId + ':command' }));
+    }
+  }
+
+  function chatScheduleReconnect() {
+    if (chatState.reconnectTimer) return;
+    chatState.reconnectTimer = setTimeout(function() {
+      chatState.reconnectTimer = null;
+      chatConnect();
+    }, chatState.reconnectDelay);
+    chatState.reconnectDelay = Math.min(chatState.reconnectDelay * 2, 30000);
+  }
+
+  function chatSetStatus(connected) {
+    var dot = $('#chatWsDot');
+    var label = $('#chatWsLabel');
+    if (connected) {
+      dot.classList.add('open');
+      label.textContent = 'Connected';
+    } else {
+      dot.classList.remove('open');
+      label.textContent = 'Disconnected';
+    }
+  }
+
+  function chatSendCommand(type, payload) {
+    if (!state.currentProject) {
+      chatAddMessage('system', 'No project selected');
+      return;
+    }
+
+    var displayText = type;
+    if (payload && Object.keys(payload).length > 0) {
+      displayText += ' ' + JSON.stringify(payload);
+    }
+    chatAddMessage('sent', displayText);
+
+    var targetProject = state.currentProject;
+    postJSON('/api/' + targetProject + '/command',
+      { type: type, payload: payload || {}, source: 'browser' }
+    ).then(function(data) {
+      if (data && data.commandId) {
+        var ch = chatGetChannel(targetProject);
+        if (ch) ch.pendingCommands[data.commandId] = { type: type, sentAt: Date.now(), projectId: targetProject };
+        chatAddMessage('system', 'Dispatched → ' + data.commandId.slice(0, 8) + '…', targetProject);
+      } else {
+        chatAddMessage('error', 'Failed to dispatch command', targetProject);
+      }
+    });
+  }
+
+  /** POST JSON to the hub — used by chat commands. */
+  function postJSON(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }).catch(function(e) {
+      console.warn('API POST failed:', url, e);
+      return null;
+    });
+  }
+
+  function chatHandleResult(result) {
+    var cmdId = result.commandId;
+    // Find which channel owns this command
+    var targetProject = null;
+    var pending = null;
+    Object.keys(chatState.channels).forEach(function(pid) {
+      var ch = chatState.channels[pid];
+      if (ch.pendingCommands[cmdId]) {
+        pending = ch.pendingCommands[cmdId];
+        targetProject = pid;
+        delete ch.pendingCommands[cmdId];
+      }
+    });
+    var label = pending ? pending.type : 'command';
+    targetProject = targetProject || result.projectId || state.currentProject;
+
+    if (result.status === 'completed') {
+      var text = label + ' completed';
+      if (result.data) {
+        var dataStr = typeof result.data === 'string' ? result.data : JSON.stringify(result.data, null, 2);
+        if (dataStr.length > 2000) dataStr = dataStr.slice(0, 2000) + '\n… (truncated)';
+        text += '\n' + dataStr;
+      }
+      chatAddMessage('received', text, targetProject);
+    } else if (result.status === 'failed') {
+      chatAddMessage('error', label + ' failed: ' + (result.error || 'unknown error'), targetProject);
+    } else {
+      chatAddMessage('system', label + ' → ' + result.status, targetProject);
+    }
+  }
+
+  function chatAddMessage(type, text, projectId) {
+    var pid = projectId || state.currentProject;
+    var timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+    // Store in channel
+    var channel = chatGetChannel(pid);
+    if (channel) {
+      channel.messages.push({ type: type, text: text, time: timeStr });
+      // Cap at 200 messages per channel
+      if (channel.messages.length > 200) channel.messages.shift();
+    }
+
+    // Only render if this is the active project
+    if (pid === state.currentProject) {
+      chatRenderChannel();
+    }
+  }
+
+  // Map "hex <subcommand>" to hub command types
+  var hexCommandAliases = {
+    'analyze':   'run-analyze',
+    'build':     'run-build',
+    'summarize': 'run-summarize',
+    'validate':  'run-validate',
+    'generate':  'run-generate',
+    'status':    'ping',
+    'ping':      'ping',
+  };
+
+  function chatParseInput(input) {
+    var trimmed = input.trim();
+    if (!trimmed) return null;
+
+    // Parse: "command-type key=value key=value" or "command-type {json}"
+    var parts = trimmed.split(/\s+/);
+    var type = parts[0];
+    var rest = trimmed.slice(type.length).trim();
+
+    // Handle "hex <subcommand> [args]" → mapped command type
+    if (type === 'hex') {
+      var subCmd = (parts[1] || '').toLowerCase();
+      if (hexCommandAliases[subCmd]) {
+        type = hexCommandAliases[subCmd];
+        rest = parts.slice(2).join(' ');
+      } else if (!subCmd) {
+        // Bare "hex" → show available subcommands
+        chatAddMessage('system', 'hex commands: ' + Object.keys(hexCommandAliases).join(', '));
+        return null;
+      } else {
+        chatAddMessage('error', 'Unknown hex command: ' + escapeHtml(subCmd) + '. Available: ' + Object.keys(hexCommandAliases).join(', '));
+        return null;
+      }
+    }
+
+    var payload = {};
+    if (rest.charAt(0) === '{') {
+      try { payload = JSON.parse(rest); } catch(e) { /* treat as empty */ }
+    } else if (rest) {
+      // Parse key=value pairs
+      rest.split(/\s+/).forEach(function(pair) {
+        var eqIdx = pair.indexOf('=');
+        if (eqIdx > 0) {
+          payload[pair.slice(0, eqIdx)] = pair.slice(eqIdx + 1);
+        } else if (pair) {
+          // Shorthand: "spawn-agent coder" → { role: "coder" }
+          // "spawn-agent myname coder" → { name: "myname", role: "coder" }
+          if (type === 'spawn-agent') {
+            if (!payload.name) payload.name = pair;
+            else if (!payload.role) payload.role = pair;
+          } else if (type === 'create-task') {
+            if (!payload.title) payload.title = pair;
+            else if (!payload.agentRole) payload.agentRole = pair;
+          } else if (type === 'terminate-agent') {
+            payload.agentId = pair;
+          } else if (type === 'cancel-task') {
+            payload.taskId = pair;
+          } else if (type === 'run-summarize') {
+            if (!payload.filePath) payload.filePath = pair;
+            else if (!payload.level) payload.level = pair;
+          } else if (type === 'run-generate') {
+            if (!payload.adapter) payload.adapter = pair;
+            else if (!payload.portInterface) payload.portInterface = pair;
+            else if (!payload.language) payload.language = pair;
+          } else if (type === 'run-analyze') {
+            payload.rootPath = pair;
+          }
+        }
+      });
+      // Fix spawn-agent shorthand: if only name given, it's actually the role
+      if (type === 'spawn-agent' && payload.name && !payload.role) {
+        payload.role = payload.name;
+        payload.name = payload.role + '-' + Date.now().toString(36).slice(-4);
+      }
+    }
+
+    return { type: type, payload: payload };
+  }
+
   function init() {
     // File selector
     $('#fileSelector').addEventListener('change', function(e) {
@@ -1924,6 +2296,35 @@ a{color:var(--accent);text-decoration:none}
       state.autoScroll = !state.autoScroll;
       setText('#pauseBtn', state.autoScroll ? '\u23F8 Pause' : '\u25B6 Resume');
     });
+
+    // --- Chat panel ---
+    $('#chatSendBtn').addEventListener('click', function() {
+      var parsed = chatParseInput($('#chatInput').value);
+      if (parsed) {
+        chatSendCommand(parsed.type, parsed.payload);
+        $('#chatInput').value = '';
+      }
+    });
+
+    $('#chatInput').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        $('#chatSendBtn').click();
+      }
+    });
+
+    // Quick action buttons
+    $$('.chat-quick-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var cmd = btn.getAttribute('data-cmd');
+        var payloadStr = btn.getAttribute('data-payload');
+        var payload = payloadStr ? JSON.parse(payloadStr) : {};
+        chatSendCommand(cmd, payload);
+      });
+    });
+
+    // Connect chat WebSocket
+    chatConnect();
 
     // Graph toggle — recompute layout every time we open (canvas size changes)
     $('#graphToggle').addEventListener('click', function() {
@@ -2157,13 +2558,36 @@ a{color:var(--accent);text-decoration:none}
     tList.appendChild(createEl('div', { className: 'empty', textContent: 'No tasks registered' }));
 
     // Initial data load — detects hub vs single-project mode
+    loadVersion();
     loadProjects();
 
-    // SSE connection
-    connectSSE();
+    // Hash-based URL routing — deep-link to a project via #/project/{id}
+    function handleHashRoute() {
+      var match = location.hash.match(/^#\/project\/(.+)$/);
+      if (match) {
+        var targetId = decodeURIComponent(match[1]);
+        // Only switch if it differs from current (avoids loops)
+        if (targetId !== state.currentProject) {
+          // If projects are loaded, switch immediately; otherwise defer
+          if (state.projects.length > 0) {
+            var exists = state.projects.some(function(p) { return p.id === targetId; });
+            if (exists) switchProject(targetId);
+          } else {
+            // Projects not loaded yet — store desired project for loadProjects to pick up
+            state.currentProject = targetId;
+          }
+        }
+      }
+    }
+
+    // Apply hash route on initial load
+    handleHashRoute();
+
+    // Listen for back/forward navigation
+    window.addEventListener('hashchange', handleHashRoute);
 
     // Polling — refresh project list every 10s (picks up new registrations)
-    // Panel data is pushed by projects, but we poll as fallback
+    // Panel data is pushed via WS, but we poll as fallback
     state.pollTimer = setInterval(function() {
       rawFetch('/api/projects').then(function(data) {
         if (data && data.projects) {

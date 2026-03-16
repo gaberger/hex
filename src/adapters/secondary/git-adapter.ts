@@ -3,7 +3,9 @@
  *
  * Uses execFile (no shell) for safety. All commands run in the configured repo.
  */
-import { execFile as execFileCb } from 'node:child_process';
+import { createRequire } from 'node:module';
+const _require = createRequire(import.meta.url);
+const { execFile: execFileCb } = _require('node:child_process');
 import { promisify } from 'node:util';
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';

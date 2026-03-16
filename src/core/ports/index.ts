@@ -166,6 +166,28 @@ export { formatArchReport, formatCompactSummary } from '../domain/report-formatt
 export type { ActionItem, ActionItemReport, ActionPriority, ActionCategory } from '../domain/action-items.js';
 export { extractArchActions, extractValidationActions, buildActionItemReport, formatActionItems } from '../domain/action-items.js';
 
+// ─── Hub Command Ports (Bidirectional Hub ↔ Project) ───
+
+export type {
+  HubCommandType,
+  HubCommandPayload,
+  SpawnAgentPayload,
+  TerminateAgentPayload,
+  CreateTaskPayload,
+  CancelTaskPayload,
+  RunAnalyzePayload,
+  RunBuildPayload,
+  RunValidatePayload,
+  RunGeneratePayload,
+  RunSummarizePayload,
+  HubCommand,
+  HubCommandStatus,
+  HubCommandResult,
+  HubCommandHandler,
+  IHubCommandReceiverPort,
+  IHubCommandSenderPort,
+} from './hub-command.js';
+
 // ─── Checkpoint Ports ───────────────────────────────────
 
 export type { CheckpointEntry, TaskSnapshot, FeatureProgress, FeaturePhase, ICheckpointPort } from './checkpoint.js';

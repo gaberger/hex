@@ -27,7 +27,7 @@ import { RegistryAdapter } from './adapters/secondary/registry-adapter.js';
 import { LLMAdapter } from './adapters/secondary/llm-adapter.js';
 import type { LLMAdapterConfig } from './adapters/secondary/llm-adapter.js';
 import { InMemoryEventBus } from './adapters/secondary/in-memory-event-bus.js';
-import { SSEBroadcastAdapter } from './adapters/secondary/sse-broadcast-adapter.js';
+import type { IBroadcastPort } from './core/ports/broadcast.js';
 import { EnvSecretsAdapter } from './adapters/secondary/env-secrets-adapter.js';
 import { InfisicalAdapter } from './adapters/secondary/infisical-adapter.js';
 import { LocalVaultAdapter } from './adapters/secondary/local-vault-adapter.js';
@@ -56,6 +56,24 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   const swarm = new RufloAdapter(projectPath);
   const registry = new RegistryAdapter();
   const checkpoint = new FileCheckpointAdapter(`${outputDir}/checkpoints`, fs);
+
+  // Cross-language communication adapters (dynamic imports to avoid circular init)
+  const { SerializationAdapter } = await import('./adapters/secondary/serialization-adapter.js');
+  const { JsonSchemaAdapter } = await import('./adapters/secondary/json-schema-adapter.js');
+  const { ScaffoldService } = await import('./core/usecases/scaffold-service.js');
+  const { WASMBridgeAdapter } = await import('./adapters/secondary/wasm-bridge-adapter.js');
+  const { FFIAdapter } = await import('./adapters/secondary/ffi-adapter.js');
+  const { HTTPServiceMeshAdapter } = await import('./adapters/secondary/service-mesh-adapter.js');
+
+  const { ValidationAdapter } = await import('./adapters/secondary/validation-adapter.js');
+
+  const serialization = new SerializationAdapter();
+  const schema = new JsonSchemaAdapter();
+  const scaffold = new ScaffoldService(fs);
+  const wasmBridge = new WASMBridgeAdapter();
+  const ffi = new FFIAdapter();
+  const serviceMesh = new HTTPServiceMeshAdapter();
+  const validator = new ValidationAdapter();
 
   // Tree-sitter: search multiple candidate directories for WASM grammars
   // Paths must be RELATIVE to project root — fs.exists() uses safePath()
@@ -91,16 +109,14 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   // Event infrastructure — real pub/sub spine replacing the null stub
   const projectName = projectPath.split('/').pop() ?? 'unknown';
   const eventBus = new InMemoryEventBus();
-  const broadcastAdapter = new SSEBroadcastAdapter();
-
-  // Bridge: forward domain events to broadcast clients (SSE/WebSocket)
-  eventBus.subscribeAll((event) => {
-    broadcastAdapter.send({
-      event: event.type,
-      data: event,
-      projectId: projectName,
-    });
-  });
+  // No-op broadcaster — the DashboardAdapter pushes events to hex-hub via HTTP,
+  // and hex-hub broadcasts to browsers via WebSocket. No local fan-out needed.
+  const broadcastAdapter: IBroadcastPort = {
+    get clientCount() { return 0; },
+    send() {},
+    addClient() { return () => {}; },
+    removeClient() {},
+  };
 
   // Use cases
   const archAnalyzer = new ArchAnalyzer(ast, fs, git);
@@ -180,6 +196,10 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
         const client = new DashboardAdapter(ctx, HUB_PORT);
         const { url } = await client.start();
         status.dashboard = url.replace('http://', '');
+        // Deterministic project ID (must match Rust hex-hub's make_project_id)
+        const basename = projectPath.split('/').pop() ?? 'unknown';
+        const hash = Array.from(projectPath).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+        status.projectId = `${basename}-${(hash >>> 0).toString(36)}`;
         process.stderr.write(`[hex] Project registered with dashboard hub\n`);
       } catch (err) {
         process.stderr.write(`[hex] Dashboard skipped: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -297,5 +317,13 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     broadcaster: broadcastAdapter,
     secrets,
     checkpoint,
+    scaffold,
+    validator,
+    serialization,
+    wasmBridge,
+    ffi,
+    serviceMesh,
+    schema,
+    hubCommandSender: null, // wired dynamically when hub is available
   };
 }

@@ -9,18 +9,19 @@ pub type SharedState = Arc<AppState>;
 
 pub struct AppState {
     pub projects: RwLock<HashMap<String, ProjectEntry>>,
-    pub sse_tx: broadcast::Sender<SseEvent>,
+    pub commands: RwLock<HashMap<String, HubCommand>>,       // commandId → command
+    pub results: RwLock<HashMap<String, HubCommandResult>>,  // commandId → result
     pub ws_tx: broadcast::Sender<WsEnvelope>,
     pub auth_token: Option<String>,
 }
 
 impl AppState {
     pub fn new(auth_token: Option<String>) -> Self {
-        let (sse_tx, _) = broadcast::channel(256);
-        let (ws_tx, _) = broadcast::channel(256);
+        let (ws_tx, _) = broadcast::channel(512);
         Self {
             projects: RwLock::new(HashMap::new()),
-            sse_tx,
+            commands: RwLock::new(HashMap::new()),
+            results: RwLock::new(HashMap::new()),
             ws_tx,
             auth_token,
         }
@@ -61,15 +62,6 @@ pub struct ProjectMeta {
     pub ast_is_stub: bool,
 }
 
-// ── SSE Event ───────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-pub struct SseEvent {
-    pub project_id: Option<String>,
-    pub event_type: String,
-    pub data: serde_json::Value,
-}
-
 // ── WebSocket Envelope ──────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +69,31 @@ pub struct WsEnvelope {
     pub topic: String,
     pub event: String,
     pub data: serde_json::Value,
+}
+
+// ── Command Types (Hub → Project) ───────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubCommand {
+    pub command_id: String,
+    pub project_id: String,
+    #[serde(rename = "type")]
+    pub command_type: String,
+    pub payload: serde_json::Value,
+    pub issued_at: String,
+    pub source: String,
+    pub status: String,  // pending, dispatched, running, completed, failed
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubCommandResult {
+    pub command_id: String,
+    pub status: String,
+    pub data: Option<serde_json::Value>,
+    pub error: Option<String>,
+    pub completed_at: String,
 }
 
 // ── Request/Response Types ──────────────────────────────
@@ -105,10 +122,6 @@ pub struct DecisionRequest {
     pub selected_option: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SseParams {
-    pub project: Option<String>,
-}
 
 // ── Project ID (must match TypeScript implementation) ───
 

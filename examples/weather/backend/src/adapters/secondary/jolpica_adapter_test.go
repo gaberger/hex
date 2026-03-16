@@ -486,6 +486,91 @@ func TestJolpicaAdapter_FetchErrorOnNon200(t *testing.T) {
 	}
 }
 
+func TestJolpicaAdapter_GetDriverStandings_EmptyStandingsLists(t *testing.T) {
+	body := `{
+		"MRData": {
+			"StandingsTable": {
+				"season": "2024",
+				"StandingsLists": []
+			}
+		}
+	}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	adapter := newTestAdapter(srv.URL)
+	_, err := adapter.GetDriverStandings(context.Background(), domain.Season(2024))
+	if err == nil {
+		t.Fatal("expected error for empty StandingsLists, got nil")
+	}
+}
+
+func TestJolpicaAdapter_GetConstructorStandings_EmptyStandingsLists(t *testing.T) {
+	body := `{
+		"MRData": {
+			"StandingsTable": {
+				"season": "2024",
+				"StandingsLists": []
+			}
+		}
+	}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	adapter := newTestAdapter(srv.URL)
+	_, err := adapter.GetConstructorStandings(context.Background(), domain.Season(2024))
+	if err == nil {
+		t.Fatal("expected error for empty StandingsLists, got nil")
+	}
+}
+
+func TestJolpicaAdapter_GetDriverStandings_NilStandingsTable(t *testing.T) {
+	body := `{"MRData": {}}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	adapter := newTestAdapter(srv.URL)
+	_, err := adapter.GetDriverStandings(context.Background(), domain.Season(2024))
+	if err == nil {
+		t.Fatal("expected error for nil StandingsTable, got nil")
+	}
+}
+
+func TestJolpicaAdapter_GetLatestRaceResult_EmptyRaces(t *testing.T) {
+	body := `{
+		"MRData": {
+			"RaceTable": {
+				"season": "2024",
+				"Races": []
+			}
+		}
+	}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	adapter := newTestAdapter(srv.URL)
+	_, err := adapter.GetLatestRaceResult(context.Background())
+	if err == nil {
+		t.Fatal("expected error for empty Races, got nil")
+	}
+}
+
 func TestJolpicaAdapter_FetchErrorOnBadJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

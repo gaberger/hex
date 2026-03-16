@@ -1,24 +1,48 @@
 /**
- * Dashboard Client Adapter
+ * Dashboard Client Adapter (Bidirectional)
  *
  * Connects to the central Dashboard Hub (port 5555) as a CLIENT.
- * Gathers data from the local project's AppContext and pushes it
- * to the hub periodically. Also watches local files and pushes
- * change events in real-time.
+ * Two communication channels:
  *
- * Push model: this adapter is the "project side" — it collects
- * health, tokens, swarm, and graph data locally, then POSTs it
- * to the hub. The hub stores and serves it to browsers.
+ * 1. HTTP POST (push) — Gathers data from the local project's AppContext
+ *    and pushes health, tokens, swarm, and graph data to the hub periodically.
+ *
+ * 2. WebSocket (command listener) — Opens a persistent WS connection to the
+ *    hub, subscribes to project:{id}:command topic, and dispatches received
+ *    commands through AppContext. Results are POSTed back to the hub.
+ *
+ * This makes hex-hub fully bidirectional: monitor status AND issue commands
+ * from a single place (browser, MCP, or CLI).
  */
 
-import { watch, type FSWatcher } from 'node:fs';
-import { resolve } from 'node:path';
+import { watch, readFileSync, type FSWatcher } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { homedir } from 'node:os';
 import { request } from 'node:http';
+import WebSocket from 'ws';
 import type { AppContext } from '../../core/ports/app-context.js';
 import type { ImportEdge } from '../../core/ports/index.js';
+import type {
+  HubCommand,
+  HubCommandHandler,
+  HubCommandResult,
+  HubCommandType,
+  IHubCommandReceiverPort,
+} from '../../core/ports/hub-command.js';
 
 /** Fixed dashboard hub port — must match dashboard-hub.ts */
 const HUB_PORT = 5555;
+
+/** Read auth token from hub lock file. Returns empty string if unavailable. */
+function readHubToken(): string {
+  try {
+    const lockPath = join(homedir(), '.hex', 'daemon', 'hub.lock');
+    const lock = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    return lock.token ?? '';
+  } catch {
+    return '';
+  }
+}
 
 // ── Layer classifier ─────────────────────────────────────
 
@@ -33,17 +57,28 @@ function classifyLayer(filePath: string): string {
 
 // ── Dashboard Client ─────────────────────────────────────
 
-export class DashboardAdapter {
+export class DashboardAdapter implements IHubCommandReceiverPort {
   private projectId: string | null = null;
   private pushTimer: ReturnType<typeof setInterval> | null = null;
   private watchers: FSWatcher[] = [];
   private fileChangeDebounce = new Map<string, ReturnType<typeof setTimeout>>();
   private stopped = false;
+  private readonly authToken: string;
+
+  // ── WebSocket command listener state ──────────────
+  private ws: WebSocket | null = null;
+  private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private wsReconnectDelay = 1000; // starts at 1s, doubles up to 30s
+  private readonly wsMaxReconnectDelay = 30_000;
+  private commandHandlers = new Map<HubCommandType, HubCommandHandler>();
+  private _isListening = false;
 
   constructor(
     private readonly ctx: AppContext,
     private readonly hubPort: number = HUB_PORT,
-  ) {}
+  ) {
+    this.authToken = readHubToken();
+  }
 
   /**
    * Register with the hub and start pushing data.
@@ -67,17 +102,20 @@ export class DashboardAdapter {
 
     this.projectId = regResult.id as string;
 
-    // Initial push of all state
-    await this.pushAll();
+    // Initial push — fire and forget (don't block registration)
+    void this.pushAll().catch((err) => this.log('initial push failed:', err));
 
     // Start periodic push (every 10s)
     this.pushTimer = setInterval(() => {
-      if (!this.stopped) void this.pushAll();
+      if (!this.stopped) void this.pushAll().catch((err) => this.log('periodic push failed:', err));
     }, 10_000);
     this.pushTimer.unref(); // Don't keep process alive
 
     // Watch local files for changes
     this.startFileWatcher();
+
+    // Open WebSocket for bidirectional command channel
+    void this.startListening().catch((err) => this.log('command listener failed to start:', err));
 
     return {
       url: hubUrl,
@@ -85,7 +123,7 @@ export class DashboardAdapter {
     };
   }
 
-  /** Stop pushing and unregister. */
+  /** Stop pushing, close command listener, and unregister. */
   stop(): void {
     this.stopped = true;
     if (this.pushTimer) {
@@ -96,6 +134,317 @@ export class DashboardAdapter {
     this.watchers = [];
     for (const t of this.fileChangeDebounce.values()) clearTimeout(t);
     this.fileChangeDebounce.clear();
+    void this.stopListening();
+  }
+
+  // ── IHubCommandReceiverPort implementation ─────────
+
+  async startListening(): Promise<void> {
+    if (!this.projectId || this._isListening) return;
+    this._isListening = true; // Set immediately to prevent concurrent calls (H2)
+
+    const tokenParam = this.authToken ? `?token=${encodeURIComponent(this.authToken)}` : '';
+    const wsUrl = `ws://127.0.0.1:${this.hubPort}/ws${tokenParam}`;
+
+    this.registerDefaultHandlers();
+    this.connectWs(wsUrl);
+  }
+
+  async stopListening(): Promise<void> {
+    this._isListening = false;
+    if (this.wsReconnectTimer) {
+      clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = null;
+    }
+    if (this.ws) {
+      this.ws.removeAllListeners();
+      if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+        this.ws.close(1000, 'shutdown');
+      }
+      this.ws = null;
+    }
+  }
+
+  isListening(): boolean {
+    return this._isListening;
+  }
+
+  onCommand(type: HubCommandType, handler: HubCommandHandler): void {
+    this.commandHandlers.set(type, handler);
+  }
+
+  offCommand(type: HubCommandType): void {
+    this.commandHandlers.delete(type);
+  }
+
+  // ── WebSocket connection with auto-reconnect ──────
+
+  private connectWs(wsUrl: string): void {
+    if (this.stopped) return;
+
+    try {
+      this.ws = new WebSocket(wsUrl);
+    } catch {
+      this.scheduleReconnect(wsUrl);
+      return;
+    }
+
+    this.ws.on('open', () => {
+      this._isListening = true;
+      this.wsReconnectDelay = 1000; // reset backoff on successful connect
+      this.log('command listener connected');
+
+      // Subscribe to command topic for this project
+      this.wsSend({
+        type: 'subscribe',
+        topic: `project:${this.projectId}:command`,
+      });
+    });
+
+    this.ws.on('message', (raw: WebSocket.Data) => {
+      try {
+        const envelope = JSON.parse(raw.toString());
+        if (envelope.event === 'command' && envelope.data) {
+          void this.handleCommand(envelope.data as HubCommand);
+        }
+      } catch {
+        // Ignore malformed messages
+      }
+    });
+
+    this.ws.on('close', () => {
+      this._isListening = false;
+      this.scheduleReconnect(wsUrl);
+    });
+
+    this.ws.on('error', () => {
+      // WS errors are non-critical — HTTP push still works.
+      // 'close' event fires after 'error', triggering reconnect silently.
+    });
+  }
+
+  private scheduleReconnect(wsUrl: string): void {
+    if (this.stopped) return; // Check stopped FIRST — prevents reconnect after shutdown (H3)
+    if (this.wsReconnectTimer) return;
+
+    this.wsReconnectTimer = setTimeout(() => {
+      this.wsReconnectTimer = null;
+      this.connectWs(wsUrl);
+    }, this.wsReconnectDelay);
+    this.wsReconnectTimer.unref();
+
+    // Exponential backoff: 1s → 2s → 4s → 8s → 16s → 30s (cap)
+    this.wsReconnectDelay = Math.min(this.wsReconnectDelay * 2, this.wsMaxReconnectDelay);
+  }
+
+  private wsSend(msg: unknown): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(msg));
+    }
+  }
+
+  // ── Command dispatch ──────────────────────────────
+
+  private async handleCommand(command: HubCommand): Promise<void> {
+    const handler = this.commandHandlers.get(command.type);
+    let result: HubCommandResult;
+
+    if (!handler) {
+      result = {
+        commandId: command.commandId,
+        status: 'failed',
+        error: `Unknown command type: ${command.type}`,
+        completedAt: new Date().toISOString(),
+      };
+    } else {
+      try {
+        result = await handler(command);
+      } catch (err) {
+        result = {
+          commandId: command.commandId,
+          status: 'failed',
+          error: err instanceof Error ? err.message : String(err),
+          completedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    // Report result back to hub via HTTP POST (hub broadcasts to WS subscribers)
+    await this.post(
+      `/api/${this.projectId}/command/${command.commandId}/result`,
+      result,
+    );
+  }
+
+  // ── Default command handlers ──────────────────────
+
+  private registerDefaultHandlers(): void {
+    this.onCommand('ping', async (cmd) => ({
+      commandId: cmd.commandId,
+      status: 'completed',
+      data: { pong: true, projectId: this.projectId, timestamp: Date.now() },
+      completedAt: new Date().toISOString(),
+    }));
+
+    this.onCommand('spawn-agent', async (cmd) => {
+      const p = cmd.payload as { name: string; role: string; taskId?: string };
+      const agent = await this.ctx.swarm.spawnAgent(
+        p.name,
+        p.role as import('../../core/ports/swarm.js').AgentRole,
+        p.taskId,
+      );
+      return {
+        commandId: cmd.commandId,
+        status: 'completed',
+        data: agent,
+        completedAt: new Date().toISOString(),
+      };
+    });
+
+    this.onCommand('terminate-agent', async (cmd) => {
+      const p = cmd.payload as { agentId: string };
+      await this.ctx.swarm.terminateAgent(p.agentId);
+      return {
+        commandId: cmd.commandId,
+        status: 'completed',
+        data: { terminated: p.agentId },
+        completedAt: new Date().toISOString(),
+      };
+    });
+
+    this.onCommand('create-task', async (cmd) => {
+      const p = cmd.payload as { title: string; agentRole: string; adapter?: string; language?: string };
+      const task = await this.ctx.swarm.createTask({
+        title: p.title,
+        agentRole: p.agentRole as import('../../core/ports/swarm.js').AgentRole,
+        adapter: p.adapter,
+        language: p.language as import('../../core/ports/swarm.js').SwarmTask['language'],
+      });
+      return {
+        commandId: cmd.commandId,
+        status: 'completed',
+        data: task,
+        completedAt: new Date().toISOString(),
+      };
+    });
+
+    this.onCommand('cancel-task', async (cmd) => {
+      const p = cmd.payload as { taskId: string };
+      await this.ctx.swarm.completeTask(p.taskId, 'cancelled');
+      return {
+        commandId: cmd.commandId,
+        status: 'completed',
+        data: { cancelled: p.taskId },
+        completedAt: new Date().toISOString(),
+      };
+    });
+
+    this.onCommand('run-analyze', async (cmd) => {
+      const p = cmd.payload as { rootPath?: string };
+      const result = await this.ctx.archAnalyzer.analyzeArchitecture(p.rootPath ?? '.');
+      return {
+        commandId: cmd.commandId,
+        status: 'completed',
+        data: result,
+        completedAt: new Date().toISOString(),
+      };
+    });
+
+    this.onCommand('run-build', async (cmd) => {
+      const name = this.ctx.rootPath.split('/').pop() ?? 'unknown';
+      const result = await this.ctx.build.compile({ rootPath: this.ctx.rootPath, name, language: 'typescript', adapters: [] });
+      return {
+        commandId: cmd.commandId,
+        status: result.success ? 'completed' : 'failed',
+        data: result,
+        error: result.success ? undefined : 'Build failed',
+        completedAt: new Date().toISOString(),
+      };
+    });
+
+    this.onCommand('run-validate', async (cmd) => {
+      const p = cmd.payload as { rootPath?: string };
+      // Validate = analyze + build combined check
+      const [analysis, buildResult] = await Promise.all([
+        this.ctx.archAnalyzer.analyzeArchitecture(p.rootPath ?? '.'),
+        this.ctx.build.compile({
+          rootPath: this.ctx.rootPath,
+          name: this.ctx.rootPath.split('/').pop() ?? 'unknown',
+          language: 'typescript',
+          adapters: [],
+        }),
+      ]);
+      const violations = (analysis as { summary?: { violationCount?: number } }).summary?.violationCount ?? 0;
+      const passed = buildResult.success && violations === 0;
+      return {
+        commandId: cmd.commandId,
+        status: passed ? 'completed' : 'failed',
+        data: { passed, build: buildResult.success, violations, analysis },
+        error: passed ? undefined : `Validation failed: build=${buildResult.success}, violations=${violations}`,
+        completedAt: new Date().toISOString(),
+      };
+    });
+
+    this.onCommand('run-generate', async (cmd) => {
+      const p = cmd.payload as { adapter?: string; portInterface?: string; language?: string };
+      if (!this.ctx.codeGenerator) {
+        return {
+          commandId: cmd.commandId,
+          status: 'failed',
+          error: 'Code generation requires an LLM API key (set ANTHROPIC_API_KEY)',
+          completedAt: new Date().toISOString(),
+        };
+      }
+      if (!p.adapter || !p.portInterface) {
+        return {
+          commandId: cmd.commandId,
+          status: 'failed',
+          error: 'Missing required payload: adapter and portInterface (e.g. run-generate my-adapter IMyPort)',
+          completedAt: new Date().toISOString(),
+        };
+      }
+      const lang = (p.language ?? 'typescript') as import('../../core/domain/value-objects.js').Language;
+      const spec: import('../../core/domain/value-objects.js').Specification = {
+        title: `Generate ${p.adapter} implementing ${p.portInterface}`,
+        requirements: [`Implement ${p.portInterface} adapter: ${p.adapter}`],
+        constraints: ['Follow hexagonal architecture rules', 'Only import from core/ports and core/domain'],
+        targetLanguage: lang,
+        targetAdapter: p.adapter,
+      };
+      const result = await this.ctx.codeGenerator.generateFromSpec(spec, lang);
+      return {
+        commandId: cmd.commandId,
+        status: 'completed',
+        data: result,
+        completedAt: new Date().toISOString(),
+      };
+    });
+
+    this.onCommand('run-summarize', async (cmd) => {
+      const p = cmd.payload as { filePath?: string; level?: string };
+      if (p.filePath) {
+        const summary = await this.ctx.ast.extractSummary(
+          p.filePath,
+          (p.level ?? 'L1') as 'L0' | 'L1' | 'L2' | 'L3',
+        );
+        return {
+          commandId: cmd.commandId,
+          status: 'completed',
+          data: summary,
+          completedAt: new Date().toISOString(),
+        };
+      }
+      const summaries = await this.ctx.summaryService.summarizeProject(
+        this.ctx.rootPath,
+        (p.level ?? 'L1') as 'L0' | 'L1' | 'L2' | 'L3',
+      );
+      return {
+        commandId: cmd.commandId,
+        status: 'completed',
+        data: { files: summaries.length, summaries },
+        completedAt: new Date().toISOString(),
+      };
+    });
   }
 
   // ── Push all state ─────────────────────────────────
@@ -263,16 +612,20 @@ export class DashboardAdapter {
   private post(path: string, body: unknown): Promise<Record<string, unknown> | null> {
     return new Promise((resolve) => {
       const payload = JSON.stringify(body);
+      const headers: Record<string, string | number> = {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      };
+      if (this.authToken) {
+        headers['Authorization'] = `Bearer ${this.authToken}`;
+      }
       const req = request(
         {
           hostname: '127.0.0.1',
           port: this.hubPort,
           path,
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(payload),
-          },
+          headers,
           timeout: 5000,
         },
         (res) => {
@@ -313,7 +666,8 @@ export class DashboardAdapter {
 export async function startDashboard(
   ctx: AppContext,
   hubPort?: number,
-): Promise<{ url: string; close: () => void }> {
+): Promise<{ url: string; close: () => void; commandReceiver: IHubCommandReceiverPort }> {
   const adapter = new DashboardAdapter(ctx, hubPort);
-  return adapter.start();
+  const handle = await adapter.start();
+  return { ...handle, commandReceiver: adapter };
 }
