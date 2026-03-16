@@ -135,6 +135,17 @@ export type {
   IValidationPort,
 } from './validation.js';
 
+// ─── Report Formatting (re-exported from domain) ────────
+export { formatArchReport, formatCompactSummary } from '../domain/report-formatter.js';
+
+// ─── Action Items (re-exported from domain) ─────────────
+export type { ActionItem, ActionItemReport, ActionPriority, ActionCategory } from '../domain/action-items.js';
+export { extractArchActions, extractValidationActions, buildActionItemReport, formatActionItems } from '../domain/action-items.js';
+
+// ─── Secrets Ports ──────────────────────────────────────
+
+export type { SecretContext, SecretMetadata, SecretResult, ISecretsPort } from './secrets.js';
+
 // ─── Analysis Ports ──────────────────────────────────────
 
 export interface IArchAnalysisPort {

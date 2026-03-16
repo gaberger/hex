@@ -18,6 +18,7 @@ import type {
   Specification,
 } from '../../core/ports/index.js';
 import type { AppContext } from '../../core/ports/app-context.js';
+import { formatArchReport } from '../../core/ports/index.js';
 
 /** Result from runCLI — captures output for testing */
 export interface CLIResult {
@@ -301,6 +302,8 @@ export class CLIAdapter {
           return await this.mcp();
         case 'projects':
           return await this.projects();
+        case 'secrets':
+          return await this.secrets(args);
         case 'help':
         case '--help':
         case '-h':
@@ -322,6 +325,8 @@ export class CLIAdapter {
   private async analyze(args: ParsedArgs): Promise<number> {
     const targetPath = args.positional[0] ?? '.';
     const jsonMode = args.flags.has('json');
+    const compactMode = args.flags.has('compact');
+    const fullPaths = args.flags.has('full-paths');
 
     const result = await this.ctx.archAnalyzer.analyzeArchitecture(targetPath);
     const s = result.summary;
@@ -337,52 +342,12 @@ export class CLIAdapter {
       this.writeLn('');
     }
 
-    this.writeLn(`Analyzing architecture at: ${targetPath}`);
-    this.writeLn('');
-
-    this.writeLn(`Files scanned:    ${s.totalFiles}`);
-    this.writeLn(`Total exports:    ${s.totalExports}`);
-    this.writeLn(`Health score:     ${s.healthScore}/100`);
-    this.writeLn('');
-
-    if (s.deadExportCount > 0) {
-      this.writeLn(`Dead exports (${s.deadExportCount}):`);
-      for (const d of result.deadExports.slice(0, 10)) {
-        this.writeLn(`  ${d.filePath}: ${d.exportName} (${d.kind})`);
-      }
-      if (result.deadExports.length > 10) {
-        this.writeLn(`  ... and ${result.deadExports.length - 10} more`);
-      }
-      this.writeLn('');
-    }
-
-    if (s.violationCount > 0) {
-      this.writeLn(`Hex boundary violations (${s.violationCount}):`);
-      for (const v of result.dependencyViolations.slice(0, 10)) {
-        this.writeLn(`  ${v.from} -> ${v.to}`);
-        this.writeLn(`    ${v.rule}`);
-      }
-      if (result.dependencyViolations.length > 10) {
-        this.writeLn(`  ... and ${result.dependencyViolations.length - 10} more`);
-      }
-      this.writeLn('');
-    }
-
-    if (s.circularCount > 0) {
-      this.writeLn(`Circular dependencies (${s.circularCount}):`);
-      for (const cycle of result.circularDeps.slice(0, 5)) {
-        this.writeLn(`  ${cycle.join(' -> ')}`);
-      }
-      this.writeLn('');
-    }
-
-    if (result.orphanFiles.length > 0) {
-      this.writeLn(`Orphan files (${result.orphanFiles.length}):`);
-      for (const f of result.orphanFiles.slice(0, 10)) {
-        this.writeLn(`  ${f}`);
-      }
-      this.writeLn('');
-    }
+    // Generate the formatted report
+    const report = formatArchReport(result, targetPath, {
+      fullPaths,
+      showRulesReference: !compactMode,
+    });
+    this.writeLn(report);
 
     return s.healthScore >= 50 ? 0 : 1;
   }
@@ -443,6 +408,7 @@ export class CLIAdapter {
   private async generate(args: ParsedArgs): Promise<number> {
     if (!this.ctx.codeGenerator) {
       this.writeLn('LLM not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.');
+      this.writeLn('Tip: Inside Claude Code, use hex_generate via MCP — Claude IS the LLM.');
       return 1;
     }
 
@@ -493,6 +459,7 @@ export class CLIAdapter {
   private async plan(args: ParsedArgs): Promise<number> {
     if (!this.ctx.workplanExecutor) {
       this.writeLn('LLM not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.');
+      this.writeLn('Tip: Inside Claude Code, use hex_plan via MCP — Claude IS the LLM.');
       return 1;
     }
 
@@ -535,7 +502,7 @@ export class CLIAdapter {
     const existing = await daemon.status();
     if (existing.running) {
       this.writeLn(`Dashboard already running at http://localhost:${existing.port}`);
-      this.writeLn(`  PID: ${existing.pid}  Uptime: ${Math.round((existing.uptime ?? 0) / 1000)}s  Projects: ${existing.projects}`);
+      this.writeLn(`  PID: ${existing.pid}  Uptime: ${Math.round((existing.uptime ?? 0) / 1000)}s`);
       this.writeLn(`  Open: http://localhost:${existing.port}`);
       return 0;
     }
@@ -553,97 +520,38 @@ export class CLIAdapter {
   }
 
   /**
-   * Start the dashboard hub with broadcast adapter and WebSocket broker.
+   * Start the dashboard hub on fixed port 5555.
    * Used by both `dashboard` and `hub` commands.
    */
-  private async startHub(args: ParsedArgs, isDaemon: boolean): Promise<number> {
-    const port = parseInt(args.flags.get('port') ?? '0', 10);
-    if (isNaN(port) || port < 0 || port > 65535) {
-      this.writeLn('Invalid port number. Must be 0-65535 (0 = auto-assign).');
-      return 1;
-    }
+  private async startHub(_args: ParsedArgs, isDaemon: boolean): Promise<number> {
+    const { DashboardHub, HUB_PORT } = await import('./dashboard-hub.js');
 
-    const { DashboardHub } = await import('./dashboard-hub.js');
-    const { createAppContext: factory } = await import('../../composition-root.js');
-
-    // Inject the broadcast adapter so the hub delegates to IBroadcastPort
-    const hub = new DashboardHub(factory, port || 3847, this.ctx.broadcaster);
+    const hub = new DashboardHub(HUB_PORT);
     const { url } = await hub.start();
 
     // Attach WebSocket broker to the HTTP server
     const httpServer = hub.httpServer;
     if (httpServer) {
       try {
-        const { WebSocketBroker } = await import('./ws-broker.js');
-        const wsBroker = new WebSocketBroker(httpServer);
-
-        // Forward inbound agent messages to the hub's broadcast
-        wsBroker.onPublish((topic, event, data) => {
-          const projectMatch = topic.match(/^project:([^:]+):/);
-          if (projectMatch) {
-            hub.broadcastToProject(projectMatch[1], event, data);
-          } else {
-            hub.broadcast(event, data);
-          }
-        });
-
-        this.writeLn(`WebSocket broker attached (ws://${url.replace('http://', '')})`);
+        const { WsBroker } = await import('./ws-broker.js');
+        const wsBroker = new WsBroker();
+        wsBroker.attach(httpServer);
+        this.writeLn(`WebSocket broker attached (ws://localhost:${HUB_PORT}/ws)`);
       } catch {
         this.writeLn('WebSocket unavailable (ws package not installed — SSE only)');
       }
     }
 
-    // Register the current project
-    const slot = await hub.registerProject(this.ctx.rootPath);
-    this.writeLn(`Dashboard running at ${url}`);
-    this.writeLn(`Project: ${slot.id}`);
-
-    // Register additional projects from positional args
-    for (const projectPath of args.positional) {
-      try {
-        const s = await hub.registerProject(projectPath);
-        this.writeLn(`Project: ${s.id}`);
-      } catch (err) {
-        this.writeLn(`Failed: ${projectPath}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-
-    // Wire notification orchestrator → broadcast
-    if (this.ctx.notificationOrchestrator) {
-      this.ctx.notificationOrchestrator.addListener((notification) => {
-        hub.broadcastToProject(slot.id, notification.level, {
-          id: notification.id,
-          level: notification.level,
-          message: notification.title,
-          detail: notification.detail,
-          source: notification.source,
-          timestamp: notification.timestamp,
-          context: notification.context,
-        });
-      });
-    }
+    this.writeLn(`Dashboard hub running at ${url}`);
+    this.writeLn(`Projects push data to this hub on port ${HUB_PORT}.`);
 
     // If running as daemon, write lock file
     if (isDaemon) {
       const { DaemonManager } = await import('./daemon-manager.js');
       const daemon = new DaemonManager();
-      const actualPort = parseInt(url.split(':').pop() ?? '3847', 10);
       const token = process.env['HEX_DAEMON_TOKEN'] ?? '';
-      daemon.registerSelf(actualPort, token, '1.0.0');
+      daemon.registerSelf(token, '1.0.0');
 
-      // Persist state so projects survive daemon restart
-      const state = daemon.readState();
-      state.registeredProjects.push({ rootPath: this.ctx.rootPath, registeredAt: Date.now() });
-      daemon.persistState(state);
-
-      // Idle timeout
-      const idle = daemon.createIdleTimer(() => {
-        this.writeLn('[hex] Idle timeout — shutting down');
-        daemon.unregisterSelf();
-        process.exit(0);
-      });
-
-      // Reset idle on any HTTP activity (hub already handles requests)
       process.on('SIGTERM', () => { daemon.unregisterSelf(); process.exit(0); });
       process.on('SIGINT', () => { daemon.unregisterSelf(); process.exit(0); });
     } else {
@@ -669,7 +577,6 @@ export class CLIAdapter {
           this.writeLn(`  PID:      ${status.pid}`);
           this.writeLn(`  Port:     ${status.port}`);
           this.writeLn(`  Uptime:   ${Math.round((status.uptime ?? 0) / 1000)}s`);
-          this.writeLn(`  Projects: ${status.projects}`);
           this.writeLn(`  URL:      http://localhost:${status.port}`);
         } else {
           this.writeLn('Dashboard daemon is not running.');
@@ -726,7 +633,6 @@ export class CLIAdapter {
 
     if (daemonStatus.running) {
       this.writeLn(`Dashboard:  http://localhost:${daemonStatus.port} (PID ${daemonStatus.pid})`);
-      this.writeLn(`Projects:   ${daemonStatus.projects}`);
       this.writeLn(`Uptime:     ${Math.round((daemonStatus.uptime ?? 0) / 1000)}s`);
     } else {
       this.writeLn('Dashboard:  not running (start with: hex dashboard)');
@@ -751,7 +657,7 @@ export class CLIAdapter {
   //   { "mcpServers": { "hex": { "command": "npx", "args": ["hex", "mcp"] } } }
 
   private async mcp(): Promise<number> {
-    const { MCPAdapter, HEX_TOOLS, HEX_DASHBOARD_TOOLS } = await import('./mcp-adapter.js');
+    const { MCPAdapter } = await import('./mcp-adapter.js');
 
     const adapter = new MCPAdapter({
       archAnalyzer: this.ctx.archAnalyzer,
@@ -1418,6 +1324,89 @@ export class CLIAdapter {
 
   // ── help ────────────────────────────────────────────
 
+  // ── secrets ─────────────────────────────────────────
+
+  private async secrets(args: ParsedArgs): Promise<number> {
+    const subCmd = args.positional[0] ?? 'status';
+
+    switch (subCmd) {
+      case 'status':
+        return this.secretsStatus();
+      case 'list':
+        return this.secretsList(args);
+      default:
+        this.writeLn(`Unknown secrets command: ${subCmd}`);
+        this.writeLn('Usage: hex secrets [status|list] [--json]');
+        return 1;
+    }
+  }
+
+  private async secretsStatus(): Promise<number> {
+    // Determine backend type by probing listSecrets behavior
+    const metadata = await this.ctx.secrets.listSecrets();
+
+    if (metadata.length === 0) {
+      // EnvSecretsAdapter always returns [] — check if it can resolve anything
+      // to distinguish "env backend" from "Infisical with zero secrets"
+      const hasEnvMarker = await this.ctx.secrets.hasSecret('PATH');
+      if (hasEnvMarker) {
+        // Environment variable backend (can see PATH)
+        this.writeLn('Backend:     Environment variables');
+        this.writeLn("Secrets:     (use 'hex secrets list' with Infisical or local vault)");
+        return 0;
+      }
+    }
+
+    // Infisical or local vault backend — has metadata
+    this.writeLn('Backend:     Infisical');
+    this.writeLn(`Secrets:     ${metadata.length} keys accessible`);
+    return 0;
+  }
+
+  private async secretsList(args: ParsedArgs): Promise<number> {
+    const jsonMode = args.flags.has('json');
+    const metadata = await this.ctx.secrets.listSecrets();
+
+    if (metadata.length === 0) {
+      // Check if this is the env adapter (no metadata support)
+      const hasEnvMarker = await this.ctx.secrets.hasSecret('PATH');
+      if (hasEnvMarker) {
+        if (jsonMode) {
+          this.writeLn(JSON.stringify([]));
+        } else {
+          this.writeLn('Secret listing requires Infisical or local vault backend.');
+        }
+        return 0;
+      }
+    }
+
+    if (jsonMode) {
+      this.writeLn(JSON.stringify(metadata, null, 2));
+      return 0;
+    }
+
+    if (metadata.length === 0) {
+      this.writeLn('No secrets found.');
+      return 0;
+    }
+
+    // Table header
+    this.writeLn('Key                            Env       Version  Updated');
+    this.writeLn('─'.repeat(72));
+    for (const m of metadata) {
+      const key = m.key.padEnd(30);
+      const env = m.environment.padEnd(9);
+      const ver = String(m.version).padEnd(8);
+      this.writeLn(`${key} ${env} ${ver} ${m.updatedAt}`);
+    }
+    this.writeLn('');
+    this.writeLn(`Total: ${metadata.length} secrets`);
+
+    return 0;
+  }
+
+  // ── help ────────────────────────────────────────────
+
   private help(): number {
     this.writeLn('hex - Hexagonal Architecture framework for agentic coding');
     this.writeLn('');
@@ -1437,6 +1426,7 @@ export class CLIAdapter {
     this.writeLn('  daemon [status|start|stop|logs] Background dashboard service');
     this.writeLn('  status                          Show dashboard, tasks, agents, patterns');
     this.writeLn('  init [--lang ts|go|rust]        Scaffold a hex project');
+    this.writeLn('  secrets [status|list] [--json]  Secrets backend status and listing');
     this.writeLn('  help                            Show this help');
     this.writeLn('');
     this.writeLn('MCP Server (add to any project):');
@@ -1559,6 +1549,9 @@ export class CLIAdapter {
       this.writeLn(`  Failed to install skills/agents: ${err instanceof Error ? err.message : String(err)}`);
     }
 
+    // Register ruflo MCP server in project-local Claude Code settings
+    await this.registerRufloMCP(claudeDir, join);
+
     this.writeLn('');
     this.writeLn('Setup complete. Available commands:');
     this.writeLn('  hex analyze .     Check architecture health');
@@ -1566,5 +1559,65 @@ export class CLIAdapter {
     this.writeLn('  hex init          Scaffold a new hex project');
     this.writeLn('  hex help          Show all commands');
     return 0;
+  }
+
+  // ── registerRufloMCP ──────────────────────────────
+
+  private async registerRufloMCP(claudeDir: string, join: (...args: string[]) => string): Promise<void> {
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const settingsPath = join(claudeDir, 'settings.local.json');
+
+    // Find ruflo binary path
+    const { execFile: execFileCb } = await import('child_process');
+    const { promisify } = await import('util');
+    const run = promisify(execFileCb);
+
+    let rufloPath = '';
+    try {
+      const { stdout } = await run('which', ['ruflo'], { timeout: 5000 });
+      rufloPath = stdout.trim();
+    } catch {
+      // Try npx resolution
+      try {
+        const { stdout } = await run('npx', ['--yes', 'ruflo', '--version'], { timeout: 15000 });
+        if (stdout.trim()) rufloPath = 'npx';
+      } catch { /* ruflo not available */ }
+    }
+
+    if (!rufloPath) {
+      this.writeLn('');
+      this.writeLn('  Ruflo MCP: skipped (ruflo not found)');
+      this.writeLn('  Install with: npm install -g ruflo');
+      return;
+    }
+
+    // Read existing settings or create new
+    let settings: Record<string, unknown> = {};
+    try {
+      const existing = await readFile(settingsPath, 'utf-8');
+      settings = JSON.parse(existing);
+    } catch { /* file doesn't exist yet */ }
+
+    // Check if ruflo MCP is already registered
+    const mcpServers = (settings.mcpServers ?? {}) as Record<string, unknown>;
+    if (mcpServers.ruflo) {
+      this.writeLn('');
+      this.writeLn('  Ruflo MCP: already registered');
+      return;
+    }
+
+    // Register ruflo as stdio MCP server
+    const rufloConfig = rufloPath === 'npx'
+      ? { command: 'npx', args: ['--yes', 'ruflo', 'mcp', 'start'], type: 'stdio' }
+      : { command: rufloPath, args: ['mcp', 'start'], type: 'stdio' };
+
+    mcpServers.ruflo = rufloConfig;
+    settings.mcpServers = mcpServers;
+
+    await writeFile(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+    this.writeLn('');
+    this.writeLn(`  Ruflo MCP: registered in .claude/settings.local.json`);
+    this.writeLn(`  Binary: ${rufloPath}`);
+    this.writeLn('  Restart Claude Code to activate swarm tools');
   }
 }

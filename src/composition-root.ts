@@ -28,6 +28,11 @@ import { LLMAdapter } from './adapters/secondary/llm-adapter.js';
 import type { LLMAdapterConfig } from './adapters/secondary/llm-adapter.js';
 import { InMemoryEventBus } from './adapters/secondary/in-memory-event-bus.js';
 import { SSEBroadcastAdapter } from './adapters/secondary/sse-broadcast-adapter.js';
+import { EnvSecretsAdapter } from './adapters/secondary/env-secrets-adapter.js';
+import { InfisicalAdapter } from './adapters/secondary/infisical-adapter.js';
+import { LocalVaultAdapter } from './adapters/secondary/local-vault-adapter.js';
+import { CachingSecretsAdapter } from './adapters/secondary/caching-secrets-adapter.js';
+import type { ISecretsPort } from './core/ports/secrets.js';
 
 // Re-export AppContext from the port (canonical definition)
 export type { AppContext } from './core/ports/app-context.js';
@@ -143,34 +148,32 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
       (err) => process.stderr.write(`[hex] AgentDB session skipped: ${err instanceof Error ? err.message : String(err)}\n`),
     ).finally(() => writeFile(statusFile, JSON.stringify(status, null, 2)).catch(() => {}));
 
-    // Auto-register with project registry + start dashboard server
+    // Connect to central dashboard hub (port 5555) as a client
+    // Hub may or may not be running — if not, we start one in-process
     void (async () => {
       try {
-        const reg = await registry.register(projectPath, projectName);
-        await registry.writeLocalIdentity(projectPath, {
-          id: reg.id,
-          name: reg.name,
-          createdAt: reg.createdAt,
-        });
-
-        // Start the actual dashboard HTTP server on the assigned port
-        // Wrap in a promise that catches EADDRINUSE (port already taken)
+        const { DashboardHub, HUB_PORT } = await import('./adapters/primary/dashboard-hub.js');
         const { DashboardAdapter } = await import('./adapters/primary/dashboard-adapter.js');
-        const ctx = { rootPath: projectPath, astIsStub, archAnalyzer, ast, fs, git, worktree, build, swarm, registry, notifier, eventBus, summaryService, notificationOrchestrator, llm: null, codeGenerator: null, workplanExecutor: null, swarmOrchestrator, autoConfirm: false, outputDir, broadcaster: broadcastAdapter } as any;
-        const dash = new DashboardAdapter(ctx, reg.port);
+
+        // Try to start the hub (if not already running on 5555)
         try {
-          const { url } = await dash.start();
-          status.dashboard = url.replace('http://', '');
-          process.stderr.write(`[hex] Dashboard live at ${url}\n`);
-        } catch (dashErr: any) {
-          if (dashErr?.code === 'EADDRINUSE') {
-            // Port already in use — dashboard likely running from another session
-            status.dashboard = `localhost:${reg.port}`;
-            process.stderr.write(`[hex] Dashboard port ${reg.port} in use (existing session)\n`);
+          const hub = new DashboardHub(HUB_PORT);
+          const { url } = await hub.start();
+          process.stderr.write(`[hex] Dashboard hub started at ${url}\n`);
+        } catch (hubErr: any) {
+          if (hubErr?.code === 'EADDRINUSE') {
+            process.stderr.write(`[hex] Dashboard hub already running on port ${HUB_PORT}\n`);
           } else {
-            throw dashErr;
+            throw hubErr;
           }
         }
+
+        // Register this project as a client that pushes data to the hub
+        const ctx = { rootPath: projectPath, astIsStub, archAnalyzer, ast, fs, git, worktree, build, swarm, registry, notifier, eventBus, summaryService, notificationOrchestrator, llm: null, codeGenerator: null, workplanExecutor: null, swarmOrchestrator, autoConfirm: false, outputDir, broadcaster: broadcastAdapter } as any;
+        const client = new DashboardAdapter(ctx, HUB_PORT);
+        const { url } = await client.start();
+        status.dashboard = url.replace('http://', '');
+        process.stderr.write(`[hex] Project registered with dashboard hub\n`);
       } catch (err) {
         process.stderr.write(`[hex] Dashboard skipped: ${err instanceof Error ? err.message : String(err)}\n`);
       }
@@ -196,13 +199,63 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     statusInterval.unref();
   }
 
+  // Secrets: config-based adapter selection (.hex/secrets.json → Infisical/LocalVault/Env)
+  let secrets: ISecretsPort = new EnvSecretsAdapter();
+  try {
+    const { existsSync, readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const configPath = resolve(projectPath, '.hex/secrets.json');
+
+    if (existsSync(configPath)) {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+
+      if (config.backend === 'infisical' && config.infisical) {
+        const inf = config.infisical;
+        const adapter = new InfisicalAdapter({
+          siteUrl: inf.siteUrl,
+          clientId: inf.auth.clientId,
+          clientSecret: inf.auth.clientSecret,
+          projectId: inf.projectId,
+          defaultEnvironment: inf.defaultEnvironment,
+        });
+        const ttl = (config.cache?.ttlSeconds ?? 300) * 1000;
+        secrets = new CachingSecretsAdapter(adapter, ttl);
+        process.stderr.write(`[hex] Secrets: Infisical (${inf.siteUrl})\n`);
+      } else if (config.backend === 'local-vault') {
+        const vaultPath = resolve(projectPath, config.localVault?.path ?? '.hex/vault.enc');
+        const password = process.env['HEX_VAULT_PASSWORD'];
+        if (existsSync(vaultPath) && password) {
+          secrets = new LocalVaultAdapter(vaultPath, password);
+          process.stderr.write('[hex] Secrets: Local vault\n');
+        } else if (!existsSync(vaultPath)) {
+          process.stderr.write(`[hex] Secrets: vault not found at ${vaultPath} — using env vars\n`);
+        } else {
+          process.stderr.write('[hex] Secrets: HEX_VAULT_PASSWORD not set — using env vars\n');
+        }
+      }
+    }
+  } catch (err) {
+    process.stderr.write(`[hex] Secrets config error: ${err instanceof Error ? err.message : String(err)} — using env vars\n`);
+  }
+
   // LLM: graceful degradation — null when no API key is configured
+  // Try secrets port first (Infisical), fall back to direct env vars
   let llm: ILLMPort | null = null;
   let codeGenerator: ICodeGenerationPort | null = null;
   let workplanExecutor: IWorkplanPort | null = null;
 
-  const anthropicKey = process.env['ANTHROPIC_API_KEY'];
-  const openaiKey = process.env['OPENAI_API_KEY'];
+  let anthropicKey = process.env['ANTHROPIC_API_KEY'];
+  let openaiKey = process.env['OPENAI_API_KEY'];
+
+  // If Infisical is active and env vars are missing, try resolving from secrets
+  if (!anthropicKey && !openaiKey && !(secrets instanceof EnvSecretsAdapter)) {
+    const [aResult, oResult] = await Promise.all([
+      secrets.resolveSecret('ANTHROPIC_API_KEY'),
+      secrets.resolveSecret('OPENAI_API_KEY'),
+    ]);
+    if (aResult.ok) anthropicKey = aResult.value;
+    if (oResult.ok) openaiKey = oResult.value;
+  }
 
   if (anthropicKey || openaiKey) {
     const provider: LLMAdapterConfig['provider'] = anthropicKey ? 'anthropic' : 'openai';
@@ -235,5 +288,6 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     swarm,
     registry,
     broadcaster: broadcastAdapter,
+    secrets,
   };
 }

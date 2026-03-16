@@ -12,6 +12,7 @@ import type { IEventBusPort } from './event-bus.js';
 import type { ISwarmPort, ISwarmOrchestrationPort } from './swarm.js';
 import type { IRegistryPort } from './registry.js';
 import type { IBroadcastPort } from './broadcast.js';
+import type { ISecretsPort } from './secrets.js';
 
 export interface AppContext {
   rootPath: string;
@@ -44,6 +45,9 @@ export interface AppContext {
   swarm: ISwarmPort;
   registry: IRegistryPort;
   broadcaster: IBroadcastPort;
+
+  /** Secrets manager — Infisical when configured, env-var fallback otherwise */
+  secrets: ISecretsPort;
 
   /** Local output directory for analysis reports, caches, and logs */
   outputDir: string; // defaults to '.hex/' — gitignored, project-scoped
