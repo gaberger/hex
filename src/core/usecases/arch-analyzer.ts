@@ -65,6 +65,17 @@ function hasReExports(summary: ASTSummary): boolean {
 export class ArchAnalyzer implements IArchAnalysisPort {
   private goModulePrefix: string | null = null;
 
+  /**
+   * Normalize a user-supplied scope path into a relative prefix for glob patterns.
+   * Absolute paths, '.', and '' all resolve to '' (no prefix = project root).
+   */
+  private static normalizeScopePrefix(scopePath: string): string {
+    if (scopePath === '' || scopePath === '.') return '';
+    // Absolute paths: treat as project root (the fs adapter resolves from cwd)
+    if (scopePath.startsWith('/')) return '';
+    return scopePath.replace(/\/$/, '') + '/';
+  }
+
   constructor(
     private readonly ast: IASTPort,
     private readonly fs: IFileSystemPort,
@@ -82,10 +93,11 @@ export class ArchAnalyzer implements IArchAnalysisPort {
    * Detect Go module name from go.mod in common locations.
    * Returns the module path (e.g. "hex-f1" or "github.com/org/repo") or null.
    */
-  private async detectGoModulePrefix(): Promise<string | null> {
+  private async detectGoModulePrefix(scopePath: string): Promise<string | null> {
+    const prefix = ArchAnalyzer.normalizeScopePrefix(scopePath);
     for (const candidate of ['go.mod', 'backend/go.mod', 'src/go.mod', 'cmd/go.mod']) {
       try {
-        const content = await this.fs.read(candidate);
+        const content = await this.fs.read(prefix + candidate);
         const match = content.match(/^module\s+(\S+)/m);
         if (match) return match[1];
       } catch { /* not found */ }
@@ -93,31 +105,37 @@ export class ArchAnalyzer implements IArchAnalysisPort {
     return null;
   }
 
-  private async collectSummaries(): Promise<ASTSummary[]> {
+  private async collectSummaries(scopePath: string): Promise<ASTSummary[]> {
     // Auto-detect Go module prefix once per analysis run
     if (this.goModulePrefix === null) {
-      this.goModulePrefix = await this.detectGoModulePrefix() ?? '';
+      this.goModulePrefix = await this.detectGoModulePrefix(scopePath) ?? '';
     }
-    const results = await Promise.all(SOURCE_GLOBS.map((g) => this.fs.glob(g)));
+    const prefix = ArchAnalyzer.normalizeScopePrefix(scopePath);
+    const results = await Promise.all(SOURCE_GLOBS.map((g) => this.fs.glob(prefix + g)));
     const allFiles = results.flat();
-    const sourceFiles = allFiles.filter((f) => !matchesExclude(f, this.excludePatterns));
+    // When scoped to a subdirectory, don't exclude files that are inside the scope
+    // (e.g. scoping to 'examples/weather/backend' should not be blocked by the 'examples' exclude)
+    const activeExcludes = prefix
+      ? this.excludePatterns.filter((p) => !prefix.startsWith(p) && !prefix.includes(`/${p}/`))
+      : this.excludePatterns;
+    const sourceFiles = allFiles.filter((f) => !matchesExclude(f, activeExcludes));
     return Promise.all(
       sourceFiles.map((f) => this.ast.extractSummary(f, 'L1')),
     );
   }
 
-  async buildDependencyGraph(_rootPath: string): Promise<ImportEdge[]> {
-    const summaries = await this.collectSummaries();
+  async buildDependencyGraph(rootPath: string): Promise<ImportEdge[]> {
+    const summaries = await this.collectSummaries(rootPath);
     return this.buildEdgesFromSummaries(summaries);
   }
 
-  async findDeadExports(_rootPath: string): Promise<DeadExport[]> {
-    const summaries = await this.collectSummaries();
+  async findDeadExports(rootPath: string): Promise<DeadExport[]> {
+    const summaries = await this.collectSummaries(rootPath);
     return this.findDeadFromSummaries(summaries);
   }
 
-  async validateHexBoundaries(_rootPath: string): Promise<DependencyViolation[]> {
-    const edges = await this.buildDependencyGraph('');
+  async validateHexBoundaries(rootPath: string): Promise<DependencyViolation[]> {
+    const edges = await this.buildDependencyGraph(rootPath);
     const violations: DependencyViolation[] = [];
 
     for (const edge of edges) {
@@ -144,8 +162,8 @@ export class ArchAnalyzer implements IArchAnalysisPort {
     return violations;
   }
 
-  async detectCircularDeps(_rootPath: string): Promise<string[][]> {
-    const edges = await this.buildDependencyGraph('');
+  async detectCircularDeps(rootPath: string): Promise<string[][]> {
+    const edges = await this.buildDependencyGraph(rootPath);
 
     // Build adjacency list
     const graph = new Map<string, Set<string>>();
@@ -189,11 +207,11 @@ export class ArchAnalyzer implements IArchAnalysisPort {
     return cycles;
   }
 
-  async analyzeArchitecture(_rootPath: string): Promise<ArchAnalysisResult> {
+  async analyzeArchitecture(rootPath: string): Promise<ArchAnalysisResult> {
     // Reset Go module prefix for fresh detection on each analysis run
     this.goModulePrefix = null;
     // Collect summaries ONCE and pass to all sub-analyses to avoid 5x re-parsing
-    const summaries = await this.collectSummaries();
+    const summaries = await this.collectSummaries(rootPath);
     const edges = this.buildEdgesFromSummaries(summaries);
 
     const deadExports = this.findDeadFromSummaries(summaries);
