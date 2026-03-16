@@ -308,13 +308,26 @@ interface ISwarmPort {
 
 </details>
 
-### Dashboard
+### Dashboard (hex-hub)
+
+hex-hub is a Rust-native dashboard service that replaces the Node.js dashboard. It runs as a system-wide daemon on port 5555.
 
 ```bash
-hex dashboard --port 3456
+# Auto-starts on any hex command (if binary installed)
+hex analyze .
+
+# Manual control
+hex hub start           # Start daemon
+hex hub stop            # Stop daemon
+hex hub status          # Show status + connected projects
+
+# Open in browser
+open http://localhost:5555
 ```
 
-Real-time web UI with WebSocket updates showing agent status, task progress, and architecture health.
+Features: multi-project tabs, real-time SSE events, WebSocket pub/sub, embedded dashboard UI. 1.5MB binary, zero runtime dependencies.
+
+See [hex-hub/README.md](hex-hub/README.md) for full API reference.
 
 <br/>
 
@@ -500,7 +513,8 @@ npx hex --help
 | `hex validate <path>` | Post-build semantic validation (blocking gate) |
 | `hex orchestrate` | Execute workplan steps via swarm agents |
 | `hex status` | Swarm progress report |
-| `hex dashboard` | Start real-time monitoring dashboard (auto-starts on project load) |
+| `hex hub [start\|stop\|status]` | Manage hex-hub daemon (Rust dashboard service) |
+| `hex dashboard` | Legacy Node.js dashboard (fallback if hex-hub binary not installed) |
 | `hex mcp` | Start MCP stdio server for Claude Code / IDE integration |
 | `hex setup` | Install tree-sitter grammars + skills + agents |
 | `hex init` | Initialize project with startup hooks |
@@ -659,6 +673,7 @@ tests/
   unit/                  # London-school mock-first tests
   integration/           # Real adapter tests
 examples/                # Reference apps (weather, rust-api, flappy-bird, todo-app, test-app, summaries)
+hex-hub/                 # Rust dashboard daemon (axum, system-wide on port 5555)
 agents/                  # Agent definitions (YAML)
 skills/                  # Skill definitions (Markdown)
 config/                  # Language configs, tree-sitter settings
@@ -704,7 +719,8 @@ bun run build        # Bundle CLI + library to dist/
 bun test             # Run all tests (unit + property + smoke)
 bun run check        # TypeScript type check (no emit)
 hex analyze .   # Architecture validation
-hex setup       # Install grammars + skills + agents
+hex setup       # Install grammars + skills + agents + hex-hub binary
+cargo build --release -p hex-hub  # Build dashboard binary manually
 ```
 
 <br/>
@@ -733,6 +749,7 @@ hex setup       # Install grammars + skills + agents
 | **`hex_build` single entry point** | Users describe what to build; hex handles plan → orchestrate → analyze → validate internally |
 | **Pluggable secrets chain** | `ISecretsPort` adapters stack: Infisical → LocalVault → env-var; composition root selects |
 | **Dashboard auto-start** | Dashboard HTTP server launches on project load; port conflicts and stale locks self-heal |
+| **Rust hub over Node hub** | 1.5MB binary vs Node.js process; zero runtime deps; system-wide daemon serves all projects |
 
 </details>
 

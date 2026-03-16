@@ -148,27 +148,20 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
       (err) => process.stderr.write(`[hex] AgentDB session skipped: ${err instanceof Error ? err.message : String(err)}\n`),
     ).finally(() => writeFile(statusFile, JSON.stringify(status, null, 2)).catch(() => {}));
 
-    // Connect to central dashboard hub (port 5555) as a client
-    // Hub may or may not be running — if not, we start one in-process
+    // Start Rust hex-hub daemon (if binary available), then register as a client
     void (async () => {
       try {
-        const { DashboardHub, HUB_PORT } = await import('./adapters/primary/dashboard-hub.js');
-        const { DashboardAdapter } = await import('./adapters/primary/dashboard-adapter.js');
-
-        // Try to start the hub (if not already running on 5555)
+        const { ensureHubRunning } = await import('./adapters/secondary/hub-launcher.js');
         try {
-          const hub = new DashboardHub(HUB_PORT);
-          const { url } = await hub.start();
-          process.stderr.write(`[hex] Dashboard hub started at ${url}\n`);
-        } catch (hubErr: any) {
-          if (hubErr?.code === 'EADDRINUSE') {
-            process.stderr.write(`[hex] Dashboard hub already running on port ${HUB_PORT}\n`);
-          } else {
-            throw hubErr;
-          }
+          const hubUrl = await ensureHubRunning();
+          process.stderr.write(`[hex] Hub running at ${hubUrl}\n`);
+        } catch (hubErr) {
+          process.stderr.write(`[hex] Hub skipped: ${hubErr instanceof Error ? hubErr.message : String(hubErr)}\n`);
         }
 
         // Register this project as a client that pushes data to the hub
+        const { DashboardAdapter } = await import('./adapters/primary/dashboard-adapter.js');
+        const HUB_PORT = 5555;
         const ctx = { rootPath: projectPath, astIsStub, archAnalyzer, ast, fs, git, worktree, build, swarm, registry, notifier, eventBus, summaryService, notificationOrchestrator, llm: null, codeGenerator: null, workplanExecutor: null, swarmOrchestrator, autoConfirm: false, outputDir, broadcaster: broadcastAdapter } as any;
         const client = new DashboardAdapter(ctx, HUB_PORT);
         const { url } = await client.start();

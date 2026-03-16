@@ -514,11 +514,61 @@ export class CLIAdapter {
     return this.startHub(args, false);
   }
 
-  // ── hub (multi-project dashboard) ───────────────────
+  // ── hub (Rust hex-hub binary management) ────────────
 
   private async hub(args: ParsedArgs): Promise<number> {
-    const isDaemon = process.env['HEX_DAEMON'] === '1' || args.flags.has('daemon');
-    return this.startHub(args, isDaemon);
+    // Legacy: if HEX_DAEMON=1 or --daemon, start the Node hub (backwards compat)
+    if (process.env['HEX_DAEMON'] === '1' || args.flags.has('daemon')) {
+      return this.startHub(args, true);
+    }
+
+    const subCmd = args.positional[0] ?? 'status';
+    const { HubLauncher } = await import('../secondary/hub-launcher.js');
+    const launcher = new HubLauncher();
+
+    switch (subCmd) {
+      case 'start': {
+        const token = args.flags.get('token') ?? process.env['HEX_DASHBOARD_TOKEN'];
+        try {
+          const { started, url } = await launcher.start(token);
+          if (started) {
+            this.writeLn(`hex-hub started at ${url}`);
+          } else {
+            this.writeLn(`hex-hub already running at ${url}`);
+          }
+          return 0;
+        } catch (err) {
+          this.writeLn(`Error: ${err instanceof Error ? err.message : String(err)}`);
+          return 1;
+        }
+      }
+      case 'stop': {
+        const stopped = await launcher.stop();
+        this.writeLn(stopped ? 'hex-hub stopped.' : 'hex-hub was not running.');
+        return stopped ? 0 : 1;
+      }
+      case 'status': {
+        const status = await launcher.status();
+        if (status.running) {
+          this.writeLn(`hex-hub: running at ${status.url}`);
+          this.writeLn(`Projects: ${status.projects} registered`);
+        } else {
+          this.writeLn('hex-hub: not running');
+          const binary = launcher.findBinary();
+          if (binary) {
+            this.writeLn(`Binary: ${binary}`);
+            this.writeLn('Start with: hex hub start');
+          } else {
+            this.writeLn('Binary: not found — run "hex setup" to install');
+          }
+        }
+        return 0;
+      }
+      default:
+        this.writeLn(`Unknown hub command: ${subCmd}`);
+        this.writeLn('Usage: hex hub [start|stop|status]');
+        return 1;
+    }
   }
 
   /**
@@ -1682,7 +1732,7 @@ export class CLIAdapter {
     this.writeLn('    [--lang ts|go|rust]');
     this.writeLn('  setup                           Download grammars + install skills/agents');
     this.writeLn('  dashboard [--port N]             Start dashboard (auto-detects running daemon)');
-    this.writeLn('  hub [paths...] [--port N]       Multi-project dashboard with WebSocket');
+    this.writeLn('  hub [start|stop|status]          Manage hex-hub daemon (Rust dashboard service)');
     this.writeLn('  daemon [status|start|stop|logs] Background dashboard service');
     this.writeLn('  status                          Show dashboard, tasks, agents, patterns');
     this.writeLn('  init [--lang ts|go|rust]        Scaffold a hex project');
@@ -1813,6 +1863,52 @@ export class CLIAdapter {
 
     // Register ruflo MCP server in project-local Claude Code settings
     await this.registerRufloMCP(claudeDir, join);
+
+    // Build hex-hub Rust binary
+    this.writeLn('');
+    this.writeLn('Installing hex-hub dashboard service...');
+    const { existsSync } = await import('node:fs');
+    const { homedir } = await import('node:os');
+    const hubDir = join(this.ctx.rootPath, 'hex-hub');
+    const hubCargoToml = join(hubDir, 'Cargo.toml');
+
+    if (existsSync(hubCargoToml)) {
+      // Dev mode: build from source
+      try {
+        const { promisify } = await import('util');
+        const { execFile: execFileCb } = await import('child_process');
+        const execFile = promisify(execFileCb);
+
+        this.writeLn('  Building hex-hub from source (cargo build --release)...');
+        await execFile('cargo', ['build', '--release', '--manifest-path', hubCargoToml], {
+          timeout: 120_000,
+        });
+
+        // Copy binary to ~/.hex/bin/
+        const { mkdirSync, copyFileSync, chmodSync } = await import('node:fs');
+        const targetBin = join(homedir(), '.hex', 'bin');
+        mkdirSync(targetBin, { recursive: true });
+        const src = join(hubDir, 'target', 'release', 'hex-hub');
+        const dest = join(targetBin, 'hex-hub');
+        copyFileSync(src, dest);
+        chmodSync(dest, 0o755);
+
+        this.writeLn(`  hex-hub installed to ${dest}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.writeLn(`  hex-hub build failed: ${msg}`);
+        this.writeLn('  Install Rust toolchain (rustup.rs) and retry, or use the Node dashboard fallback.');
+      }
+    } else {
+      // npm install mode: no source available, check if binary exists
+      const hexBin = join(homedir(), '.hex', 'bin', 'hex-hub');
+      if (existsSync(hexBin)) {
+        this.writeLn(`  hex-hub already installed at ${hexBin}`);
+      } else {
+        this.writeLn('  hex-hub not found. For now, the Node.js dashboard will be used as fallback.');
+        this.writeLn('  To install: clone the repo and run "cargo build --release" in hex-hub/');
+      }
+    }
 
     this.writeLn('');
     this.writeLn('Setup complete. Available commands:');
