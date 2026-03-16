@@ -813,7 +813,7 @@ hex builds on the **Hexagonal Architecture** pattern (also known as **Ports and 
 
 | Contributor | Role |
 |:------------|:-----|
-| **Gary** ([@garyhost](https://github.com/garyhost)) | Creator, architect, primary developer |
+| **Gary** ([@gaberger](https://github.com/gaberger/hex)) | Creator, architect, primary developer |
 | **Claude** (Anthropic) | AI pair programmer — code generation, testing, documentation |
 
 ### License
