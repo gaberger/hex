@@ -1,8 +1,6 @@
 {
-  "mcpServers": {
-    "hex": {
-      "command": "npx",
-      "args": ["hex", "mcp"]
-    }
+  "statusLine": {
+    "type": "command",
+    "command": "node ../../scripts/hex-statusline.cjs"
   }
 }
