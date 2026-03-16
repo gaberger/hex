@@ -143,19 +143,27 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
       (err) => process.stderr.write(`[hex] AgentDB session skipped: ${err instanceof Error ? err.message : String(err)}\n`),
     ).finally(() => writeFile(statusFile, JSON.stringify(status, null, 2)).catch(() => {}));
 
-    // Auto-register with project registry + start dashboard
+    // Auto-register with project registry + start dashboard server
     void (async () => {
       try {
         const reg = await registry.register(projectPath, projectName);
-        status.dashboard = `localhost:${reg.port}`;
         await registry.writeLocalIdentity(projectPath, {
           id: reg.id,
           name: reg.name,
           createdAt: reg.createdAt,
         });
-        process.stderr.write(`[hex] Registered ${projectName} (port ${reg.port})\n`);
+
+        // Start the actual dashboard HTTP server on the assigned port
+        const { DashboardAdapter } = await import('./adapters/primary/dashboard-adapter.js');
+        const dash = new DashboardAdapter(
+          { rootPath: projectPath, astIsStub, archAnalyzer, ast, fs, git, worktree, build, swarm, registry, notifier, eventBus, summaryService, notificationOrchestrator, llm: null, codeGenerator: null, workplanExecutor: null, swarmOrchestrator, autoConfirm: false, outputDir, broadcaster: broadcastAdapter } as any,
+          reg.port,
+        );
+        const { url } = await dash.start();
+        status.dashboard = url.replace('http://', '');
+        process.stderr.write(`[hex] Dashboard live at ${url}\n`);
       } catch (err) {
-        process.stderr.write(`[hex] Registry skipped: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.stderr.write(`[hex] Dashboard skipped: ${err instanceof Error ? err.message : String(err)}\n`);
       }
       await writeFile(statusFile, JSON.stringify(status, null, 2)).catch(() => {});
     })();
