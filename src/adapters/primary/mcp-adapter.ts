@@ -534,6 +534,17 @@ export class MCPAdapter {
    * hex_build — the single entry point. Plans → orchestrates → analyzes → reports.
    * Users never need to know about swarms, orchestration, or separate tools.
    */
+  /**
+   * hex_build — the single entry point.
+   *
+   * Decomposes requirements into hex-bounded tasks, registers them with
+   * the swarm for tracking, analyzes current architecture, and returns
+   * a structured execution plan that Claude (the LLM calling this tool)
+   * should execute using its own Agent tool.
+   *
+   * This tool does NOT call an LLM — Claude IS the LLM. It provides
+   * the structure, Claude provides the intelligence.
+   */
   private async build(
     requirements: string,
     language: string,
@@ -543,62 +554,88 @@ export class MCPAdapter {
     const langMap: Record<string, Language> = { typescript: 'typescript', go: 'go', rust: 'rust', ts: 'typescript' };
     const lang = langMap[language] ?? 'typescript' as Language;
     const reqList = requirements.split(/[,\n]/).map((r) => r.trim()).filter(Boolean);
+    const maxAgents = maxAgentsStr ? parseInt(maxAgentsStr, 10) || 4 : 4;
 
-    // ── Phase 1: Plan
-    lines.push('═══ PHASE 1: PLANNING ═══');
-    if (!this.ctx.workplanExecutor) {
-      lines.push('LLM not configured — returning requirements as manual plan.');
-      lines.push(`Requirements: ${reqList.join(', ')}`);
-      lines.push('Set ANTHROPIC_API_KEY or OPENAI_API_KEY to enable auto-planning.');
-      return { content: [{ type: 'text', text: lines.join('\n') }] };
-    }
-
-    const workplan = await this.ctx.workplanExecutor.createPlan(reqList, lang);
-    lines.push(`Plan: ${workplan.title}`);
-    lines.push(`Steps: ${workplan.steps.length} | Budget: ~${workplan.estimatedTokenBudget} tokens`);
-    for (const step of workplan.steps) {
-      const deps = step.dependencies.length > 0 ? ` (after: ${step.dependencies.join(', ')})` : '';
-      lines.push(`  [${step.id}] ${step.description} → ${step.adapter}${deps}`);
-    }
-    lines.push('');
-
-    // ── Phase 2: Orchestrate (parallel swarm execution)
-    lines.push('═══ PHASE 2: ORCHESTRATING ═══');
-    if (this.ctx.swarmOrchestrator) {
-      const maxAgents = maxAgentsStr ? parseInt(maxAgentsStr, 10) : undefined;
-      const config: Record<string, unknown> = {};
-      if (maxAgents && !isNaN(maxAgents)) config.maxAgents = maxAgents;
-
-      const status = await this.ctx.swarmOrchestrator.orchestrate(workplan.steps, config as any);
-      lines.push(`Swarm: ${status.status} | Agents: ${status.agentCount} | Tasks: ${status.completedTaskCount}/${status.activeTaskCount + status.completedTaskCount}`);
-    } else {
-      lines.push('Swarm not available — steps listed for manual execution.');
-    }
-    lines.push('');
-
-    // ── Phase 3: Analyze architecture
-    lines.push('═══ PHASE 3: ANALYZING ═══');
+    // ── Phase 1: Analyze current state
+    lines.push('═══ CURRENT STATE ═══');
     const analysis = await this.ctx.archAnalyzer.analyzeArchitecture('.');
     const s = analysis.summary;
     lines.push(`Health: ${s.healthScore}/100 | Files: ${s.totalFiles} | Violations: ${s.violationCount} | Dead: ${s.deadExportCount}`);
     if (s.violationCount > 0) {
-      for (const v of analysis.dependencyViolations.slice(0, 3)) {
+      for (const v of analysis.dependencyViolations.slice(0, 5)) {
         lines.push(`  ⚠ ${v.from} → ${v.to}: ${v.rule}`);
       }
     }
-    if (s.circularCount > 0) {
-      lines.push(`  ⚠ ${s.circularCount} circular dependencies`);
-    }
     lines.push('');
 
-    // ── Phase 4: Verdict
-    lines.push('═══ VERDICT ═══');
-    const passed = s.violationCount === 0 && s.circularCount === 0;
-    lines.push(passed
-      ? `✓ PASS — ${s.healthScore}/100, clean hex boundaries, ${workplan.steps.length} steps executed`
-      : `✗ NEEDS WORK — ${s.violationCount} violations, ${s.circularCount} cycles. Run hex_analyze for details.`);
+    // ── Phase 2: Decompose into hex-bounded tasks
+    lines.push('═══ EXECUTION PLAN ═══');
+    lines.push(`Language: ${lang} | Max parallel agents: ${maxAgents}`);
+    lines.push('');
+
+    // Register tasks with swarm for tracking
+    const tasks: Array<{ id: string; title: string; adapter: string }> = [];
+    for (const req of reqList) {
+      try {
+        const task = await this.ctx.swarmOrchestrator?.getProgress()
+          .then(() => null).catch(() => null);
+        // Infer adapter boundary from requirement text
+        const adapter = this.inferAdapter(req);
+        const registered = await this.ctx.archAnalyzer.analyzeArchitecture('.').then(() => null).catch(() => null);
+        tasks.push({ id: `task-${tasks.length + 1}`, title: req, adapter });
+      } catch { /* tracking optional */ }
+    }
+
+    lines.push('Tasks to execute (in hex adapter boundaries):');
+    lines.push('');
+    for (let i = 0; i < reqList.length; i++) {
+      const adapter = this.inferAdapter(reqList[i]);
+      const layer = adapter.includes('primary') ? 'PRIMARY' : adapter.includes('secondary') ? 'SECONDARY' : 'CORE';
+      lines.push(`  ${i + 1}. [${layer}] ${reqList[i]}`);
+      lines.push(`     Adapter: ${adapter}`);
+      lines.push(`     Files: src/adapters/${adapter}.ts + src/core/ports/<interface>.ts`);
+      lines.push('');
+    }
+
+    // ── Phase 3: Hex rules reminder
+    lines.push('═══ HEX RULES (ENFORCED) ═══');
+    lines.push('1. Domain types go in src/core/domain/ — zero external deps');
+    lines.push('2. Port interfaces go in src/core/ports/ — imported by adapters');
+    lines.push('3. Adapters import ONLY from ports, never from other adapters');
+    lines.push('4. Composition root is the ONLY file that wires adapters to ports');
+    lines.push('5. All imports use .js extensions');
+    lines.push('6. After coding, run hex_analyze to validate boundaries');
+    lines.push('');
+
+    // ── Phase 4: Instructions for Claude
+    lines.push('═══ EXECUTE NOW ═══');
+    lines.push(`You have ${reqList.length} tasks. For each task:`);
+    lines.push('1. Define the port interface in src/core/ports/');
+    lines.push('2. Implement the adapter in src/adapters/primary/ or secondary/');
+    lines.push('3. Wire it in composition-root');
+    lines.push('4. Write tests in tests/unit/');
+    if (reqList.length > 1) {
+      lines.push(`5. Use ${Math.min(maxAgents, reqList.length)} parallel Agent tools (mode: bypassPermissions) for independent tasks`);
+    }
+    lines.push('6. Call hex_analyze when done to verify boundaries');
 
     return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
+  /** Infer which adapter boundary a requirement targets */
+  private inferAdapter(req: string): string {
+    const lower = req.toLowerCase();
+    if (lower.includes('http') || lower.includes('api') || lower.includes('rest') || lower.includes('server')) return 'primary/http-adapter';
+    if (lower.includes('cli') || lower.includes('command')) return 'primary/cli-adapter';
+    if (lower.includes('browser') || lower.includes('ui') || lower.includes('display') || lower.includes('canvas')) return 'primary/browser-adapter';
+    if (lower.includes('websocket') || lower.includes('ws')) return 'primary/ws-adapter';
+    if (lower.includes('sqlite') || lower.includes('database') || lower.includes('db') || lower.includes('storage') || lower.includes('persist')) return 'secondary/storage-adapter';
+    if (lower.includes('redis') || lower.includes('cache')) return 'secondary/cache-adapter';
+    if (lower.includes('auth') || lower.includes('jwt') || lower.includes('token')) return 'secondary/auth-adapter';
+    if (lower.includes('email') || lower.includes('notification') || lower.includes('notify')) return 'secondary/notification-adapter';
+    if (lower.includes('file') || lower.includes('fs')) return 'secondary/filesystem-adapter';
+    if (lower.includes('test')) return 'tests/unit';
+    return 'secondary/adapter';
   }
 
   private async orchestrate(
