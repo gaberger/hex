@@ -528,8 +528,10 @@ export class CLIAdapter {
       this.writeLn(`Dashboard: ${url}`);
       this.writeLn('Project registered — pushing architecture data...');
 
-      // Keep pushing in the background (adapter has a 10s interval)
-      // Unref the timer so it doesn't keep the process alive
+      // Wait for the initial data push to complete before exiting
+      await adapter.pushAllOnce();
+      this.writeLn('Architecture data pushed successfully.');
+      adapter.stop();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.writeLn(`Dashboard data push failed: ${msg}`);

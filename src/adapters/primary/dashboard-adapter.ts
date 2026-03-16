@@ -449,6 +449,11 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
   // ── Push all state ─────────────────────────────────
 
+  /** Public one-shot push for CLI use (awaitable, no timer). */
+  async pushAllOnce(): Promise<void> {
+    return this.pushAll();
+  }
+
   private async pushAll(): Promise<void> {
     if (!this.projectId) return;
 
