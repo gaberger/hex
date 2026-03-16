@@ -82,7 +82,7 @@ export class HubLauncher {
 
   /** Stop the running hub by reading the lock file PID and sending SIGTERM */
   async stop(): Promise<boolean> {
-    const lockPath = join(homedir(), '.hex', 'hub.lock');
+    const lockPath = join(homedir(), '.hex', 'daemon', 'hub.lock');
     try {
       const raw: unknown = JSON.parse(readFileSync(lockPath, 'utf-8'));
       if (typeof raw === 'object' && raw !== null && 'pid' in raw) {

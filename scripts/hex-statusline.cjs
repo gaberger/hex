@@ -69,6 +69,18 @@ const activeAgents   = statusData ? (statusData.activeAgents || 0) : 0;
 const totalTasks     = statusData ? (statusData.tasks || 0) : 0;
 const completedTasks = statusData ? (statusData.completedTasks || 0) : 0;
 
+// Check if hex-hub daemon is running (lock file, status.json, or TCP port probe)
+const hubLockPath = path.join(require('os').homedir(), '.hex', 'daemon', 'hub.lock');
+const hubLock = safe(() => JSON.parse(fs.readFileSync(hubLockPath, 'utf8')), null);
+const hubPidAlive = !!(hubLock && hubLock.pid && safe(() => { process.kill(hubLock.pid, 0); return true; }, false));
+// Also check if anything is listening on port 5555 (covers Node hub or Rust hub without lock file)
+const { execFileSync: execSync2 } = require('child_process');
+const hubPortOpen = safe(() => {
+  execSync2('lsof', ['-iTCP:5555', '-sTCP:LISTEN', '-t'], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().length > 0;
+  return true;
+}, false);
+const hubRunning = hubPidAlive || hubPortOpen;
+
 const cfMetrics = path.join(require('os').homedir(), '.claude-flow', 'metrics');
 const cfAlive = safe(() =>
   fs.existsSync(cfMetrics) && (Date.now() - fs.statSync(cfMetrics).mtimeMs) < 300000, false);
@@ -114,9 +126,10 @@ if (activeAgents > 0) {
 
 // Services — compact dot indicators
 const dot = (on, label) => on ? `${P.on}● ${label}` : `${P.off}○ ${label}`;
+const hubActive = hubRunning || !!dashUrl;
 const svcs = [
   dot(dbShow, 'db'),
-  dot(!!dashUrl, 'dash'),
+  dot(hubActive, hubRunning ? 'hub' : 'dash'),
   dot(hexMcp, 'mcp'),
 ].join(`${P.dim} · `);
 parts.push(svcs);

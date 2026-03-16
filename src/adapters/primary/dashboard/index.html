@@ -173,6 +173,10 @@ a{color:var(--accent);text-decoration:none}
       <span class="ast-badge" id="astBadge"></span>
     </div>
     <span class="project-count" id="projectCount"></span>
+    <a class="conn-badge" id="hubBadge" href="http://localhost:5555" target="_blank" title="hex-hub dashboard — click to open" style="text-decoration:none;color:inherit">
+      <span class="conn-dot" id="hubDot"></span>
+      <span id="hubLabel">hub</span>
+    </a>
     <div class="conn-badge">
       <span class="conn-dot" id="connDot"></span>
       <span id="connLabel">Connecting...</span>
@@ -1467,6 +1471,29 @@ a{color:var(--accent);text-decoration:none}
     tList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Tasks' }));
     tList.appendChild(createEl('div', { className: 'empty', textContent: 'No tasks registered' }));
 
+    // Hub health check — updates the hub badge in the header
+    function checkHubHealth() {
+      var hubDot = $('#hubDot');
+      var hubLabel = $('#hubLabel');
+      var hubBadge = $('#hubBadge');
+      fetch('/api/projects', { signal: AbortSignal.timeout(3000) })
+        .then(function(res) {
+          if (res.ok) {
+            hubDot.classList.remove('disconnected');
+            hubDot.style.background = 'var(--green)';
+            setText('#hubLabel', 'hub');
+            if (hubBadge) hubBadge.title = 'hex-hub running — click to open';
+          } else { throw new Error('not ok'); }
+        })
+        .catch(function() {
+          hubDot.classList.add('disconnected');
+          hubDot.style.background = 'var(--red)';
+          setText('#hubLabel', 'hub offline');
+          if (hubBadge) hubBadge.title = 'hex-hub not responding';
+        });
+    }
+    checkHubHealth();
+
     // Initial data load — detects hub vs single-project mode
     loadProjects();
 
@@ -1484,6 +1511,7 @@ a{color:var(--accent);text-decoration:none}
       });
       loadHealth();
       loadSwarm();
+      checkHubHealth();
     }, 10000);
   }
 
