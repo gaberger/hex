@@ -157,6 +157,7 @@ a{color:var(--accent);text-decoration:none}
 .project-tab .tab-dot.offline{background:var(--text2)}
 .no-projects{padding:10px 20px;color:var(--text2);font-size:.85rem;font-style:italic}
 .project-count{font-size:.7rem;color:var(--text2);padding:2px 8px;border-radius:10px;background:rgba(88,166,255,.1)}
+.version-badge{font-size:.65rem;color:var(--text2);padding:2px 8px;border-radius:10px;background:rgba(188,140,255,.1);font-family:'SF Mono',Consolas,monospace}
 
 /* Hidden dropdown (still used for programmatic access) */
 .project-selector{display:none}
@@ -207,6 +208,7 @@ a{color:var(--accent);text-decoration:none}
       <span class="ast-badge" id="astBadge"></span>
     </div>
     <span class="project-count" id="projectCount"></span>
+    <span class="version-badge" id="versionBadge"></span>
     <div class="conn-badge">
       <span class="conn-dot" id="connDot"></span>
       <span id="connLabel">Connecting...</span>
@@ -461,6 +463,14 @@ a{color:var(--accent);text-decoration:none}
   }
 
   // --- Project List & Switching ---
+  function loadVersion() {
+    rawFetch('/api/version').then(function(data) {
+      if (data && data.version) {
+        setText('#versionBadge', 'v' + data.version);
+      }
+    });
+  }
+
   function loadProjects() {
     rawFetch('/api/projects').then(function(data) {
       if (data && data.projects && data.projects.length > 0) {
@@ -2495,6 +2505,7 @@ a{color:var(--accent);text-decoration:none}
     tList.appendChild(createEl('div', { className: 'empty', textContent: 'No tasks registered' }));
 
     // Initial data load — detects hub vs single-project mode
+    loadVersion();
     loadProjects();
 
     // SSE connection

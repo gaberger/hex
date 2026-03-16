@@ -6,12 +6,20 @@ pub mod query;
 pub mod sse;
 pub mod ws;
 
-use axum::{Router, routing::{get, post, delete}, extract::DefaultBodyLimit};
+use axum::{Router, Json, routing::{get, post, delete}, extract::DefaultBodyLimit};
 use tower_http::cors::{CorsLayer, AllowOrigin};
 use http::{HeaderValue, Method};
+use serde_json::json;
 use crate::state::SharedState;
 use crate::middleware::auth::auth_layer;
 use crate::embed::serve_index;
+
+async fn get_version() -> Json<serde_json::Value> {
+    Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "name": "hex-hub",
+    }))
+}
 
 const PUSH_BODY_LIMIT: usize = 256 * 1024;  // 256KB for /api/push
 const EVENT_BODY_LIMIT: usize = 16 * 1024;  // 16KB for /api/event
@@ -30,8 +38,9 @@ pub fn build_router(state: SharedState) -> Router {
         ]);
 
     Router::new()
-        // Static
+        // Static + version
         .route("/", get(serve_index))
+        .route("/api/version", get(get_version))
         // Project management
         .route("/api/projects", get(projects::list_projects))
         .route("/api/projects/register", post(projects::register)
