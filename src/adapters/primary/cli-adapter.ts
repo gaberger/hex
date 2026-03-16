@@ -505,29 +505,44 @@ export class CLIAdapter {
   // ── dashboard ───────────────────────────────────────
 
   private async dashboard(args: ParsedArgs): Promise<number> {
-    const { DaemonManager } = await import('./daemon-manager.js');
-    const daemon = new DaemonManager();
-
-    // Check if a daemon is already running
-    const existing = await daemon.status();
-    if (existing.running) {
-      this.writeLn(`Dashboard running at http://localhost:${existing.port}`);
-      return 0;
-    }
-
-    // Launch Rust hex-hub binary (Node fallback removed)
     const { HubLauncher } = await import('../secondary/hub-launcher.js');
     const launcher = new HubLauncher();
 
-    try {
-      const { started, url } = await launcher.start();
-      this.writeLn(started ? `hex-hub started at ${url}` : `hex-hub already running at ${url}`);
-      return 0;
-    } catch (err) {
-      this.writeLn(`Error: ${err instanceof Error ? err.message : String(err)}`);
-      this.writeLn('Run "hex setup" to build and install the hex-hub binary.');
-      return 1;
+    // Ensure hex-hub is running
+    let url: string;
+    if (await launcher.isRunning()) {
+      url = 'http://127.0.0.1:5555';
+    } else {
+      try {
+        const result = await launcher.start();
+        url = result.url;
+        this.writeLn(`hex-hub started at ${url}`);
+      } catch (err) {
+        this.writeLn(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        this.writeLn('Run "hex setup" to build and install the hex-hub binary.');
+        return 1;
+      }
     }
+
+    // Register current project with the hub
+    try {
+      const name = this.ctx.rootPath.split('/').pop() ?? 'unknown';
+      const res = await fetch(`${url}/api/projects/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, rootPath: this.ctx.rootPath }),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as Record<string, unknown>;
+        this.writeLn(`Project "${name}" registered (id: ${data.id ?? 'ok'})`);
+      }
+    } catch {
+      // Registration is best-effort — hub may not support this endpoint yet
+    }
+
+    this.writeLn(`Dashboard: ${url}`);
+    return 0;
   }
 
   // ── hub (Rust hex-hub binary management) ────────────
