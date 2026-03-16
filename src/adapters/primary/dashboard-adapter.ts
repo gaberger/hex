@@ -63,6 +63,26 @@ function isLocalOrigin(origin: string): boolean {
   }
 }
 
+// ── Bearer token auth for mutating endpoints ─────────────
+
+/** Read optional auth token from HEX_DASHBOARD_TOKEN env var */
+function getDashboardToken(): string | null {
+  return process.env['HEX_DASHBOARD_TOKEN'] ?? null;
+}
+
+/**
+ * Check bearer token on mutating requests (POST/PUT/DELETE).
+ * Returns true if authorized (no token configured, or token matches).
+ * GET requests are always allowed (read-only).
+ */
+function isAuthorized(req: IncomingMessage): boolean {
+  const token = getDashboardToken();
+  if (!token) return true; // No token configured — open access (localhost default)
+  if (req.method === 'GET' || req.method === 'OPTIONS') return true;
+  const authHeader = req.headers.authorization ?? '';
+  return authHeader === `Bearer ${token}`;
+}
+
 // ── Dashboard Adapter ───────────────────────────────────
 
 export class DashboardAdapter {
@@ -147,10 +167,17 @@ export class DashboardAdapter {
       res.setHeader('Access-Control-Allow-Origin', origin || 'http://localhost');
     }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204).end();
+      return;
+    }
+
+    // Auth check — mutating endpoints require bearer token when HEX_DASHBOARD_TOKEN is set
+    if (!isAuthorized(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized. Set Authorization: Bearer <HEX_DASHBOARD_TOKEN>' }));
       return;
     }
 
@@ -237,10 +264,16 @@ export class DashboardAdapter {
     const hit = this.tokensCache.get();
     if (hit) return this.json(res, 200, hit);
 
-    const allFiles = await this.ctx.fs.glob('**/*.ts');
+    const globResults = await Promise.all([
+      this.ctx.fs.glob('**/*.ts'),
+      this.ctx.fs.glob('**/*.go'),
+      this.ctx.fs.glob('**/*.rs'),
+    ]);
+    const allFiles = globResults.flat();
     const sourceFiles = allFiles.filter(
       (f) => !f.includes('node_modules') && !f.includes('dist')
         && !f.includes('.test.ts') && !f.includes('.spec.ts')
+        && !f.includes('_test.go') && !f.includes('.test.rs')
         && !f.includes('examples'),
     );
 

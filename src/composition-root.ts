@@ -14,6 +14,7 @@ import { NotificationOrchestrator } from './core/usecases/notification-orchestra
 import { CodeGenerator } from './core/usecases/code-generator.js';
 import { WorkplanExecutor } from './core/usecases/workplan-executor.js';
 import { SummaryService } from './core/usecases/summary-service.js';
+import { SwarmOrchestrator } from './core/usecases/swarm-orchestrator.js';
 
 // ── Secondary Adapters (the ONLY adapter imports in the entire project) ──
 import { FileSystemAdapter } from './adapters/secondary/filesystem-adapter.js';
@@ -94,6 +95,7 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   const archAnalyzer = new ArchAnalyzer(ast, fs);
   const notificationOrchestrator = new NotificationOrchestrator(notifier);
   const summaryService = new SummaryService(ast, fs);
+  const swarmOrchestrator = new SwarmOrchestrator(swarm, worktree);
 
   // LLM: graceful degradation — null when no API key is configured
   let llm: ILLMPort | null = null;
@@ -122,6 +124,7 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     codeGenerator,
     workplanExecutor,
     summaryService,
+    swarmOrchestrator,
     fs,
     git,
     worktree,

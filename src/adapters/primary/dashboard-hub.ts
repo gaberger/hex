@@ -95,6 +95,20 @@ function isLocalOrigin(origin: string): boolean {
   }
 }
 
+/** Read optional auth token from HEX_DASHBOARD_TOKEN env var */
+function getDashboardToken(): string | null {
+  return process.env['HEX_DASHBOARD_TOKEN'] ?? null;
+}
+
+/** Check bearer token on mutating requests. GET/OPTIONS always pass. */
+function isAuthorized(req: IncomingMessage): boolean {
+  const token = getDashboardToken();
+  if (!token) return true;
+  if (req.method === 'GET' || req.method === 'OPTIONS') return true;
+  const authHeader = req.headers.authorization ?? '';
+  return authHeader === `Bearer ${token}`;
+}
+
 // ── Dashboard Hub ───────────────────────────────────────
 
 export class DashboardHub {
@@ -234,8 +248,14 @@ export class DashboardHub {
       res.setHeader('Access-Control-Allow-Origin', origin || 'http://localhost');
     }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
+
+    // Auth check — mutating endpoints require bearer token when HEX_DASHBOARD_TOKEN is set
+    if (!isAuthorized(req)) {
+      this.json(res, 401, { error: 'Unauthorized. Set Authorization: Bearer <HEX_DASHBOARD_TOKEN>' });
+      return;
+    }
 
     try {
       // ── Global routes ──

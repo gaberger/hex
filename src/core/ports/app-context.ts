@@ -9,7 +9,7 @@
 import type { IArchAnalysisPort, IASTPort, ICodeGenerationPort, IFileSystemPort, IGitPort, ILLMPort, ISummaryPort, IWorktreePort, IWorkplanPort, IBuildPort } from './index.js';
 import type { INotificationEmitPort, INotificationQueryPort } from './notification.js';
 import type { IEventBusPort } from './event-bus.js';
-import type { ISwarmPort } from './swarm.js';
+import type { ISwarmPort, ISwarmOrchestrationPort } from './swarm.js';
 import type { IRegistryPort } from './registry.js';
 
 export interface AppContext {
@@ -28,6 +28,9 @@ export interface AppContext {
   llm: ILLMPort | null;
   codeGenerator: ICodeGenerationPort | null;
   workplanExecutor: IWorkplanPort | null;
+
+  // Swarm orchestration (composes swarm + worktree for parallel execution)
+  swarmOrchestrator: ISwarmOrchestrationPort;
 
   // Secondary adapters (behind port interfaces)
   fs: IFileSystemPort;
