@@ -25,7 +25,8 @@
           "interfaces": "(interface_declaration name: (type_identifier) @name) @iface",
           "types": "(type_alias_declaration name: (type_identifier) @name) @type",
           "enums": "(enum_declaration name: (identifier) @name) @enum",
-          "constants": "(lexical_declaration (variable_declarator name: (identifier) @name)) @const"
+          "constants": "(lexical_declaration (variable_declarator name: (identifier) @name)) @const",
+          "defaultExports": "(export_statement \"default\" (_) @decl) @export"
         },
         "L2": {
           "methodSignatures": "(method_signature name: (property_identifier) @name parameters: (formal_parameters) @params return_type: (type_annotation)? @ret) @method",
@@ -56,14 +57,19 @@
           "structs": "(type_declaration (type_spec name: (type_identifier) @name type: (struct_type))) @struct",
           "interfaces": "(type_declaration (type_spec name: (type_identifier) @name type: (interface_type))) @iface",
           "types": "(type_declaration (type_spec name: (type_identifier) @name)) @type",
-          "constants": "(const_declaration) @const"
+          "constants": "(const_declaration) @const",
+          "initFunctions": "(function_declaration name: (identifier) @name (#eq? @name \"init\")) @func"
         },
         "L2": {
-          "structFields": "(field_declaration name: (field_identifier) @name type: (_) @type) @field",
-          "methodReceiver": "(method_declaration receiver: (parameter_list (parameter_declaration type: (_) @recv)) name: (field_identifier) @name) @method",
+          "structFields": "(field_declaration name: (field_identifier) @name type: (_) @type tag: (raw_string_literal)? @tag) @field",
+          "embeddedFields": "(field_declaration type: (type_identifier) @name) @field",
+          "methodReceiver": "(method_declaration receiver: (parameter_list (parameter_declaration name: (identifier)? @recv_name type: (_) @recv_type)) name: (field_identifier) @name) @method",
           "functionParams": "(parameter_list (parameter_declaration name: (identifier) @name type: (_) @type)) @params",
-          "returnType": "(function_declaration result: (_) @ret) @func",
-          "interfaceMethods": "(method_spec name: (field_identifier) @name parameters: (parameter_list) @params result: (_)? @ret) @method"
+          "functionReturnType": "(function_declaration name: (identifier) @name result: (_) @ret) @func",
+          "methodReturnType": "(method_declaration name: (field_identifier) @name result: (_) @ret) @method",
+          "multipleReturn": "(parameter_list (parameter_declaration type: (_) @type)) @results",
+          "interfaceMethods": "(method_spec name: (field_identifier) @name parameters: (parameter_list) @params result: (_)? @ret) @method",
+          "interfaceEmbedded": "(interface_type (type_identifier) @embedded)"
         }
       },
       "exportDetection": "capitalized_identifier",
@@ -85,16 +91,23 @@
           "enums": "(enum_item name: (type_identifier) @name) @enum",
           "types": "(type_item name: (type_identifier) @name) @type",
           "constants": "(const_item name: (identifier) @name) @const",
-          "impls": "(impl_item type: (type_identifier) @name) @impl"
+          "impls": "(impl_item type: (type_identifier) @name) @impl",
+          "modules": "(mod_item name: (identifier) @name) @mod",
+          "macros": "(macro_definition name: (identifier) @name) @macro"
         },
         "L2": {
-          "structFields": "(field_declaration name: (field_identifier) @name type: (_) @type) @field",
-          "traitMethods": "(trait_item body: (declaration_list (function_signature_item name: (identifier) @name parameters: (parameters) @params return_type: (_)? @ret))) @method",
-          "implMethods": "(impl_item body: (declaration_list (function_item name: (identifier) @name parameters: (parameters) @params return_type: (_)? @ret))) @method",
-          "enumVariants": "(enum_variant name: (identifier) @name body: (_)? @body) @variant",
-          "lifetimes": "(lifetime) @lifetime",
-          "typeParameters": "(type_parameters) @tparams",
-          "whereClause": "(where_clause) @where"
+          "structFields": "(field_declaration (visibility_modifier)? @vis name: (field_identifier) @name type: (_) @type) @field",
+          "traitMethods": "(function_signature_item name: (identifier) @name parameters: (parameters) @params return_type: (_)? @ret) @method",
+          "implMethods": "(function_item name: (identifier) @name parameters: (parameters) @params return_type: (_)? @ret) @method",
+          "enumVariants": "(enum_variant name: (identifier) @name) @variant",
+          "enumTupleVariant": "(enum_variant name: (identifier) @name body: (ordered_field_declaration_list) @fields) @variant",
+          "enumStructVariant": "(enum_variant name: (identifier) @name body: (field_declaration_list) @fields) @variant",
+          "lifetimes": "(lifetime (identifier) @name) @lifetime",
+          "typeParameters": "(type_parameters (type_identifier) @name) @tparams",
+          "constrained_type_parameter": "(constrained_type_parameter left: (type_identifier) @name bounds: (trait_bounds) @bounds) @constraint",
+          "whereClause": "(where_clause (where_predicate left: (_) @type bounds: (trait_bounds) @bounds) @pred) @where",
+          "attributes": "(attribute_item (attribute) @attr) @item",
+          "traitImpl": "(impl_item trait: (type_identifier) @trait type: (type_identifier) @type) @impl"
         }
       },
       "exportDetection": "pub_visibility_modifier",

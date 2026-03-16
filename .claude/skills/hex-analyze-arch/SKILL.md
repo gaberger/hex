@@ -1,82 +1,207 @@
 ---
 name: hex-analyze-arch
-description: Check hexagonal architecture health, find dead code, and validate boundary rules. Use when the user asks to "check architecture", "find dead code", "validate hex boundaries", "architecture health", "detect circular dependencies", or "hex analyze".
+description: Check hexagonal architecture health, find dead code, and validate boundary rules. Automatically creates tasks and spawns fix agents for violations found. Use when the user asks to "check architecture", "find dead code", "validate hex boundaries", "architecture health", "detect circular dependencies", or "hex analyze".
 ---
 
-# Hex Analyze Arch — Architecture Health Check
+# Hex Analyze Arch — Architecture Health Check with Auto-Fix
 
-Runs a full hexagonal architecture analysis: dead export detection, dependency direction validation, and circular dependency detection.
+Runs a full hexagonal architecture analysis. When violations are found, automatically creates ruflo tasks and spawns a fix swarm — no manual triage needed.
 
 ## Parameters
 
-Ask the user for:
-- **rootPath** (optional, default: "src"): Root directory to analyze
-- **excludePatterns** (optional, default: "node_modules,dist,*.test.ts,*.spec.ts"): Comma-separated glob patterns to exclude
+- **rootPath** (optional, default: "."): Root directory to analyze
+- **autoFix** (implicit: true when critical/high issues found): Spawn agents to fix violations
+- **reportOnly** (optional, default: false): Skip auto-fix, just report
 
 ## Execution Steps
 
-### 1. Run hex analyze
+### 1. Run Architecture Analysis
 
-```bash
-npx hex analyze {rootPath}
+Call the hex_analyze MCP tool:
+
+```
+mcp__hex__hex_analyze({ path: rootPath })
 ```
 
-If hex is not available, perform manual analysis as described below.
+This returns the formatted HEXAGONAL ARCHITECTURE HEALTH REPORT with:
+- Summary table (files, exports, violations, circular deps, dead exports)
+- Error rates with thresholds
+- Layer breakdown
+- Boundary violations grouped by severity (CRITICAL/WARNING)
+- Circular dependencies
+- Dead exports grouped by file
+- Unused ports & adapters
+- Health score and grade (A-F)
 
-### 2. Collect File Inventory
+Display the full report to the user.
 
-Glob all source files in rootPath, excluding the specified patterns. Extract L1 AST summaries (exports, imports, dependencies) for each file.
+### 2. Extract Action Items
 
-### 3. Dead Export Detection
+Use the action item extractor from the domain layer to convert findings into structured tasks:
 
-Identify exported symbols that are not imported by any other file in the project. For each dead export, report:
-- File path and export name
-- Whether it is a public API entry point (acceptable) or truly unused
-- Suggested action: remove, mark as public API, or investigate
+```typescript
+import { buildActionItemReport, formatActionItems } from 'src/core/domain/action-items.ts';
 
-### 4. Hex Boundary Validation
+const actionReport = buildActionItemReport(archResult);
+const formatted = formatActionItems(actionReport);
+```
 
-Classify each file into its hexagonal layer:
-- **core/domain** — Domain entities and value objects
-- **core/ports** — Port interfaces (input and output)
-- **core/usecases** — Use case orchestrations
-- **adapters/primary** — Driving adapters (CLI, HTTP, etc.)
-- **adapters/secondary** — Driven adapters (DB, filesystem, etc.)
-- **infrastructure** — Cross-cutting concerns
+Display the ACTION ITEMS report showing:
+- MUST FIX: Critical and high-priority items with suggested fixes
+- SHOULD FIX: Medium and low-priority items
 
-Validate import direction rules:
-- Domain MUST NOT import from ports, usecases, adapters, or infrastructure
-- Ports MUST NOT import from usecases, adapters, or infrastructure
-- Usecases MAY import from domain and ports only
-- Adapters MAY import from ports and domain only
-- Infrastructure MAY import from anything
+### 3. Register Tasks in Ruflo
 
-Report every violation with file path, import statement, and the rule violated.
+For each action item with priority `critical` or `high`, create a ruflo task:
 
-### 5. Circular Dependency Detection
+```
+mcp__ruflo__task_create({
+  title: item.title,
+  metadata: {
+    category: item.category,        // bug, violation, circular-dep
+    priority: item.priority,        // critical, high
+    file: item.file,                // affected file path
+    layer: item.layer,              // hex layer name
+    suggestedFix: item.suggestedFix,
+    source: "hex-analyze-arch",
+    autoFixable: item.autoFixable
+  }
+})
+```
 
-Build a directed dependency graph from all imports. Run DFS cycle detection. For each circular dependency chain found, report:
-- The full cycle path (A -> B -> C -> A)
-- Suggested resolution strategy (extract interface, event-based decoupling, etc.)
+Store the full report in ruflo memory:
+```
+mcp__ruflo__memory_store("devtracker/validation-actions", JSON.stringify(actionReport))
+```
 
-### 6. Compute Health Score
+### 4. Auto-Fix Decision
 
-Calculate an overall health score (0-100):
-- Start at 100
-- Subtract 5 per boundary violation
-- Subtract 3 per circular dependency
-- Subtract 1 per dead export (non-public-API)
-- Minimum score is 0
+If `reportOnly` is true, stop here with the report.
+
+Otherwise, evaluate whether to auto-fix:
+
+| Condition | Action |
+|-----------|--------|
+| Critical violations (cross-adapter, domain leak) | Spawn fix agent immediately |
+| Circular dependencies | Spawn fix agent immediately |
+| High-priority violations only | Spawn fix agent |
+| Medium/low only (dead exports, unused ports) | Report only, do not auto-fix |
+| Score >= 90 (Grade A) | No action needed |
+
+### 5. Spawn Fix Swarm
+
+For each fixable issue, spawn a targeted agent in a worktree:
+
+```
+Agent tool: {
+  subagent_type: "general-purpose",
+  mode: "bypassPermissions",
+  run_in_background: true,
+  isolation: "worktree",
+  prompt: <fix prompt with full context>
+}
+```
+
+#### Fix Prompts by Category
+
+**Boundary Violation** (adapter imports from wrong layer):
+```
+Fix hex boundary violation in {file}.
+Current: imports {names} from {wrongLayer}
+Required: import through ports layer only.
+
+Check if the types are already re-exported through a port file.
+If yes: change the import path to use the port.
+If no: add re-exports to the appropriate port file, then update the import.
+
+Rules:
+- adapters/ may only import from ports/
+- domain/ may only import from domain/
+- usecases/ may only import from domain/ and ports/
+
+After fixing, run: bun test
+```
+
+**Circular Dependency**:
+```
+Break circular dependency: {cycle}
+
+Strategies (pick the simplest):
+1. Extract shared types to a common domain file both can import
+2. Introduce a port interface to break the direct dependency
+3. Use event-based decoupling if the cycle is behavioral
+
+After fixing, run: bun test
+```
+
+**Domain Leak** (domain imports non-domain):
+```
+Fix domain purity violation in {file}.
+Domain layer must have zero external dependencies.
+Move the imported types to domain/ or inject via port interface.
+
+After fixing, run: bun test
+```
+
+### 6. Monitor Fix Results
+
+After spawning fix agents:
+
+1. Wait for agent completion notifications
+2. For each completed fix:
+   - Run `mcp__hex__hex_validate_boundaries(".")` to verify the fix
+   - If violation resolved: `mcp__ruflo__task_complete(taskId, commitHash)`
+   - If still broken: report failure, do NOT retry automatically
+3. Run final `mcp__hex__hex_analyze(".")` to get updated health score
 
 ### 7. Write Report
 
-Write the analysis to `docs/analysis/arch-report.md` with sections for:
-- Health score and summary
-- Dead exports table
-- Boundary violations table
-- Circular dependencies list
-- Recommendations
+Write the full analysis + action items + fix results to `docs/analysis/arch-report.md`:
+
+```markdown
+# Architecture Health Report — {date}
+
+## Score: {score}/100 ({grade})
+
+## Summary
+{summary table}
+
+## Error Rates
+{error rates table}
+
+## Violations Found
+{violations table with severity}
+
+## Action Items Created
+{list of ruflo tasks created}
+
+## Fixes Applied
+{list of auto-fixed issues with commit hashes}
+
+## Remaining Issues
+{items that need manual attention}
+```
+
+### 8. Final Status
+
+Display to the user:
+- Before/after health score comparison
+- Number of issues auto-fixed vs remaining
+- Any items that need manual attention
+- Link to the full report
+
+## Exclude Patterns
+
+The analyzer excludes these by default:
+- `node_modules`, `dist`, `examples`
+- `*.test.ts`, `*.spec.ts`, `*_test.go`, `*.test.rs`
+- `/tests/`
+- `**/target/**` (Rust/Cargo build artifacts)
 
 ## Output
 
-Report the health score, number of violations found, and path to the full report.
+- Full health report displayed inline
+- Action items report displayed inline
+- Ruflo tasks created for critical/high issues
+- Fix agents spawned for violations (unless reportOnly)
+- Report written to `docs/analysis/arch-report.md`
