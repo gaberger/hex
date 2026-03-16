@@ -140,11 +140,21 @@ a{color:var(--accent);text-decoration:none}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:var(--accent)}
 
-/* Project Selector */
-.project-selector{padding:6px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--accent);font-size:.85rem;font-weight:600;outline:none;cursor:pointer;min-width:140px}
-.project-selector:focus{border-color:var(--accent)}
-.project-selector option{background:var(--card);color:var(--text)}
+/* Project Tabs */
+.project-tabs{display:flex;align-items:stretch;gap:0;background:var(--bg);border-bottom:1px solid var(--border);padding:0 24px;overflow-x:auto}
+.project-tab{padding:10px 20px;font-size:.85rem;font-weight:500;color:var(--text2);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent;transition:all .2s;white-space:nowrap;display:flex;align-items:center;gap:8px}
+.project-tab:hover{color:var(--text);background:rgba(255,255,255,.03)}
+.project-tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:700}
+.project-tab .tab-name{font-size:.9rem}
+.project-tab .tab-lang{font-size:.65rem;padding:1px 6px;border-radius:8px;background:rgba(255,255,255,.06);color:var(--text2);text-transform:uppercase;letter-spacing:.5px}
+.project-tab .tab-dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0}
+.project-tab .tab-dot.stale{background:var(--yellow)}
+.project-tab .tab-dot.offline{background:var(--text2)}
+.no-projects{padding:10px 20px;color:var(--text2);font-size:.85rem;font-style:italic}
 .project-count{font-size:.7rem;color:var(--text2);padding:2px 8px;border-radius:10px;background:rgba(79,195,247,.1)}
+
+/* Hidden dropdown (still used for programmatic access) */
+.project-selector{display:none}
 
 /* Empty state */
 .empty{color:var(--text2);font-size:.8rem;font-style:italic;padding:8px 0}
@@ -158,17 +168,21 @@ a{color:var(--accent);text-decoration:none}
     <select class="project-selector" id="projectSelector">
       <option value="">Loading projects...</option>
     </select>
-    <span class="project-count" id="projectCount"></span>
     <div class="project-info" id="projectInfo">
       <span class="project-path" id="projectPath"></span>
       <span class="ast-badge" id="astBadge"></span>
     </div>
+    <span class="project-count" id="projectCount"></span>
     <div class="conn-badge">
       <span class="conn-dot" id="connDot"></span>
       <span id="connLabel">Connecting...</span>
     </div>
   </div>
 </header>
+
+<nav class="project-tabs" id="projectTabs">
+  <div class="no-projects">Waiting for projects to connect...</div>
+</nav>
 
 <div class="grid">
   <!-- Architecture Health -->
@@ -286,10 +300,11 @@ a{color:var(--accent);text-decoration:none}
       </div>
     </div>
     <div class="graph-legend">
-      <div class="legend-item"><span class="legend-dot" style="background:#42a5f5"></span> Domain</div>
-      <div class="legend-item"><span class="legend-dot" style="background:#66bb6a"></span> Ports</div>
-      <div class="legend-item"><span class="legend-dot" style="background:#ffa726"></span> Adapters</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#42a5f5"></span> Domain (center)</div>
       <div class="legend-item"><span class="legend-dot" style="background:#ab47bc"></span> Use Cases</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#66bb6a"></span> Ports</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#ffa726"></span> Adapters (outer)</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#9e9e9e"></span> External / Stdlib</div>
       <div class="legend-item"><span class="legend-dot" style="background:#ef5350"></span> Violation</div>
     </div>
   </div>
@@ -320,9 +335,8 @@ a{color:var(--accent);text-decoration:none}
     sseRetryTimer: null,
     pollTimer: null,
     evtSource: null,
-    currentProject: null, // project ID for hub mode (null = single-project mode)
-    projects: [],         // list of { id, rootPath, astIsStub }
-    isHubMode: false,
+    currentProject: null, // currently selected project ID
+    projects: [],         // list of { id, name, rootPath, astIsStub }
   };
 
   // --- DOM Helpers ---
@@ -379,61 +393,77 @@ a{color:var(--accent);text-decoration:none}
 
   // --- Project List & Switching ---
   function loadProjects() {
-    // Try hub endpoint first
     rawFetch('/api/projects').then(function(data) {
       if (data && data.projects && data.projects.length > 0) {
-        state.isHubMode = true;
         state.projects = data.projects;
         populateProjectSelector(data.projects);
         if (!state.currentProject) {
           switchProject(data.projects[0].id);
         }
       } else {
-        // Fallback: single-project mode
-        state.isHubMode = false;
-        loadSingleProject();
+        // No projects yet — show empty state
+        var sel = $('#projectSelector');
+        clearChildren(sel);
+        sel.appendChild(createEl('option', { value: '', textContent: 'No projects registered' }));
+        sel.disabled = true;
+        setText('#projectCount', '0 projects');
+        setText('#projectPath', 'Waiting for projects to connect...');
       }
-    });
-  }
-
-  function loadSingleProject() {
-    rawFetch('/api/project').then(function(data) {
-      if (!data) {
-        setText('#projectPath', '');
-        var badge = $('#astBadge');
-        badge.textContent = '';
-        badge.className = 'ast-badge';
-        setTimeout(loadSingleProject, 5000);
-        return;
-      }
-      var sel = $('#projectSelector');
-      clearChildren(sel);
-      sel.appendChild(createEl('option', { value: '', textContent: data.name || 'Unknown' }));
-      sel.disabled = true;
-      setText('#projectPath', data.rootPath || '');
-      var badge = $('#astBadge');
-      if (data.astIsStub) {
-        badge.textContent = 'stub AST';
-        badge.className = 'ast-badge ast-stub';
-      } else {
-        badge.textContent = 'real AST';
-        badge.className = 'ast-badge ast-real';
-      }
-      setText('#projectCount', '1 project');
     });
   }
 
   function populateProjectSelector(projects) {
+    // Hidden dropdown (for programmatic compat)
     var sel = $('#projectSelector');
     clearChildren(sel);
-    sel.disabled = false;
     projects.forEach(function(p) {
       sel.appendChild(createEl('option', { value: p.id, textContent: p.id }));
     });
-    if (state.currentProject) {
-      sel.value = state.currentProject;
+    if (state.currentProject) sel.value = state.currentProject;
+
+    // Tab bar
+    var tabs = $('#projectTabs');
+    clearChildren(tabs);
+
+    if (projects.length === 0) {
+      tabs.appendChild(createEl('div', { className: 'no-projects', textContent: 'Waiting for projects to connect...' }));
+      setText('#projectCount', '0 projects');
+      return;
     }
+
     setText('#projectCount', projects.length + ' project' + (projects.length === 1 ? '' : 's'));
+
+    projects.forEach(function(p) {
+      var isActive = state.currentProject === p.id;
+      var name = p.name || p.id;
+      // Detect language from path or name
+      var lang = '';
+      if (p.rootPath) {
+        if (p.rootPath.includes('/go/') || name.includes('backend')) lang = 'go';
+        else if (name.includes('frontend') || name.includes('web')) lang = 'ts';
+      }
+
+      // Freshness dot: green if pushed in last 30s, yellow if 30-120s, gray if older
+      var age = p.lastPushAt ? (Date.now() - p.lastPushAt) / 1000 : 999;
+      var dotClass = 'tab-dot';
+      if (age > 120 || !p.lastPushAt) dotClass += ' offline';
+      else if (age > 30) dotClass += ' stale';
+
+      var tab = createEl('button', {
+        className: 'project-tab' + (isActive ? ' active' : ''),
+        'data-id': p.id,
+      }, [
+        createEl('span', { className: dotClass }),
+        createEl('span', { className: 'tab-name', textContent: name }),
+      ]);
+
+      if (lang) {
+        tab.appendChild(createEl('span', { className: 'tab-lang', textContent: lang }));
+      }
+
+      tab.addEventListener('click', function() { switchProject(p.id); });
+      tabs.appendChild(tab);
+    });
   }
 
   function switchProject(projectId) {
@@ -441,7 +471,12 @@ a{color:var(--accent);text-decoration:none}
     var sel = $('#projectSelector');
     sel.value = projectId;
 
-    // Update project info
+    // Update active tab
+    $$('.project-tab').forEach(function(tab) {
+      tab.classList.toggle('active', tab.getAttribute('data-id') === projectId);
+    });
+
+    // Update project info in header
     var proj = state.projects.find(function(p) { return p.id === projectId; });
     if (proj) {
       setText('#projectPath', proj.rootPath || '');
@@ -480,13 +515,11 @@ a{color:var(--accent);text-decoration:none}
     });
   }
 
-  /** Project-scoped fetch — auto-prefixes /api/:projectId/ in hub mode. */
+  /** Project-scoped fetch — always prefixes /api/:projectId/. */
   function apiFetch(url) {
-    var resolved = url;
-    if (state.isHubMode && state.currentProject) {
-      // Transform /api/health → /api/:projectId/health
-      resolved = url.replace('/api/', '/api/' + state.currentProject + '/');
-    }
+    if (!state.currentProject) return Promise.resolve(null);
+    // Transform /api/health → /api/:projectId/health
+    var resolved = url.replace('/api/', '/api/' + state.currentProject + '/');
     return rawFetch(resolved);
   }
 
@@ -508,7 +541,11 @@ a{color:var(--accent);text-decoration:none}
     apiFetch('/api/health').then(function(data) {
       if (!data) return;
 
-      var score = typeof data.score === 'number' ? data.score : (data.healthScore || 0);
+      // API may return { summary: { healthScore, totalFiles, ... }, deadExports, ... }
+      // or flat { healthScore, totalFiles, ... } — handle both
+      var summary = data.summary || {};
+      var score = typeof summary.healthScore === 'number' ? summary.healthScore
+        : (typeof data.score === 'number' ? data.score : (data.healthScore || 0));
       var circumference = 326.73;
       var offset = circumference - (circumference * Math.min(score, 100) / 100);
       var arc = $('#healthArc');
@@ -516,11 +553,12 @@ a{color:var(--accent);text-decoration:none}
       arc.style.stroke = scoreColor(score);
       setText('#healthNum', Math.round(score));
 
-      setText('#hFiles', data.totalFiles || data.files || '--');
-      setText('#hExports', data.totalExports || data.exports || '--');
+      setText('#hFiles', summary.totalFiles || data.totalFiles || data.files || '--');
+      setText('#hExports', summary.totalExports || data.totalExports || data.exports || '--');
 
-      var violations = data.violations || data.boundaryViolations || [];
-      var violationCount = Array.isArray(violations) ? violations.length : (violations || 0);
+      var violations = data.dependencyViolations || data.violations || data.boundaryViolations || [];
+      var violationCount = typeof summary.violationCount === 'number' ? summary.violationCount
+        : (Array.isArray(violations) ? violations.length : (violations || 0));
       setText('#hViolations', violationCount);
       $('#hViolations').style.color = violationCount > 0 ? '#ef5350' : '#66bb6a';
 
@@ -529,11 +567,13 @@ a{color:var(--accent);text-decoration:none}
       setText('#hUnused', unusedCount);
 
       var dead = data.deadExports || data.unusedExports || [];
-      var deadCount = Array.isArray(dead) ? dead.length : (dead || 0);
+      var deadCount = typeof summary.deadExportCount === 'number' ? summary.deadExportCount
+        : (Array.isArray(dead) ? dead.length : (dead || 0));
       setText('#hDead', deadCount);
 
-      var circular = data.circularDependencies || data.cycles || [];
-      var circularCount = Array.isArray(circular) ? circular.length : (circular || 0);
+      var circular = data.circularDeps || data.circularDependencies || data.cycles || [];
+      var circularCount = typeof summary.circularCount === 'number' ? summary.circularCount
+        : (Array.isArray(circular) ? circular.length : (circular || 0));
       setText('#hCircular', circularCount);
       $('#hCircular').style.color = circularCount > 0 ? '#ef5350' : '#66bb6a';
 
@@ -812,19 +852,31 @@ a{color:var(--accent);text-decoration:none}
     // Named event listeners for typed server events
     es.addEventListener('connected', function(e) {
       setConnected(true);
-      // Hub mode sends project list on connect
       try {
         var data = JSON.parse(e.data);
         if (data.projects && data.projects.length > 0) {
-          state.isHubMode = true;
           state.projects = data.projects;
           populateProjectSelector(data.projects);
           if (!state.currentProject) {
             switchProject(data.projects[0].id);
           }
         }
-      } catch (err) { /* single-project mode sends {} */ }
+      } catch (err) { /* ignore */ }
       addEvent({ level: 'info', message: 'SSE stream established', timestamp: Date.now() });
+    });
+
+    // State update — project pushed new data, refresh the relevant panel
+    es.addEventListener('state-update', function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        if (data.projectId !== state.currentProject) return;
+        switch (data.type) {
+          case 'health': loadHealth(); break;
+          case 'tokens': loadTokenOverview(); break;
+          case 'swarm': loadSwarm(); break;
+          case 'graph': loadGraph(); break;
+        }
+      } catch (err) { /* ignore */ }
     });
 
     // Hub: project registered/unregistered
@@ -944,8 +996,8 @@ a{color:var(--accent);text-decoration:none}
   }
 
   function submitDecision(selectedOption) {
-    if (!state.currentDecisionId) return;
-    var prefix = (state.isHubMode && state.currentProject) ? '/api/' + state.currentProject : '/api';
+    if (!state.currentDecisionId || !state.currentProject) return;
+    var prefix = '/api/' + state.currentProject;
     fetch(prefix + '/decisions/' + encodeURIComponent(state.currentDecisionId), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1032,43 +1084,110 @@ a{color:var(--accent);text-decoration:none}
 
   function computePositions() {
     var nodes = graphState.nodes;
+    var edges = graphState.edges;
     var canvas = $('#graphCanvas');
+    // Force layout reflow so we get real dimensions even if panel just opened
+    canvas.style.display = 'block';
     var rect = canvas.getBoundingClientRect();
-    var width = rect.width || 800;
-    var height = 360;
+    var width = Math.max(rect.width, 600);
+    var height = Math.max(rect.height, 420);
+    var pad = 80;
 
+    // Group by layer in hex order (concentric rings: domain center → adapters outer)
     var layerGroups = {};
     nodes.forEach(function(n) {
-      var layer = (n.layer || 'unknown').toLowerCase();
+      var layer = (n.layer || 'other').toLowerCase();
       if (!layerGroups[layer]) layerGroups[layer] = [];
       layerGroups[layer].push(n);
     });
 
-    var layerOrder = ['domain', 'usecases', 'usecase', 'ports', 'port', 'primary-adapter', 'secondary-adapter', 'adapters', 'adapter'];
+    // Hex architecture ring order: domain at center, adapters on outside
+    var ringOrder = ['domain', 'usecases', 'usecase', 'ports', 'port', 'primary-adapter', 'secondary-adapter', 'adapters', 'adapter', 'other'];
     var usedLayers = [];
     var seen = {};
     nodes.forEach(function(n) {
-      var l = (n.layer || 'unknown').toLowerCase();
+      var l = (n.layer || 'other').toLowerCase();
       if (!seen[l]) { seen[l] = true; usedLayers.push(l); }
     });
     usedLayers.sort(function(a, b) {
-      var ai = layerOrder.indexOf(a);
-      var bi = layerOrder.indexOf(b);
+      var ai = ringOrder.indexOf(a);
+      var bi = ringOrder.indexOf(b);
       return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
     });
 
+    var cx = width / 2;
+    var cy = height / 2;
+    var maxRadius = Math.min(width - pad * 2, height - pad * 2) / 2;
     var positions = {};
-    var colWidth = width / (usedLayers.length + 1);
-    usedLayers.forEach(function(layer, li) {
-      var group = layerGroups[layer] || [];
-      var rowHeight = height / (group.length + 1);
-      group.forEach(function(n, ni) {
+
+    if (usedLayers.length <= 1) {
+      // Single layer: arrange in a circle
+      var group = nodes;
+      var angleStep = (Math.PI * 2) / Math.max(group.length, 1);
+      group.forEach(function(n, i) {
         positions[n.id] = {
-          x: colWidth * (li + 1),
-          y: rowHeight * (ni + 1),
+          x: cx + maxRadius * 0.6 * Math.cos(angleStep * i - Math.PI / 2),
+          y: cy + maxRadius * 0.6 * Math.sin(angleStep * i - Math.PI / 2),
         };
       });
+    } else {
+      // Multi-layer: concentric rings
+      var ringStep = maxRadius / usedLayers.length;
+
+      usedLayers.forEach(function(layer, li) {
+        var group = layerGroups[layer] || [];
+        var radius = ringStep * (li + 0.5);
+
+        // For very small radii with 1 node, place at center
+        if (group.length === 1 && li === 0) {
+          positions[group[0].id] = { x: cx, y: cy };
+          return;
+        }
+
+        // Distribute nodes evenly around the ring
+        var angleStep = (Math.PI * 2) / Math.max(group.length, 1);
+        // Offset each ring slightly so nodes don't overlap between rings
+        var angleOffset = (li * Math.PI / 7) - Math.PI / 2;
+
+        group.forEach(function(n, ni) {
+          var angle = angleStep * ni + angleOffset;
+          positions[n.id] = {
+            x: cx + radius * Math.cos(angle),
+            y: cy + radius * Math.sin(angle),
+          };
+        });
+      });
+    }
+
+    // Simple force-nudge: push overlapping nodes apart (3 iterations)
+    var nodeIds = Object.keys(positions);
+    for (var iter = 0; iter < 3; iter++) {
+      for (var i = 0; i < nodeIds.length; i++) {
+        for (var j = i + 1; j < nodeIds.length; j++) {
+          var a = positions[nodeIds[i]];
+          var b = positions[nodeIds[j]];
+          var dx = b.x - a.x;
+          var dy = b.y - a.y;
+          var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          var minDist = 50;
+          if (dist < minDist) {
+            var push = (minDist - dist) / 2;
+            var nx = (dx / dist) * push;
+            var ny = (dy / dist) * push;
+            a.x -= nx; a.y -= ny;
+            b.x += nx; b.y += ny;
+          }
+        }
+      }
+    }
+
+    // Clamp to visible area
+    nodeIds.forEach(function(id) {
+      var p = positions[id];
+      p.x = Math.max(pad, Math.min(width - pad, p.x));
+      p.y = Math.max(pad, Math.min(height - pad, p.y));
     });
+
     graphState.positions = positions;
   }
 
@@ -1080,8 +1199,8 @@ a{color:var(--accent);text-decoration:none}
 
     var canvas = $('#graphCanvas');
     var rect = canvas.getBoundingClientRect();
-    var width = rect.width || 800;
-    var height = 460;
+    var width = Math.max(rect.width, 600);
+    var height = Math.max(rect.height, 420);
     canvas.width = width * (window.devicePixelRatio || 1);
     canvas.height = height * (window.devicePixelRatio || 1);
     canvas.style.width = width + 'px';
@@ -1101,7 +1220,7 @@ a{color:var(--accent);text-decoration:none}
     // Pulse factor: oscillates 0.4→1.0 for glow effect
     var pulse = 0.7 + 0.3 * Math.sin(now / 300);
 
-    // Draw edges — highlight edges connected to active nodes
+    // Draw edges — curved beziers, highlight active connections
     edges.forEach(function(e) {
       var from = positions[e.from];
       var to = positions[e.to];
@@ -1111,9 +1230,20 @@ a{color:var(--accent);text-decoration:none}
       var toActive = isFileActive(e.to);
       var edgeActive = fromActive || toActive;
 
+      // Curved edge via quadratic bezier — control point offset perpendicular to the midpoint
+      var mx = (from.x + to.x) / 2;
+      var my = (from.y + to.y) / 2;
+      var dx = to.x - from.x;
+      var dy = to.y - from.y;
+      var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      // Offset control point perpendicular, proportional to distance
+      var curvature = Math.min(dist * 0.15, 30);
+      var cpx = mx + (-dy / dist) * curvature;
+      var cpy = my + (dx / dist) * curvature;
+
       ctx.beginPath();
       ctx.moveTo(from.x, from.y);
-      ctx.lineTo(to.x, to.y);
+      ctx.quadraticCurveTo(cpx, cpy, to.x, to.y);
       if (isViolation) {
         ctx.strokeStyle = '#ef5350';
         ctx.lineWidth = 2;
@@ -1121,14 +1251,14 @@ a{color:var(--accent);text-decoration:none}
         ctx.strokeStyle = 'rgba(79,195,247,' + (0.4 * pulse) + ')';
         ctx.lineWidth = 2;
       } else {
-        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+        ctx.lineWidth = 0.8;
       }
       ctx.stroke();
 
-      // Arrowhead
-      var angle = Math.atan2(to.y - from.y, to.x - from.x);
-      var headLen = 8;
+      // Arrowhead at the end of the curve
+      var angle = Math.atan2(to.y - cpy, to.x - cpx);
+      var headLen = 7;
       var nodeRadius = 6 + Math.min((nodes.find(function(n) { return n.id === e.to; }) || {}).exports || 0, 20);
       var endX = to.x - Math.cos(angle) * nodeRadius;
       var endY = to.y - Math.sin(angle) * nodeRadius;
@@ -1137,7 +1267,7 @@ a{color:var(--accent);text-decoration:none}
       ctx.lineTo(endX - headLen * Math.cos(angle - Math.PI / 6), endY - headLen * Math.sin(angle - Math.PI / 6));
       ctx.moveTo(endX, endY);
       ctx.lineTo(endX - headLen * Math.cos(angle + Math.PI / 6), endY - headLen * Math.sin(angle + Math.PI / 6));
-      ctx.strokeStyle = isViolation ? '#ef5350' : (edgeActive ? 'rgba(79,195,247,' + (0.5 * pulse) + ')' : 'rgba(255,255,255,0.3)');
+      ctx.strokeStyle = isViolation ? '#ef5350' : (edgeActive ? 'rgba(79,195,247,' + (0.5 * pulse) + ')' : 'rgba(255,255,255,0.25)');
       ctx.lineWidth = isViolation ? 2 : (edgeActive ? 2 : 1);
       ctx.stroke();
     });
@@ -1229,15 +1359,22 @@ a{color:var(--accent);text-decoration:none}
       setText('#pauseBtn', state.autoScroll ? '\u23F8 Pause' : '\u25B6 Resume');
     });
 
-    // Graph toggle
+    // Graph toggle — recompute layout every time we open (canvas size changes)
     $('#graphToggle').addEventListener('click', function() {
       var body = $('#graphBody');
       var arrow = $('#graphArrow');
       body.classList.toggle('open');
       arrow.classList.toggle('open');
-      if (body.classList.contains('open') && !body.getAttribute('data-loaded')) {
-        body.setAttribute('data-loaded', '1');
-        loadGraph();
+      if (body.classList.contains('open')) {
+        // Delay to let CSS transition reveal the panel, then recompute
+        setTimeout(function() {
+          if (graphState.nodes.length > 0) {
+            computePositions();
+            renderGraph();
+          } else {
+            loadGraph();
+          }
+        }, 50);
       }
     });
 
@@ -1336,19 +1473,17 @@ a{color:var(--accent);text-decoration:none}
     // SSE connection
     connectSSE();
 
-    // Polling for health, swarm, and project list every 10s
+    // Polling — refresh project list every 10s (picks up new registrations)
+    // Panel data is pushed by projects, but we poll as fallback
     state.pollTimer = setInterval(function() {
+      rawFetch('/api/projects').then(function(data) {
+        if (data && data.projects) {
+          state.projects = data.projects;
+          populateProjectSelector(data.projects);
+        }
+      });
       loadHealth();
       loadSwarm();
-      // Refresh project list in hub mode (picks up dynamic registrations)
-      if (state.isHubMode) {
-        rawFetch('/api/projects').then(function(data) {
-          if (data && data.projects) {
-            state.projects = data.projects;
-            populateProjectSelector(data.projects);
-          }
-        });
-      }
     }, 10000);
   }
 
