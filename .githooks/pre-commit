@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# hex-intf pre-commit hook — runs security gate before every commit
+# Install: git config core.hooksPath .githooks
+
+exec "$(git rev-parse --show-toplevel)/scripts/security-check.sh"
