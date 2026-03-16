@@ -127,14 +127,12 @@ if (activeAgents > 0) {
 // Services — compact dot indicators
 const dot = (on, label) => on ? `${P.on}● ${label}` : `${P.off}○ ${label}`;
 const hubActive = hubRunning || !!dashUrl;
-const hubUrl = 'http://localhost:5555';
-// OSC 8 hyperlink: \e]8;;URL\e\\TEXT\e]8;;\e\\ — clickable in iTerm2, Terminal.app, Wezterm
-const hubLink = hubActive
-  ? `${ESC}]8;;${hubUrl}${ESC}\\${P.on}● hub${ESC}]8;;${ESC}\\`
+const hubIndicator = hubActive
+  ? `${P.on}● ${ESC}]8;;http://localhost:5555${ESC}\\dashboard${ESC}]8;;${ESC}\\`
   : `${P.off}○ hub`;
 const svcs = [
   dot(dbShow, 'db'),
-  hubLink,
+  hubIndicator,
   dot(hexMcp, 'mcp'),
 ].join(`${P.dim} · `);
 parts.push(svcs);

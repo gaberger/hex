@@ -1,0 +1,1691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>hex Dashboard</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#1a1a2e;--card:#16213e;--border:#0f3460;
+  --accent:#4fc3f7;--green:#66bb6a;--yellow:#ffa726;--red:#ef5350;
+  --purple:#ab47bc;--text:#e0e0e0;--text2:#9e9e9e;
+  --radius:8px;--gap:16px;
+}
+html{font-size:14px}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-width:1024px;padding:0}
+a{color:var(--accent);text-decoration:none}
+
+/* Header */
+.header{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;background:var(--card);border-bottom:1px solid var(--border)}
+.header h1{font-size:1.25rem;font-weight:600;letter-spacing:.5px}
+.header h1 span{color:var(--accent)}
+.header-right{display:flex;align-items:center;gap:20px;font-size:.85rem;color:var(--text2)}
+.project-info{display:flex;align-items:center;gap:10px}
+.project-name{font-weight:700;color:var(--accent);font-size:.95rem}
+.project-path{color:var(--text2);font-size:.75rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ast-badge{padding:2px 8px;border-radius:10px;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.ast-real{background:rgba(102,187,106,.15);color:var(--green)}
+.ast-stub{background:rgba(255,167,38,.15);color:var(--yellow)}
+.health-updated{margin-top:8px;font-size:.75rem;color:var(--text2);text-align:right}
+.swarm-unavailable{color:var(--text2);font-size:.85rem;font-style:italic;padding:16px 0;text-align:center}
+.conn-badge{display:flex;align-items:center;gap:6px}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block}
+.conn-dot.disconnected{background:var(--red);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* Grid */
+.grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto auto;gap:var(--gap);padding:var(--gap) 24px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;overflow:hidden}
+.card-title{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);margin-bottom:16px;font-weight:600}
+
+/* Health Panel */
+.health-top{display:flex;align-items:center;gap:24px;margin-bottom:20px}
+.health-ring{position:relative;width:120px;height:120px;flex-shrink:0}
+.health-ring svg{transform:rotate(-90deg)}
+.health-ring-bg{fill:none;stroke:var(--border);stroke-width:8}
+.health-ring-fg{fill:none;stroke-width:8;stroke-linecap:round;transition:stroke-dashoffset .8s ease,stroke .4s}
+.health-score{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:2rem;font-weight:700;line-height:1}
+.health-score small{font-size:.7rem;color:var(--text2);font-weight:400;margin-top:2px}
+.health-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.health-stat{display:flex;align-items:center;gap:6px;font-size:.85rem}
+.health-stat .num{font-weight:700;font-size:1.1rem;min-width:28px}
+.health-stat .lbl{color:var(--text2)}
+.violations-list,.unused-list{margin-top:12px;max-height:120px;overflow-y:auto;font-size:.8rem}
+.section-heading{color:var(--text2);font-size:.75rem;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;font-weight:600}
+.violation-item{padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04);color:var(--red)}
+.violation-rule{color:var(--yellow);font-size:.75rem}
+.unused-item{padding:2px 0;color:var(--yellow)}
+
+/* Token Panel */
+.file-selector{width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:.85rem;margin-bottom:16px;outline:none}
+.file-selector:focus{border-color:var(--accent)}
+.token-bars{display:flex;flex-direction:column;gap:10px}
+.token-row{display:flex;align-items:center;gap:10px;font-size:.85rem}
+.token-label{width:32px;font-weight:600;color:var(--accent);flex-shrink:0}
+.token-count{width:70px;text-align:right;color:var(--text2);font-size:.8rem;flex-shrink:0}
+.token-bar-track{flex:1;height:18px;background:var(--bg);border-radius:4px;overflow:hidden;position:relative}
+.token-bar-fill{height:100%;border-radius:4px;transition:width .5s ease;min-width:2px}
+.token-bar-pct{width:40px;text-align:right;font-weight:600;font-size:.85rem;flex-shrink:0}
+.token-summary{margin-top:16px;padding-top:12px;border-top:1px solid var(--border);font-size:.85rem;color:var(--text2);display:flex;justify-content:space-between}
+.token-summary .val{color:var(--text);font-weight:600}
+
+/* Swarm Panel */
+.swarm-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.status-badge{padding:4px 12px;border-radius:12px;font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.status-idle{background:rgba(158,158,158,.15);color:var(--text2)}
+.status-running{background:rgba(79,195,247,.15);color:var(--accent)}
+.status-completed{background:rgba(102,187,106,.15);color:var(--green)}
+.status-failed{background:rgba(239,83,80,.15);color:var(--red)}
+.swarm-counts{display:flex;gap:20px;margin-bottom:16px;font-size:.85rem}
+.swarm-counts .num{font-weight:700;font-size:1.2rem}
+.swarm-counts .lbl{color:var(--text2)}
+.agent-list,.task-list{max-height:140px;overflow-y:auto}
+.agent-item,.task-item{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:.8rem}
+.agent-role{color:var(--accent);min-width:60px}
+.task-status{font-size:.7rem;padding:2px 8px;border-radius:8px}
+
+/* Event Log */
+.event-controls{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.event-controls button{padding:4px 12px;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--text2);font-size:.75rem;cursor:pointer;transition:all .2s}
+.event-controls button:hover,.event-controls button.active{background:var(--border);color:var(--text)}
+.event-log-list{max-height:220px;overflow-y:auto;font-family:'JetBrains Mono','Fira Code',monospace;font-size:.78rem;line-height:1.7}
+.event-entry{display:flex;gap:8px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.03)}
+.event-time{color:var(--text2);flex-shrink:0;min-width:50px}
+.event-icon{flex-shrink:0;width:16px;text-align:center}
+.event-msg{word-break:break-word}
+.ev-info .event-icon{color:var(--accent)}
+.ev-success .event-icon{color:var(--green)}
+.ev-warning .event-icon{color:var(--yellow)}
+.ev-error .event-icon{color:var(--red)}
+.ev-decision .event-icon{color:var(--yellow)}
+.ev-milestone .event-icon{color:var(--purple)}
+.pause-btn{margin-left:auto;font-size:.7rem;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--text2);cursor:pointer}
+.pause-btn:hover{background:var(--border);color:var(--text)}
+
+/* Dependency Graph */
+.graph-section{margin:0 24px var(--gap);background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.graph-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;cursor:pointer;user-select:none}
+.graph-header:hover{background:rgba(255,255,255,.02)}
+.graph-header h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);font-weight:600}
+.graph-toggle{color:var(--text2);font-size:.85rem;transition:transform .3s}
+.graph-toggle.open{transform:rotate(180deg)}
+.graph-body{max-height:0;overflow:hidden;transition:max-height .4s ease}
+.graph-body.open{max-height:500px}
+.graph-canvas{display:block;width:100%;height:460px;background:var(--bg);border-top:1px solid var(--border);cursor:grab}
+.graph-canvas:active{cursor:grabbing}
+.graph-zoom-controls{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:4px;z-index:10}
+.graph-zoom-controls button{width:28px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--text);font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1}
+.graph-zoom-controls button:hover{background:var(--border);color:var(--accent)}
+.graph-wrapper{position:relative}
+.graph-legend{display:flex;gap:16px;padding:10px 20px;font-size:.75rem;color:var(--text2);border-top:1px solid var(--border)}
+.legend-item{display:flex;align-items:center;gap:4px}
+.legend-dot{width:10px;height:10px;border-radius:50%}
+
+/* Decision Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:1000}
+.modal-overlay.show{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;max-width:420px;width:90%}
+.modal h3{margin-bottom:12px;font-size:1rem}
+.modal p{color:var(--text2);font-size:.85rem;margin-bottom:16px}
+.modal-options{display:flex;flex-direction:column;gap:8px}
+.modal-option{padding:10px 16px;border:1px solid var(--border);border-radius:var(--radius);background:transparent;color:var(--text);font-size:.85rem;cursor:pointer;text-align:left;transition:all .2s}
+.modal-option:hover{background:var(--border);border-color:var(--accent)}
+.modal-cancel{margin-top:12px;padding:8px;background:transparent;border:none;color:var(--text2);font-size:.8rem;cursor:pointer;width:100%;text-align:center}
+.modal-cancel:hover{color:var(--text)}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg);border-radius:3px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+
+/* Project Tabs */
+.project-tabs{display:flex;align-items:stretch;gap:0;background:var(--bg);border-bottom:1px solid var(--border);padding:0 24px;overflow-x:auto}
+.project-tab{padding:10px 20px;font-size:.85rem;font-weight:500;color:var(--text2);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent;transition:all .2s;white-space:nowrap;display:flex;align-items:center;gap:8px}
+.project-tab:hover{color:var(--text);background:rgba(255,255,255,.03)}
+.project-tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:700}
+.project-tab .tab-name{font-size:.9rem}
+.project-tab .tab-lang{font-size:.65rem;padding:1px 6px;border-radius:8px;background:rgba(255,255,255,.06);color:var(--text2);text-transform:uppercase;letter-spacing:.5px}
+.project-tab .tab-dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0}
+.project-tab .tab-dot.stale{background:var(--yellow)}
+.project-tab .tab-dot.offline{background:var(--text2)}
+.no-projects{padding:10px 20px;color:var(--text2);font-size:.85rem;font-style:italic}
+.project-count{font-size:.7rem;color:var(--text2);padding:2px 8px;border-radius:10px;background:rgba(79,195,247,.1)}
+
+/* Hidden dropdown (still used for programmatic access) */
+.project-selector{display:none}
+
+/* Empty state */
+.empty{color:var(--text2);font-size:.8rem;font-style:italic;padding:8px 0}
+</style>
+</head>
+<body>
+
+<header class="header">
+  <h1><span>hex</span> Dashboard</h1>
+  <div class="header-right">
+    <select class="project-selector" id="projectSelector">
+      <option value="">Loading projects...</option>
+    </select>
+    <div class="project-info" id="projectInfo">
+      <span class="project-path" id="projectPath"></span>
+      <span class="ast-badge" id="astBadge"></span>
+    </div>
+    <span class="project-count" id="projectCount"></span>
+    <div class="conn-badge">
+      <span class="conn-dot" id="connDot"></span>
+      <span id="connLabel">Connecting...</span>
+    </div>
+  </div>
+</header>
+
+<nav class="project-tabs" id="projectTabs">
+  <div class="no-projects">Waiting for projects to connect...</div>
+</nav>
+
+<div class="grid">
+  <!-- Architecture Health -->
+  <div class="card" id="healthPanel">
+    <div class="card-title">Architecture Health</div>
+    <div class="health-top">
+      <div class="health-ring">
+        <svg viewBox="0 0 120 120" width="120" height="120">
+          <circle class="health-ring-bg" cx="60" cy="60" r="52"/>
+          <circle class="health-ring-fg" id="healthArc" cx="60" cy="60" r="52"
+            stroke-dasharray="326.73" stroke-dashoffset="326.73"/>
+        </svg>
+        <div class="health-score">
+          <span id="healthNum">--</span>
+          <small>/ 100</small>
+        </div>
+      </div>
+      <div class="health-stats" id="healthStats">
+        <div class="health-stat"><span class="num" id="hFiles">--</span><span class="lbl">files</span></div>
+        <div class="health-stat"><span class="num" id="hExports">--</span><span class="lbl">exports</span></div>
+        <div class="health-stat"><span class="num" id="hViolations">--</span><span class="lbl">violations</span></div>
+        <div class="health-stat"><span class="num" id="hUnused">--</span><span class="lbl">unused ports</span></div>
+        <div class="health-stat"><span class="num" id="hDead">--</span><span class="lbl">dead exports</span></div>
+        <div class="health-stat"><span class="num" id="hCircular">--</span><span class="lbl">circular deps</span></div>
+      </div>
+    </div>
+    <div class="violations-list" id="violationsList"></div>
+    <div class="unused-list" id="unusedList"></div>
+    <div class="health-updated" id="healthUpdated"></div>
+  </div>
+
+  <!-- Token Efficiency -->
+  <div class="card" id="tokenPanel">
+    <div class="card-title">Token Efficiency</div>
+    <select class="file-selector" id="fileSelector">
+      <option value="">Loading files...</option>
+    </select>
+    <div class="token-bars" id="tokenBars">
+      <div class="token-row">
+        <span class="token-label">L0</span>
+        <span class="token-count" id="tokL0">--</span>
+        <div class="token-bar-track"><div class="token-bar-fill" id="barL0" style="width:0;background:var(--green)"></div></div>
+        <span class="token-bar-pct" id="pctL0">--%</span>
+      </div>
+      <div class="token-row">
+        <span class="token-label">L1</span>
+        <span class="token-count" id="tokL1">--</span>
+        <div class="token-bar-track"><div class="token-bar-fill" id="barL1" style="width:0;background:var(--accent)"></div></div>
+        <span class="token-bar-pct" id="pctL1">--%</span>
+      </div>
+      <div class="token-row">
+        <span class="token-label">L2</span>
+        <span class="token-count" id="tokL2">--</span>
+        <div class="token-bar-track"><div class="token-bar-fill" id="barL2" style="width:0;background:var(--yellow)"></div></div>
+        <span class="token-bar-pct" id="pctL2">--%</span>
+      </div>
+      <div class="token-row">
+        <span class="token-label">L3</span>
+        <span class="token-count" id="tokL3">--</span>
+        <div class="token-bar-track"><div class="token-bar-fill" id="barL3" style="width:0;background:var(--red)"></div></div>
+        <span class="token-bar-pct" id="pctL3">--%</span>
+      </div>
+    </div>
+    <div class="token-summary">
+      <span>Avg compression: <span class="val" id="avgCompression">--%</span></span>
+      <span>Files: <span class="val" id="totalFiles">--</span></span>
+    </div>
+  </div>
+
+  <!-- Swarm Status -->
+  <div class="card" id="swarmPanel">
+    <div class="card-title">Swarm Status</div>
+    <div class="swarm-header">
+      <span class="status-badge status-idle" id="swarmBadge">idle</span>
+    </div>
+    <div class="swarm-counts">
+      <div><span class="num" id="agentCount">0</span><br><span class="lbl">agents</span></div>
+      <div><span class="num" id="taskProgress">0/0</span><br><span class="lbl">tasks</span></div>
+    </div>
+    <div class="agent-list" id="agentList"></div>
+    <div class="task-list" id="taskList" style="margin-top:10px"></div>
+  </div>
+
+  <!-- Event Log -->
+  <div class="card" id="eventPanel">
+    <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+      <span>Event Log</span>
+      <button class="pause-btn" id="pauseBtn" title="Pause auto-scroll">&#9208; Pause</button>
+    </div>
+    <div class="event-controls" id="eventFilters">
+      <button class="active" data-filter="all">All</button>
+      <button data-filter="error">Errors</button>
+      <button data-filter="decision">Decisions</button>
+      <button data-filter="milestone">Milestones</button>
+    </div>
+    <div class="event-log-list" id="eventLog">
+      <div class="empty">Waiting for events...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Dependency Graph -->
+<div class="graph-section">
+  <div class="graph-header" id="graphToggle">
+    <h3>Dependency Graph</h3>
+    <span class="graph-toggle" id="graphArrow">&#9660;</span>
+  </div>
+  <div class="graph-body" id="graphBody">
+    <div class="graph-wrapper">
+      <canvas class="graph-canvas" id="graphCanvas"></canvas>
+      <div class="graph-zoom-controls">
+        <button id="zoomIn" title="Zoom in">+</button>
+        <button id="zoomOut" title="Zoom out">-</button>
+        <button id="zoomReset" title="Reset view">R</button>
+        <button id="toggleExternal" title="Show/hide external deps" style="font-size:9px;margin-top:4px">EXT</button>
+      </div>
+    </div>
+    <div class="graph-legend">
+      <div class="legend-item"><span class="legend-dot" style="background:#42a5f5"></span> Domain</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#66bb6a"></span> Ports</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#ab47bc"></span> Use Cases</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#ff8a65"></span> Primary (driving)</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#ffd54f"></span> Secondary (driven)</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#9e9e9e"></span> External</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#ef5350;border-radius:0;width:14px;height:2px"></span> Violation</div>
+    </div>
+  </div>
+</div>
+
+<!-- Decision Modal -->
+<div class="modal-overlay" id="decisionModal">
+  <div class="modal">
+    <h3 id="modalTitle">Decision Required</h3>
+    <p id="modalDesc"></p>
+    <div class="modal-options" id="modalOptions"></div>
+    <button class="modal-cancel" id="modalCancel">Dismiss</button>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // --- State ---
+  var state = {
+    connected: false,
+    autoScroll: true,
+    eventFilter: 'all',
+    events: [],
+    tokenOverview: null,
+    currentDecisionId: null,
+    sseRetryTimer: null,
+    pollTimer: null,
+    evtSource: null,
+    currentProject: null, // currently selected project ID
+    projects: [],         // list of { id, name, rootPath, astIsStub }
+  };
+
+  // --- DOM Helpers ---
+  function $(sel) { return document.querySelector(sel); }
+  function $$(sel) { return document.querySelectorAll(sel); }
+
+  function escapeHtml(str) {
+    var d = document.createElement('div');
+    d.textContent = String(str);
+    return d.innerHTML;
+  }
+
+  function setText(el, text) {
+    if (typeof el === 'string') el = $(el);
+    if (el) el.textContent = String(text);
+  }
+
+  function clearChildren(el) {
+    if (typeof el === 'string') el = $(el);
+    while (el && el.firstChild) el.removeChild(el.firstChild);
+  }
+
+  function createEl(tag, attrs, children) {
+    var el = document.createElement(tag);
+    if (attrs) {
+      Object.keys(attrs).forEach(function(k) {
+        if (k === 'className') el.className = attrs[k];
+        else if (k === 'textContent') el.textContent = attrs[k];
+        else if (k.indexOf('data-') === 0) el.setAttribute(k, attrs[k]);
+        else el.setAttribute(k, attrs[k]);
+      });
+    }
+    if (children) {
+      children.forEach(function(c) {
+        if (typeof c === 'string') el.appendChild(document.createTextNode(c));
+        else if (c) el.appendChild(c);
+      });
+    }
+    return el;
+  }
+
+  // --- Connection Status ---
+  function setConnected(val) {
+    state.connected = val;
+    var dot = $('#connDot');
+    if (val) {
+      dot.classList.remove('disconnected');
+      setText('#connLabel', 'Connected');
+    } else {
+      dot.classList.add('disconnected');
+      setText('#connLabel', 'Disconnected');
+    }
+  }
+
+  // --- Project List & Switching ---
+  function loadProjects() {
+    rawFetch('/api/projects').then(function(data) {
+      if (data && data.projects && data.projects.length > 0) {
+        state.projects = data.projects;
+        populateProjectSelector(data.projects);
+        if (!state.currentProject) {
+          switchProject(data.projects[0].id);
+        }
+      } else {
+        // No projects yet — show empty state
+        var sel = $('#projectSelector');
+        clearChildren(sel);
+        sel.appendChild(createEl('option', { value: '', textContent: 'No projects registered' }));
+        sel.disabled = true;
+        setText('#projectCount', '0 projects');
+        setText('#projectPath', 'Waiting for projects to connect...');
+      }
+    });
+  }
+
+  function populateProjectSelector(projects) {
+    // Hidden dropdown (for programmatic compat)
+    var sel = $('#projectSelector');
+    clearChildren(sel);
+    projects.forEach(function(p) {
+      sel.appendChild(createEl('option', { value: p.id, textContent: p.id }));
+    });
+    if (state.currentProject) sel.value = state.currentProject;
+
+    // Tab bar
+    var tabs = $('#projectTabs');
+    clearChildren(tabs);
+
+    if (projects.length === 0) {
+      tabs.appendChild(createEl('div', { className: 'no-projects', textContent: 'Waiting for projects to connect...' }));
+      setText('#projectCount', '0 projects');
+      return;
+    }
+
+    setText('#projectCount', projects.length + ' project' + (projects.length === 1 ? '' : 's'));
+
+    projects.forEach(function(p) {
+      var isActive = state.currentProject === p.id;
+      var name = p.name || p.id;
+      // Detect language from path or name
+      var lang = '';
+      if (p.rootPath) {
+        if (p.rootPath.includes('/go/') || name.includes('backend')) lang = 'go';
+        else if (name.includes('frontend') || name.includes('web')) lang = 'ts';
+      }
+
+      // Freshness dot: green if pushed in last 30s, yellow if 30-120s, gray if older
+      var age = p.lastPushAt ? (Date.now() - p.lastPushAt) / 1000 : 999;
+      var dotClass = 'tab-dot';
+      if (age > 120 || !p.lastPushAt) dotClass += ' offline';
+      else if (age > 30) dotClass += ' stale';
+
+      var tab = createEl('button', {
+        className: 'project-tab' + (isActive ? ' active' : ''),
+        'data-id': p.id,
+      }, [
+        createEl('span', { className: dotClass }),
+        createEl('span', { className: 'tab-name', textContent: name }),
+      ]);
+
+      if (lang) {
+        tab.appendChild(createEl('span', { className: 'tab-lang', textContent: lang }));
+      }
+
+      tab.addEventListener('click', function() { switchProject(p.id); });
+      tabs.appendChild(tab);
+    });
+  }
+
+  function switchProject(projectId) {
+    state.currentProject = projectId;
+    var sel = $('#projectSelector');
+    sel.value = projectId;
+
+    // Update active tab
+    $$('.project-tab').forEach(function(tab) {
+      tab.classList.toggle('active', tab.getAttribute('data-id') === projectId);
+    });
+
+    // Update project info in header
+    var proj = state.projects.find(function(p) { return p.id === projectId; });
+    if (proj) {
+      setText('#projectPath', proj.rootPath || '');
+      var badge = $('#astBadge');
+      if (proj.astIsStub) {
+        badge.textContent = 'stub AST';
+        badge.className = 'ast-badge ast-stub';
+      } else {
+        badge.textContent = 'real AST';
+        badge.className = 'ast-badge ast-real';
+      }
+    }
+
+    // Clear graph state for new project
+    graphState = { nodes: [], edges: [], positions: {} };
+    camera = { x: 0, y: 0, zoom: 1 };
+
+    // Reload all panels for the new project
+    loadHealth();
+    loadTokenOverview();
+    loadSwarm();
+    loadGraph();
+  }
+
+  // --- API Fetch ---
+  /** Raw fetch — no project prefix. */
+  function rawFetch(url) {
+    return fetch(url).then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      setConnected(true);
+      return res.json();
+    }).catch(function(e) {
+      setConnected(false);
+      console.warn('API fetch failed: ' + url, e);
+      return null;
+    });
+  }
+
+  /** Project-scoped fetch — always prefixes /api/:projectId/. */
+  function apiFetch(url) {
+    if (!state.currentProject) return Promise.resolve(null);
+    // Transform /api/health → /api/:projectId/health
+    var resolved = url.replace('/api/', '/api/' + state.currentProject + '/');
+    return rawFetch(resolved);
+  }
+
+  // --- Utilities ---
+  function formatTime(ts) {
+    if (!ts) return '--:--';
+    var d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  }
+
+  function scoreColor(score) {
+    if (score >= 80) return '#66bb6a';
+    if (score >= 50) return '#ffa726';
+    return '#ef5350';
+  }
+
+  // --- Health Panel ---
+  function loadHealth() {
+    apiFetch('/api/health').then(function(data) {
+      if (!data) return;
+
+      // API may return { summary: { healthScore, totalFiles, ... }, deadExports, ... }
+      // or flat { healthScore, totalFiles, ... } — handle both
+      var summary = data.summary || {};
+      var score = typeof summary.healthScore === 'number' ? summary.healthScore
+        : (typeof data.score === 'number' ? data.score : (data.healthScore || 0));
+      var circumference = 326.73;
+      var offset = circumference - (circumference * Math.min(score, 100) / 100);
+      var arc = $('#healthArc');
+      arc.style.strokeDashoffset = String(offset);
+      arc.style.stroke = scoreColor(score);
+      setText('#healthNum', Math.round(score));
+
+      setText('#hFiles', summary.totalFiles || data.totalFiles || data.files || '--');
+      setText('#hExports', summary.totalExports || data.totalExports || data.exports || '--');
+
+      var violations = data.dependencyViolations || data.violations || data.boundaryViolations || [];
+      var violationCount = typeof summary.violationCount === 'number' ? summary.violationCount
+        : (Array.isArray(violations) ? violations.length : (violations || 0));
+      setText('#hViolations', violationCount);
+      $('#hViolations').style.color = violationCount > 0 ? '#ef5350' : '#66bb6a';
+
+      var unused = data.unusedPorts || [];
+      var unusedCount = Array.isArray(unused) ? unused.length : (unused || 0);
+      setText('#hUnused', unusedCount);
+
+      var dead = data.deadExports || data.unusedExports || [];
+      var deadCount = typeof summary.deadExportCount === 'number' ? summary.deadExportCount
+        : (Array.isArray(dead) ? dead.length : (dead || 0));
+      setText('#hDead', deadCount);
+
+      var circular = data.circularDeps || data.circularDependencies || data.cycles || [];
+      var circularCount = typeof summary.circularCount === 'number' ? summary.circularCount
+        : (Array.isArray(circular) ? circular.length : (circular || 0));
+      setText('#hCircular', circularCount);
+      $('#hCircular').style.color = circularCount > 0 ? '#ef5350' : '#66bb6a';
+
+      setText('#healthUpdated', 'Updated: ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }));
+
+      // Violations list
+      var vList = $('#violationsList');
+      clearChildren(vList);
+      if (Array.isArray(violations) && violations.length > 0) {
+        vList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Violations' }));
+        violations.forEach(function(v) {
+          var item = createEl('div', { className: 'violation-item' });
+          item.appendChild(document.createTextNode(
+            (v.from || v.source || '') + ' \u2192 ' + (v.to || v.target || '') + ' '
+          ));
+          item.appendChild(createEl('span', { className: 'violation-rule', textContent: v.rule || v.type || '' }));
+          vList.appendChild(item);
+        });
+      }
+
+      // Unused ports
+      var uList = $('#unusedList');
+      clearChildren(uList);
+      if (Array.isArray(unused) && unused.length > 0) {
+        uList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Unused Ports' }));
+        unused.forEach(function(u) {
+          var label = typeof u === 'string' ? u : (u.name || u.port || JSON.stringify(u));
+          uList.appendChild(createEl('div', { className: 'unused-item', textContent: label }));
+        });
+      }
+    });
+  }
+
+  // --- Token Panel ---
+  function loadTokenOverview() {
+    apiFetch('/api/tokens/overview').then(function(data) {
+      if (!data) return;
+
+      state.tokenOverview = data;
+      var files = data.files || [];
+      var sel = $('#fileSelector');
+      clearChildren(sel);
+      sel.appendChild(createEl('option', { value: '', textContent: '-- Select a file --' }));
+      files.forEach(function(f) {
+        sel.appendChild(createEl('option', { value: f.path, textContent: f.path }));
+      });
+
+      // Compute average compression
+      if (files.length > 0) {
+        var total = 0;
+        files.forEach(function(f) {
+          var ratio = typeof f.ratio === 'number' ? f.ratio : (f.l1Tokens && f.l3Tokens ? (1 - f.l1Tokens / f.l3Tokens) : 0);
+          total += ratio;
+        });
+        setText('#avgCompression', Math.round((total / files.length) * 100) + '%');
+      }
+      setText('#totalFiles', files.length);
+
+      if (files.length > 0) {
+        sel.value = files[0].path;
+        loadFileTokens(files[0].path);
+      }
+    });
+  }
+
+  function loadFileTokens(filePath) {
+    if (!filePath) return;
+    apiFetch('/api/tokens/' + encodeURIComponent(filePath)).then(function(data) {
+      if (!data) return;
+
+      var levels = [
+        { key: 'l0', el: 'L0' },
+        { key: 'l1', el: 'L1' },
+        { key: 'l2', el: 'L2' },
+        { key: 'l3', el: 'L3' },
+      ];
+
+      // API returns { l0: { tokens, exports, imports, lines }, ... }
+      function tokVal(key) {
+        var entry = data[key];
+        if (!entry) return 0;
+        if (typeof entry === 'number') return entry;
+        return entry.tokens || 0;
+      }
+
+      var maxTok = Math.max(tokVal('l0'), tokVal('l1'), tokVal('l2'), tokVal('l3'), 1);
+
+      levels.forEach(function(lv) {
+        var val = tokVal(lv.key);
+        setText('#tok' + lv.el, val + ' tok');
+        var pct = maxTok > 0 ? (val / maxTok) * 100 : 0;
+        $('#bar' + lv.el).style.width = pct + '%';
+
+        var l3Val = tokVal('l3') || 1;
+        if (lv.key === 'l3') {
+          setText('#pct' + lv.el, 'base');
+        } else {
+          var ratio = Math.round((1 - val / l3Val) * 100);
+          setText('#pct' + lv.el, ratio + '%');
+        }
+      });
+    });
+  }
+
+  // --- Swarm Panel ---
+  function loadSwarm() {
+    apiFetch('/api/swarm').then(function(data) {
+      if (!data) {
+        // Show unavailable message
+        var panel = $('#swarmPanel');
+        var existing = panel.querySelector('.swarm-unavailable');
+        if (!existing) {
+          existing = createEl('div', { className: 'swarm-unavailable', textContent: 'Swarm not connected. Start a swarm to see agent and task status.' });
+          panel.appendChild(existing);
+        }
+        return;
+      }
+
+      // Remove unavailable message if present
+      var unavail = $('#swarmPanel').querySelector('.swarm-unavailable');
+      if (unavail) unavail.remove();
+
+      // status may be a string or an object { status: 'idle', ... }
+      var statusObj = data.status || {};
+      var statusStr = (typeof statusObj === 'string' ? statusObj : (statusObj.status || 'idle')).toLowerCase();
+      var badge = $('#swarmBadge');
+      badge.textContent = statusStr;
+      badge.className = 'status-badge status-' + statusStr;
+
+      var agents = data.agents || [];
+      var tasks = data.tasks || [];
+      setText('#agentCount', agents.length);
+
+      var completed = tasks.filter(function(t) {
+        return t.status === 'completed' || t.status === 'done';
+      }).length;
+      setText('#taskProgress', completed + '/' + tasks.length);
+
+      // Agent list
+      var aList = $('#agentList');
+      clearChildren(aList);
+      aList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Agents' }));
+      if (agents.length > 0) {
+        agents.forEach(function(a) {
+          var item = createEl('div', { className: 'agent-item' }, [
+            createEl('span', { className: 'agent-role', textContent: a.role || a.type || 'agent' }),
+            createEl('span', { textContent: a.name || a.id || '--' }),
+            createEl('span', {
+              className: 'status-badge status-' + (a.status || 'idle').toLowerCase(),
+              textContent: a.status || 'idle',
+              style: 'font-size:.65rem;padding:2px 6px',
+            }),
+          ]);
+          if (a.currentTask) {
+            item.appendChild(createEl('span', {
+              textContent: a.currentTask,
+              style: 'color:var(--text2);margin-left:auto;font-size:.75rem',
+            }));
+          }
+          aList.appendChild(item);
+        });
+      } else {
+        aList.appendChild(createEl('div', { className: 'empty', textContent: 'No agents active' }));
+      }
+
+      // Task list
+      var tList = $('#taskList');
+      clearChildren(tList);
+      tList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Tasks' }));
+      if (tasks.length > 0) {
+        tasks.forEach(function(t) {
+          var ts = (t.status || 'pending').toLowerCase();
+          var badgeClass = 'status-idle';
+          if (ts === 'completed' || ts === 'done') badgeClass = 'status-completed';
+          else if (ts === 'running' || ts === 'in-progress') badgeClass = 'status-running';
+          else if (ts === 'failed') badgeClass = 'status-failed';
+
+          var item = createEl('div', { className: 'task-item' }, [
+            createEl('span', {
+              className: 'task-status status-badge ' + badgeClass,
+              textContent: t.status || 'pending',
+              style: 'font-size:.65rem;padding:2px 6px',
+            }),
+            createEl('span', { textContent: t.title || t.name || t.id || '--' }),
+          ]);
+          if (t.assignee) {
+            item.appendChild(createEl('span', {
+              textContent: t.assignee,
+              style: 'color:var(--text2);margin-left:auto;font-size:.75rem',
+            }));
+          }
+          tList.appendChild(item);
+        });
+      } else {
+        tList.appendChild(createEl('div', { className: 'empty', textContent: 'No tasks registered' }));
+      }
+    });
+  }
+
+  // --- Event Log ---
+  var LEVEL_ICONS = {
+    info: '\u25CF',
+    success: '\u2713',
+    warning: '\u25B2',
+    error: '\u2716',
+    decision: '?',
+    milestone: '\u2605',
+  };
+  var LEVEL_CLASSES = {
+    info: 'ev-info',
+    success: 'ev-success',
+    warning: 'ev-warning',
+    error: 'ev-error',
+    decision: 'ev-decision',
+    milestone: 'ev-milestone',
+  };
+
+  function addEvent(evt) {
+    state.events.push(evt);
+    if (state.events.length > 500) state.events.shift();
+    renderEvents();
+  }
+
+  function renderEvents() {
+    var log = $('#eventLog');
+    var filtered = state.eventFilter === 'all'
+      ? state.events
+      : state.events.filter(function(e) { return e.level === state.eventFilter; });
+
+    clearChildren(log);
+
+    if (filtered.length === 0) {
+      log.appendChild(createEl('div', { className: 'empty', textContent: 'No matching events' }));
+      return;
+    }
+
+    filtered.forEach(function(e) {
+      var cls = LEVEL_CLASSES[e.level] || LEVEL_CLASSES.info;
+      var icon = LEVEL_ICONS[e.level] || LEVEL_ICONS.info;
+      var msg = e.message || e.msg || JSON.stringify(e);
+
+      var entry = createEl('div', { className: 'event-entry ' + cls }, [
+        createEl('span', { className: 'event-time', textContent: formatTime(e.timestamp || e.ts) }),
+        createEl('span', { className: 'event-icon', textContent: icon }),
+        createEl('span', { className: 'event-msg', textContent: msg }),
+      ]);
+      log.appendChild(entry);
+    });
+
+    if (state.autoScroll) {
+      log.scrollTop = log.scrollHeight;
+    }
+  }
+
+  // --- SSE ---
+  function connectSSE() {
+    if (state.evtSource) {
+      state.evtSource.close();
+    }
+    var es;
+    try {
+      es = new EventSource('/api/events');
+    } catch (e) {
+      setConnected(false);
+      state.sseRetryTimer = setTimeout(connectSSE, 5000);
+      return;
+    }
+    state.evtSource = es;
+
+    es.onopen = function() {
+      setConnected(true);
+      clearTimeout(state.sseRetryTimer);
+      addEvent({ level: 'success', message: 'Dashboard connected via SSE', timestamp: Date.now() });
+    };
+
+    // Named event listeners for typed server events
+    es.addEventListener('connected', function(e) {
+      setConnected(true);
+      try {
+        var data = JSON.parse(e.data);
+        if (data.projects && data.projects.length > 0) {
+          state.projects = data.projects;
+          populateProjectSelector(data.projects);
+          if (!state.currentProject) {
+            switchProject(data.projects[0].id);
+          }
+        }
+      } catch (err) { /* ignore */ }
+      addEvent({ level: 'info', message: 'SSE stream established', timestamp: Date.now() });
+    });
+
+    // State update — project pushed new data, refresh the relevant panel
+    es.addEventListener('state-update', function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        if (data.projectId !== state.currentProject) return;
+        switch (data.type) {
+          case 'health': loadHealth(); break;
+          case 'tokens': loadTokenOverview(); break;
+          case 'swarm': loadSwarm(); break;
+          case 'graph': loadGraph(); break;
+        }
+      } catch (err) { /* ignore */ }
+    });
+
+    // Hub: project registered/unregistered
+    es.addEventListener('project-registered', function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        addEvent({ level: 'milestone', message: 'Project registered: ' + data.id, timestamp: data.timestamp || Date.now() });
+        // Refresh project list
+        rawFetch('/api/projects').then(function(resp) {
+          if (resp && resp.projects) {
+            state.projects = resp.projects;
+            populateProjectSelector(resp.projects);
+          }
+        });
+      } catch (err) { /* ignore */ }
+    });
+
+    es.addEventListener('project-unregistered', function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        addEvent({ level: 'warning', message: 'Project removed: ' + data.id, timestamp: data.timestamp || Date.now() });
+        rawFetch('/api/projects').then(function(resp) {
+          if (resp && resp.projects) {
+            state.projects = resp.projects;
+            populateProjectSelector(resp.projects);
+            // If current project was removed, switch to first available
+            if (state.currentProject === data.id && resp.projects.length > 0) {
+              switchProject(resp.projects[0].id);
+            }
+          }
+        });
+      } catch (err) { /* ignore */ }
+    });
+
+    // Notification events from the orchestrator (broadcast as their level name)
+    var levels = ['trace', 'info', 'success', 'warning', 'error', 'decision', 'milestone'];
+    levels.forEach(function(level) {
+      es.addEventListener(level, function(e) {
+        try {
+          var data = JSON.parse(e.data);
+          data.level = data.level || level;
+          data.timestamp = data.timestamp || Date.now();
+          if (data.level === 'decision') {
+            showDecisionModal(data);
+          }
+          addEvent(data);
+          // Refresh health/swarm panels on significant events
+          if (level === 'milestone' || level === 'error' || level === 'success') {
+            loadHealth();
+            loadSwarm();
+          }
+        } catch (err) {
+          addEvent({ level: level, message: e.data, timestamp: Date.now() });
+        }
+      });
+    });
+
+    // File change events — highlight graph nodes
+    es.addEventListener('file-change', function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        if (data.path) {
+          markFileActive(data.path);
+          addEvent({
+            level: 'info',
+            message: 'File changed: ' + data.path + ' (' + (data.layer || 'unknown') + ')',
+            timestamp: data.timestamp || Date.now(),
+          });
+
+          // Reload graph data if not loaded yet
+          if (graphState.nodes.length === 0) {
+            loadGraph();
+          }
+        }
+      } catch (err) { /* ignore malformed */ }
+    });
+
+    // Fallback for unnamed events
+    es.onmessage = function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        if (data.level === 'decision') {
+          showDecisionModal(data);
+        }
+        addEvent(data);
+      } catch (err) {
+        addEvent({ level: 'info', message: e.data, timestamp: new Date().toISOString() });
+      }
+    };
+
+    es.onerror = function() {
+      setConnected(false);
+      addEvent({ level: 'warning', message: 'SSE connection lost — reconnecting...', timestamp: Date.now() });
+      es.close();
+      state.sseRetryTimer = setTimeout(connectSSE, 5000);
+    };
+  }
+
+  // --- Decision Modal ---
+  function showDecisionModal(evt) {
+    state.currentDecisionId = evt.id || evt.decisionId;
+    setText('#modalTitle', evt.title || 'Decision Required');
+    setText('#modalDesc', evt.message || evt.description || '');
+
+    var options = evt.options || [];
+    var container = $('#modalOptions');
+    clearChildren(container);
+    options.forEach(function(opt) {
+      var label = typeof opt === 'string' ? opt : (opt.label || opt.name || JSON.stringify(opt));
+      var value = typeof opt === 'string' ? opt : (opt.value || opt.name);
+      var btn = createEl('button', { className: 'modal-option', textContent: label });
+      btn.addEventListener('click', function() { submitDecision(value); });
+      container.appendChild(btn);
+    });
+
+    $('#decisionModal').classList.add('show');
+  }
+
+  function submitDecision(selectedOption) {
+    if (!state.currentDecisionId || !state.currentProject) return;
+    var prefix = '/api/' + state.currentProject;
+    fetch(prefix + '/decisions/' + encodeURIComponent(state.currentDecisionId), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selectedOption: selectedOption }),
+    }).catch(function(e) {
+      console.warn('Decision submit failed', e);
+    });
+    $('#decisionModal').classList.remove('show');
+    state.currentDecisionId = null;
+  }
+
+  // --- Active Files (file-change tracking) ---
+  var activeFiles = {}; // { path: expiresAt }
+  var ACTIVE_DURATION = 8000; // highlight for 8 seconds after last change
+  var graphAnimFrame = null;
+
+  function markFileActive(path) {
+    activeFiles[path] = Date.now() + ACTIVE_DURATION;
+
+    // Auto-open graph panel when files are being edited
+    var body = $('#graphBody');
+    if (!body.classList.contains('open')) {
+      body.classList.add('open');
+      $('#graphArrow').classList.add('open');
+      if (!body.getAttribute('data-loaded')) {
+        body.setAttribute('data-loaded', '1');
+      }
+    }
+
+    // Start animation loop if not already running
+    if (!graphAnimFrame) startGraphAnimation();
+  }
+
+  function isFileActive(path) {
+    var exp = activeFiles[path];
+    if (!exp) return false;
+    if (Date.now() > exp) {
+      delete activeFiles[path];
+      return false;
+    }
+    return true;
+  }
+
+  function hasActiveFiles() {
+    var now = Date.now();
+    var keys = Object.keys(activeFiles);
+    for (var i = 0; i < keys.length; i++) {
+      if (activeFiles[keys[i]] > now) return true;
+      delete activeFiles[keys[i]];
+    }
+    return false;
+  }
+
+  // --- Dependency Graph (Canvas) — Hexagonal Architecture Visualization ---
+
+  // Layer colors — distinct per hex layer
+  var LAYER_COLORS = {
+    domain:            '#42a5f5',  // blue — core
+    ports:             '#66bb6a',  // green — boundaries
+    port:              '#66bb6a',
+    usecases:          '#ab47bc',  // purple — application logic
+    usecase:           '#ab47bc',
+    'primary-adapter': '#ff8a65',  // warm orange — driving
+    'secondary-adapter':'#ffd54f', // amber — driven
+    adapters:          '#ffa726',
+    adapter:           '#ffa726',
+    other:             '#9e9e9e',
+  };
+
+  // Ring fills — subtle transparent zones behind each ring
+  var RING_FILLS = {
+    domain:            'rgba(66,165,245,0.06)',
+    ports:             'rgba(102,187,106,0.05)',
+    usecases:          'rgba(171,71,188,0.05)',
+    'primary-adapter': 'rgba(255,138,101,0.04)',
+    'secondary-adapter':'rgba(255,213,79,0.04)',
+    other:             'rgba(158,158,158,0.03)',
+  };
+
+  // Ring border colors
+  var RING_STROKES = {
+    domain:            'rgba(66,165,245,0.35)',
+    ports:             'rgba(102,187,106,0.25)',
+    usecases:          'rgba(171,71,188,0.25)',
+    'primary-adapter': 'rgba(255,138,101,0.20)',
+    'secondary-adapter':'rgba(255,213,79,0.20)',
+    other:             'rgba(158,158,158,0.15)',
+  };
+
+  // Canonical hex ring order: domain at center, adapters outermost
+  var HEX_RINGS = [
+    { key: 'domain',            label: 'Domain',            aliases: ['domain'] },
+    { key: 'ports',             label: 'Ports',             aliases: ['ports', 'port'] },
+    { key: 'usecases',          label: 'Use Cases',         aliases: ['usecases', 'usecase'] },
+    { key: 'primary-adapter',   label: 'Primary Adapters',  aliases: ['primary-adapter'] },
+    { key: 'secondary-adapter', label: 'Secondary Adapters', aliases: ['secondary-adapter'] },
+    { key: 'other',             label: 'External',          aliases: ['other', 'adapters', 'adapter'] },
+  ];
+
+  // Store graph data for re-rendering
+  var graphState = { nodes: [], edges: [], positions: {}, ringRadii: [], showExternal: false };
+
+  // Camera state for zoom/pan
+  var camera = { x: 0, y: 0, zoom: 1 };
+  var drag = { active: false, startX: 0, startY: 0, camStartX: 0, camStartY: 0 };
+
+  function loadGraph() {
+    apiFetch('/api/graph').then(function(data) {
+      if (!data) return;
+      graphState.nodes = data.nodes || [];
+      graphState.edges = data.edges || [];
+      if (graphState.nodes.length === 0) return;
+      computePositions();
+      renderGraph();
+    });
+  }
+
+  /**
+   * Normalize layer name to canonical ring key.
+   */
+  function normalizeLayer(layer) {
+    var l = (layer || 'other').toLowerCase();
+    for (var i = 0; i < HEX_RINGS.length; i++) {
+      if (HEX_RINGS[i].aliases.indexOf(l) !== -1) return HEX_RINGS[i].key;
+    }
+    return 'other';
+  }
+
+  /**
+   * Extract a cluster key from a node ID for sub-grouping within a ring.
+   * e.g. "src/adapters/secondary/git-adapter.ts" → "git-adapter"
+   *      "node:fs" → "node"
+   *      "axum::(Extract, State)" → "axum"
+   */
+  function clusterKey(nodeId) {
+    // For file paths: use the filename stem (minus extension)
+    if (nodeId.includes('/')) {
+      var parts = nodeId.split('/');
+      var file = parts[parts.length - 1];
+      // Group by prefix before first dot or hyphen for clustering
+      var stem = file.replace(/\.[^.]+$/, ''); // remove extension
+      // Group related files: e.g. "git-adapter" and "git-adapter.test" → "git-adapter"
+      return stem.replace(/\.test$|\.spec$|_test$/, '');
+    }
+    // For module imports: use namespace prefix
+    if (nodeId.includes(':')) return nodeId.split(':')[0];
+    return nodeId;
+  }
+
+  function computePositions() {
+    var allNodes = graphState.nodes;
+    var canvas = $('#graphCanvas');
+    canvas.style.display = 'block';
+    var rect = canvas.getBoundingClientRect();
+    var width = Math.max(rect.width, 600);
+    var height = Math.max(rect.height, 460);
+    var pad = 60;
+
+    // Filter: hide external nodes unless toggled on
+    var nodes = allNodes.filter(function(n) {
+      if (graphState.showExternal) return true;
+      return normalizeLayer(n.layer) !== 'other';
+    });
+
+    // Group nodes into canonical rings
+    var ringGroups = {};
+    HEX_RINGS.forEach(function(r) { ringGroups[r.key] = []; });
+    nodes.forEach(function(n) {
+      var key = normalizeLayer(n.layer);
+      ringGroups[key].push(n);
+    });
+
+    // Filter to rings that actually have nodes (skip 'other' if hidden)
+    var activeRings = HEX_RINGS.filter(function(r) {
+      return ringGroups[r.key].length > 0;
+    });
+
+    var cx = width / 2;
+    var cy = height / 2;
+    var maxRadius = Math.min(width - pad * 2, height - pad * 2) / 2;
+    var positions = {};
+    var ringRadii = [];
+
+    // Weighted band widths: give more space to rings with more nodes
+    // but cap so small rings still get reasonable space
+    var totalNodes = nodes.length || 1;
+    var minBand = maxRadius * 0.12; // minimum 12% of radius per ring
+
+    // Calculate raw weights
+    var rawWeights = activeRings.map(function(r) {
+      return Math.max(ringGroups[r.key].length, 2); // at least 2 so tiny rings get space
+    });
+    var totalWeight = rawWeights.reduce(function(a, b) { return a + b; }, 0) || 1;
+
+    // Convert to radii, respecting minimum band
+    var ringCount = activeRings.length;
+    var availableRadius = maxRadius - (ringCount * minBand);
+    var currentR = 0;
+
+    activeRings.forEach(function(ring, ri) {
+      var group = ringGroups[ring.key];
+      var weight = rawWeights[ri] / totalWeight;
+      var bandWidth = minBand + (availableRadius * weight);
+      var innerR = currentR;
+      var outerR = currentR + bandWidth;
+      var midR = (innerR + outerR) / 2;
+      currentR = outerR;
+
+      ringRadii.push({
+        key: ring.key,
+        label: ring.label,
+        inner: innerR,
+        outer: outerR,
+        mid: midR,
+        count: group.length,
+      });
+
+      // Special case: single node in innermost ring → center
+      if (group.length === 1 && ri === 0) {
+        positions[group[0].id] = { x: cx, y: cy, ring: ring.key };
+        return;
+      }
+
+      // Hemisphere constraints for adapters
+      var startAngle, endAngle;
+      if (ring.key === 'primary-adapter') {
+        startAngle = Math.PI * 0.55;
+        endAngle   = Math.PI * 1.45;
+      } else if (ring.key === 'secondary-adapter') {
+        startAngle = -Math.PI * 0.45;
+        endAngle   = Math.PI * 0.45;
+      } else {
+        startAngle = -Math.PI;
+        endAngle   = Math.PI;
+      }
+
+      // Sub-cluster nodes by filename prefix within the ring
+      var clusters = {};
+      group.forEach(function(n) {
+        var ck = clusterKey(n.id);
+        if (!clusters[ck]) clusters[ck] = [];
+        clusters[ck].push(n);
+      });
+
+      // Sort clusters by size (largest first for better spacing)
+      var clusterKeys = Object.keys(clusters).sort(function(a, b) {
+        return clusters[b].length - clusters[a].length;
+      });
+
+      // Lay out clusters sequentially along the arc
+      var arcSpan = endAngle - startAngle;
+      var totalInGroup = group.length;
+      var currentAngle = startAngle + arcSpan * 0.03; // small initial gap
+      var usableArc = arcSpan * 0.94; // leave gaps at edges
+
+      clusterKeys.forEach(function(ck) {
+        var clusterNodes = clusters[ck];
+        // Each cluster gets arc proportional to its size, plus a gap
+        var clusterArc = (clusterNodes.length / totalInGroup) * usableArc;
+        var clusterGap = usableArc * 0.015; // small gap between clusters
+
+        var angleStep = clusterArc / Math.max(clusterNodes.length, 1);
+
+        clusterNodes.forEach(function(n, ni) {
+          var angle = currentAngle + angleStep * (ni + 0.5);
+          // Stagger radially: alternate inner/outer within the band for density
+          var radialOffset = 0;
+          if (clusterNodes.length > 1) {
+            radialOffset = (ni % 3 - 1) * bandWidth * 0.22;
+          }
+          positions[n.id] = {
+            x: cx + (midR + radialOffset) * Math.cos(angle),
+            y: cy + (midR + radialOffset) * Math.sin(angle),
+            ring: ring.key,
+            cluster: ck,
+          };
+        });
+
+        currentAngle += clusterArc + clusterGap;
+      });
+    });
+
+    // Gentle overlap nudge — only push within same ring to preserve structure
+    var nodeIds = Object.keys(positions);
+    for (var iter = 0; iter < 8; iter++) {
+      for (var i = 0; i < nodeIds.length; i++) {
+        for (var j = i + 1; j < nodeIds.length; j++) {
+          var a = positions[nodeIds[i]];
+          var b = positions[nodeIds[j]];
+          if (a.ring !== b.ring) continue;
+          var dx = b.x - a.x;
+          var dy = b.y - a.y;
+          var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          var minDist = 35;
+          if (dist < minDist) {
+            var push = (minDist - dist) / 2;
+            var nx = (dx / dist) * push;
+            var ny = (dy / dist) * push;
+            a.x -= nx; a.y -= ny;
+            b.x += nx; b.y += ny;
+          }
+        }
+      }
+    }
+
+    // Clamp to visible area
+    nodeIds.forEach(function(id) {
+      var p = positions[id];
+      p.x = Math.max(pad, Math.min(width - pad, p.x));
+      p.y = Math.max(pad, Math.min(height - pad, p.y));
+    });
+
+    graphState.positions = positions;
+    graphState.ringRadii = ringRadii;
+  }
+
+  function renderGraph() {
+    var nodes = graphState.nodes;
+    var edges = graphState.edges;
+    var positions = graphState.positions;
+    var ringRadii = graphState.ringRadii;
+    if (nodes.length === 0) return;
+
+    var canvas = $('#graphCanvas');
+    var rect = canvas.getBoundingClientRect();
+    var width = Math.max(rect.width, 600);
+    var height = Math.max(rect.height, 460);
+    canvas.width = width * (window.devicePixelRatio || 1);
+    canvas.height = height * (window.devicePixelRatio || 1);
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+
+    var ctx = canvas.getContext('2d');
+    var dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    // Apply camera transform (pan + zoom)
+    ctx.save();
+    ctx.translate(camera.x, camera.y);
+    ctx.scale(camera.zoom, camera.zoom);
+
+    var cx = width / 2;
+    var cy = height / 2;
+    var now = Date.now();
+    var pulse = 0.7 + 0.3 * Math.sin(now / 300);
+
+    // ── Draw hex architecture rings (background zones) ──
+    // Draw from outside in so inner rings paint over outer
+    for (var ri = ringRadii.length - 1; ri >= 0; ri--) {
+      var ring = ringRadii[ri];
+
+      // Filled zone
+      ctx.beginPath();
+      ctx.arc(cx, cy, ring.outer, 0, Math.PI * 2);
+      ctx.fillStyle = RING_FILLS[ring.key] || 'rgba(158,158,158,0.03)';
+      ctx.fill();
+
+      // Ring border (dashed)
+      ctx.beginPath();
+      ctx.arc(cx, cy, ring.outer, 0, Math.PI * 2);
+      ctx.setLineDash([4, 6]);
+      ctx.strokeStyle = RING_STROKES[ring.key] || 'rgba(158,158,158,0.15)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Ring label — positioned at top of each ring
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.fillStyle = RING_STROKES[ring.key] ? RING_STROKES[ring.key].replace(/[\d.]+\)$/, '0.7)') : 'rgba(255,255,255,0.4)';
+      ctx.textAlign = 'center';
+      ctx.fillText(ring.label + ' (' + ring.count + ')', cx, cy - ring.mid + 4);
+    }
+
+    // ── Draw adapter hemisphere divider ──
+    var hasPA = ringRadii.some(function(r) { return r.key === 'primary-adapter'; });
+    var hasSA = ringRadii.some(function(r) { return r.key === 'secondary-adapter'; });
+    if (hasPA && hasSA) {
+      var adapterRing = ringRadii.find(function(r) { return r.key === 'primary-adapter' || r.key === 'secondary-adapter'; });
+      if (adapterRing) {
+        // Vertical divider line through center at adapter ring
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - adapterRing.outer);
+        ctx.lineTo(cx, cy + adapterRing.outer);
+        ctx.setLineDash([2, 4]);
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Labels for hemispheres
+        ctx.font = '9px system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(255,138,101,0.5)';
+        ctx.textAlign = 'left';
+        ctx.fillText('DRIVING', cx - adapterRing.outer + 8, cy - adapterRing.outer + 14);
+        ctx.fillStyle = 'rgba(255,213,79,0.5)';
+        ctx.textAlign = 'right';
+        ctx.fillText('DRIVEN', cx + adapterRing.outer - 8, cy - adapterRing.outer + 14);
+      }
+    }
+
+    // ── Draw edges — curved beziers ──
+    edges.forEach(function(e) {
+      var from = positions[e.from];
+      var to = positions[e.to];
+      if (!from || !to) return;
+      var isViolation = e.violation || e.isViolation;
+      var fromActive = isFileActive(e.from);
+      var toActive = isFileActive(e.to);
+      var edgeActive = fromActive || toActive;
+
+      var mx = (from.x + to.x) / 2;
+      var my = (from.y + to.y) / 2;
+      var dx = to.x - from.x;
+      var dy = to.y - from.y;
+      var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      var curvature = Math.min(dist * 0.15, 30);
+      var cpx = mx + (-dy / dist) * curvature;
+      var cpy = my + (dx / dist) * curvature;
+
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.quadraticCurveTo(cpx, cpy, to.x, to.y);
+      if (isViolation) {
+        ctx.strokeStyle = '#ef5350';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([6, 3]); // Dashed red for violations
+      } else if (edgeActive) {
+        ctx.strokeStyle = 'rgba(79,195,247,' + (0.4 * pulse) + ')';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+      } else {
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 0.6;
+        ctx.setLineDash([]);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Arrowhead
+      var angle = Math.atan2(to.y - cpy, to.x - cpx);
+      var headLen = 7;
+      var nodeRadius = 6 + Math.min((nodes.find(function(n) { return n.id === e.to; }) || {}).exports || 0, 20);
+      var endX = to.x - Math.cos(angle) * nodeRadius;
+      var endY = to.y - Math.sin(angle) * nodeRadius;
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle - Math.PI / 6), endY - headLen * Math.sin(angle - Math.PI / 6));
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle + Math.PI / 6), endY - headLen * Math.sin(angle + Math.PI / 6));
+      ctx.strokeStyle = isViolation ? '#ef5350' : (edgeActive ? 'rgba(79,195,247,' + (0.5 * pulse) + ')' : 'rgba(255,255,255,0.20)');
+      ctx.lineWidth = isViolation ? 2.5 : (edgeActive ? 2 : 1);
+      ctx.stroke();
+    });
+
+    // ── Draw nodes ──
+    nodes.forEach(function(n) {
+      var pos = positions[n.id];
+      if (!pos) return;
+      var layer = normalizeLayer(n.layer);
+      var color = LAYER_COLORS[layer] || '#9e9e9e';
+      var r = 6 + Math.min(n.exports || 0, 20);
+      var active = isFileActive(n.id);
+
+      // Glow ring for active nodes
+      if (active) {
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, r + 6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(79,195,247,' + (0.25 * pulse) + ')';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, r + 10 * pulse, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(79,195,247,' + (0.3 * (1 - pulse + 0.4)) + ')';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      // Node circle with subtle border
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = active ? 1.0 : 0.75;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Border ring on all nodes (thin, same color darker)
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+      ctx.strokeStyle = active ? '#ffffff' : 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = active ? 2 : 0.5;
+      ctx.stroke();
+
+      // Label
+      var label = n.id.split('/').pop();
+      ctx.font = active ? 'bold 11px system-ui, sans-serif' : '10px system-ui, sans-serif';
+      ctx.fillStyle = active ? '#ffffff' : 'rgba(255,255,255,0.55)';
+      ctx.textAlign = 'center';
+      ctx.fillText(label, pos.x, pos.y + r + 14);
+    });
+
+    ctx.restore(); // End camera transform
+  }
+
+  function startGraphAnimation() {
+    function frame() {
+      if (!hasActiveFiles()) {
+        graphAnimFrame = null;
+        renderGraph(); // Final render to clear highlights
+        return;
+      }
+      renderGraph();
+      graphAnimFrame = requestAnimationFrame(frame);
+    }
+    graphAnimFrame = requestAnimationFrame(frame);
+  }
+
+  // --- Init ---
+  function init() {
+    // File selector
+    $('#fileSelector').addEventListener('change', function(e) {
+      if (e.target.value) loadFileTokens(e.target.value);
+    });
+
+    // Event filter buttons
+    $$('#eventFilters button').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        $$('#eventFilters button').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        state.eventFilter = btn.getAttribute('data-filter');
+        renderEvents();
+      });
+    });
+
+    // Pause button
+    $('#pauseBtn').addEventListener('click', function() {
+      state.autoScroll = !state.autoScroll;
+      setText('#pauseBtn', state.autoScroll ? '\u23F8 Pause' : '\u25B6 Resume');
+    });
+
+    // Graph toggle — recompute layout every time we open (canvas size changes)
+    $('#graphToggle').addEventListener('click', function() {
+      var body = $('#graphBody');
+      var arrow = $('#graphArrow');
+      body.classList.toggle('open');
+      arrow.classList.toggle('open');
+      if (body.classList.contains('open')) {
+        // Delay to let CSS transition reveal the panel, then recompute
+        setTimeout(function() {
+          if (graphState.nodes.length > 0) {
+            computePositions();
+            renderGraph();
+          } else {
+            loadGraph();
+          }
+        }, 50);
+      }
+    });
+
+    // Modal cancel
+    $('#modalCancel').addEventListener('click', function() {
+      $('#decisionModal').classList.remove('show');
+      state.currentDecisionId = null;
+    });
+
+    // Overlay click to close
+    $('#decisionModal').addEventListener('click', function(e) {
+      if (e.target === e.currentTarget) {
+        $('#decisionModal').classList.remove('show');
+        state.currentDecisionId = null;
+      }
+    });
+
+    // --- Graph zoom/pan controls ---
+    var graphCanvas = $('#graphCanvas');
+
+    // Mouse wheel zoom (centered on cursor)
+    graphCanvas.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      var rect = graphCanvas.getBoundingClientRect();
+      var mx = e.clientX - rect.left;
+      var my = e.clientY - rect.top;
+      var delta = e.deltaY > 0 ? 0.9 : 1.1;
+      var newZoom = Math.max(0.2, Math.min(5, camera.zoom * delta));
+      // Zoom toward cursor position
+      camera.x = mx - (mx - camera.x) * (newZoom / camera.zoom);
+      camera.y = my - (my - camera.y) * (newZoom / camera.zoom);
+      camera.zoom = newZoom;
+      renderGraph();
+    }, { passive: false });
+
+    // Mouse drag pan
+    graphCanvas.addEventListener('mousedown', function(e) {
+      drag.active = true;
+      drag.startX = e.clientX;
+      drag.startY = e.clientY;
+      drag.camStartX = camera.x;
+      drag.camStartY = camera.y;
+    });
+    window.addEventListener('mousemove', function(e) {
+      if (!drag.active) return;
+      camera.x = drag.camStartX + (e.clientX - drag.startX);
+      camera.y = drag.camStartY + (e.clientY - drag.startY);
+      renderGraph();
+    });
+    window.addEventListener('mouseup', function() {
+      drag.active = false;
+    });
+
+    // Zoom buttons
+    $('#zoomIn').addEventListener('click', function() {
+      var rect = graphCanvas.getBoundingClientRect();
+      var cx = rect.width / 2;
+      var cy = rect.height / 2;
+      var newZoom = Math.min(5, camera.zoom * 1.25);
+      camera.x = cx - (cx - camera.x) * (newZoom / camera.zoom);
+      camera.y = cy - (cy - camera.y) * (newZoom / camera.zoom);
+      camera.zoom = newZoom;
+      renderGraph();
+    });
+    $('#zoomOut').addEventListener('click', function() {
+      var rect = graphCanvas.getBoundingClientRect();
+      var cx = rect.width / 2;
+      var cy = rect.height / 2;
+      var newZoom = Math.max(0.2, camera.zoom * 0.8);
+      camera.x = cx - (cx - camera.x) * (newZoom / camera.zoom);
+      camera.y = cy - (cy - camera.y) * (newZoom / camera.zoom);
+      camera.zoom = newZoom;
+      renderGraph();
+    });
+    $('#zoomReset').addEventListener('click', function() {
+      camera = { x: 0, y: 0, zoom: 1 };
+      renderGraph();
+    });
+
+    // Toggle external deps visibility
+    $('#toggleExternal').addEventListener('click', function() {
+      graphState.showExternal = !graphState.showExternal;
+      this.style.opacity = graphState.showExternal ? '1' : '0.4';
+      if (graphState.nodes.length > 0) {
+        computePositions();
+        camera = { x: 0, y: 0, zoom: 1 };
+        renderGraph();
+      }
+    });
+    // Start dimmed (externals hidden by default)
+    $('#toggleExternal').style.opacity = '0.4';
+
+    // Project selector
+    $('#projectSelector').addEventListener('change', function(e) {
+      if (e.target.value) switchProject(e.target.value);
+    });
+
+    // Populate initial empty states
+    var aList = $('#agentList');
+    aList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Agents' }));
+    aList.appendChild(createEl('div', { className: 'empty', textContent: 'No agents active' }));
+    var tList = $('#taskList');
+    tList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Tasks' }));
+    tList.appendChild(createEl('div', { className: 'empty', textContent: 'No tasks registered' }));
+
+    // Initial data load — detects hub vs single-project mode
+    loadProjects();
+
+    // SSE connection
+    connectSSE();
+
+    // Polling — refresh project list every 10s (picks up new registrations)
+    // Panel data is pushed by projects, but we poll as fallback
+    state.pollTimer = setInterval(function() {
+      rawFetch('/api/projects').then(function(data) {
+        if (data && data.projects) {
+          state.projects = data.projects;
+          populateProjectSelector(data.projects);
+        }
+      });
+      loadHealth();
+      loadSwarm();
+    }, 10000);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>
