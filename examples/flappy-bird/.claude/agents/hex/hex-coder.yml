@@ -66,9 +66,9 @@ tools:
     - Glob
     - Grep
   optional:
-    - mcp__claude-flow__task_update
-    - mcp__claude-flow__task_complete
-    - mcp__claude-flow__memory_store
+    - mcp__ruflo__task_update
+    - mcp__ruflo__task_complete
+    - mcp__ruflo__memory_store
 
 inputs:
   task:
@@ -112,6 +112,29 @@ outputs:
 
 workflow:
   phases:
+    - id: pre_validate
+      name: "Pre-Generation — Validate Boundaries"
+      description: >
+        BEFORE writing any code, validate that planned imports respect hex
+        boundary rules. Uses import-boundary-checker.ts (same rules as
+        post-build arch-analyzer, but enforced BEFORE code is written).
+      steps:
+        - Classify target file layer using classifyLayer(filePath)
+        - Call allowedImportsFor(filePath) to get permitted import targets
+        - List all planned imports for the file being generated
+        - Call validatePlannedImports(filePath, plannedImports)
+        - "If violations found: DO NOT proceed to Red phase. Fix imports first."
+        - "If warnings found: log them but proceed with caution"
+      gate:
+        name: boundary_check
+        blocking: true
+        on_fail: |
+          Planned imports violate hex boundary rules. Before writing code:
+            1. Check which layers this adapter may import from (allowedImportsFor)
+            2. Replace forbidden imports with port-based alternatives
+            3. If domain types are needed, import via ports/ re-exports
+            4. Re-run boundary check before proceeding
+
     - id: red
       name: "TDD Red — Write Failing Tests"
       steps:
@@ -137,6 +160,32 @@ workflow:
         - Improve error messages
         - Add JSDoc/documentation
         - Run full quality gate to verify no regressions
+
+    - id: test_coverage_gate
+      name: "Test Type Gate — Verify Minimum Test Categories"
+      description: >
+        After TDD refactor, verify that minimum test types are present.
+        Blocks commit if required test categories are missing.
+      steps:
+        - "Check: unit tests exist for all public methods (from Red phase)"
+        - "Check: at least one integration test exists if adapter has external deps"
+        - "Check: at least one property test exists for domain functions (fast-check)"
+        - "Check: error path tests exist (not just happy path)"
+      gate:
+        name: test_types
+        blocking: true
+        required_categories:
+          - unit          # From TDD Red phase
+          - error_paths   # At minimum, test error handling
+          - integration   # If adapter touches external systems
+        recommended_categories:
+          - property      # fast-check generative tests for domain logic
+        on_fail: |
+          Missing required test categories. Before committing:
+            1. Add missing test types (see required_categories above)
+            2. For property tests, use fast-check: fc.assert(fc.property(...))
+            3. For integration tests, test with real adapter dependencies
+            4. Re-run test suite to verify all categories pass
 
   feedback_loop:
     max_iterations: 5

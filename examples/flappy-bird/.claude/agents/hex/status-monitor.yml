@@ -59,9 +59,9 @@ tools:
     - Glob
     - Grep
   optional:
-    - mcp__claude-flow__task_status
-    - mcp__claude-flow__swarm_status
-    - mcp__claude-flow__memory_retrieve
+    - mcp__ruflo__task_status
+    - mcp__ruflo__swarm_status
+    - mcp__ruflo__memory_retrieve
 
 inputs:
   swarm_id:

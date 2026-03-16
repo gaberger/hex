@@ -56,10 +56,18 @@ phases:
 
   2_generate_property_tests:
     description: >
-      Generate property-based test specs for all domain functions.
+      Generate property-based test specs for all domain functions using fast-check.
       Focus on invariants: sign conventions, monotonicity, bounds,
       idempotency, commutativity. Use production config values.
+      REQUIREMENT: Tests must use `import fc from 'fast-check'` and
+      `fc.assert(fc.property(...))` — example-based tests do NOT satisfy
+      this phase. If fast-check is not installed, fail with instructions.
     output: property_specs
+    tooling:
+      library: fast-check
+      import: "import fc from 'fast-check'"
+      pattern: "fc.assert(fc.property(fc.integer(), fc.string(), ...))"
+      min_properties: 3  # At least 3 property tests per domain module
 
   3_create_smoke_scenarios:
     description: >
@@ -90,11 +98,31 @@ phases:
     output: verdict
     blocking: true  # If FAIL, code generation must iterate
 
+  7_verify_hex_boundaries:
+    description: >
+      Run import-boundary-checker against ALL generated files to catch any
+      hex boundary violations that slipped past the hex-coder pre-generation gate.
+      This is the defense-in-depth layer — if hex-coder's pre_validate phase
+      was bypassed or misconfigured, this catches it before shipping.
+    output: boundary_results
+    blocking: true
+
+  8_verify_error_types:
+    description: >
+      Scan domain/ and usecases/ for raw `new Error()` usage. All errors in
+      these layers must use typed DomainError subclasses from core/domain/errors.ts.
+      Run: `npx eslint src/core/domain/ src/core/usecases/ --rule 'no-restricted-syntax: error'`
+    output: error_type_results
+    blocking: true
+
 constraints:
   - Behavioral specs must be INDEPENDENT of implementation (no function names)
   - Property tests must use PRODUCTION config values, never test-only fixtures
+  - Property tests must use fast-check (fc.assert/fc.property), not example-based assertions
   - Smoke scenarios must exercise the composition root, not individual functions
   - Sign convention audit must cross-reference config, domain code, and tests
+  - Hex boundary check must pass with zero violations before shipping
+  - Domain/usecases must use typed DomainError subclasses, not raw Error()
   - Verdict FAIL blocks deployment — code generation must iterate
 
 tools:

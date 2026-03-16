@@ -67,10 +67,10 @@ tools:
     - EnterWorktree
     - ExitWorktree
   optional:
-    - mcp__claude-flow__task_update
-    - mcp__claude-flow__task_complete
-    - mcp__claude-flow__memory_store
-    - mcp__claude-flow__memory_retrieve
+    - mcp__ruflo__task_update
+    - mcp__ruflo__task_complete
+    - mcp__ruflo__memory_store
+    - mcp__ruflo__memory_retrieve
 
 inputs:
   workplan:
