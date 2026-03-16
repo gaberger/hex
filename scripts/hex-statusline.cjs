@@ -39,9 +39,14 @@ const statusData = safe(() => JSON.parse(fs.readFileSync(path.join(hexDir, 'stat
 const swarmUp = statusData ? !!statusData.swarm : false;
 const agentdbUp = statusData ? !!statusData.agentdb : false;
 const dashUrl = statusData ? (statusData.dashboard || '') : '';
+const activeAgents = statusData ? (statusData.activeAgents || 0) : 0;
+const idleAgents = statusData ? (statusData.idleAgents || 0) : 0;
+const totalTasks = statusData ? (statusData.tasks || 0) : 0;
+const completedTasks = statusData ? (statusData.completedTasks || 0) : 0;
 
 // ── Fallback: check claude-flow runtime if no status.json
-const cfMetrics = path.join(require('os').homedir(), '.claude-flow', 'metrics');
+const cfHome = path.join(require('os').homedir(), '.claude-flow');
+const cfMetrics = path.join(cfHome, 'metrics');
 const cfAlive = safe(() => fs.existsSync(cfMetrics) && (Date.now() - fs.statSync(cfMetrics).mtimeMs) < 300000, false);
 const swarmShow = swarmUp || cfAlive;
 const dbShow = agentdbUp || cfAlive;
@@ -62,7 +67,7 @@ const parts = [
   `${B}${MAG}⬡ hex${R}`,
   `${CYN}${projectName}${R}${idShort ? `${D}:${R}${idShort}` : ''}`,
   `${D}⎇${R}${WHT}${branch}${R}`,
-  `${dot(swarmShow)}${D}swarm${R}`,
+  `${dot(swarmShow)}${D}swarm${R}${activeAgents || idleAgents ? ` ${GRN}${activeAgents}${D}⚡${R}${idleAgents ? `${YLW}${idleAgents}${D}💤${R}` : ''}` : ''}${totalTasks ? ` ${D}[${R}${completedTasks}${D}/${R}${totalTasks}${D}]${R}` : ''}`,
   `${dot(dbShow)}${D}db${R}`,
   dashUrl ? `${GRN}◉${R}\x1b]8;;http://${dashUrl}\x07${BLU}${dashUrl}${R}\x1b]8;;\x07` : `${dot(false)}${D}dash${R}`,
   hexMcp ? `${GRN}◉${R}${D}mcp${R}` : '',

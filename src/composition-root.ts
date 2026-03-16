@@ -159,6 +159,24 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
       }
       await writeFile(statusFile, JSON.stringify(status, null, 2)).catch(() => {});
     })();
+
+    // Periodic status updater — polls agent/task counts every 5s
+    // Uses unref() so it doesn't keep the process alive
+    const statusInterval = setInterval(async () => {
+      try {
+        const [agents, tasks] = await Promise.all([
+          swarm.listAgents().catch(() => []),
+          swarm.listTasks().catch(() => []),
+        ]);
+        status.activeAgents = agents.filter((a: any) => a.status === 'active').length;
+        status.idleAgents = agents.filter((a: any) => a.status === 'idle' || a.status === 'spawning').length;
+        status.tasks = tasks.length;
+        status.completedTasks = tasks.filter((t: any) => t.status === 'completed').length;
+        status.updatedAt = new Date().toISOString();
+        await writeFile(statusFile, JSON.stringify(status, null, 2)).catch(() => {});
+      } catch { /* swarm may not be available — skip silently */ }
+    }, 5000);
+    statusInterval.unref();
   }
 
   // LLM: graceful degradation — null when no API key is configured
