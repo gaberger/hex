@@ -395,13 +395,16 @@ export class ArchAnalyzer implements IArchAnalysisPort {
       }
     }
 
-    // Collect all interface names imported by adapter files
+    // Collect all interface names imported by adapter and use-case files
+    // Use cases can also implement ports (e.g., SummaryService implements ISummaryPort)
     const implementedPorts = new Set<string>();
     const adapterFiles: string[] = [];
     for (const s of summaries) {
       const normalized = normalizePath(s.filePath);
-      if (!normalized.includes('/adapters/')) continue;
-      adapterFiles.push(normalized);
+      const isAdapter = normalized.includes('/adapters/');
+      const isUseCase = normalized.includes('/usecases/');
+      if (!isAdapter && !isUseCase) continue;
+      if (isAdapter) adapterFiles.push(normalized);
       for (const imp of s.imports) {
         for (const name of imp.names) {
           if (portInterfaces.has(name)) {

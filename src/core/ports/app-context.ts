@@ -14,6 +14,10 @@ import type { IRegistryPort } from './registry.js';
 import type { IBroadcastPort } from './broadcast.js';
 import type { ISecretsPort } from './secrets.js';
 import type { ICheckpointPort } from './checkpoint.js';
+import type { IScaffoldPort } from './scaffold.js';
+import type { IValidationPort } from './validation.js';
+import type { ISerializationPort, IWASMBridgePort, IFFIPort, IServiceMeshPort, ISchemaPort } from './cross-lang.js';
+import type { IHubCommandSenderPort } from './hub-command.js';
 
 export interface AppContext {
   rootPath: string;
@@ -52,6 +56,30 @@ export interface AppContext {
 
   /** Checkpoint persistence for crash-resilient state recovery */
   checkpoint: ICheckpointPort;
+
+  /** Scaffold & runtime analysis for generated projects */
+  scaffold: IScaffoldPort;
+
+  /** Post-build semantic validation (behavioral specs, property tests) */
+  validator: IValidationPort | null;
+
+  /** Cross-language serialization (JSON, future: Protobuf, MessagePack) */
+  serialization: ISerializationPort;
+
+  /** WebAssembly module loading and calling */
+  wasmBridge: IWASMBridgePort | null;
+
+  /** Foreign Function Interface for native binaries */
+  ffi: IFFIPort | null;
+
+  /** HTTP service mesh for cross-language service discovery */
+  serviceMesh: IServiceMeshPort | null;
+
+  /** JSON Schema validation for cross-language type contracts */
+  schema: ISchemaPort;
+
+  /** Send commands to hex-hub (null when hub is not available) */
+  hubCommandSender: IHubCommandSenderPort | null;
 
   /** Local output directory for analysis reports, caches, and logs */
   outputDir: string; // defaults to '.hex/' — gitignored, project-scoped
