@@ -70,7 +70,7 @@ npx hex summarize src/ --level L1
 | `ports/` | `domain/` only | Typed interfaces — contracts between layers |
 | `usecases/` | `domain/` + `ports/` | Application logic composing ports |
 | `adapters/primary/` | `ports/` only | Driving: CLI, HTTP, MCP, Dashboard |
-| `adapters/secondary/` | `ports/` only | Driven: FS, Git, LLM, TreeSitter, Ruflo |
+| `adapters/secondary/` | `ports/` only | Driven: FS, Git, LLM, TreeSitter, Ruflo, Secrets |
 | `composition-root.ts` | Everything | The ONLY file that imports adapters |
 
 **The golden rule:** Adapters NEVER import other adapters. This is the most common mistake AI agents make, and `hex analyze` catches it every time.
@@ -491,17 +491,21 @@ npx hex --help
 
 | Command | Description |
 |:--------|:-----------|
+| `hex build <requirements>` | **Single entry point** — auto-plans, orchestrates agents, generates code, analyzes, validates |
 | `hex scaffold <name>` | Create a new hex project with full structure |
 | `hex analyze <path>` | Architecture health check (dead code, violations, cycles) |
 | `hex summarize <path> --level <L0-L3>` | Token-efficient AST summaries via tree-sitter |
 | `hex generate` | Generate code within an adapter boundary |
 | `hex plan <requirements>` | Decompose requirements into workplan steps |
 | `hex validate <path>` | Post-build semantic validation (blocking gate) |
-| `hex dashboard` | Start real-time monitoring web UI |
-| `hex hub` | Start MCP server for Claude Code integration |
+| `hex orchestrate` | Execute workplan steps via swarm agents |
 | `hex status` | Swarm progress report |
+| `hex dashboard` | Start real-time monitoring dashboard (auto-starts on project load) |
+| `hex mcp` | Start MCP stdio server for Claude Code / IDE integration |
 | `hex setup` | Install tree-sitter grammars + skills + agents |
 | `hex init` | Initialize project with startup hooks |
+| `hex help` | Show all commands and usage |
+| `hex version` | Print current version |
 
 <br/>
 
@@ -519,27 +523,40 @@ npx hex --help
 
 | Skill | Description |
 |:------|:-----------|
+| `/hex-feature-dev` | Full feature lifecycle with hex decomposition |
 | `/hex-scaffold` | Scaffold new hex project |
 | `/hex-generate` | Generate adapter code |
 | `/hex-summarize` | Token-efficient summaries |
 | `/hex-analyze-arch` | Architecture health check |
 | `/hex-analyze-deps` | Dependency + tech stack analysis |
 | `/hex-validate` | Post-build validation |
-| `/hex-dashboard` | Start monitoring UI |
 
 </td>
 <td width="50%">
 
 ### MCP Tools
 
-Available via `hex hub`:
+Available via `hex mcp`:
 
 | Tool | Description |
 |:-----|:-----------|
+| `hex_build` | **Single entry point** — plans, orchestrates, analyzes, validates |
+| `hex_analyze` | Architecture health check |
+| `hex_analyze_json` | Analysis with JSON output |
+| `hex_summarize` | Summarize a single file |
+| `hex_summarize_project` | Summarize entire project |
+| `hex_validate_boundaries` | Validate hex boundary rules |
+| `hex_dead_exports` | Find unused exports |
+| `hex_scaffold` | Scaffold a new project |
 | `hex_generate` | Generate code from spec |
 | `hex_plan` | Create workplan |
 | `hex_orchestrate` | Run swarm orchestration |
 | `hex_status` | Query swarm progress |
+| `hex_dashboard_start` | Start dashboard server |
+| `hex_dashboard_register` | Register project |
+| `hex_dashboard_unregister` | Unregister project |
+| `hex_dashboard_list` | List registered projects |
+| `hex_dashboard_query` | Query dashboard data |
 
 </td>
 </tr>
@@ -555,12 +572,18 @@ Pre-built YAML agents for swarm orchestration:
 <td><code>hex-coder</code></td>
 <td><code>integrator</code></td>
 <td><code>swarm-coordinator</code></td>
+<td><code>dependency-analyst</code></td>
 </tr>
 <tr>
 <td><code>dead-code-analyzer</code></td>
 <td><code>validation-judge</code></td>
 <td><code>behavioral-spec-writer</code></td>
 <td><code>scaffold-validator</code></td>
+<td><code>status-monitor</code></td>
+</tr>
+<tr>
+<td><code>dev-tracker</code></td>
+<td colspan="4"></td>
 </tr>
 </table>
 
@@ -574,11 +597,16 @@ Pre-built YAML agents for swarm orchestration:
 
 Powered by [tree-sitter](https://tree-sitter.github.io/) WASM for language-agnostic AST extraction:
 
-| Language | Summarize | Analyze | Generate |
-|:---------|:---------:|:-------:|:--------:|
-| TypeScript | L0–L3 | Full | Full |
-| Go | L0–L3 | Full | Full |
-| Rust | L0–L3 | Full | Full |
+| Capability | TypeScript | Go | Rust |
+|:-----------|:----------:|:--:|:----:|
+| **AST Summarize** (L0–L3) | Full | Full | Full |
+| **Export extraction** | `export` keyword | Capitalized names | `pub` visibility |
+| **Import extraction** | `import` statements | `import` declarations | `use` declarations |
+| **Boundary validation** | Full | Full | Full |
+| **Code generation** | Full (TS rules) | Full (Go rules) | Full (Rust rules) |
+| **Path resolution** | `.js` → `.ts` | Module paths | `crate::` paths |
+| **Scaffold** | `package.json` | Planned | Planned |
+| **Example project** | 4 apps | 1 (weather) | 1 (rust-api) |
 
 <details>
 <summary><b>Example: Go Backend (Weather API)</b></summary>
@@ -622,7 +650,7 @@ src/
     usecases/            # Application logic
   adapters/
     primary/             # CLI, MCP, Dashboard, Notifications
-    secondary/           # FS, Git, TreeSitter, LLM, Ruflo, Build, Registry
+    secondary/           # FS, Git, TreeSitter, LLM, Ruflo, Build, Registry, Secrets
   infrastructure/        # Tree-sitter query definitions
   composition-root.ts    # Single DI wiring point
   cli.ts                 # CLI entry point
@@ -630,7 +658,7 @@ src/
 tests/
   unit/                  # London-school mock-first tests
   integration/           # Real adapter tests
-examples/                # Reference apps (weather, flappy-bird, todo)
+examples/                # Reference apps (weather, rust-api, flappy-bird, todo-app, test-app, summaries)
 agents/                  # Agent definitions (YAML)
 skills/                  # Skill definitions (Markdown)
 config/                  # Language configs, tree-sitter settings
@@ -638,6 +666,30 @@ docs/
   adrs/                  # Architecture Decision Records
   analysis/              # Adversarial review reports
 ```
+
+<br/>
+
+---
+
+<br/>
+
+## Status Line
+
+hex includes a status line script that shows real-time swarm and project health directly in your Claude Code terminal:
+
+```
+⬡ hex │ my-app │ ⎇main │ ●swarm 2⚡ [3/5] │ ●db │ ◉localhost:3456 │ ◉mcp │ 87/100
+```
+
+Indicators:
+- **Swarm** — `●` green (agents active) / `●` yellow (available, idle) / `○` dim (not configured)
+- **Agent counts** — `2⚡` active, `1💤` idle, `[3/5]` tasks completed
+- **AgentDB** — pattern store connectivity
+- **Dashboard** — clickable URL when running (auto-starts on project load)
+- **MCP** — hex MCP server status
+- **Score** — last architecture health score
+
+Three-tier detection: `.hex/status.json` (written by hooks) → `~/.claude-flow/metrics` (daemon) → ruflo MCP config (fallback). Auto-configured during `hex init`.
 
 <br/>
 
@@ -678,10 +730,26 @@ hex setup       # Install grammars + skills + agents
 | **`safePath()` protection** | FileSystemAdapter prevents path traversal outside project root |
 | **`execFile` not `exec`** | RufloAdapter prevents shell injection from untrusted inputs |
 | **London-school testing** | Mock ports, test logic; hexagonal architecture makes this natural |
+| **`hex_build` single entry point** | Users describe what to build; hex handles plan → orchestrate → analyze → validate internally |
+| **Pluggable secrets chain** | `ISecretsPort` adapters stack: Infisical → LocalVault → env-var; composition root selects |
+| **Dashboard auto-start** | Dashboard HTTP server launches on project load; port conflicts and stale locks self-heal |
 
 </details>
 
 <br/>
+
+## Secrets Management
+
+hex includes `ISecretsPort` with a pluggable adapter chain for secret resolution:
+
+| Adapter | When It's Used |
+|:--------|:--------------|
+| `InfisicalAdapter` | Production — fetches from [Infisical](https://infisical.com) vault |
+| `LocalVaultAdapter` | Development — encrypted local file (`~/.hex/vault.json`) |
+| `EnvSecretsAdapter` | Fallback — reads from environment variables |
+| `CachingSecretsAdapter` | Wraps any adapter with TTL-based in-memory cache |
+
+The composition root selects the adapter chain based on environment. Secrets never leak into domain or adapter code — only the composition root calls `ISecretsPort`.
 
 ## Security
 
@@ -689,9 +757,11 @@ hex setup       # Install grammars + skills + agents
 |:-----------|:--------------|
 | Path traversal | `FileSystemAdapter.safePath()` blocks `../` escapes |
 | Shell injection | `RufloAdapter` uses `execFile` (not `exec`) |
-| Secret management | API keys loaded only in `composition-root.ts` from env vars |
+| Secret management | `ISecretsPort` — Infisical / LocalVault / env-var adapter chain |
 | XSS prevention | Primary adapters must not use `innerHTML` with external data |
 | Credential safety | `.env` files are gitignored; `.env.example` provided |
+| Dashboard auth | Bearer token authentication for HTTP endpoints |
+| Pre-commit gate | Security audit hook blocks commits with violations |
 
 <br/>
 

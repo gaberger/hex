@@ -1,0 +1,188 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <!-- Main gradient -->
+    <linearGradient id="main-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#58a6ff"/>
+      <stop offset="50%" style="stop-color:#8b5cf6"/>
+      <stop offset="100%" style="stop-color:#bc8cff"/>
+    </linearGradient>
+
+    <!-- Inner glow gradient -->
+    <radialGradient id="inner-glow" cx="50%" cy="45%" r="50%">
+      <stop offset="0%" style="stop-color:#58a6ff;stop-opacity:0.25"/>
+      <stop offset="100%" style="stop-color:#0d1117;stop-opacity:0"/>
+    </radialGradient>
+
+    <!-- Core gradient -->
+    <linearGradient id="core-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#58a6ff;stop-opacity:0.9"/>
+      <stop offset="100%" style="stop-color:#bc8cff;stop-opacity:0.9"/>
+    </linearGradient>
+
+    <!-- Port dot gradients -->
+    <radialGradient id="dot-blue">
+      <stop offset="0%" style="stop-color:#79c0ff"/>
+      <stop offset="100%" style="stop-color:#58a6ff"/>
+    </radialGradient>
+    <radialGradient id="dot-purple">
+      <stop offset="0%" style="stop-color:#d2a8ff"/>
+      <stop offset="100%" style="stop-color:#bc8cff"/>
+    </radialGradient>
+    <radialGradient id="dot-green">
+      <stop offset="0%" style="stop-color:#7ee787"/>
+      <stop offset="100%" style="stop-color:#3fb950"/>
+    </radialGradient>
+
+    <!-- Outer glow filter -->
+    <filter id="outer-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <!-- Soft shadow -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#58a6ff" flood-opacity="0.3"/>
+    </filter>
+
+    <!-- Port glow -->
+    <filter id="port-glow">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3"/>
+    </filter>
+  </defs>
+
+  <!-- Background circle (transparent for logo use, dark for preview) -->
+  <circle cx="256" cy="256" r="250" fill="#0d1117" opacity="0"/>
+
+  <!-- Ambient glow behind the whole thing -->
+  <ellipse cx="256" cy="260" rx="140" ry="150" fill="url(#inner-glow)" opacity="0.6"/>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!--  OUTER HEXAGON — The boundary / harness    -->
+  <!-- ═══════════════════════════════════════════ -->
+  <g filter="url(#shadow)">
+    <polygon
+      points="256,56 429,156 429,356 256,456 83,356 83,156"
+      fill="none"
+      stroke="url(#main-grad)"
+      stroke-width="4"
+      stroke-linejoin="round"
+      opacity="0.85"
+    />
+  </g>
+
+  <!-- Outer hex subtle fill -->
+  <polygon
+    points="256,56 429,156 429,356 256,456 83,356 83,156"
+    fill="url(#main-grad)"
+    opacity="0.04"
+  />
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!--  MIDDLE HEXAGON — The ports layer           -->
+  <!-- ═══════════════════════════════════════════ -->
+  <polygon
+    points="256,106 389,181 389,331 256,406 123,331 123,181"
+    fill="none"
+    stroke="url(#main-grad)"
+    stroke-width="2"
+    stroke-linejoin="round"
+    opacity="0.35"
+    stroke-dasharray="12,6"
+  />
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!--  INNER HEXAGON — The domain core            -->
+  <!-- ═══════════════════════════════════════════ -->
+  <polygon
+    points="256,166 339,214 339,310 256,358 173,310 173,214"
+    fill="url(#core-grad)"
+    opacity="0.12"
+    stroke="url(#core-grad)"
+    stroke-width="2.5"
+    stroke-linejoin="round"
+  />
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!--  PORT CONNECTORS — Lines from core to edge  -->
+  <!-- ═══════════════════════════════════════════ -->
+  <g stroke="url(#main-grad)" stroke-width="1.5" opacity="0.3">
+    <!-- Top -->
+    <line x1="256" y1="166" x2="256" y2="56"/>
+    <!-- Top-right -->
+    <line x1="339" y1="214" x2="429" y2="156"/>
+    <!-- Bottom-right -->
+    <line x1="339" y1="310" x2="429" y2="356"/>
+    <!-- Bottom -->
+    <line x1="256" y1="358" x2="256" y2="456"/>
+    <!-- Bottom-left -->
+    <line x1="173" y1="310" x2="83" y2="356"/>
+    <!-- Top-left -->
+    <line x1="173" y1="214" x2="83" y2="156"/>
+  </g>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!--  PORT DOTS — 6 vertices of outer hex        -->
+  <!-- ═══════════════════════════════════════════ -->
+
+  <!-- Glow layer behind dots -->
+  <g filter="url(#port-glow)" opacity="0.5">
+    <circle cx="256" cy="56" r="10" fill="#58a6ff"/>
+    <circle cx="429" cy="156" r="10" fill="#58a6ff"/>
+    <circle cx="429" cy="356" r="10" fill="#bc8cff"/>
+    <circle cx="256" cy="456" r="10" fill="#bc8cff"/>
+    <circle cx="83" cy="356" r="10" fill="#3fb950"/>
+    <circle cx="83" cy="156" r="10" fill="#3fb950"/>
+  </g>
+
+  <!-- Solid dots -->
+  <circle cx="256" cy="56" r="7" fill="url(#dot-blue)"/>
+  <circle cx="429" cy="156" r="7" fill="url(#dot-blue)"/>
+  <circle cx="429" cy="356" r="7" fill="url(#dot-purple)"/>
+  <circle cx="256" cy="456" r="7" fill="url(#dot-purple)"/>
+  <circle cx="83" cy="356" r="7" fill="url(#dot-green)"/>
+  <circle cx="83" cy="156" r="7" fill="url(#dot-green)"/>
+
+  <!-- Inner white ring on dots -->
+  <g fill="none" stroke="#fff" stroke-width="1.5" opacity="0.6">
+    <circle cx="256" cy="56" r="4"/>
+    <circle cx="429" cy="156" r="4"/>
+    <circle cx="429" cy="356" r="4"/>
+    <circle cx="256" cy="456" r="4"/>
+    <circle cx="83" cy="356" r="4"/>
+    <circle cx="83" cy="156" r="4"/>
+  </g>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!--  CENTER MARK — Small hex at the very core   -->
+  <!-- ═══════════════════════════════════════════ -->
+  <polygon
+    points="256,232 276,244 276,268 256,280 236,268 236,244"
+    fill="url(#core-grad)"
+    opacity="0.7"
+  />
+  <polygon
+    points="256,232 276,244 276,268 256,280 236,268 236,244"
+    fill="none"
+    stroke="#fff"
+    stroke-width="1"
+    opacity="0.4"
+  />
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!--  ADAPTER INDICATORS — Small marks on edges  -->
+  <!-- ═══════════════════════════════════════════ -->
+  <g opacity="0.5">
+    <!-- Top-right edge midpoint -->
+    <rect x="338" y="102" width="16" height="4" rx="2" fill="#58a6ff" transform="rotate(-30, 346, 104)"/>
+    <!-- Right edge midpoint -->
+    <rect x="425" y="254" width="16" height="4" rx="2" fill="#8b5cf6" transform="rotate(90, 433, 256)"/>
+    <!-- Bottom-right edge midpoint -->
+    <rect x="338" y="404" width="16" height="4" rx="2" fill="#bc8cff" transform="rotate(30, 346, 406)"/>
+    <!-- Bottom-left edge midpoint -->
+    <rect x="158" y="404" width="16" height="4" rx="2" fill="#bc8cff" transform="rotate(-30, 166, 406)"/>
+    <!-- Left edge midpoint -->
+    <rect x="71" y="254" width="16" height="4" rx="2" fill="#3fb950" transform="rotate(90, 79, 256)"/>
+    <!-- Top-left edge midpoint -->
+    <rect x="158" y="102" width="16" height="4" rx="2" fill="#3fb950" transform="rotate(30, 166, 104)"/>
+  </g>
+</svg>

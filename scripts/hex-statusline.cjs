@@ -44,11 +44,16 @@ const idleAgents = statusData ? (statusData.idleAgents || 0) : 0;
 const totalTasks = statusData ? (statusData.tasks || 0) : 0;
 const completedTasks = statusData ? (statusData.completedTasks || 0) : 0;
 
-// ── Fallback: check claude-flow runtime if no status.json
+// ── Fallback tier 2: check claude-flow runtime metrics (recent activity)
 const cfHome = path.join(require('os').homedir(), '.claude-flow');
 const cfMetrics = path.join(cfHome, 'metrics');
 const cfAlive = safe(() => fs.existsSync(cfMetrics) && (Date.now() - fs.statSync(cfMetrics).mtimeMs) < 300000, false);
-const swarmShow = swarmUp || cfAlive;
+
+// ── Fallback tier 3: check if ruflo MCP server is configured (available but idle)
+const settingsLocal = safe(() => JSON.parse(fs.readFileSync(path.join(cwd, '.claude', 'settings.local.json'), 'utf8')), null);
+const rufloConfigured = !!(settingsLocal && settingsLocal.mcpServers && settingsLocal.mcpServers.ruflo);
+
+const swarmShow = swarmUp || cfAlive || rufloConfigured;
 const dbShow = agentdbUp || cfAlive;
 
 // ── Health score
@@ -63,11 +68,14 @@ const dot = (ok) => ok ? `${GRN}●${R}` : `${D}○${R}`;
 const scoreCol = !score ? '' : parseInt(score) >= 80 ? GRN : parseInt(score) >= 50 ? YLW : RED;
 const idShort = projectId ? projectId.slice(0, 8) : '';
 
+// Swarm dot: green if agents active, yellow if configured but idle, dim if absent
+const swarmDot = activeAgents > 0 ? `${GRN}●${R}` : swarmShow ? `${YLW}●${R}` : `${D}○${R}`;
+
 const parts = [
   `${B}${MAG}⬡ hex${R}`,
   `${CYN}${projectName}${R}${idShort ? `${D}:${R}${idShort}` : ''}`,
   `${D}⎇${R}${WHT}${branch}${R}`,
-  `${dot(swarmShow)}${D}swarm${R}${activeAgents || idleAgents ? ` ${GRN}${activeAgents}${D}⚡${R}${idleAgents ? `${YLW}${idleAgents}${D}💤${R}` : ''}` : ''}${totalTasks ? ` ${D}[${R}${completedTasks}${D}/${R}${totalTasks}${D}]${R}` : ''}`,
+  `${swarmDot}${D}swarm${R}${activeAgents ? ` ${GRN}${activeAgents}${D}⚡${R}` : ''}${idleAgents ? `${YLW}${idleAgents}${D}💤${R}` : ''}${totalTasks ? ` ${D}[${R}${completedTasks}${D}/${R}${totalTasks}${D}]${R}` : ''}`,
   `${dot(dbShow)}${D}db${R}`,
   dashUrl ? `${GRN}◉${R}\x1b]8;;http://${dashUrl}\x07${BLU}${dashUrl}${R}\x1b]8;;\x07` : `${dot(false)}${D}dash${R}`,
   hexMcp ? `${GRN}◉${R}${D}mcp${R}` : '',

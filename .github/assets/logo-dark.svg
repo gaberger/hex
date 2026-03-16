@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="mg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#58a6ff"/>
+      <stop offset="50%" style="stop-color:#8b5cf6"/>
+      <stop offset="100%" style="stop-color:#bc8cff"/>
+    </linearGradient>
+    <radialGradient id="ig" cx="50%" cy="45%" r="50%">
+      <stop offset="0%" style="stop-color:#58a6ff;stop-opacity:0.25"/>
+      <stop offset="100%" style="stop-color:#0d1117;stop-opacity:0"/>
+    </radialGradient>
+    <linearGradient id="cg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#58a6ff;stop-opacity:0.9"/>
+      <stop offset="100%" style="stop-color:#bc8cff;stop-opacity:0.9"/>
+    </linearGradient>
+    <radialGradient id="db"><stop offset="0%" style="stop-color:#79c0ff"/><stop offset="100%" style="stop-color:#58a6ff"/></radialGradient>
+    <radialGradient id="dp"><stop offset="0%" style="stop-color:#d2a8ff"/><stop offset="100%" style="stop-color:#bc8cff"/></radialGradient>
+    <radialGradient id="dg"><stop offset="0%" style="stop-color:#7ee787"/><stop offset="100%" style="stop-color:#3fb950"/></radialGradient>
+    <filter id="sh" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#58a6ff" flood-opacity="0.3"/>
+    </filter>
+    <filter id="pg"><feGaussianBlur in="SourceGraphic" stdDeviation="3"/></filter>
+  </defs>
+
+  <!-- Dark background -->
+  <rect width="512" height="512" rx="64" fill="#0d1117"/>
+
+  <!-- Ambient glow -->
+  <ellipse cx="256" cy="260" rx="140" ry="150" fill="url(#ig)" opacity="0.6"/>
+
+  <!-- Outer hex -->
+  <g filter="url(#sh)">
+    <polygon points="256,56 429,156 429,356 256,456 83,356 83,156"
+      fill="none" stroke="url(#mg)" stroke-width="4" stroke-linejoin="round" opacity="0.85"/>
+  </g>
+  <polygon points="256,56 429,156 429,356 256,456 83,356 83,156" fill="url(#mg)" opacity="0.04"/>
+
+  <!-- Middle hex (ports) -->
+  <polygon points="256,106 389,181 389,331 256,406 123,331 123,181"
+    fill="none" stroke="url(#mg)" stroke-width="2" stroke-linejoin="round" opacity="0.35" stroke-dasharray="12,6"/>
+
+  <!-- Inner hex (domain) -->
+  <polygon points="256,166 339,214 339,310 256,358 173,310 173,214"
+    fill="url(#cg)" opacity="0.12" stroke="url(#cg)" stroke-width="2.5" stroke-linejoin="round"/>
+
+  <!-- Port connectors -->
+  <g stroke="url(#mg)" stroke-width="1.5" opacity="0.3">
+    <line x1="256" y1="166" x2="256" y2="56"/>
+    <line x1="339" y1="214" x2="429" y2="156"/>
+    <line x1="339" y1="310" x2="429" y2="356"/>
+    <line x1="256" y1="358" x2="256" y2="456"/>
+    <line x1="173" y1="310" x2="83" y2="356"/>
+    <line x1="173" y1="214" x2="83" y2="156"/>
+  </g>
+
+  <!-- Port dot glows -->
+  <g filter="url(#pg)" opacity="0.5">
+    <circle cx="256" cy="56" r="10" fill="#58a6ff"/>
+    <circle cx="429" cy="156" r="10" fill="#58a6ff"/>
+    <circle cx="429" cy="356" r="10" fill="#bc8cff"/>
+    <circle cx="256" cy="456" r="10" fill="#bc8cff"/>
+    <circle cx="83" cy="356" r="10" fill="#3fb950"/>
+    <circle cx="83" cy="156" r="10" fill="#3fb950"/>
+  </g>
+
+  <!-- Port dots -->
+  <circle cx="256" cy="56" r="7" fill="url(#db)"/>
+  <circle cx="429" cy="156" r="7" fill="url(#db)"/>
+  <circle cx="429" cy="356" r="7" fill="url(#dp)"/>
+  <circle cx="256" cy="456" r="7" fill="url(#dp)"/>
+  <circle cx="83" cy="356" r="7" fill="url(#dg)"/>
+  <circle cx="83" cy="156" r="7" fill="url(#dg)"/>
+
+  <!-- Dot inner rings -->
+  <g fill="none" stroke="#fff" stroke-width="1.5" opacity="0.6">
+    <circle cx="256" cy="56" r="4"/>
+    <circle cx="429" cy="156" r="4"/>
+    <circle cx="429" cy="356" r="4"/>
+    <circle cx="256" cy="456" r="4"/>
+    <circle cx="83" cy="356" r="4"/>
+    <circle cx="83" cy="156" r="4"/>
+  </g>
+
+  <!-- Center core hex -->
+  <polygon points="256,232 276,244 276,268 256,280 236,268 236,244" fill="url(#cg)" opacity="0.7"/>
+  <polygon points="256,232 276,244 276,268 256,280 236,268 236,244" fill="none" stroke="#fff" stroke-width="1" opacity="0.4"/>
+
+  <!-- Adapter edge marks -->
+  <g opacity="0.5">
+    <rect x="338" y="102" width="16" height="4" rx="2" fill="#58a6ff" transform="rotate(-30, 346, 104)"/>
+    <rect x="425" y="254" width="16" height="4" rx="2" fill="#8b5cf6" transform="rotate(90, 433, 256)"/>
+    <rect x="338" y="404" width="16" height="4" rx="2" fill="#bc8cff" transform="rotate(30, 346, 406)"/>
+    <rect x="158" y="404" width="16" height="4" rx="2" fill="#bc8cff" transform="rotate(-30, 166, 406)"/>
+    <rect x="71" y="254" width="16" height="4" rx="2" fill="#3fb950" transform="rotate(90, 79, 256)"/>
+    <rect x="158" y="102" width="16" height="4" rx="2" fill="#3fb950" transform="rotate(30, 166, 104)"/>
+  </g>
+</svg>

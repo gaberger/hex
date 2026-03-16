@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#58a6ff"/>
+      <stop offset="100%" style="stop-color:#bc8cff"/>
+    </linearGradient>
+  </defs>
+  <polygon points="32,4 58,19 58,45 32,60 6,45 6,19" fill="url(#g)" opacity="0.12" stroke="url(#g)" stroke-width="2.5" stroke-linejoin="round"/>
+  <polygon points="32,16 46,24 46,40 32,48 18,40 18,24" fill="url(#g)" opacity="0.25" stroke="url(#g)" stroke-width="1.5" stroke-linejoin="round"/>
+  <polygon points="32,27 37,30 37,34 32,37 27,34 27,30" fill="url(#g)" opacity="0.8"/>
+  <g fill="none" stroke="url(#g)" stroke-width="1" opacity="0.3">
+    <line x1="32" y1="16" x2="32" y2="4"/><line x1="46" y1="24" x2="58" y2="19"/>
+    <line x1="46" y1="40" x2="58" y2="45"/><line x1="32" y1="48" x2="32" y2="60"/>
+    <line x1="18" y1="40" x2="6" y2="45"/><line x1="18" y1="24" x2="6" y2="19"/>
+  </g>
+  <circle cx="32" cy="4" r="3" fill="#58a6ff"/><circle cx="58" cy="19" r="3" fill="#58a6ff"/>
+  <circle cx="58" cy="45" r="3" fill="#bc8cff"/><circle cx="32" cy="60" r="3" fill="#bc8cff"/>
+  <circle cx="6" cy="45" r="3" fill="#3fb950"/><circle cx="6" cy="19" r="3" fill="#3fb950"/>
+</svg>

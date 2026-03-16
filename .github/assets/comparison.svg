@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="220" viewBox="0 0 800 220">
+  <defs>
+    <linearGradient id="cmp-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0d1117"/>
+      <stop offset="100%" style="stop-color:#161b22"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="800" height="220" fill="url(#cmp-bg)" rx="12"/>
+
+  <!-- Title -->
+  <text x="400" y="28" font-family="'Segoe UI', system-ui, sans-serif" font-size="12" fill="#8b949e" text-anchor="middle" letter-spacing="2">WHAT AI AGENTS ACTUALLY RECEIVE</text>
+
+  <!-- SPECKit Column -->
+  <g transform="translate(50, 50)">
+    <rect width="220" height="150" rx="10" fill="#f778681a" stroke="#f77868" stroke-width="1" stroke-opacity="0.4"/>
+    <text x="110" y="25" font-family="'Segoe UI', sans-serif" font-size="13" fill="#f77868" text-anchor="middle" font-weight="600">SPECKit</text>
+    <line x1="20" y1="35" x2="200" y2="35" stroke="#f77868" stroke-width="0.5" opacity="0.3"/>
+    <text x="110" y="60" font-family="'SF Mono', monospace" font-size="10" fill="#8b949e" text-anchor="middle">"Please implement</text>
+    <text x="110" y="76" font-family="'SF Mono', monospace" font-size="10" fill="#8b949e" text-anchor="middle">a cache layer"</text>
+    <line x1="60" y1="95" x2="160" y2="95" stroke="#30363d" stroke-width="0.5"/>
+    <text x="110" y="115" font-family="'Segoe UI', sans-serif" font-size="9" fill="#484f58" text-anchor="middle">AI decides structure</text>
+    <text x="110" y="130" font-family="'Segoe UI', sans-serif" font-size="9" fill="#f77868" text-anchor="middle" opacity="0.7">No boundaries enforced</text>
+  </g>
+
+  <!-- BMAD Column -->
+  <g transform="translate(290, 50)">
+    <rect width="220" height="150" rx="10" fill="#d299221a" stroke="#d29922" stroke-width="1" stroke-opacity="0.4"/>
+    <text x="110" y="25" font-family="'Segoe UI', sans-serif" font-size="13" fill="#d29922" text-anchor="middle" font-weight="600">BMAD</text>
+    <line x1="20" y1="35" x2="200" y2="35" stroke="#d29922" stroke-width="0.5" opacity="0.3"/>
+    <text x="110" y="60" font-family="'SF Mono', monospace" font-size="10" fill="#8b949e" text-anchor="middle">"As Architect,</text>
+    <text x="110" y="76" font-family="'SF Mono', monospace" font-size="10" fill="#8b949e" text-anchor="middle">design a cache layer"</text>
+    <line x1="60" y1="95" x2="160" y2="95" stroke="#30363d" stroke-width="0.5"/>
+    <text x="110" y="115" font-family="'Segoe UI', sans-serif" font-size="9" fill="#484f58" text-anchor="middle">Document describes structure</text>
+    <text x="110" y="130" font-family="'Segoe UI', sans-serif" font-size="9" fill="#d29922" text-anchor="middle" opacity="0.7">Not enforced in code</text>
+  </g>
+
+  <!-- hex Column -->
+  <g transform="translate(530, 50)">
+    <rect width="220" height="150" rx="10" fill="#3fb9501a" stroke="#3fb950" stroke-width="1.5" stroke-opacity="0.6"/>
+    <text x="110" y="25" font-family="'Segoe UI', sans-serif" font-size="13" fill="#3fb950" text-anchor="middle" font-weight="600">hex</text>
+    <line x1="20" y1="35" x2="200" y2="35" stroke="#3fb950" stroke-width="0.5" opacity="0.3"/>
+    <text x="20" y="58" font-family="'SF Mono', monospace" font-size="9" fill="#7ee787">IFileSystemPort {</text>
+    <text x="30" y="72" font-family="'SF Mono', monospace" font-size="9" fill="#c9d1d9">read(path): string</text>
+    <text x="30" y="86" font-family="'SF Mono', monospace" font-size="9" fill="#c9d1d9">write(path, data): void</text>
+    <text x="30" y="100" font-family="'SF Mono', monospace" font-size="9" fill="#c9d1d9">glob(pattern): string[]</text>
+    <text x="20" y="114" font-family="'SF Mono', monospace" font-size="9" fill="#7ee787">}</text>
+    <text x="110" y="140" font-family="'Segoe UI', sans-serif" font-size="9" fill="#3fb950" text-anchor="middle" font-weight="600">Typed contract enforced</text>
+  </g>
+</svg>

@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
+  <defs>
+    <linearGradient id="bg2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0d1117"/>
+      <stop offset="100%" style="stop-color:#161b22"/>
+    </linearGradient>
+    <linearGradient id="blue-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#58a6ff;stop-opacity:0.2"/>
+      <stop offset="100%" style="stop-color:#58a6ff;stop-opacity:0.05"/>
+    </linearGradient>
+    <linearGradient id="purple-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#bc8cff;stop-opacity:0.2"/>
+      <stop offset="100%" style="stop-color:#bc8cff;stop-opacity:0.05"/>
+    </linearGradient>
+    <linearGradient id="green-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#3fb950;stop-opacity:0.2"/>
+      <stop offset="100%" style="stop-color:#3fb950;stop-opacity:0.05"/>
+    </linearGradient>
+    <linearGradient id="orange-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#f0883e;stop-opacity:0.2"/>
+      <stop offset="100%" style="stop-color:#f0883e;stop-opacity:0.05"/>
+    </linearGradient>
+    <linearGradient id="gold-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#d29922;stop-opacity:0.2"/>
+      <stop offset="100%" style="stop-color:#d29922;stop-opacity:0.05"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="800" height="520" fill="url(#bg2)" rx="12"/>
+
+  <!-- Title -->
+  <text x="400" y="35" font-family="'Segoe UI', system-ui, sans-serif" font-size="16" fill="#e6edf3" text-anchor="middle" font-weight="600" letter-spacing="2">HEXAGONAL ARCHITECTURE</text>
+  <line x1="250" y1="45" x2="550" y2="45" stroke="#30363d" stroke-width="1"/>
+
+  <!-- Layer 1: Primary Adapters -->
+  <rect x="50" y="60" width="700" height="65" rx="8" fill="url(#blue-grad)" stroke="#58a6ff" stroke-width="1" stroke-opacity="0.3"/>
+  <text x="70" y="82" font-family="'Segoe UI', system-ui, sans-serif" font-size="10" fill="#58a6ff" font-weight="600" letter-spacing="1.5">PRIMARY ADAPTERS</text>
+  <text x="70" y="96" font-family="'Segoe UI', system-ui, sans-serif" font-size="9" fill="#8b949e">Driving side — external world calls in</text>
+  <g font-family="'SF Mono', 'Fira Code', monospace" font-size="11" fill="#c9d1d9">
+    <rect x="320" y="70" width="90" height="28" rx="6" fill="#58a6ff" opacity="0.1" stroke="#58a6ff" stroke-width="0.5" stroke-opacity="0.4"/>
+    <text x="365" y="88" text-anchor="middle">CLI</text>
+    <rect x="420" y="70" width="90" height="28" rx="6" fill="#58a6ff" opacity="0.1" stroke="#58a6ff" stroke-width="0.5" stroke-opacity="0.4"/>
+    <text x="465" y="88" text-anchor="middle">MCP</text>
+    <rect x="520" y="70" width="110" height="28" rx="6" fill="#58a6ff" opacity="0.1" stroke="#58a6ff" stroke-width="0.5" stroke-opacity="0.4"/>
+    <text x="575" y="88" text-anchor="middle">Dashboard</text>
+    <rect x="640" y="70" width="90" height="28" rx="6" fill="#58a6ff" opacity="0.1" stroke="#58a6ff" stroke-width="0.5" stroke-opacity="0.4"/>
+    <text x="685" y="88" text-anchor="middle">HTTP</text>
+  </g>
+
+  <!-- Arrow down -->
+  <line x1="400" y1="125" x2="400" y2="145" stroke="#30363d" stroke-width="1.5"/>
+  <polygon points="400,150 395,142 405,142" fill="#58a6ff" opacity="0.6"/>
+  <text x="415" y="140" font-family="'Segoe UI', system-ui, sans-serif" font-size="9" fill="#484f58">implements</text>
+
+  <!-- Layer 2: Input Ports -->
+  <rect x="100" y="155" width="600" height="55" rx="8" fill="url(#purple-grad)" stroke="#bc8cff" stroke-width="1" stroke-opacity="0.3"/>
+  <text x="120" y="177" font-family="'Segoe UI', system-ui, sans-serif" font-size="10" fill="#bc8cff" font-weight="600" letter-spacing="1.5">INPUT PORTS</text>
+  <g font-family="'SF Mono', 'Fira Code', monospace" font-size="10" fill="#d2a8ff">
+    <text x="330" y="182">ICodeGenerationPort</text>
+    <text x="500" y="182">IWorkplanPort</text>
+    <text x="330" y="198">ISummaryPort</text>
+    <text x="500" y="198">ISwarmOrchestrationPort</text>
+  </g>
+
+  <!-- Arrow down -->
+  <line x1="400" y1="210" x2="400" y2="230" stroke="#30363d" stroke-width="1.5"/>
+  <polygon points="400,235 395,227 405,227" fill="#bc8cff" opacity="0.6"/>
+  <text x="415" y="225" font-family="'Segoe UI', system-ui, sans-serif" font-size="9" fill="#484f58">calls</text>
+
+  <!-- Layer 3: Use Cases -->
+  <rect x="150" y="240" width="500" height="55" rx="8" fill="url(#green-grad)" stroke="#3fb950" stroke-width="1" stroke-opacity="0.3"/>
+  <text x="170" y="262" font-family="'Segoe UI', system-ui, sans-serif" font-size="10" fill="#3fb950" font-weight="600" letter-spacing="1.5">USE CASES</text>
+  <g font-family="'SF Mono', 'Fira Code', monospace" font-size="10" fill="#7ee787">
+    <text x="330" y="267">CodeGenerator</text>
+    <text x="480" y="267">WorkplanExecutor</text>
+    <text x="330" y="283">SummaryService</text>
+    <text x="480" y="283">ArchAnalyzer</text>
+  </g>
+
+  <!-- Arrow down -->
+  <line x1="400" y1="295" x2="400" y2="315" stroke="#30363d" stroke-width="1.5"/>
+  <polygon points="400,320 395,312 405,312" fill="#3fb950" opacity="0.6"/>
+  <text x="415" y="310" font-family="'Segoe UI', system-ui, sans-serif" font-size="9" fill="#484f58">depends on</text>
+
+  <!-- Layer 4: Output Ports -->
+  <rect x="100" y="325" width="600" height="55" rx="8" fill="url(#orange-grad)" stroke="#f0883e" stroke-width="1" stroke-opacity="0.3"/>
+  <text x="120" y="347" font-family="'Segoe UI', system-ui, sans-serif" font-size="10" fill="#f0883e" font-weight="600" letter-spacing="1.5">OUTPUT PORTS</text>
+  <g font-family="'SF Mono', 'Fira Code', monospace" font-size="10" fill="#f0883e">
+    <text x="310" y="352">IASTPort</text>
+    <text x="395" y="352">ILLMPort</text>
+    <text x="475" y="352">IBuildPort</text>
+    <text x="570" y="352">ISwarmPort</text>
+    <text x="310" y="368">IFileSystemPort</text>
+    <text x="460" y="368">IGitPort</text>
+    <text x="570" y="368">IWorktreePort</text>
+  </g>
+
+  <!-- Arrow down -->
+  <line x1="400" y1="380" x2="400" y2="400" stroke="#30363d" stroke-width="1.5"/>
+  <polygon points="400,405 395,397 405,397" fill="#f0883e" opacity="0.6"/>
+  <text x="415" y="395" font-family="'Segoe UI', system-ui, sans-serif" font-size="9" fill="#484f58">implemented by</text>
+
+  <!-- Layer 5: Secondary Adapters -->
+  <rect x="50" y="410" width="700" height="65" rx="8" fill="url(#gold-grad)" stroke="#d29922" stroke-width="1" stroke-opacity="0.3"/>
+  <text x="70" y="432" font-family="'Segoe UI', system-ui, sans-serif" font-size="10" fill="#d29922" font-weight="600" letter-spacing="1.5">SECONDARY ADAPTERS</text>
+  <text x="70" y="446" font-family="'Segoe UI', system-ui, sans-serif" font-size="9" fill="#8b949e">Driven side — app calls out to infrastructure</text>
+  <g font-family="'SF Mono', 'Fira Code', monospace" font-size="11" fill="#c9d1d9">
+    <rect x="290" y="420" width="90" height="28" rx="6" fill="#d29922" opacity="0.1" stroke="#d29922" stroke-width="0.5" stroke-opacity="0.4"/>
+    <text x="335" y="438" text-anchor="middle">TreeSitter</text>
+    <rect x="388" y="420" width="90" height="28" rx="6" fill="#d29922" opacity="0.1" stroke="#d29922" stroke-width="0.5" stroke-opacity="0.4"/>
+    <text x="433" y="438" text-anchor="middle">Claude</text>
+    <rect x="486" y="420" width="90" height="28" rx="6" fill="#d29922" opacity="0.1" stroke="#d29922" stroke-width="0.5" stroke-opacity="0.4"/>
+    <text x="531" y="438" text-anchor="middle">FileSystem</text>
+    <rect x="584" y="420" width="70" height="28" rx="6" fill="#d29922" opacity="0.1" stroke="#d29922" stroke-width="0.5" stroke-opacity="0.4"/>
+    <text x="619" y="438" text-anchor="middle">Git</text>
+    <rect x="662" y="420" width="70" height="28" rx="6" fill="#d29922" opacity="0.1" stroke="#d29922" stroke-width="0.5" stroke-opacity="0.4"/>
+    <text x="697" y="438" text-anchor="middle">Ruflo</text>
+  </g>
+
+  <!-- Composition Root label -->
+  <rect x="50" y="488" width="700" height="22" rx="6" fill="#f778681a" stroke="#f77868" stroke-width="0.5" stroke-opacity="0.3" stroke-dasharray="4,3"/>
+  <text x="400" y="503" font-family="'Segoe UI', system-ui, sans-serif" font-size="10" fill="#f77868" text-anchor="middle" letter-spacing="0.5">composition-root.ts  —  the ONLY file that imports adapters (single DI wiring point)</text>
+</svg>

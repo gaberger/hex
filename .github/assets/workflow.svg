@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="140" viewBox="0 0 800 140">
+  <defs>
+    <linearGradient id="wf-bg" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#0d1117"/>
+      <stop offset="100%" style="stop-color:#161b22"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="800" height="140" fill="url(#wf-bg)" rx="12"/>
+
+  <!-- Title -->
+  <text x="400" y="28" font-family="'Segoe UI', system-ui, sans-serif" font-size="12" fill="#8b949e" text-anchor="middle" letter-spacing="2">SPECS-FIRST DEVELOPMENT PIPELINE</text>
+
+  <!-- Phase 1: Specify -->
+  <rect x="30" y="50" width="130" height="60" rx="10" fill="#58a6ff15" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="95" y="72" font-family="'Segoe UI', system-ui, sans-serif" font-size="10" fill="#58a6ff" text-anchor="middle" font-weight="600" letter-spacing="1">SPECIFY</text>
+  <text x="95" y="88" font-family="'SF Mono', monospace" font-size="9" fill="#8b949e" text-anchor="middle">hex plan</text>
+  <text x="95" y="100" font-family="'Segoe UI', sans-serif" font-size="8" fill="#484f58" text-anchor="middle">behavioral specs</text>
+
+  <!-- Arrow -->
+  <line x1="160" y1="80" x2="180" y2="80" stroke="#30363d" stroke-width="1.5"/>
+  <polygon points="185,80 178,76 178,84" fill="#58a6ff" opacity="0.5"/>
+
+  <!-- Phase 2: Build -->
+  <rect x="185" y="50" width="130" height="60" rx="10" fill="#bc8cff15" stroke="#bc8cff" stroke-width="1.5"/>
+  <text x="250" y="72" font-family="'Segoe UI', system-ui, sans-serif" font-size="10" fill="#bc8cff" text-anchor="middle" font-weight="600" letter-spacing="1">BUILD</text>
+  <text x="250" y="88" font-family="'SF Mono', monospace" font-size="9" fill="#8b949e" text-anchor="middle">hex generate</text>
+  <text x="250" y="100" font-family="'Segoe UI', sans-serif" font-size="8" fill="#484f58" text-anchor="middle">adapter-bounded</text>
+
+  <!-- Arrow -->
+  <line x1="315" y1="80" x2="335" y2="80" stroke="#30363d" stroke-width="1.5"/>
+  <polygon points="340,80 333,76 333,84" fill="#bc8cff" opacity="0.5"/>
+
+  <!-- Phase 3: Test -->
+  <rect x="340" y="50" width="130" height="60" rx="10" fill="#3fb95015" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="405" y="72" font-family="'Segoe UI', system-ui, sans-serif" font-size="10" fill="#3fb950" text-anchor="middle" font-weight="600" letter-spacing="1">TEST</text>
+  <text x="405" y="88" font-family="'SF Mono', monospace" font-size="9" fill="#8b949e" text-anchor="middle">bun test</text>
+  <text x="405" y="100" font-family="'Segoe UI', sans-serif" font-size="8" fill="#484f58" text-anchor="middle">unit + property + smoke</text>
+
+  <!-- Arrow -->
+  <line x1="470" y1="80" x2="490" y2="80" stroke="#30363d" stroke-width="1.5"/>
+  <polygon points="495,80 488,76 488,84" fill="#3fb950" opacity="0.5"/>
+
+  <!-- Phase 4: Validate -->
+  <rect x="495" y="50" width="130" height="60" rx="10" fill="#f0883e15" stroke="#f0883e" stroke-width="1.5"/>
+  <text x="560" y="72" font-family="'Segoe UI', system-ui, sans-serif" font-size="10" fill="#f0883e" text-anchor="middle" font-weight="600" letter-spacing="1">VALIDATE</text>
+  <text x="560" y="88" font-family="'SF Mono', monospace" font-size="9" fill="#8b949e" text-anchor="middle">hex validate</text>
+  <text x="560" y="100" font-family="'Segoe UI', sans-serif" font-size="8" fill="#484f58" text-anchor="middle">blocking gate</text>
+
+  <!-- Arrow -->
+  <line x1="625" y1="80" x2="645" y2="80" stroke="#30363d" stroke-width="1.5"/>
+  <polygon points="650,80 643,76 643,84" fill="#f0883e" opacity="0.5"/>
+
+  <!-- Phase 5: Ship -->
+  <rect x="650" y="50" width="120" height="60" rx="10" fill="#d2992215" stroke="#d29922" stroke-width="1.5"/>
+  <text x="710" y="72" font-family="'Segoe UI', system-ui, sans-serif" font-size="10" fill="#d29922" text-anchor="middle" font-weight="600" letter-spacing="1">SHIP</text>
+  <text x="710" y="88" font-family="'SF Mono', monospace" font-size="9" fill="#8b949e" text-anchor="middle">git commit</text>
+  <text x="710" y="100" font-family="'Segoe UI', sans-serif" font-size="8" fill="#484f58" text-anchor="middle">verified output</text>
+
+  <!-- Bottom label -->
+  <text x="400" y="132" font-family="'Segoe UI', system-ui, sans-serif" font-size="9" fill="#484f58" text-anchor="middle">Each phase is mechanically enforced  —  not just documented</text>
+</svg>
