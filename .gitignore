@@ -50,3 +50,4 @@ Volumes/
 examples/hex-worktrees/
 examples/hex-worktrees/
 examples/rust-api/target/
+hex-hub/target/
