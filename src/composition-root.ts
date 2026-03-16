@@ -27,7 +27,7 @@ import { RegistryAdapter } from './adapters/secondary/registry-adapter.js';
 import { LLMAdapter } from './adapters/secondary/llm-adapter.js';
 import type { LLMAdapterConfig } from './adapters/secondary/llm-adapter.js';
 import { InMemoryEventBus } from './adapters/secondary/in-memory-event-bus.js';
-import type { IBroadcastPort } from './core/ports/broadcast.js';
+
 import { EnvSecretsAdapter } from './adapters/secondary/env-secrets-adapter.js';
 import { InfisicalAdapter } from './adapters/secondary/infisical-adapter.js';
 import { LocalVaultAdapter } from './adapters/secondary/local-vault-adapter.js';
@@ -109,15 +109,6 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   // Event infrastructure — real pub/sub spine replacing the null stub
   const projectName = projectPath.split('/').pop() ?? 'unknown';
   const eventBus = new InMemoryEventBus();
-  // No-op broadcaster — the DashboardAdapter pushes events to hex-hub via HTTP,
-  // and hex-hub broadcasts to browsers via WebSocket. No local fan-out needed.
-  const broadcastAdapter: IBroadcastPort = {
-    get clientCount() { return 0; },
-    send() {},
-    addClient() { return () => {}; },
-    removeClient() {},
-  };
-
   // Use cases
   const archAnalyzer = new ArchAnalyzer(ast, fs, git);
   const notificationOrchestrator = new NotificationOrchestrator(notifier);
@@ -192,7 +183,7 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
         // Register this project as a client that pushes data to the hub
         const { DashboardAdapter } = await import('./adapters/primary/dashboard-adapter.js');
         const HUB_PORT = 5555;
-        const ctx = { rootPath: projectPath, astIsStub, archAnalyzer, ast, fs, git, worktree, build, swarm, registry, notifier, eventBus, summaryService, notificationOrchestrator, llm: null, codeGenerator: null, workplanExecutor: null, swarmOrchestrator, autoConfirm: false, outputDir, broadcaster: broadcastAdapter } as any;
+        const ctx = { rootPath: projectPath, astIsStub, archAnalyzer, ast, fs, git, worktree, build, swarm, registry, notifier, eventBus, summaryService, notificationOrchestrator, llm: null, codeGenerator: null, workplanExecutor: null, swarmOrchestrator, autoConfirm: false, outputDir } as any;
         const client = new DashboardAdapter(ctx, HUB_PORT);
         const { url } = await client.start();
         status.dashboard = url.replace('http://', '');
@@ -314,7 +305,6 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     notifier,
     swarm,
     registry,
-    broadcaster: broadcastAdapter,
     secrets,
     checkpoint,
     scaffold,

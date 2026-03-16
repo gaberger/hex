@@ -11,7 +11,7 @@ import type { INotificationEmitPort, INotificationQueryPort } from './notificati
 import type { IEventBusPort } from './event-bus.js';
 import type { ISwarmPort, ISwarmOrchestrationPort } from './swarm.js';
 import type { IRegistryPort } from './registry.js';
-import type { IBroadcastPort } from './broadcast.js';
+
 import type { ISecretsPort } from './secrets.js';
 import type { ICheckpointPort } from './checkpoint.js';
 import type { IScaffoldPort } from './scaffold.js';
@@ -49,8 +49,6 @@ export interface AppContext {
   notifier: INotificationEmitPort;
   swarm: ISwarmPort;
   registry: IRegistryPort;
-  broadcaster: IBroadcastPort;
-
   /** Secrets manager — Infisical when configured, env-var fallback otherwise */
   secrets: ISecretsPort;
 
