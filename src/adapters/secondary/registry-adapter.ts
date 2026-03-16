@@ -9,7 +9,7 @@
  */
 
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
-import { mkdirSync, rmdirSync } from 'node:fs';
+import { mkdirSync, rmdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -144,6 +144,15 @@ export class RegistryAdapter implements IRegistryPort {
   private acquire(): void {
     // Ensure parent directory exists before attempting lock
     mkdirSync(REGISTRY_DIR, { recursive: true });
+
+    // Break stale locks — if lock is older than 10s, a process crashed holding it
+    try {
+      const stat = statSync(LOCK_PATH);
+      if (Date.now() - stat.mtimeMs > 10_000) {
+        rmdirSync(LOCK_PATH);
+      }
+    } catch { /* lock doesn't exist — good */ }
+
     for (let i = 0; i < LOCK_RETRIES; i++) {
       try {
         mkdirSync(LOCK_PATH);
@@ -154,6 +163,8 @@ export class RegistryAdapter implements IRegistryPort {
         const code = (err as NodeJS.ErrnoException).code;
         if (code !== 'EEXIST') throw err;
         if (i === LOCK_RETRIES - 1) {
+          // Last resort: force-break the lock
+          try { rmdirSync(LOCK_PATH); mkdirSync(LOCK_PATH); return; } catch { /* give up */ }
           throw new Error(`Failed to acquire registry lock after ${LOCK_RETRIES} attempts`);
         }
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_RETRY_MS);

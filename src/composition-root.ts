@@ -154,14 +154,23 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
         });
 
         // Start the actual dashboard HTTP server on the assigned port
+        // Wrap in a promise that catches EADDRINUSE (port already taken)
         const { DashboardAdapter } = await import('./adapters/primary/dashboard-adapter.js');
-        const dash = new DashboardAdapter(
-          { rootPath: projectPath, astIsStub, archAnalyzer, ast, fs, git, worktree, build, swarm, registry, notifier, eventBus, summaryService, notificationOrchestrator, llm: null, codeGenerator: null, workplanExecutor: null, swarmOrchestrator, autoConfirm: false, outputDir, broadcaster: broadcastAdapter } as any,
-          reg.port,
-        );
-        const { url } = await dash.start();
-        status.dashboard = url.replace('http://', '');
-        process.stderr.write(`[hex] Dashboard live at ${url}\n`);
+        const ctx = { rootPath: projectPath, astIsStub, archAnalyzer, ast, fs, git, worktree, build, swarm, registry, notifier, eventBus, summaryService, notificationOrchestrator, llm: null, codeGenerator: null, workplanExecutor: null, swarmOrchestrator, autoConfirm: false, outputDir, broadcaster: broadcastAdapter } as any;
+        const dash = new DashboardAdapter(ctx, reg.port);
+        try {
+          const { url } = await dash.start();
+          status.dashboard = url.replace('http://', '');
+          process.stderr.write(`[hex] Dashboard live at ${url}\n`);
+        } catch (dashErr: any) {
+          if (dashErr?.code === 'EADDRINUSE') {
+            // Port already in use — dashboard likely running from another session
+            status.dashboard = `localhost:${reg.port}`;
+            process.stderr.write(`[hex] Dashboard port ${reg.port} in use (existing session)\n`);
+          } else {
+            throw dashErr;
+          }
+        }
       } catch (err) {
         process.stderr.write(`[hex] Dashboard skipped: ${err instanceof Error ? err.message : String(err)}\n`);
       }

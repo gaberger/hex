@@ -104,7 +104,8 @@ export class DashboardAdapter {
 
     this.startFileWatcher();
 
-    return new Promise((ok) => {
+    return new Promise((ok, fail) => {
+      server.on('error', fail);
       server.listen(this.port, () => {
         const url = `http://localhost:${this.port}`;
         ok({
