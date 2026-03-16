@@ -123,7 +123,48 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
     };
   }
 
-  /** Stop pushing, close command listener, and unregister. */
+  /**
+   * Register + push once + listen for commands. No periodic push or file watcher.
+   * Used by `hex dashboard` CLI which keeps the process alive for commands only.
+   */
+  async startAndPushOnce(): Promise<{ url: string }> {
+    const hubUrl = `http://localhost:${this.hubPort}`;
+
+    const name = this.ctx.rootPath.split('/').pop() ?? 'unknown';
+    const regResult = await this.post('/api/projects/register', {
+      name,
+      rootPath: this.ctx.rootPath,
+      astIsStub: this.ctx.astIsStub,
+    });
+
+    if (!regResult || !regResult.id) {
+      throw new Error('Hub registration failed');
+    }
+
+    this.projectId = regResult.id as string;
+
+    // Single synchronous push — no timer, no watcher
+    await this.pushAll();
+
+    // Open WebSocket for bidirectional command channel
+    void this.startListening().catch((err) => this.log('command listener failed to start:', err));
+
+    return { url: hubUrl };
+  }
+
+  /** Stop only the periodic push timer (keeps WS command listener alive). */
+  stopPeriodicPush(): void {
+    if (this.pushTimer) {
+      clearInterval(this.pushTimer);
+      this.pushTimer = null;
+    }
+    for (const w of this.watchers) w.close();
+    this.watchers = [];
+    for (const t of this.fileChangeDebounce.values()) clearTimeout(t);
+    this.fileChangeDebounce.clear();
+  }
+
+  /** Stop everything: push timer, command listener, and unregister. */
   stop(): void {
     this.stopped = true;
     if (this.pushTimer) {
@@ -543,7 +584,12 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
         this.ctx.swarm.listTasks(),
         this.ctx.swarm.listAgents(),
       ]);
-      await this.pushState('swarm', { status, tasks, agents });
+      // Normalize: if daemon is "running" but has no agents/tasks, report as "idle"
+      const activeTasks = tasks.filter(t => t.status === 'in-progress' || t.status === 'pending');
+      const effectiveStatus = (agents.length === 0 && activeTasks.length === 0)
+        ? { ...status, status: 'idle' as const }
+        : status;
+      await this.pushState('swarm', { status: effectiveStatus, tasks, agents });
     } catch (err) {
       // Swarm may not be running — push empty state
       await this.pushState('swarm', {

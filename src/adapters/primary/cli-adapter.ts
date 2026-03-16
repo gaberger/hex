@@ -524,14 +524,18 @@ export class CLIAdapter {
     try {
       const { DashboardAdapter } = await import('./dashboard-adapter.js');
       const adapter = new DashboardAdapter(this.ctx);
-      const { url } = await adapter.start();
-      this.writeLn(`Dashboard: ${url}`);
-      this.writeLn('Project registered — pushing architecture data...');
+      this.writeLn('Registering project and pushing architecture data...');
 
-      // Wait for the initial data push to complete before exiting
-      await adapter.pushAllOnce();
-      this.writeLn('Architecture data pushed successfully.');
-      adapter.stop();
+      const { url } = await adapter.startAndPushOnce();
+      this.writeLn(`Dashboard: ${url}`);
+      this.writeLn('Data pushed. Listening for commands... (Ctrl+C to stop)');
+
+      // Keep process alive to handle WebSocket commands from the hub
+      await new Promise<void>((resolve) => {
+        const onSignal = () => { adapter.stop(); resolve(); };
+        process.on('SIGINT', onSignal);
+        process.on('SIGTERM', onSignal);
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.writeLn(`Dashboard data push failed: ${msg}`);

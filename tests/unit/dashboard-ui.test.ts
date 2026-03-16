@@ -165,6 +165,13 @@ function chatParseInput(input: string): { type: string; payload: Record<string, 
         } else if (type === 'create-task') {
           if (!payload.title) payload.title = pair;
           else if (!payload.agentRole) payload.agentRole = pair;
+        } else if (type === 'run-summarize') {
+          if (!payload.filePath) payload.filePath = pair;
+          else if (!payload.level) payload.level = pair;
+        } else if (type === 'run-generate') {
+          if (!payload.adapter) payload.adapter = pair;
+          else if (!payload.portInterface) payload.portInterface = pair;
+          else if (!payload.language) payload.language = pair;
         } else if (type === 'run-analyze') {
           payload.rootPath = pair;
         }
@@ -322,6 +329,69 @@ describe('Dashboard UI Logic', () => {
       expect(result!.payload.rootPath).toBe('/src');
     });
 
+    test('hex validate parses to run-validate', () => {
+      const result = chatParseInput('hex validate');
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe('run-validate');
+    });
+
+    test('hex generate parses to run-generate', () => {
+      const result = chatParseInput('hex generate');
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe('run-generate');
+    });
+
+    test('hex summarize parses to run-summarize', () => {
+      const result = chatParseInput('hex summarize');
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe('run-summarize');
+    });
+
+    test('hex status parses to ping', () => {
+      const result = chatParseInput('hex status');
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe('ping');
+    });
+
+    test('run-summarize with positional filePath and level', () => {
+      const result = chatParseInput('run-summarize src/cli.ts L1');
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe('run-summarize');
+      expect(result!.payload.filePath).toBe('src/cli.ts');
+      expect(result!.payload.level).toBe('L1');
+    });
+
+    test('run-generate with positional adapter, portInterface, language', () => {
+      const result = chatParseInput('run-generate my-adapter IMyPort typescript');
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe('run-generate');
+      expect(result!.payload.adapter).toBe('my-adapter');
+      expect(result!.payload.portInterface).toBe('IMyPort');
+      expect(result!.payload.language).toBe('typescript');
+    });
+
+    test('run-analyze with positional rootPath', () => {
+      const result = chatParseInput('run-analyze ./src');
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe('run-analyze');
+      expect(result!.payload.rootPath).toBe('./src');
+    });
+
+    test('bare hex returns null', () => {
+      expect(chatParseInput('hex')).toBeNull();
+    });
+
+    test('unknown hex subcommand returns null', () => {
+      expect(chatParseInput('hex foobar')).toBeNull();
+    });
+
+    test('JSON payload parsing', () => {
+      const result = chatParseInput('run-analyze {"rootPath": "/app"}');
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe('run-analyze');
+      expect(result!.payload.rootPath).toBe('/app');
+    });
+
     test('empty input returns null', () => {
       expect(chatParseInput('')).toBeNull();
       expect(chatParseInput('   ')).toBeNull();
@@ -436,6 +506,61 @@ describe('Dashboard UI Logic', () => {
       const result = formatTime(ts);
       // Should match HH:MM:SS pattern regardless of timezone
       expect(result).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    });
+  });
+
+  // 11. Swarm status normalization
+  describe('swarm status normalization', () => {
+    interface SwarmStatus { status: string; agentCount: number; activeTaskCount: number; completedTaskCount: number }
+    interface Task { status: string }
+
+    // Mirror the normalization logic from dashboard-adapter.ts pushSwarm
+    function normalizeSwarmStatus(
+      status: SwarmStatus,
+      agents: unknown[],
+      tasks: Task[],
+    ): SwarmStatus {
+      const activeTasks = tasks.filter(t => t.status === 'in-progress' || t.status === 'pending');
+      if (agents.length === 0 && activeTasks.length === 0) {
+        return { ...status, status: 'idle' };
+      }
+      return status;
+    }
+
+    test('daemon running with 0 agents and 0 tasks normalizes to idle', () => {
+      const status: SwarmStatus = { status: 'running', agentCount: 0, activeTaskCount: 0, completedTaskCount: 0 };
+      const result = normalizeSwarmStatus(status, [], []);
+      expect(result.status).toBe('idle');
+    });
+
+    test('daemon running with agents stays running', () => {
+      const status: SwarmStatus = { status: 'running', agentCount: 1, activeTaskCount: 0, completedTaskCount: 0 };
+      const result = normalizeSwarmStatus(status, [{ id: 'a1' }], []);
+      expect(result.status).toBe('running');
+    });
+
+    test('daemon running with active tasks stays running', () => {
+      const status: SwarmStatus = { status: 'running', agentCount: 0, activeTaskCount: 1, completedTaskCount: 0 };
+      const result = normalizeSwarmStatus(status, [], [{ status: 'in-progress' }]);
+      expect(result.status).toBe('running');
+    });
+
+    test('daemon running with only completed tasks normalizes to idle', () => {
+      const status: SwarmStatus = { status: 'running', agentCount: 0, activeTaskCount: 0, completedTaskCount: 5 };
+      const result = normalizeSwarmStatus(status, [], [{ status: 'completed' }, { status: 'completed' }]);
+      expect(result.status).toBe('idle');
+    });
+
+    test('idle status stays idle regardless', () => {
+      const status: SwarmStatus = { status: 'idle', agentCount: 0, activeTaskCount: 0, completedTaskCount: 0 };
+      const result = normalizeSwarmStatus(status, [], []);
+      expect(result.status).toBe('idle');
+    });
+
+    test('pending tasks keep status as running', () => {
+      const status: SwarmStatus = { status: 'running', agentCount: 0, activeTaskCount: 1, completedTaskCount: 0 };
+      const result = normalizeSwarmStatus(status, [], [{ status: 'pending' }]);
+      expect(result.status).toBe('running');
     });
   });
 });
