@@ -102,25 +102,31 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   const swarmOrchestrator = new SwarmOrchestrator(swarm, worktree);
 
   // ── Initialize swarm + AgentDB in background (non-blocking) ──
-  // Fire-and-forget: doesn't delay startup, logs result to stderr
-  void swarm.init({
-    topology: 'hierarchical',
-    maxAgents: 4,
-    strategy: 'specialized',
-    consensus: 'raft',
-    memoryNamespace: `hex:${projectName}`,
-  }).then(
-    () => process.stderr.write(`[hex] Swarm initialized for ${projectName}\n`),
-    (err) => process.stderr.write(`[hex] Swarm init skipped: ${err instanceof Error ? err.message : String(err)}\n`),
-  );
+  // Skip during tests — npx child processes cause timeouts.
+  // Skip when NODE_ENV=test or BUN_ENV=test (bun test sets this).
+  const isTest = process.env['NODE_ENV'] === 'test' || process.env['BUN_ENV'] === 'test'
+    || typeof (globalThis as any).Bun?.jest !== 'undefined';
 
-  void swarm.sessionStart(`hex:${projectName}`, {
-    projectPath,
-    startedAt: new Date().toISOString(),
-  }).then(
-    () => process.stderr.write(`[hex] AgentDB session started for ${projectName}\n`),
-    (err) => process.stderr.write(`[hex] AgentDB session skipped: ${err instanceof Error ? err.message : String(err)}\n`),
-  );
+  if (!isTest) {
+    void swarm.init({
+      topology: 'hierarchical',
+      maxAgents: 4,
+      strategy: 'specialized',
+      consensus: 'raft',
+      memoryNamespace: `hex:${projectName}`,
+    }).then(
+      () => process.stderr.write(`[hex] Swarm initialized for ${projectName}\n`),
+      (err) => process.stderr.write(`[hex] Swarm init skipped: ${err instanceof Error ? err.message : String(err)}\n`),
+    );
+
+    void swarm.sessionStart(`hex:${projectName}`, {
+      projectPath,
+      startedAt: new Date().toISOString(),
+    }).then(
+      () => process.stderr.write(`[hex] AgentDB session started for ${projectName}\n`),
+      (err) => process.stderr.write(`[hex] AgentDB session skipped: ${err instanceof Error ? err.message : String(err)}\n`),
+    );
+  }
 
   // LLM: graceful degradation — null when no API key is configured
   let llm: ILLMPort | null = null;
