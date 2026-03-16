@@ -1,0 +1,104 @@
+name: validation-judge
+type: reviewer
+description: >
+  Post-build validation judge. Runs AFTER all code generation and unit tests pass.
+  Catches semantic bugs that compile-lint-test pipelines miss — the kind where
+  "tests pass but app doesn't work." Produces a PASS/FAIL verdict with specific
+  reasons. If FAIL, code generation must iterate.
+
+model_tier: 3  # Opus — needs deep reasoning about semantic correctness
+
+context:
+  load:
+    - Problem specification from user (original prompt)
+    - L2 summaries of all generated domain code
+    - L2 summaries of all generated test files
+    - Production config values (not test fixtures)
+    - Behavioral specs from behavioral-spec-writer (if available)
+  external: []
+
+inputs:
+  problem_statement:
+    type: string
+    required: true
+    description: "Original user prompt describing what they want built"
+  domain_path:
+    type: string
+    required: true
+    description: "Path to generated domain code (e.g., examples/flappy-bird/src)"
+  test_path:
+    type: string
+    required: true
+    description: "Path to generated test files"
+  behavioral_specs:
+    type: array
+    required: false
+    description: "Pre-generated BehavioralSpec[] from behavioral-spec-writer"
+
+outputs:
+  verdict:
+    passed: boolean
+    overall_score: "0-100"
+    behavioral_results: "per-spec pass/fail with failure reasons"
+    property_results: "per-property pass/fail with counterexamples"
+    smoke_results: "per-scenario pass/fail with failed step index"
+    sign_convention_audit: "consistent: boolean, issues: string[]"
+    fix_instructions: "If FAIL, specific code changes needed"
+
+phases:
+  1_generate_behavioral_specs:
+    description: >
+      Derive behavioral specs from the original problem statement.
+      Focus on user-facing behavior, not implementation details.
+      Use domain knowledge (e.g., how Flappy Bird actually works).
+    output: behavioral_specs
+    skip_if: "behavioral_specs input is provided"
+
+  2_generate_property_tests:
+    description: >
+      Generate property-based test specs for all domain functions.
+      Focus on invariants: sign conventions, monotonicity, bounds,
+      idempotency, commutativity. Use production config values.
+    output: property_specs
+
+  3_create_smoke_scenarios:
+    description: >
+      Create end-to-end smoke scenarios that exercise the composition
+      root with simulated inputs. Test real state flow, not isolated
+      functions. Include: first interaction, steady-state, edge cases.
+    output: smoke_scenarios
+
+  4_audit_sign_conventions:
+    description: >
+      Extract all directional quantities (velocity, force, position).
+      Verify consistent sign conventions across: domain functions,
+      config values, test fixtures, and composition root wiring.
+    output: sign_conventions
+
+  5_execute_validations:
+    description: >
+      Run all behavioral specs, property tests, and smoke scenarios
+      against the built code. Compare test fixture values against
+      production config. Flag any divergence.
+    output: validation_results
+
+  6_produce_verdict:
+    description: >
+      Aggregate results into a PASS or FAIL verdict.
+      PASS (score >= 80): Ship it.
+      FAIL (score < 80): Return specific fix instructions.
+    output: verdict
+    blocking: true  # If FAIL, code generation must iterate
+
+constraints:
+  - Behavioral specs must be INDEPENDENT of implementation (no function names)
+  - Property tests must use PRODUCTION config values, never test-only fixtures
+  - Smoke scenarios must exercise the composition root, not individual functions
+  - Sign convention audit must cross-reference config, domain code, and tests
+  - Verdict FAIL blocks deployment — code generation must iterate
+
+tools:
+  - file_read     # Read generated source and test files
+  - ast_summary   # Analyze function signatures and bodies
+  - bash_execute  # Run property tests and smoke scenarios
+  - file_write    # Output verdict report

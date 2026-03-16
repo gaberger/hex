@@ -17,7 +17,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, watch, type FSWatcher } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AppContext } from '../../core/ports/app-context.js';
@@ -58,6 +58,8 @@ export class DashboardAdapter {
   private sseClients: Set<ServerResponse> = new Set();
   private readonly healthCache = cached<unknown>(10_000);
   private readonly tokensCache = cached<unknown>(30_000);
+  private watchers: FSWatcher[] = [];
+  private fileChangeDebounce = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly ctx: AppContext,
@@ -69,12 +71,16 @@ export class DashboardAdapter {
       void this.handleRequest(req, res);
     });
 
+    this.startFileWatcher();
+
     return new Promise((ok) => {
       server.listen(this.port, () => {
         const url = `http://localhost:${this.port}`;
         ok({
           url,
           close: () => {
+            for (const w of this.watchers) w.close();
+            this.watchers = [];
             for (const client of this.sseClients) client.end();
             this.sseClients.clear();
             server.close();
@@ -82,6 +88,40 @@ export class DashboardAdapter {
         });
       });
     });
+  }
+
+  // ── File Watcher ──────────────────────────────────
+
+  private startFileWatcher(): void {
+    const srcDir = resolve(this.ctx.rootPath, 'src');
+    try {
+      const watcher = watch(srcDir, { recursive: true }, (_eventType, filename) => {
+        if (!filename) return;
+        // Only watch source files
+        if (!filename.endsWith('.ts') && !filename.endsWith('.js') && !filename.endsWith('.go') && !filename.endsWith('.rs')) return;
+
+        const relPath = `src/${filename}`;
+
+        // Debounce rapid saves (IDE auto-save, formatters)
+        const existing = this.fileChangeDebounce.get(relPath);
+        if (existing) clearTimeout(existing);
+        this.fileChangeDebounce.set(relPath, setTimeout(() => {
+          this.fileChangeDebounce.delete(relPath);
+          this.broadcast('file-change', {
+            path: relPath,
+            layer: classifyLayer(relPath),
+            timestamp: Date.now(),
+          });
+          // Invalidate caches so next poll gets fresh data
+          this.healthCache.set(null as unknown as never);
+          this.tokensCache.set(null as unknown as never);
+        }, 300));
+      });
+      this.watchers.push(watcher);
+    } catch {
+      // src/ may not exist yet in a fresh scaffold — that's fine
+      process.stderr.write(`[dashboard] File watcher: src/ not found, graph highlighting disabled\n`);
+    }
   }
 
   // ── Request router ──────────────────────────────────
@@ -248,9 +288,11 @@ export class DashboardAdapter {
         this.ctx.swarm.listAgents(),
       ]);
       this.json(res, 200, { status, tasks, agents });
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[dashboard] swarm query failed:', message);
       this.json(res, 200, {
-        status: { id: 'none', topology: 'hierarchical', agentCount: 0, activeTaskCount: 0, completedTaskCount: 0, status: 'idle' },
+        status: { id: 'none', topology: 'hierarchical', agentCount: 0, activeTaskCount: 0, completedTaskCount: 0, status: 'idle', error: message },
         tasks: [],
         agents: [],
       });

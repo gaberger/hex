@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ValidationError } from './errors.js';
 
 export type TodoId = string;
 export type TodoStatus = 'pending' | 'in-progress' | 'completed';
@@ -15,10 +16,10 @@ export function createTodoId(): TodoId {
 export function createTodoTitle(raw: string): TodoTitle {
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
-    throw new Error('Todo title cannot be empty');
+    throw new ValidationError('Todo title cannot be empty');
   }
   if (trimmed.length > 200) {
-    throw new Error('Todo title cannot exceed 200 characters');
+    throw new ValidationError('Todo title cannot exceed 200 characters');
   }
   return { value: trimmed };
 }

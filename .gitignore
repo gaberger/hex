@@ -36,3 +36,6 @@ coverage/
 # Logs
 *.log
 .hex-intf/
+
+# Filesystem artifacts
+Volumes/

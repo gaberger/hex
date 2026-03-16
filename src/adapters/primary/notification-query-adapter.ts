@@ -11,6 +11,7 @@ import type {
   INotificationEmitPort,
   Notification,
   NotificationLevel,
+  NotificationListener,
   NotificationPreferences,
   ProgressReport,
   DecisionRequest,
@@ -42,6 +43,7 @@ export class NotificationQueryAdapter implements INotificationQueryPort {
   private preferences: NotificationPreferences;
   private progress: ProgressReport | null = null;
   private readonly maxBuffer: number;
+  private readonly listeners: NotificationListener[] = [];
 
   constructor(
     private readonly emitPort: INotificationEmitPort,
@@ -103,6 +105,11 @@ export class NotificationQueryAdapter implements INotificationQueryPort {
     this.preferences = { ...this.preferences, ...prefs };
   }
 
+  /** Register a callback for every ingested notification (used by dashboard SSE). */
+  addListener(fn: NotificationListener): void {
+    this.listeners.push(fn);
+  }
+
   // ── Ingest methods (called by use cases / domain) ────────
 
   /** Store a notification and forward it through the emit port. */
@@ -114,6 +121,10 @@ export class NotificationQueryAdapter implements INotificationQueryPort {
     };
     this.pushToBuffer(full);
     await this.emitPort.notify(notification);
+
+    for (const fn of this.listeners) {
+      try { fn(full); } catch { /* listener errors must not break ingestion */ }
+    }
   }
 
   /** Register a pending decision so UIs can discover it. */

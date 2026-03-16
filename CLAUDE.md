@@ -132,3 +132,4 @@ Agent tool: { subagent_type: "coder", mode: "bypassPermissions", run_in_backgrou
 - `RufloAdapter` uses `execFile` (not `exec`) — no shell injection
 - API keys loaded only in `composition-root.ts` from env vars
 - Never commit `.env` files — use `.env.example`
+- Primary adapters MUST NOT use `innerHTML`/`outerHTML`/`insertAdjacentHTML` with any data that originates outside the domain layer. Use `textContent` or DOM APIs (`createElement`) instead.

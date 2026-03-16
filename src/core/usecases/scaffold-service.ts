@@ -113,6 +113,9 @@ export class ScaffoldService implements IScaffoldPort {
     // Write README.md
     await this.fs.write('README.md', this.renderReadme(readme));
 
+    // Write CLAUDE.md — hex architecture rules for LLM-driven development
+    await this.fs.write('CLAUDE.md', this.generateClaudeMd(projectName, language));
+
     // Write .env.example if there are env vars
     if (runtime.envVars.length > 0) {
       await this.fs.write('.env.example', envExample);
@@ -171,6 +174,53 @@ export class ScaffoldService implements IScaffoldPort {
       '- `src/adapters/primary/` — Driving adapters (CLI, HTTP, browser)',
       '- `src/adapters/secondary/` — Driven adapters (DB, API, filesystem)',
     ].join('\n');
+  }
+
+  private generateClaudeMd(projectName: string, language: Language): string {
+    const buildCmd = language === 'typescript' ? 'bun run build' : language === 'go' ? 'go build ./...' : 'cargo build';
+    const testCmd = language === 'typescript' ? 'bun test' : language === 'go' ? 'go test ./...' : 'cargo test';
+
+    return [
+      `# ${projectName} — Hexagonal Architecture`,
+      '',
+      '## Behavioral Rules',
+      '',
+      '- ALWAYS read a file before editing it',
+      '- NEVER commit secrets, credentials, or .env files',
+      `- ALWAYS run \`${testCmd}\` after making code changes`,
+      `- ALWAYS run \`${buildCmd}\` before committing`,
+      '',
+      '## Hexagonal Architecture Rules (ENFORCED)',
+      '',
+      '1. **domain/** must only import from **domain/**',
+      '2. **ports/** may import from **domain/** but nothing else',
+      '3. **usecases/** may import from **domain/** and **ports/** only',
+      '4. **adapters/primary/** may import from **ports/** only',
+      '5. **adapters/secondary/** may import from **ports/** only',
+      '6. **adapters must NEVER import other adapters** (cross-adapter coupling)',
+      '7. **composition-root** is the ONLY file that imports from adapters',
+      language === 'typescript' ? '8. All relative imports MUST use `.js` extensions (NodeNext module resolution)' : '',
+      '',
+      '## File Organization',
+      '',
+      '```',
+      'src/',
+      '  core/',
+      '    domain/          # Pure business logic, zero external deps',
+      '    ports/           # Typed interfaces (contracts between layers)',
+      '    usecases/        # Application logic composing ports',
+      '  adapters/',
+      '    primary/         # Driving adapters (CLI, HTTP, browser input)',
+      '    secondary/       # Driven adapters (DB, API, filesystem)',
+      '  composition-root   # Wires adapters to ports (single DI point)',
+      '```',
+      '',
+      '## Security',
+      '',
+      '- Never commit `.env` files — use `.env.example`',
+      '- Primary adapters MUST NOT use `innerHTML`/`outerHTML`/`insertAdjacentHTML` with any data that originates outside the domain layer. Use `textContent` or DOM APIs (`createElement`) instead.',
+      '',
+    ].filter(Boolean).join('\n');
   }
 
   private renderReadme(readme: ProjectReadme): string {

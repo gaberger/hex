@@ -75,6 +75,195 @@ function parseArgs(argv: string[]): ParsedArgs {
   return { command, positional, flags };
 }
 
+// ── Init Templates ──────────────────────────────────────
+
+const TEMPLATES = {
+  ports: (ext: string) =>
+    ext === 'ts'
+      ? [
+          '// Define your port interfaces here',
+          '// Example:',
+          '// export interface IMyPort {',
+          '//   doSomething(input: string): Promise<string>;',
+          '// }',
+          'export {};',
+          '',
+        ].join('\n')
+      : '',
+
+  domain: (ext: string) =>
+    ext === 'ts'
+      ? ['// Define your domain entities and value objects here', 'export {};', ''].join('\n')
+      : '',
+
+  compositionRoot: (ext: string) =>
+    ext === 'ts'
+      ? [
+          'export interface AppContext {',
+          '  rootPath: string;',
+          '}',
+          '',
+          'export async function createAppContext(rootPath: string): Promise<AppContext> {',
+          '  return { rootPath };',
+          '}',
+          '',
+        ].join('\n')
+      : '',
+
+  tsconfig: JSON.stringify(
+    {
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'ESNext',
+        moduleResolution: 'bundler',
+        strict: true,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        outDir: 'dist',
+        rootDir: 'src',
+        declaration: true,
+        declarationMap: true,
+        sourceMap: true,
+      },
+      include: ['src'],
+      exclude: ['node_modules', 'dist'],
+    },
+    null,
+    2,
+  ) + '\n',
+
+  packageJson: JSON.stringify(
+    {
+      name: 'my-hex-project',
+      version: '0.1.0',
+      type: 'module',
+      scripts: {
+        dev: 'bun run --watch src/index.ts',
+        test: 'bun test',
+        build: 'bun build src/index.ts --outdir dist --target node',
+        check: 'tsc --noEmit',
+      },
+      devDependencies: {
+        typescript: '^5.0.0',
+      },
+    },
+    null,
+    2,
+  ) + '\n',
+
+  gitignore: [
+    'node_modules/',
+    'dist/',
+    '.env',
+    '.hex-intf/',
+    '*.tsbuildinfo',
+    '',
+  ].join('\n'),
+
+  readme: [
+    '# My Hex Project',
+    '',
+    'Scaffolded with [hex-intf](https://github.com/your-org/hex-intf).',
+    '',
+    '## Quick Start',
+    '',
+    '```bash',
+    'bun install',
+    'bun run dev',
+    '```',
+    '',
+    '## Commands',
+    '',
+    '| Command | Description |',
+    '|---------|-------------|',
+    '| `bun run dev` | Start dev server with watch |',
+    '| `bun test` | Run tests |',
+    '| `bun run build` | Build for production |',
+    '| `bun run check` | Type-check without emitting |',
+    '',
+    '## Architecture',
+    '',
+    '```',
+    'src/',
+    '  core/',
+    '    domain/        Domain entities and value objects',
+    '    ports/         Port interfaces (input + output)',
+    '    usecases/      Use case implementations',
+    '  adapters/',
+    '    primary/       Driving adapters (CLI, HTTP, etc.)',
+    '    secondary/     Driven adapters (DB, FS, API, etc.)',
+    '  infrastructure/  Cross-cutting concerns',
+    '  composition-root.ts',
+    '```',
+    '',
+  ].join('\n'),
+
+  claudeMd: (lang: string) => [
+    `# Hexagonal Architecture Project`,
+    '',
+    '## Behavioral Rules',
+    '',
+    '- ALWAYS read a file before editing it',
+    '- NEVER commit secrets, credentials, or .env files',
+    `- ALWAYS run \`${lang === 'ts' ? 'bun test' : lang === 'go' ? 'go test ./...' : 'cargo test'}\` after making code changes`,
+    `- ALWAYS run \`${lang === 'ts' ? 'bun run build' : lang === 'go' ? 'go build ./...' : 'cargo build'}\` before committing`,
+    '',
+    '## Hexagonal Architecture Rules (ENFORCED)',
+    '',
+    '1. **domain/** must only import from **domain/**',
+    '2. **ports/** may import from **domain/** but nothing else',
+    '3. **usecases/** may import from **domain/** and **ports/** only',
+    '4. **adapters/primary/** may import from **ports/** only',
+    '5. **adapters/secondary/** may import from **ports/** only',
+    '6. **adapters must NEVER import other adapters** (cross-adapter coupling)',
+    '7. **composition-root** is the ONLY file that imports from adapters',
+    ...(lang === 'ts' ? ['8. All relative imports MUST use `.js` extensions (NodeNext module resolution)'] : []),
+    '',
+    '## File Organization',
+    '',
+    '```',
+    'src/',
+    '  core/',
+    '    domain/          # Pure business logic, zero external deps',
+    '    ports/           # Typed interfaces (contracts between layers)',
+    '    usecases/        # Application logic composing ports',
+    '  adapters/',
+    '    primary/         # Driving adapters (CLI, HTTP, browser input)',
+    '    secondary/       # Driven adapters (DB, API, filesystem)',
+    '  composition-root   # Wires adapters to ports (single DI point)',
+    '```',
+    '',
+    '## Security',
+    '',
+    '- Never commit `.env` files — use `.env.example`',
+    '- Primary adapters MUST NOT use `innerHTML`/`outerHTML`/`insertAdjacentHTML` with any data that originates outside the domain layer. Use `textContent` or DOM APIs (`createElement`) instead.',
+    '',
+    '## On Startup',
+    '',
+    'A SessionStart hook runs `scripts/hex-startup.sh` which outputs project status. You MUST:',
+    '',
+    '1. Read the hook output (it appears in a system-reminder) to understand project progress',
+    '2. Read `PRD.md` for the full project scope',
+    '3. **Immediately present** the user with:',
+    '   - Project name and goal (from PRD)',
+    '   - Pipeline progress (which hex layers are done vs todo)',
+    '   - The recommended next step',
+    '   - Ask what they would like to work on',
+    '4. Do NOT wait for the user to ask — proactively guide them',
+    '',
+    '## Development Pipeline (follow this order)',
+    '',
+    '1. **Domain** — Define entities and value objects in `domain/`',
+    '2. **Ports** — Define typed interfaces (contracts) in `ports/`',
+    '3. **Use Cases** — Implement business logic in `usecases/`, importing only domain + ports',
+    '4. **Adapters** — Implement primary (input) and secondary (output) adapters',
+    '5. **Composition Root** — Wire adapters to ports in `composition-root`',
+    '6. **Tests** — Unit tests (London-school mocks) + integration tests',
+    '7. **Validate** — Run `hex-intf analyze .` to check architecture health',
+    '',
+  ].join('\n'),
+} as const;
+
 // ── CLI Adapter ─────────────────────────────────────────
 
 export class CLIAdapter {
@@ -98,12 +287,16 @@ export class CLIAdapter {
           return await this.plan(args);
         case 'dashboard':
           return await this.dashboard(args);
+        case 'hub':
+          return await this.hub(args);
         case 'status':
           return await this.status();
         case 'setup':
           return await this.setup();
         case 'init':
-          return this.init(args);
+          return await this.init(args);
+        case 'projects':
+          return await this.projects();
         case 'help':
         case '--help':
         case '-h':
@@ -324,12 +517,73 @@ export class CLIAdapter {
     }
 
     // Dynamic import to avoid loading http server when not needed
-    const { startDashboard } = await import('./dashboard-adapter.js');
-    const { url } = await startDashboard(this.ctx as AppContext, port);
+    const { DashboardAdapter } = await import('./dashboard-adapter.js');
+    const dashboard = new DashboardAdapter(this.ctx as AppContext, port);
+    const { url } = await dashboard.start();
     this.writeLn(`Dashboard running at ${url}`);
+
+    // Wire notification orchestrator → dashboard SSE broadcast
+    if (this.ctx.notificationOrchestrator) {
+      this.ctx.notificationOrchestrator.addListener((notification) => {
+        dashboard.broadcast(notification.level, {
+          id: notification.id,
+          level: notification.level,
+          message: notification.title,
+          detail: notification.detail,
+          source: notification.source,
+          timestamp: notification.timestamp,
+          context: notification.context,
+        });
+      });
+      this.writeLn('Notifications connected to dashboard SSE.');
+    } else {
+      this.writeLn('No notification orchestrator — SSE events will be limited.');
+    }
+
     this.writeLn('Press Ctrl+C to stop.');
 
     // Keep the process alive until interrupted
+    await new Promise(() => {});
+    return 0;
+  }
+
+  // ── hub (multi-project dashboard) ───────────────────
+
+  private async hub(args: ParsedArgs): Promise<number> {
+    const port = parseInt(args.flags.get('port') ?? '3847', 10);
+    if (isNaN(port) || port < 1 || port > 65535) {
+      this.writeLn('Invalid port number. Must be 1-65535.');
+      return 1;
+    }
+
+    // Dynamic import to avoid loading http server when not needed
+    const { DashboardHub } = await import('./dashboard-hub.js');
+    // Inject the composition root factory — keeps the hub hex-clean
+    const { createAppContext: factory } = await import('../../composition-root.js');
+
+    const hub = new DashboardHub(factory, port);
+    const { url } = await hub.start();
+    this.writeLn(`Dashboard Hub running at ${url}`);
+
+    // Register the current project as the first project
+    const slot = await hub.registerProject(this.ctx.rootPath);
+    this.writeLn(`Registered project: ${slot.id} (${this.ctx.rootPath})`);
+
+    // Register additional projects from --project flags
+    const extraProjects = args.positional;
+    for (const projectPath of extraProjects) {
+      try {
+        const s = await hub.registerProject(projectPath);
+        this.writeLn(`Registered project: ${s.id} (${s.ctx.rootPath})`);
+      } catch (err) {
+        this.writeLn(`Failed to register ${projectPath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    this.writeLn('');
+    this.writeLn('Register more projects via POST /api/projects/register { "rootPath": "..." }');
+    this.writeLn('Press Ctrl+C to stop.');
+
     await new Promise(() => {});
     return 0;
   }
@@ -343,33 +597,531 @@ export class CLIAdapter {
 
   // ── init ────────────────────────────────────────────
 
-  private init(args: ParsedArgs): number {
-    const lang = args.flags.get('lang') ?? 'ts';
+  private async init(args: ParsedArgs): Promise<number> {
+    const skipWizard = args.flags.get('skip-wizard') === 'true';
+
+    // ── Phase 1: Check for existing PRD or run wizard ──
+
+    let scope: { name: string; summary: string; lang: string };
+
+    if (await this.ctx.fs.exists('PRD.md')) {
+      this.writeLn('Found existing PRD.md — skipping wizard.');
+      scope = await this.parsePrd();
+    } else if (skipWizard) {
+      scope = { name: 'my-hex-project', summary: 'A hexagonal architecture project', lang: args.flags.get('lang') ?? 'ts' };
+    } else {
+      scope = await this.scopeWizard(args);
+    }
+
+    const langStr = scope.lang;
+    const langs = langStr.split('+').map((l) => l.trim());
     const validLangs = ['ts', 'go', 'rust'];
-    if (!validLangs.includes(lang)) {
-      this.writeLn(`Invalid language: ${lang}. Must be one of: ${validLangs.join(', ')}`);
+    const invalid = langs.filter((l) => !validLangs.includes(l));
+    if (invalid.length > 0) {
+      this.writeLn(`Invalid language(s): ${invalid.join(', ')}. Must be: ${validLangs.join(', ')}`);
       return 1;
     }
 
-    this.writeLn(`Scaffolding hex-intf project (${lang}):`);
+    const primaryLang = langs[0];
+    const ext = primaryLang === 'ts' ? 'ts' : primaryLang === 'go' ? 'go' : 'rs';
+    const isMultiStack = langs.length > 1;
+
+    // ── Phase 2: Generate PRD.md ──────────────────────
+
     this.writeLn('');
-    this.writeLn('  src/');
-    this.writeLn('    core/');
-    this.writeLn('      domain/       Domain entities and value objects');
-    this.writeLn('      ports/        Port interfaces (input + output)');
-    this.writeLn('      usecases/     Use case implementations');
-    this.writeLn('    adapters/');
-    this.writeLn('      primary/      Driving adapters (CLI, HTTP, etc.)');
-    this.writeLn('      secondary/    Driven adapters (DB, FS, API, etc.)');
-    this.writeLn('    infrastructure/ Cross-cutting concerns');
-    this.writeLn('    composition-root.ts');
-    this.writeLn('    cli.ts');
-    this.writeLn('    index.ts');
-    this.writeLn('  tests/');
+    this.writeLn('Generating PRD.md...');
+    const prd = this.generatePrd(scope);
+
+    this.writeLn(`Scaffolding ${scope.name} (${langStr})...`);
     this.writeLn('');
-    this.writeLn('Run "hex-intf analyze" after scaffolding to validate boundaries.');
+
+    const created: string[] = [];
+    const skipped: string[] = [];
+
+    // Override package name with wizard input
+    const pkgJson = JSON.parse(TEMPLATES.packageJson);
+    pkgJson.name = scope.name;
+    const packageJsonContent = JSON.stringify(pkgJson, null, 2) + '\n';
+
+    /** Write a file only if it does not already exist. Paths are relative to rootPath. */
+    const safeWrite = async (relPath: string, content: string) => {
+      if (await this.ctx.fs.exists(relPath)) {
+        skipped.push(relPath);
+      } else {
+        await this.ctx.fs.write(relPath, content);
+        created.push(relPath);
+      }
+    };
+
+    // ── Starter source files ──────────────────────────
+
+    if (isMultiStack) {
+      // Multi-stack: separate directories per language (e.g., backend/ + frontend/)
+      for (const lang of langs) {
+        const langExt = lang === 'ts' ? 'ts' : lang === 'go' ? 'go' : 'rs';
+        const dir = lang === 'go' || lang === 'rust' ? 'backend' : 'frontend';
+        await safeWrite(`${dir}/src/core/ports/index.${langExt}`, TEMPLATES.ports(langExt));
+        await safeWrite(`${dir}/src/core/domain/index.${langExt}`, TEMPLATES.domain(langExt));
+        await safeWrite(`${dir}/src/core/usecases/.gitkeep`, '');
+        await safeWrite(`${dir}/src/adapters/primary/.gitkeep`, '');
+        await safeWrite(`${dir}/src/adapters/secondary/.gitkeep`, '');
+        await safeWrite(`${dir}/src/infrastructure/.gitkeep`, '');
+        await safeWrite(`${dir}/src/composition-root.${langExt}`, TEMPLATES.compositionRoot(langExt));
+        await safeWrite(`${dir}/tests/unit/.gitkeep`, '');
+        await safeWrite(`${dir}/tests/integration/.gitkeep`, '');
+        await safeWrite(`${dir}/CLAUDE.md`, TEMPLATES.claudeMd(lang));
+      }
+    } else {
+      await safeWrite(`src/core/ports/index.${ext}`, TEMPLATES.ports(ext));
+      await safeWrite(`src/core/domain/index.${ext}`, TEMPLATES.domain(ext));
+      await safeWrite(`src/core/usecases/.gitkeep`, '');
+      await safeWrite(`src/adapters/primary/.gitkeep`, '');
+      await safeWrite(`src/adapters/secondary/.gitkeep`, '');
+      await safeWrite(`src/infrastructure/.gitkeep`, '');
+      await safeWrite(`src/composition-root.${ext}`, TEMPLATES.compositionRoot(ext));
+    }
+
+    // ── Test directories (single-stack only, multi-stack has them per dir) ──
+
+    if (!isMultiStack) {
+      await safeWrite('tests/unit/.gitkeep', '');
+      await safeWrite('tests/integration/.gitkeep', '');
+    }
+
+    // ── Config directory ──────────────────────────────
+
+    await safeWrite('config/.gitkeep', '');
+
+    // ── Root config files ─────────────────────────────
+
+    if (langs.includes('ts')) {
+      const tsconfigPath = isMultiStack ? 'frontend/tsconfig.json' : 'tsconfig.json';
+      await safeWrite(tsconfigPath, TEMPLATES.tsconfig);
+    }
+    await safeWrite('package.json', packageJsonContent);
+    await safeWrite('.gitignore', TEMPLATES.gitignore);
+    await safeWrite('README.md', TEMPLATES.readme);
+    if (isMultiStack) {
+      // Root CLAUDE.md references both stacks
+      const rootClaude = [
+        `# ${scope.name} — Multi-Stack Hexagonal Architecture`,
+        '',
+        'This project has multiple stacks, each with its own hex boundaries:',
+        '',
+        ...langs.map((l) => {
+          const dir = l === 'go' || l === 'rust' ? 'backend' : 'frontend';
+          return `- **${dir}/** — ${l === 'ts' ? 'TypeScript' : l === 'go' ? 'Go' : 'Rust'} (see ${dir}/CLAUDE.md)`;
+        }),
+        '',
+        '## Cross-Stack Rules',
+        '',
+        '- Backend and frontend communicate ONLY via API contracts (HTTP/gRPC)',
+        '- Shared types belong in a `shared/` directory or are duplicated per stack',
+        '- Each stack has its own CLAUDE.md with language-specific hex rules',
+        '- NEVER import code across stack boundaries',
+        '',
+        '## Security',
+        '',
+        '- Never commit `.env` files — use `.env.example`',
+        '- Primary adapters MUST NOT use `innerHTML`/`outerHTML`/`insertAdjacentHTML` with any data that originates outside the domain layer. Use `textContent` or DOM APIs (`createElement`) instead.',
+        '',
+        '## On Startup',
+        '',
+        'When a new conversation begins in this project:',
+        '',
+        '1. Read `PRD.md` to understand the project scope and requirements',
+        '2. Scan `backend/` and `frontend/` to assess build progress',
+        '3. Present the user with a **status summary**:',
+        '   - What has been built so far in each stack',
+        '   - What the next logical step is (following the development pipeline)',
+        '   - Any issues found (missing ports, empty adapters, no tests)',
+        '4. Ask the user what they want to work on, suggesting the next step',
+        '',
+        '## Development Pipeline (follow this order, per stack)',
+        '',
+        '1. **Domain** — Define entities and value objects in `domain/`',
+        '2. **Ports** — Define typed interfaces (contracts) in `ports/`',
+        '3. **Use Cases** — Implement business logic in `usecases/`',
+        '4. **Adapters** — Implement primary (input) and secondary (output) adapters',
+        '5. **Composition Root** — Wire adapters to ports',
+        '6. **Tests** — Unit tests + integration tests',
+        '7. **Validate** — Run `hex-intf analyze .` to check architecture health',
+        '',
+      ].join('\n');
+      await safeWrite('CLAUDE.md', rootClaude);
+    } else {
+      await safeWrite('CLAUDE.md', TEMPLATES.claudeMd(primaryLang));
+    }
+    await safeWrite('PRD.md', prd);
+
+    // ── Initialize ruflo swarm if not already running ──
+
+    try {
+      const swarmStatus = await this.ctx.swarm.status();
+      if (swarmStatus.status === 'running' || swarmStatus.status === 'idle') {
+        this.writeLn(`Swarm already initialized (${swarmStatus.status}).`);
+      } else {
+        await this.initSwarm();
+      }
+    } catch {
+      await this.initSwarm();
+    }
+    this.writeLn('');
+
+    // ── Register project ────────────────────────────────
+
+    try {
+      const { resolve } = await import('node:path');
+      const absPath = resolve(this.ctx.rootPath);
+      const existing = await this.ctx.registry.readLocalIdentity(absPath);
+      if (existing) {
+        await this.ctx.registry.touch(existing.id);
+        this.writeLn(`Project registered: ${existing.name} (${existing.id.slice(0, 8)})`);
+      } else {
+        const reg = await this.ctx.registry.register(absPath, scope.name);
+        await this.ctx.registry.writeLocalIdentity(absPath, {
+          id: reg.id,
+          name: reg.name,
+          createdAt: reg.createdAt,
+        });
+        this.writeLn(`Project registered: ${reg.name} (${reg.id.slice(0, 8)}) on port ${reg.port}`);
+      }
+    } catch (err) {
+      this.writeLn(`Registry: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // ── Install session-start hook ─────────────────────
+
+    await this.installStartupHook();
+
+    // ── Run setup (grammars + skills) ─────────────────
+
+    this.writeLn('Running setup (grammars + skills)...');
+    this.writeLn('');
+    await this.setup();
+    this.writeLn('');
+
+    // ── Summary ───────────────────────────────────────
+
+    if (created.length > 0) {
+      this.writeLn(`Created (${created.length}):`);
+      for (const f of created) {
+        this.writeLn(`  + ${f}`);
+      }
+    }
+    if (skipped.length > 0) {
+      this.writeLn(`Skipped (already exist) (${skipped.length}):`);
+      for (const f of skipped) {
+        this.writeLn(`  - ${f}`);
+      }
+    }
+
+    this.writeLn('');
+    this.writeLn('Done. Next steps:');
+    this.writeLn('  bun install');
+    this.writeLn('  claude              # Start AI-guided development');
+    this.writeLn('');
+    this.writeLn('When Claude starts, type "start" and it will:');
+    this.writeLn('  - Read your PRD.md and assess progress');
+    this.writeLn('  - Show which hex layers are built vs pending');
+    this.writeLn('  - Guide you through the next step');
 
     return 0;
+  }
+
+  // ── projects ──────────────────────────────────
+
+  private async projects(): Promise<number> {
+    const projects = await this.ctx.registry.list();
+    if (projects.length === 0) {
+      this.writeLn('No registered projects. Run "hex-intf init" in a project directory.');
+      return 0;
+    }
+
+    this.writeLn(`Registered projects (${projects.length}):`);
+    this.writeLn('');
+    for (const p of projects) {
+      const age = Math.round((Date.now() - p.lastSeenAt) / 60000);
+      const stale = age > 1440 ? ' (stale)' : '';
+      this.writeLn(`  ${p.id.slice(0, 8)}  ${p.name.padEnd(20)} :${p.port}  ${p.status}${stale}`);
+      this.writeLn(`           ${p.rootPath}`);
+    }
+    return 0;
+  }
+
+  // ── scopeWizard ────────────────────────────────
+
+  private async scopeWizard(args: ParsedArgs): Promise<{ name: string; summary: string; lang: string }> {
+    this.writeLn('─── hex-intf project setup ───────────────────');
+    this.writeLn('');
+
+    const name = await this.prompt('Project name', 'my-hex-project');
+    const summary = await this.prompt('Describe what this project does', '');
+
+    // Infer language(s) from summary or flag
+    const flagLang = args.flags.get('lang');
+    const lang = flagLang ?? this.inferLang(summary);
+
+    this.writeLn('');
+    this.writeLn(`  Inferred stack: ${lang}`);
+
+    return { name, summary, lang };
+  }
+
+  private inferLang(summary: string): string {
+    const lower = summary.toLowerCase();
+    const langs: string[] = [];
+
+    if (lower.includes('go') || lower.includes('golang')) langs.push('go');
+    if (lower.includes('ts') || lower.includes('typescript') || lower.includes('htmx') || lower.includes('react') || lower.includes('frontend') || lower.includes('front end') || lower.includes('front-end') || lower.includes('web ui') || lower.includes('next')) langs.push('ts');
+    if (lower.includes('rust') || lower.includes('cargo')) langs.push('rust');
+
+    if (langs.length === 0) return 'ts';
+    return langs.join('+');
+  }
+
+  // ── parsePrd ─────────────────────────────────
+
+  private async parsePrd(): Promise<{ name: string; summary: string; lang: string }> {
+    const content = await this.ctx.fs.read('PRD.md');
+    const lines = content.split('\n');
+
+    // Extract name from first heading: "# project-name — ..."
+    const titleLine = lines.find((l) => l.startsWith('# '));
+    const name = titleLine
+      ? titleLine.replace(/^#\s+/, '').split(/\s*[—–-]\s*/)[0].trim()
+      : 'my-hex-project';
+
+    // Extract summary from the section after "## Summary"
+    const summaryIdx = lines.findIndex((l) => /^##\s+summary/i.test(l));
+    let summary = '';
+    if (summaryIdx >= 0) {
+      for (let i = summaryIdx + 1; i < lines.length; i++) {
+        if (lines[i].startsWith('##')) break;
+        const trimmed = lines[i].trim();
+        if (trimmed && !trimmed.startsWith('_')) {
+          summary = trimmed;
+          break;
+        }
+      }
+    }
+
+    // Extract lang from "**Stack:**" or "**Language:**" line, fallback to inferring from summary
+    const stackLine = lines.find((l) => /\*\*(Stack|Language)\*\*/.test(l));
+    let lang = 'ts';
+    if (stackLine) {
+      const lower = stackLine.toLowerCase();
+      const langs: string[] = [];
+      if (lower.includes('go')) langs.push('go');
+      if (lower.includes('typescript') || lower.includes('ts')) langs.push('ts');
+      if (lower.includes('rust')) langs.push('rust');
+      if (langs.length > 0) lang = langs.join('+');
+    }
+    // If Stack line only found one lang but summary mentions more, re-infer
+    if (summary) {
+      const inferred = this.inferLang(summary);
+      const inferredLangs = inferred.split('+');
+      const currentLangs = lang.split('+');
+      if (inferredLangs.length > currentLangs.length) {
+        lang = inferred;
+      }
+    }
+
+    this.writeLn(`  Name: ${name}`);
+    this.writeLn(`  Stack: ${lang}`);
+    this.writeLn(`  Summary: ${summary || '(none)'}`);
+
+    return { name, summary, lang };
+  }
+
+  // ── generatePrd ──────────────────────────────
+
+  private generatePrd(scope: { name: string; summary: string; lang: string }): string {
+    const langs = scope.lang.split('+');
+    const langNames: Record<string, string> = { ts: 'TypeScript', go: 'Go', rust: 'Rust' };
+    const langFull = langs.map((l) => langNames[l] ?? l).join(' + ');
+    const isMulti = langs.length > 1;
+
+    return [
+      `# ${scope.name} — Product Requirements`,
+      '',
+      '## Summary',
+      '',
+      scope.summary || '_No description provided._',
+      '',
+      '## Technical Decisions',
+      '',
+      `- **Stack:** ${langFull}`,
+      ...(isMulti ? [`- **Structure:** Multi-stack (${langs.includes('go') || langs.includes('rust') ? 'backend/' : ''}${langs.includes('go') || langs.includes('rust') ? ' + ' : ''}${langs.includes('ts') ? 'frontend/' : ''})`] : []),
+      `- **Architecture:** Hexagonal (ports & adapters)`,
+      `- **Scaffolded by:** hex-intf`,
+      '',
+      '## Scope',
+      '',
+      '### In Scope',
+      '',
+      '- [ ] Define domain entities and value objects',
+      '- [ ] Define port interfaces (contracts)',
+      '- [ ] Implement primary adapter(s)',
+      '- [ ] Implement secondary adapter(s)',
+      '- [ ] Wire composition root',
+      '- [ ] Unit tests (London-school mocks)',
+      '',
+      '### Out of Scope',
+      '',
+      '- _TBD — add items as the project evolves_',
+      '',
+      '## Architecture',
+      '',
+      '```',
+      'src/',
+      '  core/',
+      '    domain/          # Pure business logic, zero external deps',
+      '    ports/           # Typed interfaces (contracts)',
+      '    usecases/        # Application logic composing ports',
+      '  adapters/',
+      '    primary/         # Driving adapters (CLI, HTTP, browser)',
+      '    secondary/       # Driven adapters (DB, API, filesystem)',
+      '  composition-root   # Wires adapters to ports',
+      '```',
+      '',
+      '## Next Steps',
+      '',
+      '1. Fill in domain entities based on the summary above',
+      '2. Define port interfaces for each boundary',
+      '3. Implement adapters',
+      '4. Run `hex-intf analyze .` to validate architecture',
+      '',
+    ].join('\n');
+  }
+
+  // ── prompt ───────────────────────────────────
+
+  private prompt(question: string, defaultValue: string): Promise<string> {
+    const { createInterface } = require('readline');
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const suffix = defaultValue ? ` (${defaultValue})` : '';
+    return new Promise((resolve) => {
+      rl.question(`  ${question}${suffix}: `, (answer: string) => {
+        rl.close();
+        resolve(answer.trim() || defaultValue);
+      });
+    });
+  }
+
+  // ── installStartupHook ─────────────────────────
+
+  private async installStartupHook(): Promise<void> {
+    const { mkdir, writeFile, readFile } = await import('node:fs/promises');
+    const { resolve, join } = await import('node:path');
+
+    const claudeDir = resolve(this.ctx.rootPath, '.claude');
+    const scriptsDir = resolve(this.ctx.rootPath, 'scripts');
+    const settingsPath = join(claudeDir, 'settings.json');
+
+    // Ensure directories exist
+    await mkdir(claudeDir, { recursive: true });
+    await mkdir(scriptsDir, { recursive: true });
+
+    // Write the startup script
+    const startupScript = this.generateStartupScript();
+    const scriptPath = join(scriptsDir, 'hex-startup.sh');
+    await writeFile(scriptPath, startupScript, { mode: 0o755 });
+
+    // Read or create settings.json
+    let settings: Record<string, unknown> = {};
+    try {
+      const existing = await readFile(settingsPath, 'utf-8');
+      settings = JSON.parse(existing);
+    } catch { /* doesn't exist yet */ }
+
+    // Add the SessionStart hook if not already present
+    const hooksObj = (settings.hooks ?? {}) as Record<string, unknown>;
+    const sessionHooks = (hooksObj.SessionStart ?? []) as Array<Record<string, unknown>>;
+    const hasStartup = sessionHooks.some((entry) => {
+      const innerHooks = (entry.hooks ?? []) as Array<Record<string, unknown>>;
+      return innerHooks.some((h) => typeof h.command === 'string' && h.command.includes('hex-startup'));
+    });
+
+    if (!hasStartup) {
+      sessionHooks.push({
+        hooks: [{ type: 'command', command: 'bash scripts/hex-startup.sh', timeout: 10000 }],
+      });
+      hooksObj.SessionStart = sessionHooks;
+      settings.hooks = hooksObj;
+      await writeFile(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+      this.writeLn('Startup hook installed (.claude/settings.json).');
+    }
+  }
+
+  private generateStartupScript(): string {
+    return [
+      '#!/bin/bash',
+      '# hex-intf session-start hook — presents project context on first prompt',
+      'set -e',
+      '',
+      '# Only run in hex-intf projects',
+      '[ ! -f "PRD.md" ] || [ ! -f "CLAUDE.md" ] && exit 0',
+      '',
+      'echo ""',
+      'echo "=== hex-intf Project ==="',
+      'echo ""',
+      '',
+      '# Extract project info from PRD.md',
+      'NAME=$(head -1 PRD.md | sed \'s/^# //\' | sed \'s/ —.*//\')',
+      'SUMMARY=$(awk \'/^## Summary/{f=1;next} /^##/{f=0} f && NF && !/^_/\' PRD.md | head -1)',
+      'echo "Project: $NAME"',
+      '[ -n "$SUMMARY" ] && echo "Goal: $SUMMARY"',
+      'echo ""',
+      '',
+      '# Check pipeline progress',
+      'BASE="."',
+      '[ -d "backend" ] && BASE="backend"',
+      '',
+      'status() { [ "$1" -gt 0 ] && echo "done" || echo "todo"; }',
+      'count() { find "$1" \\( -name "*.ts" -o -name "*.go" -o -name "*.rs" \\) 2>/dev/null | grep -v gitkeep | wc -l | tr -d " "; }',
+      '',
+      'D=$(count "$BASE/src/core/domain")',
+      'P=$(count "$BASE/src/core/ports")',
+      'U=$(count "$BASE/src/core/usecases")',
+      'PA=$(count "$BASE/src/adapters/primary")',
+      'SA=$(count "$BASE/src/adapters/secondary")',
+      'T=$(find "$BASE/tests" -name "*.test.*" -o -name "*_test.*" 2>/dev/null | wc -l | tr -d " ")',
+      '',
+      'echo "Pipeline:"',
+      'echo "  [$(status $D)] Domain ($D)  [$(status $P)] Ports ($P)  [$(status $U)] UseCases ($U)"',
+      'echo "  [$(status $PA)] Primary ($PA)  [$(status $SA)] Secondary ($SA)  [$(status $T)] Tests ($T)"',
+      'echo ""',
+      '',
+      '# Suggest next step',
+      'if [ "$D" -eq 0 ]; then echo "Next: Define domain entities in $BASE/src/core/domain/"',
+      'elif [ "$P" -eq 0 ]; then echo "Next: Define port interfaces in $BASE/src/core/ports/"',
+      'elif [ "$U" -eq 0 ]; then echo "Next: Implement use cases in $BASE/src/core/usecases/"',
+      'elif [ "$PA" -eq 0 ] && [ "$SA" -eq 0 ]; then echo "Next: Implement adapters"',
+      'elif [ "$T" -eq 0 ]; then echo "Next: Add tests"',
+      'else echo "Next: Run hex-intf analyze . to validate"',
+      'fi',
+      'echo "==========================="',
+      '',
+    ].join('\n');
+  }
+
+  // ── initSwarm ──────────────────────────────────
+
+  private async initSwarm(): Promise<void> {
+    this.writeLn('Initializing ruflo swarm...');
+    try {
+      const status = await this.ctx.swarm.init({
+        topology: 'hierarchical',
+        maxAgents: 5,
+        strategy: 'specialized',
+        consensus: 'raft',
+        memoryNamespace: 'hex-intf',
+      });
+      this.writeLn(`Swarm initialized: ${status.id} (${status.topology})`);
+    } catch (err) {
+      this.writeLn(`Swarm init skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // ── help ────────────────────────────────────────────
@@ -388,6 +1140,7 @@ export class CLIAdapter {
     this.writeLn('    [--lang ts|go|rust]');
     this.writeLn('  setup                           Download tree-sitter grammars');
     this.writeLn('  dashboard [--port N]             Open web dashboard (default: 3847)');
+    this.writeLn('  hub [paths...] [--port N]       Multi-project dashboard broker');
     this.writeLn('  status                          Show swarm progress');
     this.writeLn('  init [--lang ts|go|rust]        Scaffold a hex project');
     this.writeLn('  help                            Show this help');

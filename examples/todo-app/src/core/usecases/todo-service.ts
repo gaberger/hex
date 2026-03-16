@@ -1,16 +1,21 @@
 import { Todo, TodoList } from '../domain/entities.js';
 import type { TodoData } from '../domain/entities.js';
 import type { TodoId, TodoStatus, Priority } from '../domain/value-objects.js';
+import { NotFoundError } from '../domain/errors.js';
 import type {
   ITodoStoragePort,
   ITodoQueryPort,
   ITodoCommandPort,
 } from '../ports/index.js';
+import type { ILoggerPort } from '../ports/logger.js';
 
 export class TodoService implements ITodoQueryPort, ITodoCommandPort {
   private list: TodoList | null = null;
 
-  constructor(private readonly storage: ITodoStoragePort) {}
+  constructor(
+    private readonly storage: ITodoStoragePort,
+    private readonly logger?: ILoggerPort,
+  ) {}
 
   private async ensureLoaded(): Promise<TodoList> {
     if (!this.list) {
@@ -64,16 +69,18 @@ export class TodoService implements ITodoQueryPort, ITodoCommandPort {
     const todo = Todo.create(title, priority, tags);
     list.add(todo);
     await this.persist();
+    this.logger?.info('Todo created', { id: todo.id, title });
     return todo.toData();
   }
 
   async complete(id: TodoId): Promise<TodoData> {
     const list = await this.ensureLoaded();
     const existing = list.getById(id);
-    if (!existing) throw new Error(`Todo not found: ${id}`);
+    if (!existing) throw new NotFoundError('Todo', id);
     const completed = existing.complete();
     list.replace(completed);
     await this.persist();
+    this.logger?.info('Todo completed', { id });
     return completed.toData();
   }
 
@@ -83,7 +90,7 @@ export class TodoService implements ITodoQueryPort, ITodoCommandPort {
   ): Promise<TodoData> {
     const list = await this.ensureLoaded();
     let todo = list.getById(id);
-    if (!todo) throw new Error(`Todo not found: ${id}`);
+    if (!todo) throw new NotFoundError('Todo', id);
     if (changes.title !== undefined) {
       todo = todo.updateTitle(changes.title);
     }
@@ -106,7 +113,7 @@ export class TodoService implements ITodoQueryPort, ITodoCommandPort {
   async delete(id: TodoId): Promise<void> {
     const list = await this.ensureLoaded();
     const existed = list.remove(id);
-    if (!existed) throw new Error(`Todo not found: ${id}`);
+    if (!existed) throw new NotFoundError('Todo', id);
     await this.persist();
   }
 }

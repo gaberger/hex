@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Todo App — Hexagonal Architecture</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Todo App</h1>
+      <p>Hexagonal Architecture Demo</p>
+    </header>
+
+    <div class="stats" id="stats">
+      <div class="stat">
+        <div class="stat-value" id="stat-total">0</div>
+        <div class="stat-label">Total</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="stat-pending">0</div>
+        <div class="stat-label">Pending</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="stat-completed">0</div>
+        <div class="stat-label">Done</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="stat-rate">0%</div>
+        <div class="stat-label">Rate</div>
+      </div>
+    </div>
+
+    <form class="add-form" id="add-form">
+      <input type="text" id="title-input" placeholder="What needs to be done?" autocomplete="off">
+      <select id="priority-input">
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+        <option value="low">Low</option>
+      </select>
+      <button type="submit">Add</button>
+    </form>
+
+    <div class="filters" id="filters">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="pending">Pending</button>
+      <button class="filter-btn" data-filter="completed">Completed</button>
+    </div>
+
+    <ul class="todo-list" id="todo-list"></ul>
+  </div>
+
+  <div class="health" id="health">
+    <div class="health-dot" id="health-dot"></div>
+    <span id="health-text">Connected</span>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

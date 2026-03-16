@@ -10,10 +10,14 @@ import type { IArchAnalysisPort, IASTPort, ICodeGenerationPort, IFileSystemPort,
 import type { INotificationEmitPort, INotificationQueryPort } from './notification.js';
 import type { IEventBusPort } from './event-bus.js';
 import type { ISwarmPort } from './swarm.js';
+import type { IRegistryPort } from './registry.js';
 
 export interface AppContext {
   rootPath: string;
   astIsStub: boolean;
+
+  /** When true, skip interactive prompts and use sensible defaults (--yes / -y) */
+  autoConfirm: boolean;
 
   // Use cases
   archAnalyzer: IArchAnalysisPort;
@@ -34,6 +38,7 @@ export interface AppContext {
   eventBus: IEventBusPort | null;
   notifier: INotificationEmitPort;
   swarm: ISwarmPort;
+  registry: IRegistryPort;
 
   /** Local output directory for analysis reports, caches, and logs */
   outputDir: string; // defaults to '.hex-intf/' — gitignored, project-scoped

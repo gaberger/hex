@@ -4,6 +4,7 @@ import type {
   Priority,
 } from './value-objects.js';
 import { createTodoId, createTodoTitle } from './value-objects.js';
+import { ConflictError, ValidationError } from './errors.js';
 
 export type TodoEvent =
   | { type: 'TodoCreated'; payload: { id: TodoId; title: string; priority: Priority } }
@@ -68,7 +69,7 @@ export class Todo {
 
   complete(): Todo {
     if (this.data.status === 'completed') {
-      throw new Error(`Todo ${this.data.id} is already completed`);
+      throw new ConflictError(`Todo ${this.data.id} is already completed`);
     }
     const next = new Todo({
       ...this.data,

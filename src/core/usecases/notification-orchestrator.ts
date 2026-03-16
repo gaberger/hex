@@ -56,12 +56,15 @@ interface TrackedAgent {
 
 // ─── Orchestrator ───────────────────────────────────────
 
+export type NotificationListener = (notification: Notification) => void;
+
 export class NotificationOrchestrator implements INotificationQueryPort {
   private readonly agents = new Map<string, TrackedAgent>();
   private readonly notifications: Notification[] = [];
   private readonly pendingDecisions = new Map<string, DecisionRequest>();
   private readonly config: OrchestratorConfig;
   private preferences: NotificationPreferences;
+  private readonly listeners: NotificationListener[] = [];
 
   private lastTraceTimestamp = 0;
   private lastProgressTimestamp = 0;
@@ -87,6 +90,13 @@ export class NotificationOrchestrator implements INotificationQueryPort {
       showTokenUsage: true,
       ...preferences,
     };
+  }
+
+  // ─── Listener Registration ─────────────────────────
+
+  /** Register a callback invoked for every emitted notification. */
+  addListener(fn: NotificationListener): void {
+    this.listeners.push(fn);
   }
 
   // ─── Lifecycle ──────────────────────────────────────
@@ -467,6 +477,11 @@ export class NotificationOrchestrator implements INotificationQueryPort {
     };
     this.notifications.push(notification);
     await this.emitPort.notify(partial);
+
+    // Notify all registered listeners (e.g. dashboard SSE)
+    for (const fn of this.listeners) {
+      try { fn(notification); } catch { /* listener errors must not break emission */ }
+    }
   }
 
   private async maybeEmitProgress(): Promise<void> {

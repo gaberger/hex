@@ -8,6 +8,7 @@ import type {
   ASTSummary,
   CodeUnit,
   IASTPort,
+  IArchAnalysisPort,
   IBuildPort,
   ICodeGenerationPort,
   IFileSystemPort,
@@ -25,12 +26,16 @@ const DEFAULT_BUDGET: TokenBudget = {
   available: 11904,
 };
 
+/** Maximum arch-validation refinement passes to avoid infinite loops. */
+const MAX_ARCH_REFINE_PASSES = 2;
+
 export class CodeGenerator implements ICodeGenerationPort {
   constructor(
     private readonly llm: ILLMPort,
     private readonly ast: IASTPort,
     private readonly build: IBuildPort,
     private readonly fs: IFileSystemPort,
+    private readonly archAnalyzer?: IArchAnalysisPort,
   ) {}
 
   async generateFromSpec(spec: Specification, lang: Language): Promise<CodeUnit> {
@@ -68,15 +73,20 @@ export class CodeGenerator implements ICodeGenerationPort {
     const astSummary = await this.ast.extractSummary(filePath, 'L1');
     const codeUnit: CodeUnit = { filePath, language: lang, content, astSummary };
 
-    // Validate generated code compiles before returning
+    // Phase 1: Validate generated code compiles
     const project = { name: 'hex-intf', rootPath: '.', language: lang, adapters: [] };
     const buildResult = await this.build.compile(project);
+    let result = codeUnit;
     if (!buildResult.success) {
-      const refined = await this.refineFromBuildErrors(codeUnit, buildResult.errors);
-      return refined;
+      result = await this.refineFromBuildErrors(codeUnit, buildResult.errors);
     }
 
-    return codeUnit;
+    // Phase 2: Architecture validation feedback loop
+    if (this.archAnalyzer) {
+      result = await this.refineFromArchAnalysis(result);
+    }
+
+    return result;
   }
 
   async refineFromFeedback(unit: CodeUnit, errors: LintError[]): Promise<CodeUnit> {
@@ -90,7 +100,16 @@ export class CodeGenerator implements ICodeGenerationPort {
         content: [
           'You are refining code for a hexagonal architecture project.',
           'Fix ALL reported errors while preserving the existing architecture.',
-          'Only import from ports, never from other adapters.',
+          '',
+          '## Rules to enforce during refinement',
+          '- Only import from ports, never from other adapters or domain/ directly.',
+          '- All dependencies must be constructor-injected as port interfaces.',
+          '- Adapters with connections (DB, HTTP) must have close()/dispose().',
+          '- Validate external input at system boundaries (HTTP bodies, CLI args).',
+          '- Re-export domain types through ports if adapters need them.',
+          '- Remove dead exports (only export what ports define or composition-root uses).',
+          '- Use .js extensions on all relative imports.',
+          '',
           'Respond with ONLY the complete corrected file content. No markdown fences.',
         ].join('\n'),
       },
@@ -117,6 +136,57 @@ export class CodeGenerator implements ICodeGenerationPort {
     return { ...unit, content, astSummary };
   }
 
+  // ── Architecture validation feedback loop ─────────────────
+
+  private async refineFromArchAnalysis(unit: CodeUnit): Promise<CodeUnit> {
+    if (!this.archAnalyzer) return unit;
+
+    let current = unit;
+
+    for (let pass = 0; pass < MAX_ARCH_REFINE_PASSES; pass++) {
+      const [violations, deadExports] = await Promise.all([
+        this.archAnalyzer.validateHexBoundaries('.'),
+        this.archAnalyzer.findDeadExports('.'),
+      ]);
+
+      // Filter to findings relevant to the generated file
+      const fileViolations = violations.filter(
+        (v) => v.from.includes(current.filePath) || v.to.includes(current.filePath),
+      );
+      const fileDeadExports = deadExports.filter(
+        (d) => d.filePath.includes(current.filePath),
+      );
+
+      if (fileViolations.length === 0 && fileDeadExports.length === 0) {
+        return current; // Clean — no arch issues
+      }
+
+      // Convert arch findings to LintError format for the refine pipeline
+      const archErrors: LintError[] = [
+        ...fileViolations.map((v) => ({
+          filePath: v.from,
+          line: 0,
+          column: 0,
+          severity: 'error' as const,
+          message: `Hex boundary violation: ${v.from} → ${v.to} (${v.rule})`,
+          rule: 'hex-boundary',
+        })),
+        ...fileDeadExports.map((d) => ({
+          filePath: d.filePath,
+          line: 0,
+          column: 0,
+          severity: 'warning' as const,
+          message: `Dead export: ${d.exportName} (${d.kind}) is never imported by any other file`,
+          rule: 'dead-export',
+        })),
+      ];
+
+      current = await this.refineFromFeedback(current, archErrors);
+    }
+
+    return current;
+  }
+
   // ── Private helpers ───────────────────────────────────────
 
   private async refineFromBuildErrors(unit: CodeUnit, errors: string[]): Promise<CodeUnit> {
@@ -139,12 +209,37 @@ export class CodeGenerator implements ICodeGenerationPort {
     return [
       'You are generating code for a hexagonal architecture project (hex-intf).',
       '',
-      '## Rules',
+      '## Import Rules (STRICT)',
       '- Only import from ports (../../core/ports/index.js), never from other adapters.',
       '- Use .js extensions on all relative imports (NodeNext resolution).',
-      '- Implement the port interface exactly as defined.',
-      '- Use constructor injection for dependencies.',
-      '- No external SDK dependencies unless specified.',
+      '- Domain types used by adapters MUST be re-exported through ports — never import domain/ directly from adapters.',
+      '- Only export symbols that are defined in a port interface or needed by composition-root. No dead exports.',
+      '',
+      '## Dependency Injection Rules',
+      '- ALL dependencies MUST be injected via constructor, typed as port interfaces (never concrete classes).',
+      '- Primary adapters receive use case ports. Secondary adapters implement output ports.',
+      '- The composition-root is the ONLY place that instantiates concrete adapters.',
+      '',
+      '## Lifecycle & Resource Management',
+      '- Any adapter that opens connections (DB, HTTP, file handles) MUST expose a close()/dispose() method.',
+      '- The composition-root or main entry point MUST call close() on shutdown (process signals, server stop).',
+      '- Use try/finally or AbortSignal for cleanup in async code.',
+      '',
+      '## Input Validation & Error Handling',
+      '- Validate ALL external input at system boundaries (HTTP request bodies, CLI args, env vars).',
+      '- Return proper error responses (400 for bad input, 404 for not found) — never let malformed data reach domain logic.',
+      '- Domain functions should throw typed errors; adapters catch and translate to protocol-specific responses.',
+      '',
+      '## Testing Requirements',
+      '- Generate a companion test file for every module.',
+      '- Use London-school (mock-first) unit tests: mock port interfaces, test behavior not implementation.',
+      '- Test edge cases: empty input, special characters, missing fields, concurrent access.',
+      '- Primary adapter tests should cover all routes/commands including error responses.',
+      '',
+      '## TypeScript Config',
+      '- moduleResolution MUST be "nodenext" (not "bundler") to match .js import extensions.',
+      '- strict: true, no implicit any.',
+      '',
       spec.targetAdapter
         ? `- This adapter implements a port interface for: ${spec.targetAdapter}`
         : '- This is a use case in the domain core.',

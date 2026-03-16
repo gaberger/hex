@@ -156,6 +156,8 @@ export interface NotificationPreferences {
 
 // ─── Input Port (Primary / Driving) ──────────────────────
 
+export type NotificationListener = (notification: Notification) => void;
+
 export interface INotificationQueryPort {
   /** Get current progress for all agents */
   getProgress(): Promise<ProgressReport>;
@@ -171,6 +173,9 @@ export interface INotificationQueryPort {
 
   /** Update notification preferences */
   setPreferences(prefs: Partial<NotificationPreferences>): Promise<void>;
+
+  /** Register a callback for every emitted notification (used by dashboard SSE) */
+  addListener(fn: NotificationListener): void;
 }
 
 // ─── Output Port (Secondary / Driven) ────────────────────

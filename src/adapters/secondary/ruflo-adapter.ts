@@ -52,84 +52,91 @@ export class RufloAdapter implements ISwarmPort {
   constructor(private readonly projectPath: string) {}
 
   async init(config: SwarmConfig): Promise<SwarmStatus> {
-    const { stdout } = await this.run([
-      'swarm', 'init',
-      '--topology', config.topology,
-      '--max-agents', String(config.maxAgents),
-      '--strategy', config.strategy,
-    ]);
-    return this.parseStatus(stdout);
+    const result = await this.mcpExec('swarm_init', {
+      topology: config.topology,
+      maxAgents: config.maxAgents,
+      strategy: config.strategy,
+    });
+    return this.toSwarmStatus(result);
   }
 
   async status(): Promise<SwarmStatus> {
-    const { stdout } = await this.run(['swarm', 'status', '--json']);
-    return this.parseStatus(stdout);
+    const result = await this.mcpExec('swarm_status');
+    return this.toSwarmStatus(result);
   }
 
   async shutdown(): Promise<void> {
-    await this.run(['swarm', 'shutdown']);
+    await this.mcpExec('swarm_shutdown');
   }
 
   async createTask(task: Omit<SwarmTask, 'id' | 'status'>): Promise<SwarmTask> {
-    const args = ['task', 'create', '--title', task.title, '--assignee', task.assignee ?? 'unassigned'];
-    if (task.adapter) args.push('--metadata', `adapter=${task.adapter}`);
-    if (task.language) args.push('--metadata', `language=${task.language}`);
-    const { stdout } = await this.run(args);
-    const id = this.extractId(stdout);
+    const result = await this.mcpExec('task_create', {
+      title: task.title,
+      assignee: task.assignee ?? 'unassigned',
+      type: task.agentRole,
+      ...(task.adapter ? { metadata: `adapter=${task.adapter}` } : {}),
+    });
+    const id = result.id ?? result.taskId ?? `hex-${Date.now()}`;
     return { ...task, id, status: 'pending' };
   }
 
   async completeTask(taskId: string, result: string, commitHash?: string): Promise<void> {
     const resultStr = commitHash ? `${result} — commit ${commitHash}` : result;
-    await this.run(['task', 'complete', '--id', taskId, '--result', resultStr]);
+    await this.mcpExec('task_complete', { id: taskId, result: resultStr });
   }
 
   async listTasks(statusFilter?: SwarmTask['status']): Promise<SwarmTask[]> {
-    const args = ['task', 'list', '--json'];
-    if (statusFilter) args.push('--status', statusFilter);
-    const { stdout } = await this.run(args);
-    return this.parseTasks(stdout);
+    const params: Record<string, string> = {};
+    if (statusFilter) params.status = statusFilter;
+    const result = await this.mcpExec('task_list', params);
+    return (result.tasks ?? []) as SwarmTask[];
   }
 
   async spawnAgent(name: string, role: AgentRole, taskId?: string): Promise<SwarmAgent> {
-    const args = ['agent', 'spawn', '-t', role, '--name', name];
-    if (taskId) args.push('--task', taskId);
-    const { stdout } = await this.run(args);
-    const id = this.extractId(stdout);
+    const result = await this.mcpExec('agent_spawn', {
+      type: role,
+      name,
+      ...(taskId ? { task: taskId } : {}),
+    });
+    const id = result.id ?? result.agentId ?? `hex-${Date.now()}`;
     return { id, name, role, status: 'spawning', currentTask: taskId };
   }
 
   async terminateAgent(agentId: string): Promise<void> {
-    await this.run(['agent', 'terminate', '--id', agentId]);
+    await this.mcpExec('agent_terminate', { id: agentId });
   }
 
   async listAgents(): Promise<SwarmAgent[]> {
-    const { stdout } = await this.run(['agent', 'list', '--json']);
-    return this.parseAgents(stdout);
+    const result = await this.mcpExec('agent_list');
+    return (result.agents ?? []) as SwarmAgent[];
   }
 
   async memoryStore(entry: SwarmMemoryEntry): Promise<void> {
-    const args = ['memory', 'store', '--key', entry.key, '--value', entry.value, '--namespace', entry.namespace];
-    if (entry.tags?.length) args.push('--tags', entry.tags.join(','));
-    if (entry.ttl) args.push('--ttl', String(entry.ttl));
-    await this.run(args);
+    await this.mcpExec('memory_store', {
+      key: entry.key,
+      value: entry.value,
+      namespace: entry.namespace,
+      ...(entry.tags?.length ? { tags: entry.tags.join(',') } : {}),
+      ...(entry.ttl ? { ttl: String(entry.ttl) } : {}),
+    });
   }
 
   async memoryRetrieve(key: string, namespace: string): Promise<string | null> {
     try {
-      const { stdout } = await this.run(['memory', 'retrieve', '--key', key, '--namespace', namespace]);
-      return stdout.trim() || null;
+      const result = await this.mcpExec('memory_retrieve', { key, namespace });
+      return result.value ?? null;
     } catch {
       return null;
     }
   }
 
   async memorySearch(query: string, namespace?: string): Promise<SwarmMemoryEntry[]> {
-    const args = ['memory', 'search', '--query', query, '--json'];
-    if (namespace) args.push('--namespace', namespace);
-    const { stdout } = await this.run(args);
     try {
-      return JSON.parse(stdout) as SwarmMemoryEntry[];
+      const result = await this.mcpExec('memory_search', {
+        query,
+        ...(namespace ? { namespace } : {}),
+      });
+      return (result.results ?? []) as SwarmMemoryEntry[];
     } catch {
       return [];
     }
@@ -137,59 +144,61 @@ export class RufloAdapter implements ISwarmPort {
 
   // ─── Private Helpers ─────────────────────────────────────
 
-  private async run(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  /**
+   * Execute an MCP tool via the running ruflo daemon.
+   * Uses `mcp exec --tool <name>` which routes through the active
+   * MCP server process — same state that Claude Code's MCP tools see.
+   */
+  private async mcpExec(tool: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const args = ['mcp', 'exec', '--tool', tool];
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        args.push('--param', `${k}=${String(v)}`);
+      }
+    }
+
     try {
-      return await execFile(CLI_BIN, [CLI_PKG, ...args], {
+      const { stdout } = await execFile(CLI_BIN, [CLI_PKG, ...args], {
         cwd: this.projectPath,
         timeout: 30000,
       });
+      return this.extractJson(stdout);
     } catch (err) {
       throw new SwarmConnectionError(
-        `CLI command failed: ${CLI_BIN} ${CLI_PKG} ${args.join(' ')}`,
-        args,
+        `MCP exec failed: ${tool}`,
+        [tool, ...Object.keys(params ?? {})],
         err instanceof Error ? err : undefined,
       );
     }
   }
 
-  private extractId(output: string): string {
-    const match = output.match(/[a-f0-9-]{8,}/);
-    return match?.[0] ?? `hex-${Date.now()}`;
-  }
-
-  private parseStatus(output: string): SwarmStatus {
+  /**
+   * Extract JSON from `mcp exec` output.
+   * Output format is: "Result:\n{...}" — we need just the JSON part.
+   */
+  private extractJson(output: string): Record<string, unknown> {
+    const jsonStart = output.indexOf('{');
+    if (jsonStart === -1) return {};
+    const jsonStr = output.slice(jsonStart);
     try {
-      return JSON.parse(output) as SwarmStatus;
+      return JSON.parse(jsonStr) as Record<string, unknown>;
     } catch (err) {
       throw new SwarmParseError(
-        'Failed to parse swarm status response as JSON',
+        'Failed to parse MCP exec response as JSON',
         output,
         err instanceof Error ? err : undefined,
       );
     }
   }
 
-  private parseTasks(output: string): SwarmTask[] {
-    try {
-      return JSON.parse(output) as SwarmTask[];
-    } catch (err) {
-      throw new SwarmParseError(
-        'Failed to parse task list response as JSON',
-        output,
-        err instanceof Error ? err : undefined,
-      );
-    }
-  }
-
-  private parseAgents(output: string): SwarmAgent[] {
-    try {
-      return JSON.parse(output) as SwarmAgent[];
-    } catch (err) {
-      throw new SwarmParseError(
-        'Failed to parse agent list response as JSON',
-        output,
-        err instanceof Error ? err : undefined,
-      );
-    }
+  private toSwarmStatus(result: Record<string, unknown>): SwarmStatus {
+    return {
+      id: (result.id ?? result.swarmId ?? 'default') as string,
+      topology: (result.topology ?? 'hierarchical') as SwarmStatus['topology'],
+      agentCount: (result.agentCount ?? 0) as number,
+      activeTaskCount: (result.activeTaskCount ?? result.taskCount ?? 0) as number,
+      completedTaskCount: (result.completedTaskCount ?? 0) as number,
+      status: (result.status ?? 'idle') as SwarmStatus['status'],
+    };
   }
 }

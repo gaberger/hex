@@ -112,7 +112,12 @@ a{color:var(--accent);text-decoration:none}
 .graph-toggle.open{transform:rotate(180deg)}
 .graph-body{max-height:0;overflow:hidden;transition:max-height .4s ease}
 .graph-body.open{max-height:500px}
-.graph-canvas{display:block;width:100%;height:360px;background:var(--bg);border-top:1px solid var(--border)}
+.graph-canvas{display:block;width:100%;height:460px;background:var(--bg);border-top:1px solid var(--border);cursor:grab}
+.graph-canvas:active{cursor:grabbing}
+.graph-zoom-controls{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:4px;z-index:10}
+.graph-zoom-controls button{width:28px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--text);font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1}
+.graph-zoom-controls button:hover{background:var(--border);color:var(--accent)}
+.graph-wrapper{position:relative}
 .graph-legend{display:flex;gap:16px;padding:10px 20px;font-size:.75rem;color:var(--text2);border-top:1px solid var(--border)}
 .legend-item{display:flex;align-items:center;gap:4px}
 .legend-dot{width:10px;height:10px;border-radius:50%}
@@ -135,6 +140,12 @@ a{color:var(--accent);text-decoration:none}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:var(--accent)}
 
+/* Project Selector */
+.project-selector{padding:6px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--accent);font-size:.85rem;font-weight:600;outline:none;cursor:pointer;min-width:140px}
+.project-selector:focus{border-color:var(--accent)}
+.project-selector option{background:var(--card);color:var(--text)}
+.project-count{font-size:.7rem;color:var(--text2);padding:2px 8px;border-radius:10px;background:rgba(79,195,247,.1)}
+
 /* Empty state */
 .empty{color:var(--text2);font-size:.8rem;font-style:italic;padding:8px 0}
 </style>
@@ -144,8 +155,11 @@ a{color:var(--accent);text-decoration:none}
 <header class="header">
   <h1><span>hex-intf</span> Dashboard</h1>
   <div class="header-right">
+    <select class="project-selector" id="projectSelector">
+      <option value="">Loading projects...</option>
+    </select>
+    <span class="project-count" id="projectCount"></span>
     <div class="project-info" id="projectInfo">
-      <span class="project-name" id="projectName">Loading...</span>
       <span class="project-path" id="projectPath"></span>
       <span class="ast-badge" id="astBadge"></span>
     </div>
@@ -263,7 +277,14 @@ a{color:var(--accent);text-decoration:none}
     <span class="graph-toggle" id="graphArrow">&#9660;</span>
   </div>
   <div class="graph-body" id="graphBody">
-    <canvas class="graph-canvas" id="graphCanvas"></canvas>
+    <div class="graph-wrapper">
+      <canvas class="graph-canvas" id="graphCanvas"></canvas>
+      <div class="graph-zoom-controls">
+        <button id="zoomIn" title="Zoom in">+</button>
+        <button id="zoomOut" title="Zoom out">-</button>
+        <button id="zoomReset" title="Reset view">R</button>
+      </div>
+    </div>
     <div class="graph-legend">
       <div class="legend-item"><span class="legend-dot" style="background:#42a5f5"></span> Domain</div>
       <div class="legend-item"><span class="legend-dot" style="background:#66bb6a"></span> Ports</div>
@@ -299,6 +320,9 @@ a{color:var(--accent);text-decoration:none}
     sseRetryTimer: null,
     pollTimer: null,
     evtSource: null,
+    currentProject: null, // project ID for hub mode (null = single-project mode)
+    projects: [],         // list of { id, rootPath, astIsStub }
+    isHubMode: false,
   };
 
   // --- DOM Helpers ---
@@ -353,20 +377,39 @@ a{color:var(--accent);text-decoration:none}
     }
   }
 
-  // --- Project Info ---
-  function loadProject() {
-    apiFetch('/api/project').then(function(data) {
+  // --- Project List & Switching ---
+  function loadProjects() {
+    // Try hub endpoint first
+    rawFetch('/api/projects').then(function(data) {
+      if (data && data.projects && data.projects.length > 0) {
+        state.isHubMode = true;
+        state.projects = data.projects;
+        populateProjectSelector(data.projects);
+        if (!state.currentProject) {
+          switchProject(data.projects[0].id);
+        }
+      } else {
+        // Fallback: single-project mode
+        state.isHubMode = false;
+        loadSingleProject();
+      }
+    });
+  }
+
+  function loadSingleProject() {
+    rawFetch('/api/project').then(function(data) {
       if (!data) {
-        setText('#projectName', 'Not connected');
         setText('#projectPath', '');
         var badge = $('#astBadge');
         badge.textContent = '';
         badge.className = 'ast-badge';
-        // Retry in 5 seconds if disconnected
-        setTimeout(loadProject, 5000);
+        setTimeout(loadSingleProject, 5000);
         return;
       }
-      setText('#projectName', data.name || 'Unknown');
+      var sel = $('#projectSelector');
+      clearChildren(sel);
+      sel.appendChild(createEl('option', { value: '', textContent: data.name || 'Unknown' }));
+      sel.disabled = true;
       setText('#projectPath', data.rootPath || '');
       var badge = $('#astBadge');
       if (data.astIsStub) {
@@ -376,11 +419,56 @@ a{color:var(--accent);text-decoration:none}
         badge.textContent = 'real AST';
         badge.className = 'ast-badge ast-real';
       }
+      setText('#projectCount', '1 project');
     });
   }
 
+  function populateProjectSelector(projects) {
+    var sel = $('#projectSelector');
+    clearChildren(sel);
+    sel.disabled = false;
+    projects.forEach(function(p) {
+      sel.appendChild(createEl('option', { value: p.id, textContent: p.id }));
+    });
+    if (state.currentProject) {
+      sel.value = state.currentProject;
+    }
+    setText('#projectCount', projects.length + ' project' + (projects.length === 1 ? '' : 's'));
+  }
+
+  function switchProject(projectId) {
+    state.currentProject = projectId;
+    var sel = $('#projectSelector');
+    sel.value = projectId;
+
+    // Update project info
+    var proj = state.projects.find(function(p) { return p.id === projectId; });
+    if (proj) {
+      setText('#projectPath', proj.rootPath || '');
+      var badge = $('#astBadge');
+      if (proj.astIsStub) {
+        badge.textContent = 'stub AST';
+        badge.className = 'ast-badge ast-stub';
+      } else {
+        badge.textContent = 'real AST';
+        badge.className = 'ast-badge ast-real';
+      }
+    }
+
+    // Clear graph state for new project
+    graphState = { nodes: [], edges: [], positions: {} };
+    camera = { x: 0, y: 0, zoom: 1 };
+
+    // Reload all panels for the new project
+    loadHealth();
+    loadTokenOverview();
+    loadSwarm();
+    loadGraph();
+  }
+
   // --- API Fetch ---
-  function apiFetch(url) {
+  /** Raw fetch — no project prefix. */
+  function rawFetch(url) {
     return fetch(url).then(function(res) {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       setConnected(true);
@@ -390,6 +478,16 @@ a{color:var(--accent);text-decoration:none}
       console.warn('API fetch failed: ' + url, e);
       return null;
     });
+  }
+
+  /** Project-scoped fetch — auto-prefixes /api/:projectId/ in hub mode. */
+  function apiFetch(url) {
+    var resolved = url;
+    if (state.isHubMode && state.currentProject) {
+      // Transform /api/health → /api/:projectId/health
+      resolved = url.replace('/api/', '/api/' + state.currentProject + '/');
+    }
+    return rawFetch(resolved);
   }
 
   // --- Utilities ---
@@ -708,8 +806,103 @@ a{color:var(--accent);text-decoration:none}
     es.onopen = function() {
       setConnected(true);
       clearTimeout(state.sseRetryTimer);
+      addEvent({ level: 'success', message: 'Dashboard connected via SSE', timestamp: Date.now() });
     };
 
+    // Named event listeners for typed server events
+    es.addEventListener('connected', function(e) {
+      setConnected(true);
+      // Hub mode sends project list on connect
+      try {
+        var data = JSON.parse(e.data);
+        if (data.projects && data.projects.length > 0) {
+          state.isHubMode = true;
+          state.projects = data.projects;
+          populateProjectSelector(data.projects);
+          if (!state.currentProject) {
+            switchProject(data.projects[0].id);
+          }
+        }
+      } catch (err) { /* single-project mode sends {} */ }
+      addEvent({ level: 'info', message: 'SSE stream established', timestamp: Date.now() });
+    });
+
+    // Hub: project registered/unregistered
+    es.addEventListener('project-registered', function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        addEvent({ level: 'milestone', message: 'Project registered: ' + data.id, timestamp: data.timestamp || Date.now() });
+        // Refresh project list
+        rawFetch('/api/projects').then(function(resp) {
+          if (resp && resp.projects) {
+            state.projects = resp.projects;
+            populateProjectSelector(resp.projects);
+          }
+        });
+      } catch (err) { /* ignore */ }
+    });
+
+    es.addEventListener('project-unregistered', function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        addEvent({ level: 'warning', message: 'Project removed: ' + data.id, timestamp: data.timestamp || Date.now() });
+        rawFetch('/api/projects').then(function(resp) {
+          if (resp && resp.projects) {
+            state.projects = resp.projects;
+            populateProjectSelector(resp.projects);
+            // If current project was removed, switch to first available
+            if (state.currentProject === data.id && resp.projects.length > 0) {
+              switchProject(resp.projects[0].id);
+            }
+          }
+        });
+      } catch (err) { /* ignore */ }
+    });
+
+    // Notification events from the orchestrator (broadcast as their level name)
+    var levels = ['trace', 'info', 'success', 'warning', 'error', 'decision', 'milestone'];
+    levels.forEach(function(level) {
+      es.addEventListener(level, function(e) {
+        try {
+          var data = JSON.parse(e.data);
+          data.level = data.level || level;
+          data.timestamp = data.timestamp || Date.now();
+          if (data.level === 'decision') {
+            showDecisionModal(data);
+          }
+          addEvent(data);
+          // Refresh health/swarm panels on significant events
+          if (level === 'milestone' || level === 'error' || level === 'success') {
+            loadHealth();
+            loadSwarm();
+          }
+        } catch (err) {
+          addEvent({ level: level, message: e.data, timestamp: Date.now() });
+        }
+      });
+    });
+
+    // File change events — highlight graph nodes
+    es.addEventListener('file-change', function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        if (data.path) {
+          markFileActive(data.path);
+          addEvent({
+            level: 'info',
+            message: 'File changed: ' + data.path + ' (' + (data.layer || 'unknown') + ')',
+            timestamp: data.timestamp || Date.now(),
+          });
+
+          // Reload graph data if not loaded yet
+          if (graphState.nodes.length === 0) {
+            loadGraph();
+          }
+        }
+      } catch (err) { /* ignore malformed */ }
+    });
+
+    // Fallback for unnamed events
     es.onmessage = function(e) {
       try {
         var data = JSON.parse(e.data);
@@ -724,6 +917,7 @@ a{color:var(--accent);text-decoration:none}
 
     es.onerror = function() {
       setConnected(false);
+      addEvent({ level: 'warning', message: 'SSE connection lost — reconnecting...', timestamp: Date.now() });
       es.close();
       state.sseRetryTimer = setTimeout(connectSSE, 5000);
     };
@@ -751,7 +945,8 @@ a{color:var(--accent);text-decoration:none}
 
   function submitDecision(selectedOption) {
     if (!state.currentDecisionId) return;
-    fetch('/api/decisions/' + encodeURIComponent(state.currentDecisionId), {
+    var prefix = (state.isHubMode && state.currentProject) ? '/api/' + state.currentProject : '/api';
+    fetch(prefix + '/decisions/' + encodeURIComponent(state.currentDecisionId), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ selectedOption: selectedOption }),
@@ -760,6 +955,48 @@ a{color:var(--accent);text-decoration:none}
     });
     $('#decisionModal').classList.remove('show');
     state.currentDecisionId = null;
+  }
+
+  // --- Active Files (file-change tracking) ---
+  var activeFiles = {}; // { path: expiresAt }
+  var ACTIVE_DURATION = 8000; // highlight for 8 seconds after last change
+  var graphAnimFrame = null;
+
+  function markFileActive(path) {
+    activeFiles[path] = Date.now() + ACTIVE_DURATION;
+
+    // Auto-open graph panel when files are being edited
+    var body = $('#graphBody');
+    if (!body.classList.contains('open')) {
+      body.classList.add('open');
+      $('#graphArrow').classList.add('open');
+      if (!body.getAttribute('data-loaded')) {
+        body.setAttribute('data-loaded', '1');
+      }
+    }
+
+    // Start animation loop if not already running
+    if (!graphAnimFrame) startGraphAnimation();
+  }
+
+  function isFileActive(path) {
+    var exp = activeFiles[path];
+    if (!exp) return false;
+    if (Date.now() > exp) {
+      delete activeFiles[path];
+      return false;
+    }
+    return true;
+  }
+
+  function hasActiveFiles() {
+    var now = Date.now();
+    var keys = Object.keys(activeFiles);
+    for (var i = 0; i < keys.length; i++) {
+      if (activeFiles[keys[i]] > now) return true;
+      delete activeFiles[keys[i]];
+    }
+    return false;
   }
 
   // --- Dependency Graph (Canvas) ---
@@ -771,116 +1008,202 @@ a{color:var(--accent);text-decoration:none}
     adapter: '#ffa726',
     usecases: '#ab47bc',
     usecase: '#ab47bc',
+    'primary-adapter': '#ffa726',
+    'secondary-adapter': '#ffa726',
   };
+
+  // Store graph data for re-rendering
+  var graphState = { nodes: [], edges: [], positions: {} };
+
+  // Camera state for zoom/pan
+  var camera = { x: 0, y: 0, zoom: 1 };
+  var drag = { active: false, startX: 0, startY: 0, camStartX: 0, camStartY: 0 };
 
   function loadGraph() {
     apiFetch('/api/graph').then(function(data) {
       if (!data) return;
+      graphState.nodes = data.nodes || [];
+      graphState.edges = data.edges || [];
+      if (graphState.nodes.length === 0) return;
+      computePositions();
+      renderGraph();
+    });
+  }
 
-      var nodes = data.nodes || [];
-      var edges = data.edges || [];
-      if (nodes.length === 0) return;
+  function computePositions() {
+    var nodes = graphState.nodes;
+    var canvas = $('#graphCanvas');
+    var rect = canvas.getBoundingClientRect();
+    var width = rect.width || 800;
+    var height = 360;
 
-      var canvas = $('#graphCanvas');
-      var rect = canvas.getBoundingClientRect();
-      var width = rect.width || 800;
-      var height = 360;
-      canvas.width = width * (window.devicePixelRatio || 1);
-      canvas.height = height * (window.devicePixelRatio || 1);
-      canvas.style.width = width + 'px';
-      canvas.style.height = height + 'px';
+    var layerGroups = {};
+    nodes.forEach(function(n) {
+      var layer = (n.layer || 'unknown').toLowerCase();
+      if (!layerGroups[layer]) layerGroups[layer] = [];
+      layerGroups[layer].push(n);
+    });
 
-      var ctx = canvas.getContext('2d');
-      ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
-      ctx.clearRect(0, 0, width, height);
+    var layerOrder = ['domain', 'usecases', 'usecase', 'ports', 'port', 'primary-adapter', 'secondary-adapter', 'adapters', 'adapter'];
+    var usedLayers = [];
+    var seen = {};
+    nodes.forEach(function(n) {
+      var l = (n.layer || 'unknown').toLowerCase();
+      if (!seen[l]) { seen[l] = true; usedLayers.push(l); }
+    });
+    usedLayers.sort(function(a, b) {
+      var ai = layerOrder.indexOf(a);
+      var bi = layerOrder.indexOf(b);
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
 
-      // Group nodes by layer
-      var layerGroups = {};
-      nodes.forEach(function(n) {
-        var layer = (n.layer || 'unknown').toLowerCase();
-        if (!layerGroups[layer]) layerGroups[layer] = [];
-        layerGroups[layer].push(n);
-      });
-
-      var layerOrder = ['domain', 'usecases', 'usecase', 'ports', 'port', 'adapters', 'adapter'];
-      var usedLayers = [];
-      var seen = {};
-      nodes.forEach(function(n) {
-        var l = (n.layer || 'unknown').toLowerCase();
-        if (!seen[l]) { seen[l] = true; usedLayers.push(l); }
-      });
-      usedLayers.sort(function(a, b) {
-        var ai = layerOrder.indexOf(a);
-        var bi = layerOrder.indexOf(b);
-        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-      });
-
-      var positions = {};
-      var colWidth = width / (usedLayers.length + 1);
-      usedLayers.forEach(function(layer, li) {
-        var group = layerGroups[layer] || [];
-        var rowHeight = height / (group.length + 1);
-        group.forEach(function(n, ni) {
-          positions[n.id] = {
-            x: colWidth * (li + 1),
-            y: rowHeight * (ni + 1),
-          };
-        });
-      });
-
-      // Draw edges
-      edges.forEach(function(e) {
-        var from = positions[e.from];
-        var to = positions[e.to];
-        if (!from || !to) return;
-        var isViolation = e.violation || e.isViolation;
-
-        ctx.beginPath();
-        ctx.moveTo(from.x, from.y);
-        ctx.lineTo(to.x, to.y);
-        ctx.strokeStyle = isViolation ? '#ef5350' : 'rgba(255,255,255,0.12)';
-        ctx.lineWidth = isViolation ? 2 : 1;
-        ctx.stroke();
-
-        // Arrowhead
-        var angle = Math.atan2(to.y - from.y, to.x - from.x);
-        var headLen = 8;
-        var nodeRadius = 6 + Math.min((nodes.find(function(n) { return n.id === e.to; }) || {}).exports || 0, 20);
-        var endX = to.x - Math.cos(angle) * nodeRadius;
-        var endY = to.y - Math.sin(angle) * nodeRadius;
-        ctx.beginPath();
-        ctx.moveTo(endX, endY);
-        ctx.lineTo(endX - headLen * Math.cos(angle - Math.PI / 6), endY - headLen * Math.sin(angle - Math.PI / 6));
-        ctx.moveTo(endX, endY);
-        ctx.lineTo(endX - headLen * Math.cos(angle + Math.PI / 6), endY - headLen * Math.sin(angle + Math.PI / 6));
-        ctx.strokeStyle = isViolation ? '#ef5350' : 'rgba(255,255,255,0.3)';
-        ctx.lineWidth = isViolation ? 2 : 1;
-        ctx.stroke();
-      });
-
-      // Draw nodes
-      nodes.forEach(function(n) {
-        var pos = positions[n.id];
-        if (!pos) return;
-        var layer = (n.layer || 'unknown').toLowerCase();
-        var color = LAYER_COLORS[layer] || '#9e9e9e';
-        var r = 6 + Math.min(n.exports || 0, 20);
-
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.globalAlpha = 0.85;
-        ctx.fill();
-        ctx.globalAlpha = 1;
-
-        // Label
-        var label = n.id.split('/').pop();
-        ctx.font = '10px system-ui, sans-serif';
-        ctx.fillStyle = '#9e9e9e';
-        ctx.textAlign = 'center';
-        ctx.fillText(label, pos.x, pos.y + r + 14);
+    var positions = {};
+    var colWidth = width / (usedLayers.length + 1);
+    usedLayers.forEach(function(layer, li) {
+      var group = layerGroups[layer] || [];
+      var rowHeight = height / (group.length + 1);
+      group.forEach(function(n, ni) {
+        positions[n.id] = {
+          x: colWidth * (li + 1),
+          y: rowHeight * (ni + 1),
+        };
       });
     });
+    graphState.positions = positions;
+  }
+
+  function renderGraph() {
+    var nodes = graphState.nodes;
+    var edges = graphState.edges;
+    var positions = graphState.positions;
+    if (nodes.length === 0) return;
+
+    var canvas = $('#graphCanvas');
+    var rect = canvas.getBoundingClientRect();
+    var width = rect.width || 800;
+    var height = 460;
+    canvas.width = width * (window.devicePixelRatio || 1);
+    canvas.height = height * (window.devicePixelRatio || 1);
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+
+    var ctx = canvas.getContext('2d');
+    var dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    // Apply camera transform (pan + zoom)
+    ctx.save();
+    ctx.translate(camera.x, camera.y);
+    ctx.scale(camera.zoom, camera.zoom);
+
+    var now = Date.now();
+    // Pulse factor: oscillates 0.4→1.0 for glow effect
+    var pulse = 0.7 + 0.3 * Math.sin(now / 300);
+
+    // Draw edges — highlight edges connected to active nodes
+    edges.forEach(function(e) {
+      var from = positions[e.from];
+      var to = positions[e.to];
+      if (!from || !to) return;
+      var isViolation = e.violation || e.isViolation;
+      var fromActive = isFileActive(e.from);
+      var toActive = isFileActive(e.to);
+      var edgeActive = fromActive || toActive;
+
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      if (isViolation) {
+        ctx.strokeStyle = '#ef5350';
+        ctx.lineWidth = 2;
+      } else if (edgeActive) {
+        ctx.strokeStyle = 'rgba(79,195,247,' + (0.4 * pulse) + ')';
+        ctx.lineWidth = 2;
+      } else {
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+        ctx.lineWidth = 1;
+      }
+      ctx.stroke();
+
+      // Arrowhead
+      var angle = Math.atan2(to.y - from.y, to.x - from.x);
+      var headLen = 8;
+      var nodeRadius = 6 + Math.min((nodes.find(function(n) { return n.id === e.to; }) || {}).exports || 0, 20);
+      var endX = to.x - Math.cos(angle) * nodeRadius;
+      var endY = to.y - Math.sin(angle) * nodeRadius;
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle - Math.PI / 6), endY - headLen * Math.sin(angle - Math.PI / 6));
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - headLen * Math.cos(angle + Math.PI / 6), endY - headLen * Math.sin(angle + Math.PI / 6));
+      ctx.strokeStyle = isViolation ? '#ef5350' : (edgeActive ? 'rgba(79,195,247,' + (0.5 * pulse) + ')' : 'rgba(255,255,255,0.3)');
+      ctx.lineWidth = isViolation ? 2 : (edgeActive ? 2 : 1);
+      ctx.stroke();
+    });
+
+    // Draw nodes
+    nodes.forEach(function(n) {
+      var pos = positions[n.id];
+      if (!pos) return;
+      var layer = (n.layer || 'unknown').toLowerCase();
+      var color = LAYER_COLORS[layer] || '#9e9e9e';
+      var r = 6 + Math.min(n.exports || 0, 20);
+      var active = isFileActive(n.id);
+
+      // Glow ring for active nodes
+      if (active) {
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, r + 6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(79,195,247,' + (0.25 * pulse) + ')';
+        ctx.fill();
+
+        // Outer pulse ring
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, r + 10 * pulse, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(79,195,247,' + (0.3 * (1 - pulse + 0.4)) + ')';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      // Node circle
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = active ? 1.0 : 0.65;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      if (active) {
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      // Label
+      var label = n.id.split('/').pop();
+      ctx.font = active ? 'bold 11px system-ui, sans-serif' : '10px system-ui, sans-serif';
+      ctx.fillStyle = active ? '#ffffff' : '#9e9e9e';
+      ctx.textAlign = 'center';
+      ctx.fillText(label, pos.x, pos.y + r + 14);
+    });
+
+    ctx.restore(); // End camera transform
+  }
+
+  function startGraphAnimation() {
+    function frame() {
+      if (!hasActiveFiles()) {
+        graphAnimFrame = null;
+        renderGraph(); // Final render to clear highlights
+        return;
+      }
+      renderGraph();
+      graphAnimFrame = requestAnimationFrame(frame);
+    }
+    graphAnimFrame = requestAnimationFrame(frame);
   }
 
   // --- Init ---
@@ -932,6 +1255,73 @@ a{color:var(--accent);text-decoration:none}
       }
     });
 
+    // --- Graph zoom/pan controls ---
+    var graphCanvas = $('#graphCanvas');
+
+    // Mouse wheel zoom (centered on cursor)
+    graphCanvas.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      var rect = graphCanvas.getBoundingClientRect();
+      var mx = e.clientX - rect.left;
+      var my = e.clientY - rect.top;
+      var delta = e.deltaY > 0 ? 0.9 : 1.1;
+      var newZoom = Math.max(0.2, Math.min(5, camera.zoom * delta));
+      // Zoom toward cursor position
+      camera.x = mx - (mx - camera.x) * (newZoom / camera.zoom);
+      camera.y = my - (my - camera.y) * (newZoom / camera.zoom);
+      camera.zoom = newZoom;
+      renderGraph();
+    }, { passive: false });
+
+    // Mouse drag pan
+    graphCanvas.addEventListener('mousedown', function(e) {
+      drag.active = true;
+      drag.startX = e.clientX;
+      drag.startY = e.clientY;
+      drag.camStartX = camera.x;
+      drag.camStartY = camera.y;
+    });
+    window.addEventListener('mousemove', function(e) {
+      if (!drag.active) return;
+      camera.x = drag.camStartX + (e.clientX - drag.startX);
+      camera.y = drag.camStartY + (e.clientY - drag.startY);
+      renderGraph();
+    });
+    window.addEventListener('mouseup', function() {
+      drag.active = false;
+    });
+
+    // Zoom buttons
+    $('#zoomIn').addEventListener('click', function() {
+      var rect = graphCanvas.getBoundingClientRect();
+      var cx = rect.width / 2;
+      var cy = rect.height / 2;
+      var newZoom = Math.min(5, camera.zoom * 1.25);
+      camera.x = cx - (cx - camera.x) * (newZoom / camera.zoom);
+      camera.y = cy - (cy - camera.y) * (newZoom / camera.zoom);
+      camera.zoom = newZoom;
+      renderGraph();
+    });
+    $('#zoomOut').addEventListener('click', function() {
+      var rect = graphCanvas.getBoundingClientRect();
+      var cx = rect.width / 2;
+      var cy = rect.height / 2;
+      var newZoom = Math.max(0.2, camera.zoom * 0.8);
+      camera.x = cx - (cx - camera.x) * (newZoom / camera.zoom);
+      camera.y = cy - (cy - camera.y) * (newZoom / camera.zoom);
+      camera.zoom = newZoom;
+      renderGraph();
+    });
+    $('#zoomReset').addEventListener('click', function() {
+      camera = { x: 0, y: 0, zoom: 1 };
+      renderGraph();
+    });
+
+    // Project selector
+    $('#projectSelector').addEventListener('change', function(e) {
+      if (e.target.value) switchProject(e.target.value);
+    });
+
     // Populate initial empty states
     var aList = $('#agentList');
     aList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Agents' }));
@@ -940,19 +1330,25 @@ a{color:var(--accent);text-decoration:none}
     tList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Tasks' }));
     tList.appendChild(createEl('div', { className: 'empty', textContent: 'No tasks registered' }));
 
-    // Initial data load
-    loadProject();
-    loadHealth();
-    loadTokenOverview();
-    loadSwarm();
+    // Initial data load — detects hub vs single-project mode
+    loadProjects();
 
     // SSE connection
     connectSSE();
 
-    // Polling for health and swarm every 10s
+    // Polling for health, swarm, and project list every 10s
     state.pollTimer = setInterval(function() {
       loadHealth();
       loadSwarm();
+      // Refresh project list in hub mode (picks up dynamic registrations)
+      if (state.isHubMode) {
+        rawFetch('/api/projects').then(function(data) {
+          if (data && data.projects) {
+            state.projects = data.projects;
+            populateProjectSelector(data.projects);
+          }
+        });
+      }
     }, 10000);
   }
 

@@ -5,9 +5,18 @@ description: Scaffold a new hexagonal architecture project. Use when the user as
 
 # Hex Scaffold — Create a Hexagonal Architecture Project
 
-CRITICAL: Do NOT generate code immediately. Use AskUserQuestion for an interactive wizard experience.
+CRITICAL: Do NOT enter plan mode (EnterPlanMode). Proceed directly with execution.
 
-## Phase 1: Interactive Discovery Wizard
+If the `--yes` or `-y` flag was passed (check `ctx.autoConfirm`), skip Phase 1 entirely and use these defaults:
+- Interface: CLI
+- Storage: JSON file
+- Entities: inferred from project name or user description
+- Style: Minimal MVP
+Then go straight to Phase 2: Scaffold.
+
+Otherwise, use AskUserQuestion for an interactive wizard experience.
+
+## Phase 1: Interactive Discovery Wizard (skipped with --yes)
 
 Use the AskUserQuestion tool to gather requirements interactively. Ask in batches of 3-4 questions max.
 

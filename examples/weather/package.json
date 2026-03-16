@@ -1,0 +1,17 @@
+{
+  "name": "hex-f1",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "test": "bun test",
+    "build": "bun build src/index.ts --outdir dist --target node",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "tree-sitter-wasms": "^0.1.13"
+  }
+}

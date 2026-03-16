@@ -67,8 +67,8 @@ describe('TodoService', () => {
       expect(completed.completedAt).toBeGreaterThan(0);
     });
 
-    it('throws on non-existent ID', async () => {
-      await expect(service.complete('nonexistent')).rejects.toThrow('Todo not found');
+    it('throws NotFoundError on non-existent ID', async () => {
+      await expect(service.complete('nonexistent')).rejects.toThrow('not found');
     });
   });
 
@@ -85,8 +85,8 @@ describe('TodoService', () => {
       expect(updated.priority).toBe('high');
     });
 
-    it('throws on non-existent ID', async () => {
-      await expect(service.update('nonexistent', { title: 'X' })).rejects.toThrow('Todo not found');
+    it('throws NotFoundError on non-existent ID', async () => {
+      await expect(service.update('nonexistent', { title: 'X' })).rejects.toThrow('not found');
     });
   });
 
@@ -98,8 +98,8 @@ describe('TodoService', () => {
       expect(all).toHaveLength(0);
     });
 
-    it('throws on non-existent ID', async () => {
-      await expect(service.delete('nonexistent')).rejects.toThrow('Todo not found');
+    it('throws NotFoundError on non-existent ID', async () => {
+      await expect(service.delete('nonexistent')).rejects.toThrow('not found');
     });
   });
 

@@ -16,5 +16,8 @@
   "devDependencies": {
     "typescript": "^5.9.3",
     "vite": "^6.3.5"
+  },
+  "dependencies": {
+    "hex-intf": "../../"
   }
 }

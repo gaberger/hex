@@ -6,7 +6,7 @@
     "start": "bun run src/cli.ts",
     "serve": "bun run src/cli.ts serve",
     "test": "bun test",
-    "dev": "bun --watch run src/cli.ts"
+    "dev": "bun --watch run src/cli.ts serve"
   },
   "devDependencies": {
     "@types/bun": "latest"

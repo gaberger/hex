@@ -23,6 +23,7 @@ import { GitAdapter } from './adapters/secondary/git-adapter.js';
 import { WorktreeAdapter } from './adapters/secondary/worktree-adapter.js';
 import { BuildAdapter } from './adapters/secondary/build-adapter.js';
 import { RufloAdapter } from './adapters/secondary/ruflo-adapter.js';
+import { RegistryAdapter } from './adapters/secondary/registry-adapter.js';
 import { LLMAdapter } from './adapters/secondary/llm-adapter.js';
 import type { LLMAdapterConfig } from './adapters/secondary/llm-adapter.js';
 
@@ -55,6 +56,7 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   const build = new BuildAdapter(projectPath);
   const notifier = new TerminalNotifier();
   const swarm = new RufloAdapter(projectPath);
+  const registry = new RegistryAdapter();
 
   // Tree-sitter: search multiple candidate directories for WASM grammars
   // Paths must be RELATIVE to project root — fs.exists() uses safePath()
@@ -105,12 +107,13 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     const apiKey = (anthropicKey ?? openaiKey)!;
     const model = anthropicKey ? 'claude-sonnet-4-20250514' : 'gpt-4o';
     llm = new LLMAdapter({ provider, apiKey, model });
-    codeGenerator = new CodeGenerator(llm, ast, build, fs);
+    codeGenerator = new CodeGenerator(llm, ast, build, fs, archAnalyzer);
     workplanExecutor = new WorkplanExecutor(llm, ast, fs, swarm);
   }
 
   return {
     rootPath: projectPath,
+    autoConfirm: false,
     outputDir,
     archAnalyzer,
     notificationOrchestrator,
@@ -127,5 +130,6 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     eventBus: NULL_EVENT_BUS,
     notifier,
     swarm,
+    registry,
   };
 }

@@ -160,6 +160,29 @@ export interface Message {
   content: string;
 }
 
+// ─── Project Registry ──────────────────────────────────
+
+export interface ProjectRegistration {
+  id: string;
+  name: string;
+  rootPath: string;
+  port: number;
+  status: 'active' | 'inactive' | 'error';
+  createdAt: number;
+  lastSeenAt: number;
+}
+
+export interface ProjectRegistry {
+  version: 1;
+  projects: ProjectRegistration[];
+}
+
+export interface LocalProjectIdentity {
+  id: string;
+  name: string;
+  createdAt: number;
+}
+
 export interface LLMResponse {
   content: string;
   tokenUsage: { input: number; output: number };

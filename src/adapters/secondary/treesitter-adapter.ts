@@ -181,7 +181,7 @@ export class TreeSitterAdapter implements IASTPort {
 
       // Handle re-exports: `export type { X, Y } from './foo.js'`
       // and `export { X, Y } from './foo.js'`
-      const exportClause = node.namedChildren.find((c) => c.type === 'export_clause');
+      const exportClause = node.namedChildren.find((c) => c != null && c.type === 'export_clause');
       if (exportClause) {
         for (let j = 0; j < exportClause.namedChildCount; j++) {
           const spec = exportClause.namedChild(j)!;
@@ -197,12 +197,12 @@ export class TreeSitterAdapter implements IASTPort {
         continue;
       }
 
-      const decl = node.namedChildren.find((c) => c.type !== 'comment');
+      const decl = node.namedChildren.find((c) => c != null && c.type !== 'comment');
       if (!decl) continue;
       const kind = TS_NODE_KIND_MAP[decl.type] as ExportEntry['kind'] | undefined;
       if (!kind) continue;
       const nameNode = decl.childForFieldName('name')
-        ?? decl.namedChildren.find((c) => c.type === 'identifier' || c.type === 'type_identifier');
+        ?? decl.namedChildren.find((c) => c != null && (c.type === 'identifier' || c.type === 'type_identifier'));
       if (!nameNode) continue;
       const entry: ExportEntry = { name: nameNode.text, kind };
       if (withSigs) {
@@ -226,7 +226,7 @@ export class TreeSitterAdapter implements IASTPort {
       const from = srcNode ? srcNode.text.replace(/['"]/g, '') : '';
       if (!from) continue;
       const names: string[] = [];
-      const clause = node.namedChildren.find((c) => c.type === 'import_clause');
+      const clause = node.namedChildren.find((c) => c != null && c.type === 'import_clause');
       if (clause) collectNames(clause, names);
       results.push({ names, from });
     }
@@ -251,7 +251,7 @@ function collectNames(node: TSNode, out: string[]): void {
     return;
   }
   if (node.type === 'namespace_import') {
-    const id = node.namedChildren.find((c: TSNode) => c.type === 'identifier');
+    const id = node.namedChildren.find((c): c is TSNode => c != null && c.type === 'identifier');
     if (id) out.push(`* as ${id.text}`);
     return;
   }
