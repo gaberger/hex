@@ -43,6 +43,11 @@ const NULL_EVENT_BUS: IEventBusPort = {
 // ── Factory ─────────────────────────────────────────────
 
 export async function createAppContext(projectPath: string): Promise<AppContext> {
+  // Project-scoped output directory for analysis, caches, logs
+  const outputDir = `${projectPath}/.hex-intf`;
+  const { mkdir } = await import('node:fs/promises');
+  await mkdir(outputDir, { recursive: true }).catch(() => {});
+
   // Secondary adapters — all real implementations
   const fs = new FileSystemAdapter(projectPath);
   const git = new GitAdapter(projectPath);
@@ -106,6 +111,7 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
 
   return {
     rootPath: projectPath,
+    outputDir,
     archAnalyzer,
     notificationOrchestrator,
     llm,

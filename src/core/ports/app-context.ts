@@ -35,6 +35,6 @@ export interface AppContext {
   notifier: INotificationEmitPort;
   swarm: ISwarmPort;
 
-  /** Extensible — adapters can access additional context via this */
-  [key: string]: unknown;
+  /** Local output directory for analysis reports, caches, and logs */
+  outputDir: string; // defaults to '.hex-intf/' — gitignored, project-scoped
 }
