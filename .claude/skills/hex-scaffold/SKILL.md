@@ -5,167 +5,123 @@ description: Scaffold a new hexagonal architecture project. Use when the user as
 
 # Hex Scaffold — Create a Hexagonal Architecture Project
 
-CRITICAL: Do NOT generate code immediately. This skill is a guided conversation that gathers requirements BEFORE scaffolding.
+CRITICAL: Do NOT generate code immediately. Use AskUserQuestion for an interactive wizard experience.
 
-## Phase 1: Discovery (MUST complete before any code)
+## Phase 1: Interactive Discovery Wizard
 
-Ask the user these questions. Wait for answers before proceeding.
+Use the AskUserQuestion tool to gather requirements interactively. Ask in batches of 3-4 questions max.
 
-### Question 1: What does this application do?
-"What's the core purpose of this application? Describe in 1-2 sentences what it does."
+### Wizard Step 1 (3 questions)
 
-Examples of good answers:
-- "A todo list manager"
-- "A webhook relay that forwards events between services"
-- "A CLI tool that analyzes git commit patterns"
-
-### Question 2: How will users interact with it?
-"How should users interact with this? Pick one or more:"
-
-| Option | Description |
-|--------|-------------|
-| **CLI** | Terminal commands (e.g., `myapp add "task"`, `myapp list`) |
-| **Web UI** | Browser-based interface with a local server |
-| **REST API** | JSON API consumed by other services or frontends |
-| **Library** | Imported as a package by other TypeScript/Node projects |
-| **MCP Tool** | Claude Code tool integration via Model Context Protocol |
-
-This determines which **primary adapters** to scaffold.
-
-### Question 3: Where does data live?
-"How should this app store its data?"
-
-| Option | Description |
-|--------|-------------|
-| **JSON file** | Simple file-based persistence (good for CLIs, small apps) |
-| **SQLite** | Embedded database (good for local apps with queries) |
-| **PostgreSQL/MySQL** | External database (good for APIs, multi-user) |
-| **External API** | Delegates storage to another service |
-| **In-memory only** | No persistence (good for libraries, stream processors) |
-
-This determines which **secondary adapters** to scaffold.
-
-### Question 4: What's the domain model?
-"What are the main entities? List 2-5 nouns that represent core concepts."
-
-Example for a todo app: "Todo, TodoList, Tag"
-Example for a webhook relay: "Webhook, Endpoint, Delivery, RetryPolicy"
-
-### Question 5: Project name
-"What should the project directory be called?"
-
-## Phase 2: Design Summary
-
-Before generating any code, present a design summary and get confirmation:
-
-```
-Project: {name}
-Purpose: {description}
-
-Primary Adapters (how users interact):
-  - {adapter1}: {what it does}
-  - {adapter2}: {what it does}
-
-Secondary Adapters (external systems):
-  - {storage}: {what it does}
-
-Domain Entities:
-  - {Entity1}: {brief description}
-  - {Entity2}: {brief description}
-
-Port Interfaces:
-  Input (driving):
-    - I{Entity}CommandPort: create, update, delete
-    - I{Entity}QueryPort: getById, list, filter, stats
-  Output (driven):
-    - I{Entity}StoragePort: load, save
-
-Files to create: ~{count}
+```tool
+AskUserQuestion({
+  questions: [
+    {
+      question: "How will users interact with this application?",
+      header: "Interface",
+      multiSelect: true,
+      options: [
+        { label: "CLI (Recommended)", description: "Terminal commands like `myapp add \"task\"`. Fastest to scaffold, works everywhere." },
+        { label: "Web UI", description: "Browser-based interface with local server. Great for visual apps." },
+        { label: "REST API", description: "JSON API for other services. Good for backends and microservices." },
+        { label: "Library", description: "Imported as npm package. No runtime interface, just typed exports." }
+      ]
+    },
+    {
+      question: "Where should this app store its data?",
+      header: "Storage",
+      multiSelect: false,
+      options: [
+        { label: "JSON file (Recommended)", description: "Simple file persistence. Perfect for CLIs and small tools." },
+        { label: "SQLite", description: "Embedded database. Good for queries and local apps." },
+        { label: "In-memory only", description: "No persistence. Good for stream processors and libraries." },
+        { label: "External API", description: "Delegates storage to another service via HTTP/gRPC." }
+      ]
+    },
+    {
+      question: "What are the main domain entities? (the core nouns)",
+      header: "Entities",
+      multiSelect: false,
+      options: [
+        { label: "Todo, TodoList", description: "Task management domain" },
+        { label: "User, Session", description: "Authentication domain" },
+        { label: "Event, Handler", description: "Event processing domain" },
+        { label: "Custom", description: "I'll describe my own entities" }
+      ]
+    }
+  ]
+})
 ```
 
-Ask: "Does this look right? Any changes before I scaffold?"
+### Wizard Step 2 (1-2 questions, based on Step 1 answers)
 
-## Phase 3: Scaffold (only after Phase 2 approval)
+Use AskUserQuestion with preview to show the proposed architecture:
 
-### Step 1: Create directory structure
-
-```bash
-mkdir -p {name}/src/core/{domain,ports,usecases}
-mkdir -p {name}/src/adapters/{primary,secondary}
-mkdir -p {name}/tests/unit
+```tool
+AskUserQuestion({
+  questions: [
+    {
+      question: "Here's the architecture plan. Which style fits your project?",
+      header: "Style",
+      multiSelect: false,
+      options: [
+        {
+          label: "Minimal MVP",
+          description: "Just the core CRUD operations. Ship fast, add later.",
+          preview: "src/\n  core/\n    domain/entities.ts     # 1 entity\n    ports/index.ts         # 3 interfaces\n    usecases/service.ts    # CRUD logic\n  adapters/\n    primary/cli.ts         # 5 commands\n    secondary/storage.ts   # JSON file\n  composition-root.ts\ntests/\n  unit/service.test.ts\n\n~8 files, ~600 lines"
+        },
+        {
+          label: "Full Featured",
+          description: "CRUD + filtering + stats + validation + events.",
+          preview: "src/\n  core/\n    domain/\n      value-objects.ts    # IDs, statuses, types\n      entities.ts         # Entities + events\n    ports/index.ts         # 5 interfaces (CQRS)\n    usecases/service.ts    # Full orchestration\n  adapters/\n    primary/cli.ts         # 8+ commands\n    secondary/storage.ts   # Atomic writes\n  composition-root.ts\ntests/\n  unit/\n    entities.test.ts\n    service.test.ts\n\n~12 files, ~1200 lines"
+        },
+        {
+          label: "Production",
+          description: "Full featured + error handling + logging + health checks.",
+          preview: "src/\n  core/\n    domain/\n      value-objects.ts\n      entities.ts\n      errors.ts          # Domain error types\n    ports/\n      commands.ts         # Write operations\n      queries.ts          # Read operations\n      storage.ts          # Persistence\n    usecases/service.ts\n  adapters/\n    primary/\n      cli.ts\n      http.ts            # REST + health\n    secondary/\n      storage.ts\n      logger.ts\n  composition-root.ts\ntests/\n  unit/ (3 files)\n  integration/ (1 file)\n\n~16 files, ~1800 lines"
+        }
+      ]
+    }
+  ]
+})
 ```
 
-### Step 2: Domain layer (zero external imports)
+## Phase 2: Scaffold Based on Answers
 
-Create `src/core/domain/value-objects.ts`:
-- Type aliases for IDs (branded strings)
-- Status enums relevant to the domain
-- Small value types
+After the wizard completes, generate ONLY the files that match the user's choices.
 
-Create `src/core/domain/entities.ts`:
-- Domain event discriminated union
-- Entity classes with immutable state transitions
-- Aggregate root if applicable
+### Map answers to adapters:
 
-### Step 3: Port interfaces
+| User chose | Primary adapter to create |
+|-----------|--------------------------|
+| CLI | `src/adapters/primary/cli-adapter.ts` with arg parsing |
+| Web UI | `src/adapters/primary/http-adapter.ts` serving HTML |
+| REST API | `src/adapters/primary/http-adapter.ts` JSON-only |
+| Library | Just `src/index.ts` with type exports |
 
-Create `src/core/ports/index.ts`:
-- Command port (mutations) — derived from Question 2
-- Query port (reads) — derived from Question 2
-- Storage port (persistence) — derived from Question 3
-- Use domain value objects for all types
+| User chose | Secondary adapter to create |
+|-----------|---------------------------|
+| JSON file | `src/adapters/secondary/json-storage.ts` |
+| SQLite | `src/adapters/secondary/sqlite-storage.ts` |
+| In-memory | `src/adapters/secondary/memory-storage.ts` |
+| External API | `src/adapters/secondary/api-storage.ts` |
 
-### Step 4: Use cases
+### Generate in order:
 
-Create `src/core/usecases/{entity}-service.ts`:
-- Implements command + query ports
-- Composes storage port via constructor injection
-- Validates inputs at this boundary
-- Emits domain events
+1. `mkdir -p` for directory structure
+2. Domain layer (value-objects.ts, entities.ts) — zero external imports
+3. Ports (index.ts) — imports only domain types
+4. Use cases (service.ts) — imports domain + ports
+5. Selected primary adapter(s) — imports ports only
+6. Selected secondary adapter — imports ports only
+7. composition-root.ts — the ONLY cross-boundary file
+8. Entry point (cli.ts or index.ts)
+9. Tests (London-school mocks)
+10. package.json, tsconfig.json, README.md
 
-### Step 5: Adapters (ONLY the ones the user chose)
+### Verify:
 
-For each primary adapter from Question 2:
-- CLI: `src/adapters/primary/cli-adapter.ts` with arg parsing
-- Web: `src/adapters/primary/http-adapter.ts` with node:http
-- API: same as Web but JSON-only (no HTML)
-- Library: just export ports from `src/index.ts`
-- MCP: `src/adapters/primary/mcp-adapter.ts`
-
-For each secondary adapter from Question 3:
-- JSON: `src/adapters/secondary/json-storage.ts`
-- SQLite: `src/adapters/secondary/sqlite-storage.ts`
-- External API: `src/adapters/secondary/api-storage.ts`
-- In-memory: `src/adapters/secondary/memory-storage.ts`
-
-### Step 6: Wiring
-
-Create `src/composition-root.ts`:
-- Only file that imports adapters
-- Constructor-injects storage into use case
-- Exports factory function
-
-Create `src/cli.ts` (entry point).
-
-### Step 7: Tests
-
-Create London-school mock tests for:
-- Domain entities (immutability, validation, events)
-- Use case service (mock storage, test CRUD)
-
-### Step 8: Config
-
-Create:
-- `package.json` with scripts: start, test, dev
-- `tsconfig.json` with strict mode
-- `README.md` with usage examples specific to chosen adapters
-
-### Step 9: Verify
-
-Run `bun test` and fix any failures. Run the primary adapter to verify it works:
-- CLI: `bun run src/cli.ts help`
-- Web: Start server, verify / responds
-- API: Start server, verify healthcheck
+Run `bun test` and verify the app works end-to-end via the chosen primary adapter.
 
 ## Rules
 
@@ -175,4 +131,5 @@ Run `bun test` and fix any failures. Run the primary adapter to verify it works:
 - composition-root.ts is the ONLY cross-boundary file
 - All imports use `.js` extensions
 - Every file under 150 lines
-- The app MUST actually work end-to-end after scaffolding
+- The app MUST actually work after scaffolding
+- NEVER scaffold adapters the user didn't ask for
