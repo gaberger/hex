@@ -52,6 +52,17 @@ function classifyLayer(filePath: string): string {
   return 'other';
 }
 
+// ── CORS origin validation ──────────────────────────────
+
+function isLocalOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
 // ── Dashboard Adapter ───────────────────────────────────
 
 export class DashboardAdapter {
@@ -130,9 +141,9 @@ export class DashboardAdapter {
     const url = new URL(req.url ?? '/', `http://localhost:${this.port}`);
     const path = url.pathname;
 
-    // CORS headers — restrict to localhost origins only
+    // CORS headers — restrict to localhost origins only (exact hostname match)
     const origin = req.headers.origin ?? '';
-    if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1') || !origin) {
+    if (isLocalOrigin(origin) || !origin) {
       res.setHeader('Access-Control-Allow-Origin', origin || 'http://localhost');
     }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -180,8 +191,8 @@ export class DashboardAdapter {
 
       this.json(res, 404, { error: 'Not found' });
     } catch (err) {
-      process.stderr.write(`[dashboard] ${req.method} ${path}: ${String(err)}\n`);
-      this.json(res, 500, { error: err instanceof Error ? err.message : 'Internal error' });
+      console.error('[dashboard] %s %s:', req.method, path, err);
+      this.json(res, 500, { error: 'Internal server error' });
     }
   }
 
@@ -205,7 +216,8 @@ export class DashboardAdapter {
         return;
       } catch { /* try next */ }
     }
-    this.json(res, 500, { error: 'Dashboard HTML not found. Searched:\n' + candidates.join('\n') });
+    console.error('[dashboard] Dashboard HTML not found. Searched:', candidates);
+    this.json(res, 500, { error: 'Internal server error' });
   }
 
   // ── GET /api/health ─────────────────────────────────
@@ -289,10 +301,9 @@ export class DashboardAdapter {
       ]);
       this.json(res, 200, { status, tasks, agents });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error('[dashboard] swarm query failed:', message);
+      console.error('[dashboard] swarm query failed:', err);
       this.json(res, 200, {
-        status: { id: 'none', topology: 'hierarchical', agentCount: 0, activeTaskCount: 0, completedTaskCount: 0, status: 'idle', error: message },
+        status: { id: 'none', topology: 'hierarchical', agentCount: 0, activeTaskCount: 0, completedTaskCount: 0, status: 'idle', error: 'Swarm unavailable' },
         tasks: [],
         agents: [],
       });
@@ -349,8 +360,13 @@ export class DashboardAdapter {
     const body = await readBody(req);
     let parsed: { selectedOption?: string };
     try {
-      parsed = JSON.parse(body) as { selectedOption?: string };
+      const raw: unknown = JSON.parse(body);
+      if (typeof raw !== 'object' || raw === null) {
+        return this.json(res, 400, { error: 'Invalid JSON body: expected object' });
+      }
+      parsed = raw as { selectedOption?: string };
     } catch {
+      // Client sent non-JSON body — return 400
       return this.json(res, 400, { error: 'Invalid JSON body' });
     }
 

@@ -5,6 +5,7 @@
  * relative to a configurable root directory.
  */
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { IFileSystemPort } from '../../core/ports/index.js';
 
@@ -19,7 +20,9 @@ export class FileSystemAdapter implements IFileSystemPort {
   private readonly root: string;
 
   constructor(rootPath?: string) {
-    this.root = rootPath ? resolve(rootPath) : process.cwd();
+    const resolved = rootPath ? resolve(rootPath) : process.cwd();
+    // Resolve symlinks in the root itself so all comparisons use real paths
+    this.root = realpathSync.native(resolved);
   }
 
   async read(filePath: string): Promise<string> {
@@ -56,12 +59,37 @@ export class FileSystemAdapter implements IFileSystemPort {
     return matches.sort();
   }
 
-  /** Resolve path and verify it stays within root — prevents directory traversal */
+  /** Resolve path and verify it stays within root — prevents directory traversal and symlink escapes */
   private safePath(filePath: string): string {
     const abs = resolve(join(this.root, filePath));
+    // Quick check before expensive realpath (catches ../.. without I/O)
     if (!abs.startsWith(this.root)) {
       throw new PathTraversalError(filePath, this.root);
     }
-    return abs;
+    // Resolve symlinks to detect symlink-based escapes
+    let real: string;
+    try {
+      real = realpathSync.native(abs);
+    } catch {
+      // File (or parent dirs) may not exist yet — walk up to the nearest existing ancestor
+      let ancestor = dirname(abs);
+      while (ancestor !== this.root && ancestor.startsWith(this.root)) {
+        try {
+          const ancestorReal = realpathSync.native(ancestor);
+          if (!ancestorReal.startsWith(this.root)) {
+            throw new PathTraversalError(filePath, this.root);
+          }
+          return abs;
+        } catch {
+          ancestor = dirname(ancestor);
+        }
+      }
+      // Reached root or above — verify root itself resolves cleanly
+      return abs;
+    }
+    if (!real.startsWith(this.root)) {
+      throw new PathTraversalError(filePath, this.root);
+    }
+    return real;
   }
 }

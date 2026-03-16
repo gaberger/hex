@@ -47,6 +47,7 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   // Project-scoped output directory for analysis, caches, logs
   const outputDir = `${projectPath}/.hex-intf`;
   const { mkdir } = await import('node:fs/promises');
+  // mkdir with recursive:true only fails on permission errors — safe to ignore
   await mkdir(outputDir, { recursive: true }).catch(() => {});
 
   // Secondary adapters — all real implementations

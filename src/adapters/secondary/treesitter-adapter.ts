@@ -100,6 +100,18 @@ export class TreeSitterAdapter implements IASTPort {
     const lineCount = source.split('\n').length;
     const fullTokenEstimate = Math.ceil(source.length / 4);
 
+    // When tree-sitter has no grammars, return a clearly-stubbed summary
+    // with empty analysis results so callers know data is not real.
+    if (this._isStub) {
+      return {
+        filePath, language: lang, level,
+        exports: [], imports: [], dependencies: [],
+        lineCount, tokenEstimate: fullTokenEstimate,
+        stubbed: true,
+        ...(level === 'L3' ? { raw: source } : {}),
+      };
+    }
+
     if (level === 'L0') {
       return {
         filePath, language: lang, level,

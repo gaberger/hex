@@ -48,6 +48,19 @@ export class SwarmParseError extends Error {
 const CLI_BIN = 'npx';
 const CLI_PKG = '@claude-flow/cli@latest';
 
+/** Validate that `data` is a non-null object with all `requiredKeys` present. */
+function validateShape<T>(data: unknown, requiredKeys: string[]): T {
+  if (typeof data !== 'object' || data === null) {
+    throw new Error('Expected object, got ' + typeof data);
+  }
+  for (const key of requiredKeys) {
+    if (!(key in data)) {
+      throw new Error(`Missing required field: ${key}`);
+    }
+  }
+  return data as T;
+}
+
 export class RufloAdapter implements ISwarmPort {
   constructor(private readonly projectPath: string) {}
 
@@ -126,6 +139,7 @@ export class RufloAdapter implements ISwarmPort {
       const result = await this.mcpExec('memory_retrieve', { key, namespace });
       return result.value ?? null;
     } catch {
+      // Memory key may not exist — return null rather than propagating
       return null;
     }
   }
@@ -138,6 +152,7 @@ export class RufloAdapter implements ISwarmPort {
       });
       return (result.results ?? []) as SwarmMemoryEntry[];
     } catch {
+      // Search may fail if swarm daemon is not running — return empty results
       return [];
     }
   }
@@ -181,7 +196,7 @@ export class RufloAdapter implements ISwarmPort {
     if (jsonStart === -1) return {};
     const jsonStr = output.slice(jsonStart);
     try {
-      return JSON.parse(jsonStr) as Record<string, unknown>;
+      return validateShape<Record<string, unknown>>(JSON.parse(jsonStr), []);
     } catch (err) {
       throw new SwarmParseError(
         'Failed to parse MCP exec response as JSON',
@@ -192,13 +207,26 @@ export class RufloAdapter implements ISwarmPort {
   }
 
   private toSwarmStatus(result: Record<string, unknown>): SwarmStatus {
+    const id = result.id ?? result.swarmId ?? 'default';
+    const topology = result.topology ?? 'hierarchical';
+    const agentCount = result.agentCount ?? 0;
+    const activeTaskCount = result.activeTaskCount ?? result.taskCount ?? 0;
+    const completedTaskCount = result.completedTaskCount ?? 0;
+    const status = result.status ?? 'idle';
+
+    // Validate types at runtime — external CLI output is not type-safe
+    if (typeof id !== 'string') throw new SwarmParseError('SwarmStatus.id must be a string', JSON.stringify(result));
+    if (typeof agentCount !== 'number') throw new SwarmParseError('SwarmStatus.agentCount must be a number', JSON.stringify(result));
+    if (typeof activeTaskCount !== 'number') throw new SwarmParseError('SwarmStatus.activeTaskCount must be a number', JSON.stringify(result));
+    if (typeof completedTaskCount !== 'number') throw new SwarmParseError('SwarmStatus.completedTaskCount must be a number', JSON.stringify(result));
+
     return {
-      id: (result.id ?? result.swarmId ?? 'default') as string,
-      topology: (result.topology ?? 'hierarchical') as SwarmStatus['topology'],
-      agentCount: (result.agentCount ?? 0) as number,
-      activeTaskCount: (result.activeTaskCount ?? result.taskCount ?? 0) as number,
-      completedTaskCount: (result.completedTaskCount ?? 0) as number,
-      status: (result.status ?? 'idle') as SwarmStatus['status'],
+      id,
+      topology: topology as SwarmStatus['topology'],
+      agentCount,
+      activeTaskCount,
+      completedTaskCount,
+      status: status as SwarmStatus['status'],
     };
   }
 }

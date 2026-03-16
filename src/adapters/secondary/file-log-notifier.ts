@@ -168,6 +168,7 @@ export class FileLogNotifier implements INotificationEmitPort {
         .filter(Boolean)
         .map((line) => JSON.parse(line) as LogEntry);
     } catch {
+      // Log file may not exist or contain corrupted lines — return empty
       return [];
     }
   }

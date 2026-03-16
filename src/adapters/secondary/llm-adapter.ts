@@ -124,6 +124,9 @@ export class LLMAdapter implements ILLMPort {
 
   private parseResponse(json: Record<string, unknown>): LLMResponse {
     if (this.config.provider === 'anthropic') {
+      if (!Array.isArray(json.content) || typeof json.usage !== 'object' || json.usage === null) {
+        throw new Error('Invalid Anthropic response: missing content array or usage object');
+      }
       const content = json.content as Array<{ text: string }>;
       const usage = json.usage as { input_tokens: number; output_tokens: number };
       return {
@@ -131,6 +134,9 @@ export class LLMAdapter implements ILLMPort {
         tokenUsage: { input: usage.input_tokens, output: usage.output_tokens },
         model: (json.model as string) ?? this.model,
       };
+    }
+    if (!Array.isArray(json.choices) || typeof json.usage !== 'object' || json.usage === null) {
+      throw new Error('Invalid OpenAI response: missing choices array or usage object');
     }
     const choices = json.choices as Array<{ message: { content: string } }>;
     const usage = json.usage as { prompt_tokens: number; completion_tokens: number };
@@ -156,6 +162,7 @@ export class LLMAdapter implements ILLMPort {
       const choices = data.choices as Array<{ delta: { content?: string } }>;
       return choices?.[0]?.delta.content ?? null;
     } catch {
+      // SSE lines may be malformed during streaming — skip silently
       return null;
     }
   }

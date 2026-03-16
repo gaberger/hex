@@ -8,7 +8,8 @@
  * Port range: 3848-3947 (100 slots), 3847 reserved for hub.
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
+import { mkdirSync, rmdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -21,44 +22,52 @@ import type {
 
 const REGISTRY_DIR = join(homedir(), '.hex-intf');
 const REGISTRY_PATH = join(REGISTRY_DIR, 'registry.json');
+const LOCK_PATH = REGISTRY_PATH + '.lock';
+const TMP_PATH = REGISTRY_PATH + '.tmp';
 const PORT_MIN = 3848;
 const PORT_MAX = 3947;
+const LOCK_RETRIES = 5;
+const LOCK_RETRY_MS = 100;
 
 export class RegistryAdapter implements IRegistryPort {
   async register(rootPath: string, name: string): Promise<ProjectRegistration> {
-    const registry = await this.readRegistry();
-    const existing = registry.projects.find((p) => p.rootPath === rootPath);
-    if (existing) {
-      existing.lastSeenAt = Date.now();
-      existing.name = name;
-      existing.status = 'active';
+    return this.withLock(async () => {
+      const registry = await this.readRegistry();
+      const existing = registry.projects.find((p) => p.rootPath === rootPath);
+      if (existing) {
+        existing.lastSeenAt = Date.now();
+        existing.name = name;
+        existing.status = 'active';
+        await this.writeRegistry(registry);
+        return existing;
+      }
+
+      const port = this.allocatePort(registry);
+      const reg: ProjectRegistration = {
+        id: randomUUID(),
+        name,
+        rootPath,
+        port,
+        status: 'active',
+        createdAt: Date.now(),
+        lastSeenAt: Date.now(),
+      };
+
+      registry.projects.push(reg);
       await this.writeRegistry(registry);
-      return existing;
-    }
-
-    const port = this.allocatePort(registry);
-    const reg: ProjectRegistration = {
-      id: randomUUID(),
-      name,
-      rootPath,
-      port,
-      status: 'active',
-      createdAt: Date.now(),
-      lastSeenAt: Date.now(),
-    };
-
-    registry.projects.push(reg);
-    await this.writeRegistry(registry);
-    return reg;
+      return reg;
+    });
   }
 
   async unregister(projectId: string): Promise<boolean> {
-    const registry = await this.readRegistry();
-    const idx = registry.projects.findIndex((p) => p.id === projectId);
-    if (idx === -1) return false;
-    registry.projects.splice(idx, 1);
-    await this.writeRegistry(registry);
-    return true;
+    return this.withLock(async () => {
+      const registry = await this.readRegistry();
+      const idx = registry.projects.findIndex((p) => p.id === projectId);
+      if (idx === -1) return false;
+      registry.projects.splice(idx, 1);
+      await this.writeRegistry(registry);
+      return true;
+    });
   }
 
   async list(): Promise<ProjectRegistration[]> {
@@ -72,19 +81,26 @@ export class RegistryAdapter implements IRegistryPort {
   }
 
   async touch(projectId: string): Promise<void> {
-    const registry = await this.readRegistry();
-    const project = registry.projects.find((p) => p.id === projectId);
-    if (project) {
-      project.lastSeenAt = Date.now();
-      await this.writeRegistry(registry);
-    }
+    return this.withLock(async () => {
+      const registry = await this.readRegistry();
+      const project = registry.projects.find((p) => p.id === projectId);
+      if (project) {
+        project.lastSeenAt = Date.now();
+        await this.writeRegistry(registry);
+      }
+    });
   }
 
   async readLocalIdentity(rootPath: string): Promise<LocalProjectIdentity | null> {
     try {
       const content = await readFile(join(rootPath, '.hex-intf', 'project.json'), 'utf-8');
-      return JSON.parse(content) as LocalProjectIdentity;
+      const parsed: unknown = JSON.parse(content);
+      if (typeof parsed !== 'object' || parsed === null || !('id' in parsed)) {
+        return null;
+      }
+      return parsed as LocalProjectIdentity;
     } catch {
+      // project.json doesn't exist yet — project has no local identity
       return null;
     }
   }
@@ -108,14 +124,51 @@ export class RegistryAdapter implements IRegistryPort {
   private async readRegistry(): Promise<ProjectRegistry> {
     try {
       const content = await readFile(REGISTRY_PATH, 'utf-8');
-      return JSON.parse(content) as ProjectRegistry;
+      const parsed: unknown = JSON.parse(content);
+      if (typeof parsed !== 'object' || parsed === null || !('version' in parsed)) {
+        return { version: 1, projects: [] };
+      }
+      return parsed as ProjectRegistry;
     } catch {
+      // Registry file doesn't exist or is corrupted — start fresh
       return { version: 1, projects: [] };
     }
   }
 
   private async writeRegistry(registry: ProjectRegistry): Promise<void> {
     await mkdir(REGISTRY_DIR, { recursive: true });
-    await writeFile(REGISTRY_PATH, JSON.stringify(registry, null, 2) + '\n');
+    await writeFile(TMP_PATH, JSON.stringify(registry, null, 2) + '\n');
+    await rename(TMP_PATH, REGISTRY_PATH);
+  }
+
+  private acquire(): void {
+    for (let i = 0; i < LOCK_RETRIES; i++) {
+      try {
+        mkdirSync(LOCK_PATH);
+        return;
+      } catch {
+        if (i === LOCK_RETRIES - 1) {
+          throw new Error(`Failed to acquire registry lock after ${LOCK_RETRIES} attempts`);
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_RETRY_MS);
+      }
+    }
+  }
+
+  private release(): void {
+    try {
+      rmdirSync(LOCK_PATH);
+    } catch {
+      // Lock dir already removed — safe to ignore
+    }
+  }
+
+  private async withLock<T>(fn: () => Promise<T>): Promise<T> {
+    this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
   }
 }

@@ -22,14 +22,14 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFileSync, watch, type FSWatcher } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { existsSync, readFileSync, statSync, watch, type FSWatcher } from 'node:fs';
+import { resolve, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AppContext } from '../../core/ports/app-context.js';
+import type { AppContext, AppContextFactory } from '../../core/ports/app-context.js';
 import type { ImportEdge } from '../../core/ports/index.js';
 
-/** Factory function injected by the composition root — keeps the adapter hex-clean. */
-export type AppContextFactory = (rootPath: string) => Promise<AppContext>;
+// Re-export so existing consumers don't break
+export type { AppContextFactory } from '../../core/ports/app-context.js';
 
 // ── Cache helper ────────────────────────────────────────
 
@@ -80,6 +80,17 @@ interface SSEClient {
   res: ServerResponse;
   projectFilter: string | null; // null = all projects
   heartbeat: ReturnType<typeof setInterval>;
+}
+
+// ── CORS origin validation ──────────────────────────────
+
+function isLocalOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
 }
 
 // ── Dashboard Hub ───────────────────────────────────────
@@ -212,9 +223,9 @@ export class DashboardHub {
     const url = new URL(req.url ?? '/', `http://localhost:${this.port}`);
     const path = url.pathname;
 
-    // CORS
+    // CORS — exact hostname match to prevent origin bypass (e.g. localhost.evil.com)
     const origin = req.headers.origin ?? '';
-    if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1') || !origin) {
+    if (isLocalOrigin(origin) || !origin) {
       res.setHeader('Access-Control-Allow-Origin', origin || 'http://localhost');
     }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -241,15 +252,15 @@ export class DashboardHub {
         const [, projectId, subPath] = match;
         const slot = this.projects.get(projectId);
         if (!slot) {
-          return this.json(res, 404, { error: `Project "${projectId}" not registered. POST /api/projects/register first.` });
+          return this.json(res, 404, { error: 'Not found' });
         }
         return await this.handleProjectRoute(slot, subPath, req, res);
       }
 
       this.json(res, 404, { error: 'Not found' });
     } catch (err) {
-      process.stderr.write(`[hub] ${req.method} ${path}: ${String(err)}\n`);
-      this.json(res, 500, { error: err instanceof Error ? err.message : 'Internal error' });
+      console.error('[hub] %s %s:', req.method, path, err);
+      this.json(res, 500, { error: 'Internal server error' });
     }
   }
 
@@ -341,9 +352,9 @@ export class DashboardHub {
         ]);
         return this.json(res, 200, { status, tasks, agents });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        console.error('[hub] swarm query failed:', err);
         return this.json(res, 200, {
-          status: { id: 'none', topology: 'hierarchical', agentCount: 0, activeTaskCount: 0, completedTaskCount: 0, status: 'idle', error: message },
+          status: { id: 'none', topology: 'hierarchical', agentCount: 0, activeTaskCount: 0, completedTaskCount: 0, status: 'idle', error: 'Swarm unavailable' },
           tasks: [],
           agents: [],
         });
@@ -364,8 +375,13 @@ export class DashboardHub {
       const body = await readBody(req);
       let parsed: { selectedOption?: string };
       try {
-        parsed = JSON.parse(body) as { selectedOption?: string };
+        const raw: unknown = JSON.parse(body);
+        if (typeof raw !== 'object' || raw === null) {
+          return this.json(res, 400, { error: 'Invalid JSON body: expected object' });
+        }
+        parsed = raw as { selectedOption?: string };
       } catch {
+        // Client sent non-JSON body — return 400
         return this.json(res, 400, { error: 'Invalid JSON body' });
       }
       if (!parsed.selectedOption) {
@@ -380,7 +396,7 @@ export class DashboardHub {
       return this.json(res, 200, { ok: true });
     }
 
-    this.json(res, 404, { error: `Unknown route: ${subPath}` });
+    this.json(res, 404, { error: 'Not found' });
   }
 
   // ── Global route handlers ─────────────────────────
@@ -399,19 +415,45 @@ export class DashboardHub {
     const body = await readBody(req);
     let parsed: { rootPath?: string };
     try {
-      parsed = JSON.parse(body) as { rootPath?: string };
+      const raw: unknown = JSON.parse(body);
+      if (typeof raw !== 'object' || raw === null) {
+        return this.json(res, 400, { error: 'Invalid JSON body: expected object' });
+      }
+      parsed = raw as { rootPath?: string };
     } catch {
+      // Client sent non-JSON body — return 400
       return this.json(res, 400, { error: 'Invalid JSON body' });
     }
     if (!parsed.rootPath) {
       return this.json(res, 400, { error: 'Missing rootPath' });
     }
 
+    // Validate the project path before registering.
+    // Use a single generic error message to avoid revealing which check
+    // failed, preventing filesystem probing via error differentiation.
+    if (!isAbsolute(parsed.rootPath)) {
+      return this.json(res, 400, { error: 'Invalid project path' });
+    }
+    const candidatePath = resolve(parsed.rootPath);
+    try {
+      const stat = statSync(candidatePath);
+      if (!stat.isDirectory()) {
+        return this.json(res, 400, { error: 'Invalid project path' });
+      }
+    } catch {
+      return this.json(res, 400, { error: 'Invalid project path' });
+    }
+    // Must contain package.json or .hex-intf/ to be recognised as a project
+    if (!existsSync(join(candidatePath, 'package.json')) && !existsSync(join(candidatePath, '.hex-intf'))) {
+      return this.json(res, 400, { error: 'Invalid project path' });
+    }
+
     try {
       const slot = await this.registerProject(parsed.rootPath);
       this.json(res, 200, { id: slot.id, rootPath: slot.ctx.rootPath, registeredAt: slot.registeredAt });
     } catch (err) {
-      this.json(res, 500, { error: err instanceof Error ? err.message : 'Failed to register project' });
+      console.error('[hub] Failed to register project:', err);
+      this.json(res, 500, { error: 'Internal server error' });
     }
   }
 
@@ -419,7 +461,7 @@ export class DashboardHub {
     if (this.unregisterProject(id)) {
       this.json(res, 200, { ok: true });
     } else {
-      this.json(res, 404, { error: `Project "${id}" not found` });
+      this.json(res, 404, { error: 'Not found' });
     }
   }
 

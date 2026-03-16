@@ -510,17 +510,32 @@ export class CLIAdapter {
   // ── dashboard ───────────────────────────────────────
 
   private async dashboard(args: ParsedArgs): Promise<number> {
-    const port = parseInt(args.flags.get('port') ?? '3847', 10);
+    const explicitPort = args.flags.get('port');
+
+    // Register with the project registry to get an assigned port
+    const ctx = this.ctx as AppContext;
+    const projectName = ctx.rootPath.split('/').pop() ?? 'unknown';
+    const registration = await ctx.registry.register(ctx.rootPath, projectName);
+    const port = explicitPort ? parseInt(explicitPort, 10) : registration.port;
+
     if (isNaN(port) || port < 1 || port > 65535) {
       this.writeLn('Invalid port number. Must be 1-65535.');
       return 1;
     }
 
+    // Write local identity so the project knows its registry ID
+    await ctx.registry.writeLocalIdentity(ctx.rootPath, {
+      id: registration.id,
+      name: registration.name,
+      createdAt: registration.createdAt,
+    });
+
     // Dynamic import to avoid loading http server when not needed
     const { DashboardAdapter } = await import('./dashboard-adapter.js');
-    const dashboard = new DashboardAdapter(this.ctx as AppContext, port);
+    const dashboard = new DashboardAdapter(ctx, port);
     const { url } = await dashboard.start();
     this.writeLn(`Dashboard running at ${url}`);
+    this.writeLn(`Registry: ${registration.id} (port ${registration.port})`);
 
     // Wire notification orchestrator → dashboard SSE broadcast
     if (this.ctx.notificationOrchestrator) {
@@ -1032,8 +1047,13 @@ export class CLIAdapter {
     let settings: Record<string, unknown> = {};
     try {
       const existing = await readFile(settingsPath, 'utf-8');
-      settings = JSON.parse(existing);
-    } catch { /* doesn't exist yet */ }
+      const parsed: unknown = JSON.parse(existing);
+      if (typeof parsed === 'object' && parsed !== null) {
+        settings = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Settings file doesn't exist yet — start with empty defaults
+    }
 
     // Add the SessionStart hook if not already present
     const hooksObj = (settings.hooks ?? {}) as Record<string, unknown>;

@@ -43,3 +43,6 @@ export interface AppContext {
   /** Local output directory for analysis reports, caches, and logs */
   outputDir: string; // defaults to '.hex-intf/' — gitignored, project-scoped
 }
+
+/** Factory that creates an AppContext for a given project root path. */
+export type AppContextFactory = (rootPath: string) => Promise<AppContext>;

@@ -24,6 +24,7 @@ export interface ASTSummary {
   lineCount: number;
   tokenEstimate: number;
   raw?: string; // Only present at L3
+  stubbed?: boolean; // true when tree-sitter is unavailable
 }
 
 export interface ExportEntry {

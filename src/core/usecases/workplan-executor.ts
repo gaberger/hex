@@ -135,7 +135,11 @@ export class WorkplanExecutor implements IWorkplanPort {
       throw new Error('LLM response did not contain valid JSON workplan');
     }
 
-    const parsed = JSON.parse(jsonMatch[0]) as {
+    const raw: unknown = JSON.parse(jsonMatch[0]);
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('LLM response JSON is not an object');
+    }
+    const parsed = raw as {
       title?: string;
       steps?: Array<{
         id: string;
@@ -144,6 +148,9 @@ export class WorkplanExecutor implements IWorkplanPort {
         dependencies?: string[];
       }>;
     };
+    if (parsed.steps !== undefined && !Array.isArray(parsed.steps)) {
+      throw new Error('LLM response "steps" field is not an array');
+    }
 
     const steps: WorkplanStep[] = (parsed.steps ?? []).map((s) => ({
       id: s.id,

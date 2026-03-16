@@ -78,7 +78,11 @@ export class BuildAdapter implements IBuildPort {
 
   private parseEslintOutput(raw: string): LintResult {
     try {
-      const files = JSON.parse(raw) as Array<{
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return { success: false, errors: [], warningCount: 0, errorCount: 1 };
+      }
+      const files = parsed as Array<{
         filePath: string;
         messages: Array<{
           line: number; column: number;
@@ -104,7 +108,9 @@ export class BuildAdapter implements IBuildPort {
         }
       }
       return { success: errorCount === 0, errors, warningCount, errorCount };
-    } catch {
+    } catch (e) {
+      // ESLint output may not be valid JSON (e.g., eslint crashed or produced text errors)
+      console.error('Warning: failed to parse eslint output:', e);
       return { success: false, errors: [], warningCount: 0, errorCount: 1 };
     }
   }
