@@ -131,7 +131,7 @@ All IFileSystemPort methods accept `filePath: string`. The FileSystemAdapter res
 - Empty string
 - Names with `..` (ref traversal)
 
-The WorktreeAdapter also uses `branchName` in a filesystem path: `hex-intf-${branchName}`. A branch name like `../../etc` would create a worktree outside the intended directory.
+The WorktreeAdapter also uses `branchName` in a filesystem path: `hex-${branchName}`. A branch name like `../../etc` would create a worktree outside the intended directory.
 
 - **Interpretation A:** Branch names must be valid git ref names.
 - **Interpretation B:** The port accepts any string and the adapter validates.

@@ -10,7 +10,7 @@ Accepted
 
 ## Context
 
-hex-intf runs multiple AI agents in parallel across git worktrees. Without a unified notification system, developers must manually tail logs and poll individual agents for status. This creates information gaps, missed decision points, and wasted agent time when blockers go unnoticed.
+hex runs multiple AI agents in parallel across git worktrees. Without a unified notification system, developers must manually tail logs and poll individual agents for status. This creates information gaps, missed decision points, and wasted agent time when blockers go unnoticed.
 
 We need a system that:
 - Keeps the developer informed in real time during swarm execution.
@@ -28,7 +28,7 @@ Implement a multi-channel notification system with four secondary adapters behin
 | Channel | Adapter | Purpose |
 |---------|---------|---------|
 | **Terminal** | `TerminalNotifier` | Real-time developer awareness: color-coded messages, persistent status bar, interactive decision prompts |
-| **File Log** | `FileLogNotifier` | Structured JSONL audit trail in `.hex-intf/activity.log`, rotated at 10 MB, queryable by the primary adapter |
+| **File Log** | `FileLogNotifier` | Structured JSONL audit trail in `.hex/activity.log`, rotated at 10 MB, queryable by the primary adapter |
 | **Webhook** | `WebhookNotifier` | External integration (Slack, CI, monitoring); batched delivery with exponential-backoff retry |
 | **Event Bus** | `EventBusNotifier` | In-memory pub/sub for agent-to-agent coordination; wildcard subscriptions by level, agent, or adapter |
 
@@ -44,7 +44,7 @@ The persistent status bar uses a compact, terminal-friendly format:
 [execute] coder-1: generating tests | quality: 85 | 3/6 adapters | ████░░ 50%
 ```
 
-Fields: `[phase]`, active agent and step, quality score from `QualityScore.score`, adapter completion ratio, and a Unicode progress bar. The format is inspired by ruflo's status system but tailored to hex-intf's phase model (plan / execute / integrate / package) and quality-gate feedback loop.
+Fields: `[phase]`, active agent and step, quality score from `QualityScore.score`, adapter completion ratio, and a Unicode progress bar. The format is inspired by ruflo's status system but tailored to hex's phase model (plan / execute / integrate / package) and quality-gate feedback loop.
 
 ### Integration with Domain Events
 

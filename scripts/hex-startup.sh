@@ -1,16 +1,16 @@
 #!/bin/bash
-# hex-intf session-start hook
+# hex session-start hook
 # Reads PRD.md and scans project structure to present startup context
 
 set -e
 
-# Only run in hex-intf projects (check for CLAUDE.md + PRD.md)
+# Only run in hex projects (check for CLAUDE.md + PRD.md)
 if [ ! -f "PRD.md" ] || [ ! -f "CLAUDE.md" ]; then
   exit 0
 fi
 
 echo ""
-echo "=== hex-intf Project Detected ==="
+echo "=== hex Project Detected ==="
 echo ""
 
 # Extract project name and summary from PRD.md
@@ -105,7 +105,7 @@ elif [ "$PRI_FILES" -eq 0 ] && [ "$SEC_FILES" -eq 0 ]; then
 elif [ "$TEST_FILES" -eq 0 ]; then
   echo "Next step: Add tests"
 else
-  echo "Next step: Run 'hex-intf analyze .' to validate architecture"
+  echo "Next step: Run 'hex analyze .' to validate architecture"
 fi
 
 echo ""

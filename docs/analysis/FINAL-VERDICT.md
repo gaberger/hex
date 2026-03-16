@@ -1,4 +1,4 @@
-# FINAL VERDICT -- hex-intf Adversarial Review (Updated)
+# FINAL VERDICT -- hex Adversarial Review (Updated)
 
 **Judge**: Synthesizer (6 reports, source verification against current `main`)
 **Date**: 2026-03-15
@@ -98,7 +98,7 @@ CLI defines shadow `AppContext` (4 fields) vs composition root (14 fields). FIX:
 
 **Is the hexagonal architecture sound?** Yes, structurally. Import direction is correct. Composition root centralizes wiring. The one true violation (domain-ports cycle) is fixable. The design demonstrates genuine understanding of ports-and-adapters.
 
-**Is the dogfooding principle working?** No. `hex-intf analyze` always reports health=100 because (a) tree-sitter never loads, (b) import paths never match glob paths, and (c) `unusedPorts` is hardcoded empty. The tool cannot detect its own problems.
+**Is the dogfooding principle working?** No. `hex analyze` always reports health=100 because (a) tree-sitter never loads, (b) import paths never match glob paths, and (c) `unusedPorts` is hardcoded empty. The tool cannot detect its own problems.
 
 **Is it ready for AI-driven dev?** Partially. LLM adapter, code generator, and workplan executor are wired in -- a major advancement. The analysis pipeline (the tool's differentiator) remains non-functional. The notification infrastructure has no consumer yet but now has a plausible path to one.
 

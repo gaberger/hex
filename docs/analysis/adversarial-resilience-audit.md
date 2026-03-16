@@ -42,7 +42,7 @@ private async writeRegistry(registry: ProjectRegistry): Promise<void> {
 }
 ```
 
-**Issue**: `readRegistry` + `writeRegistry` is a classic TOCTOU race. Two concurrent `hex-intf` processes (e.g., two terminals running `hex-intf dashboard`) will both read, modify, and write -- the second write silently overwrites the first's changes. The global registry at `~/.hex-intf/registry.json` is shared across all projects.
+**Issue**: `readRegistry` + `writeRegistry` is a classic TOCTOU race. Two concurrent `hex` processes (e.g., two terminals running `hex dashboard`) will both read, modify, and write -- the second write silently overwrites the first's changes. The global registry at `~/.hex/registry.json` is shared across all projects.
 
 **Hidden errors in the catch block**: The bare `catch {}` also swallows:
 - Permission denied (EACCES) -- user thinks registry is empty, not inaccessible
@@ -70,7 +70,7 @@ const exitCode = await cli.run(filteredArgs);
 process.exit(exitCode);
 ```
 
-**Issue**: If `createAppContext` throws (e.g., `mkdir` fails for `.hex-intf/`, or `TreeSitterAdapter.create` throws something unexpected beyond what's caught internally), the process crashes with an unhandled rejection and a raw stack trace. There is no `try/catch` or `process.on('unhandledRejection')` handler.
+**Issue**: If `createAppContext` throws (e.g., `mkdir` fails for `.hex/`, or `TreeSitterAdapter.create` throws something unexpected beyond what's caught internally), the process crashes with an unhandled rejection and a raw stack trace. There is no `try/catch` or `process.on('unhandledRejection')` handler.
 
 **Severity**: CRITICAL
 **User impact**: Users see a raw Node.js stack trace instead of a helpful error message. No exit code is set (defaults to 1 on crash, but no cleanup runs).
@@ -78,7 +78,7 @@ process.exit(exitCode);
 
 ---
 
-### C-03: Composition root silently swallows `.hex-intf` directory creation failure
+### C-03: Composition root silently swallows `.hex` directory creation failure
 
 **Location**: `src/composition-root.ts:50`
 
@@ -233,7 +233,7 @@ private parseResponse(json: Record<string, unknown>): LLMResponse {
 ```typescript
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`[hex-intf] WARNING: Tree-sitter init failed: ${msg}. Analysis will return empty results.\n`);
+  process.stderr.write(`[hex] WARNING: Tree-sitter init failed: ${msg}. Analysis will return empty results.\n`);
   astIsStub = true;
   ast = {
     async extractSummary(filePath, level) {
@@ -247,7 +247,7 @@ private parseResponse(json: Record<string, unknown>): LLMResponse {
 **Issue**: When tree-sitter fails to load, the entire AST subsystem is replaced with a stub that returns empty results for everything. While `astIsStub` is set and a warning is printed, every downstream consumer (`archAnalyzer`, `summaryService`, `codeGenerator`) proceeds silently. The architecture analyzer will report "0 violations, 0 dead exports, 100% health" because it has no data -- a dangerously misleading result.
 
 **Severity**: HIGH
-**User impact**: `hex-intf analyze .` reports perfect health when tree-sitter is broken, giving false confidence. The warning is only printed once at startup and easily missed.
+**User impact**: `hex analyze .` reports perfect health when tree-sitter is broken, giving false confidence. The warning is only printed once at startup and easily missed.
 **Recommendation**: When `astIsStub` is true, `analyzeArchitecture` should return a result with `healthScore: -1` or include a prominent warning. The CLI `analyze` command should print a warning banner.
 
 ---
@@ -306,7 +306,7 @@ private async rotate(): Promise<void> {
 ```typescript
 async readLocalIdentity(rootPath: string): Promise<LocalProjectIdentity | null> {
   try {
-    const content = await readFile(join(rootPath, '.hex-intf', 'project.json'), 'utf-8');
+    const content = await readFile(join(rootPath, '.hex', 'project.json'), 'utf-8');
     return JSON.parse(content) as LocalProjectIdentity;
   } catch {
     return null;
@@ -545,7 +545,7 @@ The inner `treeSitter.isStub()` check (line 72) means tree-sitter "worked" but f
 
 1. **C-02**: Add top-level error boundary in `cli.ts`
 2. **C-01**: Add atomic writes and error discrimination to registry-adapter
-3. **C-03**: Stop swallowing `.hex-intf` mkdir errors in composition-root
+3. **C-03**: Stop swallowing `.hex` mkdir errors in composition-root
 4. **H-06**: Make stub AST produce visibly degraded results (not "all clean")
 5. **H-01**: Log webhook delivery failures
 6. **H-02**: Distinguish "not found" from "backend down" in ruflo memory methods

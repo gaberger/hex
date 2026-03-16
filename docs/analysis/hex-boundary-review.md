@@ -1,4 +1,4 @@
-# Hexagonal Boundary Purity Review — hex-intf
+# Hexagonal Boundary Purity Review — hex
 
 **Reviewer**: Adversarial Architecture Reviewer
 **Date**: 2025-03-15

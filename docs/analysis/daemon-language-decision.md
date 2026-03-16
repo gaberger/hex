@@ -2,7 +2,7 @@
 
 **Date**: 2025-03-15
 **Status**: Recommendation — TypeScript with Bun runtime
-**Context**: hex-intf dashboard daemon — long-lived background service for developer machines
+**Context**: hex dashboard daemon — long-lived background service for developer machines
 
 ---
 
@@ -49,14 +49,14 @@
 
 ### 5. Build and Distribution
 
-**Current state**: hex-intf is an npm package. The daemon runs as TypeScript via Bun.
+**Current state**: hex is an npm package. The daemon runs as TypeScript via Bun.
 
 **If Rust**: Must cross-compile for 4+ targets and distribute via `optionalDependencies`:
 ```
-@hex-intf/daemon-darwin-arm64
-@hex-intf/daemon-darwin-x64
-@hex-intf/daemon-linux-x64
-@hex-intf/daemon-linux-arm64
+@hex/daemon-darwin-arm64
+@hex/daemon-darwin-x64
+@hex/daemon-linux-x64
+@hex/daemon-linux-arm64
 ```
 
 This is the oxlint/biome pattern (oxlint ships 19 platform packages, biome ships 8). It requires:
@@ -66,7 +66,7 @@ This is the oxlint/biome pattern (oxlint ships 19 platform packages, biome ships
 - Testing on all 4 platforms per release
 - Separate versioning/publishing pipeline
 
-**If Bun compiled binary**: `bun build --compile` produces a 58 MB self-contained binary. Cross-compilation is possible (`--target=bun-linux-x64`, etc.) but produces large binaries. However, this is unnecessary — Bun is already a dependency of hex-intf.
+**If Bun compiled binary**: `bun build --compile` produces a 58 MB self-contained binary. Cross-compilation is possible (`--target=bun-linux-x64`, etc.) but produces large binaries. However, this is unnecessary — Bun is already a dependency of hex.
 
 **If TypeScript (no compile)**: The daemon is just TypeScript source shipped in the npm package. `bun run src/daemon.ts` — zero build step, zero platform binaries, zero CI complexity.
 
@@ -94,15 +94,15 @@ The existing `dashboard-hub.ts` imports `AppContext` and `AppContextFactory` and
 import type { AppContext, AppContextFactory } from '../../core/ports/app-context.js';
 ```
 
-**In Rust**: Every one of these types must be duplicated as Rust structs. Every port interface becomes a Rust trait. The composition root cannot be shared. The daemon would communicate with hex-intf only via JSON over HTTP/stdio, losing type safety at the boundary. Any domain type change requires updating two codebases.
+**In Rust**: Every one of these types must be duplicated as Rust structs. Every port interface becomes a Rust trait. The composition root cannot be shared. The daemon would communicate with hex only via JSON over HTTP/stdio, losing type safety at the boundary. Any domain type change requires updating two codebases.
 
 **In TypeScript**: `import { ... } from '../core/ports/index.js'` — done. Type changes propagate automatically. The daemon IS part of the hex architecture.
 
-**Verdict**: This is the decisive factor. The daemon is not a standalone tool (like biome or oxlint). It is an adapter within hex-intf's hexagonal architecture. Rewriting it in Rust would violate the architecture's own principles — it would create a parallel, untyped boundary between the daemon and the domain core.
+**Verdict**: This is the decisive factor. The daemon is not a standalone tool (like biome or oxlint). It is an adapter within hex's hexagonal architecture. Rewriting it in Rust would violate the architecture's own principles — it would create a parallel, untyped boundary between the daemon and the domain core.
 
 ### 7. Developer Experience
 
-- hex-intf contributors are TypeScript developers
+- hex contributors are TypeScript developers
 - The dashboard hub is already 500+ lines of working TypeScript
 - Rust would require contributors to install `rustup`, learn Rust, and maintain two build systems
 - The Rust ecosystem has no equivalent to Bun's zero-config TypeScript execution
@@ -128,13 +128,13 @@ Both work. Neither has a meaningful advantage.
 | Watchman | C++ | Standalone tool; extreme performance requirements |
 | tsc --watch | TypeScript | Ecosystem tool; shares TypeScript compiler code |
 
-**Pattern**: Standalone performance tools use Rust/C++. Ecosystem tools that share code with a JS/TS project stay in JS/TS. hex-intf's daemon is firmly in the "ecosystem tool" category.
+**Pattern**: Standalone performance tools use Rust/C++. Ecosystem tools that share code with a JS/TS project stay in JS/TS. hex's daemon is firmly in the "ecosystem tool" category.
 
 ---
 
 ## Recommendation: TypeScript with Bun Runtime
 
-**Use TypeScript.** The daemon should remain a TypeScript adapter within hex-intf's hexagonal architecture.
+**Use TypeScript.** The daemon should remain a TypeScript adapter within hex's hexagonal architecture.
 
 ### Specific Implementation Plan
 
@@ -149,7 +149,7 @@ Both work. Neither has a meaningful advantage.
 Rust would become worth considering if:
 - The daemon needed to handle **thousands of concurrent connections** (it handles dozens)
 - Memory budget was **under 5 MB** (no such constraint exists)
-- The daemon was a **standalone product** separate from hex-intf (it's not)
+- The daemon was a **standalone product** separate from hex (it's not)
 - The team had **Rust expertise** and wanted to maintain two build systems (they don't)
 
 ### Quantified Cost of Rust

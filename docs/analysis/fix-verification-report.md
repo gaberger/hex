@@ -106,6 +106,6 @@ Formula (lines 219-224):
 
 1. Add barrel/directory import resolution to `path-normalizer.ts` (check if path is a directory and append `/index`).
 2. Expand `detectUnusedPorts` to also check use-case and composition-root imports, not only adapter imports.
-3. Add `console.warn('[hex-intf] tree-sitter failed to initialize, using stub AST')` to the catch block in `composition-root.ts`, writing to stderr.
+3. Add `console.warn('[hex] tree-sitter failed to initialize, using stub AST')` to the catch block in `composition-root.ts`, writing to stderr.
 4. Add unit tests for `detectUnusedPorts` and `unusedAdapters` in `arch-analyzer.test.ts`.
 5. Fix the bare-specifier test to not assert `node:path.ts` as correct behavior -- bare specifiers should be returned unchanged.

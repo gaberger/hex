@@ -5,7 +5,7 @@
 
 ## Context
 
-hex-intf needs to support code generation, linting, and testing across multiple languages. The framework targets LLM-driven development where compile-time feedback is the primary guardrail against defects. We need languages with strong static typing, mature tree-sitter grammars, and fast build toolchains.
+hex needs to support code generation, linting, and testing across multiple languages. The framework targets LLM-driven development where compile-time feedback is the primary guardrail against defects. We need languages with strong static typing, mature tree-sitter grammars, and fast build toolchains.
 
 ## Decision
 

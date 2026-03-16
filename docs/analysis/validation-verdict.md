@@ -1,7 +1,7 @@
 # Validation Verdict Report
 
 **Date:** 2025-03-15
-**Problem Statement:** hex-intf — a hexagonal architecture framework providing token-efficient AST summaries, architecture analysis, code generation, and swarm coordination for LLM-driven development.
+**Problem Statement:** hex — a hexagonal architecture framework providing token-efficient AST summaries, architecture analysis, code generation, and swarm coordination for LLM-driven development.
 **Verdict: PASS (84/100)**
 
 ---
@@ -53,7 +53,7 @@
 
 ### Existing Property Tests
 
-Property tests exist **only for the Flappy Bird example**, not for hex-intf core:
+Property tests exist **only for the Flappy Bird example**, not for hex core:
 
 | Property | File | Status |
 |----------|------|--------|
@@ -63,7 +63,7 @@ Property tests exist **only for the Flappy Bird example**, not for hex-intf core
 | `checkBounds` safe in valid play area | `physics-properties.test.ts` | PASS |
 | Position changes match velocity sign | `physics-properties.test.ts` | PASS |
 
-### Missing Property Tests for hex-intf Core (-30)
+### Missing Property Tests for hex Core (-30)
 
 | Property | Why It Matters |
 |----------|----------------|
@@ -79,8 +79,8 @@ Property tests exist **only for the Flappy Bird example**, not for hex-intf core
 
 | Smoke Test | Result |
 |------------|--------|
-| `hex-intf help` runs without error | PASS |
-| `hex-intf analyze src` produces health score | PASS (70/100) |
+| `hex help` runs without error | PASS |
+| `hex analyze src` produces health score | PASS (70/100) |
 | `bun run build` compiles to dist/ | PASS |
 | `bun run check` (tsc --noEmit) passes | PASS (after treesitter-adapter fix) |
 | `bun test` — 194 tests, 0 failures | PASS |
@@ -91,8 +91,8 @@ Property tests exist **only for the Flappy Bird example**, not for hex-intf core
 
 | Gap | Impact |
 |-----|--------|
-| No smoke test for `hex-intf init` generating a real project on disk | Low — scaffold service is tested in isolation but not E2E |
-| No smoke test for `hex-intf dashboard` starting HTTP server | Medium — dashboard has no tests at all |
+| No smoke test for `hex init` generating a real project on disk | Low — scaffold service is tested in isolation but not E2E |
+| No smoke test for `hex dashboard` starting HTTP server | Medium — dashboard has no tests at all |
 
 ---
 
@@ -122,7 +122,7 @@ Property tests exist **only for the Flappy Bird example**, not for hex-intf core
 
 ## Recommendations
 
-1. **Add property tests for core hex-intf** — The example apps have property tests but the framework itself does not. Priority: `classifyLayer`, `resolveImportPath`, `QualityScore`.
+1. **Add property tests for core hex** — The example apps have property tests but the framework itself does not. Priority: `classifyLayer`, `resolveImportPath`, `QualityScore`.
 
 2. **Add dashboard + MCP adapter tests** — These two primary adapters have zero test coverage. Even basic "responds to GET /api/health" would catch regressions.
 

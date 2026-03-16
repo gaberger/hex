@@ -1,4 +1,4 @@
-# hex-intf: Hexagonal Architecture for LLM-Driven Development
+# hex: Hexagonal Architecture for LLM-Driven Development
 
 ## Vision
 
@@ -12,7 +12,7 @@ A reusable, packageable framework that enables AI coding agents to generate, val
 4. **Fast Feedback Loops** — Compile → Lint → Test in seconds. Each cycle gives the LLM structured error output to self-correct.
 5. **Bounded Context per Adapter** — An LLM agent works on one adapter at a time. Port interfaces define the contract; the agent never needs full codebase context.
 6. **Swarm Coordination** — Ruflo orchestrates parallel agents across git worktrees, each working on isolated adapters with merge-back via PR.
-7. **Dogfooding (ADR-008)** — hex-intf is built using its own hexagonal patterns. The framework's own code serves as both the product and the primary test case. Domain events drive all cross-cutting concerns (notifications, logging, metrics) through the `IEventBusPort`, ensuring adapters never couple to each other.
+7. **Dogfooding (ADR-008)** — hex is built using its own hexagonal patterns. The framework's own code serves as both the product and the primary test case. Domain events drive all cross-cutting concerns (notifications, logging, metrics) through the `IEventBusPort`, ensuring adapters never couple to each other.
 
 ### Dependency Direction (Enforced)
 
@@ -62,7 +62,7 @@ A reusable, packageable framework that enables AI coding agents to generate, val
 ## Directory Structure
 
 ```
-hex-intf/
+hex/
 ├── src/
 │   ├── core/
 │   │   ├── domain/          # Entities, value objects, domain events
@@ -250,10 +250,10 @@ Each agent gets its own worktree so they can edit files in parallel without conf
 
 ```bash
 # Agent-A works on CLI adapter
-git worktree add ../hex-intf-cli feat/cli-adapter
+git worktree add ../hex-cli feat/cli-adapter
 
 # Agent-B works on Git adapter
-git worktree add ../hex-intf-git feat/git-adapter
+git worktree add ../hex-git feat/git-adapter
 
 # After both complete, merge back
 git merge feat/cli-adapter
@@ -316,8 +316,8 @@ Every code generation cycle passes through:
 ### As a Claude Code Skill
 
 ```yaml
-# skills/hex-intf-scaffold.yaml
-name: hex-intf-scaffold
+# skills/hex-scaffold.yaml
+name: hex-scaffold
 description: Scaffold a new hexagonal architecture project with LLM-optimized structure
 triggers:
   - "create hex project"
@@ -345,16 +345,16 @@ constraints:
 ### As npm Package
 
 ```bash
-npx hex-intf init --lang typescript --name my-project
-npx hex-intf generate --adapter secondary/database --from spec.md
-npx hex-intf summarize --level L2 --output context.txt
+npx hex init --lang typescript --name my-project
+npx hex generate --adapter secondary/database --from spec.md
+npx hex summarize --level L2 --output context.txt
 ```
 
 ---
 
 ## Comparison with Existing Tools
 
-| Feature | SPECKIT | BMAD | **hex-intf** |
+| Feature | SPECKIT | BMAD | **hex** |
 |---------|---------|------|-------------|
 | PRD Generation | Yes | Yes | Via workplan use case |
 | Context Management | Basic | Prompt injection | Tree-sitter AST summaries (10x compression) |

@@ -1,4 +1,4 @@
-# ROUND 2 VERDICT -- hex-intf Adversarial Review
+# ROUND 2 VERDICT -- hex Adversarial Review
 
 **Reviewer**: Round 2 Auditor
 **Date**: 2026-03-15

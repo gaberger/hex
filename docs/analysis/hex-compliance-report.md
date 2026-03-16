@@ -1,7 +1,7 @@
 # Hexagonal Architecture Compliance Report
 
 **Generated**: 2026-03-15
-**Project**: hex-intf
+**Project**: hex
 **Total source files**: 21
 **Violations found**: 3 (all fixed)
 **Compliance after fixes**: 100%

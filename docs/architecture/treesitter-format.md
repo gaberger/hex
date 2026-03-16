@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document defines the canonical output format for tree-sitter AST summaries used by hex-intf. The format is designed for maximum token efficiency while preserving the structural information an LLM needs to generate compatible code across TypeScript, Go, and Rust.
+This document defines the canonical output format for tree-sitter AST summaries used by hex. The format is designed for maximum token efficiency while preserving the structural information an LLM needs to generate compatible code across TypeScript, Go, and Rust.
 
 ---
 

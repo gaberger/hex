@@ -85,7 +85,7 @@ It does NOT:
 
 ---
 
-## Part 2: E2E Test Design -- "hex-intf Analyzes Itself"
+## Part 2: E2E Test Design -- "hex Analyzes Itself"
 
 ### The Test
 
@@ -95,9 +95,9 @@ import { describe, it, expect } from 'bun:test';
 import { createAppContext } from '../../src/composition-root.js';
 import { runCLI, type AppContext as CLIContext } from '../../src/adapters/primary/cli-adapter.js';
 
-const PROJECT_ROOT = '/Volumes/ExtendedStorage/PARA/01-Projects/hex-intf';
+const PROJECT_ROOT = '/Volumes/ExtendedStorage/PARA/01-Projects/hex';
 
-describe('E2E: hex-intf analyzes itself', () => {
+describe('E2E: hex analyzes itself', () => {
   let ctx: Awaited<ReturnType<typeof createAppContext>>;
 
   // Phase 1: Composition root wires real adapters
@@ -133,7 +133,7 @@ describe('E2E: hex-intf analyzes itself', () => {
   });
 
   // Phase 4: Hex boundary validation -- the project should follow its own rules
-  it('hex-intf has zero dependency violations against its own rules', async () => {
+  it('hex has zero dependency violations against its own rules', async () => {
     const violations = await ctx.archAnalyzer.validateHexBoundaries(PROJECT_ROOT);
     if (violations.length > 0) {
       const report = violations.map(v =>
@@ -199,7 +199,7 @@ describe('E2E: hex-intf analyzes itself', () => {
 
 ### What FAKE/STUB Behavior Masks Real Failures
 
-1. **The tree-sitter stub in composition-root.ts** -- returns empty exports/imports for every file. ArchAnalyzer sees zero edges, zero exports, and reports a "perfect" health score of 100. This makes `hex-intf analyze` ALWAYS succeed with zero findings.
+1. **The tree-sitter stub in composition-root.ts** -- returns empty exports/imports for every file. ArchAnalyzer sees zero edges, zero exports, and reports a "perfect" health score of 100. This makes `hex analyze` ALWAYS succeed with zero findings.
 
 2. **The NULL_EVENT_BUS** -- silently swallows all domain events. No notification, no logging. Tests and production both use it (the real event bus adapter exists but is never wired in).
 

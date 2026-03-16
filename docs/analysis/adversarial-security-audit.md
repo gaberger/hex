@@ -1,4 +1,4 @@
-# Adversarial Security Audit — hex-intf
+# Adversarial Security Audit — hex
 
 **Date:** 2026-03-15
 **Auditor:** Security Auditor Agent (claude-opus-4-6)
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-The hex-intf codebase demonstrates strong security awareness: `execFile` over `exec`, a `safePath()` guard, `escapeHtml()`/`textContent` in the dashboard, body-size limits on HTTP endpoints, and API keys loaded exclusively from environment variables. However, the audit identified **4 confirmed vulnerabilities** and **3 items requiring manual review**.
+The hex codebase demonstrates strong security awareness: `execFile` over `exec`, a `safePath()` guard, `escapeHtml()`/`textContent` in the dashboard, body-size limits on HTTP endpoints, and API keys loaded exclusively from environment variables. However, the audit identified **4 confirmed vulnerabilities** and **3 items requiring manual review**.
 
 | Severity | Count |
 |----------|-------|
@@ -168,7 +168,7 @@ async create(branchName: string): Promise<WorktreePath> {
 
 ```typescript
 private worktreePath(branchName: string): string {
-  return join(this.worktreeDir, `hex-intf-${branchName}`);
+  return join(this.worktreeDir, `hex-${branchName}`);
 }
 ```
 
@@ -207,7 +207,7 @@ private async mcpExec(tool: string, params?: Record<string, unknown>): Promise<.
 const CLI_PKG = '@claude-flow/cli@latest';
 ```
 
-**Concern:** Every `mcpExec` call runs `npx @claude-flow/cli@latest ...` which downloads and executes the latest published version. A supply-chain compromise of the `@claude-flow/cli` npm package would immediately affect all hex-intf users on their next command invocation, with no version pinning or integrity checking.
+**Concern:** Every `mcpExec` call runs `npx @claude-flow/cli@latest ...` which downloads and executes the latest published version. A supply-chain compromise of the `@claude-flow/cli` npm package would immediately affect all hex users on their next command invocation, with no version pinning or integrity checking.
 
 **File:** `package.json:52`
 ```json

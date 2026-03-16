@@ -1,4 +1,4 @@
-# Production Readiness Verdict — hex-intf
+# Production Readiness Verdict — hex
 
 **Date:** 2026-03-15
 **Method:** 5-agent adversarial swarm evaluation
@@ -28,7 +28,7 @@
 
 ### B2 — Dashboard Hub Accepts Arbitrary rootPath (Security VULN-03)
 `POST /api/projects/register` accepts any filesystem path. An attacker can register `/etc` and read any `.ts` file.
-**Fix:** Validate `rootPath` is an existing directory containing a `package.json` or `.hex-intf/` marker.
+**Fix:** Validate `rootPath` is an existing directory containing a `package.json` or `.hex/` marker.
 
 ### B3 — Symlink Traversal in FileSystemAdapter (Security VULN-01)
 `safePath()` does not resolve symlinks. An attacker can symlink past the root boundary.

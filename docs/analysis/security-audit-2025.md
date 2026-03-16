@@ -1,4 +1,4 @@
-# hex-intf Adversarial Security Audit
+# hex Adversarial Security Audit
 
 **Date**: 2025-03-15
 **Scope**: All files under `src/` -- adapters, composition root, CLI, use cases
@@ -58,7 +58,7 @@ When tree-sitter initialization fails, the stub AST adapter returns `{ exports: 
 - 0 circular deps (no edges)
 - Health score: **100/100**
 
-This means `hex-intf analyze` will report **perfect architecture health** when the analyzer is completely non-functional. A user running this in CI would get a green check on a broken codebase.
+This means `hex analyze` will report **perfect architecture health** when the analyzer is completely non-functional. A user running this in CI would get a green check on a broken codebase.
 
 **Fix**: The stub should throw or the ArchAnalyzer should detect when all summaries have 0 exports and flag it as suspicious. At minimum, log a warning that tree-sitter failed.
 
@@ -92,7 +92,7 @@ return await execFile('git', args, { cwd: this.repoPath, maxBuffer: 10 * 1024 * 
 
 The `worktreeDir` is set in composition-root.ts:68 to `${projectPath}/../hex-worktrees` -- a sibling directory outside the project. Accumulated leaked worktrees will consume disk and pollute git state.
 
-**Fix**: On startup, call `list()` and remove any worktrees with the `hex-intf-` prefix that do not match active tasks. Register a `process.on('exit')` cleanup handler.
+**Fix**: On startup, call `list()` and remove any worktrees with the `hex-` prefix that do not match active tasks. Register a `process.on('exit')` cleanup handler.
 
 ---
 

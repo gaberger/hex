@@ -51,4 +51,4 @@ done
 
 echo ""
 echo "Done. Grammars installed in $GRAMMAR_DIR"
-echo "You can now run: hex-intf analyze ./src"
+echo "You can now run: hex analyze ./src"

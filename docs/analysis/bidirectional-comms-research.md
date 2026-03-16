@@ -2,7 +2,7 @@
 
 ## Context
 
-hex-intf's dashboard currently uses SSE (Server-Sent Events) for one-way server-to-client push. The system needs bidirectional communication so CLI agents and background worktrees can PUSH events TO the hub, not just receive them.
+hex's dashboard currently uses SSE (Server-Sent Events) for one-way server-to-client push. The system needs bidirectional communication so CLI agents and background worktrees can PUSH events TO the hub, not just receive them.
 
 **Current architecture:**
 - `DashboardHub` (multi-project broker) and `DashboardAdapter` (single-project) both use `node:http` with zero external deps
@@ -92,7 +92,7 @@ Run NATS server as a separate process. Hub, CLI agents, and dashboards all conne
 
 ### Operational complexity
 - **Requires a separate process** -- `nats-server` must be running before hub starts
-- Must manage lifecycle: start on `hex-intf dashboard`, stop on shutdown
+- Must manage lifecycle: start on `hex dashboard`, stop on shutdown
 - Configuration file needed for auth, ports, clustering
 - Developer must install `nats-server` or project must bundle/download it
 - Significant onboarding friction for a dev tool

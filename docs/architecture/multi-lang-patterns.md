@@ -1,6 +1,6 @@
 # Multi-Language Architectural Patterns
 
-Concrete patterns for hex-intf projects that use multiple languages simultaneously. Each pattern includes directory structure, port mapping, build orchestration, tree-sitter summary strategy, and agent assignment.
+Concrete patterns for hex projects that use multiple languages simultaneously. Each pattern includes directory structure, port mapping, build orchestration, tree-sitter summary strategy, and agent assignment.
 
 ---
 
@@ -121,8 +121,8 @@ tasks:
   summarize:
     desc: Generate tree-sitter summaries for both languages
     cmds:
-      - npx hex-intf summarize --level L2 --root frontend/src --output .treesitter/frontend.txt
-      - npx hex-intf summarize --level L2 --root backend/internal --output .treesitter/backend.txt
+      - npx hex summarize --level L2 --root frontend/src --output .treesitter/frontend.txt
+      - npx hex summarize --level L2 --root backend/internal --output .treesitter/backend.txt
 ```
 
 ### Tree-Sitter Across Language Boundaries
@@ -506,8 +506,8 @@ test: go-test
 
 # --- Tree-sitter summaries ---
 summarize:
-	npx hex-intf summarize --level L2 --root go/internal --output .treesitter/go.txt
-	npx hex-intf summarize --level L2 --root rust/crates --output .treesitter/rust.txt
+	npx hex summarize --level L2 --root go/internal --output .treesitter/go.txt
+	npx hex summarize --level L2 --root rust/crates --output .treesitter/rust.txt
 
 clean:
 	cd rust && cargo clean
@@ -736,9 +736,9 @@ tasks:
   # --- Tree-sitter summaries ---
   summarize:
     cmds:
-      - npx hex-intf summarize --level L2 --root ts/packages --output .treesitter/ts.txt
-      - npx hex-intf summarize --level L2 --root go/internal --output .treesitter/go.txt
-      - npx hex-intf summarize --level L2 --root rust/crates --output .treesitter/rust.txt
+      - npx hex summarize --level L2 --root ts/packages --output .treesitter/ts.txt
+      - npx hex summarize --level L2 --root go/internal --output .treesitter/go.txt
+      - npx hex summarize --level L2 --root rust/crates --output .treesitter/rust.txt
 
   # --- Dev (all services) ---
   dev:

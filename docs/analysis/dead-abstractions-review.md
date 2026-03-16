@@ -24,9 +24,9 @@
 | `ISchemaPort` | `src/core/ports/cross-lang.ts:227` | HIGH |
 | `ISwarmOrchestrationPort` | `src/core/ports/swarm.ts:107` | HIGH |
 
-**Evidence**: Searched every adapter file. No class in `src/adapters/` implements `ICodeGenerationPort`, `IWorkplanPort`, `ISummaryPort`, or `ILLMPort`. These are the four ports that would make hex-intf actually *do* anything generative. The entire `cross-lang.ts` file (253 lines) has zero implementations anywhere in the codebase.
+**Evidence**: Searched every adapter file. No class in `src/adapters/` implements `ICodeGenerationPort`, `IWorkplanPort`, `ISummaryPort`, or `ILLMPort`. These are the four ports that would make hex actually *do* anything generative. The entire `cross-lang.ts` file (253 lines) has zero implementations anywhere in the codebase.
 
-**Assessment**: The four core input ports (`ICodeGenerationPort`, `IWorkplanPort`, `ISummaryPort`, `ILLMPort`) represent the project's stated purpose -- LLM-driven code generation. Without them, hex-intf is an architecture linter that aspires to be a code generation framework. Rating: **CRITICAL**.
+**Assessment**: The four core input ports (`ICodeGenerationPort`, `IWorkplanPort`, `ISummaryPort`, `ILLMPort`) represent the project's stated purpose -- LLM-driven code generation. Without them, hex is an architecture linter that aspires to be a code generation framework. Rating: **CRITICAL**.
 
 ---
 
@@ -150,7 +150,7 @@ The project that these 2,044 lines of notification infrastructure serve has:
 - 1 working use case (ArchAnalyzer, ~233 lines)
 - 0 working generative use cases
 - 0 tests for any notification component
-- The CLI `status` command outputs a static string: `'Swarm status: use "hex-intf analyze" to check project health.'`
+- The CLI `status` command outputs a static string: `'Swarm status: use "hex analyze" to check project health.'`
 
 **The notification subsystem is 8.7x the size of the only working use case.** It supports 7 notification levels, 6 channels, decision prompts with countdown timers, quality convergence detection, stall detection with configurable thresholds, Slack-compatible webhook payloads with exponential backoff retry, JSONL log rotation at 10MB, and an in-memory pub/sub event bus.
 
@@ -210,7 +210,7 @@ unusedAdapters: [], // Requires L2 port interface analysis (future)
 The `ArchAnalysisResult` type defines `unusedPorts: string[]` and `unusedAdapters: string[]` fields. The `ArchAnalyzer` always returns empty arrays for both. The `analyzeArchitecture` result type *promises* to report unused ports and adapters, but the implementation **hardcodes them to empty**.
 
 This means:
-- `hex-intf analyze` will NEVER report that `ICodeGenerationPort`, `ILLMPort`, `IWorkplanPort`, `ISummaryPort`, or any cross-lang port lacks an implementation
+- `hex analyze` will NEVER report that `ICodeGenerationPort`, `ILLMPort`, `IWorkplanPort`, `ISummaryPort`, or any cross-lang port lacks an implementation
 - The tool cannot detect its own project's most severe architectural problem
 - The health score formula does not penalize unused ports at all
 
@@ -235,4 +235,4 @@ Rating: **HIGH** -- the tool's primary value proposition (architecture health) h
 
 ### Bottom Line
 
-hex-intf is a well-structured architecture linter wearing the costume of an LLM-driven code generation framework. The hexagonal architecture is correctly applied to the parts that work (AST analysis, file system, git, build). But 60% of the defined interface surface has no implementation, and the largest subsystem (notifications, 2,044 lines) has no consumers and no tests. The project should either implement its core generative use cases or honestly re-scope to what it actually is today.
+hex is a well-structured architecture linter wearing the costume of an LLM-driven code generation framework. The hexagonal architecture is correctly applied to the parts that work (AST analysis, file system, git, build). But 60% of the defined interface surface has no implementation, and the largest subsystem (notifications, 2,044 lines) has no consumers and no tests. The project should either implement its core generative use cases or honestly re-scope to what it actually is today.

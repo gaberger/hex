@@ -1,4 +1,4 @@
-# Library Ecosystem Analysis for hex-intf
+# Library Ecosystem Analysis for hex
 
 > **Purpose**: Runtime reference for the `dependency-analyst` agent. Maps problem domains to optimal language + library combinations, scored on LLM generation quality, tree-sitter L2 friendliness, and production fitness.
 >
@@ -394,7 +394,7 @@ START: What are you building?
 
 ### How This Maps to Hexagonal Architecture
 
-Each library recommendation maps to an **adapter** in the hex-intf framework:
+Each library recommendation maps to an **adapter** in the hex framework:
 
 - **Primary adapters** (CLI, HTTP, UI): Use the CLI or Web Frontend recommendations
 - **Secondary adapters** (DB, file I/O, external APIs): Use the ETL/API Server recommendations
@@ -403,6 +403,6 @@ Each library recommendation maps to an **adapter** in the hex-intf framework:
 
 ### Tree-Sitter Summary Compatibility
 
-Libraries rated 4-5 on "TS L2" produce API surfaces that compress to <200 tokens per file at L2 level, matching the hex-intf token budget architecture. Libraries rated 1-2 may require L3 (full source) loading for LLM agents to work with them correctly, which defeats the token efficiency goal.
+Libraries rated 4-5 on "TS L2" produce API surfaces that compress to <200 tokens per file at L2 level, matching the hex token budget architecture. Libraries rated 1-2 may require L3 (full source) loading for LLM agents to work with them correctly, which defeats the token efficiency goal.
 
-**Rule of thumb**: If a library scores below 3 on both LLM Gen and TS L2, it should not be used in hex-intf agent-driven development regardless of other merits.
+**Rule of thumb**: If a library scores below 3 on both LLM Gen and TS L2, it should not be used in hex agent-driven development regardless of other merits.

@@ -1,6 +1,6 @@
 # Background Daemon Patterns for Developer Tools
 
-Research into how popular developer tools implement always-running background services, with recommendations for hex-intf's dashboard hub.
+Research into how popular developer tools implement always-running background services, with recommendations for hex's dashboard hub.
 
 ---
 
@@ -37,7 +37,7 @@ Research into how popular developer tools implement always-running background se
 | **Discovery** | stdin/stdout pipes between editor and tsserver. No socket or port. |
 | **Crash recovery** | Editor detects process exit, shows notification, offers restart. Automatic restart with backoff in VS Code. |
 | **Cleanup** | Process exits when editor closes or sends shutdown command. |
-| **Key insight** | Parent-child model. Not suitable for hex-intf since dashboard must survive terminal close. |
+| **Key insight** | Parent-child model. Not suitable for hex since dashboard must survive terminal close. |
 
 ### 1.4 Turborepo Daemon
 
@@ -48,7 +48,7 @@ Research into how popular developer tools implement always-running background se
 | **Discovery** | Socket path is deterministic from repo root. Client computes expected path and connects. |
 | **Crash recovery** | Client detects dead socket, cleans up, restarts daemon. `turbo daemon clean` for manual reset. |
 | **Cleanup** | Idle timeout (repo-specific). Clean shutdown removes socket file. |
-| **Key insight** | Per-repo daemon with deterministic socket path is elegant. gRPC is heavier than needed for hex-intf. |
+| **Key insight** | Per-repo daemon with deterministic socket path is elegant. gRPC is heavier than needed for hex. |
 
 ### 1.5 Watchman (Facebook)
 
@@ -59,7 +59,7 @@ Research into how popular developer tools implement always-running background se
 | **Discovery** | `watchman get-sockname` returns socket path. Clients should use this command for discovery rather than hardcoding paths. |
 | **Crash recovery** | State file (`<USER>.state`) preserves all watches and triggers. Daemon restores them on restart. Supports systemd socket activation (`--inetd` flag). |
 | **Cleanup** | `watchman shutdown-server` for clean stop. Socket and log files in STATEDIR. |
-| **Key insight** | State file for durable subscriptions is valuable — hex-intf could persist registered projects similarly. |
+| **Key insight** | State file for durable subscriptions is valuable — hex could persist registered projects similarly. |
 
 ### 1.6 Claude Code / Cursor (IDE Tools)
 
@@ -70,7 +70,7 @@ Research into how popular developer tools implement always-running background se
 | **Discovery** | Internal IPC or stdio. MCP uses stdin/stdout transport or SSE over HTTP. |
 | **Crash recovery** | IDE respawns crashed child processes. User-visible error states with retry. |
 | **Cleanup** | Children terminated when IDE exits (process group kill). |
-| **Key insight** | MCP's SSE transport pattern is relevant — hex-intf already uses SSE for dashboard updates. |
+| **Key insight** | MCP's SSE transport pattern is relevant — hex already uses SSE for dashboard updates. |
 
 ### 1.7 pm2
 
@@ -98,16 +98,16 @@ Research into how popular developer tools implement always-running background se
 
 ---
 
-## 3. Recommendation for hex-intf Dashboard Hub
+## 3. Recommendation for hex Dashboard Hub
 
 ### Recommended: Hybrid eslint_d + Watchman Pattern
 
-The best fit for hex-intf is a **lazy-start daemon with a lock file and optional OS integration**, combining the simplicity of eslint_d with Watchman's state persistence.
+The best fit for hex is a **lazy-start daemon with a lock file and optional OS integration**, combining the simplicity of eslint_d with Watchman's state persistence.
 
 ### 3.1 Architecture
 
 ```
-~/.hex-intf/
+~/.hex/
   daemon/
     hub.lock          # { pid, port, token, startedAt }
     hub.state         # { registeredProjects: [...] }
@@ -119,9 +119,9 @@ The best fit for hex-intf is a **lazy-start daemon with a lock file and optional
 #### Starting (Lazy on First Use)
 
 ```
-hex-intf dashboard
+hex dashboard
   |
-  +-- Read ~/.hex-intf/daemon/hub.lock
+  +-- Read ~/.hex/daemon/hub.lock
   |     |
   |     +-- File exists? Check if PID alive (process.kill(pid, 0))
   |     |     |
@@ -153,11 +153,11 @@ interface HubLockFile {
   port: number;
   token: string;
   startedAt: string;  // ISO timestamp
-  version: string;    // hex-intf version for compatibility check
+  version: string;    // hex version for compatibility check
 }
 ```
 
-Client reads `~/.hex-intf/daemon/hub.lock`, validates PID is alive, connects to `http://localhost:<port>`. Token passed as `Authorization: Bearer <token>` for mutations.
+Client reads `~/.hex/daemon/hub.lock`, validates PID is alive, connects to `http://localhost:<port>`. Token passed as `Authorization: Bearer <token>` for mutations.
 
 #### Crash Recovery
 
@@ -255,15 +255,15 @@ For users who want the dashboard to auto-start on login:
 
 ```bash
 # macOS (launchd)
-hex-intf daemon install
-# Generates ~/Library/LaunchAgents/com.hex-intf.dashboard.plist
+hex daemon install
+# Generates ~/Library/LaunchAgents/com.hex.dashboard.plist
 
 # Linux (systemd user unit)
-hex-intf daemon install
-# Generates ~/.config/systemd/user/hex-intf-dashboard.service
+hex daemon install
+# Generates ~/.config/systemd/user/hex-dashboard.service
 
 # Remove
-hex-intf daemon uninstall
+hex daemon uninstall
 ```
 
 This should be opt-in, not default. Most developers do not want dev tools starting on boot.
@@ -271,20 +271,20 @@ This should be opt-in, not default. Most developers do not want dev tools starti
 ### 3.4 CLI Commands
 
 ```bash
-hex-intf dashboard          # Open dashboard (lazy-starts daemon)
-hex-intf daemon status      # Show PID, port, uptime, registered projects
-hex-intf daemon stop        # Graceful shutdown
-hex-intf daemon restart     # Stop + start
-hex-intf daemon logs        # Tail ~/.hex-intf/daemon/hub.log
-hex-intf daemon install     # Install OS startup script (opt-in)
-hex-intf daemon uninstall   # Remove OS startup script
+hex dashboard          # Open dashboard (lazy-starts daemon)
+hex daemon status      # Show PID, port, uptime, registered projects
+hex daemon stop        # Graceful shutdown
+hex daemon restart     # Stop + start
+hex daemon logs        # Tail ~/.hex/daemon/hub.log
+hex daemon install     # Install OS startup script (opt-in)
+hex daemon uninstall   # Remove OS startup script
 ```
 
 ### 3.5 Why This Pattern
 
 | Requirement | How It's Met |
 |-------------|--------------|
-| "Just works" without manual management | Lazy start on `hex-intf dashboard` |
+| "Just works" without manual management | Lazy start on `hex dashboard` |
 | Multiple projects register/unregister | Multi-project hub with state persistence |
 | Survives terminal close | `detached: true` + `child.unref()` |
 | macOS + Linux support | Node.js detached process works everywhere; optional launchd/systemd for reboot survival |
@@ -298,7 +298,7 @@ hex-intf daemon uninstall   # Remove OS startup script
 2. **Do not use Unix domain sockets** — HTTP on localhost is simpler, browser-accessible for the dashboard UI, and works on Windows.
 3. **Do not require explicit `daemon start`** — lazy start is the developer-friendly pattern every modern tool uses.
 4. **Do not bind to a fixed port** — use port 0 and write the assigned port to the lock file. Fixed ports cause conflicts across tools.
-5. **Do not store lock files in the project directory** — use `~/.hex-intf/daemon/` so one daemon serves all projects.
+5. **Do not store lock files in the project directory** — use `~/.hex/daemon/` so one daemon serves all projects.
 
 ---
 

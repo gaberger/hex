@@ -1,4 +1,4 @@
-# Adversarial Test Report — hex-intf
+# Adversarial Test Report — hex
 
 **Date**: 2025-03-15
 **Suite**: bun test v1.3.10
@@ -64,10 +64,10 @@ All 172 tests pass. The E2E suite (10 tests, 23 assertions) exercises the real s
 
 | Command | Status | Notes |
 |---------|--------|-------|
-| `hex-intf analyze .` | PASS | 39 files, 175 exports, health 70/100 |
-| `hex-intf summarize ... --level L1` | PASS | 134 tokens, 10 exports listed |
-| `hex-intf summarize ... --level L3` | PASS | 1064 tokens, full AST |
-| `hex-intf help` | PASS | All 10 commands listed |
+| `hex analyze .` | PASS | 39 files, 175 exports, health 70/100 |
+| `hex summarize ... --level L1` | PASS | 134 tokens, 10 exports listed |
+| `hex summarize ... --level L3` | PASS | 1064 tokens, full AST |
+| `hex help` | PASS | All 10 commands listed |
 
 ---
 

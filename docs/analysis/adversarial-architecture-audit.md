@@ -1,4 +1,4 @@
-# Adversarial Architecture Audit — hex-intf
+# Adversarial Architecture Audit — hex
 
 **Date:** 2026-03-15
 **Scope:** All `.ts` files in `src/` and `tests/`

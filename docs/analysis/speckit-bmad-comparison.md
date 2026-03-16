@@ -1,4 +1,4 @@
-# SPECKit vs BMAD vs Hexagonal Architecture (hex-intf): Competitive Analysis
+# SPECKit vs BMAD vs Hexagonal Architecture (hex): Competitive Analysis
 
 ## 1. SPECKit (GitHub Spec Kit)
 
@@ -86,7 +86,7 @@
 
 ---
 
-## 3. Why Hexagonal Architecture (hex-intf) Is Superior for AI Agent Code Generation
+## 3. Why Hexagonal Architecture (hex) Is Superior for AI Agent Code Generation
 
 ### The Core Problem Neither SPECKit Nor BMAD Solves
 
@@ -96,11 +96,11 @@ Both SPECKit and BMAD operate at the **process** level -- they structure *how* y
 - There is no automated way to detect when generated code violates architecture rules
 - As projects grow, AI-generated code becomes increasingly entangled and unmaintainable
 
-### hex-intf's Architectural Advantages
+### hex's Architectural Advantages
 
-| Capability | SPECKit | BMAD | hex-intf |
+| Capability | SPECKit | BMAD | hex |
 |---|---|---|---|
-| **Architecture enforcement** | None | Document-level only | Automated static analysis (`hex-intf analyze`) |
+| **Architecture enforcement** | None | Document-level only | Automated static analysis (`hex analyze`) |
 | **Boundary violation detection** | None | None | Import-graph analysis with clear error messages |
 | **Adapter isolation** | None | None | Enforced: adapters cannot import other adapters |
 | **Multi-agent orchestration** | None | Manual persona switching | Real swarm coordination via ruflo (hierarchical/mesh topology) |
@@ -113,13 +113,13 @@ Both SPECKit and BMAD operate at the **process** level -- they structure *how* y
 
 ### Why Architecture-First Beats Spec-First for AI Agents
 
-1. **Bounded context for generation**: When an AI agent is told "implement this adapter against this port interface," it has clear input/output contracts. SPECKit and BMAD give agents prose descriptions; hex-intf gives them typed interfaces.
+1. **Bounded context for generation**: When an AI agent is told "implement this adapter against this port interface," it has clear input/output contracts. SPECKit and BMAD give agents prose descriptions; hex gives them typed interfaces.
 
-2. **Mechanical verification**: `hex-intf analyze` checks every import path. No human review needed to catch boundary violations. SPECKit and BMAD rely on the AI (or human) to notice architectural drift.
+2. **Mechanical verification**: `hex analyze` checks every import path. No human review needed to catch boundary violations. SPECKit and BMAD rely on the AI (or human) to notice architectural drift.
 
 3. **Token-efficient summaries**: Tree-sitter extracts only function signatures, types, and export surfaces (L0-L3 detail levels). A 500-line adapter becomes a 30-line summary. BMAD's sharding helps but still passes full markdown documents. SPECKit has no strategy at all.
 
-4. **True multi-agent parallelism**: hex-intf + ruflo supports real swarm topologies where multiple agents work on different adapters simultaneously with file-level claim coordination. Neither SPECKit nor BMAD can run parallel agents.
+4. **True multi-agent parallelism**: hex + ruflo supports real swarm topologies where multiple agents work on different adapters simultaneously with file-level claim coordination. Neither SPECKit nor BMAD can run parallel agents.
 
 5. **Composability via ports**: Ports are stable contracts. Adapters are swappable. An AI agent can replace a `FileSystemAdapter` with an `S3Adapter` without touching any other code. SPECKit and BMAD have no concept of swappable implementation boundaries.
 
@@ -127,7 +127,7 @@ Both SPECKit and BMAD operate at the **process** level -- they structure *how* y
 
 ### Summary
 
-SPECKit and BMAD improve the *conversation* with AI. hex-intf improves the *output*. In a world where AI agents generate code autonomously, the architecture of that code matters more than the process used to prompt it. Hexagonal architecture provides the mechanical guardrails that prevent AI-generated codebases from drifting into unmaintainable complexity.
+SPECKit and BMAD improve the *conversation* with AI. hex improves the *output*. In a world where AI agents generate code autonomously, the architecture of that code matters more than the process used to prompt it. Hexagonal architecture provides the mechanical guardrails that prevent AI-generated codebases from drifting into unmaintainable complexity.
 
 ---
 

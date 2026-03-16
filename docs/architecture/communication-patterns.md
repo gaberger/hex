@@ -1,12 +1,12 @@
 # Cross-Language Communication Patterns for Hexagonal Architecture
 
-> Reference guide for the `dependency-analyst` agent when recommending IPC/API patterns between hex-intf components across TypeScript, Go, and Rust boundaries.
+> Reference guide for the `dependency-analyst` agent when recommending IPC/API patterns between hex components across TypeScript, Go, and Rust boundaries.
 
 ---
 
 ## Overview
 
-In a multi-language hexagonal architecture, the **port interface** defines the contract and the **adapter** implements the transport. Domain logic never knows whether `ILLMPort.prompt()` crosses a REST boundary, a gRPC channel, or a WASM bridge. This document catalogs seven communication patterns, their hex-intf mappings, and when to recommend each.
+In a multi-language hexagonal architecture, the **port interface** defines the contract and the **adapter** implements the transport. Domain logic never knows whether `ILLMPort.prompt()` crosses a REST boundary, a gRPC channel, or a WASM bridge. This document catalogs seven communication patterns, their hex mappings, and when to recommend each.
 
 ---
 
@@ -178,7 +178,7 @@ React Game UI  <--[ws://game.example.com/play]--> Go WebSocketAdapter
 
 ### Hex-intf Mapping
 
-- **Port**: Any output port calling another hex-intf service. `IBuildPort` calling a remote build farm, `IASTPort` calling a tree-sitter service.
+- **Port**: Any output port calling another hex service. `IBuildPort` calling a remote build farm, `IASTPort` calling a tree-sitter service.
 - **Adapter**: `GrpcClientAdapter` (driven) wraps generated stubs. `GrpcServerAdapter` (driving) exposes use cases.
 - **Structure**: `.proto` files define the contract. Generated code implements the serialization. The adapter translates between protobuf types and domain types.
 
@@ -255,7 +255,7 @@ Go Orchestrator --> IBuildPort --> GrpcBuildClient --> [h2] --> Rust GrpcBuildSe
 - Decoupled adapters that should not know about each other (e.g., `CodeGenerated` event triggers both testing and documentation).
 - Workflow orchestration with durable message delivery (JetStream).
 - Fan-out patterns: one event, many handlers.
-- Cross-service domain events in a distributed hex-intf deployment.
+- Cross-service domain events in a distributed hex deployment.
 
 ### Hex-intf Mapping
 
@@ -500,7 +500,7 @@ Node CLI --> IASTPort --> NapiASTAdapter --> [N-API] --> Rust tree-sitter (nativ
 ### Hex-intf Mapping
 
 - **Port**: Any output port calling a colocated service. `IBuildPort` calling a local compiler daemon, `IASTPort` calling a local tree-sitter server.
-- **Adapter**: `UnixSocketBuildAdapter` connects to `/var/run/hex-intf/build.sock`. Protocol on top can be JSON-RPC, newline-delimited JSON, or protobuf.
+- **Adapter**: `UnixSocketBuildAdapter` connects to `/var/run/hex/build.sock`. Protocol on top can be JSON-RPC, newline-delimited JSON, or protobuf.
 - **Structure**: The adapter manages the socket connection. The port interface is identical to a REST or gRPC version -- only the adapter changes.
 
 ```
@@ -520,7 +520,7 @@ Go Orchestrator --> IBuildPort --> UnixSocketBuildAdapter --> /var/run/build.soc
 Moderate. The socket path and protocol are simple, but the connection management code adds some noise. Recommend using a standard protocol (JSON-RPC 2.0) on top for L2-friendly summaries:
 
 ```
-Unix Socket: /var/run/hex-intf/build.sock
+Unix Socket: /var/run/hex/build.sock
 Protocol: JSON-RPC 2.0
 Methods:
   compile({ projectId, target }) -> { success, artifacts[], duration }
@@ -603,7 +603,7 @@ Event-driven / multiple consumers?
 
 ## Hybrid Approaches
 
-Real projects rarely use a single communication pattern. Here are common combinations for hex-intf projects:
+Real projects rarely use a single communication pattern. Here are common combinations for hex projects:
 
 ### Pattern 1: REST + WebSocket + WASM (Interactive Application)
 
@@ -668,7 +668,7 @@ Client:
   TS Browser --[WASM]--> Rust Validation (same code, compiled to WASM)  (instant feedback)
 ```
 
-The same Rust validation code compiles to both a native gRPC server and a WASM module. The hex-intf port `IValidationPort` has three adapters:
+The same Rust validation code compiles to both a native gRPC server and a WASM module. The hex port `IValidationPort` has three adapters:
 
 1. `NativeValidationAdapter` -- direct Rust call (server-side)
 2. `GrpcValidationAdapter` -- remote call from Go (server-to-server)

@@ -1,7 +1,7 @@
 # Root Cause Analysis: Flappy Bird — 30 Tests Pass, Game Unplayable
 
 **Date**: 2026-03-15
-**Project**: hex-intf example — `examples/flappy-bird`
+**Project**: hex example — `examples/flappy-bird`
 **Symptom**: All 30 unit tests green. Manual play: bird flies down on tap, dies on ceiling, first tap ignored.
 
 ---
@@ -49,7 +49,7 @@
 
 ---
 
-## 2. Why hex-intf Did Not Catch This
+## 2. Why hex Did Not Catch This
 
 ### Quality Gates (Compile -> Lint -> Test)
 
@@ -65,7 +65,7 @@ Phase 6 (`6_actually_runs`) executes install and test scripts. It does NOT run t
 
 ### Adversarial Review (Contract Hunter)
 
-hex-intf does not currently include an adversarial review agent. A Contract Hunter that cross-references function signatures against their call sites would have found:
+hex does not currently include an adversarial review agent. A Contract Hunter that cross-references function signatures against their call sites would have found:
 - `applyFlap` is called with `config.flapStrength` which is `-280`, but the function negates it. The hunter would flag: "sign of return value depends on sign convention of input — is this intentional?"
 - `checkBounds` has two conditions but only one is tested at the integration level.
 
@@ -153,16 +153,16 @@ Add the following to `agents/dependency-analyst.yml`:
 
 ---
 
-## 5. Lessons for hex-intf
+## 5. Lessons for hex
 
 1. **Unit tests with mocks can encode bugs as correct.** When the same LLM writes code and tests in one pass, the tests reflect the LLM's understanding — including its misunderstandings. The test suite becomes a mirror, not an oracle.
 
 2. **LLMs generate "plausible" physics that compiles but does not match reality.** The double-negation in `applyFlap` is syntactically reasonable. An LLM with no physics intuition (or wrong Flappy Bird mental model) will produce code that looks right, types correctly, and passes self-generated tests.
 
-3. **The compile-lint-test loop catches structural bugs, not semantic bugs.** Structural: missing imports, type mismatches, undefined variables. Semantic: bird goes down instead of up, ceiling kills instead of allowing flyover. hex-intf's quality gates are entirely structural today.
+3. **The compile-lint-test loop catches structural bugs, not semantic bugs.** Structural: missing imports, type mismatches, undefined variables. Semantic: bird goes down instead of up, ceiling kills instead of allowing flyover. hex's quality gates are entirely structural today.
 
 4. **Semantic bugs require one of**: (a) property-based tests derived from domain invariants, (b) behavioral acceptance tests written BEFORE implementation, (c) integration smoke tests that exercise the real composition root, or (d) human/automated playtesting. The framework must add at least one of these to close the gap.
 
 5. **Immutable state composition is an integration-level concern.** Bug 3 only appeared in the composition root where multiple state transitions chain. Unit tests of individual functions cannot catch this class of bug. The framework needs a "composition root validation" step.
 
-**Bottom line**: hex-intf's current architecture ensures code that builds and passes its own tests. It does not ensure code that does what the user asked for. Closing this gap requires behavioral specifications, property tests, and smoke tests — all concrete additions to the agent pipeline and quality gate sequence.
+**Bottom line**: hex's current architecture ensures code that builds and passes its own tests. It does not ensure code that does what the user asked for. Closing this gap requires behavioral specifications, property tests, and smoke tests — all concrete additions to the agent pipeline and quality gate sequence.

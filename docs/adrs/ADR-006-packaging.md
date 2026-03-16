@@ -5,7 +5,7 @@
 
 ## Context
 
-hex-intf produces reusable artifacts: project scaffolds, code generation workflows, and agent configurations. These need to be distributable in formats that match how consumers adopt them — from casual one-off use (skill trigger) to full integration (npm package).
+hex produces reusable artifacts: project scaffolds, code generation workflows, and agent configurations. These need to be distributable in formats that match how consumers adopt them — from casual one-off use (skill trigger) to full integration (npm package).
 
 ## Decision
 
@@ -16,7 +16,7 @@ We support **three packaging formats**, each targeting a different adoption leve
 For end users who invoke capabilities via natural language triggers.
 
 ```yaml
-name: hex-intf-scaffold
+name: hex-scaffold
 triggers: ["create hex project", "scaffold hexagonal", "new ports and adapters"]
 ```
 
@@ -53,9 +53,9 @@ Agents start with L1 summaries of the full project, drill to L2 for their assign
 For programmatic integration into CI/CD pipelines and developer toolchains.
 
 ```bash
-npx hex-intf init --lang typescript --name my-project
-npx hex-intf generate --adapter secondary/database --from spec.md
-npx hex-intf summarize --level L2 --output context.txt
+npx hex init --lang typescript --name my-project
+npx hex generate --adapter secondary/database --from spec.md
+npx hex summarize --level L2 --output context.txt
 ```
 
 The npm package exposes the full port interface programmatically, enabling custom adapters and build integrations.
@@ -66,7 +66,7 @@ The npm package exposes the full port interface programmatically, enabling custo
 - Skills and agent definitions are embedded in the npm package under `skills/` and `agents/`
 - npm is the sole distribution channel; skills and agent YAMLs are extracted at install time
 - Breaking port interface changes require a major version bump
-- Agent definitions pin a minimum hex-intf version to ensure port compatibility
+- Agent definitions pin a minimum hex version to ensure port compatibility
 
 ## Consequences
 

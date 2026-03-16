@@ -119,7 +119,7 @@ The quality-score and code-generator tests show moderate mirroring risk. The qua
 | Test | External Dependency | Risk |
 |---|---|---|
 | `filesystem-adapter.test.ts` | Real filesystem via `tmpdir()` | **Acceptable** -- uses temp dir with cleanup. Deterministic. |
-| `composition-root.test.ts` | Hardcoded path `/Volumes/ExtendedStorage/PARA/01-Projects/hex-intf` | **CRITICAL**: Fails on any other machine. Not portable. |
+| `composition-root.test.ts` | Hardcoded path `/Volumes/ExtendedStorage/PARA/01-Projects/hex` | **CRITICAL**: Fails on any other machine. Not portable. |
 | `self-analysis.test.ts` (E2E) | Same hardcoded path + real tree-sitter WASM grammars | **CRITICAL**: Fails on any other machine and requires grammar installation. |
 
 ### Determinism issues
@@ -136,7 +136,7 @@ The integration and E2E tests are machine-specific. The hardcoded `PROJECT_ROOT`
 ## 5. Property-Based Testing Assessment
 
 ### Current state
-The only property-based test in the project is `examples/flappy-bird/tests/property/physics-properties.test.ts` for the Flappy Bird example. The core `hex-intf` framework has **zero property tests**.
+The only property-based test in the project is `examples/flappy-bird/tests/property/physics-properties.test.ts` for the Flappy Bird example. The core `hex` framework has **zero property tests**.
 
 ### Modules that SHOULD have property tests
 
@@ -233,7 +233,7 @@ Good -- this checks specific error content. However, no test verifies that succe
 
 3. **Add ruflo-adapter unit tests** (8/10): The `extractJson` method, `toSwarmStatus` field mapping with fallback chains, and `mcpExec` error wrapping are all untested. Mock `execFile` and test parsing edge cases.
 
-4. **Fix hardcoded paths in integration/E2E tests** (8/10): Replace `/Volumes/ExtendedStorage/PARA/01-Projects/hex-intf` with `import.meta.dir` or `process.cwd()`. These tests cannot run on CI or any other developer's machine.
+4. **Fix hardcoded paths in integration/E2E tests** (8/10): Replace `/Volumes/ExtendedStorage/PARA/01-Projects/hex` with `import.meta.dir` or `process.cwd()`. These tests cannot run on CI or any other developer's machine.
 
 5. **Add property tests for QualityScore** (9/10): The current tests encode exact formula weights. Add property tests: score always in [0,100], monotonically increases with better inputs, `compileSuccess=false` always yields 0.
 
@@ -268,7 +268,7 @@ Good -- this checks specific error content. However, no test verifies that succe
 - **import-boundary-checker.test.ts**: Good behavioral testing with `validatePlannedImports` covering multi-violation scenarios and edge cases like unknown layers.
 - **task-graph.test.ts**: Tests diamond dependencies and reverse-order insertion for topological sort. Strong behavioral focus.
 - **feedback-loop.test.ts**: Good factory-based fixtures (`makeQualityScore`, `makeFeedbackIteration`) that make tests readable and maintainable.
-- **self-analysis.test.ts (E2E)**: Despite machine-specificity, this is a valuable "eats its own dog food" test that verifies hex-intf can analyze itself.
+- **self-analysis.test.ts (E2E)**: Despite machine-specificity, this is a valuable "eats its own dog food" test that verifies hex can analyze itself.
 - **todo-app tests**: The example todo-app has excellent London-school mock tests demonstrating the framework's testing philosophy. Good edge case coverage (empty title, not found, filter combinations).
 - **Test fixtures**: The shared `fixtures.ts` file with factory functions and sensible defaults follows best practices for test data management.
 

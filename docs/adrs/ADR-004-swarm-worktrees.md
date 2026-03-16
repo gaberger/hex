@@ -19,14 +19,14 @@ Each agent receives a dedicated **git worktree** linked to a feature branch. The
 | **Separate clones** | Yes | Low | Heavy disk/network cost |
 | **Worktrees** | Yes — each has own dir | Low — isolated until merge | Lightweight, shares .git |
 
-Worktrees give each agent a real filesystem path (`../hex-intf-<task>`) while sharing the object database. Agents read and write freely without coordination locks.
+Worktrees give each agent a real filesystem path (`../hex-<task>`) while sharing the object database. Agents read and write freely without coordination locks.
 
 ### Ruflo Integration
 
 The swarm coordinator maps each Ruflo task to a worktree:
 
 1. `task_create("impl-cli-adapter")` registers the task
-2. `IWorktreePort.create("feat/cli-adapter")` creates `../hex-intf-cli-adapter/`
+2. `IWorktreePort.create("feat/cli-adapter")` creates `../hex-cli-adapter/`
 3. Agent spawns with `cwd` set to the worktree path
 4. On completion: `task_complete` records the commit hash from the worktree
 

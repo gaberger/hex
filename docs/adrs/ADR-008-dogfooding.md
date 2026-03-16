@@ -1,20 +1,20 @@
-# ADR-008: Dogfooding — hex-intf Built with Hexagonal Architecture
+# ADR-008: Dogfooding — hex Built with Hexagonal Architecture
 
 ## Status: Accepted
 ## Date: 2026-03-15
 
 ## Context
 
-hex-intf is a framework that prescribes hexagonal architecture for AI-driven development projects. If the framework itself doesn't follow its own patterns, we lose:
+hex is a framework that prescribes hexagonal architecture for AI-driven development projects. If the framework itself doesn't follow its own patterns, we lose:
 
 1. **Credibility** — users won't trust patterns we don't use ourselves
 2. **Validation** — we can't prove the patterns work at framework scale
-3. **Self-hosting** — hex-intf agents should be able to modify hex-intf itself using hex-intf's own tooling (L2 summaries, quality gates, feedback loops)
-4. **Consistency** — tree-sitter summaries of hex-intf's code should match the patterns documented in its architecture spec
+3. **Self-hosting** — hex agents should be able to modify hex itself using hex's own tooling (L2 summaries, quality gates, feedback loops)
+4. **Consistency** — tree-sitter summaries of hex's code should match the patterns documented in its architecture spec
 
 ## Decision
 
-hex-intf is built using its own hexagonal architecture:
+hex is built using its own hexagonal architecture:
 
 - **Domain Core** (`src/core/domain/`, `src/core/usecases/`): Pure business logic — feedback loops, quality scoring, task graphs, event handling. Zero external dependencies.
 - **Port Interfaces** (`src/core/ports/`): Typed contracts for all boundaries — AST, LLM, Build, Git, Worktree, FileSystem, Notification. No implementation details.
@@ -32,16 +32,16 @@ hex-intf is built using its own hexagonal architecture:
 
 ### Self-Hosting Test
 
-hex-intf passes the "self-hosting test" when:
-- `hex-intf summarize --level L2` produces valid summaries of its own codebase
-- `hex-intf generate --adapter secondary/treesitter` can be used to modify the tree-sitter adapter
-- Quality gates run on hex-intf's own code during development
-- Agents can work on hex-intf using hex-intf's worktree isolation
+hex passes the "self-hosting test" when:
+- `hex summarize --level L2` produces valid summaries of its own codebase
+- `hex generate --adapter secondary/treesitter` can be used to modify the tree-sitter adapter
+- Quality gates run on hex's own code during development
+- Agents can work on hex using hex's worktree isolation
 
 ## Consequences
 
 - **Positive**: Framework is validated by its own usage — bugs surface immediately
-- **Positive**: L2 summaries of hex-intf serve as both documentation and test data
+- **Positive**: L2 summaries of hex serve as both documentation and test data
 - **Positive**: Contributors use the same patterns they're building
 - **Negative**: Bootstrap problem — early development can't use the framework's own tooling (solved by progressive bootstrapping)
 - **Negative**: Stricter constraints slow initial development (acceptable tradeoff)

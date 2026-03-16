@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hex-intf Security Gate — Pre-commit hook
+# hex Security Gate — Pre-commit hook
 # Blocks on CRITICAL/HIGH findings, warns on MEDIUM/LOW
 # Checks: path traversal, secrets, input validation, dependency audit
 
@@ -22,7 +22,7 @@ high() { echo -e "${RED}HIGH${NC}: $1"; ((HIGH++)); }
 warn() { echo -e "${YELLOW}MEDIUM${NC}: $1"; ((MEDIUM++)); }
 info() { echo -e "${YELLOW}LOW${NC}: $1"; ((LOW++)); }
 
-echo -e "${BOLD}hex-intf Security Gate${NC}"
+echo -e "${BOLD}hex Security Gate${NC}"
 echo "────────────────────────────────"
 
 # ── 1. Path Traversal ─────────────────────────────────
