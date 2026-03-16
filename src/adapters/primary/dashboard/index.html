@@ -20,7 +20,15 @@ a{color:var(--accent);text-decoration:none}
 .header{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;background:var(--card);border-bottom:1px solid var(--border)}
 .header h1{font-size:1.25rem;font-weight:600;letter-spacing:.5px}
 .header h1 span{color:var(--accent)}
-.header-right{display:flex;align-items:center;gap:16px;font-size:.85rem;color:var(--text2)}
+.header-right{display:flex;align-items:center;gap:20px;font-size:.85rem;color:var(--text2)}
+.project-info{display:flex;align-items:center;gap:10px}
+.project-name{font-weight:700;color:var(--accent);font-size:.95rem}
+.project-path{color:var(--text2);font-size:.75rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ast-badge{padding:2px 8px;border-radius:10px;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.ast-real{background:rgba(102,187,106,.15);color:var(--green)}
+.ast-stub{background:rgba(255,167,38,.15);color:var(--yellow)}
+.health-updated{margin-top:8px;font-size:.75rem;color:var(--text2);text-align:right}
+.swarm-unavailable{color:var(--text2);font-size:.85rem;font-style:italic;padding:16px 0;text-align:center}
 .conn-badge{display:flex;align-items:center;gap:6px}
 .conn-dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block}
 .conn-dot.disconnected{background:var(--red);animation:pulse 1.5s infinite}
@@ -136,11 +144,15 @@ a{color:var(--accent);text-decoration:none}
 <header class="header">
   <h1><span>hex-intf</span> Dashboard</h1>
   <div class="header-right">
+    <div class="project-info" id="projectInfo">
+      <span class="project-name" id="projectName">Loading...</span>
+      <span class="project-path" id="projectPath"></span>
+      <span class="ast-badge" id="astBadge"></span>
+    </div>
     <div class="conn-badge">
       <span class="conn-dot" id="connDot"></span>
       <span id="connLabel">Connecting...</span>
     </div>
-    <span id="versionLabel">v0.1.0</span>
   </div>
 </header>
 
@@ -166,10 +178,12 @@ a{color:var(--accent);text-decoration:none}
         <div class="health-stat"><span class="num" id="hViolations">--</span><span class="lbl">violations</span></div>
         <div class="health-stat"><span class="num" id="hUnused">--</span><span class="lbl">unused ports</span></div>
         <div class="health-stat"><span class="num" id="hDead">--</span><span class="lbl">dead exports</span></div>
+        <div class="health-stat"><span class="num" id="hCircular">--</span><span class="lbl">circular deps</span></div>
       </div>
     </div>
     <div class="violations-list" id="violationsList"></div>
     <div class="unused-list" id="unusedList"></div>
+    <div class="health-updated" id="healthUpdated"></div>
   </div>
 
   <!-- Token Efficiency -->
@@ -339,6 +353,32 @@ a{color:var(--accent);text-decoration:none}
     }
   }
 
+  // --- Project Info ---
+  function loadProject() {
+    apiFetch('/api/project').then(function(data) {
+      if (!data) {
+        setText('#projectName', 'Not connected');
+        setText('#projectPath', '');
+        var badge = $('#astBadge');
+        badge.textContent = '';
+        badge.className = 'ast-badge';
+        // Retry in 5 seconds if disconnected
+        setTimeout(loadProject, 5000);
+        return;
+      }
+      setText('#projectName', data.name || 'Unknown');
+      setText('#projectPath', data.rootPath || '');
+      var badge = $('#astBadge');
+      if (data.astIsStub) {
+        badge.textContent = 'stub AST';
+        badge.className = 'ast-badge ast-stub';
+      } else {
+        badge.textContent = 'real AST';
+        badge.className = 'ast-badge ast-real';
+      }
+    });
+  }
+
   // --- API Fetch ---
   function apiFetch(url) {
     return fetch(url).then(function(res) {
@@ -393,6 +433,13 @@ a{color:var(--accent);text-decoration:none}
       var dead = data.deadExports || data.unusedExports || [];
       var deadCount = Array.isArray(dead) ? dead.length : (dead || 0);
       setText('#hDead', deadCount);
+
+      var circular = data.circularDependencies || data.cycles || [];
+      var circularCount = Array.isArray(circular) ? circular.length : (circular || 0);
+      setText('#hCircular', circularCount);
+      $('#hCircular').style.color = circularCount > 0 ? '#ef5350' : '#66bb6a';
+
+      setText('#healthUpdated', 'Updated: ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }));
 
       // Violations list
       var vList = $('#violationsList');
@@ -465,19 +512,28 @@ a{color:var(--accent);text-decoration:none}
         { key: 'l2', el: 'L2' },
         { key: 'l3', el: 'L3' },
       ];
-      var maxTok = Math.max(data.l0 || 0, data.l1 || 0, data.l2 || 0, data.l3 || 0, 1);
+
+      // API returns { l0: { tokens, exports, imports, lines }, ... }
+      function tokVal(key) {
+        var entry = data[key];
+        if (!entry) return 0;
+        if (typeof entry === 'number') return entry;
+        return entry.tokens || 0;
+      }
+
+      var maxTok = Math.max(tokVal('l0'), tokVal('l1'), tokVal('l2'), tokVal('l3'), 1);
 
       levels.forEach(function(lv) {
-        var val = data[lv.key] || 0;
+        var val = tokVal(lv.key);
         setText('#tok' + lv.el, val + ' tok');
         var pct = maxTok > 0 ? (val / maxTok) * 100 : 0;
         $('#bar' + lv.el).style.width = pct + '%';
 
-        var l3 = data.l3 || 1;
+        var l3Val = tokVal('l3') || 1;
         if (lv.key === 'l3') {
           setText('#pct' + lv.el, 'base');
         } else {
-          var ratio = Math.round((1 - val / l3) * 100);
+          var ratio = Math.round((1 - val / l3Val) * 100);
           setText('#pct' + lv.el, ratio + '%');
         }
       });
@@ -487,12 +543,27 @@ a{color:var(--accent);text-decoration:none}
   // --- Swarm Panel ---
   function loadSwarm() {
     apiFetch('/api/swarm').then(function(data) {
-      if (!data) return;
+      if (!data) {
+        // Show unavailable message
+        var panel = $('#swarmPanel');
+        var existing = panel.querySelector('.swarm-unavailable');
+        if (!existing) {
+          existing = createEl('div', { className: 'swarm-unavailable', textContent: 'Swarm not connected. Start a swarm to see agent and task status.' });
+          panel.appendChild(existing);
+        }
+        return;
+      }
 
-      var status = (data.status || 'idle').toLowerCase();
+      // Remove unavailable message if present
+      var unavail = $('#swarmPanel').querySelector('.swarm-unavailable');
+      if (unavail) unavail.remove();
+
+      // status may be a string or an object { status: 'idle', ... }
+      var statusObj = data.status || {};
+      var statusStr = (typeof statusObj === 'string' ? statusObj : (statusObj.status || 'idle')).toLowerCase();
       var badge = $('#swarmBadge');
-      badge.textContent = status;
-      badge.className = 'status-badge status-' + status;
+      badge.textContent = statusStr;
+      badge.className = 'status-badge status-' + statusStr;
 
       var agents = data.agents || [];
       var tasks = data.tasks || [];
@@ -870,6 +941,7 @@ a{color:var(--accent);text-decoration:none}
     tList.appendChild(createEl('div', { className: 'empty', textContent: 'No tasks registered' }));
 
     // Initial data load
+    loadProject();
     loadHealth();
     loadTokenOverview();
     loadSwarm();
