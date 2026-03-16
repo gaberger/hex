@@ -9,6 +9,9 @@
     "build": "bun build src/index.ts --outdir dist --target bun",
     "check": "tsc --noEmit"
   },
+  "dependencies": {
+    "hex": "link:../../"
+  },
   "devDependencies": {
     "typescript": "^5.0.0"
   }

@@ -1,5 +1,5 @@
 {
-  "name": "hex-intf-todo-example",
+  "name": "hex-todo-example",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
@@ -7,6 +7,9 @@
     "serve": "bun run src/cli.ts serve",
     "test": "bun test",
     "dev": "bun --watch run src/cli.ts serve"
+  },
+  "dependencies": {
+    "hex": "link:../../"
   },
   "devDependencies": {
     "@types/bun": "latest"

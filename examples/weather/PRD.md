@@ -9,7 +9,7 @@ I want to create a golang backend and an htmx front end that provides F1 race st
 - **Stack:** Go + TypeScript
 - **Structure:** Multi-stack (backend/ + frontend/)
 - **Architecture:** Hexagonal (ports & adapters)
-- **Scaffolded by:** hex-intf
+- **Scaffolded by:** hex
 
 ## Scope
 
@@ -45,4 +45,4 @@ src/
 1. Fill in domain entities based on the summary above
 2. Define port interfaces for each boundary
 3. Implement adapters
-4. Run `hex-intf analyze .` to validate architecture
+4. Run `hex analyze .` to validate architecture

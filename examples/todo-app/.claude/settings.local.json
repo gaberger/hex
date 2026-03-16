@@ -1,8 +1,8 @@
 {
-  "permissions": {
-    "allow": [
-      "Bash(bun test:*)",
-      "Bash(bun run:*)"
-    ]
+  "mcpServers": {
+    "hex": {
+      "command": "npx",
+      "args": ["hex", "mcp"]
+    }
   }
 }

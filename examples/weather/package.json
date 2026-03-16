@@ -12,6 +12,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "hex": "link:../../",
     "tree-sitter-wasms": "^0.1.13"
   }
 }

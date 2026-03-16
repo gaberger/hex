@@ -1,6 +1,6 @@
 ---
 name: hex-scaffold
-description: Scaffold a new hexagonal architecture project. Use when the user asks to "create hex project", "scaffold hexagonal", "new ports and adapters project", "hex-intf init", or "init hexagonal project".
+description: Scaffold a new hexagonal architecture project. Use when the user asks to "create hex project", "scaffold hexagonal", "new ports and adapters project", "hex init", or "init hexagonal project".
 ---
 
 # Hex Scaffold — Create a Hexagonal Architecture Project
@@ -76,7 +76,7 @@ Each adapter must implement its corresponding port interface with dependency inj
 
 ## Step 6: Install Dependencies
 
-For TypeScript: `bun install` or `npm install` with hex-intf and tree-sitter-wasms as dependencies.
+For TypeScript: `bun install` or `npm install` with hex and tree-sitter-wasms as dependencies.
 
 ## Step 7: Verify Scaffold
 

@@ -1,6 +1,6 @@
 # My Hex Project
 
-Scaffolded with [hex-intf](https://github.com/your-org/hex-intf).
+Scaffolded with [hex](https://github.com/your-org/hex).
 
 ## Quick Start
 

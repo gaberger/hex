@@ -1,6 +1,6 @@
-# Todo App - hex-intf Hexagonal Architecture Example
+# Todo App - hex Hexagonal Architecture Example
 
-A fully working Todo application demonstrating hexagonal (ports & adapters) architecture patterns from the hex-intf framework.
+A fully working Todo application demonstrating hexagonal (ports & adapters) architecture patterns from the hex framework.
 
 ## Architecture
 

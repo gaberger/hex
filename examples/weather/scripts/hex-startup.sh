@@ -1,12 +1,12 @@
 #!/bin/bash
-# hex-intf session-start hook â presents project context on first prompt
+# hex session-start hook â presents project context on first prompt
 set -e
 
-# Only run in hex-intf projects
+# Only run in hex projects
 [ ! -f "PRD.md" ] || [ ! -f "CLAUDE.md" ] && exit 0
 
 echo ""
-echo "=== hex-intf Project ==="
+echo "=== hex Project ==="
 echo ""
 
 # Extract project info from PRD.md
@@ -41,6 +41,6 @@ elif [ "$P" -eq 0 ]; then echo "Next: Define port interfaces in $BASE/src/core/p
 elif [ "$U" -eq 0 ]; then echo "Next: Implement use cases in $BASE/src/core/usecases/"
 elif [ "$PA" -eq 0 ] && [ "$SA" -eq 0 ]; then echo "Next: Implement adapters"
 elif [ "$T" -eq 0 ]; then echo "Next: Add tests"
-else echo "Next: Run hex-intf analyze . to validate"
+else echo "Next: Run hex analyze . to validate"
 fi
 echo "==========================="

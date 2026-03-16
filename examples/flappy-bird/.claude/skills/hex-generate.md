@@ -63,7 +63,7 @@ Run quality gates in order, up to max_iterations:
 1. **Compile**: `npx tsc --noEmit` / `go build ./...` / `cargo check`
 2. **Lint**: `npx eslint src/adapters/{adapter}/ --ext .ts` / equivalent
 3. **Unit Test**: `npx vitest run tests/unit/{adapter_name}.test.ts` / equivalent
-4. **AST Diff** (optional): `npx hex-intf summarize --file src/adapters/{adapter}/index.ts --level L2`
+4. **AST Diff** (optional): `npx hex summarize --file src/adapters/{adapter}/index.ts --level L2`
 
 On failure:
 1. Parse structured error output from the failing gate
@@ -86,7 +86,7 @@ Re-run quality gates after refactoring to confirm nothing broke.
 
 ## Step 7: Run Architecture Analysis
 
-Run `hex-intf analyze .` to verify the new adapter does not introduce boundary violations or circular dependencies.
+Run `hex analyze .` to verify the new adapter does not introduce boundary violations or circular dependencies.
 
 ## Output
 

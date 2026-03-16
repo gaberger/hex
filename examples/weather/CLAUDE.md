@@ -58,4 +58,4 @@ When a new conversation begins, a SessionStart hook runs `scripts/hex-startup.sh
 4. **Adapters** — Implement primary (input) and secondary (output) adapters
 5. **Composition Root** — Wire adapters to ports in `composition-root`
 6. **Tests** — Unit tests (London-school mocks) + integration tests
-7. **Validate** — Run `hex-intf analyze .` to check architecture health
+7. **Validate** — Run `hex analyze .` to check architecture health

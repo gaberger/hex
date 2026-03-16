@@ -1,4 +1,4 @@
-# Flappy Bird — hex-intf Example
+# Flappy Bird — hex Example
 
 A Flappy Bird clone built with hexagonal architecture (ports and adapters), demonstrating the **behavioral-specification-first** pipeline.
 
