@@ -769,6 +769,42 @@ The composition root selects the adapter chain based on environment. Secrets nev
 
 <br/>
 
+## Credits & References
+
+hex builds on the **Hexagonal Architecture** pattern (also known as **Ports and Adapters**), originally conceived by **Alistair Cockburn** in 2005.
+
+> *"Allow an application to equally be driven by users, programs, automated test or batch scripts, and to be developed and tested in isolation from its eventual run-time devices and databases."*
+> — Alistair Cockburn
+
+### Foundational Work
+
+- **[Hexagonal Architecture](https://alistair.cockburn.us/hexagonal-architecture/)** — Alistair Cockburn's original article defining the Ports and Adapters pattern
+- **[Growing Object-Oriented Software, Guided by Tests](http://www.growing-object-oriented-software.com/)** — Steve Freeman & Nat Pryce. The London-school TDD approach that hex's test strategy follows
+- **[Clean Architecture](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)** — Robert C. Martin. Concentric dependency rule that hex enforces via static analysis
+
+### Key Technologies
+
+- **[tree-sitter](https://tree-sitter.github.io/)** — Max Brunsfeld et al. Language-agnostic parsing framework powering hex's L0-L3 AST summaries
+- **[ruflo / claude-flow](https://github.com/ruvnet/claude-flow)** — Reuven Cohen ([@ruvnet](https://github.com/ruvnet)). Multi-agent swarm coordination framework
+- **[Infisical](https://github.com/Infisical/infisical)** — Open-source secrets management platform integrated via `ISecretsPort`
+
+### Authors
+
+| Contributor | Role |
+|:------------|:-----|
+| **Gary** ([@garyhost](https://github.com/garyhost)) | Creator, architect, primary developer |
+| **Claude** (Anthropic) | AI pair programmer — code generation, testing, documentation |
+
+### License
+
+[MIT](LICENSE) — Use it, fork it, build on it.
+
+<br/>
+
+---
+
+<br/>
+
 <p align="center">
   <img src="https://img.shields.io/badge/architecture-hexagonal-58a6ff?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiPjxwb2x5Z29uIHBvaW50cz0iMTIgMiAyMiA4LjUgMjIgMTUuNSAxMiAyMiAyIDE1LjUgMiA4LjUiLz48L3N2Zz4=" alt="Hexagonal Architecture"/>
   &nbsp;

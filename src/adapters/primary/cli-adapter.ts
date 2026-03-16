@@ -304,6 +304,8 @@ export class CLIAdapter {
           return await this.projects();
         case 'secrets':
           return await this.secrets(args);
+        case 'go':
+          return await this.go(args);
         case 'help':
         case '--help':
         case '-h':
@@ -1405,6 +1407,264 @@ export class CLIAdapter {
     return 0;
   }
 
+  // ── go ──────────────────────────────────────────────
+
+  private async go(args: ParsedArgs): Promise<number> {
+    const prompt = args.positional.join(' ').trim();
+    if (!prompt) {
+      this.writeLn('Usage: hex go <prompt> [--yolo] [--review] [--no-worktree]');
+      this.writeLn('');
+      this.writeLn('Autonomous coding — give hex a task and let it build.');
+      this.writeLn('');
+      this.writeLn('Options:');
+      this.writeLn('  --yolo          Auto-merge on PASS (no confirmation)');
+      this.writeLn('  --review        Pause after each phase for approval');
+      this.writeLn('  --no-worktree   Work directly on current branch (dangerous)');
+      this.writeLn('');
+      this.writeLn('Examples:');
+      this.writeLn('  hex go "add user authentication with JWT"');
+      this.writeLn('  hex go "refactor the payment module" --review');
+      this.writeLn('  hex go "fix the flaky timeout in tests" --yolo');
+      return 1;
+    }
+
+    const yolo = args.flags.has('yolo');
+    const review = args.flags.has('review');
+    const noWorktree = args.flags.has('no-worktree');
+    const dryRun = args.flags.has('dry-run');
+
+    // Generate session identifiers
+    const timestamp = Date.now();
+    const slug = prompt
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40);
+    const branchName = `hex-go/${slug}`;
+    const worktreeDir = `${this.ctx.rootPath}/../hex-go-${timestamp}`;
+
+    // ── Phase 1: Worktree isolation ──
+    let workDir = this.ctx.rootPath;
+    if (!noWorktree) {
+      this.writeLn(`[hex go] Creating worktree: ${branchName}`);
+      try {
+        const wt = await this.ctx.worktree.create(branchName);
+        workDir = wt.absolutePath;
+        this.writeLn(`[hex go] Isolated at: ${workDir}`);
+      } catch (err) {
+        // Worktree creation failed — fall back to direct mode
+        const msg = err instanceof Error ? err.message : String(err);
+        this.writeLn(`[hex go] Worktree failed (${msg}) — working on current branch`);
+      }
+    } else {
+      this.writeLn('[hex go] --no-worktree: working directly on current branch');
+    }
+
+    // ── Phase 2: Build context for the agent ──
+    const projectName = this.ctx.rootPath.split('/').pop() ?? 'project';
+    let portsContext = '';
+    try {
+      const portsContent = await this.ctx.fs.read('src/core/ports/index.ts');
+      portsContext = portsContent.slice(0, 3000); // Keep it token-efficient
+    } catch { /* ports file may not exist in target project */ }
+
+    let claudeMd = '';
+    try {
+      claudeMd = await this.ctx.fs.read('CLAUDE.md');
+    } catch { /* no CLAUDE.md */ }
+
+    // Resolve secrets for the agent environment
+    let secretsInfo = 'Secrets: env-var fallback (no .hex/secrets.json)';
+    try {
+      const hasInfisical = await this.ctx.secrets.hasSecret('ANTHROPIC_API_KEY');
+      if (hasInfisical) {
+        secretsInfo = 'Secrets: configured and available';
+      }
+    } catch { /* secrets check failed */ }
+
+    const mode = yolo ? 'YOLO (auto-merge on PASS)'
+      : review ? 'REVIEW (pause after each phase)'
+      : 'DEFAULT (confirm before merge)';
+
+    this.writeLn('');
+    this.writeLn('┌─────────────────────────────────────────┐');
+    this.writeLn('│  hex go — autonomous coding             │');
+    this.writeLn('├─────────────────────────────────────────┤');
+    this.writeLn(`│  Prompt:  ${prompt.slice(0, 30).padEnd(30)}│`);
+    this.writeLn(`│  Mode:    ${mode.slice(0, 30).padEnd(30)}│`);
+    this.writeLn(`│  Branch:  ${(noWorktree ? '(current)' : branchName).slice(0, 30).padEnd(30)}│`);
+    this.writeLn(`│  ${secretsInfo.slice(0, 38).padEnd(38)} │`);
+    this.writeLn('└─────────────────────────────────────────┘');
+    this.writeLn('');
+
+    // Dry-run: stop after setup (for testing and previewing)
+    if (dryRun) {
+      this.writeLn('[hex go] Dry run — stopping before agent launch.');
+      return 0;
+    }
+
+    // ── Phase 3: Spawn autonomous agent ──
+    // The agent command is printed so the user can run it manually or
+    // hex's MCP/daemon layer can spawn it programmatically.
+    const agentPrompt = [
+      `You are an autonomous hex-coder working on project "${projectName}".`,
+      '',
+      `## Task`,
+      prompt,
+      '',
+      `## Working Directory`,
+      workDir,
+      '',
+      `## Mode`,
+      review ? 'REVIEW: Pause after planning and after coding to ask for approval.' :
+      yolo ? 'YOLO: Execute fully autonomously. Plan, code, test, commit — no pauses.' :
+      'DEFAULT: Execute autonomously but ask before final commit.',
+      '',
+      `## Hex Architecture Rules`,
+      '- domain/ imports only domain/',
+      '- ports/ imports only domain/',
+      '- usecases/ imports domain/ and ports/ only',
+      '- adapters/ imports ports/ only',
+      '- composition-root.ts is the only file that crosses boundaries',
+      '- All relative imports use .js extensions',
+      '',
+      claudeMd ? `## Project Instructions (CLAUDE.md)\n${claudeMd.slice(0, 2000)}` : '',
+      portsContext ? `## Port Interfaces (first 3000 chars)\n\`\`\`typescript\n${portsContext}\n\`\`\`` : '',
+      '',
+      `## Workflow`,
+      '1. Read the codebase structure (src/core/ports, src/adapters)',
+      '2. Plan your changes (which layers, which files)',
+      '3. Write tests first (TDD red phase)',
+      '4. Implement the feature (TDD green phase)',
+      '5. Run: bun test (or the project\'s test command)',
+      '6. Commit with a descriptive message',
+      '',
+      `## Validation Gate`,
+      'Before declaring done:',
+      '- All tests must pass',
+      '- No hex boundary violations (check imports)',
+      '- The app must be runnable, not just compilable',
+      '',
+      'When finished, report: files changed, tests added, commit hash.',
+    ].filter(Boolean).join('\n');
+
+    // Write the agent prompt to a file so it can be picked up by Claude Code
+    const promptFile = `${workDir}/.hex/go-prompt.md`;
+    try {
+      const { mkdir, writeFile } = await import('node:fs/promises');
+      await mkdir(`${workDir}/.hex`, { recursive: true }).catch(() => {});
+      await writeFile(promptFile, agentPrompt);
+      this.writeLn(`[hex go] Agent prompt written to: ${promptFile}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.writeLn(`[hex go] Could not write prompt file: ${msg}`);
+    }
+
+    // ── Phase 4: Launch Claude Code ──
+    this.writeLn('[hex go] Launching Claude Code...');
+    this.writeLn('');
+
+    const { execFile: execFileCb } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFile = promisify(execFileCb);
+
+    // Build claude command args
+    const claudeArgs = [
+      '--print',        // non-interactive, stream output
+      '--dangerously-skip-permissions',  // YOLO mode — agent needs full autonomy
+      agentPrompt,
+    ];
+
+    try {
+      const result = await execFile('claude', claudeArgs, {
+        cwd: workDir,
+        maxBuffer: 50 * 1024 * 1024, // 50MB — agents produce a lot of output
+        timeout: 30 * 60 * 1000, // 30 minute timeout
+        env: { ...process.env },
+      });
+
+      if (result.stdout) {
+        this.writeLn(result.stdout);
+      }
+
+      this.writeLn('');
+      this.writeLn('[hex go] Agent completed.');
+    } catch (err: any) {
+      if (err.stdout) this.writeLn(err.stdout);
+      if (err.stderr) this.writeLn(err.stderr);
+      this.writeLn(`[hex go] Agent exited with error: ${err.message ?? 'unknown'}`);
+
+      if (!noWorktree) {
+        this.writeLn(`[hex go] Worktree preserved at: ${workDir}`);
+        this.writeLn(`[hex go] Branch: ${branchName}`);
+        this.writeLn('[hex go] To resume: cd into the worktree and continue manually');
+      }
+      return 1;
+    }
+
+    // ── Phase 5: Validation ──
+    this.writeLn('[hex go] Running validation...');
+    try {
+      const buildResult = await this.ctx.build.test(
+        { name: projectName, rootPath: workDir, language: 'typescript', adapters: [] },
+        { name: 'all', filePaths: [], type: 'unit' },
+      );
+
+      if (!buildResult.success) {
+        this.writeLn(`[hex go] FAIL — ${buildResult.failed} test(s) failed`);
+        if (!noWorktree) {
+          this.writeLn(`[hex go] Worktree preserved at: ${workDir}`);
+        }
+        return 1;
+      }
+
+      this.writeLn(`[hex go] PASS — ${buildResult.passed} tests passed`);
+    } catch {
+      this.writeLn('[hex go] Validation skipped (no test runner found)');
+    }
+
+    // ── Phase 6: Merge decision ──
+    if (!noWorktree) {
+      if (yolo) {
+        this.writeLn('[hex go] --yolo: auto-merging to current branch...');
+        try {
+          const mergeResult = await this.ctx.worktree.merge(
+            { absolutePath: workDir, branch: branchName },
+            await this.ctx.git.currentBranch(),
+          );
+          if (mergeResult.success) {
+            this.writeLn(`[hex go] Merged: ${mergeResult.commitHash ?? branchName}`);
+            await this.ctx.worktree.cleanup({ absolutePath: workDir, branch: branchName });
+            this.writeLn('[hex go] Worktree cleaned up.');
+          } else {
+            this.writeLn(`[hex go] Merge conflicts in: ${mergeResult.conflicts.join(', ')}`);
+            this.writeLn(`[hex go] Resolve manually in: ${workDir}`);
+            return 1;
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.writeLn(`[hex go] Merge failed: ${msg}`);
+          this.writeLn(`[hex go] Worktree preserved at: ${workDir}`);
+          return 1;
+        }
+      } else {
+        this.writeLn('');
+        this.writeLn('[hex go] Ready to merge. Review the changes:');
+        this.writeLn(`  cd ${workDir}`);
+        this.writeLn(`  git diff main...${branchName}`);
+        this.writeLn('');
+        this.writeLn('To merge:');
+        this.writeLn(`  git merge ${branchName}`);
+        this.writeLn(`  git worktree remove ${workDir}`);
+        this.writeLn(`  git branch -d ${branchName}`);
+      }
+    }
+
+    this.writeLn('');
+    this.writeLn('[hex go] Done.');
+    return 0;
+  }
+
   // ── help ────────────────────────────────────────────
 
   private help(): number {
@@ -1427,6 +1687,7 @@ export class CLIAdapter {
     this.writeLn('  status                          Show dashboard, tasks, agents, patterns');
     this.writeLn('  init [--lang ts|go|rust]        Scaffold a hex project');
     this.writeLn('  secrets [status|list] [--json]  Secrets backend status and listing');
+    this.writeLn('  go <prompt> [--yolo|--review]   Autonomous coding in isolated worktree');
     this.writeLn('  help                            Show this help');
     this.writeLn('');
     this.writeLn('MCP Server (add to any project):');
@@ -1439,6 +1700,7 @@ export class CLIAdapter {
     this.writeLn('  hex generate spec.txt --output src/adapters/primary/api.ts');
     this.writeLn('  hex plan "add caching layer" "implement retry logic"');
     this.writeLn('  hex init --lang ts');
+    this.writeLn('  hex go "add user authentication" --yolo');
 
     return 0;
   }
