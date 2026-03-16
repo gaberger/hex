@@ -1,12 +1,12 @@
 /**
  * Domain Event Bus Port
  *
- * Central event infrastructure for hex-intf's own dogfooding.
+ * Central event infrastructure for hex's own dogfooding.
  * All domain events flow through this port — adapters subscribe
  * to react (notifications, logging, metrics) without coupling
  * to the domain core.
  *
- * This is how hex-intf eats its own dogfood: the notification
+ * This is how hex eats its own dogfood: the notification
  * system doesn't import domain entities directly — it subscribes
  * to domain events through this port interface.
  */

@@ -2,7 +2,7 @@
  * File Log Notifier (Secondary / Driven)
  *
  * Implements {@link INotificationEmitPort} for structured JSONL logging
- * to `.hex-intf/activity.log`. Rotates at 10 MB. Includes full context
+ * to `.hex/activity.log`. Rotates at 10 MB. Includes full context
  * (quality scores, token usage, files changed) so the log is queryable
  * by the {@link NotificationQueryAdapter}.
  */
@@ -42,7 +42,7 @@ export interface LogEntry {
 }
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
-const DEFAULT_LOG_DIR = '.hex-intf';
+const DEFAULT_LOG_DIR = '.hex';
 const DEFAULT_LOG_FILE = 'activity.log';
 
 /**

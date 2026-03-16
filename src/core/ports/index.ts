@@ -1,5 +1,5 @@
 /**
- * hex-intf Port Interfaces
+ * hex Port Interfaces
  *
  * All communication between domain core and adapters flows through these typed ports.
  * Input ports are implemented by use cases (driven by primary adapters).

@@ -2,8 +2,8 @@
  * Registry Adapter
  *
  * Implements IRegistryPort using the filesystem.
- * Global registry: ~/.hex-intf/registry.json
- * Local identity: <project>/.hex-intf/project.json
+ * Global registry: ~/.hex/registry.json
+ * Local identity: <project>/.hex/project.json
  *
  * Port range: 3848-3947 (100 slots), 3847 reserved for hub.
  */
@@ -20,7 +20,7 @@ import type {
   ProjectRegistry,
 } from '../../core/ports/registry.js';
 
-const REGISTRY_DIR = join(homedir(), '.hex-intf');
+const REGISTRY_DIR = join(homedir(), '.hex');
 const REGISTRY_PATH = join(REGISTRY_DIR, 'registry.json');
 const LOCK_PATH = REGISTRY_PATH + '.lock';
 const TMP_PATH = REGISTRY_PATH + '.tmp';
@@ -93,7 +93,7 @@ export class RegistryAdapter implements IRegistryPort {
 
   async readLocalIdentity(rootPath: string): Promise<LocalProjectIdentity | null> {
     try {
-      const content = await readFile(join(rootPath, '.hex-intf', 'project.json'), 'utf-8');
+      const content = await readFile(join(rootPath, '.hex', 'project.json'), 'utf-8');
       const parsed: unknown = JSON.parse(content);
       if (typeof parsed !== 'object' || parsed === null || !('id' in parsed)) {
         return null;
@@ -106,7 +106,7 @@ export class RegistryAdapter implements IRegistryPort {
   }
 
   async writeLocalIdentity(rootPath: string, identity: LocalProjectIdentity): Promise<void> {
-    const dir = join(rootPath, '.hex-intf');
+    const dir = join(rootPath, '.hex');
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'project.json'), JSON.stringify(identity, null, 2) + '\n');
   }
@@ -142,11 +142,17 @@ export class RegistryAdapter implements IRegistryPort {
   }
 
   private acquire(): void {
+    // Ensure parent directory exists before attempting lock
+    mkdirSync(REGISTRY_DIR, { recursive: true });
     for (let i = 0; i < LOCK_RETRIES; i++) {
       try {
         mkdirSync(LOCK_PATH);
         return;
-      } catch {
+      } catch (err: unknown) {
+        // EEXIST means another process holds the lock — retry
+        // Any other error (permissions, etc.) should fail immediately
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'EEXIST') throw err;
         if (i === LOCK_RETRIES - 1) {
           throw new Error(`Failed to acquire registry lock after ${LOCK_RETRIES} attempts`);
         }

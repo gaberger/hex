@@ -64,7 +64,7 @@ export class WorktreeAdapter implements IWorktreePort {
   }
 
   private worktreePath(branchName: string): string {
-    return join(this.worktreeDir, `hex-intf-${branchName}`);
+    return join(this.worktreeDir, `hex-${branchName}`);
   }
 
   private async git(

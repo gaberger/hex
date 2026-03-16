@@ -3,7 +3,7 @@
  *
  * Keeps the developer informed of agent activity, quality gate results,
  * and decision points requiring human input. Inspired by ruflo's status
- * system but designed for hex-intf's feedback loop workflow.
+ * system but designed for hex's feedback loop workflow.
  */
 
 // ─── Notification Levels ─────────────────────────────────
@@ -22,7 +22,7 @@ export type NotificationChannel =
   | 'status_bar'  // Persistent status line (like ruflo)
   | 'toast'       // OS-level notification (macOS/Linux)
   | 'webhook'     // HTTP POST to external service
-  | 'file_log'    // Append to .hex-intf/activity.log
+  | 'file_log'    // Append to .hex/activity.log
   | 'event_bus';  // Internal pub/sub for other agents
 
 // ─── Core Types ──────────────────────────────────────────

@@ -25,7 +25,7 @@ const DEFAULT_CONFIG: SwarmConfig = {
   maxAgents: 4,
   strategy: 'specialized',
   consensus: 'raft',
-  memoryNamespace: 'hex-intf',
+  memoryNamespace: 'hex',
 };
 
 /** Map workplan step adapter names to swarm agent roles */
@@ -133,7 +133,7 @@ export class SwarmOrchestrator implements ISwarmOrchestrationPort {
           worktree: worktreePath,
           dependencies: step.dependencies,
         }),
-        namespace: 'hex-intf',
+        namespace: 'hex',
         tags: ['task-context', step.adapter ?? 'general'],
       });
 

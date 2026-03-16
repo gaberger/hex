@@ -188,9 +188,9 @@ export function formatExpanded(
 
   // Header
   if (useAnsi) {
-    lines.push(colorize(`hex-intf swarm progress ${divider}`, ANSI.bold, ANSI.white));
+    lines.push(colorize(`hex swarm progress ${divider}`, ANSI.bold, ANSI.white));
   } else {
-    lines.push(`hex-intf swarm progress ${divider}`);
+    lines.push(`hex swarm progress ${divider}`);
   }
 
   // Phase info

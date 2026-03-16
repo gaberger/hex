@@ -8,7 +8,6 @@
 
 import type { AppContext } from './core/ports/app-context.js';
 import type { IASTPort, ILLMPort, ICodeGenerationPort, IWorkplanPort } from './core/ports/index.js';
-import type { IEventBusPort } from './core/ports/event-bus.js';
 import { ArchAnalyzer } from './core/usecases/arch-analyzer.js';
 import { NotificationOrchestrator } from './core/usecases/notification-orchestrator.js';
 import { CodeGenerator } from './core/usecases/code-generator.js';
@@ -27,26 +26,17 @@ import { RufloAdapter } from './adapters/secondary/ruflo-adapter.js';
 import { RegistryAdapter } from './adapters/secondary/registry-adapter.js';
 import { LLMAdapter } from './adapters/secondary/llm-adapter.js';
 import type { LLMAdapterConfig } from './adapters/secondary/llm-adapter.js';
+import { InMemoryEventBus } from './adapters/secondary/in-memory-event-bus.js';
+import { SSEBroadcastAdapter } from './adapters/secondary/sse-broadcast-adapter.js';
 
 // Re-export AppContext from the port (canonical definition)
 export type { AppContext } from './core/ports/app-context.js';
-
-// ── Null Event Bus (only remaining stub — real impl comes with hive-mind) ──
-
-const NULL_EVENT_BUS: IEventBusPort = {
-  async publish() {},
-  subscribe() { return { id: 'noop', unsubscribe() {} }; },
-  subscribeFiltered() { return { id: 'noop', unsubscribe() {} }; },
-  subscribeAll() { return { id: 'noop', unsubscribe() {} }; },
-  async getHistory() { return []; },
-  reset() {},
-};
 
 // ── Factory ─────────────────────────────────────────────
 
 export async function createAppContext(projectPath: string): Promise<AppContext> {
   // Project-scoped output directory for analysis, caches, logs
-  const outputDir = `${projectPath}/.hex-intf`;
+  const outputDir = `${projectPath}/.hex`;
   const { mkdir } = await import('node:fs/promises');
   // mkdir with recursive:true only fails on permission errors — safe to ignore
   await mkdir(outputDir, { recursive: true }).catch(() => {});
@@ -77,7 +67,7 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     ast = treeSitter;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[hex-intf] WARNING: Tree-sitter init failed: ${msg}. Analysis will return empty results.\n`);
+    process.stderr.write(`[hex] WARNING: Tree-sitter init failed: ${msg}. Analysis will return empty results.\n`);
     astIsStub = true;
     ast = {
       async extractSummary(filePath, level) {
@@ -91,40 +81,46 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     };
   }
 
+  // Event infrastructure — real pub/sub spine replacing the null stub
+  const projectName = projectPath.split('/').pop() ?? 'unknown';
+  const eventBus = new InMemoryEventBus();
+  const broadcastAdapter = new SSEBroadcastAdapter();
+
+  // Bridge: forward domain events to broadcast clients (SSE/WebSocket)
+  eventBus.subscribeAll((event) => {
+    broadcastAdapter.send({
+      event: event.type,
+      data: event,
+      projectId: projectName,
+    });
+  });
+
   // Use cases
   const archAnalyzer = new ArchAnalyzer(ast, fs);
   const notificationOrchestrator = new NotificationOrchestrator(notifier);
   const summaryService = new SummaryService(ast, fs);
   const swarmOrchestrator = new SwarmOrchestrator(swarm, worktree);
 
-  // ── Initialize swarm + AgentDB on startup ──────────────
-  // The swarm should be ready when the project loads, not lazily.
-  // AgentDB session tracks this project's lifecycle for pattern learning.
-  const projectName = projectPath.split('/').pop() ?? 'unknown';
-  try {
-    await swarm.init({
-      topology: 'hierarchical',
-      maxAgents: 4,
-      strategy: 'specialized',
-      consensus: 'raft',
-      memoryNamespace: `hex-intf:${projectName}`,
-    });
-    process.stderr.write(`[hex-intf] Swarm initialized for ${projectName}\n`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[hex-intf] WARNING: Swarm init failed: ${msg}. Orchestration will be unavailable.\n`);
-  }
+  // ── Initialize swarm + AgentDB in background (non-blocking) ──
+  // Fire-and-forget: doesn't delay startup, logs result to stderr
+  void swarm.init({
+    topology: 'hierarchical',
+    maxAgents: 4,
+    strategy: 'specialized',
+    consensus: 'raft',
+    memoryNamespace: `hex:${projectName}`,
+  }).then(
+    () => process.stderr.write(`[hex] Swarm initialized for ${projectName}\n`),
+    (err) => process.stderr.write(`[hex] Swarm init skipped: ${err instanceof Error ? err.message : String(err)}\n`),
+  );
 
-  try {
-    await swarm.sessionStart(`hex-intf:${projectName}`, {
-      projectPath,
-      startedAt: new Date().toISOString(),
-    });
-    process.stderr.write(`[hex-intf] AgentDB session started for ${projectName}\n`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[hex-intf] WARNING: AgentDB session start failed: ${msg}. Pattern learning unavailable.\n`);
-  }
+  void swarm.sessionStart(`hex:${projectName}`, {
+    projectPath,
+    startedAt: new Date().toISOString(),
+  }).then(
+    () => process.stderr.write(`[hex] AgentDB session started for ${projectName}\n`),
+    (err) => process.stderr.write(`[hex] AgentDB session skipped: ${err instanceof Error ? err.message : String(err)}\n`),
+  );
 
   // LLM: graceful degradation — null when no API key is configured
   let llm: ILLMPort | null = null;
@@ -160,9 +156,10 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     build,
     ast,
     astIsStub,
-    eventBus: NULL_EVENT_BUS,
+    eventBus,
     notifier,
     swarm,
     registry,
+    broadcaster: broadcastAdapter,
   };
 }

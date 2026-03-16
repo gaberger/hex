@@ -29,6 +29,7 @@ import { resolve, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AppContext, AppContextFactory } from '../../core/ports/app-context.js';
 import type { ImportEdge } from '../../core/ports/index.js';
+import type { IBroadcastPort } from '../../core/ports/broadcast.js';
 
 // Re-export so existing consumers don't break
 export type { AppContextFactory } from '../../core/ports/app-context.js';
@@ -119,7 +120,13 @@ export class DashboardHub {
   constructor(
     private readonly contextFactory: AppContextFactory,
     private readonly port: number = 3847,
+    private readonly broadcaster?: IBroadcastPort,
   ) {}
+
+  /** Expose the underlying HTTP server for WebSocket upgrade attachment. */
+  get httpServer(): ReturnType<typeof createServer> | null {
+    return this.server;
+  }
 
   // ── Lifecycle ──────────────────────────────────────
 
@@ -497,8 +504,8 @@ export class DashboardHub {
     } catch {
       return this.json(res, 400, { error: 'Invalid project path' });
     }
-    // Must contain package.json or .hex-intf/ to be recognised as a project
-    if (!existsSync(join(candidatePath, 'package.json')) && !existsSync(join(candidatePath, '.hex-intf'))) {
+    // Must contain package.json or .hex/ to be recognised as a project
+    if (!existsSync(join(candidatePath, 'package.json')) && !existsSync(join(candidatePath, '.hex'))) {
       return this.json(res, 400, { error: 'Invalid project path' });
     }
 
@@ -546,22 +553,28 @@ export class DashboardHub {
 
   // ── Broadcast ─────────────────────────────────────
 
-  /** Broadcast to all SSE clients (global event). */
+  /** Broadcast to all connected clients (SSE + IBroadcastPort). */
   broadcast(event: string, data: unknown): void {
+    // Legacy SSE clients
     const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of this.sseClients) {
       client.res.write(msg);
     }
+    // IBroadcastPort clients (WebSocket, etc.)
+    this.broadcaster?.send({ event, data });
   }
 
-  /** Broadcast to SSE clients subscribed to a specific project (or all). */
+  /** Broadcast to clients subscribed to a specific project (or all). */
   broadcastToProject(projectId: string, event: string, data: unknown): void {
+    // Legacy SSE clients
     const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of this.sseClients) {
       if (client.projectFilter === null || client.projectFilter === projectId) {
         client.res.write(msg);
       }
     }
+    // IBroadcastPort clients (WebSocket, etc.)
+    this.broadcaster?.send({ event, data, projectId });
   }
 
   // ── Static HTML ───────────────────────────────────

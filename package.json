@@ -1,12 +1,12 @@
 {
-  "name": "hex-intf",
+  "name": "hex",
   "version": "0.1.0",
   "description": "Hexagonal Architecture framework for LLM-driven development with token-efficient tree-sitter summaries",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "hex-intf": "dist/cli.js"
+    "hex": "dist/cli.js"
   },
   "scripts": {
     "build": "bun build src/cli.ts --outfile dist/cli.js --target node --format esm && bun build src/index.ts --outfile dist/index.js --target node --format esm && mkdir -p dist/adapters/primary/dashboard && cp src/adapters/primary/dashboard/index.html dist/adapters/primary/dashboard/index.html && cp node_modules/web-tree-sitter/tree-sitter.wasm dist/tree-sitter.wasm 2>/dev/null || true",

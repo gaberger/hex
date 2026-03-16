@@ -1,5 +1,5 @@
 /**
- * Domain Entities for hex-intf
+ * Domain Entities for hex
  *
  * Pure domain objects with no external dependencies.
  * All state changes emit domain events for traceability.

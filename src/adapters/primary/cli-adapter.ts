@@ -155,7 +155,7 @@ const TEMPLATES = {
     'node_modules/',
     'dist/',
     '.env',
-    '.hex-intf/',
+    '.hex/',
     '*.tsbuildinfo',
     '',
   ].join('\n'),
@@ -163,7 +163,7 @@ const TEMPLATES = {
   readme: [
     '# My Hex Project',
     '',
-    'Scaffolded with [hex-intf](https://github.com/your-org/hex-intf).',
+    'Scaffolded with [hex](https://github.com/your-org/hex).',
     '',
     '## Quick Start',
     '',
@@ -259,7 +259,7 @@ const TEMPLATES = {
     '4. **Adapters** — Implement primary (input) and secondary (output) adapters',
     '5. **Composition Root** — Wire adapters to ports in `composition-root`',
     '6. **Tests** — Unit tests (London-school mocks) + integration tests',
-    '7. **Validate** — Run `hex-intf analyze .` to check architecture health',
+    '7. **Validate** — Run `hex analyze .` to check architecture health',
     '',
   ].join('\n'),
 } as const;
@@ -305,7 +305,7 @@ export class CLIAdapter {
           return this.help();
         default:
           this.writeLn(`Unknown command: ${args.command}`);
-          this.writeLn('Run "hex-intf help" for usage.');
+          this.writeLn('Run "hex help" for usage.');
           return 1;
       }
     } catch (err) {
@@ -390,7 +390,7 @@ export class CLIAdapter {
   private async summarize(args: ParsedArgs): Promise<number> {
     const filePath = args.positional[0];
     if (!filePath) {
-      this.writeLn('Usage: hex-intf summarize <file> [--level L0|L1|L2|L3]');
+      this.writeLn('Usage: hex summarize <file> [--level L0|L1|L2|L3]');
       return 1;
     }
 
@@ -446,7 +446,7 @@ export class CLIAdapter {
 
     const specFile = args.positional[0];
     if (!specFile) {
-      this.writeLn('Usage: hex-intf generate <spec-file> [--adapter <name>] [--lang ts|go|rust]');
+      this.writeLn('Usage: hex generate <spec-file> [--adapter <name>] [--lang ts|go|rust]');
       return 1;
     }
 
@@ -496,7 +496,7 @@ export class CLIAdapter {
 
     const requirements = args.positional;
     if (requirements.length === 0) {
-      this.writeLn('Usage: hex-intf plan <requirements...>');
+      this.writeLn('Usage: hex plan <requirements...>');
       return 1;
     }
 
@@ -622,18 +622,18 @@ export class CLIAdapter {
   // ── status ──────────────────────────────────────────
 
   private async status(): Promise<number> {
-    this.writeLn('Swarm status: use "hex-intf analyze" to check project health.');
+    this.writeLn('Swarm status: use "hex analyze" to check project health.');
     return 0;
   }
 
   // ── mcp ────────────────────────────────────────────
-  // Starts hex-intf as a stdio MCP server so any project can use it:
-  //   npx hex-intf mcp
+  // Starts hex as a stdio MCP server so any project can use it:
+  //   npx hex mcp
   // Or in .claude/settings.local.json:
-  //   { "mcpServers": { "hex-intf": { "command": "npx", "args": ["hex-intf", "mcp"] } } }
+  //   { "mcpServers": { "hex": { "command": "npx", "args": ["hex", "mcp"] } } }
 
   private async mcp(): Promise<number> {
-    const { MCPAdapter, HEX_INTF_TOOLS, HEX_DASHBOARD_TOOLS } = await import('./mcp-adapter.js');
+    const { MCPAdapter, HEX_TOOLS, HEX_DASHBOARD_TOOLS } = await import('./mcp-adapter.js');
 
     const adapter = new MCPAdapter({
       archAnalyzer: this.ctx.archAnalyzer,
@@ -655,7 +655,7 @@ export class CLIAdapter {
     };
 
     // Log to stderr so it doesn't interfere with MCP protocol on stdout
-    process.stderr.write(`[hex-intf] MCP server started with ${allTools.length} tools\n`);
+    process.stderr.write(`[hex] MCP server started with ${allTools.length} tools\n`);
 
     rl.on('line', async (line: string) => {
       let request: { jsonrpc: string; id?: number | string; method: string; params?: Record<string, unknown> };
@@ -674,7 +674,7 @@ export class CLIAdapter {
             result: {
               protocolVersion: '2024-11-05',
               capabilities: { tools: {} },
-              serverInfo: { name: 'hex-intf', version: '1.0.0' },
+              serverInfo: { name: 'hex', version: '1.0.0' },
             },
           });
           break;
@@ -875,7 +875,7 @@ export class CLIAdapter {
         '4. **Adapters** — Implement primary (input) and secondary (output) adapters',
         '5. **Composition Root** — Wire adapters to ports',
         '6. **Tests** — Unit tests + integration tests',
-        '7. **Validate** — Run `hex-intf analyze .` to check architecture health',
+        '7. **Validate** — Run `hex analyze .` to check architecture health',
         '',
       ].join('\n');
       await safeWrite('CLAUDE.md', rootClaude);
@@ -964,7 +964,7 @@ export class CLIAdapter {
   private async projects(): Promise<number> {
     const projects = await this.ctx.registry.list();
     if (projects.length === 0) {
-      this.writeLn('No registered projects. Run "hex-intf init" in a project directory.');
+      this.writeLn('No registered projects. Run "hex init" in a project directory.');
       return 0;
     }
 
@@ -982,7 +982,7 @@ export class CLIAdapter {
   // ── scopeWizard ────────────────────────────────
 
   private async scopeWizard(args: ParsedArgs): Promise<{ name: string; summary: string; lang: string }> {
-    this.writeLn('─── hex-intf project setup ───────────────────');
+    this.writeLn('─── hex project setup ───────────────────');
     this.writeLn('');
 
     const name = await this.prompt('Project name', 'my-hex-project');
@@ -1084,7 +1084,7 @@ export class CLIAdapter {
       `- **Stack:** ${langFull}`,
       ...(isMulti ? [`- **Structure:** Multi-stack (${langs.includes('go') || langs.includes('rust') ? 'backend/' : ''}${langs.includes('go') || langs.includes('rust') ? ' + ' : ''}${langs.includes('ts') ? 'frontend/' : ''})`] : []),
       `- **Architecture:** Hexagonal (ports & adapters)`,
-      `- **Scaffolded by:** hex-intf`,
+      `- **Scaffolded by:** hex`,
       '',
       '## Scope',
       '',
@@ -1120,7 +1120,7 @@ export class CLIAdapter {
       '1. Fill in domain entities based on the summary above',
       '2. Define port interfaces for each boundary',
       '3. Implement adapters',
-      '4. Run `hex-intf analyze .` to validate architecture',
+      '4. Run `hex analyze .` to validate architecture',
       '',
     ].join('\n');
   }
@@ -1192,14 +1192,14 @@ export class CLIAdapter {
   private generateStartupScript(): string {
     return [
       '#!/bin/bash',
-      '# hex-intf session-start hook — presents project context on first prompt',
+      '# hex session-start hook — presents project context on first prompt',
       'set -e',
       '',
-      '# Only run in hex-intf projects',
+      '# Only run in hex projects',
       '[ ! -f "PRD.md" ] || [ ! -f "CLAUDE.md" ] && exit 0',
       '',
       'echo ""',
-      'echo "=== hex-intf Project ==="',
+      'echo "=== hex Project ==="',
       'echo ""',
       '',
       '# Extract project info from PRD.md',
@@ -1234,7 +1234,7 @@ export class CLIAdapter {
       'elif [ "$U" -eq 0 ]; then echo "Next: Implement use cases in $BASE/src/core/usecases/"',
       'elif [ "$PA" -eq 0 ] && [ "$SA" -eq 0 ]; then echo "Next: Implement adapters"',
       'elif [ "$T" -eq 0 ]; then echo "Next: Add tests"',
-      'else echo "Next: Run hex-intf analyze . to validate"',
+      'else echo "Next: Run hex analyze . to validate"',
       'fi',
       'echo "==========================="',
       '',
@@ -1251,7 +1251,7 @@ export class CLIAdapter {
         maxAgents: 5,
         strategy: 'specialized',
         consensus: 'raft',
-        memoryNamespace: 'hex-intf',
+        memoryNamespace: 'hex',
       });
       this.writeLn(`Swarm initialized: ${status.id} (${status.topology})`);
     } catch (err) {
@@ -1262,9 +1262,9 @@ export class CLIAdapter {
   // ── help ────────────────────────────────────────────
 
   private help(): number {
-    this.writeLn('hex-intf - Hexagonal Architecture framework for agentic coding');
+    this.writeLn('hex - Hexagonal Architecture framework for agentic coding');
     this.writeLn('');
-    this.writeLn('Usage: hex-intf <command> [options]');
+    this.writeLn('Usage: hex <command> [options]');
     this.writeLn('');
     this.writeLn('Commands:');
     this.writeLn('  mcp                             Start as MCP server (stdio transport)');
@@ -1283,14 +1283,14 @@ export class CLIAdapter {
     this.writeLn('');
     this.writeLn('MCP Server (add to any project):');
     this.writeLn('  # .claude/settings.local.json');
-    this.writeLn('  { "mcpServers": { "hex-intf": { "command": "npx", "args": ["hex-intf", "mcp"] } } }');
+    this.writeLn('  { "mcpServers": { "hex": { "command": "npx", "args": ["hex", "mcp"] } } }');
     this.writeLn('');
     this.writeLn('Examples:');
-    this.writeLn('  hex-intf mcp                                 # Start MCP server');
-    this.writeLn('  hex-intf analyze ./src --json                # CI-friendly output');
-    this.writeLn('  hex-intf generate spec.txt --output src/adapters/primary/api.ts');
-    this.writeLn('  hex-intf plan "add caching layer" "implement retry logic"');
-    this.writeLn('  hex-intf init --lang ts');
+    this.writeLn('  hex mcp                                 # Start MCP server');
+    this.writeLn('  hex analyze ./src --json                # CI-friendly output');
+    this.writeLn('  hex generate spec.txt --output src/adapters/primary/api.ts');
+    this.writeLn('  hex plan "add caching layer" "implement retry logic"');
+    this.writeLn('  hex init --lang ts');
 
     return 0;
   }
@@ -1298,7 +1298,7 @@ export class CLIAdapter {
   // ── setup ──────────────────────────────────────────
 
   private async setup(): Promise<number> {
-    this.writeLn('Setting up hex-intf...');
+    this.writeLn('Setting up hex...');
     this.writeLn('');
 
     const languages = ['typescript', 'go', 'rust'];
@@ -1320,11 +1320,11 @@ export class CLIAdapter {
     }
 
     // Check grammar availability — use absolute paths since grammars
-    // may be in hex-intf's own node_modules or the project's
+    // may be in hex's own node_modules or the project's
     const { access } = await import('node:fs/promises');
     const { resolve } = await import('node:path');
     // Resolve from: 1) project's config, 2) project's node_modules,
-    // 3) hex-intf's own node_modules (for global install via npm link)
+    // 3) hex's own node_modules (for global install via npm link)
     const { dirname } = await import('node:path');
     const cliDir = typeof import.meta.dir === 'string' ? import.meta.dir : dirname(import.meta.url.replace('file://', ''));
     const hexIntfRoot = resolve(cliDir, '..');  // dist/ -> project root
@@ -1361,9 +1361,9 @@ export class CLIAdapter {
 
     const claudeDir = resolve(this.ctx.rootPath, '.claude');
     const skillsTarget = join(claudeDir, 'skills');
-    const agentsTarget = join(claudeDir, 'agents', 'hex-intf');
+    const agentsTarget = join(claudeDir, 'agents', 'hex');
 
-    // Find hex-intf's own skills/ and agents/ directories
+    // Find hex's own skills/ and agents/ directories
     const skillsSrc = resolve(hexIntfRoot, 'skills');
     const agentsSrc = resolve(hexIntfRoot, 'agents');
 
@@ -1395,7 +1395,7 @@ export class CLIAdapter {
           }
         }
       } catch { /* agents dir may not exist */ }
-      this.writeLn(`  Agents: ${agentCount} installed to .claude/agents/hex-intf/`);
+      this.writeLn(`  Agents: ${agentCount} installed to .claude/agents/hex/`);
 
     } catch (err) {
       this.writeLn(`  Failed to install skills/agents: ${err instanceof Error ? err.message : String(err)}`);
@@ -1403,10 +1403,10 @@ export class CLIAdapter {
 
     this.writeLn('');
     this.writeLn('Setup complete. Available commands:');
-    this.writeLn('  hex-intf analyze .     Check architecture health');
-    this.writeLn('  hex-intf summarize     AST summary of a file');
-    this.writeLn('  hex-intf init          Scaffold a new hex project');
-    this.writeLn('  hex-intf help          Show all commands');
+    this.writeLn('  hex analyze .     Check architecture health');
+    this.writeLn('  hex summarize     AST summary of a file');
+    this.writeLn('  hex init          Scaffold a new hex project');
+    this.writeLn('  hex help          Show all commands');
     return 0;
   }
 }

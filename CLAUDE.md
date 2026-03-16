@@ -1,8 +1,8 @@
-# hex-intf — Hexagonal Architecture for LLM-Driven Development
+# hex — Hexagonal Architecture for LLM-Driven Development
 
 ## What This Project Is
 
-hex-intf is a framework + CLI tool for building software using hexagonal architecture (ports & adapters) optimized for AI agent code generation. It provides token-efficient code summaries via tree-sitter, swarm coordination via ruflo, and a specs-first development pipeline.
+hex is a framework + CLI tool for building software using hexagonal architecture (ports & adapters) optimized for AI agent code generation. It provides token-efficient code summaries via tree-sitter, swarm coordination via ruflo, and a specs-first development pipeline.
 
 ## Behavioral Rules
 
@@ -15,7 +15,7 @@ hex-intf is a framework + CLI tool for building software using hexagonal archite
 
 ## Hexagonal Architecture Rules (ENFORCED)
 
-These rules are checked by `hex-intf analyze .` and the dead-code-analyzer agent:
+These rules are checked by `hex analyze .` and the dead-code-analyzer agent:
 
 1. **domain/** must only import from **domain/** (value-objects, entities)
 2. **ports/** may import from **domain/** (for value types) but nothing else
@@ -55,7 +55,7 @@ config/              # Language configs, tree-sitter settings
 scripts/             # Build and setup scripts
 .claude/
   skills/            # Claude Code skills (.md) — /hex-scaffold, /hex-generate, etc.
-  agents/hex-intf/   # Agent definitions (.yml) — planner, hex-coder, etc.
+  agents/hex/        # Agent definitions (.yml) — planner, hex-coder, etc.
 agents/              # Agent source definitions (YAML, shipped in npm package)
 skills/              # Skill source definitions (.md, shipped in npm package)
 ```
@@ -66,8 +66,8 @@ skills/              # Skill source definitions (.md, shipped in npm package)
 bun run build        # Bundle CLI + library to dist/
 bun test             # Run all tests (unit + property + smoke)
 bun run check        # TypeScript type check (no emit)
-hex-intf analyze .   # Architecture health check
-hex-intf setup       # Install grammars + skills + agents
+hex analyze .        # Architecture health check
+hex setup            # Install grammars + skills + agents
 ```
 
 ## Development Pipeline (Specs-First)
@@ -77,7 +77,7 @@ When building new features or example applications, follow this order:
 1. **Specify** — Write behavioral specs BEFORE code (what "correct" looks like)
 2. **Build** — Generate code following hex architecture rules
 3. **Test** — Unit tests + property tests + smoke tests (3 levels)
-4. **Validate** — Run `hex-intf analyze` + validation judge
+4. **Validate** — Run `hex analyze` + validation judge
 5. **Ship** — README + start scripts + commit
 
 ## Available Skills (Claude Code slash commands)
@@ -115,7 +115,7 @@ When building new features or example applications, follow this order:
 
 ## Swarm Coordination (ruflo)
 
-ruflo (`@claude-flow/cli`) is a required dependency. Used for:
+ruflo (`@claude-flow/cli`) is a required dependency of hex. Used for:
 - Task tracking: `ISwarmPort.createTask/completeTask`
 - Agent lifecycle: `ISwarmPort.spawnAgent/terminateAgent`
 - Swarm topology: `ISwarmPort.init` (hierarchical/mesh)

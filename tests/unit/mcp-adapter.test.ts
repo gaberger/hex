@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { MCPAdapter, HEX_INTF_TOOLS, HEX_DASHBOARD_TOOLS } from '../../src/adapters/primary/mcp-adapter.js';
+import { MCPAdapter, HEX_TOOLS, HEX_DASHBOARD_TOOLS } from '../../src/adapters/primary/mcp-adapter.js';
 import type { MCPContext, MCPToolCall } from '../../src/adapters/primary/mcp-adapter.js';
 import type { IArchAnalysisPort, IASTPort, IFileSystemPort } from '../../src/core/ports/index.js';
 
@@ -88,7 +88,7 @@ describe('MCPAdapter', () => {
 
   it('returns all analysis + dashboard tools from getTools()', () => {
     const tools = adapter.getTools();
-    const expectedCount = HEX_INTF_TOOLS.length + HEX_DASHBOARD_TOOLS.length;
+    const expectedCount = HEX_TOOLS.length + HEX_DASHBOARD_TOOLS.length;
     expect(tools.length).toBe(expectedCount);
   });
 

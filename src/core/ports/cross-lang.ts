@@ -1,5 +1,5 @@
 /**
- * hex-intf Cross-Language Communication Ports
+ * hex Cross-Language Communication Ports
  *
  * Port interfaces for communication across language boundaries (TS <-> Go, TS <-> Rust, Go <-> Rust).
  * These ports abstract the serialization, bridging, and discovery mechanisms so that

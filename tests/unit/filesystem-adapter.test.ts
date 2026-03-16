@@ -9,7 +9,7 @@ let fs: FileSystemAdapter;
 
 // Setup: create a unique temp directory
 const setup = async () => {
-  tempDir = await mkdtemp(join(tmpdir(), 'hex-intf-test-'));
+  tempDir = await mkdtemp(join(tmpdir(), 'hex-test-'));
   fs = new FileSystemAdapter(tempDir);
 };
 

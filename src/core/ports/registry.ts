@@ -1,9 +1,9 @@
 /**
  * Project Registry Port
  *
- * Tracks hex-intf projects globally so the hub dashboard can
+ * Tracks hex projects globally so the hub dashboard can
  * discover them and each project gets a stable unique ID + port.
- * Registry lives at ~/.hex-intf/registry.json (outside any project).
+ * Registry lives at ~/.hex/registry.json (outside any project).
  */
 
 import type { ProjectRegistration, LocalProjectIdentity } from '../domain/value-objects.js';
@@ -27,9 +27,9 @@ export interface IRegistryPort {
   /** Update lastSeenAt for a project. */
   touch(projectId: string): Promise<void>;
 
-  /** Read the local project identity from .hex-intf/project.json */
+  /** Read the local project identity from .hex/project.json */
   readLocalIdentity(rootPath: string): Promise<LocalProjectIdentity | null>;
 
-  /** Write the local project identity to .hex-intf/project.json */
+  /** Write the local project identity to .hex/project.json */
   writeLocalIdentity(rootPath: string, identity: LocalProjectIdentity): Promise<void>;
 }

@@ -166,7 +166,7 @@ export class ScaffoldService implements IScaffoldPort {
 
   private formatArchSection(): string {
     return [
-      'This project uses [hex-intf](https://github.com/ruvnet/hex-intf) hexagonal architecture:',
+      'This project uses [hex](https://github.com/ruvnet/hex) hexagonal architecture:',
       '',
       '- `src/core/domain/` — Pure business logic, zero dependencies',
       '- `src/core/ports/` — Typed interfaces (contracts)',

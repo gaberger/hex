@@ -11,7 +11,7 @@ import type {
   ISummaryPort,
 } from '../ports/index.js';
 
-const EXCLUDED_PATTERNS = ['node_modules', 'dist', '.test.', '.spec.'];
+const EXCLUDED_PATTERNS = ['node_modules', 'dist', '.test.', '.spec.', '_test.go'];
 
 export class SummaryService implements ISummaryPort {
   constructor(
@@ -30,7 +30,12 @@ export class SummaryService implements ISummaryPort {
     rootPath: string,
     level: ASTSummary['level'],
   ): Promise<ASTSummary[]> {
-    const allFiles = await this.fs.glob(`${rootPath}/**/*.ts`);
+    const globResults = await Promise.all([
+      this.fs.glob(`${rootPath}/**/*.ts`),
+      this.fs.glob(`${rootPath}/**/*.go`),
+      this.fs.glob(`${rootPath}/**/*.rs`),
+    ]);
+    const allFiles = globResults.flat();
     const sourceFiles = allFiles.filter(
       (f) => !EXCLUDED_PATTERNS.some((p) => f.includes(p)),
     );

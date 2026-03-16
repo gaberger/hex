@@ -1,8 +1,8 @@
 /**
- * E2E Test: hex-intf analyzes itself
+ * E2E Test: hex analyzes itself
  *
  * Exercises the full stack from CLI -> ArchAnalyzer -> IASTPort -> IFileSystemPort
- * against the real hex-intf source tree. This test WILL FAIL until the blockers
+ * against the real hex source tree. This test WILL FAIL until the blockers
  * identified in docs/analysis/testability-audit-e2e-report.md are resolved:
  *
  *   1. Tree-sitter WASM grammar must be installed at the correct path
@@ -15,7 +15,7 @@ import { runCLI, type AppContext as CLIContext } from '../../src/adapters/primar
 
 const PROJECT_ROOT = '/Volumes/ExtendedStorage/PARA/01-Projects/hex-intf';
 
-describe('E2E: hex-intf analyzes itself', () => {
+describe('E2E: hex analyzes itself', () => {
   let ctx: Awaited<ReturnType<typeof createAppContext>>;
 
   beforeAll(async () => {
@@ -79,7 +79,7 @@ describe('E2E: hex-intf analyzes itself', () => {
 
   // ── Phase 4: Hex boundary self-validation ────────────────────
 
-  it('hex-intf has zero dependency violations against its own hex rules', async () => {
+  it('hex has zero dependency violations against its own hex rules', async () => {
     const violations = await ctx.archAnalyzer.validateHexBoundaries(PROJECT_ROOT);
     if (violations.length > 0) {
       const report = violations.map(v =>

@@ -11,6 +11,7 @@ import type { INotificationEmitPort, INotificationQueryPort } from './notificati
 import type { IEventBusPort } from './event-bus.js';
 import type { ISwarmPort, ISwarmOrchestrationPort } from './swarm.js';
 import type { IRegistryPort } from './registry.js';
+import type { IBroadcastPort } from './broadcast.js';
 
 export interface AppContext {
   rootPath: string;
@@ -42,9 +43,10 @@ export interface AppContext {
   notifier: INotificationEmitPort;
   swarm: ISwarmPort;
   registry: IRegistryPort;
+  broadcaster: IBroadcastPort;
 
   /** Local output directory for analysis reports, caches, and logs */
-  outputDir: string; // defaults to '.hex-intf/' — gitignored, project-scoped
+  outputDir: string; // defaults to '.hex/' — gitignored, project-scoped
 }
 
 /** Factory that creates an AppContext for a given project root path. */

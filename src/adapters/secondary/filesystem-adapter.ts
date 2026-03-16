@@ -51,12 +51,63 @@ export class FileSystemAdapter implements IFileSystemPort {
     if (pattern.includes('..')) {
       throw new PathTraversalError(pattern, this.root);
     }
-    const g = new Bun.Glob(pattern);
-    const matches: string[] = [];
-    for await (const entry of g.scan({ cwd: this.root, absolute: false })) {
-      matches.push(entry);
+
+    // Use Bun.Glob when available, fall back to node:fs/promises glob
+    if (typeof globalThis.Bun !== 'undefined') {
+      const g = new Bun.Glob(pattern);
+      const matches: string[] = [];
+      for await (const entry of g.scan({ cwd: this.root, absolute: false })) {
+        matches.push(entry);
+      }
+      return matches.sort();
     }
-    return matches.sort();
+
+    // Node.js fallback using fs.glob (Node 22+) or recursive readdir
+    try {
+      const { glob: fsGlob } = await import('node:fs/promises');
+      const matches: string[] = [];
+      for await (const entry of fsGlob(pattern, { cwd: this.root })) {
+        matches.push(entry);
+      }
+      return matches.sort();
+    } catch {
+      // Node < 22: manual recursive scan with extension matching
+      return this.manualGlob(pattern);
+    }
+  }
+
+  /** Fallback glob for Node versions without fs.glob */
+  private async manualGlob(pattern: string): Promise<string[]> {
+    const { readdir } = await import('node:fs/promises');
+    // Extract extension from pattern like "**/*.ts" → ".ts"
+    const extMatch = pattern.match(/\*(\.\w+)$/);
+    const ext = extMatch ? extMatch[1] : null;
+    // Extract prefix directory from pattern like "src/**/*.ts" → "src"
+    const prefixMatch = pattern.match(/^([^*]+)\//);
+    const prefix = prefixMatch ? prefixMatch[1] : '';
+
+    const scanDir = prefix ? join(this.root, prefix) : this.root;
+    const results: string[] = [];
+
+    const walk = async (dir: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch { return; }
+      for (const entry of entries) {
+        const fullPath = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === '.git') continue;
+          await walk(fullPath);
+        } else if (!ext || entry.name.endsWith(ext)) {
+          const rel = fullPath.slice(this.root.length + 1);
+          results.push(rel);
+        }
+      }
+    };
+
+    await walk(scanDir);
+    return results.sort();
   }
 
   /** Resolve path and verify it stays within root — prevents directory traversal and symlink escapes */

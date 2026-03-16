@@ -25,6 +25,16 @@ type IF1DataPort interface {
 	GetConstructorStandings(ctx context.Context, season domain.Season) ([]domain.ConstructorStanding, error)
 }
 
+// IF1QueryPort is the primary port exposing F1 queries to driving adapters.
+// The HTTP adapter depends on this interface, not a concrete usecase.
+type IF1QueryPort interface {
+	GetCurrentSchedule(ctx context.Context) (*domain.SeasonSchedule, error)
+	GetRaceResult(ctx context.Context, season domain.Season, round domain.RoundNumber) (*domain.RaceResult, error)
+	GetLatestResult(ctx context.Context) (*domain.RaceResult, error)
+	GetDriverStandings(ctx context.Context, season domain.Season) ([]domain.DriverStanding, error)
+	GetConstructorStandings(ctx context.Context, season domain.Season) ([]domain.ConstructorStanding, error)
+}
+
 // IHTTPServerPort is the primary port for serving the web UI.
 // The composition root wires this to the HTTP adapter.
 type IHTTPServerPort interface {

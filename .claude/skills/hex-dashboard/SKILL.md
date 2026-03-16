@@ -7,36 +7,53 @@ description: Start the hex-intf monitoring dashboard. Use when the user asks to 
 
 Start the hex-intf dashboard for the **current project directory**.
 
+The `hex-intf dashboard` command auto-registers with the project registry at `~/.hex-intf/registry.json` and gets an assigned port (3848-3947). Port 3847 is reserved for the multi-project hub.
+
 ## Steps
 
-1. Check if a dashboard is already running for THIS project by checking common ports:
+1. **Check the registry** for an existing registration using the Read tool (NOT bash):
+
+Use the Read tool to read `~/.hex-intf/registry.json`. Look for an entry whose `rootPath` matches the current working directory. If found, note the assigned `port`.
+
+2. **If registered, check if already running** on the assigned port:
 
 ```bash
-# Check ports 3847-3850 and verify which project is being served
-for port in 3847 3848 3849 3850; do
-  pid=$(lsof -ti :$port 2>/dev/null | head -1)
-  if [ -n "$pid" ]; then
-    cmd=$(ps -p $pid -o args= 2>/dev/null)
-    echo "Port $port: PID $pid — $cmd"
-  fi
-done
+lsof -ti :<assigned-port>
 ```
 
-2. If none of those ports serve the current project, find a free port and start:
+If a PID is returned, the dashboard is already running — report the URL `http://localhost:<assigned-port>` and stop.
+
+3. **Start the dashboard** using the Bash tool with `run_in_background: true`:
+
+**CRITICAL**: Do NOT use `&`, `|`, `$(...)`, or any shell operators. Use ONLY the Bash tool's `run_in_background` parameter.
+
+```
+Bash(command: "hex-intf dashboard", run_in_background: true)
+```
+
+This will:
+- Register the project in `~/.hex-intf/registry.json` (if not already)
+- Get an assigned port from the registry (3848-3947)
+- Write `.hex-intf/project.json` with the project's registry ID
+- Start the HTTP server on the assigned port
+
+4. **Wait and verify**:
 
 ```bash
-hex-intf dashboard --port <free-port> &
+sleep 3
 ```
 
-Use port 3847 if free, otherwise try 3848, 3849, etc.
+Then read `.hex-intf/project.json` with the Read tool to confirm the registration.
 
-3. Report the URL to the user: `http://localhost:<port>`
+Report: `http://localhost:<assigned-port>`
 
-## IMPORTANT
+## CRITICAL RULES
 
-- The `hex-intf hub` command (multi-project) uses port 3847 — if a hub is running, the dashboard should use a DIFFERENT port
-- Always verify the process on the port belongs to the current project directory before reporting "already running"
-- The dashboard must run from the project's root directory so it reads the correct source files
+- **Use Read tool** to read registry — NOT `cat` or `grep` via Bash
+- **Use `run_in_background: true`** — NOT the `&` shell operator
+- **Do NOT use pipes, command substitution, or shell operators** in any Bash commands
+- **Do NOT manually pick ports** — the registry assigns them
+- **Do NOT scan ports with lsof in a loop** — read the registry
 
 ## What It Shows
 
@@ -50,5 +67,5 @@ Use port 3847 if free, otherwise try 3848, 3849, etc.
 
 - The dashboard runs as a background process — it stays alive until killed
 - SSE stream connects automatically when the page loads
-- Swarm data comes from the live ruflo MCP daemon via `mcp exec`
-- Kill with: `lsof -ti :<port> | xargs kill`
+- To stop: find PID with `lsof -ti :<port>` then `kill <PID>`
+- Unregister: remove the entry from `~/.hex-intf/registry.json`

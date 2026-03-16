@@ -1,7 +1,7 @@
 /**
  * MCP Primary Adapter
  *
- * Exposes hex-intf capabilities as MCP (Model Context Protocol) tools
+ * Exposes hex capabilities as MCP (Model Context Protocol) tools
  * so LLM agents can call them directly. This is a driving/primary adapter —
  * same use cases as the CLI, different interface.
  *
@@ -39,7 +39,7 @@ export interface MCPToolResult {
 
 // ─── Tool Registry ───────────────────────────────────────
 
-export const HEX_INTF_TOOLS: MCPToolDefinition[] = [
+export const HEX_TOOLS: MCPToolDefinition[] = [
   {
     name: 'hex_analyze',
     description: 'Analyze hexagonal architecture health: dead code, boundary violations, circular deps',
@@ -265,7 +265,7 @@ export class MCPAdapter {
   }
 
   getTools(): MCPToolDefinition[] {
-    return [...HEX_INTF_TOOLS, ...HEX_DASHBOARD_TOOLS];
+    return [...HEX_TOOLS, ...HEX_DASHBOARD_TOOLS];
   }
 
   async handleToolCall(call: MCPToolCall): Promise<MCPToolResult> {

@@ -1,7 +1,7 @@
 /**
  * Dashboard Primary Adapter
  *
- * Serves a web dashboard over HTTP and exposes hex-intf ports as
+ * Serves a web dashboard over HTTP and exposes hex ports as
  * JSON API endpoints plus an SSE event stream. Uses only node:http
  * with zero external dependencies.
  *

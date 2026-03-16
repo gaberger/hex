@@ -74,7 +74,7 @@ export class CodeGenerator implements ICodeGenerationPort {
     const codeUnit: CodeUnit = { filePath, language: lang, content, astSummary };
 
     // Phase 1: Validate generated code compiles
-    const project = { name: 'hex-intf', rootPath: '.', language: lang, adapters: [] };
+    const project = { name: 'hex', rootPath: '.', language: lang, adapters: [] };
     const buildResult = await this.build.compile(project);
     let result = codeUnit;
     if (!buildResult.success) {
@@ -207,7 +207,7 @@ export class CodeGenerator implements ICodeGenerationPort {
       .join('\n');
 
     return [
-      'You are generating code for a hexagonal architecture project (hex-intf).',
+      'You are generating code for a hexagonal architecture project (hex).',
       '',
       '## Import Rules (STRICT)',
       '- Only import from ports (../../core/ports/index.js), never from other adapters.',

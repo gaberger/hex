@@ -1,0 +1,103 @@
+{{define "results.html"}}
+<div class="space-y-6">
+
+    <!-- Header -->
+    <div>
+        <a href="/schedule"
+           hx-get="/schedule" hx-target="#content" hx-push-url="true"
+           class="text-sm text-gray-400 hover:text-f1-red transition-colors mb-2 inline-block">
+            ← Back to Schedule
+        </a>
+        <h1 class="text-3xl font-black flex items-center gap-3">
+            <span class="w-1.5 h-8 bg-f1-red rounded-full inline-block"></span>
+            {{.Race.RaceName}}
+        </h1>
+        <p class="text-gray-400 mt-1">{{.Race.Circuit.Name}} &middot; {{.Race.Circuit.Location.Locality}}, {{.Race.Circuit.Location.Country}} &middot; {{formatDate .Race.Date}}</p>
+    </div>
+
+    <!-- Podium Cards -->
+    {{if .Results}}
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {{range .Results}}
+        {{if le (int .Position) 3}}
+        <div class="rounded-2xl border p-6 {{podiumBg .Position}} text-center">
+            <div class="text-4xl font-black {{podiumColor .Position}} mb-1">P{{.Position}}</div>
+            <div class="text-xl font-bold mt-2">{{.Driver.FullName}}</div>
+            <div class="text-sm text-gray-400">{{.Constructor.Name}}</div>
+            <div class="mt-3 flex items-center justify-center gap-4 text-sm">
+                <span class="text-gray-400">Grid: <span class="text-white font-mono">{{.Grid}}</span></span>
+                <span class="text-gray-400">Laps: <span class="text-white font-mono">{{.Laps}}</span></span>
+                <span class="text-gray-400">Pts: <span class="text-white font-bold">{{.Points}}</span></span>
+            </div>
+            {{if hasFastestLap .}}
+            <div class="mt-2 inline-flex items-center gap-1 px-2 py-1 bg-purple-500/20 text-purple-400 rounded text-xs font-medium">
+                ⚡ Fastest Lap
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+        {{end}}
+    </div>
+    {{end}}
+
+    <!-- Full Results Table -->
+    <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
+        <table class="w-full">
+            <thead>
+                <tr class="border-b border-gray-700 text-left text-sm font-semibold text-f1-red uppercase tracking-wider">
+                    <th class="px-4 py-4 w-14">Pos</th>
+                    <th class="px-4 py-4">Driver</th>
+                    <th class="px-4 py-4 hidden md:table-cell">Constructor</th>
+                    <th class="px-4 py-4 hidden sm:table-cell text-center w-16">Grid</th>
+                    <th class="px-4 py-4 hidden lg:table-cell text-center w-16">Laps</th>
+                    <th class="px-4 py-4">Status</th>
+                    <th class="px-4 py-4 text-right w-20">Points</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Results}}
+                <tr class="border-b border-gray-700/50 hover:bg-gray-700/30 transition-colors
+                           {{if le (int .Position) 3}}font-semibold{{end}}">
+                    <td class="px-4 py-3">
+                        <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-sm font-bold
+                                     {{if eq (int .Position) 1}}bg-yellow-400/20 text-yellow-400
+                                     {{else if eq (int .Position) 2}}bg-gray-300/20 text-gray-300
+                                     {{else if eq (int .Position) 3}}bg-amber-600/20 text-amber-600
+                                     {{else}}bg-gray-700 text-gray-300{{end}}">
+                            {{.Position}}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3">
+                        <div class="flex items-center gap-2">
+                            <span class="font-semibold">{{.Driver.FullName}}</span>
+                            {{if hasFastestLap .}}
+                            <span class="inline-flex items-center px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs" title="Fastest Lap">⚡</span>
+                            {{end}}
+                        </div>
+                        <div class="text-xs text-gray-500 md:hidden">{{.Constructor.Name}}</div>
+                    </td>
+                    <td class="px-4 py-3 text-gray-400 hidden md:table-cell">{{.Constructor.Name}}</td>
+                    <td class="px-4 py-3 text-center font-mono hidden sm:table-cell">{{.Grid}}</td>
+                    <td class="px-4 py-3 text-center font-mono hidden lg:table-cell">{{.Laps}}</td>
+                    <td class="px-4 py-3 text-sm">
+                        {{if eq .Status "Finished"}}
+                            <span class="text-green-400">{{.Status}}</span>
+                        {{else if eq .Status "+1 Lap"}}
+                            <span class="text-yellow-400">{{.Status}}</span>
+                        {{else if eq .Status "+2 Laps"}}
+                            <span class="text-yellow-400">{{.Status}}</span>
+                        {{else}}
+                            <span class="text-red-400">{{.Status}}</span>
+                        {{end}}
+                    </td>
+                    <td class="px-4 py-3 text-right font-mono font-bold">
+                        {{if ne .Points "0"}}{{.Points}}{{else}}<span class="text-gray-600">-</span>{{end}}
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+
+</div>
+{{end}}

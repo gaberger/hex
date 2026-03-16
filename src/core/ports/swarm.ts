@@ -2,7 +2,7 @@
  * Swarm Coordination Port
  *
  * Abstracts ruflo's swarm orchestration behind a hex port interface.
- * ruflo is a REQUIRED dependency of hex-intf — this port is always
+ * ruflo is a REQUIRED dependency of hex — this port is always
  * backed by the ruflo adapter in production. The port exists so that
  * tests can mock swarm behavior without starting a real daemon.
  */
@@ -62,6 +62,46 @@ export interface SwarmMemoryEntry {
   ttl?: number;
 }
 
+// ─── AgentDB Types ───────────────────────────────────────
+
+export interface AgentDBPattern {
+  id: string;
+  name: string;
+  category: string;
+  content: string;
+  confidence: number;
+  accessCount: number;
+  createdAt: string;
+  updatedAt: string;
+  tags?: string[];
+}
+
+export interface AgentDBFeedback {
+  patternId: string;
+  outcome: 'success' | 'failure' | 'partial';
+  score: number;
+  context?: string;
+  details?: string;
+}
+
+export interface AgentDBSession {
+  sessionId: string;
+  agentName: string;
+  startedAt: string;
+  status: 'active' | 'ended';
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentDBProgressReport {
+  swarmId: string;
+  tasks: SwarmTask[];
+  agents: SwarmAgent[];
+  patterns: { total: number; recentlyUsed: number };
+  sessions: AgentDBSession[];
+  overallPercent: number;
+  phase: string;
+}
+
 // ─── Output Port (Secondary / Driven) ────────────────────
 
 export interface ISwarmPort {
@@ -100,6 +140,46 @@ export interface ISwarmPort {
 
   /** Search swarm memory */
   memorySearch(query: string, namespace?: string): Promise<SwarmMemoryEntry[]>;
+
+  // ─── AgentDB: Pattern Learning ─────────────────────────
+
+  /** Store a learned pattern (successful approach, code template, decision) */
+  patternStore(pattern: Omit<AgentDBPattern, 'id' | 'accessCount' | 'createdAt' | 'updatedAt'>): Promise<AgentDBPattern>;
+
+  /** Search for relevant patterns by query and optional category */
+  patternSearch(query: string, category?: string, limit?: number): Promise<AgentDBPattern[]>;
+
+  /** Record outcome feedback for a pattern to refine confidence scores */
+  patternFeedback(feedback: AgentDBFeedback): Promise<void>;
+
+  // ─── AgentDB: Session Tracking ─────────────────────────
+
+  /** Start a tracked session for an agent (enables progress visibility) */
+  sessionStart(agentName: string, metadata?: Record<string, unknown>): Promise<AgentDBSession>;
+
+  /** End a tracked session */
+  sessionEnd(sessionId: string): Promise<void>;
+
+  // ─── AgentDB: Hierarchical Memory ─────────────────────
+
+  /** Store a memory entry with hierarchical context (layer > namespace > key) */
+  hierarchicalStore(layer: string, namespace: string, key: string, value: string, tags?: string[]): Promise<void>;
+
+  /** Recall memories from a hierarchical path with optional depth traversal */
+  hierarchicalRecall(layer: string, namespace?: string, key?: string): Promise<SwarmMemoryEntry[]>;
+
+  // ─── AgentDB: Intelligence ─────────────────────────────
+
+  /** Consolidate and deduplicate stored patterns/memories */
+  consolidate(): Promise<{ merged: number; removed: number }>;
+
+  /** Synthesize context from multiple memory sources for a given query */
+  contextSynthesize(query: string, sources?: string[]): Promise<string>;
+
+  // ─── AgentDB: Aggregate Progress ──────────────────────
+
+  /** Get a full progress report with tasks, agents, patterns, and sessions */
+  getProgressReport(): Promise<AgentDBProgressReport>;
 }
 
 // ─── Input Port (Primary / Driving) ──────────────────────
@@ -109,5 +189,5 @@ export interface ISwarmOrchestrationPort {
   orchestrate(steps: WorkplanStep[], config?: Partial<SwarmConfig>): Promise<SwarmStatus>;
 
   /** Get a formatted progress report of the current swarm */
-  getProgress(): Promise<SwarmStatus & { tasks: SwarmTask[]; agents: SwarmAgent[] }>;
+  getProgress(): Promise<AgentDBProgressReport>;
 }

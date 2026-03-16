@@ -2,7 +2,7 @@
  * Ruflo Swarm Adapter
  *
  * Implements ISwarmPort by delegating to @claude-flow/cli.
- * This is the opinionated core of hex-intf — ruflo is required,
+ * This is the opinionated core of hex — ruflo is required,
  * not optional. The adapter uses execFile (not exec) for safe
  * CLI invocation without shell injection risk.
  */
@@ -17,6 +17,10 @@ import type {
   SwarmAgent,
   SwarmMemoryEntry,
   AgentRole,
+  AgentDBPattern,
+  AgentDBFeedback,
+  AgentDBSession,
+  AgentDBProgressReport,
 } from '../../core/ports/swarm.js';
 
 const execFile = promisify(execFileCb);
@@ -89,7 +93,7 @@ export class RufloAdapter implements ISwarmPort {
       type: task.agentRole,
       ...(task.adapter ? { metadata: `adapter=${task.adapter}` } : {}),
     });
-    const id = result.id ?? result.taskId ?? `hex-${Date.now()}`;
+    const id = String(result.id ?? result.taskId ?? `hex-${Date.now()}`);
     return { ...task, id, status: 'pending' };
   }
 
@@ -111,7 +115,7 @@ export class RufloAdapter implements ISwarmPort {
       name,
       ...(taskId ? { task: taskId } : {}),
     });
-    const id = result.id ?? result.agentId ?? `hex-${Date.now()}`;
+    const id = String(result.id ?? result.agentId ?? `hex-${Date.now()}`);
     return { id, name, role, status: 'spawning', currentTask: taskId };
   }
 
@@ -137,7 +141,7 @@ export class RufloAdapter implements ISwarmPort {
   async memoryRetrieve(key: string, namespace: string): Promise<string | null> {
     try {
       const result = await this.mcpExec('memory_retrieve', { key, namespace });
-      return result.value ?? null;
+      return (result.value as string) ?? null;
     } catch {
       // Memory key may not exist — return null rather than propagating
       return null;
@@ -155,6 +159,159 @@ export class RufloAdapter implements ISwarmPort {
       // Search may fail if swarm daemon is not running — return empty results
       return [];
     }
+  }
+
+  // ─── AgentDB: Pattern Learning ─────────────────────────
+
+  async patternStore(
+    pattern: Omit<AgentDBPattern, 'id' | 'accessCount' | 'createdAt' | 'updatedAt'>,
+  ): Promise<AgentDBPattern> {
+    const result = await this.mcpExec('agentdb_pattern-store', {
+      name: pattern.name,
+      category: pattern.category,
+      content: pattern.content,
+      confidence: String(pattern.confidence),
+      ...(pattern.tags?.length ? { tags: pattern.tags.join(',') } : {}),
+    });
+    return {
+      id: (result.id as string) ?? `pat-${Date.now()}`,
+      name: pattern.name,
+      category: pattern.category,
+      content: pattern.content,
+      confidence: pattern.confidence,
+      accessCount: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      tags: pattern.tags,
+    };
+  }
+
+  async patternSearch(query: string, category?: string, limit?: number): Promise<AgentDBPattern[]> {
+    try {
+      const result = await this.mcpExec('agentdb_pattern-search', {
+        query,
+        ...(category ? { category } : {}),
+        ...(limit ? { limit: String(limit) } : {}),
+      });
+      return (result.patterns ?? result.results ?? []) as AgentDBPattern[];
+    } catch {
+      return [];
+    }
+  }
+
+  async patternFeedback(feedback: AgentDBFeedback): Promise<void> {
+    await this.mcpExec('agentdb_feedback', {
+      patternId: feedback.patternId,
+      outcome: feedback.outcome,
+      score: String(feedback.score),
+      ...(feedback.context ? { context: feedback.context } : {}),
+      ...(feedback.details ? { details: feedback.details } : {}),
+    });
+  }
+
+  // ─── AgentDB: Session Tracking ─────────────────────────
+
+  async sessionStart(agentName: string, metadata?: Record<string, unknown>): Promise<AgentDBSession> {
+    const result = await this.mcpExec('agentdb_session-start', {
+      agent: agentName,
+      ...(metadata ? { metadata: JSON.stringify(metadata) } : {}),
+    });
+    return {
+      sessionId: (result.sessionId as string) ?? (result.id as string) ?? `sess-${Date.now()}`,
+      agentName,
+      startedAt: new Date().toISOString(),
+      status: 'active',
+      metadata,
+    };
+  }
+
+  async sessionEnd(sessionId: string): Promise<void> {
+    await this.mcpExec('agentdb_session-end', { sessionId });
+  }
+
+  // ─── AgentDB: Hierarchical Memory ─────────────────────
+
+  async hierarchicalStore(
+    layer: string, namespace: string, key: string, value: string, tags?: string[],
+  ): Promise<void> {
+    await this.mcpExec('agentdb_hierarchical-store', {
+      layer,
+      namespace,
+      key,
+      value,
+      ...(tags?.length ? { tags: tags.join(',') } : {}),
+    });
+  }
+
+  async hierarchicalRecall(
+    layer: string, namespace?: string, key?: string,
+  ): Promise<SwarmMemoryEntry[]> {
+    try {
+      const result = await this.mcpExec('agentdb_hierarchical-recall', {
+        layer,
+        ...(namespace ? { namespace } : {}),
+        ...(key ? { key } : {}),
+      });
+      return (result.entries ?? result.results ?? []) as SwarmMemoryEntry[];
+    } catch {
+      return [];
+    }
+  }
+
+  // ─── AgentDB: Intelligence ─────────────────────────────
+
+  async consolidate(): Promise<{ merged: number; removed: number }> {
+    try {
+      const result = await this.mcpExec('agentdb_consolidate');
+      return {
+        merged: (result.merged as number) ?? 0,
+        removed: (result.removed as number) ?? 0,
+      };
+    } catch {
+      return { merged: 0, removed: 0 };
+    }
+  }
+
+  async contextSynthesize(query: string, sources?: string[]): Promise<string> {
+    try {
+      const result = await this.mcpExec('agentdb_context-synthesize', {
+        query,
+        ...(sources?.length ? { sources: sources.join(',') } : {}),
+      });
+      return (result.context as string) ?? (result.synthesis as string) ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  // ─── AgentDB: Aggregate Progress ──────────────────────
+
+  async getProgressReport(): Promise<AgentDBProgressReport> {
+    const [statusResult, tasks, agents, patterns] = await Promise.all([
+      this.status().catch(() => ({
+        id: 'default', topology: 'hierarchical' as const, agentCount: 0,
+        activeTaskCount: 0, completedTaskCount: 0, status: 'idle' as const,
+      })),
+      this.listTasks().catch(() => []),
+      this.listAgents().catch(() => []),
+      this.patternSearch('*', undefined, 100).catch(() => []),
+    ]);
+
+    const completed = tasks.filter((t) => t.status === 'completed').length;
+    const total = tasks.length || 1;
+
+    return {
+      swarmId: statusResult.id,
+      tasks,
+      agents,
+      patterns: {
+        total: patterns.length,
+        recentlyUsed: patterns.filter((p) => p.accessCount > 0).length,
+      },
+      sessions: [], // Sessions are ephemeral — list via sessionStart tracking
+      overallPercent: Math.round((completed / total) * 100),
+      phase: statusResult.status === 'running' ? 'execute' : statusResult.status,
+    };
   }
 
   // ─── Private Helpers ─────────────────────────────────────

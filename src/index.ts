@@ -1,5 +1,5 @@
 /**
- * hex-intf — Public Library API
+ * hex — Public Library API
  *
  * Re-exports port interfaces, domain entities, and the composition root
  * factory for npm consumers. Adapters are NOT exported (they are internal).

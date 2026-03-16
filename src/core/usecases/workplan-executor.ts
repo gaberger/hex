@@ -34,7 +34,20 @@ export class WorkplanExecutor implements IWorkplanPort {
   ) {}
 
   async createPlan(requirements: string[], lang: Language): Promise<Workplan> {
-    const projectContext = await this.summarizeProject();
+    const [projectContext, relevantPatterns] = await Promise.all([
+      this.summarizeProject(),
+      this.findRelevantPatterns(requirements),
+    ]);
+
+    const patternHints = relevantPatterns.length > 0
+      ? [
+          '',
+          '## Learned Patterns (from prior successful runs)',
+          ...relevantPatterns.map((p) =>
+            `- [${p.category}] ${p.name} (confidence: ${p.confidence}): ${p.content.slice(0, 200)}`,
+          ),
+        ]
+      : [];
 
     const messages: Message[] = [
       {
@@ -51,6 +64,7 @@ export class WorkplanExecutor implements IWorkplanPort {
           '- Each step targets one adapter boundary (e.g., "secondary/llm-adapter")',
           '- Dependencies reference other step IDs',
           '- Order steps so dependencies come first',
+          '- If learned patterns are provided, prefer approaches that worked before',
         ].join('\n'),
       },
       {
@@ -58,6 +72,7 @@ export class WorkplanExecutor implements IWorkplanPort {
         content: [
           `## Project Context (${lang})`,
           projectContext,
+          ...patternHints,
           '',
           '## Requirements',
           ...requirements.map((r, i) => `${i + 1}. ${r}`),
@@ -77,12 +92,24 @@ export class WorkplanExecutor implements IWorkplanPort {
       graph.addStep(step);
     }
 
+    // Start a tracked session so progress is visible in dashboard
+    let session: { sessionId: string } | null = null;
+    try {
+      session = await this.swarm.sessionStart('workplan-executor', {
+        planId: plan.id,
+        planTitle: plan.title,
+        stepCount: plan.steps.length,
+      });
+    } catch { /* session tracking is best-effort */ }
+
     const completed = new Set<string>();
+    const failed = new Set<string>();
     const sorted = graph.topologicalSort();
 
     for (const step of sorted) {
       const depsReady = step.dependencies.every((d) => completed.has(d));
       if (!depsReady) {
+        failed.add(step.id);
         yield { stepId: step.id, status: 'failed', errors: ['Unmet dependencies'] };
         continue;
       }
@@ -100,11 +127,31 @@ export class WorkplanExecutor implements IWorkplanPort {
         await this.swarm.completeTask(task.id, `Completed: ${step.description}`);
         completed.add(step.id);
 
+        // Store successful step as a learned pattern
+        await this.storeStepPattern(step, 'success');
+
         yield { stepId: step.id, status: 'passed' };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        failed.add(step.id);
+
+        // Record failure pattern for future avoidance
+        await this.storeStepPattern(step, 'failure', message);
+
         yield { stepId: step.id, status: 'failed', errors: [message] };
       }
+    }
+
+    // End the session with a summary
+    if (session) {
+      try {
+        await this.swarm.hierarchicalStore(
+          'workplan', plan.id, 'summary',
+          JSON.stringify({ completed: completed.size, failed: failed.size, total: sorted.length }),
+          ['workplan', 'summary'],
+        );
+        await this.swarm.sessionEnd(session.sessionId);
+      } catch { /* best-effort */ }
     }
   }
 
@@ -127,6 +174,47 @@ export class WorkplanExecutor implements IWorkplanPort {
       }
     }
     return lines.join('\n');
+  }
+
+  private async findRelevantPatterns(requirements: string[]) {
+    try {
+      const query = requirements.join(' ').slice(0, 200);
+      return await this.swarm.patternSearch(query, 'workplan', 5);
+    } catch {
+      return [];
+    }
+  }
+
+  private async storeStepPattern(
+    step: { id: string; description: string; adapter: string },
+    outcome: 'success' | 'failure',
+    error?: string,
+  ): Promise<void> {
+    try {
+      const pattern = await this.swarm.patternStore({
+        name: `${outcome}: ${step.adapter}`,
+        category: 'workplan',
+        content: JSON.stringify({
+          stepId: step.id,
+          description: step.description,
+          adapter: step.adapter,
+          outcome,
+          ...(error ? { error } : {}),
+        }),
+        confidence: outcome === 'success' ? 0.8 : 0.2,
+        tags: ['workplan', step.adapter, outcome],
+      });
+
+      if (outcome === 'failure' && pattern.id) {
+        await this.swarm.patternFeedback({
+          patternId: pattern.id,
+          outcome: 'failure',
+          score: 0.2,
+          context: step.adapter,
+          details: error,
+        });
+      }
+    } catch { /* pattern storage is best-effort */ }
   }
 
   private parsePlanResponse(content: string): Workplan {
