@@ -504,19 +504,15 @@ export class CLIAdapter {
 
   // ── dashboard ───────────────────────────────────────
 
-  private async dashboard(args: ParsedArgs): Promise<number> {
+  private async dashboard(_args: ParsedArgs): Promise<number> {
     const { HubLauncher } = await import('../secondary/hub-launcher.js');
     const launcher = new HubLauncher();
 
     // Ensure hex-hub is running
-    let url: string;
-    if (await launcher.isRunning()) {
-      url = 'http://127.0.0.1:5555';
-    } else {
+    if (!(await launcher.isRunning())) {
       try {
         const result = await launcher.start();
-        url = result.url;
-        this.writeLn(`hex-hub started at ${url}`);
+        this.writeLn(`hex-hub started at ${result.url}`);
       } catch (err) {
         this.writeLn(`Error: ${err instanceof Error ? err.message : String(err)}`);
         this.writeLn('Run "hex setup" to build and install the hex-hub binary.');
@@ -524,24 +520,22 @@ export class CLIAdapter {
       }
     }
 
-    // Register current project with the hub
+    // Register project AND push all data (health, tokens, swarm, graph)
     try {
-      const name = this.ctx.rootPath.split('/').pop() ?? 'unknown';
-      const res = await fetch(`${url}/api/projects/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, rootPath: this.ctx.rootPath }),
-        signal: AbortSignal.timeout(3000),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as Record<string, unknown>;
-        this.writeLn(`Project "${name}" registered (id: ${data.id ?? 'ok'})`);
-      }
-    } catch {
-      // Registration is best-effort — hub may not support this endpoint yet
+      const { DashboardAdapter } = await import('./dashboard-adapter.js');
+      const adapter = new DashboardAdapter(this.ctx);
+      const { url } = await adapter.start();
+      this.writeLn(`Dashboard: ${url}`);
+      this.writeLn('Project registered — pushing architecture data...');
+
+      // Keep pushing in the background (adapter has a 10s interval)
+      // Unref the timer so it doesn't keep the process alive
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.writeLn(`Dashboard data push failed: ${msg}`);
+      this.writeLn('Dashboard: http://127.0.0.1:5555 (connected without data)');
     }
 
-    this.writeLn(`Dashboard: ${url}`);
     return 0;
   }
 
@@ -1602,8 +1596,10 @@ export class CLIAdapter {
       await adapter.start();
       dashboard = { broadcast: (e, d) => adapter.broadcast(e, d), stop: () => adapter.stop() };
       dashboard.broadcast('go-started', { prompt, mode, branch: branchName, workDir, timestamp });
-    } catch {
-      // Hub not running — continue without dashboard
+      this.writeLn('[hex go] Dashboard connected — pushing events to hub');
+    } catch (dashErr) {
+      const msg = dashErr instanceof Error ? dashErr.message : String(dashErr);
+      this.writeLn(`[hex go] Dashboard unavailable: ${msg} — running without live updates`);
     }
 
     this.writeLn('');
