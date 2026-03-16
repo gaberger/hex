@@ -108,6 +108,21 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     || typeof (globalThis as any).Bun?.jest !== 'undefined';
 
   if (!isTest) {
+    const { writeFile } = await import('node:fs/promises');
+    const statusFile = `${outputDir}/status.json`;
+
+    // Track what connects so the status line can read it
+    const status: Record<string, unknown> = {
+      project: projectName,
+      projectPath,
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      swarm: false,
+      agentdb: false,
+      dashboard: null as string | null,
+    };
+
+    // Initialize swarm
     void swarm.init({
       topology: 'hierarchical',
       maxAgents: 4,
@@ -115,17 +130,35 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
       consensus: 'raft',
       memoryNamespace: `hex:${projectName}`,
     }).then(
-      () => process.stderr.write(`[hex] Swarm initialized for ${projectName}\n`),
+      () => { status.swarm = true; process.stderr.write(`[hex] Swarm initialized for ${projectName}\n`); },
       (err) => process.stderr.write(`[hex] Swarm init skipped: ${err instanceof Error ? err.message : String(err)}\n`),
-    );
+    ).finally(() => writeFile(statusFile, JSON.stringify(status, null, 2)).catch(() => {}));
 
+    // Start AgentDB session
     void swarm.sessionStart(`hex:${projectName}`, {
       projectPath,
       startedAt: new Date().toISOString(),
     }).then(
-      () => process.stderr.write(`[hex] AgentDB session started for ${projectName}\n`),
+      () => { status.agentdb = true; process.stderr.write(`[hex] AgentDB session started for ${projectName}\n`); },
       (err) => process.stderr.write(`[hex] AgentDB session skipped: ${err instanceof Error ? err.message : String(err)}\n`),
-    );
+    ).finally(() => writeFile(statusFile, JSON.stringify(status, null, 2)).catch(() => {}));
+
+    // Auto-register with project registry + start dashboard
+    void (async () => {
+      try {
+        const reg = await registry.register(projectPath, projectName);
+        status.dashboard = `localhost:${reg.port}`;
+        await registry.writeLocalIdentity(projectPath, {
+          id: reg.id,
+          name: reg.name,
+          createdAt: reg.createdAt,
+        });
+        process.stderr.write(`[hex] Registered ${projectName} (port ${reg.port})\n`);
+      } catch (err) {
+        process.stderr.write(`[hex] Registry skipped: ${err instanceof Error ? err.message : String(err)}\n`);
+      }
+      await writeFile(statusFile, JSON.stringify(status, null, 2)).catch(() => {});
+    })();
   }
 
   // LLM: graceful degradation — null when no API key is configured
