@@ -295,6 +295,8 @@ export class CLIAdapter {
           return await this.setup();
         case 'init':
           return await this.init(args);
+        case 'mcp':
+          return await this.mcp();
         case 'projects':
           return await this.projects();
         case 'help':
@@ -621,6 +623,105 @@ export class CLIAdapter {
 
   private async status(): Promise<number> {
     this.writeLn('Swarm status: use "hex-intf analyze" to check project health.');
+    return 0;
+  }
+
+  // ── mcp ────────────────────────────────────────────
+  // Starts hex-intf as a stdio MCP server so any project can use it:
+  //   npx hex-intf mcp
+  // Or in .claude/settings.local.json:
+  //   { "mcpServers": { "hex-intf": { "command": "npx", "args": ["hex-intf", "mcp"] } } }
+
+  private async mcp(): Promise<number> {
+    const { MCPAdapter, HEX_INTF_TOOLS, HEX_DASHBOARD_TOOLS } = await import('./mcp-adapter.js');
+
+    const adapter = new MCPAdapter({
+      archAnalyzer: this.ctx.archAnalyzer,
+      ast: this.ctx.ast,
+      fs: this.ctx.fs,
+      codeGenerator: this.ctx.codeGenerator,
+      workplanExecutor: this.ctx.workplanExecutor,
+      swarmOrchestrator: this.ctx.swarmOrchestrator,
+    });
+
+    const allTools = adapter.getTools();
+
+    // JSON-RPC stdio MCP server — reads from stdin, writes to stdout
+    const readline = await import('node:readline');
+    const rl = readline.createInterface({ input: process.stdin });
+
+    const send = (msg: unknown) => {
+      process.stdout.write(JSON.stringify(msg) + '\n');
+    };
+
+    // Log to stderr so it doesn't interfere with MCP protocol on stdout
+    process.stderr.write(`[hex-intf] MCP server started with ${allTools.length} tools\n`);
+
+    rl.on('line', async (line: string) => {
+      let request: { jsonrpc: string; id?: number | string; method: string; params?: Record<string, unknown> };
+      try {
+        request = JSON.parse(line);
+      } catch {
+        return; // Ignore malformed lines
+      }
+
+      const { id, method, params } = request;
+
+      switch (method) {
+        case 'initialize':
+          send({
+            jsonrpc: '2.0', id,
+            result: {
+              protocolVersion: '2024-11-05',
+              capabilities: { tools: {} },
+              serverInfo: { name: 'hex-intf', version: '1.0.0' },
+            },
+          });
+          break;
+
+        case 'notifications/initialized':
+          // Client ack — no response needed
+          break;
+
+        case 'tools/list':
+          send({
+            jsonrpc: '2.0', id,
+            result: {
+              tools: allTools.map((t) => ({
+                name: t.name,
+                description: t.description,
+                inputSchema: t.inputSchema,
+              })),
+            },
+          });
+          break;
+
+        case 'tools/call': {
+          const toolName = (params as any)?.name as string;
+          const toolArgs = (params as any)?.arguments as Record<string, unknown> ?? {};
+          const result = await adapter.handleToolCall({ name: toolName, arguments: toolArgs });
+          send({
+            jsonrpc: '2.0', id,
+            result: { content: result.content, isError: result.isError },
+          });
+          break;
+        }
+
+        default:
+          send({
+            jsonrpc: '2.0', id,
+            error: { code: -32601, message: `Method not found: ${method}` },
+          });
+      }
+    });
+
+    // Keep the process alive
+    await new Promise<void>((resolve) => {
+      rl.on('close', resolve);
+      process.on('SIGINT', () => { adapter.shutdownHub(); resolve(); });
+      process.on('SIGTERM', () => { adapter.shutdownHub(); resolve(); });
+    });
+
     return 0;
   }
 
@@ -1161,30 +1262,34 @@ export class CLIAdapter {
   // ── help ────────────────────────────────────────────
 
   private help(): number {
-    this.writeLn('hex-intf - Hexagonal Architecture toolkit');
+    this.writeLn('hex-intf - Hexagonal Architecture framework for agentic coding');
     this.writeLn('');
     this.writeLn('Usage: hex-intf <command> [options]');
     this.writeLn('');
     this.writeLn('Commands:');
-    this.writeLn('  analyze [path]                  Analyze architecture health');
+    this.writeLn('  mcp                             Start as MCP server (stdio transport)');
+    this.writeLn('  analyze [path] [--json]         Analyze architecture health');
     this.writeLn('  summarize <file> [--level L]     Print AST summary (L0-L3)');
     this.writeLn('  generate <spec> [--adapter N]    Generate code from a spec file');
-    this.writeLn('    [--lang ts|go|rust]');
+    this.writeLn('    [--lang ts|go|rust] [--output path]');
     this.writeLn('  plan <requirements...>           Create a workplan from requirements');
     this.writeLn('    [--lang ts|go|rust]');
-    this.writeLn('  setup                           Download tree-sitter grammars');
+    this.writeLn('  setup                           Download grammars + install skills/agents');
     this.writeLn('  dashboard [--port N]             Open web dashboard (default: 3847)');
     this.writeLn('  hub [paths...] [--port N]       Multi-project dashboard broker');
     this.writeLn('  status                          Show swarm progress');
     this.writeLn('  init [--lang ts|go|rust]        Scaffold a hex project');
     this.writeLn('  help                            Show this help');
     this.writeLn('');
+    this.writeLn('MCP Server (add to any project):');
+    this.writeLn('  # .claude/settings.local.json');
+    this.writeLn('  { "mcpServers": { "hex-intf": { "command": "npx", "args": ["hex-intf", "mcp"] } } }');
+    this.writeLn('');
     this.writeLn('Examples:');
-    this.writeLn('  hex-intf analyze ./src');
-    this.writeLn('  hex-intf summarize src/core/ports/index.ts --level L2');
-    this.writeLn('  hex-intf generate spec.txt --adapter redis --lang ts');
+    this.writeLn('  hex-intf mcp                                 # Start MCP server');
+    this.writeLn('  hex-intf analyze ./src --json                # CI-friendly output');
+    this.writeLn('  hex-intf generate spec.txt --output src/adapters/primary/api.ts');
     this.writeLn('  hex-intf plan "add caching layer" "implement retry logic"');
-    this.writeLn('  hex-intf status');
     this.writeLn('  hex-intf init --lang ts');
 
     return 0;

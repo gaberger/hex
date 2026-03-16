@@ -13,6 +13,9 @@
 
 import type { DomainEvent } from '../domain/entities.js';
 
+// Re-export so adapters import DomainEvent from ports, not domain
+export type { DomainEvent } from '../domain/entities.js';
+
 // ─── Event Handler Type ──────────────────────────────────
 
 export type EventHandler<T extends DomainEvent['type'] = DomainEvent['type']> = (
