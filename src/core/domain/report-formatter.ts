@@ -6,7 +6,7 @@
  * No I/O — usable by both CLI and MCP adapters.
  */
 
-import type { ArchAnalysisResult, DependencyViolation, DeadExport, DependencyDirection } from './value-objects.js';
+import type { ArchAnalysisResult, DependencyViolation, DeadExport, DependencyDirection, RepoHygieneResult, HygieneSeverity } from './value-objects.js';
 
 // ─── Report Configuration ──────────────────────────────
 
@@ -184,6 +184,8 @@ export function formatArchReport(
       ['Unused ports', String(result.unusedPorts.length), result.unusedPorts.length === 0 ? 'PASS' : 'WARN'],
       ['Unused adapters', String(result.unusedAdapters.length), result.unusedAdapters.length === 0 ? 'PASS' : 'INFO'],
       ['Orphan files', String(result.orphanFiles.length), result.orphanFiles.length === 0 ? 'PASS' : 'INFO'],
+      ['Repo hygiene', result.repoHygiene ? String(result.repoHygiene.findings.length) : 'N/A',
+        !result.repoHygiene ? 'SKIP' : result.repoHygiene.clean ? 'PASS' : 'WARN'],
     ],
     [22, 7, 6],
   ));
@@ -380,6 +382,15 @@ export function formatArchReport(
     ln();
   }
 
+  // ── Repo Hygiene (Anti-Slop) ────────────────────────
+  if (result.repoHygiene && result.repoHygiene.findings.length > 0) {
+    ln('-'.repeat(60));
+    ln('  REPO HYGIENE');
+    ln('-'.repeat(60));
+    ln();
+    formatHygieneFindings(result.repoHygiene, ln, o.maxItems);
+  }
+
   // ── Rules Reference ─────────────────────────────────
   if (o.showRulesReference) {
     ln('-'.repeat(60));
@@ -415,6 +426,44 @@ export function formatArchReport(
   ln('='.repeat(60));
 
   return lines.join('\n');
+}
+
+// ─── Hygiene Section Formatter ─────────────────────────
+
+function formatHygieneFindings(
+  hygiene: RepoHygieneResult,
+  ln: (text?: string) => void,
+  maxItems: number,
+): void {
+  const severityOrder: Record<HygieneSeverity, number> = { critical: 0, warning: 1, info: 2 };
+  const sorted = [...hygiene.findings].sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+
+  const bySeverity = new Map<HygieneSeverity, typeof sorted>();
+  for (const f of sorted) {
+    if (!bySeverity.has(f.severity)) bySeverity.set(f.severity, []);
+    bySeverity.get(f.severity)!.push(f);
+  }
+
+  for (const [severity, findings] of bySeverity) {
+    const label = severity.toUpperCase();
+    ln(`  [${label}] ${findings.length} finding(s)`);
+    ln();
+    const rows = findings.slice(0, maxItems).map((f) => [
+      f.category,
+      shortPath(f.path),
+      f.suggestedFix,
+    ]);
+    ln(table(['Category', 'Path', 'Suggested Fix'], rows));
+    if (findings.length > maxItems) {
+      ln(`  ... and ${findings.length - maxItems} more ${severity} findings`);
+    }
+    ln();
+  }
+
+  // Summary line
+  ln(`  Totals: ${hygiene.uncommittedCount} uncommitted, ${hygiene.stagedCount} staged, ` +
+    `${hygiene.orphanWorktreeCount} orphan worktrees, ${hygiene.embeddedRepoCount} embedded repos`);
+  ln();
 }
 
 /**

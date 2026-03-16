@@ -7,13 +7,13 @@
  * become work items — closing the validate → fix loop.
  */
 
-import type { ArchAnalysisResult, DependencyViolation, DeadExport, DependencyDirection } from './value-objects.js';
+import type { ArchAnalysisResult, DependencyViolation, DeadExport, DependencyDirection, RepoHygieneResult } from './value-objects.js';
 import type { ValidationVerdict } from './validation-types.js';
 
 // ─── Action Item Types ─────────────────────────────────
 
 export type ActionPriority = 'critical' | 'high' | 'medium' | 'low';
-export type ActionCategory = 'bug' | 'violation' | 'dead-code' | 'test-gap' | 'circular-dep' | 'unused-port';
+export type ActionCategory = 'bug' | 'violation' | 'dead-code' | 'test-gap' | 'circular-dep' | 'unused-port' | 'hygiene';
 
 export interface ActionItem {
   id: string;
@@ -241,6 +241,28 @@ export function extractValidationActions(verdict: ValidationVerdict): ActionItem
   return items;
 }
 
+// ─── Extract from Repo Hygiene ─────────────────────────
+
+export function extractHygieneActions(hygiene: RepoHygieneResult): ActionItem[] {
+  const items: ActionItem[] = [];
+  for (const f of hygiene.findings) {
+    const priority: ActionPriority =
+      f.severity === 'critical' ? 'high' :
+      f.severity === 'warning' ? 'medium' : 'low';
+    items.push({
+      id: nextId('HYG'),
+      category: 'hygiene',
+      priority,
+      title: `${f.category}: ${f.path}`,
+      description: f.description,
+      file: f.path,
+      suggestedFix: f.suggestedFix,
+      autoFixable: f.category === 'build-artifact' || f.category === 'runtime-state',
+    });
+  }
+  return items;
+}
+
 // ─── Combined Report ───────────────────────────────────
 
 export function buildActionItemReport(
@@ -254,6 +276,9 @@ export function buildActionItemReport(
 
   if (archResult) {
     items.push(...extractArchActions(archResult));
+    if (archResult.repoHygiene) {
+      items.push(...extractHygieneActions(archResult.repoHygiene));
+    }
     source = verdict ? 'combined' : 'arch-analysis';
   }
   if (verdict) {

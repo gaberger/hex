@@ -24,13 +24,14 @@ mcp__hex__hex_analyze({ path: rootPath })
 ```
 
 This returns the formatted HEXAGONAL ARCHITECTURE HEALTH REPORT with:
-- Summary table (files, exports, violations, circular deps, dead exports)
+- Summary table (files, exports, violations, circular deps, dead exports, repo hygiene)
 - Error rates with thresholds
 - Layer breakdown
 - Boundary violations grouped by severity (CRITICAL/WARNING)
 - Circular dependencies
 - Dead exports grouped by file
 - Unused ports & adapters
+- **Repo hygiene (anti-slop)**: uncommitted files, staged-not-committed, orphan worktrees, embedded git repos, untracked build artifacts, runtime state dirs
 - Health score and grade (A-F)
 
 Display the full report to the user.
