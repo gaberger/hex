@@ -22,9 +22,19 @@
 
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 const HUB_PORT = 5555;
 const TIMEOUT_MS = 2000;
+
+// Read auth token from hub lock file
+let authToken = '';
+try {
+  const lockPath = path.join(os.homedir(), '.hex', 'daemon', 'hub.lock');
+  const lock = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+  authToken = lock.token || '';
+} catch { /* no lock file — push without auth */ }
 
 const eventType = process.argv[2] || 'tool-use';
 
@@ -82,12 +92,15 @@ const payload = JSON.stringify({
 });
 
 // Fire-and-forget POST to hub
+const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) };
+if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+
 const req = http.request({
   hostname: '127.0.0.1',
   port: HUB_PORT,
   path: '/api/event',
   method: 'POST',
-  headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+  headers,
   timeout: TIMEOUT_MS,
 }, (res) => { res.resume(); }); // drain response
 

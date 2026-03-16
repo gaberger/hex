@@ -11,14 +11,26 @@
  * to the hub. The hub stores and serves it to browsers.
  */
 
-import { watch, type FSWatcher } from 'node:fs';
-import { resolve } from 'node:path';
+import { watch, readFileSync, type FSWatcher } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { homedir } from 'node:os';
 import { request } from 'node:http';
 import type { AppContext } from '../../core/ports/app-context.js';
 import type { ImportEdge } from '../../core/ports/index.js';
 
 /** Fixed dashboard hub port — must match dashboard-hub.ts */
 const HUB_PORT = 5555;
+
+/** Read auth token from hub lock file. Returns empty string if unavailable. */
+function readHubToken(): string {
+  try {
+    const lockPath = join(homedir(), '.hex', 'daemon', 'hub.lock');
+    const lock = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    return lock.token ?? '';
+  } catch {
+    return '';
+  }
+}
 
 // ── Layer classifier ─────────────────────────────────────
 
@@ -39,11 +51,14 @@ export class DashboardAdapter {
   private watchers: FSWatcher[] = [];
   private fileChangeDebounce = new Map<string, ReturnType<typeof setTimeout>>();
   private stopped = false;
+  private readonly authToken: string;
 
   constructor(
     private readonly ctx: AppContext,
     private readonly hubPort: number = HUB_PORT,
-  ) {}
+  ) {
+    this.authToken = readHubToken();
+  }
 
   /**
    * Register with the hub and start pushing data.
@@ -263,16 +278,20 @@ export class DashboardAdapter {
   private post(path: string, body: unknown): Promise<Record<string, unknown> | null> {
     return new Promise((resolve) => {
       const payload = JSON.stringify(body);
+      const headers: Record<string, string | number> = {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      };
+      if (this.authToken) {
+        headers['Authorization'] = `Bearer ${this.authToken}`;
+      }
       const req = request(
         {
           hostname: '127.0.0.1',
           port: this.hubPort,
           path,
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(payload),
-          },
+          headers,
           timeout: 5000,
         },
         (res) => {
