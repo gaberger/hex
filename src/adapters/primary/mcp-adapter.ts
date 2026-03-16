@@ -147,6 +147,19 @@ export const HEX_TOOLS: MCPToolDefinition[] = [
     },
   },
   {
+    name: 'hex_build',
+    description: 'Build anything: automatically plans, orchestrates parallel agents, generates code, analyzes architecture, and validates. The single entry point for hex — just describe what you want built.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requirements: { type: 'string', description: 'What to build (natural language description)' },
+        language: { type: 'string', description: 'Target language', enum: ['typescript', 'go', 'rust'] },
+        maxAgents: { type: 'string', description: 'Maximum parallel agents (default: 4)' },
+      },
+      required: ['requirements'],
+    },
+  },
+  {
     name: 'hex_orchestrate',
     description: 'Execute a workplan using parallel swarm agents in isolated worktrees with dependency ordering',
     inputSchema: {
@@ -307,6 +320,12 @@ export class MCPAdapter {
           );
         case 'hex_analyze_json':
           return await this.analyzeJson(call.arguments.path as string);
+        case 'hex_build':
+          return await this.build(
+            call.arguments.requirements as string,
+            (call.arguments.language as string) ?? 'typescript',
+            call.arguments.maxAgents as string | undefined,
+          );
         case 'hex_orchestrate':
           return await this.orchestrate(
             call.arguments.requirements as string,
@@ -509,6 +528,77 @@ export class MCPAdapter {
   private async analyzeJson(path: string): Promise<MCPToolResult> {
     const result = await this.ctx.archAnalyzer.analyzeArchitecture(path);
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+
+  /**
+   * hex_build — the single entry point. Plans → orchestrates → analyzes → reports.
+   * Users never need to know about swarms, orchestration, or separate tools.
+   */
+  private async build(
+    requirements: string,
+    language: string,
+    maxAgentsStr?: string,
+  ): Promise<MCPToolResult> {
+    const lines: string[] = [];
+    const langMap: Record<string, Language> = { typescript: 'typescript', go: 'go', rust: 'rust', ts: 'typescript' };
+    const lang = langMap[language] ?? 'typescript' as Language;
+    const reqList = requirements.split(/[,\n]/).map((r) => r.trim()).filter(Boolean);
+
+    // ── Phase 1: Plan
+    lines.push('═══ PHASE 1: PLANNING ═══');
+    if (!this.ctx.workplanExecutor) {
+      lines.push('LLM not configured — returning requirements as manual plan.');
+      lines.push(`Requirements: ${reqList.join(', ')}`);
+      lines.push('Set ANTHROPIC_API_KEY or OPENAI_API_KEY to enable auto-planning.');
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    }
+
+    const workplan = await this.ctx.workplanExecutor.createPlan(reqList, lang);
+    lines.push(`Plan: ${workplan.title}`);
+    lines.push(`Steps: ${workplan.steps.length} | Budget: ~${workplan.estimatedTokenBudget} tokens`);
+    for (const step of workplan.steps) {
+      const deps = step.dependencies.length > 0 ? ` (after: ${step.dependencies.join(', ')})` : '';
+      lines.push(`  [${step.id}] ${step.description} → ${step.adapter}${deps}`);
+    }
+    lines.push('');
+
+    // ── Phase 2: Orchestrate (parallel swarm execution)
+    lines.push('═══ PHASE 2: ORCHESTRATING ═══');
+    if (this.ctx.swarmOrchestrator) {
+      const maxAgents = maxAgentsStr ? parseInt(maxAgentsStr, 10) : undefined;
+      const config: Record<string, unknown> = {};
+      if (maxAgents && !isNaN(maxAgents)) config.maxAgents = maxAgents;
+
+      const status = await this.ctx.swarmOrchestrator.orchestrate(workplan.steps, config as any);
+      lines.push(`Swarm: ${status.status} | Agents: ${status.agentCount} | Tasks: ${status.completedTaskCount}/${status.activeTaskCount + status.completedTaskCount}`);
+    } else {
+      lines.push('Swarm not available — steps listed for manual execution.');
+    }
+    lines.push('');
+
+    // ── Phase 3: Analyze architecture
+    lines.push('═══ PHASE 3: ANALYZING ═══');
+    const analysis = await this.ctx.archAnalyzer.analyzeArchitecture('.');
+    const s = analysis.summary;
+    lines.push(`Health: ${s.healthScore}/100 | Files: ${s.totalFiles} | Violations: ${s.violationCount} | Dead: ${s.deadExportCount}`);
+    if (s.violationCount > 0) {
+      for (const v of analysis.dependencyViolations.slice(0, 3)) {
+        lines.push(`  ⚠ ${v.from} → ${v.to}: ${v.rule}`);
+      }
+    }
+    if (s.circularCount > 0) {
+      lines.push(`  ⚠ ${s.circularCount} circular dependencies`);
+    }
+    lines.push('');
+
+    // ── Phase 4: Verdict
+    lines.push('═══ VERDICT ═══');
+    const passed = s.violationCount === 0 && s.circularCount === 0;
+    lines.push(passed
+      ? `✓ PASS — ${s.healthScore}/100, clean hex boundaries, ${workplan.steps.length} steps executed`
+      : `✗ NEEDS WORK — ${s.violationCount} violations, ${s.circularCount} cycles. Run hex_analyze for details.`);
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 
   private async orchestrate(
