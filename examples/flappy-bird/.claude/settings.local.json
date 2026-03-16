@@ -1,4 +1,15 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(bun test:*)",
+      "Read(//Volumes/ExtendedStorage/PARA/01-Projects/hex-intf/**)",
+      "Bash(npx hex:*)",
+      "mcp__plugin_context-mode_context-mode__ctx_batch_execute",
+      "Bash(npx tsc:*)",
+      "mcp__hex__hex_build",
+      "Bash(bun run:*)"
+    ]
+  },
   "statusLine": {
     "type": "command",
     "command": "node ../../scripts/hex-statusline.cjs"

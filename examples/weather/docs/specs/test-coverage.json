@@ -1,0 +1,122 @@
+[
+  {
+    "category": "secondary/jolpica",
+    "description": "JolpicaAdapter correctly maps season schedule from API JSON to domain types",
+    "given": "The Jolpica API returns valid JSON for season 2024",
+    "when": "GetSeasonSchedule is called with season 2024",
+    "then": "Returns SeasonSchedule with correct season, races mapped with Season/Round/RaceName/Circuit/Date/Time",
+    "negative_spec": false
+  },
+  {
+    "category": "secondary/jolpica",
+    "description": "JolpicaAdapter returns error on HTTP non-200 status",
+    "given": "The Jolpica API returns HTTP 500",
+    "when": "Any data method is called",
+    "then": "Returns a descriptive error containing the status code",
+    "negative_spec": true
+  },
+  {
+    "category": "secondary/jolpica",
+    "description": "JolpicaAdapter maps race results including FastestLap",
+    "given": "The API returns a race result with FastestLap data for a driver",
+    "when": "GetRaceResult is called",
+    "then": "Returns RaceResult with DriverResults containing FastestLap.Rank, Lap, Time, AvgSpeed",
+    "negative_spec": false
+  },
+  {
+    "category": "secondary/jolpica",
+    "description": "JolpicaAdapter handles missing RaceTable gracefully",
+    "given": "The API returns valid JSON but RaceTable is null",
+    "when": "GetSeasonSchedule is called",
+    "then": "Returns an error, not a nil pointer panic",
+    "negative_spec": true
+  },
+  {
+    "category": "secondary/jolpica",
+    "description": "JolpicaAdapter maps driver standings with position parsing",
+    "given": "The API returns driver standings with string positions",
+    "when": "GetDriverStandings is called",
+    "then": "Returns []DriverStanding with Position converted from string to domain.Position(int)",
+    "negative_spec": false
+  },
+  {
+    "category": "secondary/jolpica",
+    "description": "JolpicaAdapter maps constructor standings correctly",
+    "given": "The API returns constructor standings JSON",
+    "when": "GetConstructorStandings is called",
+    "then": "Returns []ConstructorStanding with correct Position, Points, Wins, Constructor fields",
+    "negative_spec": false
+  },
+  {
+    "category": "secondary/jolpica",
+    "description": "JolpicaAdapter returns error on invalid JSON response",
+    "given": "The API returns malformed JSON",
+    "when": "Any data method is called",
+    "then": "Returns a descriptive decode error",
+    "negative_spec": true
+  },
+  {
+    "category": "secondary/jolpica",
+    "description": "JolpicaAdapter GetLatestRaceResult fetches current/last endpoint",
+    "given": "The API returns the latest race result",
+    "when": "GetLatestRaceResult is called",
+    "then": "Fetches from /current/last/results.json and returns mapped RaceResult",
+    "negative_spec": false
+  },
+  {
+    "category": "primary/http",
+    "description": "TeamColor returns correct hex colors for known teams",
+    "given": "Constructor IDs for all 10 F1 teams",
+    "when": "TeamColor is called with each ID",
+    "then": "Returns the correct hex color string for each team",
+    "negative_spec": false
+  },
+  {
+    "category": "primary/http",
+    "description": "TeamColor returns white for unknown constructor",
+    "given": "An unknown constructor ID",
+    "when": "TeamColor is called",
+    "then": "Returns #FFFFFF",
+    "negative_spec": false
+  },
+  {
+    "category": "primary/http",
+    "description": "DriverHash produces consistent non-negative hash",
+    "given": "A driver ID string",
+    "when": "DriverHash is called multiple times with the same input",
+    "then": "Returns the same non-negative integer each time",
+    "negative_spec": false
+  },
+  {
+    "category": "primary/http",
+    "description": "Calendar handler returns 200 with race dates grouped by month",
+    "given": "A schedule with races spanning multiple months",
+    "when": "GET /calendar is requested",
+    "then": "Returns 200 OK with calendar content",
+    "negative_spec": false
+  },
+  {
+    "category": "primary/http",
+    "description": "Schedule error returns 500",
+    "given": "The IF1QueryPort returns an error for GetCurrentSchedule",
+    "when": "GET /schedule is requested",
+    "then": "Returns HTTP 500 with error message",
+    "negative_spec": true
+  },
+  {
+    "category": "usecases",
+    "description": "GetDriverStandings uses cache on second call",
+    "given": "A first call populates the cache",
+    "when": "GetDriverStandings is called again with same season",
+    "then": "Returns cached result without hitting the data port",
+    "negative_spec": false
+  },
+  {
+    "category": "usecases",
+    "description": "GetFullStandings fails if constructor standings fail but drivers succeed",
+    "given": "Driver standings succeed but constructor standings return error",
+    "when": "GetFullStandings is called",
+    "then": "Returns the constructor error (not a partial result)",
+    "negative_spec": true
+  }
+]

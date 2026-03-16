@@ -2,7 +2,11 @@
 
 ## What This Project Is
 
-hex is a framework + CLI tool for building software using hexagonal architecture (ports & adapters) optimized for AI agent code generation. It provides token-efficient code summaries via tree-sitter, swarm coordination via ruflo, and a specs-first development pipeline.
+hex is a **harness** — a framework + CLI tool that gets **installed into target projects** for AI-driven development using hexagonal architecture (ports & adapters). This repo is NOT an application. It is the installable framework that scaffolds and manages other projects.
+
+**Critical**: Everything in this repo (settings, hooks, statuslines, agents, skills) exists to be instantiated INTO a target project via `hex setup` or `hex scaffold`. The `examples/` directory contains sample target projects that use hex as an installed dependency. When working on examples, you are testing hex as a consumer would use it — the example IS the project, hex is the tool.
+
+hex provides token-efficient code summaries via tree-sitter, swarm coordination via ruflo, and a specs-first development pipeline.
 
 ## Behavioral Rules
 
@@ -80,10 +84,70 @@ When building new features or example applications, follow this order:
 4. **Validate** — Run `hex analyze` + validation judge
 5. **Ship** — README + start scripts + commit
 
+## Feature Development Workflow
+
+In hex architecture, a "feature" is NOT a vertical slice. It decomposes inside-out across layers, with each adapter boundary getting its own git worktree for isolation.
+
+### How to Start a Feature
+
+Use `/hex-feature-dev` or run the shell script directly:
+
+```bash
+# Interactive (via Claude Code skill)
+/hex-feature-dev
+
+# Shell script for worktree lifecycle
+./scripts/feature-workflow.sh setup <feature-name>     # Create worktrees from workplan
+./scripts/feature-workflow.sh status <feature-name>     # Show progress
+./scripts/feature-workflow.sh merge <feature-name>      # Merge in dependency order
+./scripts/feature-workflow.sh cleanup <feature-name>    # Remove worktrees + branches
+./scripts/feature-workflow.sh list                      # List all feature worktrees
+./scripts/feature-workflow.sh stale                     # Find abandoned worktrees
+```
+
+### Feature Lifecycle (7 Phases)
+
+```
+Phase 1: SPECS       behavioral-spec-writer → docs/specs/<feature>.json
+Phase 2: PLAN        planner → docs/workplans/feat-<feature>.json
+Phase 3: WORKTREES   feature-workflow.sh setup → one worktree per adapter
+Phase 4: CODE        hex-coder agents (parallel, TDD) in isolated worktrees
+Phase 5: VALIDATE    validation-judge → PASS/FAIL verdict (BLOCKING)
+Phase 6: INTEGRATE   merge worktrees in dependency order → run full suite
+Phase 7: FINALIZE    cleanup worktrees, commit, report
+```
+
+### Worktree Conventions
+
+- **Naming**: `feat/<feature-name>/<layer-or-adapter>`
+- **Max concurrent**: 8 worktrees
+- **Merge order**: domain → ports → secondary adapters → primary adapters → usecases → integration
+- **Cleanup**: Always remove worktrees after successful merge
+- **Stale detection**: Worktrees older than 24h with no commits are flagged
+
+### Dependency Tiers (What Runs When)
+
+| Tier | Layer | Depends On | Agent |
+|------|-------|------------|-------|
+| 0 | Domain + Ports | Nothing | hex-coder |
+| 1 | Secondary adapters | Tier 0 | hex-coder |
+| 2 | Primary adapters | Tier 0 | hex-coder |
+| 3 | Use cases + Composition root | Tiers 1-2 | hex-coder |
+| 4 | Integration tests | Everything | integrator |
+
+### Development Modes
+
+| Mode | When to Use |
+|------|------------|
+| **Swarm** (default) | Features spanning 2+ adapters — parallel worktrees |
+| **Interactive** | Critical features needing human review at each phase |
+| **Single-agent** | Small changes within one adapter boundary |
+
 ## Available Skills (Claude Code slash commands)
 
 | Skill | Trigger |
 |-------|---------|
+| `/hex-feature-dev` | Start feature development with hex decomposition |
 | `/hex-scaffold` | Scaffold a new hex project |
 | `/hex-generate` | Generate code within an adapter boundary |
 | `/hex-summarize` | Token-efficient AST summaries (L0-L3) |
@@ -95,6 +159,7 @@ When building new features or example applications, follow this order:
 
 | Agent | Role |
 |-------|------|
+| `feature-developer` | Orchestrates full feature lifecycle (specs → code → validate → merge) |
 | `planner` | Decomposes requirements into adapter-bounded tasks |
 | `hex-coder` | Codes within one adapter with TDD loop |
 | `integrator` | Merges worktrees, integration tests |

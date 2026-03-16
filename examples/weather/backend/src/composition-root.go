@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"hex-f1/src/adapters/primary"
 	"hex-f1/src/adapters/secondary"
@@ -42,7 +43,7 @@ func main() {
 	<-stop
 	log.Println("Shutting down...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*1e9) // 5 seconds
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if err := httpAdapter.Stop(ctx); err != nil {

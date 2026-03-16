@@ -52,21 +52,21 @@ tools:
     - Read
     - Glob
   ruflo:
-    - mcp__claude-flow__swarm_init
-    - mcp__claude-flow__swarm_status
-    - mcp__claude-flow__task_create
-    - mcp__claude-flow__task_list
-    - mcp__claude-flow__task_status
-    - mcp__claude-flow__task_complete
-    - mcp__claude-flow__task_assign
-    - mcp__claude-flow__memory_store
-    - mcp__claude-flow__memory_retrieve
-    - mcp__claude-flow__memory_search
+    - mcp__ruflo__swarm_init
+    - mcp__ruflo__swarm_status
+    - mcp__ruflo__task_create
+    - mcp__ruflo__task_list
+    - mcp__ruflo__task_status
+    - mcp__ruflo__task_complete
+    - mcp__ruflo__task_assign
+    - mcp__ruflo__memory_store
+    - mcp__ruflo__memory_retrieve
+    - mcp__ruflo__memory_search
   agent_management:
-    - mcp__claude-flow__agent_spawn
-    - mcp__claude-flow__agent_status
-    - mcp__claude-flow__agent_list
-    - mcp__claude-flow__agent_terminate
+    - mcp__ruflo__agent_spawn
+    - mcp__ruflo__agent_status
+    - mcp__ruflo__agent_list
+    - mcp__ruflo__agent_terminate
 
 inputs:
   requirements:
@@ -100,7 +100,7 @@ workflow:
       name: "Initialize Swarm"
       steps:
         - id: swarm-init
-          action: mcp__claude-flow__swarm_init
+          action: mcp__ruflo__swarm_init
           params:
             topology: hierarchical
             maxAgents: 8
@@ -136,7 +136,7 @@ workflow:
           action: |
             Read the workplan from docs/workplans/current.json
             For each step in the workplan:
-              mcp__claude-flow__task_create({
+              mcp__ruflo__task_create({
                 title: step.description,
                 assignee: step.assignee,
                 metadata: { adapter: step.adapter, port: step.port }
@@ -185,7 +185,7 @@ workflow:
         when notified of a task completion or failure.
       on_task_complete:
         action: |
-          1. mcp__claude-flow__task_complete with commit hash
+          1. mcp__ruflo__task_complete with commit hash
           2. Check if all tasks in current dependency tier are done
           3. If yes, spawn next tier of tasks (if any)
           4. If all tasks done, proceed to integrate phase
@@ -249,7 +249,7 @@ workflow:
         Focus resources on blocking tasks.
 
 progress_tracking:
-  store_in: mcp__claude-flow__memory_store
+  store_in: mcp__ruflo__memory_store
   key_pattern: "swarm/{{workplan_id}}/progress"
   update_on:
     - task_complete

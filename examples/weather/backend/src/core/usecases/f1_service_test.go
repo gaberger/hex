@@ -325,6 +325,178 @@ func TestGetCurrentSchedule_UsesCacheOnHit(t *testing.T) {
 	}
 }
 
+// --- Multi-error mock (separate error per method) ---
+
+type mockF1DataPortMultiErr struct {
+	driverStandings      []domain.DriverStanding
+	constructorStandings []domain.ConstructorStanding
+	driverErr            error
+	constructorErr       error
+}
+
+func (m *mockF1DataPortMultiErr) GetSeasonSchedule(_ context.Context, _ domain.Season) (*domain.SeasonSchedule, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockF1DataPortMultiErr) GetRaceResult(_ context.Context, _ domain.Season, _ domain.RoundNumber) (*domain.RaceResult, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockF1DataPortMultiErr) GetLatestRaceResult(_ context.Context) (*domain.RaceResult, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockF1DataPortMultiErr) GetDriverStandings(_ context.Context, _ domain.Season) ([]domain.DriverStanding, error) {
+	return m.driverStandings, m.driverErr
+}
+
+func (m *mockF1DataPortMultiErr) GetConstructorStandings(_ context.Context, _ domain.Season) ([]domain.ConstructorStanding, error) {
+	return m.constructorStandings, m.constructorErr
+}
+
+// --- Edge-case tests ---
+
+func TestGetDriverStandings_UsesCacheOnHit(t *testing.T) {
+	mock := &mockF1DataPort{
+		driverStandings: []domain.DriverStanding{
+			{Position: 1, Points: "200", Driver: domain.Driver{FirstName: "Max", LastName: "Verstappen"}},
+		},
+	}
+	cache := newMockCache()
+	svc := usecases.NewF1Service(mock, cache)
+
+	// First call populates cache
+	result1, err := svc.GetDriverStandings(context.Background(), 2024)
+	if err != nil {
+		t.Fatalf("first call: unexpected error: %v", err)
+	}
+
+	// Break mock — cache should prevent hitting it
+	mock.err = errors.New("should not be called")
+
+	result2, err := svc.GetDriverStandings(context.Background(), 2024)
+	if err != nil {
+		t.Fatalf("second call (cached): unexpected error: %v", err)
+	}
+
+	if result1[0].Driver.FullName() != result2[0].Driver.FullName() {
+		t.Errorf("cached result differs: %q vs %q", result1[0].Driver.FullName(), result2[0].Driver.FullName())
+	}
+}
+
+func TestGetConstructorStandings_UsesCacheOnHit(t *testing.T) {
+	mock := &mockF1DataPort{
+		constructorStandings: []domain.ConstructorStanding{
+			{Position: 1, Points: "400", Constructor: domain.Constructor{Name: "Red Bull"}},
+		},
+	}
+	cache := newMockCache()
+	svc := usecases.NewF1Service(mock, cache)
+
+	// First call populates cache
+	result1, err := svc.GetConstructorStandings(context.Background(), 2024)
+	if err != nil {
+		t.Fatalf("first call: unexpected error: %v", err)
+	}
+
+	// Break mock — cache should prevent hitting it
+	mock.err = errors.New("should not be called")
+
+	result2, err := svc.GetConstructorStandings(context.Background(), 2024)
+	if err != nil {
+		t.Fatalf("second call (cached): unexpected error: %v", err)
+	}
+
+	if result1[0].Constructor.Name != result2[0].Constructor.Name {
+		t.Errorf("cached result differs: %q vs %q", result1[0].Constructor.Name, result2[0].Constructor.Name)
+	}
+}
+
+func TestGetFullStandings_ConstructorError_PropagatesEvenWhenDriversSucceed(t *testing.T) {
+	mock := &mockF1DataPortMultiErr{
+		driverStandings: []domain.DriverStanding{
+			{Position: 1, Points: "200", Driver: domain.Driver{FirstName: "Max", LastName: "Verstappen"}},
+		},
+		driverErr:      nil,
+		constructorErr: errors.New("constructor API down"),
+	}
+
+	svc := usecases.NewF1Service(mock, nil)
+	_, err := svc.GetFullStandings(context.Background(), 2024)
+
+	if err == nil {
+		t.Fatal("expected error when constructor standings fail, got nil")
+	}
+	if !errors.Is(err, mock.constructorErr) {
+		t.Errorf("expected wrapped constructor error, got: %v", err)
+	}
+}
+
+func TestGetLatestResult_UsesCacheOnHit(t *testing.T) {
+	mock := &mockF1DataPort{
+		latestResult: &domain.RaceResult{
+			Race: domain.Race{Season: 2024, Round: 5, RaceName: "Chinese Grand Prix"},
+		},
+	}
+	cache := newMockCache()
+	svc := usecases.NewF1Service(mock, cache)
+
+	// First call populates cache
+	result1, err := svc.GetLatestResult(context.Background())
+	if err != nil {
+		t.Fatalf("first call: unexpected error: %v", err)
+	}
+
+	// Break mock — cache should prevent hitting it
+	mock.err = errors.New("should not be called")
+
+	result2, err := svc.GetLatestResult(context.Background())
+	if err != nil {
+		t.Fatalf("second call (cached): unexpected error: %v", err)
+	}
+
+	if result1.Race.RaceName != result2.Race.RaceName {
+		t.Errorf("cached result differs: %q vs %q", result1.Race.RaceName, result2.Race.RaceName)
+	}
+}
+
+func TestGetFullStandings_UsesCacheOnHit(t *testing.T) {
+	mock := &mockF1DataPort{
+		driverStandings: []domain.DriverStanding{
+			{Position: 1, Points: "200", Driver: domain.Driver{FirstName: "Max", LastName: "Verstappen"}},
+		},
+		constructorStandings: []domain.ConstructorStanding{
+			{Position: 1, Points: "400", Constructor: domain.Constructor{Name: "Red Bull"}},
+		},
+	}
+	cache := newMockCache()
+	svc := usecases.NewF1Service(mock, cache)
+
+	// First call populates cache
+	result1, err := svc.GetFullStandings(context.Background(), 2024)
+	if err != nil {
+		t.Fatalf("first call: unexpected error: %v", err)
+	}
+
+	// Break mock — cache should prevent hitting it
+	mock.err = errors.New("should not be called")
+
+	result2, err := svc.GetFullStandings(context.Background(), 2024)
+	if err != nil {
+		t.Fatalf("second call (cached): unexpected error: %v", err)
+	}
+
+	if result1.Season != result2.Season {
+		t.Errorf("cached season differs: %d vs %d", result1.Season, result2.Season)
+	}
+	if len(result1.DriverStandings) != len(result2.DriverStandings) {
+		t.Errorf("cached driver standings count differs: %d vs %d", len(result1.DriverStandings), len(result2.DriverStandings))
+	}
+	if len(result1.ConstructorStandings) != len(result2.ConstructorStandings) {
+		t.Errorf("cached constructor standings count differs: %d vs %d", len(result1.ConstructorStandings), len(result2.ConstructorStandings))
+	}
+}
+
 func TestNewF1Service_NilCache_WorksFine(t *testing.T) {
 	mock := &mockF1DataPort{
 		latestResult: &domain.RaceResult{

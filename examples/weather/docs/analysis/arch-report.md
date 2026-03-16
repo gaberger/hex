@@ -1,67 +1,87 @@
 # Architecture Health Report — hex-f1
 
-**Date:** 2025-07-24
-**Health Score:** 95 / 100
-**Project:** F1 Race Statistics (Go backend + HTMX frontend)
+**Score: 97/100**
+**Date: 2026-03-16**
 
 ## Summary
 
-The Go backend has a clean hexagonal architecture with proper layer separation. One soft boundary violation exists in the HTTP adapter importing domain types directly. The TypeScript frontend is scaffolded but unimplemented.
+The hex-f1 Go backend exhibits excellent hexagonal architecture compliance. All import boundaries are respected across every layer, all adapter-to-port bindings have compile-time interface assertions, and there are no circular dependencies. Three minor dead exports were detected.
 
-## Boundary Violations (1)
+## Hex Boundary Validation
 
-| File | Layer | Violation | Severity |
-|------|-------|-----------|----------|
-| `backend/src/adapters/primary/http_adapter.go` | Primary Adapter | Imports `domain` package directly (should only import `ports`) | Soft |
+| File | Layer | Project Imports | Status |
+|------|-------|-----------------|--------|
+| `src/core/domain/index.go` | Domain | _(none — stdlib only)_ | OK |
+| `src/core/ports/index.go` | Ports | `hex-f1/src/core/domain` | OK |
+| `src/core/usecases/f1_service.go` | Usecases | `hex-f1/src/core/domain`, `hex-f1/src/core/ports` | OK |
+| `src/adapters/primary/http_adapter.go` | Primary Adapter | `hex-f1/src/core/domain`, `hex-f1/src/core/ports` | OK |
+| `src/adapters/secondary/jolpica_adapter.go` | Secondary Adapter | `hex-f1/src/core/domain`, `hex-f1/src/core/ports` | OK |
+| `src/adapters/secondary/cache_adapter.go` | Secondary Adapter | `hex-f1/src/core/ports` | OK |
+| `src/composition-root.go` | Composition Root | `hex-f1/src/adapters/primary`, `hex-f1/src/adapters/secondary`, `hex-f1/src/core/usecases` | OK |
 
-**Note:** Importing domain value objects (e.g., `Season`, `RoundNumber`) in adapters for type conversion is common Go hex practice. The adapter contains no business logic — only HTTP↔domain mapping.
+**Result: 0 boundary violations.**
 
-## Cross-Adapter Coupling
+**Note on domain imports in adapters:** The primary and secondary adapters import `domain` for value-object types (`Season`, `Position`, etc.) used in type conversions. This is standard Go hex practice — the adapters contain no business logic, only mapping between external formats and domain types.
 
-None detected. ✅
+## Interface Compliance
 
-## Circular Dependencies
+| Adapter | Port | Compile-Time Assert | Status |
+|---------|------|---------------------|--------|
+| `JolpicaAdapter` | `IF1DataPort` | `var _ ports.IF1DataPort = (*JolpicaAdapter)(nil)` | OK |
+| `CacheAdapter` | `ICachePort` | `var _ ports.ICachePort = (*CacheAdapter)(nil)` | OK |
+| `HTTPAdapter` | `IHTTPServerPort` | `var _ ports.IHTTPServerPort = (*HTTPAdapter)(nil)` | OK |
+| `F1Service` | `IF1QueryPort` | _(none)_ | MISSING |
 
-None detected (Go compiler enforces this). ✅
+`F1Service` correctly implements all 5 methods of `IF1QueryPort` (`GetCurrentSchedule`, `GetRaceResult`, `GetLatestResult`, `GetDriverStandings`, `GetConstructorStandings`), but lacks a compile-time interface assertion. Not a boundary violation, but a best-practice gap.
 
 ## Dead Exports
 
-None detected. All domain types and port interfaces are consumed. ✅
+| Export | File | Reason |
+|--------|------|--------|
+| `Race.DateTime()` | `domain/index.go` | Only referenced in `domain/index_test.go`; no production caller |
+| `F1Service.GetFullStandings()` | `usecases/f1_service.go` | Only referenced in `usecases/f1_service_test.go`; no adapter or composition-root calls it |
+| `StandingsResponse` | `domain/index.go` | Only used by `GetFullStandings`; not referenced by any port or adapter |
 
-## Layer Inventory
+3 dead exports detected (-1 point each).
 
-### Backend (Go) — Fully Implemented
+## Circular Dependencies
 
-| Layer | Package | Types | Functions |
-|-------|---------|-------|-----------|
-| Domain | `core/domain` | 17 types (Season, Driver, Race, etc.) | 2 (FullName, DateTime) |
-| Ports | `core/ports` | 4 interfaces (IF1DataPort, IF1QueryPort, IHTTPServerPort, ICachePort) | — |
-| UseCases | `core/usecases` | 1 (F1Service) | 9 methods |
-| Primary | `adapters/primary` | 3 (HTTPAdapter, templateData, bytesBuffer) | 11 functions |
-| Secondary | `adapters/secondary` | 13 (JolpicaAdapter, CacheAdapter, JSON DTOs) | 11 functions |
-| Composition | `composition-root.go` | — | 1 (main) |
+None found. The dependency graph is strictly acyclic:
 
-### Frontend (TypeScript) — Scaffold Only
+```
+domain (leaf — no project imports)
+  ^
+  |
+ports (imports domain only)
+  ^
+  |
+usecases (imports domain + ports)
 
-| Layer | File | Status |
-|-------|------|--------|
-| Domain | `core/domain/index.ts` | Empty scaffold |
-| Ports | `core/ports/index.ts` | Empty scaffold |
-| Composition | `composition-root.ts` | Minimal AppContext |
+adapters/primary   (imports domain + ports)
+adapters/secondary (imports domain + ports)
 
-## Recommendations
+composition-root (imports adapters + usecases — the only DI point)
+```
 
-1. **Frontend implementation needed** — Domain entities, ports, and adapters are all empty scaffolds
-2. **Consider extracting domain DTOs** — The `http_adapter.go` could use port-level request/response types instead of importing `domain` directly, eliminating the soft violation
-3. **Add tests** — The pipeline shows Tests layer is `[todo]`. Priority: unit tests for `F1Service` use case, integration tests for `JolpicaAdapter`
-4. **Existing test files** — `index_test.go`, `cache_adapter_test.go`, and `f1_service_test.go` exist but are not tracked in the pipeline
+## Cross-Adapter Coupling
+
+None detected. No adapter imports any other adapter package.
 
 ## Score Breakdown
 
-| Category | Deduction | Count |
-|----------|-----------|-------|
-| Boundary violations | -5 each | 1 |
-| Circular dependencies | -3 each | 0 |
-| Dead exports | -1 each | 0 |
-| **Total deductions** | | **-5** |
-| **Final score** | | **95/100** |
+| Category | Deduction | Count | Total |
+|----------|-----------|-------|-------|
+| Boundary violations | -5 each | 0 | 0 |
+| Circular dependencies | -3 each | 0 | 0 |
+| Dead exports | -1 each | 3 | -3 |
+| **Final score** | | | **97/100** |
+
+## Recommendations
+
+1. **Add compile-time interface assertion for F1Service.** Add `var _ ports.IF1QueryPort = (*F1Service)(nil)` in `f1_service.go` to catch method signature drift at compile time.
+
+2. **Decide on `GetFullStandings` / `StandingsResponse`.** This method exists in the usecase layer but is not exposed through any port interface and no adapter calls it. Either:
+   - Add it to `IF1QueryPort` and wire it into an HTTP handler (e.g., a `/standings` endpoint), or
+   - Remove it and `StandingsResponse` to reduce dead code.
+
+3. **Decide on `Race.DateTime()`.** This domain method is tested but unused in production. If it will be needed for future features (e.g., countdown timers, timezone display), keep it. Otherwise, remove it to keep the domain surface minimal.

@@ -99,7 +99,7 @@ export class FeedbackLoop {
   }
 }
 
-export interface FeedbackIteration {
+interface FeedbackIteration {
   code: CodeUnit;
   build: BuildResult;
   lintErrors: LintError[];

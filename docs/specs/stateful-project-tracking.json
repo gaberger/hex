@@ -1,0 +1,207 @@
+{
+  "feature": "stateful-project-tracking",
+  "description": "Crash-resilient persistence for task tracking, feature progress, and agent state using AgentDB, enabling session recovery after Claude Code failures or restarts.",
+  "specs": [
+    {
+      "id": "SPT-001",
+      "category": "checkpoint",
+      "description": "Checkpoint task state on transition from pending to running",
+      "given": "A SwarmTask with status 'pending' exists in the swarm registry",
+      "when": "The task transitions to 'running' (agent begins execution)",
+      "then": "A checkpoint record is persisted to AgentDB via hierarchicalStore with layer='checkpoint', namespace='tasks', key=taskId, containing the full SwarmTask serialized as JSON with status='running' and a timestamp",
+      "negative_spec": false,
+      "domain_conventions": {
+        "checkpoint_layer": "checkpoint",
+        "task_namespace": "tasks",
+        "serialization": "JSON with ISO-8601 timestamps"
+      }
+    },
+    {
+      "id": "SPT-002",
+      "category": "checkpoint",
+      "description": "Checkpoint task state on transition from running to completed",
+      "given": "A SwarmTask with status 'running' exists and a checkpoint record exists in AgentDB",
+      "when": "The task transitions to 'completed' with a result string and optional commitHash",
+      "then": "The checkpoint record is updated with status='completed', the result string, the commitHash (if provided), and a completedAt timestamp. The previous checkpoint is overwritten, not appended.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "idempotency": "Overwrite-on-update, not append"
+      }
+    },
+    {
+      "id": "SPT-003",
+      "category": "checkpoint",
+      "description": "Checkpoint task state on transition from running to failed",
+      "given": "A SwarmTask with status 'running' exists and a checkpoint record exists in AgentDB",
+      "when": "The task transitions to 'failed' (error during execution or agent crash detected)",
+      "then": "The checkpoint record is updated with status='failed', an error message, and a failedAt timestamp. The task remains in the registry for recovery inspection.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "error_capture": "Error message stored but stack traces truncated to 500 chars max"
+      }
+    },
+    {
+      "id": "SPT-004",
+      "category": "recovery",
+      "description": "Recover incomplete tasks after session restart",
+      "given": "AgentDB contains checkpoint records with tasks in status 'running' (indicating a crash mid-execution)",
+      "when": "A new hex session starts and calls createAppContext()",
+      "then": "The recovery service reads all checkpoints from hierarchicalRecall(layer='checkpoint', namespace='tasks'), identifies tasks with status='running', and emits a RecoveryReport listing each stale task with its taskId, title, agentRole, adapter, and lastCheckpointAt timestamp. These tasks are re-registered in the swarm as 'pending' for re-execution.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "recovery_event": "DomainEvent type 'TasksRecovered' with payload listing recovered task IDs"
+      }
+    },
+    {
+      "id": "SPT-005",
+      "category": "checkpoint",
+      "description": "Checkpoint feature progress on phase completion",
+      "given": "A feature is being developed through the 7-phase lifecycle (SPECS -> PLAN -> WORKTREES -> CODE -> VALIDATE -> INTEGRATE -> FINALIZE)",
+      "when": "A phase completes successfully (e.g., SPECS phase produces docs/specs/<feature>.json)",
+      "then": "A feature checkpoint is persisted via hierarchicalStore with layer='checkpoint', namespace='features', key=featureName, containing: featureName, currentPhase (the completed phase), completedPhases (array of all completed phase names), completedAt timestamp, and any phase-specific artifacts (file paths produced).",
+      "negative_spec": false,
+      "domain_conventions": {
+        "phases": ["SPECS", "PLAN", "WORKTREES", "CODE", "VALIDATE", "INTEGRATE", "FINALIZE"],
+        "feature_namespace": "features"
+      }
+    },
+    {
+      "id": "SPT-006",
+      "category": "recovery",
+      "description": "Recover feature progress after crash and resume from last completed phase",
+      "given": "AgentDB contains a feature checkpoint showing completedPhases=['SPECS','PLAN','WORKTREES'] for feature 'my-feature'",
+      "when": "A new session starts and the user invokes /hex-feature-dev for 'my-feature'",
+      "then": "The recovery service detects the existing checkpoint, skips phases SPECS/PLAN/WORKTREES, and resumes from the CODE phase. The user is informed which phases were recovered and which phase will execute next.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "resume_strategy": "Skip completed phases, resume from first incomplete phase"
+      }
+    },
+    {
+      "id": "SPT-007",
+      "category": "staleness",
+      "description": "Detect stale tasks that were started but never completed",
+      "given": "AgentDB contains task checkpoints where status='running' and lastCheckpointAt is older than 1 hour, and git log shows no commits matching the task's worktreeBranch",
+      "when": "The recovery service runs stale detection (triggered at session start or via hex status)",
+      "then": "Each stale task is flagged with staleness metadata: taskId, title, staleDuration (time since lastCheckpointAt), and reason='no_matching_commits'. A DomainEvent 'AgentStalled' is emitted for each stale task.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "stale_threshold_ms": 3600000,
+        "staleness_reasons": ["no_matching_commits", "agent_terminated", "session_expired"]
+      }
+    },
+    {
+      "id": "SPT-008",
+      "category": "edge_case",
+      "description": "Handle crash during checkpoint write (partial state)",
+      "given": "A task transitions from 'pending' to 'running' and the checkpoint write to AgentDB is initiated",
+      "when": "The process crashes during the hierarchicalStore call (partial write or network failure)",
+      "then": "On next session start, the recovery service treats missing or corrupted checkpoint records as 'unknown' status. Tasks found in the swarm registry but missing from AgentDB checkpoints are re-checkpointed with their current swarm status. Tasks with corrupted JSON in AgentDB are logged as warnings and treated as 'pending' for safe re-execution.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "corruption_handling": "Log warning, treat as pending, never silently drop"
+      }
+    },
+    {
+      "id": "SPT-009",
+      "category": "edge_case",
+      "description": "Track multiple concurrent features independently",
+      "given": "Two features 'feature-A' and 'feature-B' are being developed simultaneously, each with their own task sets and phase progress",
+      "when": "A crash occurs and the session restarts",
+      "then": "Recovery correctly distinguishes between the two features by using featureName as the checkpoint key. Feature-A's progress (e.g., phases SPECS+PLAN done) is recovered independently of Feature-B's progress (e.g., phases SPECS+PLAN+CODE done). No cross-contamination of task assignments or phase states occurs.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "isolation": "Feature checkpoints keyed by featureName, task checkpoints keyed by taskId with featureName tag"
+      }
+    },
+    {
+      "id": "SPT-010",
+      "category": "edge_case",
+      "description": "Reconcile when git has commits that ruflo tasks do not reflect",
+      "given": "Git log contains commits on branch 'feat/my-feature/secondary-adapter' with messages matching task patterns, but the swarm registry shows no completed tasks for that branch",
+      "when": "The recovery service runs reconciliation at session start",
+      "then": "The reconciler matches git commits to tasks by worktreeBranch and commit message patterns (e.g., 'feat(adapter): ...'). Matched tasks are marked as 'completed' in both the swarm registry (via completeTask) and the AgentDB checkpoint. An informational log reports: 'Reconciled N tasks from git history that were missing from swarm registry.'",
+      "negative_spec": false,
+      "domain_conventions": {
+        "commit_pattern": "Conventional commits parsed for task matching",
+        "reconciliation_direction": "git is source of truth for completion"
+      }
+    },
+    {
+      "id": "SPT-011",
+      "category": "edge_case",
+      "description": "Handle phantom tasks (ruflo tasks with no matching git commits)",
+      "given": "The swarm registry contains tasks with status='completed' and commitHash='abc123', but git log shows no commit with hash 'abc123' (e.g., branch was force-pushed or reset)",
+      "when": "The recovery service runs reconciliation at session start",
+      "then": "Phantom tasks are flagged with reason='commit_not_found'. They are NOT automatically re-queued (the work may have been intentionally discarded). Instead, a warning is emitted listing phantom tasks, and they are tagged in the checkpoint with phantomDetectedAt timestamp for manual review.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "phantom_handling": "Warn, tag, but do not auto-retry — requires human decision"
+      }
+    },
+    {
+      "id": "SPT-012",
+      "category": "negative",
+      "description": "Recovery must NOT re-execute already-completed tasks",
+      "given": "AgentDB contains a task checkpoint with status='completed' and a valid commitHash that exists in git log",
+      "when": "The recovery service processes this checkpoint during session restart",
+      "then": "The task is skipped entirely. It is NOT re-registered as 'pending'. It is NOT re-assigned to an agent. The recovery report lists it under 'already_completed' with its commitHash for audit purposes only.",
+      "negative_spec": true,
+      "domain_conventions": {
+        "completion_check": "Both checkpoint status AND git commit existence must confirm completion"
+      }
+    },
+    {
+      "id": "SPT-013",
+      "category": "negative",
+      "description": "Checkpoint must NOT store secrets or API keys",
+      "given": "A task's metadata or agent session contains environment variables including ANTHROPIC_API_KEY, OPENAI_API_KEY, or HEX_VAULT_PASSWORD",
+      "when": "The checkpoint service serializes the task or session state for persistence",
+      "then": "All fields matching secret patterns (keys containing 'KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'CREDENTIAL') are stripped from the serialized checkpoint before writing to AgentDB. The checkpoint contains a 'redacted_fields' array listing which fields were removed.",
+      "negative_spec": true,
+      "domain_conventions": {
+        "secret_patterns": ["KEY", "SECRET", "PASSWORD", "TOKEN", "CREDENTIAL"],
+        "redaction_strategy": "Strip entirely, do not mask — no partial secrets in storage"
+      }
+    },
+    {
+      "id": "SPT-014",
+      "category": "negative",
+      "description": "Recovery must NOT block startup if AgentDB is unavailable",
+      "given": "The ruflo daemon is not running or AgentDB is unreachable (network error, timeout, or process not started)",
+      "when": "createAppContext() runs and the recovery service attempts to read checkpoints via hierarchicalRecall",
+      "then": "The recovery service catches the connection error, logs a warning '[hex] Recovery skipped: AgentDB unavailable', and allows startup to proceed normally. All ISwarmPort methods continue to work (they already handle connection failures gracefully). No checkpoints are written until AgentDB becomes available. The status.json file records 'recovery: skipped' rather than 'recovery: failed'.",
+      "negative_spec": true,
+      "domain_conventions": {
+        "degradation": "Graceful — hex functions without persistence, checkpointing resumes when AgentDB reconnects",
+        "retry_strategy": "No automatic retry on startup — next task transition will attempt checkpoint"
+      }
+    },
+    {
+      "id": "SPT-015",
+      "category": "checkpoint",
+      "description": "Checkpoint includes enough context for meaningful recovery",
+      "given": "A task is running in a git worktree on branch 'feat/my-feature/primary-adapter' with agentRole='coder' and adapter='primary/cli-adapter'",
+      "when": "The checkpoint is written during the pending-to-running transition",
+      "then": "The checkpoint record contains at minimum: taskId, title, agentRole, adapter, worktreeBranch, language, status, createdAt, lastCheckpointAt, featureName (extracted from branch pattern), and dependencyTier (0-4 based on adapter layer). This is sufficient to re-create the task and assign it to the correct agent type without re-running the planning phase.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "branch_pattern": "feat/<featureName>/<layer-or-adapter>",
+        "tier_mapping": { "domain": 0, "ports": 0, "secondary": 1, "primary": 2, "usecases": 3, "integration": 4 }
+      }
+    },
+    {
+      "id": "SPT-016",
+      "category": "recovery",
+      "description": "Recovery emits domain events for observability",
+      "given": "The recovery service has identified 3 stale tasks and 2 completed tasks during session startup",
+      "when": "Recovery processing completes",
+      "then": "The following DomainEvents are emitted to the event bus: one 'TasksRecovered' event with payload listing the 3 re-queued task IDs, one 'RecoveryCompleted' event with payload { recoveredCount: 3, skippedCount: 2, phantomCount: 0, duration: <ms> }. These events propagate to the SSE broadcast adapter for dashboard visibility.",
+      "negative_spec": false,
+      "domain_conventions": {
+        "new_events": ["TasksRecovered", "RecoveryCompleted"],
+        "event_bus": "InMemoryEventBus with SSE bridge"
+      }
+    }
+  ]
+}

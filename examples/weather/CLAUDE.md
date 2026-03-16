@@ -50,6 +50,46 @@ When a new conversation begins, a SessionStart hook runs `scripts/hex-startup.sh
    - Ask what they'd like to work on
 4. Do NOT wait for the user to ask — proactively guide them
 
+## Swarm Coordination (REQUIRED)
+
+This project uses ruflo (claude-flow) for task tracking. You MUST use swarm coordination for ALL work:
+
+### Before starting any task:
+```
+mcp__ruflo__task_create({ title: "descriptive task name", description: "what will be done" })
+```
+
+### While working:
+```
+mcp__ruflo__task_update({ task_id: "...", status: "in_progress", progress: 50 })
+```
+
+### After completing a task:
+```
+mcp__ruflo__task_complete({ task_id: "...", result: "what was done — include commit hash if committed" })
+```
+
+### For multi-step features, decompose into tasks first:
+1. Create a task for each adapter boundary or logical unit of work
+2. Work on tasks sequentially or spawn background agents for parallel work
+3. Complete each task as you finish it
+
+### Pattern learning — store what works:
+```
+mcp__ruflo__agentdb_pattern-store({ name: "pattern name", content: "what worked", category: "go-adapter" })
+```
+
+### Before starting work, search for relevant patterns:
+```
+mcp__ruflo__agentdb_pattern-search({ query: "what you're about to do" })
+```
+
+### Check swarm status anytime:
+```
+mcp__ruflo__swarm_status()
+mcp__ruflo__task_list()
+```
+
 ## Development Pipeline (follow this order)
 
 1. **Domain** — Define entities and value objects in `domain/`
@@ -59,3 +99,5 @@ When a new conversation begins, a SessionStart hook runs `scripts/hex-startup.sh
 5. **Composition Root** — Wire adapters to ports in `composition-root`
 6. **Tests** — Unit tests (London-school mocks) + integration tests
 7. **Validate** — Run `hex analyze .` to check architecture health
+
+For each pipeline step, create a swarm task BEFORE starting and complete it when done.

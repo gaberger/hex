@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/hex-startup.sh",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
+}

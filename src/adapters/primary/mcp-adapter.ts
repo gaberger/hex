@@ -11,9 +11,8 @@
  */
 
 import type { IArchAnalysisPort, IASTPort, IFileSystemPort, ICodeGenerationPort, IWorkplanPort, ASTSummary, Language, Specification } from '../../core/ports/index.js';
-import type { AppContextFactory } from '../../core/ports/app-context.js';
-import type { IRegistryPort } from '../../core/ports/registry.js';
 import type { ISwarmOrchestrationPort } from '../../core/ports/swarm.js';
+import { formatArchReport } from '../../core/ports/index.js';
 
 // ─── MCP Tool Definitions ────────────────────────────────
 
@@ -189,19 +188,18 @@ export const HEX_TOOLS: MCPToolDefinition[] = [
 export const HEX_DASHBOARD_TOOLS: MCPToolDefinition[] = [
   {
     name: 'hex_dashboard_start',
-    description: 'Start the multi-project dashboard hub server and register the initial project',
+    description: 'Start the dashboard hub on port 5555 and register the current project',
     inputSchema: {
       type: 'object',
       properties: {
-        rootPath: { type: 'string', description: 'Initial project root path to register' },
-        port: { type: 'string', description: 'HTTP port (default: 3847)' },
+        rootPath: { type: 'string', description: 'Project root path to register' },
       },
       required: ['rootPath'],
     },
   },
   {
     name: 'hex_dashboard_register',
-    description: 'Register an additional project with the running dashboard hub',
+    description: 'Register a project with the dashboard hub (hub must be running on port 5555)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -250,10 +248,6 @@ export interface MCPContext {
   archAnalyzer: IArchAnalysisPort;
   ast: IASTPort;
   fs: IFileSystemPort;
-  /** Optional: needed for dashboard hub tools. When absent, hub tools return an error. */
-  contextFactory?: AppContextFactory;
-  /** Optional: project registry for port allocation. When absent, falls back to port 3847. */
-  registry?: IRegistryPort;
   /** Optional: LLM code generation. When absent, generate tools return an error. */
   codeGenerator?: ICodeGenerationPort | null;
   /** Optional: LLM workplan creation. When absent, plan tools return an error. */
@@ -263,18 +257,21 @@ export interface MCPContext {
 }
 
 export class MCPAdapter {
-  private hub: import('./dashboard-hub.js').DashboardHub | null = null;
+  private hubRunning = false;
   private hubUrl: string | null = null;
   private hubCloseFn: (() => void) | null = null;
+  private dashboardClient: import('./dashboard-adapter.js').DashboardAdapter | null = null;
 
   constructor(private readonly ctx: MCPContext) {}
 
   /** Shut down the dashboard hub if running. */
   shutdownHub(): void {
     this.hubCloseFn?.();
-    this.hub = null;
+    this.dashboardClient?.stop();
+    this.hubRunning = false;
     this.hubUrl = null;
     this.hubCloseFn = null;
+    this.dashboardClient = null;
   }
 
   getTools(): MCPToolDefinition[] {
@@ -337,10 +334,7 @@ export class MCPAdapter {
           return await this.swarmStatus();
         // ── Dashboard hub tools ──
         case 'hex_dashboard_start':
-          return await this.dashboardStart(
-            call.arguments.rootPath as string,
-            call.arguments.port as string | undefined,
-          );
+          return await this.dashboardStart(call.arguments.rootPath as string);
         case 'hex_dashboard_register':
           return await this.dashboardRegister(call.arguments.rootPath as string);
         case 'hex_dashboard_unregister':
@@ -365,19 +359,8 @@ export class MCPAdapter {
 
   private async analyze(path: string): Promise<MCPToolResult> {
     const result = await this.ctx.archAnalyzer.analyzeArchitecture(path);
-    const s = result.summary;
-    const lines = [
-      `Health: ${s.healthScore}/100`,
-      `Files: ${s.totalFiles} | Exports: ${s.totalExports}`,
-      `Dead exports: ${s.deadExportCount} | Violations: ${s.violationCount} | Circular: ${s.circularCount}`,
-    ];
-    if (result.dependencyViolations.length > 0) {
-      lines.push('', 'Violations:');
-      for (const v of result.dependencyViolations.slice(0, 5)) {
-        lines.push(`  ${v.from} -> ${v.to}: ${v.rule}`);
-      }
-    }
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
+    const report = formatArchReport(result, path, { showRulesReference: false });
+    return { content: [{ type: 'text', text: report }] };
   }
 
   private async summarize(filePath: string, level: ASTSummary['level']): Promise<MCPToolResult> {
@@ -468,60 +451,115 @@ export class MCPAdapter {
     adapter?: string,
     output?: string,
   ): Promise<MCPToolResult> {
-    if (!this.ctx.codeGenerator) {
-      return { content: [{ type: 'text', text: 'LLM not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' }], isError: true };
-    }
-
     const langMap: Record<string, Language> = { typescript: 'typescript', go: 'go', rust: 'rust', ts: 'typescript' };
     const lang = langMap[language];
     if (!lang) {
       return { content: [{ type: 'text', text: `Invalid language: ${language}. Use: typescript, go, rust` }], isError: true };
     }
 
-    const spec: Specification = {
-      title: adapter ?? 'generated',
-      requirements: specContent.split('\n').filter((line) => line.trim().length > 0),
-      constraints: [],
-      targetLanguage: lang,
-      targetAdapter: adapter,
-    };
+    // If an LLM adapter is configured, use it directly
+    if (this.ctx.codeGenerator) {
+      const spec: Specification = {
+        title: adapter ?? 'generated',
+        requirements: specContent.split('\n').filter((line) => line.trim().length > 0),
+        constraints: [],
+        targetLanguage: lang,
+        targetAdapter: adapter,
+      };
 
-    const result = await this.ctx.codeGenerator.generateFromSpec(spec, lang);
+      const result = await this.ctx.codeGenerator.generateFromSpec(spec, lang);
 
-    if (output) {
-      await this.ctx.fs.write(output, result.content);
-      return { content: [{ type: 'text', text: `Generated ${result.filePath} (${lang})\nWritten to: ${output}` }] };
+      if (output) {
+        await this.ctx.fs.write(output, result.content);
+        return { content: [{ type: 'text', text: `Generated ${result.filePath} (${lang})\nWritten to: ${output}` }] };
+      }
+
+      return { content: [{ type: 'text', text: `FILE: ${result.filePath}\nLANG: ${lang}\n\n${result.content}` }] };
     }
 
-    return { content: [{ type: 'text', text: `FILE: ${result.filePath}\nLANG: ${lang}\n\n${result.content}` }] };
+    // No LLM configured — return structured spec for Claude to implement.
+    // Claude IS the LLM when running inside Claude Code.
+    const adapterPath = adapter ?? this.inferAdapter(specContent);
+    const reqs = specContent.split('\n').filter((line) => line.trim().length > 0);
+    const lines = [
+      '═══ GENERATE CODE ═══',
+      `Language: ${lang}`,
+      `Target adapter: ${adapterPath}`,
+      `Output: ${output ?? '(return inline)'}`,
+      '',
+      'Requirements:',
+      ...reqs.map((r) => `  - ${r}`),
+      '',
+      '═══ HEX RULES ═══',
+      '1. Port interface → src/core/ports/',
+      '2. Adapter implementation → src/adapters/' + adapterPath + '.ts',
+      '3. Adapters import ONLY from ports, never other adapters',
+      '4. Use .js extensions in all imports',
+      '',
+      '═══ EXECUTE NOW ═══',
+      'Generate the code following the requirements and hex rules above.',
+      output ? `Write the result to: ${output}` : 'Return the generated code inline.',
+    ];
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 
   private async plan(
     requirements: string,
     language: string,
   ): Promise<MCPToolResult> {
-    if (!this.ctx.workplanExecutor) {
-      return { content: [{ type: 'text', text: 'LLM not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' }], isError: true };
-    }
-
     const langMap: Record<string, Language> = { typescript: 'typescript', go: 'go', rust: 'rust', ts: 'typescript' };
     const lang = langMap[language] ?? 'typescript' as Language;
-
     const reqList = requirements.split(/[,\n]/).map((r) => r.trim()).filter(Boolean);
-    const workplan = await this.ctx.workplanExecutor.createPlan(reqList, lang);
 
+    // If an LLM adapter is configured, use it for richer plans
+    if (this.ctx.workplanExecutor) {
+      const workplan = await this.ctx.workplanExecutor.createPlan(reqList, lang);
+
+      const lines = [
+        `PLAN: ${workplan.title}`,
+        `ID: ${workplan.id}`,
+        `STEPS: ${workplan.steps.length}`,
+        `BUDGET: ~${workplan.estimatedTokenBudget} tokens`,
+        '',
+      ];
+      for (const step of workplan.steps) {
+        const deps = step.dependencies.length > 0 ? ` (deps: ${step.dependencies.join(', ')})` : '';
+        lines.push(`[${step.id}] ${step.description}`);
+        lines.push(`  adapter: ${step.adapter}${deps}`);
+      }
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    }
+
+    // No LLM — decompose structurally using hex conventions.
+    // Claude IS the LLM when running inside Claude Code.
     const lines = [
-      `PLAN: ${workplan.title}`,
-      `ID: ${workplan.id}`,
-      `STEPS: ${workplan.steps.length}`,
-      `BUDGET: ~${workplan.estimatedTokenBudget} tokens`,
+      '═══ WORKPLAN ═══',
+      `Language: ${lang}`,
+      `Requirements: ${reqList.length}`,
+      '',
+      'Tasks (decomposed by hex adapter boundary):',
       '',
     ];
-    for (const step of workplan.steps) {
-      const deps = step.dependencies.length > 0 ? ` (deps: ${step.dependencies.join(', ')})` : '';
-      lines.push(`[${step.id}] ${step.description}`);
-      lines.push(`  adapter: ${step.adapter}${deps}`);
+
+    for (let i = 0; i < reqList.length; i++) {
+      const adapter = this.inferAdapter(reqList[i]);
+      const layer = adapter.includes('primary') ? 'PRIMARY' : adapter.includes('secondary') ? 'SECONDARY' : 'CORE';
+      const deps = layer === 'PRIMARY' || layer === 'SECONDARY' ? 'ports' : 'none';
+      lines.push(`[step-${i + 1}] ${reqList[i]}`);
+      lines.push(`  layer: ${layer} | adapter: ${adapter} | deps: ${deps}`);
+      lines.push('');
     }
+
+    lines.push('═══ DEPENDENCY ORDER ═══');
+    lines.push('Tier 0: domain + ports (no deps)');
+    lines.push('Tier 1: secondary adapters (depend on ports)');
+    lines.push('Tier 2: primary adapters (depend on ports)');
+    lines.push('Tier 3: usecases + composition root (depend on tiers 0-2)');
+    lines.push('Tier 4: integration tests (depend on everything)');
+    lines.push('');
+    lines.push('═══ EXECUTE NOW ═══');
+    lines.push('Implement tasks in tier order. Tiers 1 and 2 can run in parallel.');
+
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 
@@ -577,11 +615,9 @@ export class MCPAdapter {
     const tasks: Array<{ id: string; title: string; adapter: string }> = [];
     for (const req of reqList) {
       try {
-        const task = await this.ctx.swarmOrchestrator?.getProgress()
-          .then(() => null).catch(() => null);
-        // Infer adapter boundary from requirement text
+        await this.ctx.swarmOrchestrator?.getProgress().catch(() => null);
         const adapter = this.inferAdapter(req);
-        const registered = await this.ctx.archAnalyzer.analyzeArchitecture('.').then(() => null).catch(() => null);
+        await this.ctx.archAnalyzer.analyzeArchitecture('.').catch(() => null);
         tasks.push({ id: `task-${tasks.length + 1}`, title: req, adapter });
       } catch { /* tracking optional */ }
     }
@@ -644,39 +680,96 @@ export class MCPAdapter {
     maxAgentsStr?: string,
     topology?: string,
   ): Promise<MCPToolResult> {
-    if (!this.ctx.workplanExecutor) {
-      return { content: [{ type: 'text', text: 'LLM not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' }], isError: true };
-    }
-    if (!this.ctx.swarmOrchestrator) {
-      return { content: [{ type: 'text', text: 'Swarm orchestrator not available.' }], isError: true };
-    }
-
     const langMap: Record<string, Language> = { typescript: 'typescript', go: 'go', rust: 'rust', ts: 'typescript' };
     const lang = langMap[language] ?? 'typescript' as Language;
     const reqList = requirements.split(/[,\n]/).map((r) => r.trim()).filter(Boolean);
+    const maxAgents = maxAgentsStr ? parseInt(maxAgentsStr, 10) || 4 : 4;
+    const topo = topology ?? 'hierarchical';
 
-    // Create workplan via LLM
-    const workplan = await this.ctx.workplanExecutor.createPlan(reqList, lang);
+    // If both LLM and swarm orchestrator are available, use the full pipeline
+    if (this.ctx.workplanExecutor && this.ctx.swarmOrchestrator) {
+      const workplan = await this.ctx.workplanExecutor.createPlan(reqList, lang);
 
-    // Execute via swarm orchestrator
-    const maxAgents = maxAgentsStr ? parseInt(maxAgentsStr, 10) : undefined;
-    const config: Record<string, unknown> = {};
-    if (maxAgents && !isNaN(maxAgents)) config.maxAgents = maxAgents;
-    if (topology) config.topology = topology;
+      const config: Record<string, unknown> = {};
+      if (maxAgents) config.maxAgents = maxAgents;
+      if (topology) config.topology = topology;
 
-    const status = await this.ctx.swarmOrchestrator.orchestrate(workplan.steps, config as any);
+      const status = await this.ctx.swarmOrchestrator.orchestrate(workplan.steps, config as any);
 
-    const lines = [
-      `SWARM: ${status.status}`,
-      `TOPOLOGY: ${status.topology}`,
-      `AGENTS: ${status.agentCount}`,
-      `TASKS: ${status.completedTaskCount}/${status.activeTaskCount + status.completedTaskCount}`,
-      '',
-      `PLAN: ${workplan.title} (${workplan.steps.length} steps)`,
-    ];
-    for (const step of workplan.steps) {
-      lines.push(`  [${step.id}] ${step.description} → ${step.adapter}`);
+      const lines = [
+        `SWARM: ${status.status}`,
+        `TOPOLOGY: ${status.topology}`,
+        `AGENTS: ${status.agentCount}`,
+        `TASKS: ${status.completedTaskCount}/${status.activeTaskCount + status.completedTaskCount}`,
+        '',
+        `PLAN: ${workplan.title} (${workplan.steps.length} steps)`,
+      ];
+      for (const step of workplan.steps) {
+        lines.push(`  [${step.id}] ${step.description} → ${step.adapter}`);
+      }
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
     }
+
+    // No LLM — decompose structurally and return orchestration plan.
+    // Claude IS the LLM when running inside Claude Code.
+    const lines: string[] = [];
+
+    // Analyze current architecture for context
+    lines.push('═══ CURRENT STATE ═══');
+    try {
+      const analysis = await this.ctx.archAnalyzer.analyzeArchitecture('.');
+      const s = analysis.summary;
+      lines.push(`Health: ${s.healthScore}/100 | Files: ${s.totalFiles} | Violations: ${s.violationCount} | Dead: ${s.deadExportCount}`);
+    } catch {
+      lines.push('(architecture analysis unavailable)');
+    }
+    lines.push('');
+
+    // Decompose into hex-bounded tasks
+    lines.push('═══ ORCHESTRATION PLAN ═══');
+    lines.push(`Language: ${lang} | Topology: ${topo} | Max agents: ${maxAgents}`);
+    lines.push('');
+
+    // Group tasks by tier
+    const tiers: Record<string, Array<{ idx: number; req: string; adapter: string }>> = {
+      'Tier 0 (domain+ports)': [],
+      'Tier 1 (secondary adapters)': [],
+      'Tier 2 (primary adapters)': [],
+      'Tier 3 (usecases+wiring)': [],
+      'Tier 4 (tests)': [],
+    };
+
+    for (let i = 0; i < reqList.length; i++) {
+      const adapter = this.inferAdapter(reqList[i]);
+      const entry = { idx: i + 1, req: reqList[i], adapter };
+      if (adapter.includes('test')) tiers['Tier 4 (tests)'].push(entry);
+      else if (adapter.includes('primary')) tiers['Tier 2 (primary adapters)'].push(entry);
+      else if (adapter.includes('secondary')) tiers['Tier 1 (secondary adapters)'].push(entry);
+      else tiers['Tier 0 (domain+ports)'].push(entry);
+    }
+
+    for (const [tier, tasks] of Object.entries(tiers)) {
+      if (tasks.length === 0) continue;
+      lines.push(`${tier}:`);
+      for (const t of tasks) {
+        lines.push(`  ${t.idx}. ${t.req} → ${t.adapter}`);
+      }
+      lines.push('');
+    }
+
+    // Register tasks with swarm if available
+    if (this.ctx.swarmOrchestrator) {
+      try {
+        const progress = await this.ctx.swarmOrchestrator.getProgress();
+        lines.push(`Swarm: ${progress.swarmId} | Phase: ${progress.phase} | Agents: ${progress.agents.length}`);
+      } catch { /* swarm tracking optional */ }
+    }
+
+    lines.push('═══ EXECUTE NOW ═══');
+    lines.push(`Use up to ${maxAgents} parallel Agent tools (mode: bypassPermissions).`);
+    lines.push('Execute tiers in order. Tiers 1+2 can run in parallel.');
+    lines.push('After all tasks: call hex_analyze to validate boundaries.');
+
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 
@@ -709,163 +802,113 @@ export class MCPAdapter {
 
   // ─── Dashboard Hub Tool Implementations ──────────────────
 
-  private requireFactory(): AppContextFactory {
-    if (!this.ctx.contextFactory) {
-      throw new Error('Dashboard hub requires a contextFactory. Pass it when constructing MCPAdapter.');
-    }
-    return this.ctx.contextFactory;
-  }
+  private async ensureHub(): Promise<string> {
+    if (this.hubRunning && this.hubUrl) return this.hubUrl;
 
-  private requireRegistry(): IRegistryPort {
-    if (!this.ctx.registry) {
-      throw new Error('Dashboard hub requires a registry. Pass it when constructing MCPAdapter.');
-    }
-    return this.ctx.registry;
-  }
-
-  /**
-   * Register with the project registry to get an assigned port,
-   * then start the hub on that port.
-   */
-  private async ensureHub(rootPath: string): Promise<import('./dashboard-hub.js').DashboardHub> {
-    if (this.hub) return this.hub;
-    const factory = this.requireFactory();
-    const registry = this.requireRegistry();
-
-    // Register with the registry server to get a slot + port
-    const projectName = rootPath.split('/').pop() ?? 'unknown';
-    const registration = await registry.register(rootPath, projectName);
-    const port = registration.port;
-
-    // Write local identity so the project knows its ID
-    await registry.writeLocalIdentity(rootPath, {
-      id: registration.id,
-      name: registration.name,
-      createdAt: registration.createdAt,
-    });
-
-    const { DashboardHub } = await import('./dashboard-hub.js');
-    const hub = new DashboardHub(factory, port);
+    const { HUB_PORT, DashboardHub } = await import('./dashboard-hub.js');
+    const hub = new DashboardHub(HUB_PORT);
     const { url, close } = await hub.start();
-    this.hub = hub;
+    this.hubRunning = true;
     this.hubUrl = url;
     this.hubCloseFn = close;
-    return hub;
+    return url;
   }
 
-  private async dashboardStart(rootPath: string, portStr?: string): Promise<MCPToolResult> {
-    if (this.hub) {
+  private async ensureClient(rootPath: string): Promise<void> {
+    if (this.dashboardClient) return;
+
+    // Build a minimal AppContext if we have the required ports
+    const { DashboardAdapter } = await import('./dashboard-adapter.js');
+    const ctx = {
+      rootPath,
+      astIsStub: true,
+      autoConfirm: false,
+      archAnalyzer: this.ctx.archAnalyzer,
+      ast: this.ctx.ast,
+      fs: this.ctx.fs,
+      outputDir: '.hex/',
+    } as any;
+    this.dashboardClient = new DashboardAdapter(ctx);
+    await this.dashboardClient.start();
+  }
+
+  private async dashboardStart(rootPath: string): Promise<MCPToolResult> {
+    if (this.hubRunning) {
       return { content: [{ type: 'text', text: `Dashboard hub already running at ${this.hubUrl}` }] };
     }
 
-    // If an explicit port is given, validate it but still register
-    if (portStr) {
-      const port = parseInt(portStr, 10);
-      if (isNaN(port) || port < 1 || port > 65535) {
-        return { content: [{ type: 'text', text: 'Invalid port. Must be 1-65535.' }], isError: true };
-      }
-    }
-
-    const hub = await this.ensureHub(rootPath);
-    const slot = await hub.registerProject(rootPath);
-
-    // Touch the registry to update lastSeenAt
-    const registry = this.requireRegistry();
-    const reg = await registry.findByPath(rootPath);
-    if (reg) await registry.touch(reg.id);
+    const url = await this.ensureHub();
+    await this.ensureClient(rootPath);
 
     return {
       content: [{
         type: 'text',
-        text: [
-          `Dashboard hub started at ${this.hubUrl}`,
-          `Registered project: ${slot.id} (${slot.ctx.rootPath})`,
-          `Port assigned by registry: ${reg?.port ?? 'unknown'}`,
-        ].join('\n'),
+        text: `Dashboard hub started at ${url}\nProject registered: ${rootPath}\nOpen ${url} in your browser to view all projects.`,
       }],
     };
   }
 
   private async dashboardRegister(rootPath: string): Promise<MCPToolResult> {
-    const hub = await this.ensureHub(rootPath);
+    const { HUB_PORT } = await import('./dashboard-hub.js');
+    const hubUrl = `http://localhost:${HUB_PORT}`;
 
-    // Register with the project registry to track this project
-    const registry = this.requireRegistry();
-    const projectName = rootPath.split('/').pop() ?? 'unknown';
-    const registration = await registry.register(rootPath, projectName);
-
-    const slot = await hub.registerProject(rootPath);
-    return {
-      content: [{
-        type: 'text',
-        text: [
-          `Registered project: ${slot.id} (${slot.ctx.rootPath})`,
-          `Registry ID: ${registration.id}`,
-          `Assigned port: ${registration.port}`,
-        ].join('\n'),
-      }],
-    };
+    try {
+      const response = await fetch(`${hubUrl}/api/projects/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rootPath, name: rootPath.split('/').pop() }),
+      });
+      const data = await response.json() as { id?: string; error?: string };
+      if (!response.ok || data.error) {
+        return { content: [{ type: 'text', text: `Registration failed: ${data.error ?? 'Unknown error'}` }], isError: true };
+      }
+      return { content: [{ type: 'text', text: `Registered project: ${data.id} (${rootPath})` }] };
+    } catch {
+      return { content: [{ type: 'text', text: `Hub not running on port ${HUB_PORT}. Call hex_dashboard_start first.` }], isError: true };
+    }
   }
 
   private async dashboardUnregister(projectId: string): Promise<MCPToolResult> {
-    if (!this.hub) {
-      return { content: [{ type: 'text', text: 'Dashboard hub is not running.' }], isError: true };
-    }
-    const removed = this.hub.unregisterProject(projectId);
-    if (!removed) {
-      return { content: [{ type: 'text', text: `Project "${projectId}" not found in hub.` }], isError: true };
-    }
+    const { HUB_PORT } = await import('./dashboard-hub.js');
+    const hubUrl = `http://localhost:${HUB_PORT}`;
 
-    // Also remove from registry if possible
-    if (this.ctx.registry) {
-      const projects = await this.ctx.registry.list();
-      const match = projects.find((p) => p.name === projectId || p.id === projectId);
-      if (match) {
-        await this.ctx.registry.unregister(match.id);
+    try {
+      const response = await fetch(`${hubUrl}/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' });
+      if (!response.ok) {
+        return { content: [{ type: 'text', text: `Project "${projectId}" not found.` }], isError: true };
       }
+      return { content: [{ type: 'text', text: `Project "${projectId}" unregistered.` }] };
+    } catch {
+      return { content: [{ type: 'text', text: 'Hub not running.' }], isError: true };
     }
-
-    return { content: [{ type: 'text', text: `Project "${projectId}" unregistered from hub and registry.` }] };
   }
 
   private async dashboardList(): Promise<MCPToolResult> {
-    // List from registry (source of truth) — works even if hub isn't running
-    if (this.ctx.registry) {
-      const projects = await this.ctx.registry.list();
-      if (projects.length === 0) {
+    const { HUB_PORT } = await import('./dashboard-hub.js');
+    const hubUrl = `http://localhost:${HUB_PORT}`;
+
+    try {
+      const response = await fetch(`${hubUrl}/api/projects`);
+      const data = await response.json() as { projects: Array<{ id: string; name: string; rootPath: string; lastPushAt: number }> };
+      if (!data.projects || data.projects.length === 0) {
         return { content: [{ type: 'text', text: 'No projects registered.' }] };
       }
-      const hubRunning = this.hub ? ` (hub at ${this.hubUrl})` : ' (hub not running)';
-      const lines = [`${projects.length} project(s) in registry${hubRunning}:`, ''];
-      for (const p of projects) {
-        const age = Math.round((Date.now() - p.lastSeenAt) / 1000);
-        lines.push(`  ${p.name} — ${p.rootPath} (port: ${p.port}, status: ${p.status}, ${age}s ago)`);
+      const lines = [`${data.projects.length} project(s) at ${hubUrl}:`, ''];
+      for (const p of data.projects) {
+        const age = p.lastPushAt ? Math.round((Date.now() - p.lastPushAt) / 1000) + 's ago' : 'no data yet';
+        lines.push(`  ${p.id} — ${p.rootPath} (${age})`);
       }
       return { content: [{ type: 'text', text: lines.join('\n') }] };
+    } catch {
+      return { content: [{ type: 'text', text: `Hub not running on port ${HUB_PORT}. Call hex_dashboard_start first.` }], isError: true };
     }
-
-    // Fallback: query the hub's HTTP API
-    if (!this.hub) {
-      return { content: [{ type: 'text', text: 'No registry and hub is not running. Call hex_dashboard_start first.' }], isError: true };
-    }
-    const response = await fetch(`${this.hubUrl}/api/projects`);
-    const data = await response.json() as { projects: Array<{ id: string; rootPath: string; astIsStub: boolean; registeredAt: number }> };
-    if (!data.projects || data.projects.length === 0) {
-      return { content: [{ type: 'text', text: 'No projects registered.' }] };
-    }
-    const lines = [`${data.projects.length} project(s) registered at ${this.hubUrl}:`, ''];
-    for (const p of data.projects) {
-      const ast = p.astIsStub ? 'stub' : 'real';
-      lines.push(`  ${p.id} — ${p.rootPath} (AST: ${ast})`);
-    }
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 
   private async dashboardQuery(projectId: string, query: string): Promise<MCPToolResult> {
-    if (!this.hub) {
-      return { content: [{ type: 'text', text: 'Dashboard hub is not running. Call hex_dashboard_start first.' }], isError: true };
-    }
-    const base = `${this.hubUrl}/api/${encodeURIComponent(projectId)}`;
+    const { HUB_PORT } = await import('./dashboard-hub.js');
+    const hubUrl = `http://localhost:${HUB_PORT}`;
+    const base = `${hubUrl}/api/${encodeURIComponent(projectId)}`;
+
     let endpoint: string;
     switch (query) {
       case 'health': endpoint = `${base}/health`; break;
@@ -876,24 +919,28 @@ export class MCPAdapter {
         return { content: [{ type: 'text', text: `Unknown query: ${query}. Use: health, tokens, swarm, graph` }], isError: true };
     }
 
-    const response = await fetch(endpoint);
-    if (!response.ok) {
-      const err = await response.json() as { error?: string };
-      return { content: [{ type: 'text', text: `Query failed: ${err.error ?? response.statusText}` }], isError: true };
+    try {
+      const response = await fetch(endpoint);
+      if (!response.ok) {
+        const err = await response.json() as { error?: string };
+        return { content: [{ type: 'text', text: `Query failed: ${err.error ?? response.statusText}` }], isError: true };
+      }
+      const data = await response.json() as Record<string, unknown>;
+      return { content: [{ type: 'text', text: this.formatQueryResult(query, data) }] };
+    } catch {
+      return { content: [{ type: 'text', text: `Hub not running on port ${HUB_PORT}. Call hex_dashboard_start first.` }], isError: true };
     }
-    const data = await response.json() as Record<string, unknown>;
-    return { content: [{ type: 'text', text: this.formatQueryResult(query, data) }] };
   }
 
   private formatQueryResult(query: string, data: Record<string, unknown>): string {
     switch (query) {
       case 'health': {
-        const score = (data.score ?? data.healthScore ?? 0) as number;
-        const violations = Array.isArray(data.violations) ? data.violations as Array<{ from: string; to: string; rule: string }> : [];
-        const dead = Array.isArray(data.deadExports) ? data.deadExports.length : 0;
+        const summary = (data.summary ?? data) as Record<string, unknown>;
+        const score = (summary.healthScore ?? data.score ?? 0) as number;
+        const violations = (data.dependencyViolations ?? data.violations ?? []) as Array<{ from: string; to: string; rule: string }>;
         const lines = [
           `Health: ${Math.round(score)}/100`,
-          `Files: ${data.totalFiles ?? '--'} | Violations: ${violations.length} | Dead exports: ${dead}`,
+          `Files: ${summary.totalFiles ?? '--'} | Violations: ${violations.length} | Dead: ${summary.deadExportCount ?? '--'}`,
         ];
         if (violations.length > 0) {
           lines.push('', 'Violations:');
@@ -916,34 +963,23 @@ export class MCPAdapter {
         const status = data.status as Record<string, unknown> | undefined;
         const tasks = (data.tasks ?? []) as Array<{ title?: string; status?: string }>;
         const agents = (data.agents ?? []) as Array<{ name?: string; role?: string; status?: string }>;
-        const lines = [
+        return [
           `Swarm: ${(status?.status as string) ?? 'unknown'}`,
           `Agents: ${agents.length} | Tasks: ${tasks.length}`,
-        ];
-        for (const a of agents) {
-          lines.push(`  Agent: ${a.name ?? a.role ?? '--'} (${a.status ?? 'idle'})`);
-        }
-        for (const t of tasks.slice(0, 10)) {
-          lines.push(`  Task: ${t.title ?? '--'} [${t.status ?? 'pending'}]`);
-        }
-        return lines.join('\n');
+          ...agents.map((a) => `  Agent: ${a.name ?? a.role ?? '--'} (${a.status ?? 'idle'})`),
+          ...tasks.slice(0, 10).map((t) => `  Task: ${t.title ?? '--'} [${t.status ?? 'pending'}]`),
+        ].join('\n');
       }
       case 'graph': {
         const nodes = (data.nodes ?? []) as Array<{ id: string; layer: string }>;
         const edges = (data.edges ?? []) as Array<{ from: string; to: string }>;
         const layers: Record<string, number> = {};
-        for (const n of nodes) {
-          layers[n.layer] = (layers[n.layer] ?? 0) + 1;
-        }
-        const lines = [
+        for (const n of nodes) layers[n.layer] = (layers[n.layer] ?? 0) + 1;
+        return [
           `Dependency graph: ${nodes.length} nodes, ${edges.length} edges`,
-          '',
-          'Layers:',
-        ];
-        for (const [layer, count] of Object.entries(layers)) {
-          lines.push(`  ${layer}: ${count} files`);
-        }
-        return lines.join('\n');
+          '', 'Layers:',
+          ...Object.entries(layers).map(([l, c]) => `  ${l}: ${c} files`),
+        ].join('\n');
       }
       default:
         return JSON.stringify(data, null, 2);

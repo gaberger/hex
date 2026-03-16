@@ -65,9 +65,10 @@ export class CodeGenerator implements ICodeGenerationPort {
 
     const response = await this.llm.prompt(DEFAULT_BUDGET, messages);
     const content = stripCodeFences(response.content);
+    const ext = langExtension(lang);
     const filePath = spec.targetAdapter
-      ? `src/adapters/secondary/${spec.targetAdapter}.ts`
-      : `src/core/usecases/${toFileName(spec.title)}.ts`;
+      ? `src/adapters/secondary/${spec.targetAdapter}${ext}`
+      : `src/core/usecases/${toFileName(spec.title)}${ext}`;
 
     await this.fs.write(filePath, content);
     const astSummary = await this.ast.extractSummary(filePath, 'L1');
@@ -206,39 +207,34 @@ export class CodeGenerator implements ICodeGenerationPort {
       .flatMap((s) => s.exports.map((e) => `  - ${e.kind} ${e.name}${e.signature ? `: ${e.signature}` : ''}`))
       .join('\n');
 
+    const langRules = buildLanguageRules(spec.targetLanguage as Language);
+
     return [
       'You are generating code for a hexagonal architecture project (hex).',
       '',
-      '## Import Rules (STRICT)',
-      '- Only import from ports (../../core/ports/index.js), never from other adapters.',
-      '- Use .js extensions on all relative imports (NodeNext resolution).',
-      '- Domain types used by adapters MUST be re-exported through ports — never import domain/ directly from adapters.',
-      '- Only export symbols that are defined in a port interface or needed by composition-root. No dead exports.',
+      '## Hexagonal Architecture Rules (ALL LANGUAGES)',
+      '- Only import from ports, never from other adapters.',
+      '- Domain types used by adapters MUST be accessed through ports — never import domain/ directly.',
+      '- Only export symbols that are defined in a port interface or needed by composition-root.',
       '',
       '## Dependency Injection Rules',
-      '- ALL dependencies MUST be injected via constructor, typed as port interfaces (never concrete classes).',
+      '- ALL dependencies MUST be injected via constructor (or function parameters in Go/Rust).',
       '- Primary adapters receive use case ports. Secondary adapters implement output ports.',
       '- The composition-root is the ONLY place that instantiates concrete adapters.',
       '',
       '## Lifecycle & Resource Management',
-      '- Any adapter that opens connections (DB, HTTP, file handles) MUST expose a close()/dispose() method.',
-      '- The composition-root or main entry point MUST call close() on shutdown (process signals, server stop).',
-      '- Use try/finally or AbortSignal for cleanup in async code.',
+      '- Any adapter that opens connections (DB, HTTP, file handles) MUST expose a Close()/drop() method.',
+      '- The composition-root or main entry point MUST call cleanup on shutdown.',
       '',
       '## Input Validation & Error Handling',
       '- Validate ALL external input at system boundaries (HTTP request bodies, CLI args, env vars).',
-      '- Return proper error responses (400 for bad input, 404 for not found) — never let malformed data reach domain logic.',
-      '- Domain functions should throw typed errors; adapters catch and translate to protocol-specific responses.',
+      '- Return proper error responses — never let malformed data reach domain logic.',
       '',
       '## Testing Requirements',
       '- Generate a companion test file for every module.',
-      '- Use London-school (mock-first) unit tests: mock port interfaces, test behavior not implementation.',
-      '- Test edge cases: empty input, special characters, missing fields, concurrent access.',
-      '- Primary adapter tests should cover all routes/commands including error responses.',
+      '- Mock port interfaces, test behavior not implementation.',
       '',
-      '## TypeScript Config',
-      '- moduleResolution MUST be "nodenext" (not "bundler") to match .js import extensions.',
-      '- strict: true, no implicit any.',
+      langRules,
       '',
       spec.targetAdapter
         ? `- This adapter implements a port interface for: ${spec.targetAdapter}`
@@ -253,7 +249,11 @@ export class CodeGenerator implements ICodeGenerationPort {
   }
 
   private async loadPortSummaries(): Promise<ASTSummary[]> {
-    const portFiles = await this.fs.glob('src/core/ports/**/*.ts');
+    const portFiles = (await Promise.all([
+      this.fs.glob('src/core/ports/**/*.ts'),
+      this.fs.glob('src/core/ports/**/*.go'),
+      this.fs.glob('src/core/ports/**/*.rs'),
+    ])).flat();
     const summaries: ASTSummary[] = [];
     for (const file of portFiles) {
       try {
@@ -278,4 +278,54 @@ function toFileName(title: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
+}
+
+function langExtension(lang: Language): string {
+  if (lang === 'go') return '.go';
+  if (lang === 'rust') return '.rs';
+  return '.ts';
+}
+
+function buildLanguageRules(lang: Language): string {
+  if (lang === 'go') {
+    return [
+      '## Go-Specific Rules',
+      '- Exported names MUST start with an uppercase letter (Go visibility convention).',
+      '- Port interfaces are Go interfaces. Adapters are structs that satisfy them.',
+      '- Use constructor functions (NewXxxAdapter) that return the interface type, not the struct.',
+      '- Import paths use Go module paths (e.g., "myproject/core/ports").',
+      '- Error handling: return (result, error) tuples, never panic in adapters.',
+      '- File naming: snake_case.go (e.g., cache_adapter.go, http_adapter.go).',
+      '- Test files: *_test.go in the same package.',
+      '- Use context.Context as first parameter for methods that do I/O.',
+      '- The composition root is typically main.go or composition_root.go.',
+    ].join('\n');
+  }
+
+  if (lang === 'rust') {
+    return [
+      '## Rust-Specific Rules',
+      '- Port interfaces are Rust traits. Adapters are structs that impl the trait.',
+      '- Use `pub` for exported items. Non-pub items are module-private.',
+      '- Import paths use `crate::core::ports::PortName` for internal modules.',
+      '- Use `mod.rs` or direct file names for module declarations.',
+      '- Error handling: return Result<T, E> with custom error enums. Never unwrap() in adapters.',
+      '- File naming: snake_case.rs (e.g., cache_adapter.rs, http_adapter.rs).',
+      '- Test modules: `#[cfg(test)] mod tests { ... }` within the same file.',
+      '- Use `async fn` with `async-trait` crate for async port interfaces.',
+      '- The composition root is typically main.rs or lib.rs.',
+      '- Lifetimes: prefer owned types in port interfaces to avoid lifetime complexity.',
+    ].join('\n');
+  }
+
+  return [
+    '## TypeScript-Specific Rules',
+    '- Use .js extensions on all relative imports (NodeNext module resolution).',
+    '- Import from ports via ../../core/ports/index.js.',
+    '- moduleResolution MUST be "nodenext" (not "bundler").',
+    '- strict: true, no implicit any.',
+    '- Port interfaces use TypeScript `interface` keyword.',
+    '- Adapters are classes that `implements` the port interface.',
+    '- Constructor injection: `constructor(private readonly port: IMyPort) {}`.',
+  ].join('\n');
 }

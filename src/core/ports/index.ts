@@ -41,6 +41,8 @@ export type {
   ArchAnalysisResult,
 } from '../domain/value-objects.js';
 
+export { Version } from '../domain/value-objects.js';
+
 import type {
   ASTSummary,
   Language,
@@ -65,6 +67,8 @@ import type {
   ArchAnalysisResult,
   ImportEdge,
 } from '../domain/value-objects.js';
+
+import { Version } from '../domain/value-objects.js';
 
 // ─── Input Ports (Primary / Driving) ─────────────────────
 
@@ -113,6 +117,26 @@ export interface IGitPort {
   createBranch(name: string): Promise<void>;
   diff(base: string, head: string): Promise<string>;
   currentBranch(): Promise<string>;
+  /** Return raw git status entries for hygiene analysis */
+  statusEntries(): Promise<GitStatusEntry[]>;
+  /** List all git worktrees with staleness info */
+  worktreeEntries(): Promise<GitWorktreeEntry[]>;
+  /** Find embedded .git directories (not the root repo) */
+  findEmbeddedRepos(rootPath: string): Promise<string[]>;
+}
+
+export interface GitStatusEntry {
+  /** Two-char status code, e.g. ' M', 'M ', '??' */
+  code: string;
+  path: string;
+}
+
+export interface GitWorktreeEntry {
+  path: string;
+  branch: string;
+  commit: string;
+  /** True if branch has commits after diverging from HEAD of main worktree */
+  hasRecentCommits: boolean;
 }
 
 export interface IFileSystemPort {
@@ -142,6 +166,10 @@ export { formatArchReport, formatCompactSummary } from '../domain/report-formatt
 export type { ActionItem, ActionItemReport, ActionPriority, ActionCategory } from '../domain/action-items.js';
 export { extractArchActions, extractValidationActions, buildActionItemReport, formatActionItems } from '../domain/action-items.js';
 
+// ─── Checkpoint Ports ───────────────────────────────────
+
+export type { CheckpointEntry, TaskSnapshot, FeatureProgress, FeaturePhase, ICheckpointPort } from './checkpoint.js';
+
 // ─── Secrets Ports ──────────────────────────────────────
 
 export type { SecretContext, SecretMetadata, SecretResult, ISecretsPort } from './secrets.js';
@@ -163,4 +191,22 @@ export interface IArchAnalysisPort {
 
   /** Full analysis: dead code + hex validation + circular detection */
   analyzeArchitecture(rootPath: string): Promise<ArchAnalysisResult>;
+}
+
+// ─── Version Ports ──────────────────────────────────────
+
+export interface VersionInfo {
+  cli: Version;
+  hub: Version | null;
+  hubBinaryPath: string | null;
+  mismatch: boolean;
+}
+
+export interface IVersionPort {
+  /** CLI version from package.json */
+  getCliVersion(): Version;
+  /** hex-hub binary version (null if not installed) */
+  getHubVersion(): Promise<Version | null>;
+  /** Combined version info with mismatch detection */
+  getVersionInfo(): Promise<VersionInfo>;
 }

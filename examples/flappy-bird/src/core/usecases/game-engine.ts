@@ -70,6 +70,15 @@ export class GameEngine implements IGamePort {
     }
   }
 
+  private onGameOver: ((score: number) => void) | null = null;
+
+  /**
+   * Register a callback for game-over events (e.g., leaderboard submission).
+   */
+  onGameOverCallback(cb: (score: number) => void): void {
+    this.onGameOver = cb;
+  }
+
   /**
    * Advance game by dt seconds.
    */
@@ -83,6 +92,7 @@ export class GameEngine implements IGamePort {
       if (this.state.score > this.state.highScore) {
         this.storage.saveHighScore(this.state.score);
       }
+      this.onGameOver?.(this.state.score);
     }
 
     // Detect scoring

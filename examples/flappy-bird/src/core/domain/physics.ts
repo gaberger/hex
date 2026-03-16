@@ -11,7 +11,7 @@
  * The caller provides flapStrength as a negative value per the sign convention.
  */
 
-import type { Bird, Pipe, GameConfig } from '../ports/index.js';
+import type { Bird, Pipe, GameConfig } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Pure physics functions

@@ -10,6 +10,48 @@
  *   value-objects.ts (domain) <- ports/index.ts (re-exports)
  */
 
+// ─── Version (CalVer YY.M) ─────────────────────────────
+
+/** CalVer version: YY.M[.patch] — e.g. 26.3, 26.3.1 */
+export class Version {
+  constructor(
+    readonly year: number,
+    readonly month: number,
+    readonly patch: number = 0,
+  ) {}
+
+  /** Parse a YY.M or YY.M.patch string. Returns null on invalid input. */
+  static parse(raw: string): Version | null {
+    const parts = raw.trim().split('.');
+    if (parts.length < 2 || parts.length > 3) return null;
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    const patch = parts.length === 3 ? Number(parts[2]) : 0;
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(patch)) return null;
+    if (year < 0 || month < 1 || month > 12 || patch < 0) return null;
+    return new Version(year, month, patch);
+  }
+
+  /** Numeric for comparison: year * 10000 + month * 100 + patch */
+  private ord(): number {
+    return this.year * 10000 + this.month * 100 + this.patch;
+  }
+
+  isNewerThan(other: Version): boolean {
+    return this.ord() > other.ord();
+  }
+
+  equals(other: Version): boolean {
+    return this.ord() === other.ord();
+  }
+
+  toString(): string {
+    return this.patch === 0
+      ? `${this.year}.${this.month}`
+      : `${this.year}.${this.month}.${this.patch}`;
+  }
+}
+
 // ─── Language & AST ─────────────────────────────────────
 
 export type Language = 'typescript' | 'go' | 'rust';
@@ -238,4 +280,33 @@ export interface ArchAnalysisResult {
     circularCount: number;
     healthScore: number;      // 0-100, penalized by violations
   };
+  repoHygiene?: RepoHygieneResult;
+}
+
+// ─── Repo Hygiene (Anti-Slop) ──────────────────────────
+
+export type HygieneSeverity = 'critical' | 'warning' | 'info';
+export type HygieneCategory =
+  | 'uncommitted'       // modified files not staged or committed
+  | 'staged'            // staged but not committed
+  | 'orphan-worktree'   // git worktree with no recent commits
+  | 'embedded-repo'     // .git directory inside project (not submodule)
+  | 'build-artifact'    // untracked build output (target/, dist/, etc.)
+  | 'runtime-state';    // runtime dirs that should be gitignored (.hex/, .superset/)
+
+export interface HygieneFinding {
+  category: HygieneCategory;
+  severity: HygieneSeverity;
+  path: string;
+  description: string;
+  suggestedFix: string;
+}
+
+export interface RepoHygieneResult {
+  findings: HygieneFinding[];
+  uncommittedCount: number;
+  stagedCount: number;
+  orphanWorktreeCount: number;
+  embeddedRepoCount: number;
+  clean: boolean;           // true when zero findings
 }

@@ -5,7 +5,7 @@
  * All functions are immutable — they return new state objects.
  */
 
-import type { GameState, GameConfig, Bird, Pipe } from '../ports/index.js';
+import type { GameState, GameConfig, Bird, Pipe } from './types.js';
 import {
   applyGravity,
   applyFlap,

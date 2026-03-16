@@ -32,6 +32,7 @@ import { EnvSecretsAdapter } from './adapters/secondary/env-secrets-adapter.js';
 import { InfisicalAdapter } from './adapters/secondary/infisical-adapter.js';
 import { LocalVaultAdapter } from './adapters/secondary/local-vault-adapter.js';
 import { CachingSecretsAdapter } from './adapters/secondary/caching-secrets-adapter.js';
+import { FileCheckpointAdapter } from './adapters/secondary/file-checkpoint-adapter.js';
 import type { ISecretsPort } from './core/ports/secrets.js';
 
 // Re-export AppContext from the port (canonical definition)
@@ -54,6 +55,7 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   const notifier = new TerminalNotifier();
   const swarm = new RufloAdapter(projectPath);
   const registry = new RegistryAdapter();
+  const checkpoint = new FileCheckpointAdapter(`${outputDir}/checkpoints`, fs);
 
   // Tree-sitter: search multiple candidate directories for WASM grammars
   // Paths must be RELATIVE to project root — fs.exists() uses safePath()
@@ -101,7 +103,7 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   });
 
   // Use cases
-  const archAnalyzer = new ArchAnalyzer(ast, fs);
+  const archAnalyzer = new ArchAnalyzer(ast, fs, git);
   const notificationOrchestrator = new NotificationOrchestrator(notifier);
   const summaryService = new SummaryService(ast, fs);
   const swarmOrchestrator = new SwarmOrchestrator(swarm, worktree);
@@ -126,6 +128,18 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
       agentdb: false,
       dashboard: null as string | null,
     };
+
+    // Checkpoint recovery — non-blocking, log-only
+    void checkpoint.recover(projectName).then(
+      (entry) => {
+        if (entry) {
+          const featureCount = entry.features.length;
+          const orphanCount = entry.orphanTasks.length;
+          process.stderr.write(`[hex] Checkpoint found from ${entry.createdAt}: ${featureCount} feature(s), ${orphanCount} orphan task(s)\n`);
+        }
+      },
+      () => { /* recovery failed — non-critical */ },
+    );
 
     // Initialize swarm
     void swarm.init({
@@ -282,5 +296,6 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     registry,
     broadcaster: broadcastAdapter,
     secrets,
+    checkpoint,
   };
 }

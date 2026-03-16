@@ -9,6 +9,7 @@
 import type {
   IASTPort,
   IFileSystemPort,
+  IGitPort,
   IArchAnalysisPort,
   ImportEdge,
   DeadExport,
@@ -19,6 +20,8 @@ import type {
 } from '../ports/index.js';
 import { classifyLayer, getViolationRule } from './layer-classifier.js';
 import { resolveImportPath, normalizePath } from './path-normalizer.js';
+import { analyzeRepoHygiene } from '../domain/repo-hygiene.js';
+import type { GitStateSnapshot } from '../domain/repo-hygiene.js';
 
 const ENTRY_POINTS = [
   'index.ts', 'cli.ts', 'main.ts', 'composition-root.ts',  // TypeScript
@@ -79,6 +82,7 @@ export class ArchAnalyzer implements IArchAnalysisPort {
   constructor(
     private readonly ast: IASTPort,
     private readonly fs: IFileSystemPort,
+    private readonly git?: IGitPort,
     private readonly excludePatterns: string[] = [
       'node_modules', 'dist', 'examples',
       '*.test.ts', '*.spec.ts',   // TypeScript tests
@@ -241,6 +245,21 @@ export class ArchAnalyzer implements IArchAnalysisPort {
     healthScore -= Math.min(10, unusedPorts.length * 1);   // cap unused port penalty at 10
     healthScore = Math.max(0, Math.min(100, healthScore));
 
+    // Repo hygiene (anti-slop) — optional, only when git port is available
+    let repoHygiene;
+    if (this.git) {
+      try {
+        const snapshot = await this.collectGitSnapshot(rootPath);
+        repoHygiene = analyzeRepoHygiene(snapshot);
+        // Penalize health score for hygiene issues
+        if (repoHygiene.embeddedRepoCount > 0) healthScore -= repoHygiene.embeddedRepoCount * 5;
+        if (repoHygiene.orphanWorktreeCount > 0) healthScore -= repoHygiene.orphanWorktreeCount * 3;
+        healthScore = Math.max(0, Math.min(100, healthScore));
+      } catch {
+        // Git not available — skip hygiene check
+      }
+    }
+
     return {
       deadExports,
       orphanFiles,
@@ -256,6 +275,7 @@ export class ArchAnalyzer implements IArchAnalysisPort {
         circularCount: circularDeps.length,
         healthScore,
       },
+      repoHygiene,
     };
   }
 
@@ -443,5 +463,31 @@ export class ArchAnalyzer implements IArchAnalysisPort {
     });
 
     return { unusedPorts, unusedAdapters };
+  }
+
+  /**
+   * Collect git state for repo hygiene analysis.
+   * Maps git port data into the domain's GitStateSnapshot.
+   */
+  private async collectGitSnapshot(rootPath: string): Promise<GitStateSnapshot> {
+    const git = this.git!;
+    const [entries, worktrees, embeddedGitDirs] = await Promise.all([
+      git.statusEntries(),
+      git.worktreeEntries(),
+      git.findEmbeddedRepos(rootPath === '.' ? process.cwd() : rootPath),
+    ]);
+
+    return {
+      modifiedFiles: entries.filter((e) => e.code === ' M' || e.code === ' D').map((e) => e.path),
+      stagedFiles: entries.filter((e) => e.code.startsWith('M') || e.code.startsWith('A') || e.code.startsWith('D')).map((e) => e.path),
+      untrackedPaths: entries.filter((e) => e.code === '??').map((e) => e.path),
+      worktrees: worktrees.map((w) => ({
+        path: w.path,
+        branch: w.branch ?? '(detached)',
+        commit: w.commit ?? '',
+        hasRecentCommits: w.hasRecentCommits,
+      })),
+      embeddedGitDirs,
+    };
   }
 }

@@ -58,9 +58,9 @@ tools:
     - Grep
     - Bash
   optional:
-    - mcp__claude-flow__task_create
-    - mcp__claude-flow__task_list
-    - mcp__claude-flow__memory_store
+    - mcp__ruflo__task_create
+    - mcp__ruflo__task_list
+    - mcp__ruflo__memory_store
 
 inputs:
   requirements:
@@ -154,7 +154,7 @@ workflow:
       description: Output the structured workplan
       action: |
         Write workplan to docs/workplans/{{workplan_id}}.json
-        Register tasks with Ruflo via mcp__claude-flow__task_create
+        Register tasks with Ruflo via mcp__ruflo__task_create
         Store workplan reference in Ruflo memory
 
 escalation:

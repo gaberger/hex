@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+#
+# hex anti-slop pre-commit hook
+#
+# Blocks commits when:
+#   1. Any boundary violation exists (HARD BLOCK)
+#   2. Any circular dependency exists (HARD BLOCK)
+#   3. Dead export rate exceeds threshold (SOFT WARNING)
+#
+# Skip with: git commit --no-verify (emergency only)
+#
+
+set -euo pipefail
+
+# Configurable thresholds
+MAX_VIOLATIONS=0
+MAX_CIRCULAR=0
+DEAD_EXPORT_WARN_THRESHOLD=40  # percent — warn above this
+
+# Only run if hex is available
+if ! command -v hex &>/dev/null; then
+  exit 0
+fi
+
+# Only run if we're in a hex project (has src/core/ports/)
+if [ ! -d "src/core/ports" ]; then
+  exit 0
+fi
+
+echo "⬡ hex pre-commit: checking architecture boundaries..."
+
+# Run analysis in JSON mode
+JSON=$(hex analyze . --json 2>/dev/null) || {
+  echo "⬡ hex pre-commit: analysis failed (non-blocking) — skipping check"
+  exit 0
+}
+
+# Parse results using node (available in any hex project)
+RESULT=$(node -e "
+  const r = JSON.parse(process.argv[1]);
+  const s = r.summary || {};
+  const violations = s.violationCount || 0;
+  const circular = s.circularCount || 0;
+  const deadRate = s.totalExports > 0
+    ? ((s.deadExportCount || 0) / s.totalExports * 100).toFixed(1)
+    : '0.0';
+  const score = s.healthScore || 0;
+
+  let blocked = false;
+  let messages = [];
+
+  if (violations > ${MAX_VIOLATIONS}) {
+    blocked = true;
+    messages.push('BLOCKED: ' + violations + ' boundary violation(s) — adapters must only import from ports');
+  }
+  if (circular > ${MAX_CIRCULAR}) {
+    blocked = true;
+    messages.push('BLOCKED: ' + circular + ' circular dependency cycle(s)');
+  }
+  if (parseFloat(deadRate) > ${DEAD_EXPORT_WARN_THRESHOLD}) {
+    messages.push('WARNING: dead export rate is ' + deadRate + '% (threshold: ${DEAD_EXPORT_WARN_THRESHOLD}%)');
+  }
+
+  if (messages.length > 0) {
+    messages.forEach(m => console.error('  ⬡ ' + m));
+  }
+
+  if (blocked) {
+    console.error('');
+    console.error('  Fix violations before committing. Run: hex analyze .');
+    console.error('  Emergency bypass: git commit --no-verify');
+    process.exit(1);
+  } else {
+    console.log('  ⬡ Score: ' + score + '/100 | Violations: 0 | Dead exports: ' + deadRate + '%');
+  }
+" "$JSON")
+
+echo "$RESULT"
