@@ -4,12 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>hex Dashboard</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%2358a6ff'/%3E%3Cstop offset='100%25' style='stop-color:%23bc8cff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpolygon points='32,4 58,19 58,45 32,60 6,45 6,19' fill='url(%23g)' opacity='0.12' stroke='url(%23g)' stroke-width='2.5' stroke-linejoin='round'/%3E%3Cpolygon points='32,16 46,24 46,40 32,48 18,40 18,24' fill='url(%23g)' opacity='0.25' stroke='url(%23g)' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpolygon points='32,27 37,30 37,34 32,37 27,34 27,30' fill='url(%23g)' opacity='0.8'/%3E%3C/svg%3E">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#1a1a2e;--card:#16213e;--border:#0f3460;
-  --accent:#4fc3f7;--green:#66bb6a;--yellow:#ffa726;--red:#ef5350;
-  --purple:#ab47bc;--text:#e0e0e0;--text2:#9e9e9e;
+  --bg:#0d1117;--card:#161b22;--border:#30363d;
+  --accent:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;
+  --purple:#bc8cff;--text:#e6edf3;--text2:#8b949e;
   --radius:8px;--gap:16px;
 }
 html{font-size:14px}
@@ -25,8 +26,8 @@ a{color:var(--accent);text-decoration:none}
 .project-name{font-weight:700;color:var(--accent);font-size:.95rem}
 .project-path{color:var(--text2);font-size:.75rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ast-badge{padding:2px 8px;border-radius:10px;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
-.ast-real{background:rgba(102,187,106,.15);color:var(--green)}
-.ast-stub{background:rgba(255,167,38,.15);color:var(--yellow)}
+.ast-real{background:rgba(63,185,80,.15);color:var(--green)}
+.ast-stub{background:rgba(210,153,34,.15);color:var(--yellow)}
 .health-updated{margin-top:8px;font-size:.75rem;color:var(--text2);text-align:right}
 .swarm-unavailable{color:var(--text2);font-size:.85rem;font-style:italic;padding:16px 0;text-align:center}
 .conn-badge{display:flex;align-items:center;gap:6px}
@@ -74,9 +75,9 @@ a{color:var(--accent);text-decoration:none}
 .swarm-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
 .status-badge{padding:4px 12px;border-radius:12px;font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
 .status-idle{background:rgba(158,158,158,.15);color:var(--text2)}
-.status-running{background:rgba(79,195,247,.15);color:var(--accent)}
-.status-completed{background:rgba(102,187,106,.15);color:var(--green)}
-.status-failed{background:rgba(239,83,80,.15);color:var(--red)}
+.status-running{background:rgba(88,166,255,.15);color:var(--accent)}
+.status-completed{background:rgba(63,185,80,.15);color:var(--green)}
+.status-failed{background:rgba(248,81,73,.15);color:var(--red)}
 .swarm-counts{display:flex;gap:20px;margin-bottom:16px;font-size:.85rem}
 .swarm-counts .num{font-weight:700;font-size:1.2rem}
 .swarm-counts .lbl{color:var(--text2)}
@@ -154,7 +155,7 @@ a{color:var(--accent);text-decoration:none}
 .project-tab .tab-dot.stale{background:var(--yellow)}
 .project-tab .tab-dot.offline{background:var(--text2)}
 .no-projects{padding:10px 20px;color:var(--text2);font-size:.85rem;font-style:italic}
-.project-count{font-size:.7rem;color:var(--text2);padding:2px 8px;border-radius:10px;background:rgba(79,195,247,.1)}
+.project-count{font-size:.7rem;color:var(--text2);padding:2px 8px;border-radius:10px;background:rgba(88,166,255,.1)}
 
 /* Hidden dropdown (still used for programmatic access) */
 .project-selector{display:none}
@@ -166,7 +167,7 @@ a{color:var(--accent);text-decoration:none}
 <body>
 
 <header class="header">
-  <h1><span>hex</span> Dashboard</h1>
+  <h1><svg width="28" height="28" viewBox="0 0 64 64" style="vertical-align:middle;margin-right:8px"><defs><linearGradient id="hg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#58a6ff"/><stop offset="100%" style="stop-color:#bc8cff"/></linearGradient></defs><polygon points="32,4 58,19 58,45 32,60 6,45 6,19" fill="none" stroke="url(#hg)" stroke-width="3" stroke-linejoin="round" opacity="0.85"/><polygon points="32,16 46,24 46,40 32,48 18,40 18,24" fill="url(#hg)" opacity="0.15" stroke="url(#hg)" stroke-width="1.5" stroke-linejoin="round"/><polygon points="32,27 37,30 37,34 32,37 27,34 27,30" fill="url(#hg)" opacity="0.7"/><circle cx="32" cy="4" r="3" fill="#58a6ff"/><circle cx="58" cy="19" r="3" fill="#58a6ff"/><circle cx="58" cy="45" r="3" fill="#bc8cff"/><circle cx="32" cy="60" r="3" fill="#bc8cff"/><circle cx="6" cy="45" r="3" fill="#3fb950"/><circle cx="6" cy="19" r="3" fill="#3fb950"/></svg><span>hex</span> Dashboard</h1>
   <div class="header-right">
     <select class="project-selector" id="projectSelector">
       <option value="">Loading projects...</option>
@@ -302,17 +303,17 @@ a{color:var(--accent);text-decoration:none}
         <button id="zoomReset" title="Reset view">R</button>
         <button id="toggleExternal" title="Show/hide external deps" style="font-size:9px;margin-top:4px">EXT</button>
         <button id="expandGraph" title="Expand fullscreen" style="font-size:12px;margin-top:4px">⛶</button>
-        <button id="simViolation" title="Simulate violation (demo)" style="font-size:8px;margin-top:4px;color:#ef5350">VIO</button>
+        <button id="simViolation" title="Simulate violation (demo)" style="font-size:8px;margin-top:4px;color:#f85149">VIO</button>
       </div>
     </div>
     <div class="graph-legend">
-      <div class="legend-item"><span class="legend-dot" style="background:#42a5f5"></span> Domain</div>
-      <div class="legend-item"><span class="legend-dot" style="background:#66bb6a"></span> Ports</div>
-      <div class="legend-item"><span class="legend-dot" style="background:#ab47bc"></span> Use Cases</div>
-      <div class="legend-item"><span class="legend-dot" style="background:#ff8a65"></span> Primary (driving)</div>
-      <div class="legend-item"><span class="legend-dot" style="background:#ffd54f"></span> Secondary (driven)</div>
-      <div class="legend-item"><span class="legend-dot" style="background:#9e9e9e"></span> External</div>
-      <div class="legend-item"><span class="legend-dot" style="background:#ef5350;border-radius:0;width:14px;height:2px"></span> Violation</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#58a6ff"></span> Domain</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#bc8cff"></span> Ports</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#3fb950"></span> Use Cases</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#f0883e"></span> Primary (driving)</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#d29922"></span> Secondary (driven)</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#8b949e"></span> External</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#f85149;border-radius:0;width:14px;height:2px"></span> Violation</div>
     </div>
   </div>
 </div>
@@ -540,9 +541,9 @@ a{color:var(--accent);text-decoration:none}
   }
 
   function scoreColor(score) {
-    if (score >= 80) return '#66bb6a';
-    if (score >= 50) return '#ffa726';
-    return '#ef5350';
+    if (score >= 80) return '#3fb950';
+    if (score >= 50) return '#d29922';
+    return '#f85149';
   }
 
   // --- Health Panel ---
@@ -569,7 +570,7 @@ a{color:var(--accent);text-decoration:none}
       var violationCount = typeof summary.violationCount === 'number' ? summary.violationCount
         : (Array.isArray(violations) ? violations.length : (violations || 0));
       setText('#hViolations', violationCount);
-      $('#hViolations').style.color = violationCount > 0 ? '#ef5350' : '#66bb6a';
+      $('#hViolations').style.color = violationCount > 0 ? '#f85149' : '#3fb950';
 
       var unused = data.unusedPorts || [];
       var unusedCount = Array.isArray(unused) ? unused.length : (unused || 0);
@@ -584,7 +585,7 @@ a{color:var(--accent);text-decoration:none}
       var circularCount = typeof summary.circularCount === 'number' ? summary.circularCount
         : (Array.isArray(circular) ? circular.length : (circular || 0));
       setText('#hCircular', circularCount);
-      $('#hCircular').style.color = circularCount > 0 ? '#ef5350' : '#66bb6a';
+      $('#hCircular').style.color = circularCount > 0 ? '#f85149' : '#3fb950';
 
       setText('#healthUpdated', 'Updated: ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }));
 
@@ -1067,16 +1068,16 @@ a{color:var(--accent);text-decoration:none}
 
   // Layer colors — distinct per hex layer
   var LAYER_COLORS = {
-    domain:            '#42a5f5',  // blue — core
-    ports:             '#66bb6a',  // green — boundaries
-    port:              '#66bb6a',
-    usecases:          '#ab47bc',  // purple — application logic
-    usecase:           '#ab47bc',
-    'primary-adapter': '#ff8a65',  // warm orange — driving
-    'secondary-adapter':'#ffd54f', // amber — driven
-    adapters:          '#ffa726',
-    adapter:           '#ffa726',
-    other:             '#9e9e9e',
+    domain:            '#58a6ff',  // blue — core
+    ports:             '#bc8cff',  // purple — boundaries
+    port:              '#bc8cff',
+    usecases:          '#3fb950',  // green — application logic
+    usecase:           '#3fb950',
+    'primary-adapter': '#f0883e',  // orange — driving
+    'secondary-adapter':'#d29922', // gold — driven
+    adapters:          '#f0883e',
+    adapter:           '#f0883e',
+    other:             '#8b949e',
   };
 
   // Ring fills — more visible zones behind each ring
@@ -1477,7 +1478,7 @@ a{color:var(--accent);text-decoration:none}
 
     for (var ri = ringRadii.length - 1; ri >= 0; ri--) {
       var ring = ringRadii[ri];
-      var layerColor = LAYER_COLORS[ring.key] || '#9e9e9e';
+      var layerColor = LAYER_COLORS[ring.key] || '#8b949e';
 
       // Filled hexagonal zone
       hexPath(ctx, cx, cy, ring.outer);
@@ -1529,7 +1530,7 @@ a{color:var(--accent);text-decoration:none}
     for (var li = 0; li < ringRadii.length; li++) {
       var lr = ringRadii[li];
       var bandY = legendStartY + li * (bandHeight + stackGap);
-      var layerDotColor = LAYER_COLORS[lr.key] || '#9e9e9e';
+      var layerDotColor = LAYER_COLORS[lr.key] || '#8b949e';
 
       // Color band rectangle
       ctx.fillStyle = layerDotColor;
@@ -1613,7 +1614,7 @@ a{color:var(--accent);text-decoration:none}
       ctx.stroke();
 
       // Badge text
-      ctx.fillStyle = '#ef5350';
+      ctx.fillStyle = '#f85149';
       ctx.textAlign = 'left';
       ctx.fillText(vText, vBadgeX + 10, vBadgeY + 16);
     } else {
@@ -1627,7 +1628,7 @@ a{color:var(--accent);text-decoration:none}
       ctx.strokeStyle = 'rgba(102,187,106,0.3)';
       ctx.lineWidth = 1;
       ctx.stroke();
-      ctx.fillStyle = '#66bb6a';
+      ctx.fillStyle = '#3fb950';
       ctx.textAlign = 'left';
       ctx.fillText('✓ No violations', vBadgeX + 10, vBadgeY + 16);
     }
@@ -1694,7 +1695,7 @@ a{color:var(--accent);text-decoration:none}
       // Source node layer → edge color (shows where the import originates)
       var fromNode = nodes.find(function(n) { return n.id === e.from; });
       var fromLayer = normalizeLayer(fromNode ? fromNode.layer : 'other');
-      var layerColor = LAYER_COLORS[fromLayer] || '#9e9e9e';
+      var layerColor = LAYER_COLORS[fromLayer] || '#8b949e';
 
       var mx = (from.x + to.x) / 2;
       var my = (from.y + to.y) / 2;
@@ -1719,7 +1720,7 @@ a{color:var(--accent);text-decoration:none}
       ctx.moveTo(from.x, from.y);
       ctx.quadraticCurveTo(cpx, cpy, to.x, to.y);
       if (isViolation) {
-        ctx.strokeStyle = '#ef5350';
+        ctx.strokeStyle = '#f85149';
         ctx.lineWidth = 2.5;
         ctx.setLineDash([6, 3]);
       } else if (dimmed) {
@@ -1749,7 +1750,7 @@ a{color:var(--accent);text-decoration:none}
       // Violation label at midpoint
       if (isViolation) {
         ctx.font = 'bold 9px system-ui, sans-serif';
-        ctx.fillStyle = '#ef5350';
+        ctx.fillStyle = '#f85149';
         ctx.textAlign = 'center';
         ctx.fillText('✕ violation', cpx, cpy - 6);
       }
@@ -1766,7 +1767,7 @@ a{color:var(--accent);text-decoration:none}
         ctx.lineTo(endX - headLen * Math.cos(angle - Math.PI / 6), endY - headLen * Math.sin(angle - Math.PI / 6));
         ctx.lineTo(endX - headLen * Math.cos(angle + Math.PI / 6), endY - headLen * Math.sin(angle + Math.PI / 6));
         ctx.closePath();
-        var arrowColor = isViolation ? '#ef5350' : layerColor;
+        var arrowColor = isViolation ? '#f85149' : layerColor;
         var arrowAlpha = isViolation ? (0.7 + 0.3 * pulse) : (inSelection ? 0.9 : (edgeActive ? (0.5 * pulse) : 0.35));
         ctx.fillStyle = arrowColor;
         ctx.globalAlpha = arrowAlpha;
@@ -1780,7 +1781,7 @@ a{color:var(--accent);text-decoration:none}
       var pos = positions[n.id];
       if (!pos) return;
       var layer = normalizeLayer(n.layer);
-      var color = LAYER_COLORS[layer] || '#9e9e9e';
+      var color = LAYER_COLORS[layer] || '#8b949e';
       var r = 6 + Math.min(n.exports || 0, 20);
       var active = isFileActive(n.id);
       var isSelected = selectedNode === n.id;
@@ -1876,7 +1877,7 @@ a{color:var(--accent);text-decoration:none}
         ctx.beginPath();
         ctx.roundRect(bx - tw / 2 - 6, by - 8, tw + 12, 18, 4);
         ctx.fill();
-        ctx.strokeStyle = LAYER_COLORS[normalizeLayer((nodes.find(function(n) { return n.id === selectedNode; }) || {}).layer)] || '#9e9e9e';
+        ctx.strokeStyle = LAYER_COLORS[normalizeLayer((nodes.find(function(n) { return n.id === selectedNode; }) || {}).layer)] || '#8b949e';
         ctx.lineWidth = 1.5;
         ctx.stroke();
         ctx.fillStyle = '#ffffff';
@@ -2125,7 +2126,7 @@ a{color:var(--accent);text-decoration:none}
       var prevCount = parseInt($('#hViolations').textContent) || 0;
       var newCount = prevCount + simViolations.length;
       setText('#hViolations', newCount);
-      $('#hViolations').style.color = '#ef5350';
+      $('#hViolations').style.color = '#f85149';
 
       // Add violations to the list
       var vList = $('#violationsList');

@@ -1,56 +1,13 @@
 /**
  * Flappy Bird — Ports (Hexagonal Architecture)
  *
- * Sign Convention Contract (screen coordinates):
- *   +Y = downward
- *   Gravity = positive (adds to velocity, bird falls)
- *   Flap strength = NEGATIVE (sets velocity negative, bird rises)
- *   Velocity: positive = falling, negative = rising
+ * Value types are defined in domain/types.ts and re-exported here
+ * so that adapters can import everything from a single module.
  */
 
-// ---------------------------------------------------------------------------
-// Value types
-// ---------------------------------------------------------------------------
-
-export type Phase = 'ready' | 'playing' | 'gameover';
-
-export interface Bird {
-  x: number;
-  y: number;
-  velocity: number;
-  rotation: number;
-}
-
-export interface Pipe {
-  x: number;
-  gapY: number;
-  scored: boolean;
-}
-
-export interface GameState {
-  bird: Bird;
-  pipes: Pipe[];
-  phase: Phase;
-  score: number;
-  highScore: number;
-  elapsed: number;
-}
-
-export interface GameConfig {
-  canvasWidth: number;
-  canvasHeight: number;
-  /** Downward acceleration. MUST BE POSITIVE. */
-  gravity: number;
-  /** Upward force applied on flap. MUST BE NEGATIVE (screen Y-axis points down). */
-  flapStrength: number;
-  pipeWidth: number;
-  pipeGap: number;
-  pipeSpeed: number;
-  pipeSpawnInterval: number;
-  groundHeight: number;
-  birdSize: number;
-  birdX: number;
-}
+// Re-export domain value types (ports → domain is the correct dependency direction)
+export type { Phase, Bird, Pipe, GameState, GameConfig, LeaderboardEntry } from '../domain/types.js';
+import type { Bird, Pipe, Phase, GameState, GameConfig, LeaderboardEntry } from '../domain/types.js';
 
 // ---------------------------------------------------------------------------
 // Ports
@@ -86,4 +43,9 @@ export interface IStoragePort {
 export interface IInputPort {
   onAction(callback: () => void): void;
   destroy(): void;
+}
+
+export interface ILeaderboardPort {
+  saveScore(name: string, score: number): Promise<void>;
+  getTopScores(limit: number): Promise<LeaderboardEntry[]>;
 }

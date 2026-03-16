@@ -10,7 +10,7 @@
       "mcp__plugin_context-mode_context-mode__ctx_execute",
       "Bash(bun run:*)",
       "Bash(timeout:*)",
-      "mcp__claude-flow__swarm_init",
+      "mcp__ruflo__swarm_init",
       "Bash(bun test:*)"
     ]
   }

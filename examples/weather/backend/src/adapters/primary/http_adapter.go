@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -16,6 +17,9 @@ import (
 
 //go:embed templates/*.html
 var templateFS embed.FS
+
+// Compile-time interface check.
+var _ ports.IHTTPServerPort = (*HTTPAdapter)(nil)
 
 // HTTPAdapter serves the HTMX-powered F1 dashboard.
 // It implements ports.IHTTPServerPort via Start/Stop.
@@ -71,21 +75,7 @@ func NewHTTPAdapter(f1 ports.IF1QueryPort) *HTTPAdapter {
 			}
 			return t.Format("Jan 2, 2006")
 		},
-		"positionSuffix": func(p domain.Position) string {
-			n := int(p)
-			switch {
-			case n%100 == 11, n%100 == 12, n%100 == 13:
-				return fmt.Sprintf("%dth", n)
-			case n%10 == 1:
-				return fmt.Sprintf("%dst", n)
-			case n%10 == 2:
-				return fmt.Sprintf("%dnd", n)
-			case n%10 == 3:
-				return fmt.Sprintf("%drd", n)
-			default:
-				return fmt.Sprintf("%dth", n)
-			}
-		},
+		"positionSuffix": PositionSuffix,
 		"podiumColor": func(p domain.Position) string {
 			switch int(p) {
 			case 1:
@@ -113,6 +103,19 @@ func NewHTTPAdapter(f1 ports.IF1QueryPort) *HTTPAdapter {
 		"hasFastestLap": func(dr domain.DriverResult) bool {
 			return dr.FastestLap != nil && dr.FastestLap.Rank == "1"
 		},
+		"printf": fmt.Sprintf,
+		"teamColor":     TeamColor,
+		"teamColorDark": TeamColorDark,
+		"driverHash":    DriverHash,
+		"mod": func(a, b int) int {
+			if b == 0 {
+				return 0
+			}
+			return a % b
+		},
+		"hashBit": func(hash, bit int) bool {
+			return (hash>>uint(bit))&1 == 1
+		},
 	}
 
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html")
@@ -126,19 +129,27 @@ func NewHTTPAdapter(f1 ports.IF1QueryPort) *HTTPAdapter {
 	}
 }
 
-// Start begins listening on the given address.
-func (h *HTTPAdapter) Start(addr string) error {
+// Handler returns the HTTP handler with all routes registered.
+// Exposed for testing — allows use with httptest without starting a real server.
+func (h *HTTPAdapter) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /", h.handleHome)
 	mux.HandleFunc("GET /schedule", h.handleSchedule)
+	mux.HandleFunc("GET /calendar", h.handleCalendar)
 	mux.HandleFunc("GET /results/{season}/{round}", h.handleResults)
 	mux.HandleFunc("GET /drivers", h.handleDrivers)
 	mux.HandleFunc("GET /constructors", h.handleConstructors)
+	mux.HandleFunc("GET /leaderboard", h.handleLeaderboard)
 
+	return mux
+}
+
+// Start begins listening on the given address.
+func (h *HTTPAdapter) Start(addr string) error {
 	h.server = &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           h.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -249,6 +260,110 @@ func (h *HTTPAdapter) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	h.render(w, r, "schedule.html", "Season Schedule", schedule)
 }
 
+// calendarMonth holds one month's calendar data for rendering.
+type calendarMonth struct {
+	Name        string
+	Year        int
+	MonthNum    int
+	DaysInMonth int
+	Offset      int // weekday of 1st: Monday=0 .. Sunday=6
+	Races       []domain.Race
+}
+
+// calendarData is the top-level template data for the calendar page.
+type calendarData struct {
+	Season      domain.Season
+	FutureCount int
+	Months      []calendarMonth
+	NextRace    *domain.Race
+	RaceMap     map[string]*domain.Race // "YYYY-MM-DD" → Race
+	Year        int
+	MonthNum    int
+	DaysInMonth int
+}
+
+func (h *HTTPAdapter) handleCalendar(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	schedule, err := h.f1.GetCurrentSchedule(ctx)
+	if err != nil {
+		log.Printf("calendar: %v", err)
+		http.Error(w, "Failed to load schedule", http.StatusInternalServerError)
+		return
+	}
+
+	now := time.Now()
+
+	// Build a date→race lookup and find the next upcoming race.
+	raceMap := make(map[string]*domain.Race, len(schedule.Races))
+	var nextRace *domain.Race
+	futureCount := 0
+
+	for i := range schedule.Races {
+		race := &schedule.Races[i]
+		raceMap[race.Date] = race
+		t, err := time.Parse("2006-01-02", race.Date)
+		if err == nil && !t.Before(now) {
+			futureCount++
+			if nextRace == nil {
+				nextRace = race
+			}
+		}
+	}
+
+	// Group races by month.
+	monthRaces := make(map[time.Month][]domain.Race)
+	for _, race := range schedule.Races {
+		t, err := time.Parse("2006-01-02", race.Date)
+		if err != nil {
+			continue
+		}
+		monthRaces[t.Month()] = append(monthRaces[t.Month()], race)
+	}
+
+	// Build sorted month list (only months that have races).
+	var months []calendarMonth
+	sortedMonthNums := make([]int, 0, len(monthRaces))
+	for m := range monthRaces {
+		sortedMonthNums = append(sortedMonthNums, int(m))
+	}
+	sort.Ints(sortedMonthNums)
+
+	year := int(schedule.Season)
+	for _, mNum := range sortedMonthNums {
+		m := time.Month(mNum)
+		first := time.Date(year, m, 1, 0, 0, 0, 0, time.UTC)
+		// Monday=0 offset
+		wd := int(first.Weekday())
+		if wd == 0 {
+			wd = 7 // Sunday
+		}
+		offset := wd - 1 // Monday=0
+
+		daysInMonth := time.Date(year, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
+
+		months = append(months, calendarMonth{
+			Name:        m.String(),
+			Year:        year,
+			MonthNum:    mNum,
+			DaysInMonth: daysInMonth,
+			Offset:      offset,
+			Races:       monthRaces[m],
+		})
+	}
+
+	data := calendarData{
+		Season:      schedule.Season,
+		FutureCount: futureCount,
+		Months:      months,
+		NextRace:    nextRace,
+		RaceMap:     raceMap,
+		Year:        year,
+	}
+
+	h.render(w, r, "calendar.html", "Race Calendar", data)
+}
+
 func (h *HTTPAdapter) handleResults(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -340,6 +455,52 @@ func (h *HTTPAdapter) handleConstructors(w http.ResponseWriter, r *http.Request)
 	h.render(w, r, "constructors.html", "Constructor Standings", data)
 }
 
+func (h *HTTPAdapter) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	season := domain.Season(2025)
+
+	drivers, err := h.f1.GetDriverStandings(ctx, season)
+	if err != nil {
+		log.Printf("leaderboard: driver standings: %v", err)
+		http.Error(w, "Failed to load leaderboard", http.StatusInternalServerError)
+		return
+	}
+
+	constructors, err := h.f1.GetConstructorStandings(ctx, season)
+	if err != nil {
+		log.Printf("leaderboard: constructor standings: %v", err)
+		http.Error(w, "Failed to load leaderboard", http.StatusInternalServerError)
+		return
+	}
+
+	driverMax := 0.0
+	if len(drivers) > 0 {
+		driverMax, _ = strconv.ParseFloat(drivers[0].Points, 64)
+	}
+	constructorMax := 0.0
+	if len(constructors) > 0 {
+		constructorMax, _ = strconv.ParseFloat(constructors[0].Points, 64)
+	}
+
+	type leaderboardData struct {
+		Season               domain.Season
+		DriverStandings      []domain.DriverStanding
+		ConstructorStandings []domain.ConstructorStanding
+		DriverMaxPoints      float64
+		ConstructorMaxPoints float64
+	}
+
+	data := leaderboardData{
+		Season:               season,
+		DriverStandings:      drivers,
+		ConstructorStandings: constructors,
+		DriverMaxPoints:      driverMax,
+		ConstructorMaxPoints: constructorMax,
+	}
+
+	h.render(w, r, "leaderboard.html", "2025 Championship Leaderboard", data)
+}
+
 // bytesBuffer is a simple bytes.Buffer wrapper to avoid importing bytes
 // in a way that clutters the import block; it satisfies io.Writer.
 type bytesBuffer struct {
@@ -353,4 +514,75 @@ func (b *bytesBuffer) Write(p []byte) (int, error) {
 
 func (b *bytesBuffer) String() string {
 	return string(b.data)
+}
+
+// TeamColor returns the primary team color hex for a given constructor ID.
+// Accepts string because Go templates lose type info in variable assignments.
+func TeamColor(id string) string {
+	colors := map[string]string{
+		"red_bull":     "#3671C6",
+		"ferrari":      "#E8002D",
+		"mercedes":     "#27F4D2",
+		"mclaren":      "#FF8000",
+		"aston_martin": "#229971",
+		"alpine":       "#FF87BC",
+		"williams":     "#64C4FF",
+		"rb":           "#6692FF",
+		"sauber":       "#52E252",
+		"haas":         "#B6BABD",
+	}
+	if c, ok := colors[id]; ok {
+		return c
+	}
+	return "#FFFFFF"
+}
+
+// TeamColorDark returns a darker variant of the team color for gradients.
+func TeamColorDark(id string) string {
+	colors := map[string]string{
+		"red_bull":     "#1B3A66",
+		"ferrari":      "#7A0018",
+		"mercedes":     "#0A5C4E",
+		"mclaren":      "#8B4500",
+		"aston_martin": "#0F4A37",
+		"alpine":       "#8B4A6A",
+		"williams":     "#2E6080",
+		"rb":           "#333F80",
+		"sauber":       "#1F6B1F",
+		"haas":         "#5B5D5F",
+	}
+	if c, ok := colors[id]; ok {
+		return c
+	}
+	return "#666666"
+}
+
+// DriverHash produces a simple numeric hash from a driver ID for generating
+// unique geometric patterns in SVG avatars.
+func DriverHash(id string) int {
+	h := 0
+	for _, c := range id {
+		h = h*31 + int(c)
+	}
+	if h < 0 {
+		h = -h
+	}
+	return h
+}
+
+// PositionSuffix returns a position number with its ordinal suffix (1st, 2nd, 3rd, etc.).
+func PositionSuffix(p domain.Position) string {
+	n := int(p)
+	switch {
+	case n%100 == 11, n%100 == 12, n%100 == 13:
+		return fmt.Sprintf("%dth", n)
+	case n%10 == 1:
+		return fmt.Sprintf("%dst", n)
+	case n%10 == 2:
+		return fmt.Sprintf("%dnd", n)
+	case n%10 == 3:
+		return fmt.Sprintf("%drd", n)
+	default:
+		return fmt.Sprintf("%dth", n)
+	}
 }

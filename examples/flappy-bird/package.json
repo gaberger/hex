@@ -11,7 +11,8 @@
     "test:unit": "bun test tests/unit/",
     "test:property": "bun test tests/property/",
     "test:smoke": "bun test tests/smoke/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "server": "bun run src/server.ts"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

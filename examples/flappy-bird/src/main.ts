@@ -10,6 +10,7 @@ import { CanvasRenderer } from './adapters/secondary/canvas-renderer.js';
 import { BrowserAudio } from './adapters/secondary/browser-audio.js';
 import { LocalStorageAdapter } from './adapters/secondary/localstorage-adapter.js';
 import { BrowserInput } from './adapters/primary/browser-input.js';
+import { LeaderboardDisplay } from './adapters/primary/leaderboard-display.js';
 
 // ---------------------------------------------------------------------------
 // Configuration — sign convention enforced here
@@ -45,9 +46,24 @@ function main(): void {
   const storage = new LocalStorageAdapter();
   const engine = new GameEngine(config, renderer, audio, storage);
   const input = new BrowserInput(canvas);
+  const leaderboard = new LeaderboardDisplay();
+
+  // Fetch leaderboard on load
+  leaderboard.fetchScores();
+
+  // On game over: prompt for name submission and refresh leaderboard
+  engine.onGameOverCallback(async (score: number) => {
+    await leaderboard.promptAndSubmit(score);
+  });
 
   engine.start();
-  input.onAction(() => engine.flap());
+  input.onAction(() => {
+    const state = engine.getState();
+    if (state.phase === 'gameover') {
+      leaderboard.resetSubmission();
+    }
+    engine.flap();
+  });
 
   // Game loop
   let lastTime = 0;
@@ -57,6 +73,16 @@ function main(): void {
     const dt = lastTime === 0 ? 1 / 60 : Math.min((timestamp - lastTime) / 1000, MAX_DT);
     lastTime = timestamp;
     engine.tick(dt);
+
+    // Draw leaderboard overlay during game-over phase
+    const state = engine.getState();
+    if (state.phase === 'gameover') {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        leaderboard.drawLeaderboard(ctx, config.canvasWidth, config.canvasHeight / 2 + 110);
+      }
+    }
+
     requestAnimationFrame(loop);
   }
 

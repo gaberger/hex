@@ -1,0 +1,94 @@
+{{define "calendar.html"}}
+<div class="space-y-6">
+
+    <div class="flex items-center justify-between">
+        <h1 class="text-3xl font-black flex items-center gap-3">
+            <span class="w-1.5 h-8 bg-f1-red rounded-full inline-block"></span>
+            {{.Season}} Race Calendar
+        </h1>
+        <span class="text-sm text-gray-400">{{.FutureCount}} upcoming races</span>
+    </div>
+
+    <!-- Month grids -->
+    {{$root := .}}
+    {{range .Months}}
+    {{if .Races}}
+    {{$month := .}}
+    <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
+            <h2 class="text-lg font-bold text-white">{{.Name}} {{.Year}}</h2>
+            <span class="text-xs text-gray-400 uppercase tracking-wider">{{len .Races}} race{{if gt (len .Races) 1}}s{{end}}</span>
+        </div>
+
+        <!-- Day-of-week headers -->
+        <div class="grid grid-cols-7 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider border-b border-gray-700/50 px-2 py-2">
+            <div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div><div>Sun</div>
+        </div>
+
+        <!-- Calendar days -->
+        <div class="grid grid-cols-7 gap-px bg-gray-700/30 p-2">
+            {{/* Leading empty cells for weekday offset (Monday=0) */}}
+            {{range seq $month.Offset}}
+            <div class="aspect-square"></div>
+            {{end}}
+
+            {{/* Actual days of the month */}}
+            {{range $day := seq $month.DaysInMonth}}
+            {{$dayNum := add $day 1}}
+            {{$dateKey := printf "%d-%02d-%02d" $month.Year $month.MonthNum $dayNum}}
+            {{$race := index $root.RaceMap $dateKey}}
+            {{if $race}}
+            <div class="aspect-square rounded-lg relative group
+                        {{if isPast $race.Date}}bg-gray-700/50 border border-gray-600{{else}}bg-f1-red/10 border border-f1-red/30{{end}}
+                        cursor-pointer transition-all hover:scale-105"
+                 hx-get="/results/{{$race.Season}}/{{$race.Round}}"
+                 hx-target="#content"
+                 hx-push-url="true">
+                <div class="absolute inset-0 flex flex-col items-center justify-center p-1">
+                    <span class="text-sm font-bold {{if isPast $race.Date}}text-gray-400{{else}}text-f1-red{{end}}">{{$dayNum}}</span>
+                    <span class="text-[9px] leading-tight text-center font-medium
+                                 {{if isPast $race.Date}}text-gray-500{{else}}text-gray-300{{end}}
+                                 hidden sm:block truncate w-full px-0.5">
+                        {{$race.Circuit.Location.Country}}
+                    </span>
+                </div>
+                <!-- Tooltip on hover -->
+                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-950 border border-gray-700 rounded-lg
+                            text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                    <div class="font-semibold text-white">{{$race.RaceName}}</div>
+                    <div class="text-gray-400">{{$race.Circuit.Name}}</div>
+                    <div class="text-gray-500">{{formatDate $race.Date}}</div>
+                </div>
+            </div>
+            {{else}}
+            <div class="aspect-square rounded-lg flex items-center justify-center">
+                <span class="text-sm text-gray-600">{{$dayNum}}</span>
+            </div>
+            {{end}}
+            {{end}}
+        </div>
+    </div>
+    {{end}}
+    {{end}}
+
+    <!-- Next Race highlight -->
+    {{if .NextRace}}
+    <div class="bg-gradient-to-r from-f1-red/20 to-gray-800 rounded-2xl border border-f1-red/30 p-6">
+        <div class="flex items-center justify-between">
+            <div>
+                <div class="text-sm font-semibold text-f1-red uppercase tracking-wider">Next Race</div>
+                <div class="text-2xl font-black text-white mt-1">{{.NextRace.RaceName}}</div>
+                <div class="text-sm text-gray-400 mt-1">
+                    {{.NextRace.Circuit.Name}} — {{.NextRace.Circuit.Location.Locality}}, {{.NextRace.Circuit.Location.Country}}
+                </div>
+            </div>
+            <div class="text-right">
+                <div class="text-3xl font-black text-f1-red">Round {{.NextRace.Round}}</div>
+                <div class="text-sm text-gray-400 font-mono">{{formatDate .NextRace.Date}}</div>
+            </div>
+        </div>
+    </div>
+    {{end}}
+
+</div>
+{{end}}

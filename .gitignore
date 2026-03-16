@@ -45,3 +45,8 @@ docs/workplans/
 
 # Filesystem artifacts
 Volumes/
+.hex/
+.superset/
+examples/hex-worktrees/
+examples/hex-worktrees/
+examples/rust-api/target/
