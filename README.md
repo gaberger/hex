@@ -310,7 +310,11 @@ interface ISwarmPort {
 
 ### Dashboard (hex-hub)
 
-hex-hub is a Rust-native dashboard service that replaces the Node.js dashboard. It runs as a system-wide daemon on port 5555.
+<p align="center">
+  <img src="docs/hex-dashboard.png" alt="hex Dashboard — architecture health, token efficiency, dependency graph, swarm status" width="900"/>
+</p>
+
+hex-hub is a Rust-native dashboard service that runs as a system-wide daemon on port 5555. It provides real-time visibility into architecture health, token efficiency across summary levels, dependency graphs with violation detection, and swarm agent status — all streamed via SSE.
 
 ```bash
 # Auto-starts on any hex command (if binary installed)

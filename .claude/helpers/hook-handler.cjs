@@ -62,6 +62,24 @@ function writeHexStatus(data) {
     fs.mkdirSync(hexDir, { recursive: true });
     fs.writeFileSync(path.join(hexDir, 'status.json'), JSON.stringify(data, null, 2));
   } catch { /* non-fatal — statusline just shows ○ */ }
+  // Bridge: transform flat status into the schema the dashboard expects:
+  //   { status: string, agents: [{role,name,status}], tasks: [{name,status}] }
+  const active = data.activeAgents || 0;
+  const total = data.tasks || 0;
+  const done = data.completedTasks || 0;
+  const swarmStatus = active > 0 ? 'running' : (data.swarm ? 'idle' : 'offline');
+  const agents = [];
+  for (let i = 0; i < active; i++) {
+    agents.push({ role: 'hex-coder', name: `agent-${i + 1}`, status: 'running' });
+  }
+  const tasks = [];
+  for (let i = 0; i < done; i++) {
+    tasks.push({ name: `task-${i + 1}`, status: 'completed' });
+  }
+  for (let i = done; i < total; i++) {
+    tasks.push({ name: `task-${i + 1}`, status: active > 0 ? 'running' : 'pending' });
+  }
+  hubPush('swarm', { status: swarmStatus, agents, tasks });
 }
 
 function isRufloConfigured() {
@@ -71,6 +89,85 @@ function isRufloConfigured() {
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     return !!(settings.mcpServers && settings.mcpServers.ruflo);
   } catch { return false; }
+}
+
+// ── hex-hub bridge ──
+// Pushes state and events to the hex-hub dashboard (port 5555).
+// hex-hub is purely event-driven — without these POSTs, the dashboard stays empty.
+const http = require('http');
+
+function getHubConnection() {
+  // Read lock file for auth token and port
+  const lockPath = path.join(require('os').homedir(), '.hex', 'daemon', 'hub.lock');
+  try {
+    const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    if (!lock.pid) return null;
+    // Verify PID is alive
+    process.kill(lock.pid, 0);
+    return { port: lock.port || 5555, token: lock.token || '' };
+  } catch { return null; }
+}
+
+function getProjectId() {
+  // Must match dashboard-hub.ts makeProjectId() and hex-hub's state.rs:
+  //   hash = chars.reduce((h, c) => ((h << 5) - h + charCode) | 0, 0)
+  // Hashes the FULL rootPath (not basename), seed 0, multiplier 31.
+  const rootPath = process.cwd();
+  const basename = rootPath.split('/').pop() || 'unknown';
+  let hash = 0;
+  for (let i = 0; i < rootPath.length; i++) {
+    hash = ((hash << 5) - hash + rootPath.charCodeAt(i)) | 0;
+  }
+  return `${basename}-${(hash >>> 0).toString(36)}`;
+}
+
+function hubPost(urlPath, body) {
+  const conn = getHubConnection();
+  if (!conn) return; // hub not running — skip silently
+  const payload = JSON.stringify(body);
+  const req = http.request({
+    hostname: '127.0.0.1',
+    port: conn.port,
+    path: urlPath,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload),
+      ...(conn.token ? { 'Authorization': `Bearer ${conn.token}` } : {}),
+    },
+    timeout: 1500,
+  });
+  req.on('error', () => {}); // non-fatal — dashboard is optional
+  req.on('timeout', () => req.destroy());
+  req.end(payload);
+}
+
+function hubPush(field, data) {
+  // PushRequest: { projectId, type, data } (camelCase — serde rename_all)
+  const pid = getProjectId();
+  hubPost('/api/push', {
+    projectId: pid,
+    type: field,
+    data: data || {},
+  });
+}
+
+function hubEvent(eventType, data) {
+  // EventRequest: { projectId, event, data } (camelCase)
+  const pid = getProjectId();
+  hubPost('/api/event', {
+    projectId: pid,
+    event: eventType,
+    data: data || {},
+  });
+}
+
+function hubEnsureRegistered() {
+  // RegisterRequest uses rootPath to derive the project ID server-side
+  hubPost('/api/projects/register', {
+    rootPath: process.cwd(),
+    name: path.basename(process.cwd()),
+  });
 }
 
 // Get the command from argv
@@ -178,13 +275,12 @@ const handlers = {
       try { session.metric('edits'); } catch (e) { /* no active session */ }
     }
     // Record edit for intelligence consolidation — prefer stdin data from Claude Code
+    const editFile = hookInput.file_path || (hookInput.toolInput && hookInput.toolInput.file_path)
+      || process.env.TOOL_INPUT_file_path || args[0] || '';
     if (intelligence && intelligence.recordEdit) {
-      try {
-        const file = hookInput.file_path || (hookInput.toolInput && hookInput.toolInput.file_path)
-          || process.env.TOOL_INPUT_file_path || args[0] || '';
-        intelligence.recordEdit(file);
-      } catch (e) { /* non-fatal */ }
+      try { intelligence.recordEdit(editFile); } catch (e) { /* non-fatal */ }
     }
+    hubEvent('file-edit', { file: editFile });
     console.log('[OK] Edit recorded');
   },
 
@@ -215,7 +311,8 @@ const handlers = {
         }
       } catch (e) { /* non-fatal */ }
     }
-    // Write initial .hex/status.json so the statusline shows swarm availability
+    // Register this project with hex-hub and write initial status
+    hubEnsureRegistered();
     const rufloUp = isRufloConfigured();
     writeHexStatus({
       swarm: rufloUp,
@@ -226,6 +323,7 @@ const handlers = {
       completedTasks: 0,
       sessionStart: Date.now(),
     });
+    hubEvent('session-start', { timestamp: Date.now() });
   },
 
   'session-end': () => {
@@ -238,6 +336,7 @@ const handlers = {
         }
       } catch (e) { /* non-fatal */ }
     }
+    hubEvent('session-end', { timestamp: Date.now() });
     // Clear .hex/status.json — session is over, swarm is no longer active
     writeHexStatus({ swarm: false, agentdb: false, activeAgents: 0, idleAgents: 0, tasks: 0, completedTasks: 0 });
     if (session && session.end) {
@@ -253,7 +352,8 @@ const handlers = {
     s.activeAgents = (s.activeAgents || 0) + 1;
     s.tasks = (s.tasks || 0) + 1;
     s.swarm = true; // agents running means swarm is live
-    writeHexStatus(s);
+    writeHexStatus(s); // also pushes to hub via bridge
+    hubEvent('agent-start', { activeAgents: s.activeAgents, tasks: s.tasks });
     console.log(`[OK] Agent started (active: ${s.activeAgents})`);
   },
 
@@ -276,7 +376,8 @@ const handlers = {
     s.activeAgents = Math.max(0, (s.activeAgents || 1) - 1);
     s.completedTasks = (s.completedTasks || 0) + 1;
     if (s.activeAgents === 0) s.idleAgents = 0; // reset idle when all done
-    writeHexStatus(s);
+    writeHexStatus(s); // also pushes to hub via bridge
+    hubEvent('agent-complete', { activeAgents: s.activeAgents, completed: s.completedTasks, total: s.tasks });
     // Implicit success feedback for intelligence
     if (intelligence && intelligence.feedback) {
       try {
@@ -284,6 +385,31 @@ const handlers = {
       } catch (e) { /* non-fatal */ }
     }
     console.log(`[OK] Task completed (active: ${s.activeAgents}, done: ${s.completedTasks}/${s.tasks})`);
+  },
+
+  'notify': () => {
+    // Claude Code Notification hook — forward all notification events to hex-hub
+    const level = hookInput.level || hookInput.severity || 'info';
+    const message = hookInput.message || hookInput.title || prompt || '';
+    const eventData = {
+      level,
+      message,
+      source: hookInput.source || 'claude-code',
+      timestamp: Date.now(),
+      ...(hookInput.data || {}),
+    };
+    hubEvent('notification', eventData);
+    console.log(`[OK] Notification forwarded to hub: ${level}`);
+  },
+
+  'compact-manual': () => {
+    hubEvent('compact', { type: 'manual', timestamp: Date.now() });
+    console.log('[OK] Manual compact');
+  },
+
+  'compact-auto': () => {
+    hubEvent('compact', { type: 'auto', timestamp: Date.now() });
+    console.log('[OK] Auto compact');
   },
 
   'stats': () => {
