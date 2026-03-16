@@ -97,6 +97,35 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   const summaryService = new SummaryService(ast, fs);
   const swarmOrchestrator = new SwarmOrchestrator(swarm, worktree);
 
+  // ── Initialize swarm + AgentDB on startup ──────────────
+  // The swarm should be ready when the project loads, not lazily.
+  // AgentDB session tracks this project's lifecycle for pattern learning.
+  const projectName = projectPath.split('/').pop() ?? 'unknown';
+  try {
+    await swarm.init({
+      topology: 'hierarchical',
+      maxAgents: 4,
+      strategy: 'specialized',
+      consensus: 'raft',
+      memoryNamespace: `hex-intf:${projectName}`,
+    });
+    process.stderr.write(`[hex-intf] Swarm initialized for ${projectName}\n`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[hex-intf] WARNING: Swarm init failed: ${msg}. Orchestration will be unavailable.\n`);
+  }
+
+  try {
+    await swarm.sessionStart(`hex-intf:${projectName}`, {
+      projectPath,
+      startedAt: new Date().toISOString(),
+    });
+    process.stderr.write(`[hex-intf] AgentDB session started for ${projectName}\n`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[hex-intf] WARNING: AgentDB session start failed: ${msg}. Pattern learning unavailable.\n`);
+  }
+
   // LLM: graceful degradation — null when no API key is configured
   let llm: ILLMPort | null = null;
   let codeGenerator: ICodeGenerationPort | null = null;
