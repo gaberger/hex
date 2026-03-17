@@ -10,10 +10,8 @@ import type {
   IFeatureProgressPort,
   FeatureSession,
   FeaturePhase,
-  FeaturePhaseStatus,
   FeatureReport,
-  Workplan,
-  WorkplanStep,
+  FeatureWorkplan,
   AgentStatusUpdate,
 } from '../ports/feature-progress.js';
 import type {
@@ -124,8 +122,8 @@ export class FeatureProgressOrchestrator implements IFeatureProgressPort {
       throw new Error('No active feature session');
     }
 
-    const content = await this.fs.readFile(workplanPath);
-    const workplan = JSON.parse(content) as Workplan;
+    const content = await this.fs.read(workplanPath);
+    const workplan = JSON.parse(content) as FeatureWorkplan;
 
     this.session.workplan = workplan;
 

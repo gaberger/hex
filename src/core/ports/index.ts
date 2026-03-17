@@ -259,3 +259,16 @@ export interface IVersionPort {
   /** Combined version info with mismatch detection */
   getVersionInfo(): Promise<VersionInfo>;
 }
+
+// ─── Feature Progress Ports ─────────────────────────────
+
+export type {
+  IFeatureProgressPort,
+  FeatureSession,
+  FeaturePhase,
+  FeaturePhaseStatus,
+  FeatureReport,
+  FeatureWorkplan,
+  FeatureWorkplanStep,
+  AgentStatusUpdate,
+} from './feature-progress.js';

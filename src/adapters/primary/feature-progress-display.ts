@@ -6,8 +6,8 @@
  * Handles keyboard input for interactive controls (d/q/h).
  */
 
-import type { IFeatureProgressPort, FeatureSession, Workplan } from '../../core/ports/feature-progress.js';
-import type { ProgressReport } from '../../core/ports/notification.js';
+import type { IFeatureProgressPort, FeatureSession, FeatureWorkplan } from '../../core/ports/feature-progress.js';
+import type { ProgressReport, AgentProgress } from '../../core/ports/notification.js';
 
 // ─── ANSI Helpers ────────────────────────────────────────────
 
@@ -20,6 +20,7 @@ const ANSI = {
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
   cyan: '\x1b[36m',
+  white: '\x1b[37m',
   gray: '\x1b[90m',
   clearScreen: '\x1b[2J\x1b[H',
   clearLine: '\x1b[2K',
@@ -329,7 +330,7 @@ export class FeatureProgressDisplay {
 
   // ─── Helpers ─────────────────────────────────────────────
 
-  private groupByTier(workplan: Workplan): Array<{
+  private groupByTier(workplan: FeatureWorkplan): Array<{
     level: number;
     label: string;
     tasks: typeof workplan.steps;
@@ -366,7 +367,7 @@ export class FeatureProgressDisplay {
     return parts[parts.length - 1];
   }
 
-  private agentPercent(agent?: typeof ProgressReport.prototype.agents[number]): number {
+  private agentPercent(agent?: AgentProgress): number {
     if (!agent) return 0;
     if (agent.status === 'done') return 100;
     if (agent.status === 'queued') return 0;

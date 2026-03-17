@@ -16,6 +16,7 @@ import { SummaryService } from './core/usecases/summary-service.js';
 import { SwarmOrchestrator } from './core/usecases/swarm-orchestrator.js';
 import { ADRAdapter } from './adapters/secondary/adr-adapter.js';
 import { ADROrchestrator } from './core/usecases/adr-orchestrator.js';
+import { FeatureProgressOrchestrator } from './core/usecases/feature-progress-orchestrator.js';
 
 // ── Secondary Adapters (the ONLY adapter imports in the entire project) ──
 import { FileSystemAdapter } from './adapters/secondary/filesystem-adapter.js';
@@ -229,6 +230,7 @@ export async function createAppContext(
   const notificationOrchestrator = new NotificationOrchestrator(notifier);
   const summaryService = new SummaryService(ast, fs);
   const swarmOrchestrator = new SwarmOrchestrator(swarm, worktree);
+  const featureProgress = new FeatureProgressOrchestrator(fs);
 
   // ── Initialize swarm + AgentDB in background (non-blocking) ──
   // Skip during tests — npx child processes cause timeouts.
@@ -437,6 +439,7 @@ export async function createAppContext(
     workplanExecutor,
     summaryService,
     swarmOrchestrator,
+    featureProgress,
     fs,
     git,
     worktree,

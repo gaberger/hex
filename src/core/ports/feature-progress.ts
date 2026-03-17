@@ -7,6 +7,7 @@
  */
 
 import type { ProgressReport, AgentProgress, Blocker } from './notification.js';
+import type { Workplan as DomainWorkplan, WorkplanStep as DomainWorkplanStep } from '../domain/value-objects.js';
 
 // ─── Feature Phases ──────────────────────────────────────────
 
@@ -23,23 +24,17 @@ export type FeaturePhase =
   | 'integrate'   // Merge worktrees + integration tests
   | 'finalize';   // Cleanup + report
 
-// ─── Workplan Types ──────────────────────────────────────────
+// ─── Workplan Types (extended from domain) ───────────────────
 
-export interface Workplan {
-  id: string;
-  title: string;
+export interface FeatureWorkplan extends DomainWorkplan {
   featureName: string;
-  steps: WorkplanStep[];
+  steps: FeatureWorkplanStep[];
   estimatedTotalTokens: number;
   createdAt: number;
 }
 
-export interface WorkplanStep {
-  id: string;
-  description: string;
-  adapter: string;
+export interface FeatureWorkplanStep extends DomainWorkplanStep {
   port: string;
-  dependencies: string[]; // IDs of steps that must complete first
   tier: number;           // 0=domain/ports, 1=secondary, 2=primary, 3=usecases
   worktreeBranch: string;
   assignee: 'hex-coder' | 'integrator' | 'planner' | 'behavioral-spec-writer' | 'validation-judge';
@@ -65,8 +60,8 @@ export interface AgentStatusUpdate {
 
 export interface FeatureSession {
   featureName: string;
-  workplan: Workplan | null; // Null until plan phase completes
-  phases: FeasePhaseStatus[];
+  workplan: FeatureWorkplan | null; // Null until plan phase completes
+  phases: FeaturePhaseStatus[];
   currentPhase: FeaturePhase;
   startedAt: number;
   tokenBudget: number;

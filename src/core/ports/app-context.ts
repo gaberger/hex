@@ -24,6 +24,7 @@ import type { IHubLauncherPort } from './hub-launcher.js';
 import type { IVaultManagementPort } from './vault.js';
 import type { ICoordinationPort } from './coordination.js';
 import type { IADRQueryPort } from './adr.js';
+import type { IFeatureProgressPort } from './feature-progress.js';
 
 /** Minimal interface for a dashboard client (avoids adapter-to-adapter imports). */
 export interface IDashboardClient {
@@ -115,6 +116,9 @@ export interface AppContext {
 
   /** ADR lifecycle queries (null when ADR directory doesn't exist) */
   adrQuery: IADRQueryPort | null;
+
+  /** Feature progress tracking for clean UX during multi-agent development */
+  featureProgress: IFeatureProgressPort;
 
   /** Local output directory for analysis reports, caches, and logs */
   outputDir: string; // defaults to '.hex/' — gitignored, project-scoped
