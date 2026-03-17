@@ -38,6 +38,106 @@ import type { ISecretsPort } from './core/ports/secrets.js';
 // Re-export AppContext from the port (canonical definition)
 export type { AppContext } from './core/ports/app-context.js';
 
+// ── Secrets Factory ─────────────────────────────────────
+// Centralised here (the only file allowed to import adapters).
+
+interface SecretsConfig {
+  version: 1;
+  backend: 'infisical' | 'local-vault' | 'env';
+  infisical?: {
+    siteUrl: string;
+    projectId: string;
+    defaultEnvironment?: string;
+    auth: {
+      method: 'universal-auth';
+      clientId: string;
+      clientSecret: string;
+    };
+  };
+  localVault?: {
+    path?: string;
+  };
+  cache?: {
+    ttlSeconds?: number;
+  };
+}
+
+interface BuildSecretsOptions {
+  /** Override vault password instead of reading from process.env (useful for testing). */
+  vaultPassword?: string;
+}
+
+/**
+ * Build the correct ISecretsPort from the project's `.hex/secrets.json`.
+ *
+ * Falls back to EnvSecretsAdapter when no config exists, config is
+ * invalid, or the requested backend cannot be initialised.
+ */
+export async function buildSecretsAdapter(
+  projectRoot: string,
+  options?: BuildSecretsOptions,
+): Promise<EnvSecretsAdapter | CachingSecretsAdapter | LocalVaultAdapter> {
+  const { existsSync, readFileSync } = await import('node:fs');
+  const { resolve } = await import('node:path');
+  const configPath = resolve(projectRoot, '.hex/secrets.json');
+
+  if (!existsSync(configPath)) {
+    return new EnvSecretsAdapter();
+  }
+
+  let config: SecretsConfig;
+  try {
+    const raw = readFileSync(configPath, 'utf-8');
+    config = JSON.parse(raw) as SecretsConfig;
+  } catch {
+    console.warn(`[hex] Warning: invalid JSON in ${configPath} — falling back to env secrets`);
+    return new EnvSecretsAdapter();
+  }
+
+  switch (config.backend) {
+    case 'infisical': {
+      const inf = config.infisical;
+      if (!inf) {
+        console.warn('[hex] Warning: backend is "infisical" but no infisical config — falling back to env');
+        return new EnvSecretsAdapter();
+      }
+      const adapter = new InfisicalAdapter({
+        siteUrl: inf.siteUrl,
+        clientId: inf.auth.clientId,
+        clientSecret: inf.auth.clientSecret,
+        projectId: inf.projectId,
+        defaultEnvironment: inf.defaultEnvironment,
+      });
+      const ttl = (config.cache?.ttlSeconds ?? 300) * 1000;
+      return new CachingSecretsAdapter(adapter, ttl);
+    }
+
+    case 'local-vault': {
+      const { resolve: res } = await import('node:path');
+      const vaultRelPath = config.localVault?.path ?? '.hex/vault.enc';
+      const vaultPath = res(projectRoot, vaultRelPath);
+      const { existsSync: exists } = await import('node:fs');
+
+      if (!exists(vaultPath)) {
+        console.warn(`[hex] Warning: vault file not found at ${vaultPath} — falling back to env secrets`);
+        return new EnvSecretsAdapter();
+      }
+
+      const password = options?.vaultPassword ?? process.env['HEX_VAULT_PASSWORD'];
+      if (!password) {
+        console.warn('[hex] Warning: HEX_VAULT_PASSWORD not set — falling back to env secrets');
+        return new EnvSecretsAdapter();
+      }
+
+      return new LocalVaultAdapter(vaultPath, password);
+    }
+
+    case 'env':
+    default:
+      return new EnvSecretsAdapter();
+  }
+}
+
 // ── Factory ─────────────────────────────────────────────
 
 export async function createAppContext(projectPath: string): Promise<AppContext> {
@@ -218,43 +318,7 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   }
 
   // Secrets: config-based adapter selection (.hex/secrets.json → Infisical/LocalVault/Env)
-  let secrets: ISecretsPort = new EnvSecretsAdapter();
-  try {
-    const { existsSync, readFileSync } = await import('node:fs');
-    const { resolve } = await import('node:path');
-    const configPath = resolve(projectPath, '.hex/secrets.json');
-
-    if (existsSync(configPath)) {
-      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-
-      if (config.backend === 'infisical' && config.infisical) {
-        const inf = config.infisical;
-        const adapter = new InfisicalAdapter({
-          siteUrl: inf.siteUrl,
-          clientId: inf.auth.clientId,
-          clientSecret: inf.auth.clientSecret,
-          projectId: inf.projectId,
-          defaultEnvironment: inf.defaultEnvironment,
-        });
-        const ttl = (config.cache?.ttlSeconds ?? 300) * 1000;
-        secrets = new CachingSecretsAdapter(adapter, ttl);
-        process.stderr.write(`[hex] Secrets: Infisical (${inf.siteUrl})\n`);
-      } else if (config.backend === 'local-vault') {
-        const vaultPath = resolve(projectPath, config.localVault?.path ?? '.hex/vault.enc');
-        const password = process.env['HEX_VAULT_PASSWORD'];
-        if (existsSync(vaultPath) && password) {
-          secrets = new LocalVaultAdapter(vaultPath, password);
-          process.stderr.write('[hex] Secrets: Local vault\n');
-        } else if (!existsSync(vaultPath)) {
-          process.stderr.write(`[hex] Secrets: vault not found at ${vaultPath} — using env vars\n`);
-        } else {
-          process.stderr.write('[hex] Secrets: HEX_VAULT_PASSWORD not set — using env vars\n');
-        }
-      }
-    }
-  } catch (err) {
-    process.stderr.write(`[hex] Secrets config error: ${err instanceof Error ? err.message : String(err)} — using env vars\n`);
-  }
+  const secrets: ISecretsPort = await buildSecretsAdapter(projectPath);
 
   // LLM: graceful degradation — null when no API key is configured
   // Try secrets port first (Infisical), fall back to direct env vars

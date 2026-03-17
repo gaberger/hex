@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect } from 'bun:test';
 
-import { buildSecretsAdapter } from '../../src/adapters/secondary/secrets-factory.js';
+import { buildSecretsAdapter } from '../../src/composition-root.js';
 import { LocalVaultAdapter } from '../../src/adapters/secondary/local-vault-adapter.js';
 
 function makeTmpDir(): string {
