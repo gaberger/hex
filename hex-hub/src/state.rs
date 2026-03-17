@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
@@ -9,6 +9,8 @@ use crate::persistence::SwarmDb;
 
 pub type SharedState = Arc<AppState>;
 
+pub const MAX_ACTIVITIES: usize = 500;
+
 pub struct AppState {
     pub projects: RwLock<HashMap<String, ProjectEntry>>,
     pub commands: RwLock<HashMap<String, HubCommand>>,       // commandId → command
@@ -16,6 +18,12 @@ pub struct AppState {
     pub ws_tx: broadcast::Sender<WsEnvelope>,
     pub auth_token: Option<String>,
     pub swarm_db: Option<SwarmDb>,
+    // Coordination state
+    pub instances: RwLock<HashMap<String, InstanceInfo>>,
+    pub worktree_locks: RwLock<HashMap<String, WorktreeLock>>,
+    pub task_claims: RwLock<HashMap<String, TaskClaim>>,
+    pub activities: RwLock<VecDeque<ActivityEntry>>,
+    pub unstaged: RwLock<HashMap<String, UnstagedState>>,
 }
 
 impl AppState {
@@ -28,6 +36,11 @@ impl AppState {
             ws_tx,
             auth_token,
             swarm_db,
+            instances: RwLock::new(HashMap::new()),
+            worktree_locks: RwLock::new(HashMap::new()),
+            task_claims: RwLock::new(HashMap::new()),
+            activities: RwLock::new(VecDeque::new()),
+            unstaged: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -126,6 +139,118 @@ pub struct DecisionRequest {
     pub selected_option: String,
 }
 
+
+// ── Coordination Types ──────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceInfo {
+    pub instance_id: String,
+    pub project_id: String,
+    pub pid: u32,
+    pub session_label: String,
+    pub registered_at: String,
+    pub last_seen: String,
+    pub agent_count: Option<u32>,
+    pub active_task_count: Option<u32>,
+    pub completed_task_count: Option<u32>,
+    pub topology: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterInstanceRequest {
+    pub project_id: String,
+    pub pid: u32,
+    pub session_label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeartbeatRequest {
+    pub instance_id: String,
+    pub project_id: String,
+    pub unstaged_files: Option<Vec<UnstagedFile>>,
+    pub agent_count: Option<u32>,
+    pub active_task_count: Option<u32>,
+    pub completed_task_count: Option<u32>,
+    pub topology: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeLock {
+    pub instance_id: String,
+    pub project_id: String,
+    pub feature: String,
+    pub layer: String,
+    pub acquired_at: String,
+    pub heartbeat_at: String,
+    pub ttl_secs: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockRequest {
+    pub instance_id: String,
+    pub project_id: String,
+    pub feature: String,
+    pub layer: String,
+    pub ttl_secs: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskClaim {
+    pub task_id: String,
+    pub instance_id: String,
+    pub claimed_at: String,
+    pub heartbeat_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskClaimRequest {
+    pub instance_id: String,
+    pub project_id: String,
+    pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityEntry {
+    pub instance_id: String,
+    pub project_id: String,
+    pub action: String,
+    pub details: serde_json::Value,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityRequest {
+    pub instance_id: String,
+    pub project_id: String,
+    pub action: String,
+    pub details: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnstagedFile {
+    pub path: String,
+    pub status: String,
+    pub layer: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnstagedState {
+    pub instance_id: String,
+    pub project_id: String,
+    pub files: Vec<UnstagedFile>,
+    pub captured_at: String,
+}
 
 // ── Project ID (must match TypeScript implementation) ───
 

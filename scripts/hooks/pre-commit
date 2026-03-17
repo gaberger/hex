@@ -27,6 +27,40 @@ if [ ! -d "src/core/ports" ]; then
   exit 0
 fi
 
+# ── Rust check: if any .rs files are staged, run cargo check ──
+RS_STAGED=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs' 2>/dev/null || true)
+if [ -n "$RS_STAGED" ]; then
+  echo "⬡ hex pre-commit: Rust files staged — running cargo check..."
+  if command -v cargo &>/dev/null; then
+    if [ -f "Cargo.toml" ]; then
+      cargo check --workspace 2>&1 | tail -5 || {
+        echo "  ⬡ BLOCKED: cargo check failed — fix Rust compilation errors before committing"
+        exit 1
+      }
+      echo "  ⬡ Rust: cargo check passed"
+    fi
+  else
+    echo "  ⬡ WARNING: Rust files staged but cargo not found — skipping Rust check"
+  fi
+fi
+
+# ── Go check: if any .go files are staged, run go build ──
+GO_STAGED=$(git diff --cached --name-only --diff-filter=ACMR -- '*.go' 2>/dev/null || true)
+if [ -n "$GO_STAGED" ]; then
+  echo "⬡ hex pre-commit: Go files staged — running go build..."
+  if command -v go &>/dev/null; then
+    if [ -f "go.mod" ]; then
+      go build ./... 2>&1 | tail -5 || {
+        echo "  ⬡ BLOCKED: go build failed — fix Go compilation errors before committing"
+        exit 1
+      }
+      echo "  ⬡ Go: build passed"
+    fi
+  else
+    echo "  ⬡ WARNING: Go files staged but go not found — skipping Go check"
+  fi
+fi
+
 echo "⬡ hex pre-commit: checking architecture boundaries..."
 
 # Run analysis in JSON mode
