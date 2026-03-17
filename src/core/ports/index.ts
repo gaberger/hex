@@ -170,7 +170,7 @@ export { extractArchActions, extractValidationActions, buildActionItemReport, fo
 
 // ─── Agent Executor Ports ────────────────────────────────
 
-export type { IAgentExecutorPort } from './agent-executor.js';
+export type { IAgentExecutorPort, IComparisonPort } from './agent-executor.js';
 export type {
   AgentTask,
   AgentResult,

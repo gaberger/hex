@@ -328,6 +328,19 @@ export async function createAppContext(
   // Claude Code executor always available if binary is installed
   claudeCodeExecutor = new ClaudeCodeExecutorAdapter({}, fs);
 
+  // Dual-swarm comparator — available when both executors exist
+  let comparator: import('./core/ports/agent-executor.js').IComparisonPort | null = null;
+  if (anthropicExecutor && claudeCodeExecutor) {
+    const { DualSwarmComparator } = await import('./core/usecases/dual-swarm-comparator.js');
+    comparator = new DualSwarmComparator({
+      claudeCodeExecutor,
+      anthropicApiExecutor: anthropicExecutor,
+      build,
+      archAnalyzer,
+      worktree,
+    });
+  }
+
   // ADR lifecycle tracking — always available (gracefully handles missing docs/adrs/)
   const adrAdapter = new ADRAdapter(fs, swarm);
   const adrQuery = new ADROrchestrator(adrAdapter, worktree);
@@ -389,5 +402,6 @@ export async function createAppContext(
     hubCommandSender: null, // wired dynamically when hub is available
     anthropicExecutor,
     claudeCodeExecutor,
+    comparator,
   };
 }

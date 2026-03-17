@@ -11,10 +11,9 @@
  * AgentDB calls are best-effort — failures are logged, not thrown.
  */
 
-import type { IFileSystemPort } from '../../core/ports/index.js';
+import type { IFileSystemPort, ADREntry, ADRStatus } from '../../core/ports/index.js';
 import type { ISwarmPort } from '../../core/ports/swarm.js';
 import type { IADRPort } from '../../core/ports/adr.js';
-import type { ADREntry, ADRStatus } from '../../core/domain/adr-types.js';
 
 const ADR_GLOB = 'docs/adrs/ADR-*.md';
 const ADR_PATTERN_CATEGORY = 'adr';

@@ -2441,14 +2441,11 @@ export class CLIAdapter {
     this.writeLn(`Specification: ${specification}`);
     this.writeLn('');
 
-    const { DualSwarmComparator } = await import('../../core/usecases/dual-swarm-comparator.js');
-    const comparator = new DualSwarmComparator({
-      claudeCodeExecutor: this.ctx.claudeCodeExecutor,
-      anthropicApiExecutor: this.ctx.anthropicExecutor,
-      build: this.ctx.build,
-      archAnalyzer: this.ctx.archAnalyzer,
-      worktree: this.ctx.worktree,
-    });
+    if (!this.ctx.comparator) {
+      this.writeLn('Comparator not available — both Anthropic API and Claude Code executors are required.');
+      return 1;
+    }
+    const comparator = this.ctx.comparator;
 
     this.writeLn('Starting parallel execution...');
     this.writeLn('  [CC]  Claude Code CLI');

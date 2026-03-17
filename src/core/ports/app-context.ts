@@ -18,7 +18,7 @@ import type { IScaffoldPort } from './scaffold.js';
 import type { IValidationPort } from './validation.js';
 import type { ISerializationPort, IWASMBridgePort, IFFIPort, IServiceMeshPort, ISchemaPort } from './cross-lang.js';
 import type { IHubCommandSenderPort } from './hub-command.js';
-import type { IAgentExecutorPort } from './agent-executor.js';
+import type { IAgentExecutorPort, IComparisonPort } from './agent-executor.js';
 import type { IVersionPort } from './index.js';
 import type { IHubLauncherPort } from './hub-launcher.js';
 import type { IVaultManagementPort } from './vault.js';
@@ -100,6 +100,9 @@ export interface AppContext {
   /** Agent executors for direct API comparison (null when no API key) */
   anthropicExecutor: IAgentExecutorPort | null;
   claudeCodeExecutor: IAgentExecutorPort | null;
+
+  /** Dual-swarm comparator (null when both executors are not available) */
+  comparator: IComparisonPort | null;
 
   /** ADR lifecycle queries (null when ADR directory doesn't exist) */
   adrQuery: IADRQueryPort | null;

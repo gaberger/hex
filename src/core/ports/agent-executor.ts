@@ -14,6 +14,7 @@ import type {
   AgentResult,
   AgentContext,
   ExecutorBackend,
+  ComparisonReport,
 } from '../domain/agent-executor-types.js';
 
 export interface IAgentExecutorPort {
@@ -42,4 +43,13 @@ export interface IAgentExecutorPort {
     task: AgentTask,
     onProgress: (chunk: string) => void,
   ): Promise<AgentResult>;
+}
+
+/** Input port for comparing two agent executors head-to-head. */
+export interface IComparisonPort {
+  compare(
+    specification: string,
+    taskTemplate: Omit<AgentTask, 'id' | 'projectPath'>,
+    onProgress?: (backend: ExecutorBackend, chunk: string) => void,
+  ): Promise<ComparisonReport>;
 }
