@@ -23,6 +23,7 @@ import type { IVersionPort } from './index.js';
 import type { IHubLauncherPort } from './hub-launcher.js';
 import type { IVaultManagementPort } from './vault.js';
 import type { ICoordinationPort } from './coordination.js';
+import type { IADRQueryPort } from './adr.js';
 
 export interface AppContext {
   rootPath: string;
@@ -99,6 +100,9 @@ export interface AppContext {
   /** Agent executors for direct API comparison (null when no API key) */
   anthropicExecutor: IAgentExecutorPort | null;
   claudeCodeExecutor: IAgentExecutorPort | null;
+
+  /** ADR lifecycle queries (null when ADR directory doesn't exist) */
+  adrQuery: IADRQueryPort | null;
 
   /** Local output directory for analysis reports, caches, and logs */
   outputDir: string; // defaults to '.hex/' — gitignored, project-scoped

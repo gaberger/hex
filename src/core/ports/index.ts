@@ -211,6 +211,25 @@ export type {
 
 export type { CheckpointEntry, TaskSnapshot, FeatureProgress, FeaturePhase, ICheckpointPort } from './checkpoint.js';
 
+// ─── Coordination Ports ─────────────────────────────────
+
+export type {
+  ICoordinationPort,
+  UnstagedFile,
+  WorktreeLock,
+  LockResult,
+  TaskClaim,
+  ClaimResult,
+  ActivityEntry,
+  InstanceInfo,
+  UnstagedState,
+} from './coordination.js';
+
+// ─── ADR Ports ─────────────────────────────────────────
+
+export type { IADRPort, IADRQueryPort } from './adr.js';
+export type { ADREntry, ADRSnapshot, ADRAbandonedReport, ADRStatus } from '../domain/adr-types.js';
+
 // ─── Secrets Ports ──────────────────────────────────────
 
 export type { SecretContext, SecretMetadata, SecretResult, ISecretsPort } from './secrets.js';

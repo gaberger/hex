@@ -65,4 +65,6 @@ export interface CheckpointEntry {
   features: FeatureProgress[];
   /** Tasks not associated with any feature. */
   orphanTasks: TaskSnapshot[];
+  /** Optional ADR snapshot — present when ADR tracking is active. */
+  adrs?: import('./adr-types.js').ADRSnapshot;
 }
