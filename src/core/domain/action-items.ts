@@ -243,7 +243,7 @@ export function extractValidationActions(verdict: ValidationVerdict): ActionItem
 
 // ─── Extract from Repo Hygiene ─────────────────────────
 
-export function extractHygieneActions(hygiene: RepoHygieneResult): ActionItem[] {
+function extractHygieneActions(hygiene: RepoHygieneResult): ActionItem[] {
   const items: ActionItem[] = [];
   for (const f of hygiene.findings) {
     const priority: ActionPriority =
