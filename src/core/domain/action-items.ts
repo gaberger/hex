@@ -47,7 +47,8 @@ function nextId(prefix: string): string {
   return `${prefix}-${actionCounter.toString().padStart(3, '0')}`;
 }
 
-export function resetActionCounter(): void {
+/** Reset action counter (internal helper for buildActionItemReport). */
+function resetActionCounter(): void {
   actionCounter = 0;
 }
 

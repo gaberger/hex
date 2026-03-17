@@ -118,8 +118,9 @@ function resolveGoImport(_fromFile: string, importPath: string, modulePrefix?: s
  * Return both possible Rust module file candidates for a base path.
  * Rust modules can be either `path.rs` or `path/mod.rs`.
  * The caller (arch-analyzer) should match against actual files.
+ * (Internal helper - not currently used)
  */
-export function rustModuleCandidates(basePath: string): string[] {
+function rustModuleCandidates(basePath: string): string[] {
   return [basePath + '.rs', basePath + '/mod.rs'];
 }
 

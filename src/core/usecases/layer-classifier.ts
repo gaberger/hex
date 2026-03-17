@@ -114,7 +114,8 @@ export function classifyLayer(filePath: string): DependencyDirection | 'unknown'
 
 type SpecialFileRole = 'composition-root' | 'entry-point' | null;
 
-export function classifySpecialFile(filePath: string): SpecialFileRole {
+/** Classify special files like composition-root or entry-point (internal helper). */
+function classifySpecialFile(filePath: string): SpecialFileRole {
   const normalized = '/' + filePath;
   for (const [regex, classification] of FILENAME_PATTERNS) {
     if (regex.test(normalized)) {

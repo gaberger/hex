@@ -32,8 +32,9 @@ interface BoundaryCheckResult {
 /**
  * Check a single planned import against hex boundary rules.
  * Returns null if allowed, or a DependencyViolation if forbidden.
+ * (Internal helper - not part of public API)
  */
-export function checkImport(fromFile: string, toFile: string, names: string[]): DependencyViolation | null {
+function checkImport(fromFile: string, toFile: string, _names: string[]): DependencyViolation | null {
   const fromLayer = classifyLayer(fromFile);
   const toLayer = classifyLayer(toFile);
 
