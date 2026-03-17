@@ -11,6 +11,7 @@ export type {
   IArchAnalysisPort,
   IBuildPort,
   IFileSystemPort,
+  StreamOptions,
   IGitPort,
   ILLMPort,
   IWorktreePort,

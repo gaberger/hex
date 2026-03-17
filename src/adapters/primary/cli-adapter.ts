@@ -8,7 +8,7 @@
  *   analyze [path]                  Architecture analysis
  *   summarize <file> [--level L]    AST summary at L0-L3
  *   status                          Swarm progress dashboard
- *   init [--lang ts|go|rust]        Scaffold a new hex project
+ *   init [--lang ts|go|rust] [--fast] [--minimal] [--large-project] [--include dirs]
  *   help                            Print usage
  */
 
@@ -25,6 +25,7 @@ import {
   didYouMean, elapsed, setColorEnabled, setUnicodeEnabled,
   error as errorColor, warn, accent, glyph, hr,
 } from './cli-fmt.js';
+import { ProgressReporter } from './progress-reporter.js';
 
 /** Colorize a plain-text architecture report with ANSI colors.
  *  Uses cli-fmt helpers already imported above (green, red, yellow, etc.). */
@@ -1054,6 +1055,30 @@ export class CLIAdapter {
   private async init(args: ParsedArgs): Promise<number> {
     const skipWizard = args.flags.get('skip-wizard') === 'true';
 
+    // ── Parse ADR-021 init flags ──
+    const fastMode = args.flags.has('fast');
+    const minimalMode = args.flags.has('minimal');
+    const largeProject = args.flags.has('large-project');
+    const includeDirs = args.flags.get('include')?.split(',').map((d) => d.trim()).filter(Boolean) ?? [];
+
+    const progress = new ProgressReporter(this.writeLn);
+    const initStartTime = Date.now();
+
+    progress.header('Initializing hex project...');
+
+    if (largeProject) {
+      progress.mode('Large project mode', 'streaming enabled');
+    }
+    if (fastMode) {
+      progress.mode('Fast mode', 'skipping filesystem index');
+    }
+    if (minimalMode) {
+      progress.mode('Minimal mode', 'config-only init, no indexing');
+    }
+    if (includeDirs.length > 0) {
+      progress.mode('Include filter', includeDirs.join(', '));
+    }
+
     // ── Phase 1: Check for existing PRD or run wizard ──
 
     let scope: { name: string; summary: string; lang: string };
@@ -1066,6 +1091,10 @@ export class CLIAdapter {
     } else {
       scope = await this.scopeWizard(args);
     }
+
+    // TODO: Auto-detect large project via InitGuard.assessProject('.')
+    // InitGuard lives in usecases — primary adapters can only import from ports (hex rules).
+    // Wire InitGuard through AppContext or create an IInitGuardPort to expose it here.
 
     const langStr = scope.lang;
     const langs = langStr.split('+').map((l) => l.trim());
@@ -1083,10 +1112,10 @@ export class CLIAdapter {
     // ── Phase 2: Generate PRD.md ──────────────────────
 
     this.writeLn('');
-    this.writeLn('Generating PRD.md...');
+    progress.phase('Generating PRD.md');
     const prd = this.generatePrd(scope);
 
-    this.writeLn(`Scaffolding ${scope.name} (${langStr})...`);
+    progress.phase('Scaffolding', `${scope.name} (${langStr})`);
     this.writeLn('');
 
     const created: string[] = [];
@@ -1266,15 +1295,21 @@ export class CLIAdapter {
 
     // ── Initialize ruflo swarm if not already running ──
 
-    try {
-      const swarmStatus = await this.ctx.swarm.status();
-      if (swarmStatus.status === 'running' || swarmStatus.status === 'idle') {
-        this.writeLn(`Swarm already initialized (${swarmStatus.status}).`);
-      } else {
+    if (!minimalMode && !fastMode) {
+      try {
+        const swarmStatus = await this.ctx.swarm.status();
+        if (swarmStatus.status === 'running' || swarmStatus.status === 'idle') {
+          progress.phase('Swarm', `already initialized (${swarmStatus.status})`);
+        } else {
+          await this.initSwarm();
+          progress.phase('Swarm', 'initialized');
+        }
+      } catch {
         await this.initSwarm();
+        progress.phase('Swarm', 'initialized');
       }
-    } catch {
-      await this.initSwarm();
+    } else {
+      progress.skipped('Swarm initialization', minimalMode ? 'minimal mode' : 'fast mode');
     }
     this.writeLn('');
 
@@ -1286,7 +1321,7 @@ export class CLIAdapter {
       const existing = await this.ctx.registry.readLocalIdentity(absPath);
       if (existing) {
         await this.ctx.registry.touch(existing.id);
-        this.writeLn(`Project registered: ${existing.name} (${existing.id.slice(0, 8)})`);
+        progress.phase('Project registered', `${existing.name} (${existing.id.slice(0, 8)})`);
       } else {
         const reg = await this.ctx.registry.register(absPath, scope.name);
         await this.ctx.registry.writeLocalIdentity(absPath, {
@@ -1294,7 +1329,7 @@ export class CLIAdapter {
           name: reg.name,
           createdAt: reg.createdAt,
         });
-        this.writeLn(`Project registered: ${reg.name} (${reg.id.slice(0, 8)}) on port ${reg.port}`);
+        progress.phase('Project registered', `${reg.name} (${reg.id.slice(0, 8)}) on port ${reg.port}`);
       }
     } catch (err) {
       this.writeLn(`Registry: ${err instanceof Error ? err.message : String(err)}`);
@@ -1306,12 +1341,21 @@ export class CLIAdapter {
 
     // ── Run setup (grammars + skills) ─────────────────
 
-    this.writeLn('Running setup (grammars + skills)...');
-    this.writeLn('');
-    await this.setup();
-    this.writeLn('');
+    if (!minimalMode) {
+      progress.phase('Running setup', 'grammars + skills');
+      this.writeLn('');
+      await this.setup();
+      this.writeLn('');
+    } else {
+      progress.skipped('Setup (grammars + skills)', 'minimal mode');
+      this.writeLn('');
+    }
 
     // ── Summary ───────────────────────────────────────
+
+    const initDuration = Date.now() - initStartTime;
+    progress.complete({ files: created.length, excluded: skipped.length, duration: initDuration });
+    this.writeLn('');
 
     if (created.length > 0) {
       this.writeLn(`Created (${created.length}):`);
@@ -2666,7 +2710,8 @@ export class CLIAdapter {
     this.writeLn(`  ${bold('orchestrate')} ${muted('<workplan.json>')}          Execute workplan via swarm agents`);
 
     this.writeLn(section('Scaffold & Generate'));
-    this.writeLn(`  ${bold('init')} ${muted('[--lang ts|go|rust]')}             Scaffold a new hex project`);
+    this.writeLn(`  ${bold('init')} ${muted('[--lang L] [--fast] [--minimal]')} Scaffold a new hex project`);
+    this.writeLn(`       ${muted('[--large-project] [--include dirs]')}`);
     this.writeLn(`  ${bold('scaffold')} ${muted('<name> [--lang L]')}           ${dim('Alias for init')}`);
     this.writeLn(`  ${bold('generate')} ${muted('<spec> [--adapter N]')}        Generate code from a spec file`);
     this.writeLn(`  ${bold('plan')} ${muted('<requirements...>')}               Create a workplan from requirements`);

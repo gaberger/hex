@@ -139,6 +139,13 @@ export interface GitWorktreeEntry {
   hasRecentCommits: boolean;
 }
 
+export interface StreamOptions {
+  /** Patterns to exclude (directory names ending with /, globs, or exact names) */
+  ignore?: string[];
+  /** Maximum depth to recurse (-1 for unlimited, default -1) */
+  maxDepth?: number;
+}
+
 export interface IFileSystemPort {
   read(filePath: string): Promise<string>;
   write(filePath: string, content: string): Promise<void>;
@@ -146,6 +153,8 @@ export interface IFileSystemPort {
   glob(pattern: string): Promise<string[]>;
   /** Return file modification time as epoch ms. Returns 0 if unavailable. */
   mtime(filePath: string): Promise<number>;
+  /** Stream files matching a pattern with bounded memory. Yields relative paths. */
+  streamFiles(pattern: string, options?: StreamOptions): AsyncGenerator<string>;
 }
 
 // ─── Validation Ports ────────────────────────────────────

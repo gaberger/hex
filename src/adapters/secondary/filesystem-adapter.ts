@@ -7,7 +7,7 @@
 import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import type { IFileSystemPort } from '../../core/ports/index.js';
+import type { IFileSystemPort, StreamOptions } from '../../core/ports/index.js';
 
 export class PathTraversalError extends Error {
   constructor(filePath: string, root: string) {
@@ -128,6 +128,80 @@ export class FileSystemAdapter implements IFileSystemPort {
 
     await walk(scanDir);
     return results.sort();
+  }
+
+  async *streamFiles(
+    pattern: string,
+    options?: StreamOptions,
+  ): AsyncGenerator<string> {
+    const { readdir, stat: fsStat } = await import('node:fs/promises');
+    const { join: pathJoin, relative } = await import('node:path');
+
+    if (pattern.includes('..')) {
+      throw new PathTraversalError(pattern, this.root);
+    }
+
+    // Extract extension filter from glob pattern (e.g. "**/*.ts" → ".ts")
+    const extMatch = pattern.match(/\*(\.\w+)$/);
+    const ext = extMatch ? extMatch[1] : null;
+
+    // Extract prefix directory (e.g. "src/**/*.ts" → "src")
+    const prefixMatch = pattern.match(/^([^*]+)\//);
+    const prefix = prefixMatch ? prefixMatch[1] : '';
+
+    const ignoreSet = new Set(options?.ignore ?? []);
+    const maxDepth = options?.maxDepth ?? -1;
+
+    // Track visited inodes to detect symlink loops
+    const visitedInodes = new Set<number>();
+
+    // Iterative BFS queue: [absolutePath, depth]
+    const startDir = prefix ? pathJoin(this.root, prefix) : this.root;
+    const queue: Array<[string, number]> = [[startDir, 0]];
+
+    while (queue.length > 0) {
+      const [dir, depth] = queue.shift()!;
+
+      // Check inode to detect symlink loops
+      let dirStat;
+      try {
+        dirStat = await fsStat(dir);
+      } catch {
+        continue;
+      }
+      if (visitedInodes.has(dirStat.ino)) continue;
+      visitedInodes.add(dirStat.ino);
+
+      let entries;
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        const fullPath = pathJoin(dir, entry.name);
+
+        if (entry.isDirectory()) {
+          // Check ignore patterns before descending
+          if (
+            ignoreSet.has(entry.name) ||
+            ignoreSet.has(entry.name + '/') ||
+            entry.name === 'node_modules' ||
+            entry.name === '.git'
+          ) {
+            continue;
+          }
+          // Respect maxDepth
+          if (maxDepth === -1 || depth + 1 <= maxDepth) {
+            queue.push([fullPath, depth + 1]);
+          }
+        } else if (!ext || entry.name.endsWith(ext)) {
+          const rel = relative(this.root, fullPath);
+          yield rel;
+        }
+      }
+    }
   }
 
   /** Resolve path and verify it stays within root — prevents directory traversal and symlink escapes */
