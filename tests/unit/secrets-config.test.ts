@@ -5,13 +5,19 @@
  * relying on beforeEach/afterEach, making them safe under Bun's parallel runner.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect } from 'bun:test';
+// Use createRequire to avoid Bun's ESM named-export race under parallel test load
+const _require = createRequire(import.meta.url);
+const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = _require('node:fs') as typeof import('node:fs');
 
 import { buildSecretsAdapter } from '../../src/composition-root.js';
 import { LocalVaultAdapter } from '../../src/adapters/secondary/local-vault-adapter.js';
+
+/** Use minimal iterations in tests to avoid PBKDF2 CPU contention under parallel load. */
+const TEST_KDF_ITERATIONS = 1_000;
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), 'hex-secrets-test-'));
@@ -93,7 +99,7 @@ describe('buildSecretsAdapter', () => {
     try {
       const vaultPath = join(d, '.hex', 'vault.enc');
       mkdirSync(join(d, '.hex'), { recursive: true });
-      LocalVaultAdapter.createVault(vaultPath, 'test-password');
+      LocalVaultAdapter.createVault(vaultPath, 'test-password', TEST_KDF_ITERATIONS);
       writeConfig(d, { version: 1, backend: 'local-vault' });
       const adapter = await buildSecretsAdapter(d, { vaultPassword: 'test-password' });
       expect(adapter.constructor.name).toBe('LocalVaultAdapter');
@@ -114,7 +120,7 @@ describe('buildSecretsAdapter', () => {
     try {
       const vaultPath = join(d, '.hex', 'vault.enc');
       mkdirSync(join(d, '.hex'), { recursive: true });
-      LocalVaultAdapter.createVault(vaultPath, 'test-password');
+      LocalVaultAdapter.createVault(vaultPath, 'test-password', TEST_KDF_ITERATIONS);
       writeConfig(d, { version: 1, backend: 'local-vault' });
       delete process.env['HEX_VAULT_PASSWORD'];
       const adapter = await buildSecretsAdapter(d);
@@ -127,7 +133,7 @@ describe('buildSecretsAdapter', () => {
     try {
       const customDir = join(d, 'secrets');
       mkdirSync(customDir, { recursive: true });
-      LocalVaultAdapter.createVault(join(customDir, 'my-vault.enc'), 'custom-pw');
+      LocalVaultAdapter.createVault(join(customDir, 'my-vault.enc'), 'custom-pw', TEST_KDF_ITERATIONS);
       writeConfig(d, {
         version: 1,
         backend: 'local-vault',

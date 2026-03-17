@@ -2,111 +2,168 @@
  * Unit tests for HubCommandSenderAdapter
  *
  * Tests request construction, fire-and-forget dispatch, status lookup,
- * and listCommands defaults. Uses a lightweight HTTP server to verify
- * the adapter sends correct requests without mocking internals.
+ * and listCommands defaults.
+ *
+ * Uses mock.module('node:http') scoped to this file so that the adapter's
+ * HTTP calls go through a controlled fake, avoiding conflicts with other
+ * test files that also mock node:http (e.g. dashboard-adapter.test.ts).
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
-import { HubCommandSenderAdapter } from '../../src/adapters/primary/hub-command-sender.js';
+import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { EventEmitter } from 'node:events';
 import type { HubCommand, HubCommandResult } from '../../src/core/ports/hub-command.js';
 
-// ── Test HTTP server ────────────────────────────────────
+// ── Per-test HTTP intercept state ──────────────────────
 
-let server: Server;
-let port: number;
-const receivedRequests: Array<{
+/** Captured requests from the adapter's node:http usage */
+let capturedRequests: Array<{
   method: string;
-  url: string;
+  path: string;
   body: unknown;
+  headers: Record<string, string | number>;
 }> = [];
 
-/** Simple handler that records requests and returns canned responses. */
-function handler(req: IncomingMessage, res: ServerResponse): void {
-  const chunks: Buffer[] = [];
-  req.on('data', (c: Buffer) => chunks.push(c));
-  req.on('end', () => {
-    let body: unknown = null;
-    if (chunks.length > 0) {
-      try { body = JSON.parse(Buffer.concat(chunks).toString('utf-8')); } catch { /* ignore */ }
-    }
-    receivedRequests.push({ method: req.method ?? '', url: req.url ?? '', body });
+/** Map of path patterns to response factories. Set per test. */
+let responseHandlers: Array<{
+  match: (method: string, path: string) => boolean;
+  respond: (method: string, path: string, body: unknown) => { status: number; body: unknown };
+}> = [];
 
-    const url = req.url ?? '';
-
-    // POST /api/{projectId}/command — accept command
-    if (req.method === 'POST' && url.match(/^\/api\/[\w-]+\/command$/)) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
-      return;
-    }
-
-    // GET /api/command/{commandId} — return completed result
-    if (req.method === 'GET' && url.match(/^\/api\/command\/[\w-]+$/)) {
-      const commandId = url.split('/').pop()!;
-      const result: HubCommandResult = {
-        commandId,
-        status: 'completed',
-        data: { pong: true },
-        completedAt: new Date().toISOString(),
-      };
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result));
-      return;
-    }
-
-    // GET /api/{projectId}/commands?limit=N — return empty list
-    if (req.method === 'GET' && url.match(/^\/api\/[\w-]+\/commands/)) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ commands: [] }));
-      return;
-    }
-
-    res.writeHead(404);
-    res.end('not found');
-  });
+/** Default response when no handler matches */
+function defaultResponse() {
+  return { status: 404, body: 'not found' };
 }
 
-beforeAll(async () => {
-  server = createServer(handler);
-  await new Promise<void>((resolve) => {
-    server.listen(0, '127.0.0.1', () => resolve());
-  });
-  const addr = server.address();
-  port = typeof addr === 'object' && addr ? addr.port : 0;
-});
+// ── Mock node:http ─────────────────────────────────────
 
-afterAll(() => {
-  server.close();
-});
+mock.module('node:http', () => ({
+  request: (
+    opts: { hostname: string; port: number; path: string; method: string; headers: Record<string, string | number>; timeout?: number },
+    cb: (res: EventEmitter & { statusCode: number }) => void,
+  ) => {
+    const req = new EventEmitter() as EventEmitter & {
+      end: (data?: string) => void;
+      destroy: () => void;
+    };
 
-// ── Helpers ─────────────────────────────────────────────
+    req.destroy = () => {};
 
-function makeAdapter(): HubCommandSenderAdapter {
-  return new HubCommandSenderAdapter(port, 'test-token');
-}
+    req.end = (data?: string) => {
+      let body: unknown = null;
+      if (data) {
+        try { body = JSON.parse(data); } catch { /* ignore */ }
+      }
 
-function baseCommand(): Omit<HubCommand, 'commandId' | 'issuedAt'> {
-  return {
-    projectId: 'proj-1',
-    type: 'ping',
-    payload: {},
-    source: 'cli',
-  };
-}
+      capturedRequests.push({
+        method: opts.method,
+        path: opts.path,
+        body,
+        headers: opts.headers ?? {},
+      });
+
+      // Find matching handler
+      let response = defaultResponse();
+      for (const handler of responseHandlers) {
+        if (handler.match(opts.method, opts.path)) {
+          response = handler.respond(opts.method, opts.path, body);
+          break;
+        }
+      }
+
+      // Simulate async response
+      setTimeout(() => {
+        const res = new EventEmitter() as EventEmitter & { statusCode: number };
+        res.statusCode = response.status;
+        cb(res);
+
+        if (response.status >= 200 && response.status < 300 && response.body !== null) {
+          const buf = Buffer.from(
+            typeof response.body === 'string'
+              ? response.body
+              : JSON.stringify(response.body),
+          );
+          res.emit('data', buf);
+        } else if (response.status >= 400) {
+          const buf = Buffer.from(
+            typeof response.body === 'string'
+              ? response.body
+              : JSON.stringify(response.body),
+          );
+          res.emit('data', buf);
+        }
+        res.emit('end');
+      }, 0);
+    };
+
+    return req;
+  },
+}));
+
+// Import AFTER mock.module so the adapter picks up the mock
+const { HubCommandSenderAdapter } = await import('../../src/adapters/primary/hub-command-sender.js');
 
 // ── Tests ───────────────────────────────────────────────
 
 describe('HubCommandSenderAdapter', () => {
+  beforeEach(() => {
+    capturedRequests = [];
+    responseHandlers = [];
+  });
+
+  /** Install the standard set of handlers that simulate a working hub */
+  function installStandardHandlers(): void {
+    responseHandlers = [
+      // POST /api/{projectId}/command — accept command
+      {
+        match: (method, path) => method === 'POST' && /^\/api\/[\w-]+\/command$/.test(path),
+        respond: () => ({ status: 200, body: { ok: true } }),
+      },
+      // GET /api/command/{commandId} — return completed result
+      {
+        match: (method, path) => method === 'GET' && /^\/api\/command\/[\w-]+$/.test(path),
+        respond: (_m, path) => {
+          const commandId = path.split('/').pop()!;
+          const result: HubCommandResult = {
+            commandId,
+            status: 'completed',
+            data: { pong: true },
+            completedAt: new Date().toISOString(),
+          };
+          return { status: 200, body: result };
+        },
+      },
+      // GET /api/{projectId}/commands?limit=N — return empty list
+      {
+        match: (method, path) => method === 'GET' && /^\/api\/[\w-]+\/commands/.test(path),
+        respond: () => ({ status: 200, body: { commands: [] } }),
+      },
+    ];
+  }
+
+  // ── Helpers ─────────────────────────────────────────────
+
+  function makeAdapter(): InstanceType<typeof HubCommandSenderAdapter> {
+    return new HubCommandSenderAdapter(9999, 'test-token');
+  }
+
+  function baseCommand(): Omit<HubCommand, 'commandId' | 'issuedAt'> {
+    return {
+      projectId: 'proj-1',
+      type: 'ping',
+      payload: {},
+      source: 'cli',
+    };
+  }
+
   it('sendCommand constructs correct POST and polls for result', async () => {
+    installStandardHandlers();
     const adapter = makeAdapter();
-    receivedRequests.length = 0;
 
     const result = await adapter.sendCommand(baseCommand());
 
     // Should have POSTed the command
-    const postReq = receivedRequests.find(
-      (r) => r.method === 'POST' && r.url?.includes('/api/proj-1/command'),
+    const postReq = capturedRequests.find(
+      (r) => r.method === 'POST' && r.path?.includes('/api/proj-1/command'),
     );
     expect(postReq).toBeTruthy();
 
@@ -119,21 +176,25 @@ describe('HubCommandSenderAdapter', () => {
     // Should have polled and received completed result
     expect(result.status).toBe('completed');
     expect(result.commandId).toBe(posted.commandId);
-  });
+  }, 15_000);
 
   it('sendCommand includes Authorization header when token provided', async () => {
-    // The test server receives the request — we verify the adapter
-    // created with a token sends it. We check indirectly: if auth were
-    // missing, a real hub would reject. Here we just verify the request
-    // completes successfully (server doesn't check auth).
+    installStandardHandlers();
     const adapter = makeAdapter();
     const result = await adapter.sendCommand(baseCommand());
     expect(result.status).toBe('completed');
-  });
+
+    // Verify the Authorization header was sent
+    const postReq = capturedRequests.find(
+      (r) => r.method === 'POST' && r.path?.includes('/api/proj-1/command'),
+    );
+    expect(postReq).toBeTruthy();
+    expect(postReq!.headers['Authorization']).toBe('Bearer test-token');
+  }, 15_000);
 
   it('dispatchCommand returns commandId immediately', async () => {
+    installStandardHandlers();
     const adapter = makeAdapter();
-    receivedRequests.length = 0;
 
     const commandId = await adapter.dispatchCommand(baseCommand());
 
@@ -141,71 +202,66 @@ describe('HubCommandSenderAdapter', () => {
     expect(commandId.length).toBeGreaterThan(0);
 
     // Should have posted exactly one request (no polling)
-    const posts = receivedRequests.filter(
-      (r) => r.method === 'POST' && r.url?.includes('/api/proj-1/command'),
+    const posts = capturedRequests.filter(
+      (r) => r.method === 'POST' && r.path?.includes('/api/proj-1/command'),
     );
     expect(posts.length).toBe(1);
 
     const posted = posts[0].body as HubCommand;
     expect(posted.commandId).toBe(commandId);
-  });
+  }, 10_000);
 
   it('getCommandStatus returns null for missing command', async () => {
-    // Spin up a quick server that returns 404 for unknown commands
-    const missingServer = createServer((_req, res) => {
-      res.writeHead(404);
-      res.end('not found');
-    });
-    await new Promise<void>((resolve) => {
-      missingServer.listen(0, '127.0.0.1', () => resolve());
-    });
-    const addr = missingServer.address();
-    const missingPort = typeof addr === 'object' && addr ? addr.port : 0;
+    // Install a handler that returns 404 for all requests
+    responseHandlers = [
+      {
+        match: () => true,
+        respond: () => ({ status: 404, body: 'not found' }),
+      },
+    ];
 
-    const adapter = new HubCommandSenderAdapter(missingPort, 'test-token');
+    const adapter = makeAdapter();
     const result = await adapter.getCommandStatus('nonexistent-id');
     expect(result).toBeNull();
-
-    missingServer.close();
-  });
+  }, 10_000);
 
   it('listCommands defaults limit to 50', async () => {
+    installStandardHandlers();
     const adapter = makeAdapter();
-    receivedRequests.length = 0;
 
     const commands = await adapter.listCommands('proj-1');
 
     expect(Array.isArray(commands)).toBe(true);
 
-    const getReq = receivedRequests.find(
-      (r) => r.method === 'GET' && r.url?.includes('/api/proj-1/commands'),
+    const getReq = capturedRequests.find(
+      (r) => r.method === 'GET' && r.path?.includes('/api/proj-1/commands'),
     );
     expect(getReq).toBeTruthy();
-    expect(getReq!.url).toContain('limit=50');
-  });
+    expect(getReq!.path).toContain('limit=50');
+  }, 10_000);
 
   it('listCommands respects custom limit', async () => {
+    installStandardHandlers();
     const adapter = makeAdapter();
-    receivedRequests.length = 0;
 
     await adapter.listCommands('proj-1', 10);
 
-    const getReq = receivedRequests.find(
-      (r) => r.method === 'GET' && r.url?.includes('/api/proj-1/commands'),
+    const getReq = capturedRequests.find(
+      (r) => r.method === 'GET' && r.path?.includes('/api/proj-1/commands'),
     );
-    expect(getReq!.url).toContain('limit=10');
-  });
+    expect(getReq!.path).toContain('limit=10');
+  }, 10_000);
 
   it('dispatchCommand sets issuedAt to ISO timestamp', async () => {
+    installStandardHandlers();
     const adapter = makeAdapter();
-    receivedRequests.length = 0;
 
     const before = new Date().toISOString();
     await adapter.dispatchCommand(baseCommand());
     const after = new Date().toISOString();
 
-    const posted = receivedRequests[0].body as HubCommand;
+    const posted = capturedRequests[0].body as HubCommand;
     expect(posted.issuedAt >= before).toBe(true);
     expect(posted.issuedAt <= after).toBe(true);
-  });
+  }, 10_000);
 });

@@ -176,11 +176,14 @@ function createMockCtx(rootPath = '/tmp/test-project') {
     llm: {},
     swarm: {
       init: async () => {},
+      status: async () => ({ status: 'idle', agentCount: 0, activeTaskCount: 0, completedTaskCount: 0 }),
       getStatus: async () => ({ status: 'idle', agentCount: 0, activeTaskCount: 0, completedTaskCount: 0 }),
       listTasks: async () => [],
       listAgents: async () => [],
       spawnAgent: async () => ({ id: 'a1', name: 'test', role: 'coder', status: 'idle' }),
       createTask: async () => ({ id: 't1', title: 'test', status: 'pending' }),
+      completeTask: async () => {},
+      terminateAgent: async () => {},
     },
   };
 }

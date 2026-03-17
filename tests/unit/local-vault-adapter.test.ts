@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
+// Use createRequire to avoid Bun's ESM named-export race under parallel test load
+const _require = createRequire(import.meta.url);
+const { existsSync, readFileSync, unlinkSync } = _require('node:fs') as typeof import('node:fs');
+const { randomBytes } = _require('node:crypto') as typeof import('node:crypto');
 
 import { LocalVaultAdapter } from '../../src/adapters/secondary/local-vault-adapter.js';
+
+/** Use minimal iterations in tests to avoid PBKDF2 CPU contention under parallel load. */
+const TEST_KDF_ITERATIONS = 1_000;
 
 function tempVaultPath(): string {
   return join(tmpdir(), `hex-vault-test-${randomBytes(8).toString('hex')}.json`);
@@ -22,8 +28,8 @@ describe('LocalVaultAdapter', () => {
   function createTempVault(password = 'test-password'): { path: string; adapter: LocalVaultAdapter } {
     const path = tempVaultPath();
     paths.push(path);
-    LocalVaultAdapter.createVault(path, password);
-    return { path, adapter: new LocalVaultAdapter(path, password) };
+    LocalVaultAdapter.createVault(path, password, TEST_KDF_ITERATIONS);
+    return { path, adapter: new LocalVaultAdapter(path, password, TEST_KDF_ITERATIONS) };
   }
 
   afterEach(() => {
@@ -37,7 +43,7 @@ describe('LocalVaultAdapter', () => {
 
     const envelope = JSON.parse(readFileSync(path, 'utf-8'));
     expect(envelope.kdf).toBe('pbkdf2');
-    expect(envelope.kdfIterations).toBe(600_000);
+    expect(envelope.kdfIterations).toBe(TEST_KDF_ITERATIONS);
     expect(typeof envelope.salt).toBe('string');
     expect(typeof envelope.iv).toBe('string');
     expect(typeof envelope.tag).toBe('string');
@@ -58,7 +64,7 @@ describe('LocalVaultAdapter', () => {
 
   it('wrong password throws (GCM auth tag failure)', () => {
     const { path } = createTempVault('correct-password');
-    const badAdapter = new LocalVaultAdapter(path, 'wrong-password');
+    const badAdapter = new LocalVaultAdapter(path, 'wrong-password', TEST_KDF_ITERATIONS);
 
     expect(() => badAdapter.addSecret('X', 'Y')).toThrow();
   });

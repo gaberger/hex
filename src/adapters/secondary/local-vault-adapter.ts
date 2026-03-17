@@ -8,17 +8,16 @@
  * Dependencies: node:crypto, node:fs, core/ports, core/domain only.
  */
 
-import {
-  createCipheriv,
-  createDecipheriv,
-  pbkdf2Sync,
-  randomBytes,
-} from 'node:crypto';
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+// Use createRequire to avoid Bun's ESM named-export race under parallel test load
+const _require = createRequire(import.meta.url);
+const { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } =
+  _require('node:crypto') as typeof import('node:crypto');
+const { readFileSync, renameSync, writeFileSync } =
+  _require('node:fs') as typeof import('node:fs');
 
 import type { SecretMetadata, SecretResult } from '../../core/ports/secrets.js';
 import type { ISecretsPort } from '../../core/ports/secrets.js';
-import type { IVaultManagementPort } from '../../core/ports/vault.js';
 
 /* ------------------------------------------------------------------ */
 /*  Internal types                                                     */
@@ -49,7 +48,7 @@ interface VaultPayload {
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-const KDF_ITERATIONS = 600_000;
+const DEFAULT_KDF_ITERATIONS = 600_000;
 const SALT_BYTES = 32;
 const IV_BYTES = 16;
 const KEY_BYTES = 32; // AES-256
@@ -60,22 +59,25 @@ const ALGORITHM = 'aes-256-gcm' as const;
 /*  Adapter                                                            */
 /* ------------------------------------------------------------------ */
 
-export class LocalVaultAdapter implements ISecretsPort, IVaultManagementPort {
+export class LocalVaultAdapter implements ISecretsPort {
   private readonly vaultPath: string;
   private readonly password: string;
+  private readonly kdfIterations: number;
 
-  constructor(vaultPath: string, password: string) {
+  constructor(vaultPath: string, password: string, kdfIterations?: number) {
     this.vaultPath = vaultPath;
     this.password = password;
+    this.kdfIterations = kdfIterations ?? DEFAULT_KDF_ITERATIONS;
   }
 
   /* ----- Static factory ------------------------------------------- */
 
   /** Create a new encrypted vault file at `path`. */
-  static createVault(path: string, password: string): void {
+  static createVault(path: string, password: string, kdfIterations?: number): void {
+    const iterations = kdfIterations ?? DEFAULT_KDF_ITERATIONS;
     const salt = randomBytes(SALT_BYTES);
     const iv = randomBytes(IV_BYTES);
-    const key = deriveKey(password, salt);
+    const key = deriveKey(password, salt, iterations);
     const payload: VaultPayload = { version: 1, secrets: {} };
     const { ciphertext, tag } = encrypt(key, iv, JSON.stringify(payload));
 
@@ -85,15 +87,10 @@ export class LocalVaultAdapter implements ISecretsPort, IVaultManagementPort {
       tag: tag.toString('hex'),
       data: ciphertext.toString('hex'),
       kdf: 'pbkdf2',
-      kdfIterations: KDF_ITERATIONS,
+      kdfIterations: iterations,
     };
 
     writeFileSync(path, JSON.stringify(envelope, null, 2), 'utf-8');
-  }
-
-  /** IVaultManagementPort — delegates to static for port compatibility */
-  createVault(path: string, password: string): void {
-    LocalVaultAdapter.createVault(path, password);
   }
 
   /* ----- ISecretsPort --------------------------------------------- */
@@ -157,7 +154,7 @@ export class LocalVaultAdapter implements ISecretsPort, IVaultManagementPort {
     const iv = Buffer.from(envelope.iv, 'hex');
     const tag = Buffer.from(envelope.tag, 'hex');
     const ciphertext = Buffer.from(envelope.data, 'hex');
-    const key = deriveKey(this.password, salt);
+    const key = deriveKey(this.password, salt, envelope.kdfIterations);
 
     const plaintext = decrypt(key, iv, ciphertext, tag);
     return JSON.parse(plaintext) as VaultPayload;
@@ -171,7 +168,7 @@ export class LocalVaultAdapter implements ISecretsPort, IVaultManagementPort {
 
     // Fresh IV for every write
     const iv = randomBytes(IV_BYTES);
-    const key = deriveKey(this.password, salt);
+    const key = deriveKey(this.password, salt, this.kdfIterations);
     const { ciphertext, tag } = encrypt(key, iv, JSON.stringify(payload));
 
     const newEnvelope: VaultEnvelope = {
@@ -180,7 +177,7 @@ export class LocalVaultAdapter implements ISecretsPort, IVaultManagementPort {
       tag: tag.toString('hex'),
       data: ciphertext.toString('hex'),
       kdf: 'pbkdf2',
-      kdfIterations: KDF_ITERATIONS,
+      kdfIterations: this.kdfIterations,
     };
 
     // Atomic write: tmp file then rename
@@ -194,8 +191,8 @@ export class LocalVaultAdapter implements ISecretsPort, IVaultManagementPort {
 /*  Crypto helpers (module-private)                                    */
 /* ------------------------------------------------------------------ */
 
-function deriveKey(password: string, salt: Buffer): Buffer {
-  return pbkdf2Sync(password, salt, KDF_ITERATIONS, KEY_BYTES, 'sha512');
+function deriveKey(password: string, salt: Buffer, iterations: number): Buffer {
+  return pbkdf2Sync(password, salt, iterations, KEY_BYTES, 'sha512');
 }
 
 function encrypt(
