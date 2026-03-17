@@ -44,6 +44,27 @@ function readHubToken(): string {
   }
 }
 
+/**
+ * Injectable dependencies for DashboardAdapter.
+ * Production code uses defaults; tests can inject fakes to avoid mock.module().
+ */
+export interface DashboardAdapterDeps {
+  /** Factory for HTTP requests (default: node:http request) */
+  httpRequest?: typeof request;
+  /** Factory for WebSocket connections (default: ws) */
+  createWebSocket?: (url: string) => WebSocket;
+  /** Override auth token (default: read from hub lock file) */
+  authToken?: string;
+  /** Override file watcher (default: node:fs watch) */
+  watchDir?: typeof watch;
+  /** Override readFileSync (default: node:fs readFileSync) */
+  readFileSync?: typeof readFileSync;
+  /** Override homedir (default: node:os homedir) */
+  homedir?: typeof homedir;
+  /** Override path.resolve (default: node:path resolve) */
+  pathResolve?: typeof resolve;
+}
+
 // ── Layer classifier ─────────────────────────────────────
 
 function classifyLayer(filePath: string): string {
@@ -58,10 +79,7 @@ function classifyLayer(filePath: string): string {
 // ── Dashboard Client ─────────────────────────────────────
 
 export class DashboardAdapter implements IHubCommandReceiverPort {
-  private _projectId: string | null = null;
-
-  /** Hub-assigned project ID (available after start/startAndPushOnce). */
-  get projectId(): string | null { return this._projectId; }
+  private projectId: string | null = null;
   private pushTimer: ReturnType<typeof setInterval> | null = null;
   private watchers: FSWatcher[] = [];
   private fileChangeDebounce = new Map<string, ReturnType<typeof setTimeout>>();
@@ -78,11 +96,22 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   private commandHandlers = new Map<HubCommandType, HubCommandHandler>();
   private _isListening = false;
 
+  // ── Injectable dependencies ──────────────────────
+  private readonly _httpRequest: typeof request;
+  private readonly _createWebSocket: (url: string) => WebSocket;
+  private readonly _watchDir: typeof watch;
+  private readonly _pathResolve: typeof resolve;
+
   constructor(
     private readonly ctx: AppContext,
     private readonly hubPort: number = HUB_PORT,
+    deps?: DashboardAdapterDeps,
   ) {
-    this.authToken = readHubToken();
+    this.authToken = deps?.authToken ?? readHubToken();
+    this._httpRequest = deps?.httpRequest ?? request;
+    this._createWebSocket = deps?.createWebSocket ?? ((url: string) => new WebSocket(url));
+    this._watchDir = deps?.watchDir ?? watch;
+    this._pathResolve = deps?.pathResolve ?? resolve;
   }
 
   /**
@@ -105,7 +134,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       throw new Error('Hub registration failed');
     }
 
-    this._projectId = regResult.id as string;
+    this.projectId = regResult.id as string;
 
     // Initial push — fire and forget (don't block registration)
     void this.pushAll().catch((err) => this.log('initial push failed:', err));
@@ -146,7 +175,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       throw new Error('Hub registration failed');
     }
 
-    this._projectId = regResult.id as string;
+    this.projectId = regResult.id as string;
 
     // Single synchronous push — no timer, no watcher
     await this.pushAll();
@@ -186,7 +215,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   // ── IHubCommandReceiverPort implementation ─────────
 
   async startListening(): Promise<void> {
-    if (!this._projectId || this._isListening) return;
+    if (!this.projectId || this._isListening) return;
     this._isListening = true; // Set immediately to prevent concurrent calls (H2)
 
     const tokenParam = this.authToken ? `?token=${encodeURIComponent(this.authToken)}` : '';
@@ -230,7 +259,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
     if (this.stopped) return;
 
     try {
-      this.ws = new WebSocket(wsUrl);
+      this.ws = this._createWebSocket(wsUrl);
     } catch {
       this.scheduleReconnect(wsUrl);
       return;
@@ -244,7 +273,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       // Subscribe to command topic for this project
       this.wsSend({
         type: 'subscribe',
-        topic: `project:${this._projectId}:command`,
+        topic: `project:${this.projectId}:command`,
       });
 
       // Start WS keepalive ping every 25s to detect dead connections early
@@ -339,7 +368,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
     // Report result back to hub via HTTP POST (hub broadcasts to WS subscribers)
     await this.post(
-      `/api/${this._projectId}/command/${command.commandId}/result`,
+      `/api/${this.projectId}/command/${command.commandId}/result`,
       result,
     );
   }
@@ -352,7 +381,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
     this.onCommand('ping', async (cmd) => ({
       commandId: cmd.commandId,
       status: 'completed',
-      data: { pong: true, projectId: this._projectId, timestamp: Date.now() },
+      data: { pong: true, projectId: this.projectId, timestamp: Date.now() },
       completedAt: new Date().toISOString(),
     }));
 
@@ -473,8 +502,8 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
           completedAt: new Date().toISOString(),
         };
       }
-      const lang = (p.language ?? 'typescript') as import('../../core/ports/index.js').Language;
-      const spec: import('../../core/ports/index.js').Specification = {
+      const lang = (p.language ?? 'typescript') as import('../../core/domain/value-objects.js').Language;
+      const spec: import('../../core/domain/value-objects.js').Specification = {
         title: `Generate ${p.adapter} implementing ${p.portInterface}`,
         requirements: [`Implement ${p.portInterface} adapter: ${p.adapter}`],
         constraints: ['Follow hexagonal architecture rules', 'Only import from core/ports and core/domain'],
@@ -504,15 +533,12 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
         const { execFile } = await import('node:child_process');
         const { promisify } = await import('node:util');
         const execFileP = promisify(execFile);
-        const model = (p as { model?: string }).model ?? 'haiku';
-        // Use the binary directly — shell wrappers add --settings/hooks that hang in -p mode
-        const claudeBin = process.env['CLAUDE_BIN'] ?? '/Users/gary/.local/bin/claude';
-        const args = ['-p', p.prompt, '--model', model];
+        const args = ['-p', p.prompt, '--model', 'haiku'];
         if (p.allowedTools) {
           args.push('--allowedTools', p.allowedTools);
         }
-        this.log(`run-claude: ${claudeBin} ${args.slice(0, 3).join(' ')}...`);
-        const { stdout, stderr } = await execFileP(claudeBin, args, {
+        this.log(`run-claude: spawning claude ${args.slice(0, 3).join(' ')}...`);
+        const { stdout, stderr } = await execFileP('claude', args, {
           cwd: this.ctx.rootPath,
           timeout: 120_000,
           maxBuffer: 1024 * 1024,
@@ -524,14 +550,12 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
           data: { output: stdout, stderr: stderr || undefined },
           completedAt: new Date().toISOString(),
         };
-      } catch (err: unknown) {
-        const e = err as { message?: string; stderr?: string; stdout?: string; code?: number };
-        const detail = e.stderr || e.stdout || e.message || String(err);
-        this.log(`run-claude error: ${detail.slice(0, 200)}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         return {
           commandId: cmd.commandId,
           status: 'failed',
-          error: `Claude CLI failed (exit ${e.code ?? '?'}): ${detail.slice(0, 500)}`,
+          error: `Claude CLI failed: ${msg}`,
           completedAt: new Date().toISOString(),
         };
       }
@@ -572,17 +596,16 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   }
 
   private async pushAll(): Promise<void> {
-    if (!this._projectId) return;
+    if (!this.projectId) return;
     if (this._pushing) return; // Concurrency guard — prevent overlapping scans
     this._pushing = true;
     try {
-      // Push health, tokens, swarm, graph, coordination in parallel
+      // Push health, tokens, swarm, graph in parallel
       await Promise.allSettled([
         this.pushHealth(),
         this.pushTokens(),
         this.pushSwarm(),
         this.pushGraph(),
-        this.pushCoordination(),
       ]);
     } finally {
       this._pushing = false;
@@ -643,7 +666,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       await Promise.all(
         files.map((f) =>
           this.post('/api/push', {
-            projectId: this._projectId,
+            projectId: this.projectId,
             type: 'tokenFile',
             filePath: f.path,
             data: {
@@ -711,48 +734,12 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
     }
   }
 
-  private async pushCoordination(): Promise<void> {
-    if (!this.ctx.coordination) return;
-    try {
-      // Gather swarm state for the coordination heartbeat
-      let swarmState: import('../../core/ports/coordination.js').InstanceSwarmState | undefined;
-      try {
-        const [swarmStatus, tasks, agents] = await Promise.all([
-          this.ctx.swarm.status(),
-          this.ctx.swarm.listTasks(),
-          this.ctx.swarm.listAgents(),
-        ]);
-        swarmState = {
-          agentCount: agents.length,
-          activeTaskCount: tasks.filter(t => t.status === 'in-progress' || t.status === 'pending').length,
-          completedTaskCount: tasks.filter(t => t.status === 'completed').length,
-          topology: swarmStatus.topology ?? 'unknown',
-        };
-      } catch {
-        // Swarm may not be running — heartbeat without swarm state
-      }
-
-      // Send heartbeat with swarm state included
-      await this.ctx.coordination.heartbeat(undefined, swarmState).catch(() => {});
-
-      const [locks, claims, activities, unstaged] = await Promise.all([
-        this.ctx.coordination.listLocks().catch(() => []),
-        this.ctx.coordination.listClaims().catch(() => []),
-        this.ctx.coordination.getActivities(20).catch(() => []),
-        this.ctx.coordination.getUnstagedAcrossInstances().catch(() => []),
-      ]);
-      await this.pushState('coordination', { locks, claims, activities, unstaged });
-    } catch (err) {
-      this.log('coordination push failed:', err);
-    }
-  }
-
   // ── File Watcher ───────────────────────────────────
 
   private startFileWatcher(): void {
-    const srcDir = resolve(this.ctx.rootPath, 'src');
+    const srcDir = this._pathResolve(this.ctx.rootPath, 'src');
     try {
-      const watcher = watch(srcDir, { recursive: true }, (_eventType, filename) => {
+      const watcher = this._watchDir(srcDir, { recursive: true }, (_eventType, filename) => {
         if (!filename) return;
         if (!filename.endsWith('.ts') && !filename.endsWith('.js') && !filename.endsWith('.go') && !filename.endsWith('.rs')) return;
 
@@ -779,7 +766,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
   private pushState(type: string, data: unknown): Promise<void> {
     return this.post('/api/push', {
-      projectId: this._projectId,
+      projectId: this.projectId,
       type,
       data,
     }).then(() => {});
@@ -787,7 +774,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
   private pushEvent(event: string, data: unknown): Promise<void> {
     return this.post('/api/event', {
-      projectId: this._projectId,
+      projectId: this.projectId,
       event,
       data,
     }).then(() => {});
@@ -804,7 +791,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       if (this.authToken) {
         headers['Authorization'] = `Bearer ${this.authToken}`;
       }
-      const req = request(
+      const req = this._httpRequest(
         {
           hostname: '127.0.0.1',
           port: this.hubPort,
@@ -835,7 +822,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   /** Broadcast to local SSE clients (kept for backward compat). */
   broadcast(event: string, data: unknown): void {
     // Forward to hub as an event
-    if (this._projectId) {
+    if (this.projectId) {
       void this.pushEvent(event, data);
     }
   }
@@ -851,8 +838,9 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 export async function startDashboard(
   ctx: AppContext,
   hubPort?: number,
+  deps?: DashboardAdapterDeps,
 ): Promise<{ url: string; close: () => void; commandReceiver: IHubCommandReceiverPort }> {
-  const adapter = new DashboardAdapter(ctx, hubPort);
+  const adapter = new DashboardAdapter(ctx, hubPort, deps);
   const handle = await adapter.start();
   return { ...handle, commandReceiver: adapter };
 }

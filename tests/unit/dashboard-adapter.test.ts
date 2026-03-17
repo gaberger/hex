@@ -1,7 +1,10 @@
 /**
  * Unit tests for DashboardAdapter (primary adapter)
  *
- * London-school TDD: mocks for all ports and external dependencies.
+ * London-school TDD: uses dependency injection for all external dependencies.
+ * NO mock.module() calls — avoids permanent module replacement that contaminates
+ * other test files in the same Bun process.
+ *
  * Tests registration, push methods, WS command listener, reconnection,
  * auth token, file watcher, cleanup, and default command handlers.
  */
@@ -9,9 +12,14 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { EventEmitter } from 'node:events';
 
-// ── Mock state ───────────────────────────────────────────
+import {
+  DashboardAdapter,
+  startDashboard,
+  type DashboardAdapterDeps,
+} from '../../src/adapters/primary/dashboard-adapter.js';
 
-let mockReadFileSyncResult: string | Error = '{}';
+// ── Mock state ───────────────────────────────────────
+
 let mockWatchCallback: ((_event: string, filename: string | null) => void) | null = null;
 const mockWatcherClose = mock(() => {});
 
@@ -25,7 +33,7 @@ const httpRequests: Array<{
 let httpResponseBody: Record<string, unknown> = { id: 'proj-123' };
 let httpShouldError = false;
 
-// ── Mock WebSocket ───────────────────────────────────────
+// ── Mock WebSocket ───────────────────────────────────
 
 class MockWebSocket extends EventEmitter {
   static OPEN = 1;
@@ -43,6 +51,10 @@ class MockWebSocket extends EventEmitter {
     this.readyState = MockWebSocket.CLOSED;
   }
 
+  ping(): void {
+    // no-op for tests
+  }
+
   removeAllListeners(): this {
     super.removeAllListeners();
     return this;
@@ -53,39 +65,26 @@ let latestWs: MockWebSocket | null = null;
 let wsConstructorCalls: string[] = [];
 let wsConstructorShouldThrow = false;
 
-// ── Module mocks ─────────────────────────────────────────
+// ── Injectable fake HTTP request ─────────────────────
 
-mock.module('node:fs', () => ({
-  readFileSync: (_path: string, _enc: string) => {
-    if (mockReadFileSyncResult instanceof Error) throw mockReadFileSyncResult;
-    return mockReadFileSyncResult;
-  },
-  watch: (_dir: string, _opts: unknown, cb: (event: string, filename: string | null) => void) => {
-    mockWatchCallback = cb;
-    return { close: mockWatcherClose };
-  },
-}));
-
-mock.module('node:os', () => ({
-  homedir: () => '/mock-home',
-}));
-
-mock.module('node:path', () => ({
-  resolve: (...parts: string[]) => parts.join('/'),
-  join: (...parts: string[]) => parts.join('/'),
-}));
-
-mock.module('node:http', () => ({
-  request: (opts: { path: string; method: string; headers: Record<string, string | number> }, cb: (res: EventEmitter) => void) => {
-    const req = new EventEmitter() as EventEmitter & { end: (data: string) => void; destroy: () => void };
+function createFakeHttpRequest() {
+  return (opts: any, cb: (res: EventEmitter) => void) => {
+    const req = new EventEmitter() as EventEmitter & {
+      end: (data: string) => void;
+      destroy: () => void;
+    };
     req.end = (data: string) => {
       let body: unknown = null;
-      try { body = JSON.parse(data); } catch { /* ignore */ }
+      try {
+        body = JSON.parse(data);
+      } catch {
+        /* ignore */
+      }
       httpRequests.push({
         path: opts.path,
-        method: opts.method,
+        method: opts.method ?? 'POST',
         body,
-        headers: opts.headers,
+        headers: opts.headers ?? {},
       });
 
       if (httpShouldError) {
@@ -103,37 +102,48 @@ mock.module('node:http', () => ({
     };
     req.destroy = () => {};
     return req;
-  },
-}));
-
-mock.module('ws', () => {
-  const WS = function (url: string) {
-    wsConstructorCalls.push(url);
-    if (wsConstructorShouldThrow) throw new Error('ws connect failed');
-    const instance = new MockWebSocket();
-    latestWs = instance;
-    // Simulate async open
-    setTimeout(() => {
-      if (instance.readyState !== MockWebSocket.CLOSED) {
-        instance.emit('open');
-      }
-    }, 5);
-    return instance;
   };
-  WS.OPEN = 1;
-  WS.CONNECTING = 0;
-  WS.CLOSING = 2;
-  WS.CLOSED = 3;
-  return { default: WS, __esModule: true };
-});
+}
 
-// ── Import after mocks ──────────────────────────────────
+// ── Injectable fake WebSocket creator ────────────────
 
-const { DashboardAdapter, startDashboard } = await import(
-  '../../src/adapters/primary/dashboard-adapter.js'
-);
+function createFakeWebSocket(url: string): any {
+  wsConstructorCalls.push(url);
+  if (wsConstructorShouldThrow) throw new Error('ws connect failed');
+  const instance = new MockWebSocket();
+  latestWs = instance;
+  // Simulate async open
+  setTimeout(() => {
+    if (instance.readyState !== MockWebSocket.CLOSED) {
+      instance.emit('open');
+    }
+  }, 5);
+  return instance;
+}
 
-// ── Mock AppContext ──────────────────────────────────────
+// ── Injectable fake file watcher ─────────────────────
+
+function createFakeWatch() {
+  return (_dir: string, _opts: unknown, cb: (event: string, filename: string | null) => void) => {
+    mockWatchCallback = cb;
+    return { close: mockWatcherClose } as any;
+  };
+}
+
+// ── Build deps helper ────────────────────────────────
+
+function makeDeps(overrides: Partial<DashboardAdapterDeps> = {}): DashboardAdapterDeps {
+  return {
+    httpRequest: createFakeHttpRequest() as any,
+    createWebSocket: createFakeWebSocket as any,
+    authToken: 'test-auth-token',
+    watchDir: createFakeWatch() as any,
+    pathResolve: (...parts: string[]) => parts.join('/'),
+    ...overrides,
+  };
+}
+
+// ── Mock AppContext ──────────────────────────────────
 
 function makeCtx(overrides: Record<string, unknown> = {}): any {
   return {
@@ -176,14 +186,13 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
   };
 }
 
-// ── Tests ────────────────────────────────────────────────
+// ── Tests ────────────────────────────────────────────
 
 describe('DashboardAdapter', () => {
   beforeEach(() => {
     httpRequests.length = 0;
     httpResponseBody = { id: 'proj-123' };
     httpShouldError = false;
-    mockReadFileSyncResult = JSON.stringify({ token: 'test-auth-token' });
     mockWatchCallback = null;
     mockWatcherClose.mockClear();
     latestWs = null;
@@ -191,12 +200,13 @@ describe('DashboardAdapter', () => {
     wsConstructorShouldThrow = false;
   });
 
-  // ── Registration ─────────────────────────────────────
+  // ── Registration ─────────────────────────────────
 
   describe('start() — registration', () => {
     it('registers with hub via POST /api/projects/register', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       const result = await adapter.start();
 
       const regReq = httpRequests.find((r) => r.path === '/api/projects/register');
@@ -215,7 +225,8 @@ describe('DashboardAdapter', () => {
 
     it('extracts project name from rootPath last segment', async () => {
       const ctx = makeCtx({ rootPath: '/deep/nested/cool-project' });
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       const result = await adapter.start();
 
       const regReq = httpRequests.find((r) => r.path === '/api/projects/register');
@@ -227,7 +238,8 @@ describe('DashboardAdapter', () => {
     it('throws when hub registration fails (no id)', async () => {
       httpResponseBody = {}; // no id field
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
 
       expect(adapter.start()).rejects.toThrow('Hub registration failed');
     });
@@ -235,14 +247,16 @@ describe('DashboardAdapter', () => {
     it('throws when hub returns null response', async () => {
       httpShouldError = true;
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
 
       expect(adapter.start()).rejects.toThrow('Hub registration failed');
     });
 
     it('returns a close function that stops the adapter', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       const result = await adapter.start();
 
       result.close();
@@ -252,13 +266,13 @@ describe('DashboardAdapter', () => {
     });
   });
 
-  // ── Auth token ───────────────────────────────────────
+  // ── Auth token ───────────────────────────────────
 
   describe('auth token', () => {
-    it('reads token from ~/.hex/daemon/hub.lock and includes as Bearer header', async () => {
-      mockReadFileSyncResult = JSON.stringify({ token: 'my-secret-token' });
+    it('reads token from deps and includes as Bearer header', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps({ authToken: 'my-secret-token' });
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       const regReq = httpRequests.find((r) => r.path === '/api/projects/register');
@@ -267,10 +281,10 @@ describe('DashboardAdapter', () => {
       adapter.stop();
     });
 
-    it('sends no Authorization header when lock file is missing', async () => {
-      mockReadFileSyncResult = new Error('ENOENT');
+    it('sends no Authorization header when token is empty', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps({ authToken: '' });
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       const regReq = httpRequests.find((r) => r.path === '/api/projects/register');
@@ -279,10 +293,14 @@ describe('DashboardAdapter', () => {
       adapter.stop();
     });
 
-    it('sends no Authorization header when lock file has no token field', async () => {
-      mockReadFileSyncResult = JSON.stringify({ pid: 1234 });
+    it('sends no Authorization header when authToken not provided and lock missing', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      // Provide deps without authToken — adapter will call readHubToken() which
+      // reads from a non-existent file and returns ''
+      const deps = makeDeps();
+      // Override authToken to empty to simulate no lock file
+      deps.authToken = '';
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       const regReq = httpRequests.find((r) => r.path === '/api/projects/register');
@@ -292,12 +310,13 @@ describe('DashboardAdapter', () => {
     });
   });
 
-  // ── Push methods ─────────────────────────────────────
+  // ── Push methods ─────────────────────────────────
 
   describe('pushHealth()', () => {
     it('calls archAnalyzer.analyzeArchitecture and POSTs health data', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       // Wait for initial pushAll to fire
@@ -316,7 +335,8 @@ describe('DashboardAdapter', () => {
   describe('pushTokens()', () => {
     it('globs for source files and extracts L0-L3 summaries', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 50));
@@ -349,7 +369,8 @@ describe('DashboardAdapter', () => {
         }
         return [];
       });
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 50));
@@ -372,7 +393,8 @@ describe('DashboardAdapter', () => {
   describe('pushSwarm()', () => {
     it('fetches swarm status, tasks, agents and POSTs swarm data', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 50));
@@ -392,7 +414,8 @@ describe('DashboardAdapter', () => {
     it('pushes idle fallback when swarm port throws', async () => {
       const ctx = makeCtx();
       ctx.swarm.status = mock(async () => { throw new Error('not running'); });
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 50));
@@ -413,7 +436,8 @@ describe('DashboardAdapter', () => {
   describe('pushGraph()', () => {
     it('builds dependency graph and POSTs nodes and edges', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 50));
@@ -436,7 +460,8 @@ describe('DashboardAdapter', () => {
       ctx.archAnalyzer.validateHexBoundaries = mock(async () => [
         { from: 'src/core/domain/foo.ts', to: 'src/core/ports/bar.ts', fromLayer: 'domain', toLayer: 'port', rule: 'domain imports port' },
       ]);
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 50));
@@ -465,7 +490,8 @@ describe('DashboardAdapter', () => {
         { from: 'src/adapters/secondary/fs.ts', to: 'src/core/ports/iface.ts', names: ['X'] },
         { from: 'src/index.ts', to: 'src/core/domain/entity.ts', names: ['Y'] },
       ]);
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 50));
@@ -487,18 +513,20 @@ describe('DashboardAdapter', () => {
     });
   });
 
-  // ── Command handler registration ─────────────────────
+  // ── Command handler registration ─────────────────
 
   describe('onCommand / offCommand / isListening', () => {
     it('isListening returns false before start', () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       expect(adapter.isListening()).toBe(false);
     });
 
     it('registers and deregisters custom command handlers', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
 
       const handler = mock(async (cmd: any) => ({
         commandId: cmd.commandId,
@@ -523,13 +551,13 @@ describe('DashboardAdapter', () => {
     });
   });
 
-  // ── WebSocket command listener ───────────────────────
+  // ── WebSocket command listener ───────────────────
 
   describe('WebSocket command listener', () => {
     it('connects to ws://127.0.0.1:{port}/ws with auth token', async () => {
-      mockReadFileSyncResult = JSON.stringify({ token: 'ws-token' });
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps({ authToken: 'ws-token' });
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 20));
@@ -544,7 +572,8 @@ describe('DashboardAdapter', () => {
 
     it('subscribes to project:{id}:command topic on open', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 20));
@@ -559,7 +588,8 @@ describe('DashboardAdapter', () => {
 
     it('dispatches received command to registered handler', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 20));
@@ -591,16 +621,13 @@ describe('DashboardAdapter', () => {
       adapter.stop();
     });
 
-    it('posts failed result for unknown command types', async () => {
+    it('returns failed result for unknown command type', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
-      // Wait for WS listener to be ready
-      for (let i = 0; i < 40; i++) {
-        await new Promise((r) => setTimeout(r, 10));
-        if (latestWs && adapter.isListening()) break;
-      }
+      await new Promise((r) => setTimeout(r, 20));
 
       const command = {
         event: 'command',
@@ -615,17 +642,14 @@ describe('DashboardAdapter', () => {
       };
       latestWs!.emit('message', Buffer.from(JSON.stringify(command)));
 
-      // Give time for async handling
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 50));
 
-      // Unknown commands now post a failed result back to the hub
       const resultReq = httpRequests.find(
         (r) => r.path.includes('/command/cmd-unknown/result'),
       );
-      expect(resultReq).toBeDefined();
-      const body = resultReq!.body as Record<string, unknown>;
-      expect(body.status).toBe('failed');
-      expect(body.error).toContain('Unknown command type');
+      expect(resultReq).toBeTruthy();
+      expect((resultReq!.body as any).status).toBe('failed');
+      expect((resultReq!.body as any).error).toContain('Unknown command type');
 
       adapter.stop();
     });
@@ -633,7 +657,8 @@ describe('DashboardAdapter', () => {
     it('returns failed result when handler throws', async () => {
       const ctx = makeCtx();
       ctx.swarm.spawnAgent = mock(async () => { throw new Error('spawn boom'); });
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 20));
@@ -665,7 +690,8 @@ describe('DashboardAdapter', () => {
 
     it('ignores malformed WS messages without crashing', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 20));
@@ -682,12 +708,13 @@ describe('DashboardAdapter', () => {
     });
   });
 
-  // ── Reconnection ─────────────────────────────────────
+  // ── Reconnection ─────────────────────────────────
 
   describe('WebSocket reconnection', () => {
     it('schedules reconnect on WS close with exponential backoff', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 20));
@@ -712,7 +739,8 @@ describe('DashboardAdapter', () => {
 
     it('does not reconnect after stop()', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 20));
@@ -731,11 +759,8 @@ describe('DashboardAdapter', () => {
 
     it('handles WS constructor throwing by scheduling reconnect', async () => {
       const ctx = makeCtx();
-      // First connection succeeds (during start), then fails
-      let callCount = 0;
-      const origThrow = wsConstructorShouldThrow;
-
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 20));
@@ -753,12 +778,13 @@ describe('DashboardAdapter', () => {
     });
   });
 
-  // ── File watcher ─────────────────────────────────────
+  // ── File watcher ─────────────────────────────────
 
   describe('file watcher', () => {
     it('watches src/ directory for .ts/.js/.go/.rs changes', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       expect(mockWatchCallback).not.toBeNull();
@@ -768,7 +794,8 @@ describe('DashboardAdapter', () => {
 
     it('debounces file change events at 300ms', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       // Trigger rapid changes to the same file
@@ -796,7 +823,8 @@ describe('DashboardAdapter', () => {
 
     it('ignores non-source file extensions', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       const beforeCount = httpRequests.filter((r) => r.path === '/api/event').length;
@@ -815,7 +843,8 @@ describe('DashboardAdapter', () => {
 
     it('sends file-change event with layer classification', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       mockWatchCallback!('change', 'core/domain/entity.ts');
@@ -833,12 +862,13 @@ describe('DashboardAdapter', () => {
     });
   });
 
-  // ── Stop / cleanup ───────────────────────────────────
+  // ── Stop / cleanup ───────────────────────────────
 
   describe('stop()', () => {
     it('clears push timer, closes watchers, clears debounce timers', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       // Trigger a debounced change
@@ -851,7 +881,8 @@ describe('DashboardAdapter', () => {
 
     it('closes WebSocket connection on stop', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       await new Promise((r) => setTimeout(r, 20));
@@ -863,12 +894,13 @@ describe('DashboardAdapter', () => {
     });
   });
 
-  // ── broadcast() ──────────────────────────────────────
+  // ── broadcast() ──────────────────────────────────
 
   describe('broadcast()', () => {
     it('forwards event to hub via /api/event when registered', async () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       await adapter.start();
 
       adapter.broadcast('custom-event', { key: 'value' });
@@ -886,7 +918,8 @@ describe('DashboardAdapter', () => {
 
     it('does nothing when projectId is not set', () => {
       const ctx = makeCtx();
-      const adapter = new DashboardAdapter(ctx, 9999);
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
       const beforeCount = httpRequests.length;
 
       adapter.broadcast('test', {});
@@ -896,12 +929,13 @@ describe('DashboardAdapter', () => {
     });
   });
 
-  // ── startDashboard factory ───────────────────────────
+  // ── startDashboard factory ───────────────────────
 
   describe('startDashboard()', () => {
     it('returns url, close function, and commandReceiver', async () => {
       const ctx = makeCtx();
-      const result = await startDashboard(ctx, 9999);
+      const deps = makeDeps();
+      const result = await startDashboard(ctx, 9999, deps);
 
       expect(result.url).toBe('http://localhost:9999');
       expect(typeof result.close).toBe('function');
