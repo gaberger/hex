@@ -14,6 +14,7 @@ import type { IArchAnalysisPort, IASTPort, IFileSystemPort, ICodeGenerationPort,
 import type { ISwarmOrchestrationPort } from '../../core/ports/swarm.js';
 import type { IScaffoldPort } from '../../core/ports/scaffold.js';
 import type { ISecretsPort } from '../../core/ports/secrets.js';
+import type { IHubLauncherPort } from '../../core/ports/hub-launcher.js';
 import { formatArchReport } from '../../core/ports/index.js';
 
 // ─── MCP Tool Definitions ────────────────────────────────
@@ -215,6 +216,52 @@ export const HEX_TOOLS: MCPToolDefinition[] = [
       required: ['key'],
     },
   },
+  // ── ADR tools ──
+  {
+    name: 'hex_adr_list',
+    description: 'List Architecture Decision Records with optional status filter',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', description: 'Filter by status: proposed, accepted, deprecated, superseded, rejected', enum: ['proposed', 'accepted', 'deprecated', 'superseded', 'rejected'] },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'hex_adr_search',
+    description: 'Search ADRs by text query using AgentDB pattern matching',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query (e.g. "tree-sitter", "swarm coordination")' },
+        limit: { type: 'string', description: 'Max results (default 10)' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'hex_adr_abandoned',
+    description: 'Find proposed ADRs that appear abandoned (stale + no active worktrees)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        days: { type: 'string', description: 'Days threshold for staleness (default 14)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'hex_adr_status',
+    description: 'Get detailed info about a specific ADR by its ID (e.g. ADR-001)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'ADR identifier (e.g. ADR-001)' },
+      },
+      required: ['id'],
+    },
+  },
 ];
 
 // ─── Dashboard Hub Tool Definitions ───────────────────────
@@ -336,6 +383,8 @@ export interface MCPContext {
   scaffold?: IScaffoldPort | null;
   /** Optional: secrets manager for resolving API keys and credentials. */
   secrets?: ISecretsPort | null;
+  /** Optional: hub daemon launcher. */
+  hubLauncher?: IHubLauncherPort | null;
 }
 
 export class MCPAdapter {
@@ -451,6 +500,15 @@ export class MCPAdapter {
           return await this.secretsHas(call.arguments.key as string);
         case 'hex_secrets_resolve':
           return await this.secretsResolve(call.arguments.key as string);
+        // ── ADR tools ──
+        case 'hex_adr_list':
+          return await this.adrList(call.arguments.status as string | undefined);
+        case 'hex_adr_search':
+          return await this.adrSearch(call.arguments.query as string, parseInt(call.arguments.limit as string || '10', 10));
+        case 'hex_adr_abandoned':
+          return await this.adrAbandoned(parseInt(call.arguments.days as string || '14', 10));
+        case 'hex_adr_status':
+          return await this.adrStatus(call.arguments.id as string);
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${call.name}` }], isError: true };
       }
@@ -941,8 +999,8 @@ export class MCPAdapter {
   private async ensureHub(): Promise<string> {
     if (this.hubRunning && this.hubUrl) return this.hubUrl;
 
-    const { HubLauncher } = await import('../secondary/hub-launcher.js');
-    const launcher = new HubLauncher();
+    const launcher = this.ctx.hubLauncher;
+    if (!launcher) throw new Error('hex-hub binary not available');
     const { url } = await launcher.start();
     this.hubRunning = true;
     this.hubUrl = url;
@@ -1273,5 +1331,68 @@ export class MCPAdapter {
       ? `${val.slice(0, 4)}${'*'.repeat(Math.min(val.length - 8, 20))}${val.slice(-4)}`
       : '********';
     return { content: [{ type: 'text', text: `Secret "${key}" resolved (masked): ${masked}` }] };
+  }
+
+  // ─── ADR Tool Implementations ──────────────────────────
+
+  private async adrList(statusFilter?: string): Promise<MCPToolResult> {
+    if (!this.ctx.adrQuery) {
+      return { content: [{ type: 'text', text: 'ADR tracking not available.' }], isError: true };
+    }
+    const entries = await this.ctx.adrQuery.list(statusFilter);
+    if (entries.length === 0) {
+      return { content: [{ type: 'text', text: 'No ADRs found.' }] };
+    }
+    const lines = entries.map((e) => `${e.id} [${e.status}] ${e.title}`);
+    lines.push(`\n${entries.length} ADR(s)`);
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
+  private async adrSearch(query: string, limit: number): Promise<MCPToolResult> {
+    if (!this.ctx.adrQuery) {
+      return { content: [{ type: 'text', text: 'ADR tracking not available.' }], isError: true };
+    }
+    const results = await this.ctx.adrQuery.search(query, limit);
+    if (results.length === 0) {
+      return { content: [{ type: 'text', text: `No ADRs matching "${query}".` }] };
+    }
+    const lines = results.map((e) => `${e.id} [${e.status}] ${e.title}`);
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
+  private async adrAbandoned(days: number): Promise<MCPToolResult> {
+    if (!this.ctx.adrQuery) {
+      return { content: [{ type: 'text', text: 'ADR tracking not available.' }], isError: true };
+    }
+    const reports = await this.ctx.adrQuery.findAbandoned(days);
+    if (reports.length === 0) {
+      return { content: [{ type: 'text', text: 'No abandoned ADRs found.' }] };
+    }
+    const lines = reports.map((r) => {
+      const age = r.daysSinceModified < 0 ? 'unknown' : `${r.daysSinceModified}d`;
+      return `${r.adrId} [${r.status}] ${r.title} — ${age} old, worktree:${r.linkedWorktreeStatus}, recommendation:${r.recommendation}`;
+    });
+    lines.push(`\n${reports.length} ADR(s) need attention`);
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
+  private async adrStatus(id: string): Promise<MCPToolResult> {
+    if (!this.ctx.adrQuery) {
+      return { content: [{ type: 'text', text: 'ADR tracking not available.' }], isError: true };
+    }
+    const entry = await this.ctx.adrQuery.status(id.toUpperCase());
+    if (!entry) {
+      return { content: [{ type: 'text', text: `ADR "${id}" not found.` }], isError: true };
+    }
+    const lines = [
+      `${entry.id}: ${entry.title}`,
+      `Status: ${entry.status}`,
+      `Date: ${entry.date || 'unknown'}`,
+      `File: ${entry.filePath}`,
+    ];
+    if (entry.sections.length > 0) lines.push(`Sections: ${entry.sections.join(', ')}`);
+    if (entry.linkedFeatures.length > 0) lines.push(`Features: ${entry.linkedFeatures.join(', ')}`);
+    if (entry.linkedWorktrees.length > 0) lines.push(`Worktrees: ${entry.linkedWorktrees.join(', ')}`);
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 }

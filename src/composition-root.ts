@@ -14,6 +14,8 @@ import { CodeGenerator } from './core/usecases/code-generator.js';
 import { WorkplanExecutor } from './core/usecases/workplan-executor.js';
 import { SummaryService } from './core/usecases/summary-service.js';
 import { SwarmOrchestrator } from './core/usecases/swarm-orchestrator.js';
+import { ADRAdapter } from './adapters/secondary/adr-adapter.js';
+import { ADROrchestrator } from './core/usecases/adr-orchestrator.js';
 
 // ── Secondary Adapters (the ONLY adapter imports in the entire project) ──
 import { FileSystemAdapter } from './adapters/secondary/filesystem-adapter.js';
@@ -34,6 +36,8 @@ import { InMemoryEventBus } from './adapters/secondary/in-memory-event-bus.js';
 import { EnvSecretsAdapter } from './adapters/secondary/env-secrets-adapter.js';
 import { InfisicalAdapter } from './adapters/secondary/infisical-adapter.js';
 import { LocalVaultAdapter } from './adapters/secondary/local-vault-adapter.js';
+import { HubLauncher } from './adapters/secondary/hub-launcher.js';
+import { VersionAdapter } from './adapters/secondary/version-adapter.js';
 import { CachingSecretsAdapter } from './adapters/secondary/caching-secrets-adapter.js';
 import { FileCheckpointAdapter } from './adapters/secondary/file-checkpoint-adapter.js';
 import type { ISecretsPort } from './core/ports/secrets.js';
@@ -43,7 +47,15 @@ export type { AppContext } from './core/ports/app-context.js';
 
 // ── Factory ─────────────────────────────────────────────
 
-export async function createAppContext(projectPath: string): Promise<AppContext> {
+export interface CreateAppContextOptions {
+  /** Optional callback to prompt for the vault password interactively (CLI only). */
+  getVaultPassword?: () => Promise<string>;
+}
+
+export async function createAppContext(
+  projectPath: string,
+  options?: CreateAppContextOptions,
+): Promise<AppContext> {
   // Project-scoped output directory for analysis, caches, logs
   const outputDir = `${projectPath}/.hex`;
   const { mkdir } = await import('node:fs/promises');
@@ -193,8 +205,20 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
         // Deterministic project ID (must match Rust hex-hub's make_project_id)
         const basename = projectPath.split('/').pop() ?? 'unknown';
         const hash = Array.from(projectPath).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
-        status.projectId = `${basename}-${(hash >>> 0).toString(36)}`;
+        const projId = `${basename}-${(hash >>> 0).toString(36)}`;
+        status.projectId = projId;
         process.stderr.write(`[hex] Project registered with dashboard hub\n`);
+
+        // Start coordination instance (multi-session awareness)
+        try {
+          const { CoordinationAdapter } = await import('./adapters/secondary/coordination-adapter.js');
+          const coord = new CoordinationAdapter(projId, projectPath, HUB_PORT);
+          const instanceId = await coord.registerInstance();
+          status.coordinationInstanceId = instanceId;
+          process.stderr.write(`[hex] Coordination registered: ${instanceId.slice(0, 8)}…\n`);
+        } catch (coordErr) {
+          process.stderr.write(`[hex] Coordination skipped: ${coordErr instanceof Error ? coordErr.message : String(coordErr)}\n`);
+        }
       } catch (err) {
         process.stderr.write(`[hex] Dashboard skipped: ${err instanceof Error ? err.message : String(err)}\n`);
       }
@@ -244,19 +268,23 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
         process.stderr.write(`[hex] Secrets: Infisical (${inf.siteUrl})\n`);
       } else if (config.backend === 'local-vault') {
         const vaultPath = resolve(projectPath, config.localVault?.path ?? '.hex/vault.enc');
-        const password = process.env['HEX_VAULT_PASSWORD'];
+        let password = process.env['HEX_VAULT_PASSWORD'];
+        // If env var is missing but caller provided a prompt callback, use it
+        if (!password && existsSync(vaultPath) && options?.getVaultPassword) {
+          try {
+            password = await options.getVaultPassword();
+          } catch { /* user cancelled or stdin closed — fall through to env vars */ }
+        }
         if (existsSync(vaultPath) && password) {
           secrets = new LocalVaultAdapter(vaultPath, password);
           process.stderr.write('[hex] Secrets: Local vault\n');
-        } else if (!existsSync(vaultPath)) {
-          process.stderr.write(`[hex] Secrets: vault not found at ${vaultPath} — using env vars\n`);
-        } else {
-          process.stderr.write('[hex] Secrets: HEX_VAULT_PASSWORD not set — using env vars\n');
         }
+        // Silent fallback to env vars — the warning is noisy on every invocation.
+        // Users running `hex secrets` will get explicit feedback from that command.
       }
     }
   } catch (err) {
-    process.stderr.write(`[hex] Secrets config error: ${err instanceof Error ? err.message : String(err)} — using env vars\n`);
+    process.stderr.write(`[hex] Secrets config error: ${err instanceof Error ? err.message : String(err)} -- using env vars\n`);
   }
 
   // LLM: graceful degradation — null when no API key is configured
@@ -300,6 +328,29 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
   // Claude Code executor always available if binary is installed
   claudeCodeExecutor = new ClaudeCodeExecutorAdapter({}, fs);
 
+  // ADR lifecycle tracking — always available (gracefully handles missing docs/adrs/)
+  const adrAdapter = new ADRAdapter(fs, swarm);
+  const adrQuery = new ADROrchestrator(adrAdapter, worktree);
+
+  // Background ADR reindex (non-blocking, best-effort)
+  if (!isTest) {
+    void adrAdapter.indexIntoAgentDB().catch(() => {});
+  }
+
+  // Version + Hub launcher — available to CLI/MCP via ports
+  const version = new VersionAdapter();
+  const hubLauncher = new HubLauncher();
+
+  // Vault manager — always available for `hex secrets init` (createVault).
+  // When a vault is open, addSecret/removeSecret also work.
+  const vaultManager = secrets instanceof LocalVaultAdapter
+    ? secrets
+    : {
+        createVault: (path: string, pw: string) => LocalVaultAdapter.createVault(path, pw),
+        addSecret() { throw new Error('No vault open — run `hex secrets init` first'); },
+        removeSecret() { throw new Error('No vault open — run `hex secrets init` first'); },
+      };
+
   return {
     rootPath: projectPath,
     autoConfirm: false,
@@ -330,6 +381,11 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     ffi,
     serviceMesh,
     schema,
+    version,
+    hubLauncher,
+    vaultManager,
+    adrQuery,
+    coordination: null, // wired dynamically via CoordinationAdapter when hub is available
     hubCommandSender: null, // wired dynamically when hub is available
     anthropicExecutor,
     claudeCodeExecutor,

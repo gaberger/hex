@@ -66,8 +66,18 @@ export class FileSystemAdapter implements IFileSystemPort {
     if (typeof globalThis.Bun !== 'undefined') {
       const g = new Bun.Glob(pattern);
       const matches: string[] = [];
-      for await (const entry of g.scan({ cwd: this.root, absolute: false })) {
-        matches.push(entry);
+      try {
+        for await (const entry of g.scan({ cwd: this.root, absolute: false })) {
+          matches.push(entry);
+        }
+      } catch (err: unknown) {
+        // EPERM/EACCES on protected OS directories (e.g. ~/Library/Caches) —
+        // return whatever we collected so far rather than crashing.
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'EPERM' || code === 'EACCES') {
+          return matches.sort();
+        }
+        throw err;
       }
       return matches.sort();
     }

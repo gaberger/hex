@@ -18,6 +18,7 @@ import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 
 import type { SecretMetadata, SecretResult } from '../../core/ports/secrets.js';
 import type { ISecretsPort } from '../../core/ports/secrets.js';
+import type { IVaultManagementPort } from '../../core/ports/vault.js';
 
 /* ------------------------------------------------------------------ */
 /*  Internal types                                                     */
@@ -59,7 +60,7 @@ const ALGORITHM = 'aes-256-gcm' as const;
 /*  Adapter                                                            */
 /* ------------------------------------------------------------------ */
 
-export class LocalVaultAdapter implements ISecretsPort {
+export class LocalVaultAdapter implements ISecretsPort, IVaultManagementPort {
   private readonly vaultPath: string;
   private readonly password: string;
 
@@ -88,6 +89,11 @@ export class LocalVaultAdapter implements ISecretsPort {
     };
 
     writeFileSync(path, JSON.stringify(envelope, null, 2), 'utf-8');
+  }
+
+  /** IVaultManagementPort — delegates to static for port compatibility */
+  createVault(path: string, password: string): void {
+    LocalVaultAdapter.createVault(path, password);
   }
 
   /* ----- ISecretsPort --------------------------------------------- */

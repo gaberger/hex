@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { IHubLauncherPort } from '../../core/ports/hub-launcher.js';
 
 // ─── Constants ───────────────────────────────────────────
 
@@ -25,7 +26,7 @@ const HUB_BINARY_PATHS = [
 
 // ─── HubLauncher ─────────────────────────────────────────
 
-export class HubLauncher {
+export class HubLauncher implements IHubLauncherPort {
   /** Find the hex-hub binary on disk */
   findBinary(): string | null {
     for (const p of HUB_BINARY_PATHS) {
