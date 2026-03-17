@@ -40,6 +40,9 @@ Traditional AI coding tools improve the *conversation* with AI. hex improves the
 # Scaffold a new hexagonal project
 npx @anthropic-hex/hex scaffold my-app --lang typescript
 
+# Initialize hex in an existing project (works on 100K+ LOC codebases)
+npx @anthropic-hex/hex init --lang ts
+
 # Analyze architecture health
 npx @anthropic-hex/hex analyze .
 
@@ -90,6 +93,7 @@ export interface IFileSystemPort {
   write(filePath: string, content: string): Promise<void>;
   exists(filePath: string): Promise<boolean>;
   glob(pattern: string): Promise<string[]>;
+  streamFiles(pattern: string, options?: StreamOptions): AsyncGenerator<string>;
 }
 
 // Adapter: the implementation (how we do it)
@@ -272,7 +276,7 @@ Agent logs are redirected to `.hex/logs/agent-<name>.log` to keep the console cl
 
 <br/>
 
-hex coordinates multiple AI agents working in parallel via [**ruflo**](https://github.com/ruvnet/claude-flow) (`@claude-flow/cli`).
+hex coordinates multiple AI agents working in parallel via [**ruflo**](https://github.com/ruvnet/claude-flow) (`@claude-flow/cli`), with **lock-based coordination** to prevent duplicate work and file conflicts across instances (ADR-022).
 
 <table>
 <tr>
@@ -379,7 +383,8 @@ open http://localhost:5555
 **Persistence & coordination:**
 - Swarm state (agents, tasks, events) is persisted in **SQLite** (`hex_hub.db`) — survives daemon restarts (ADR-015)
 - Hub binary embeds a **compile-time build hash** for version verification against the TypeScript CLI (ADR-016)
-- Multi-instance coordination uses `ICoordinationPort` with filesystem-based locking and heartbeats to prevent port conflicts (ADR-011)
+- Multi-instance coordination uses `ICoordinationPort` with worktree locks, task claiming, and activity broadcasting to prevent duplicate work and file conflicts (ADR-011, ADR-022)
+- `SwarmOrchestrator` acquires locks before worktree creation; `WorkplanExecutor` claims tasks before agent spawn — conflicts throw typed `WorktreeConflictError` / `TaskConflictError`
 
 See [hex-hub/README.md](hex-hub/README.md) for full API reference.
 
@@ -625,7 +630,7 @@ npx @anthropic-hex/hex --help
 | `hex dashboard` | Legacy Node.js dashboard (fallback if hex-hub binary not installed) |
 | `hex mcp` | Start MCP stdio server for Claude Code / IDE integration |
 | `hex setup` | Install tree-sitter grammars + skills + agents + hex-hub binary |
-| `hex init` | Initialize project with startup hooks |
+| `hex init [--fast\|--minimal\|--include\|--large-project]` | Initialize project (supports large codebases via streaming scanner) |
 | `hex adr list` | List all ADRs with status |
 | `hex adr status` | Show ADR lifecycle summary |
 | `hex adr search <query>` | Search ADRs by keyword |
@@ -900,6 +905,10 @@ cargo build --release -p hex-hub  # Build dashboard binary manually
 | **`execFile` not `exec`** | RufloAdapter prevents shell injection from untrusted inputs |
 | **London-school testing** | Mock ports, test logic; hexagonal architecture makes this natural |
 | **No `mock.module()`** | Tests use dependency injection (Deps pattern), never `mock.module()` — prevents mock/prod divergence (ADR-014) |
+| **Streaming filesystem scanner** | `streamFiles()` uses an async generator with BFS queue and inode tracking — bounded memory regardless of project size (ADR-021) |
+| **`.hexignore` defaults** | Smart exclusions (target/, node_modules/, build/) prevent OOM on large projects; falls back to `.gitignore` |
+| **Lock-before-worktree** | `SwarmOrchestrator` acquires coordination lock before creating worktree; prevents parallel agents from stomping each other (ADR-022) |
+| **Claim-before-spawn** | `WorkplanExecutor` claims tasks via hub before spawning agents; prevents duplicate work across instances |
 | **`hex_build` single entry point** | Users describe what to build; hex handles plan → orchestrate → analyze → validate internally |
 | **Pluggable secrets chain** | `ISecretsPort` adapters stack: Infisical → LocalVault → env-var; composition root selects |
 | **Dashboard auto-start** | Dashboard HTTP server launches on project load; port conflicts and stale locks self-heal |
