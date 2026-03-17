@@ -2,9 +2,9 @@
 # feature-workflow.sh — Worktree lifecycle management for hex feature development
 #
 # Usage:
-#   ./scripts/feature-workflow.sh setup <feature-name>     Create worktrees from workplan
+#   ./scripts/feature-workflow.sh setup <feature-name> [--skip-specs]  Create worktrees from workplan
 #   ./scripts/feature-workflow.sh status <feature-name>     Show worktree status
-#   ./scripts/feature-workflow.sh merge <feature-name>      Merge worktrees in dependency order
+#   ./scripts/feature-workflow.sh merge <feature-name> [--force]  Merge worktrees in dependency order
 #   ./scripts/feature-workflow.sh cleanup <feature-name>    Remove worktrees and branches
 #   ./scripts/feature-workflow.sh list                      List all feature worktrees
 #   ./scripts/feature-workflow.sh stale                     Find worktrees with no recent commits
@@ -31,6 +31,35 @@ log_err()   { echo -e "${RED}[error]${NC} $*"; }
 #--- setup: Create worktrees from a workplan ---
 cmd_setup() {
   local feature_name="$1"
+  local skip_specs=false
+
+  # Parse optional flags
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --skip-specs) skip_specs=true ;;
+      *) log_warn "Unknown flag: $1" ;;
+    esac
+    shift
+  done
+
+  # Enforce specs-first pipeline: block if no behavioral spec exists
+  local spec_file="$PROJECT_ROOT/docs/specs/${feature_name}.json"
+  if [ ! -f "$spec_file" ]; then
+    if [ "$skip_specs" = true ]; then
+      log_warn "Skipping spec check (--skip-specs). Specs-first pipeline bypassed."
+    else
+      log_err "Behavioral spec not found: $spec_file"
+      log_info "The specs-first pipeline requires behavioral specs before worktree setup."
+      log_info "Create specs by running the behavioral-spec-writer agent, or use:"
+      log_info "  $0 setup $feature_name --skip-specs"
+      log_info "to bypass this check (for hotfixes only)."
+      exit 1
+    fi
+  else
+    log_ok "Behavioral spec found: $spec_file"
+  fi
+
   local workplan="$PROJECT_ROOT/docs/workplans/feat-${feature_name}.json"
 
   if [ ! -f "$workplan" ]; then
@@ -152,6 +181,37 @@ cmd_status() {
 #--- merge: Merge worktrees in dependency order ---
 cmd_merge() {
   local feature_name="$1"
+  local force_merge=false
+
+  # Parse optional flags
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --force) force_merge=true ;;
+      *) log_warn "Unknown flag: $1" ;;
+    esac
+    shift
+  done
+
+  # Check for validation report
+  local validation_report="$PROJECT_ROOT/docs/validation/${feature_name}.json"
+  if [ ! -f "$validation_report" ]; then
+    log_warn "No validation report found at: $validation_report"
+    log_info "Run the validation-judge agent before merging to ensure specs are satisfied."
+    if [ "$force_merge" = true ]; then
+      log_warn "Proceeding without validation report (--force)."
+    else
+      echo -n "Continue without validation report? [y/N] "
+      read -r confirm
+      if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        log_info "Merge aborted. Run validation-judge first, or use: $0 merge $feature_name --force"
+        exit 1
+      fi
+    fi
+  else
+    log_ok "Validation report found: $validation_report"
+  fi
+
   local workplan="$PROJECT_ROOT/docs/workplans/feat-${feature_name}.json"
 
   log_info "Merging worktrees for feature: $feature_name"
@@ -357,9 +417,9 @@ cmd_stale() {
 
 #--- Main ---
 case "${1:-help}" in
-  setup)    cmd_setup "${2:?Feature name required}" ;;
+  setup)    cmd_setup "${2:?Feature name required}" "${@:3}" ;;
   status)   cmd_status "${2:?Feature name required}" ;;
-  merge)    cmd_merge "${2:?Feature name required}" ;;
+  merge)    cmd_merge "${2:?Feature name required}" "${@:3}" ;;
   cleanup)  cmd_cleanup "${2:?Feature name required}" ;;
   list)     cmd_list ;;
   stale)    cmd_stale "${2:-24}" ;;
@@ -367,9 +427,9 @@ case "${1:-help}" in
     echo "hex feature-workflow — Worktree lifecycle for hex feature development"
     echo ""
     echo "Usage:"
-    echo "  $0 setup <feature-name>     Create worktrees from workplan"
+    echo "  $0 setup <feature-name> [--skip-specs]  Create worktrees (blocks without specs)"
     echo "  $0 status <feature-name>    Show worktree and feature status"
-    echo "  $0 merge <feature-name>     Merge worktrees in dependency order"
+    echo "  $0 merge <feature-name> [--force]  Merge worktrees (warns without validation report)"
     echo "  $0 cleanup <feature-name>   Remove worktrees and branches"
     echo "  $0 list                     List all feature worktrees"
     echo "  $0 stale [hours]            Find worktrees with no recent commits (default: 24h)"
