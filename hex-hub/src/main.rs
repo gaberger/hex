@@ -120,9 +120,9 @@ async fn main() {
     }
 
     if is_daemon {
-        tracing::info!("hex-hub daemon started on http://{}", addr);
+        tracing::info!("hex-hub v{} daemon started on http://{}", env!("CARGO_PKG_VERSION"), addr);
     } else {
-        tracing::info!("hex-hub running on http://{}", addr);
+        tracing::info!("hex-hub v{} running on http://{}", env!("CARGO_PKG_VERSION"), addr);
     }
 
     axum::serve(listener, app)

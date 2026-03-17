@@ -106,7 +106,7 @@ a{color:var(--accent);text-decoration:none}
 .pause-btn:hover{background:var(--border);color:var(--text)}
 
 /* Dependency Graph */
-.graph-section{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;flex:1;min-height:0}
+.graph-section{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;min-height:0;height:100%}
 .graph-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;cursor:pointer;user-select:none;flex-shrink:0}
 .graph-header:hover{background:rgba(255,255,255,.02)}
 .graph-header h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);font-weight:600}
@@ -177,7 +177,7 @@ a{color:var(--accent);text-decoration:none}
 .graph-tooltip .tt-layer{color:var(--text2);font-size:.7rem;margin-top:2px}
 
 /* Bottom Row: Chat + Graph side by side */
-.bottom-row{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap);padding:0 24px var(--gap);min-height:420px}
+.bottom-row{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:minmax(420px,auto);gap:var(--gap);padding:0 24px var(--gap);align-items:stretch}
 
 /* Command Chat Panel */
 .chat-section{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;flex-direction:column;max-height:500px;min-height:0}
@@ -2459,8 +2459,9 @@ a{color:var(--accent);text-decoration:none}
     // --- Graph zoom/pan controls ---
     var graphCanvas = $('#graphCanvas');
 
-    // Mouse wheel zoom (centered on cursor)
+    // Mouse wheel zoom (centered on cursor) — only when Ctrl/Cmd held, otherwise allow page scroll
     graphCanvas.addEventListener('wheel', function(e) {
+      if (!e.ctrlKey && !e.metaKey) return; // let page scroll normally
       e.preventDefault();
       var rect = graphCanvas.getBoundingClientRect();
       var mx = e.clientX - rect.left;
