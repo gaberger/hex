@@ -4,7 +4,14 @@
   "description": "Hexagonal Architecture framework for LLM-driven development with token-efficient tree-sitter summaries",
   "type": "module",
   "main": "dist/index.js",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "bin": {
     "hex": "dist/cli.js"
   },
@@ -27,7 +34,7 @@
     "clean": "rm -rf dist",
     "dev": "bun run --watch src/cli.ts",
     "start": "bun src/cli.ts",
-    "prepublishOnly": "bun run clean && bun run build && bun test"
+    "prepublishOnly": "bun run clean && bun run build && bun run build:types && bun test"
   },
   "keywords": [
     "hexagonal-architecture",
@@ -39,6 +46,10 @@
     "swarm"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthropic-hex/hex.git"
+  },
   "engines": {
     "node": ">=20.0.0"
   },

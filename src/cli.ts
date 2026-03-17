@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 /**
  * CLI entry point -- referenced by package.json "bin".
  */
