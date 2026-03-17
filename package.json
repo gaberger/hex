@@ -13,7 +13,7 @@
     "build": "bun build src/cli.ts --outfile dist/cli.js --target node --format esm && bun build src/index.ts --outfile dist/index.js --target node --format esm && cp node_modules/web-tree-sitter/tree-sitter.wasm dist/tree-sitter.wasm 2>/dev/null || true",
     "build:all": "bun run build:native; bun run build",
     "build:types": "tsc --emitDeclarationOnly --outDir dist",
-    "test": "bun test $(find tests/unit tests/property tests/smoke -name '*.test.ts' ! -name 'dashboard-adapter.test.ts' ! -name 'hub-launcher.test.ts' ! -name 'local-vault-adapter.test.ts' ! -name 'cli-secrets-vault.test.ts' 2>/dev/null) && bun test tests/unit/local-vault-adapter.test.ts && bun test tests/unit/cli-secrets-vault.test.ts && bun test tests/unit/dashboard-adapter.test.ts && bun test tests/unit/hub-launcher.test.ts",
+    "test": "bun test $(find tests/unit tests/property tests/smoke -name '*.test.ts' ! -name 'dashboard-adapter.test.ts' ! -name 'hub-launcher.test.ts' ! -name 'local-vault-adapter.test.ts' ! -name 'cli-secrets-vault.test.ts' 2>/dev/null) && bun test tests/unit/local-vault-adapter.test.ts && bun test tests/unit/cli-secrets-vault.test.ts && bun test tests/unit/dashboard-adapter.test.ts && bun test tests/unit/hub-launcher.test.ts && bun test tests/integration/",
     "test:unit": "bun test tests/unit/",
     "test:property": "bun test tests/property/",
     "test:smoke": "bun test tests/smoke/",
