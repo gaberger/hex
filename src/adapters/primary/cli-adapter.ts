@@ -143,9 +143,16 @@ const TEMPLATES = {
         test: 'bun test',
         build: 'bun build src/index.ts --outdir dist --target node',
         check: 'tsc --noEmit',
+        postinstall: 'cd node_modules/agentdb/dist && ln -sf src/controllers controllers 2>/dev/null || true',
+      },
+      dependencies: {
+        ruflo: 'latest',
+        agentdb: 'latest',
       },
       devDependencies: {
         typescript: '^5.0.0',
+        'web-tree-sitter': '^0.24.0',
+        'tree-sitter-wasms': '^0.1.0',
       },
     },
     null,
@@ -524,12 +531,20 @@ export class CLIAdapter {
     try {
       const { DashboardAdapter } = await import('./dashboard-adapter.js');
       const adapter = new DashboardAdapter(this.ctx);
-      const { url } = await adapter.start();
-      this.writeLn(`Dashboard: ${url}`);
-      this.writeLn('Project registered — pushing architecture data...');
+      this.writeLn('Registering project and pushing architecture data...');
 
-      // Keep pushing in the background (adapter has a 10s interval)
-      // Unref the timer so it doesn't keep the process alive
+      const { url } = await adapter.startAndPushOnce();
+      this.writeLn(`Dashboard: ${url}`);
+      this.writeLn('Data pushed. Listening for commands... (Ctrl+C to stop)');
+
+      // Keep process alive to handle WebSocket commands from the hub.
+      // Use setInterval (not bare Promise) — Bun busy-waits on unresolved promises.
+      await new Promise<void>((resolve) => {
+        const keepAlive = setInterval(() => {}, 60_000);
+        const onSignal = () => { clearInterval(keepAlive); adapter.stop(); resolve(); };
+        process.on('SIGINT', onSignal);
+        process.on('SIGTERM', onSignal);
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.writeLn(`Dashboard data push failed: ${msg}`);
@@ -1885,14 +1900,50 @@ export class CLIAdapter {
     this.writeLn('');
 
     const languages = ['typescript', 'go', 'rust'];
+    const { execFile: execFileCb } = await import('child_process');
+    const { promisify } = await import('util');
+    const run = promisify(execFileCb);
 
-    // Install tree-sitter-wasms if not present
+    // Install core dependencies (ruflo, agentdb, tree-sitter)
+    const coreDeps = [
+      { pkg: 'ruflo', check: 'node_modules/ruflo' },
+      { pkg: 'agentdb', check: 'node_modules/agentdb' },
+      { pkg: 'tree-sitter-wasms', check: 'node_modules/tree-sitter-wasms/out' },
+      { pkg: 'web-tree-sitter', check: 'node_modules/web-tree-sitter' },
+    ];
+
+    for (const dep of coreDeps) {
+      if (!(await this.ctx.fs.exists(dep.check))) {
+        this.writeLn(`Installing ${dep.pkg}...`);
+        try {
+          await run('bun', ['add', dep.pkg], { cwd: this.ctx.rootPath, timeout: 60000 });
+          this.writeLn(`  ${dep.pkg} installed.`);
+        } catch {
+          this.writeLn(`  Failed. Run manually: bun add ${dep.pkg}`);
+        }
+      } else {
+        this.writeLn(`  ${dep.pkg}: already installed`);
+      }
+    }
+
+    // Fix agentdb controller path (dist/controllers -> dist/src/controllers)
+    const agentdbControllers = 'node_modules/agentdb/dist/controllers';
+    if (!(await this.ctx.fs.exists(agentdbControllers))) {
+      const { symlinkSync } = await import('node:fs');
+      const { resolve } = await import('node:path');
+      try {
+        symlinkSync(
+          resolve(this.ctx.rootPath, 'node_modules/agentdb/dist/src/controllers'),
+          resolve(this.ctx.rootPath, agentdbControllers),
+        );
+        this.writeLn('  agentdb controllers symlinked.');
+      } catch { /* already exists or no agentdb */ }
+    }
+
+    // Install tree-sitter-wasms if not present (legacy path for older setups)
     const hasWasms = await this.ctx.fs.exists('node_modules/tree-sitter-wasms/out');
     if (!hasWasms) {
       this.writeLn('Installing tree-sitter WASM grammars...');
-      const { execFile: execFileCb } = await import('child_process');
-      const { promisify } = await import('util');
-      const run = promisify(execFileCb);
       try {
         await run('bun', ['add', 'tree-sitter-wasms'], { cwd: this.ctx.rootPath, timeout: 30000 });
         this.writeLn('  tree-sitter-wasms installed.');

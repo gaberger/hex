@@ -18,11 +18,11 @@ import type {
 } from '../../core/ports/notification.js';
 
 /** Injectable HTTP client for testability. */
-export interface HttpClient {
+interface HttpClient {
   post(url: string, body: string, headers: Record<string, string>): Promise<{ status: number }>;
 }
 
-export interface WebhookConfig {
+interface WebhookConfig {
   url: string;
   minLevel: NotificationLevel;
   slackCompatible: boolean;
@@ -63,7 +63,7 @@ const DEFAULT_CONFIG: WebhookConfig = {
  *
  * Inject an {@link HttpClient} so tests never hit the network.
  */
-export class WebhookNotifier implements INotificationEmitPort {
+class WebhookNotifier implements INotificationEmitPort {
   private config: WebhookConfig;
   private queue: QueuedPayload[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | null = null;

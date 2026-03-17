@@ -63,6 +63,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   private watchers: FSWatcher[] = [];
   private fileChangeDebounce = new Map<string, ReturnType<typeof setTimeout>>();
   private stopped = false;
+  private _pushing = false;
   private readonly authToken: string;
 
   // ── WebSocket command listener state ──────────────
@@ -70,6 +71,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private wsReconnectDelay = 1000; // starts at 1s, doubles up to 30s
   private readonly wsMaxReconnectDelay = 30_000;
+  private wsPingTimer: ReturnType<typeof setInterval> | null = null;
   private commandHandlers = new Map<HubCommandType, HubCommandHandler>();
   private _isListening = false;
 
@@ -123,7 +125,48 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
     };
   }
 
-  /** Stop pushing, close command listener, and unregister. */
+  /**
+   * Register + push once + listen for commands. No periodic push or file watcher.
+   * Used by `hex dashboard` CLI which keeps the process alive for commands only.
+   */
+  async startAndPushOnce(): Promise<{ url: string }> {
+    const hubUrl = `http://localhost:${this.hubPort}`;
+
+    const name = this.ctx.rootPath.split('/').pop() ?? 'unknown';
+    const regResult = await this.post('/api/projects/register', {
+      name,
+      rootPath: this.ctx.rootPath,
+      astIsStub: this.ctx.astIsStub,
+    });
+
+    if (!regResult || !regResult.id) {
+      throw new Error('Hub registration failed');
+    }
+
+    this.projectId = regResult.id as string;
+
+    // Single synchronous push — no timer, no watcher
+    await this.pushAll();
+
+    // Open WebSocket for bidirectional command channel
+    void this.startListening().catch((err) => this.log('command listener failed to start:', err));
+
+    return { url: hubUrl };
+  }
+
+  /** Stop only the periodic push timer (keeps WS command listener alive). */
+  stopPeriodicPush(): void {
+    if (this.pushTimer) {
+      clearInterval(this.pushTimer);
+      this.pushTimer = null;
+    }
+    for (const w of this.watchers) w.close();
+    this.watchers = [];
+    for (const t of this.fileChangeDebounce.values()) clearTimeout(t);
+    this.fileChangeDebounce.clear();
+  }
+
+  /** Stop everything: push timer, command listener, and unregister. */
   stop(): void {
     this.stopped = true;
     if (this.pushTimer) {
@@ -152,6 +195,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
   async stopListening(): Promise<void> {
     this._isListening = false;
+    this.stopWsPing();
     if (this.wsReconnectTimer) {
       clearTimeout(this.wsReconnectTimer);
       this.wsReconnectTimer = null;
@@ -199,12 +243,23 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
         type: 'subscribe',
         topic: `project:${this.projectId}:command`,
       });
+
+      // Start WS keepalive ping every 25s to detect dead connections early
+      this.stopWsPing();
+      this.wsPingTimer = setInterval(() => {
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.ping();
+        }
+      }, 25_000);
+      this.wsPingTimer.unref();
     });
 
     this.ws.on('message', (raw: WebSocket.Data) => {
       try {
         const envelope = JSON.parse(raw.toString());
+        this.log(`ws message: event=${envelope.event} topic=${envelope.topic}`);
         if (envelope.event === 'command' && envelope.data) {
+          this.log(`dispatching command: ${envelope.data.type} (id=${envelope.data.commandId})`);
           void this.handleCommand(envelope.data as HubCommand);
         }
       } catch {
@@ -214,6 +269,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
     this.ws.on('close', () => {
       this._isListening = false;
+      this.stopWsPing();
       this.scheduleReconnect(wsUrl);
     });
 
@@ -221,6 +277,13 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       // WS errors are non-critical — HTTP push still works.
       // 'close' event fires after 'error', triggering reconnect silently.
     });
+  }
+
+  private stopWsPing(): void {
+    if (this.wsPingTimer) {
+      clearInterval(this.wsPingTimer);
+      this.wsPingTimer = null;
+    }
   }
 
   private scheduleReconnect(wsUrl: string): void {
@@ -231,7 +294,9 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       this.wsReconnectTimer = null;
       this.connectWs(wsUrl);
     }, this.wsReconnectDelay);
-    this.wsReconnectTimer.unref();
+    // NOTE: Do NOT .unref() — Bun's event loop skips unref'd timers during idle
+    // periods, which prevents reconnect from ever firing. The process lifetime
+    // is managed by the CLI keepAlive interval or the composition root, not here.
 
     // Exponential backoff: 1s → 2s → 4s → 8s → 16s → 30s (cap)
     this.wsReconnectDelay = Math.min(this.wsReconnectDelay * 2, this.wsMaxReconnectDelay);
@@ -250,12 +315,9 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
     let result: HubCommandResult;
 
     if (!handler) {
-      result = {
-        commandId: command.commandId,
-        status: 'failed',
-        error: `Unknown command type: ${command.type}`,
-        completedAt: new Date().toISOString(),
-      };
+      // Silently ignore unknown commands — another adapter instance may handle them.
+      // This prevents stale processes from racing with newer ones that have new handlers.
+      return;
     } else {
       try {
         result = await handler(command);
@@ -279,6 +341,8 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   // ── Default command handlers ──────────────────────
 
   private registerDefaultHandlers(): void {
+    this.log(`registering ${['ping','spawn-agent','terminate-agent','create-task','cancel-task','run-analyze','run-build','run-validate','run-generate','run-claude','run-summarize'].length} command handlers (including run-claude)`);
+
     this.onCommand('ping', async (cmd) => ({
       commandId: cmd.commandId,
       status: 'completed',
@@ -420,6 +484,48 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       };
     });
 
+    this.onCommand('run-claude', async (cmd) => {
+      const p = cmd.payload as { prompt?: string; allowedTools?: string };
+      if (!p.prompt) {
+        return {
+          commandId: cmd.commandId,
+          status: 'failed',
+          error: 'Missing required payload: prompt (e.g. run-claude "fix the build")',
+          completedAt: new Date().toISOString(),
+        };
+      }
+      try {
+        const { execFile } = await import('node:child_process');
+        const { promisify } = await import('node:util');
+        const execFileP = promisify(execFile);
+        const args = ['-p', p.prompt, '--model', 'haiku'];
+        if (p.allowedTools) {
+          args.push('--allowedTools', p.allowedTools);
+        }
+        this.log(`run-claude: spawning claude ${args.slice(0, 3).join(' ')}...`);
+        const { stdout, stderr } = await execFileP('claude', args, {
+          cwd: this.ctx.rootPath,
+          timeout: 120_000,
+          maxBuffer: 1024 * 1024,
+          env: { ...process.env, NO_COLOR: '1' },
+        });
+        return {
+          commandId: cmd.commandId,
+          status: 'completed',
+          data: { output: stdout, stderr: stderr || undefined },
+          completedAt: new Date().toISOString(),
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          commandId: cmd.commandId,
+          status: 'failed',
+          error: `Claude CLI failed: ${msg}`,
+          completedAt: new Date().toISOString(),
+        };
+      }
+    });
+
     this.onCommand('run-summarize', async (cmd) => {
       const p = cmd.payload as { filePath?: string; level?: string };
       if (p.filePath) {
@@ -449,16 +555,26 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
   // ── Push all state ─────────────────────────────────
 
+  /** Public one-shot push for CLI use (awaitable, no timer). */
+  async pushAllOnce(): Promise<void> {
+    return this.pushAll();
+  }
+
   private async pushAll(): Promise<void> {
     if (!this.projectId) return;
-
-    // Push health, tokens, swarm, graph in parallel
-    await Promise.allSettled([
-      this.pushHealth(),
-      this.pushTokens(),
-      this.pushSwarm(),
-      this.pushGraph(),
-    ]);
+    if (this._pushing) return; // Concurrency guard — prevent overlapping scans
+    this._pushing = true;
+    try {
+      // Push health, tokens, swarm, graph in parallel
+      await Promise.allSettled([
+        this.pushHealth(),
+        this.pushTokens(),
+        this.pushSwarm(),
+        this.pushGraph(),
+      ]);
+    } finally {
+      this._pushing = false;
+    }
   }
 
   private async pushHealth(): Promise<void> {
@@ -485,22 +601,23 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
           && !f.includes('examples'),
       );
 
+      // Only compute L1 (summary, requires parse) and L3 (raw source, no parse).
+      // L0 is derived from filepath length; L2 ≈ L1 for dashboard display.
+      // This cuts tree-sitter parses from 2/file to 1/file and file reads from 4 to 2.
       const files = await Promise.all(
         sourceFiles.map(async (filePath) => {
-          const [l0, l1, l2, l3] = await Promise.all([
-            this.ctx.ast.extractSummary(filePath, 'L0'),
+          const [l1, l3] = await Promise.all([
             this.ctx.ast.extractSummary(filePath, 'L1'),
-            this.ctx.ast.extractSummary(filePath, 'L2'),
             this.ctx.ast.extractSummary(filePath, 'L3'),
           ]);
+          // Derive L0 (metadata only) and L2 (≈L1 for display) without extra parses
+          const l0Tokens = Math.ceil((filePath.length + 20) / 4);
           return {
             path: filePath,
-            l0Tokens: l0.tokenEstimate,
+            l0Tokens,
             l1Tokens: l1.tokenEstimate,
-            l2Tokens: l2.tokenEstimate,
+            l2Tokens: l1.tokenEstimate, // L2 ≈ L1 (avoids second parse)
             l3Tokens: l3.tokenEstimate,
-            // Compression ratio: fraction of tokens saved (0-1).
-            // L1 is the summary, L3 is the full source.
             ratio: l3.tokenEstimate > 0 ? +(1 - l1.tokenEstimate / l3.tokenEstimate).toFixed(3) : 0,
             lineCount: l1.lineCount,
           };
@@ -538,7 +655,12 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
         this.ctx.swarm.listTasks(),
         this.ctx.swarm.listAgents(),
       ]);
-      await this.pushState('swarm', { status, tasks, agents });
+      // Normalize: if daemon is "running" but has no agents/tasks, report as "idle"
+      const activeTasks = tasks.filter(t => t.status === 'in-progress' || t.status === 'pending');
+      const effectiveStatus = (agents.length === 0 && activeTasks.length === 0)
+        ? { ...status, status: 'idle' as const }
+        : status;
+      await this.pushState('swarm', { status: effectiveStatus, tasks, agents });
     } catch (err) {
       // Swarm may not be running — push empty state
       await this.pushState('swarm', {

@@ -11,7 +11,7 @@ import type {
   TokenBudget,
 } from '../../core/ports/index.js';
 
-export type LLMProvider = 'anthropic' | 'openai';
+type LLMProvider = 'anthropic' | 'openai';
 
 export interface LLMAdapterConfig {
   provider: LLMProvider;

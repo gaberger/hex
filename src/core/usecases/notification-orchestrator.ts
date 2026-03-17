@@ -27,7 +27,7 @@ import type {
 
 // ─── Configuration ──────────────────────────────────────
 
-export interface OrchestratorConfig {
+interface OrchestratorConfig {
   /** ms with no events before a stall warning fires */
   stallThresholdMs: number;
   /** Number of consecutive quality drops before escalating to a decision */
@@ -56,7 +56,7 @@ interface TrackedAgent {
 
 // ─── Orchestrator ───────────────────────────────────────
 
-export type NotificationListener = (notification: Notification) => void;
+type NotificationListener = (notification: Notification) => void;
 
 export class NotificationOrchestrator implements INotificationQueryPort {
   private readonly agents = new Map<string, TrackedAgent>();

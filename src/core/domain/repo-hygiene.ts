@@ -27,7 +27,7 @@ export interface GitStateSnapshot {
   embeddedGitDirs: string[];
 }
 
-export interface WorktreeInfo {
+interface WorktreeInfo {
   path: string;
   branch: string;
   commit: string;

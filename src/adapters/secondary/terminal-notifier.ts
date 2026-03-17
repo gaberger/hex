@@ -44,7 +44,7 @@ function progressBar(pct: number, width = 10): string {
 }
 
 /** Compact status string used in the persistent bottom bar. */
-export function formatStatusLine(report: ProgressReport): StatusLine {
+function formatStatusLine(report: ProgressReport): StatusLine {
   const running = report.agents.filter((a) => a.status === 'running');
   const done = report.agents.filter((a) => a.status === 'done').length;
   const total = report.agents.length;
@@ -68,7 +68,7 @@ export function formatStatusLine(report: ProgressReport): StatusLine {
 }
 
 /** Writable stream abstraction for testability. */
-export interface WritableOutput {
+interface WritableOutput {
   write(data: string): void;
 }
 

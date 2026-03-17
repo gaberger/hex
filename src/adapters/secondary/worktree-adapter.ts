@@ -13,7 +13,7 @@ import type { IWorktreePort, MergeResult, WorktreePath } from '../../core/ports/
 
 const execFile = promisify(execFileCb);
 
-export class WorktreeError extends Error {
+class WorktreeError extends Error {
   override readonly name = 'WorktreeError';
   constructor(message: string, public readonly command: string) {
     super(message);

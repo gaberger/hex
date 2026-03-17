@@ -112,11 +112,11 @@ function padRight(str: string, len: number): string {
 
 // ─── Output Mode ────────────────────────────────────────
 
-export type OutputMode = 'ansi' | 'plain' | 'json';
+type OutputMode = 'ansi' | 'plain' | 'json';
 
 // ─── Compact Format ─────────────────────────────────────
 
-export function formatCompact(
+function formatCompact(
   report: ProgressReport,
   mode: OutputMode = 'ansi',
 ): string {
@@ -172,7 +172,7 @@ export function formatCompact(
 
 // ─── Expanded Format ────────────────────────────────────
 
-export function formatExpanded(
+function formatExpanded(
   report: ProgressReport,
   mode: OutputMode = 'ansi',
   elapsed?: number,
@@ -259,7 +259,7 @@ export function formatExpanded(
 
 // ─── StatusLine Builder ─────────────────────────────────
 
-export function buildStatusLine(
+function buildStatusLine(
   report: ProgressReport,
   elapsed?: number,
   tokenUsage?: { used: number; budget: number },
@@ -273,7 +273,7 @@ export function buildStatusLine(
 
 // ─── JSON Payload ───────────────────────────────────────
 
-export interface StatusJsonPayload {
+interface StatusJsonPayload {
   swarmId: string;
   phase: string;
   overallPercent: number;

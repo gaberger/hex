@@ -96,6 +96,10 @@ const dbShow = agentdbUp || cfAlive;
 const score = safe(() =>
   fs.readFileSync(path.join(hexDir, 'last-score.txt'), 'utf8').trim(), '');
 
+const pkgJson = safe(() =>
+  JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')), null);
+const hexVersion = (pkgJson && pkgJson.version) || '';
+
 const mcpJson = safe(() =>
   JSON.parse(fs.readFileSync(path.join(cwd, '.mcp.json'), 'utf8')), null);
 const hexMcp = !!(mcpJson && mcpJson.mcpServers && mcpJson.mcpServers.hex);
@@ -104,8 +108,9 @@ const hexMcp = !!(mcpJson && mcpJson.mcpServers && mcpJson.mcpServers.hex);
 const sep = `${BAR}${P.sep} │ `;
 const parts = [];
 
-// Brand
-parts.push(`${P.brand}⬡ hex`);
+// Brand + version
+const vTag = hexVersion ? `${P.dim}v${hexVersion}` : '';
+parts.push(`${P.brand}⬡ hex ${vTag}`);
 
 // Project
 parts.push(`${P.project}${projectName}`);

@@ -4,7 +4,7 @@
  * Uses Node/Bun fs APIs for file operations with path resolution
  * relative to a configurable root directory.
  */
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { IFileSystemPort } from '../../core/ports/index.js';
@@ -43,6 +43,16 @@ export class FileSystemAdapter implements IFileSystemPort {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  async mtime(filePath: string): Promise<number> {
+    const abs = this.safePath(filePath);
+    try {
+      const s = await stat(abs);
+      return s.mtimeMs;
+    } catch {
+      return 0;
     }
   }
 

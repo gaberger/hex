@@ -74,6 +74,17 @@ hex analyze .        # Architecture health check
 hex setup            # Install grammars + skills + agents
 ```
 
+### hex-hub (Dashboard Hub)
+
+The dashboard hub is a **separate Rust binary** in `hex-hub/`. It uses `rust-embed` to bake `hex-hub/assets/*` (HTML, CSS, JS) into the binary at compile time. This means:
+
+- **Editing `hex-hub/assets/index.html`** (or any asset) requires rebuilding the Rust binary:
+  ```bash
+  cd hex-hub && cargo build --release
+  ```
+- Then restart the hub daemon and hard-refresh the browser (Cmd+Shift+R)
+- `bun run build` does NOT update the hub — it only bundles the TypeScript CLI/library
+
 ## Development Pipeline (Specs-First)
 
 When building new features or example applications, follow this order:
