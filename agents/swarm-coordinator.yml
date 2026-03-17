@@ -1,5 +1,17 @@
-# swarm-coordinator — Orchestrates the full hex development workflow
+# swarm-coordinator — Orchestrates ad-hoc multi-agent workflows
 # Manages the plan -> execute -> integrate -> package lifecycle
+#
+# When to Use:
+#   Use swarm-coordinator for AD-HOC multi-agent tasks that do NOT follow the
+#   structured 7-phase feature lifecycle. Examples: bulk refactoring across many
+#   adapters, exploratory code analysis, one-off parallel tasks, or any work where
+#   behavioral specs and the validation-judge gate are not needed. It provides
+#   generic ruflo swarm tracking (init, spawn, monitor, integrate) without the
+#   per-feature memory structure or mandatory spec/validation phases.
+#
+#   Contrast with feature-developer: feature-developer is for discrete, planned
+#   features with acceptance criteria that follow the full lifecycle (specs → plan →
+#   worktrees → code → validate → integrate → finalize).
 
 name: swarm-coordinator
 type: hierarchical-coordinator

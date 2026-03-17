@@ -144,8 +144,9 @@ Phase 7: FINALIZE    cleanup worktrees, commit, report
 | 0 | Domain + Ports | Nothing | hex-coder |
 | 1 | Secondary adapters | Tier 0 | hex-coder |
 | 2 | Primary adapters | Tier 0 | hex-coder |
-| 3 | Use cases + Composition root | Tiers 1-2 | hex-coder |
-| 4 | Integration tests | Everything | integrator |
+| 3 | Use cases | Tiers 0-2 | hex-coder |
+| 4 | Composition root | Tiers 0-3 | hex-coder |
+| 5 | Integration tests | Everything | integrator |
 
 ### Development Modes
 
