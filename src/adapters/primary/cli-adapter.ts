@@ -1470,8 +1470,8 @@ export class CLIAdapter {
         this.writeLn('Commands:');
         this.writeLn('  status              Show secrets backend info');
         this.writeLn('  list [--json]       List secret keys (no values)');
-        this.writeLn('  init                Create a local encrypted vault');
-        this.writeLn('  set <key> <value>   Add or update a secret');
+        this.writeLn('  init                Create a local encrypted vault (prompts for password)');
+        this.writeLn('  set <key> [value]   Add or update a secret (prompts if value omitted)');
         this.writeLn('  get <key>           Retrieve a secret value');
         this.writeLn('  remove <key>        Remove a secret from the vault');
         return 1;
@@ -1492,8 +1492,8 @@ export class CLIAdapter {
         this.writeLn('');
         this.writeLn('No vault configured. To manage secrets locally:');
         this.writeLn('');
-        this.writeLn('  hex secrets init --password <pw>    Create encrypted vault');
-        this.writeLn('  hex secrets set <key> <value>       Store a secret');
+        this.writeLn('  hex secrets init                    Create encrypted vault');
+        this.writeLn('  hex secrets set <key>               Store a secret (prompts for value)');
         this.writeLn('  hex secrets get <key>               Retrieve a secret');
         this.writeLn('  hex secrets list                    List all keys');
         this.writeLn('');
@@ -1523,7 +1523,7 @@ export class CLIAdapter {
         } else {
           this.writeLn('No vault configured. Create one with:');
           this.writeLn('');
-          this.writeLn('  hex secrets init --password <pw>');
+          this.writeLn('  hex secrets init');
         }
         return 0;
       }
@@ -1566,12 +1566,21 @@ export class CLIAdapter {
       return 1;
     }
 
-    // Get password from flag or env
-    const password = args.flags.get('password') ?? process.env['HEX_VAULT_PASSWORD'];
+    // Password priority: --password flag > env var > interactive prompt
+    let password = args.flags.get('password')
+      ?? process.env['HEX_VAULT_PASSWORD'];
     if (!password) {
-      this.writeLn('Error: vault password required.');
-      this.writeLn('Provide via --password <pw> or HEX_VAULT_PASSWORD env var.');
-      return 1;
+      password = await this.readSecret('Vault password: ');
+      if (!password) {
+        this.writeLn('Error: vault password required.');
+        return 1;
+      }
+      // Confirm password on interactive input
+      const confirm = await this.readSecret('Confirm password: ');
+      if (password !== confirm) {
+        this.writeLn('Error: passwords do not match.');
+        return 1;
+      }
     }
 
     const { LocalVaultAdapter } = await import('../secondary/local-vault-adapter.js');
@@ -1597,11 +1606,20 @@ export class CLIAdapter {
 
   private async secretsSet(args: ParsedArgs): Promise<number> {
     const key = args.positional[1];
-    const value = args.positional[2];
-
-    if (!key || !value) {
-      this.writeLn('Usage: hex secrets set <key> <value>');
+    if (!key) {
+      this.writeLn('Usage: hex secrets set <key> [value]');
+      this.writeLn('If value is omitted, it will be read from stdin (hidden input).');
       return 1;
+    }
+
+    // Read value from arg or stdin (avoids secrets in shell history)
+    let value = args.positional[2];
+    if (!value) {
+      value = await this.readSecret(`Value for ${key}: `);
+      if (!value) {
+        this.writeLn('Error: secret value required.');
+        return 1;
+      }
     }
 
     const adapter = await this.getLocalVaultAdapter();
@@ -1670,14 +1688,94 @@ export class CLIAdapter {
     }
 
     const vaultPath = resolve(this.ctx.rootPath, config.localVault?.path ?? '.hex/vault.enc');
-    const password = process.env['HEX_VAULT_PASSWORD'];
+    let password = process.env['HEX_VAULT_PASSWORD'];
     if (!password) {
-      this.writeLn('Error: HEX_VAULT_PASSWORD environment variable required.');
-      return null;
+      password = await this.readSecret('Vault password: ');
+      if (!password) {
+        this.writeLn('Error: vault password required (or set HEX_VAULT_PASSWORD).');
+        return null;
+      }
     }
 
     const { LocalVaultAdapter } = await import('../secondary/local-vault-adapter.js');
     return new LocalVaultAdapter(vaultPath, password);
+  }
+
+  /**
+   * Read a secret from stdin with echo disabled.
+   * Returns empty string if stdin is not a TTY (e.g., piped input).
+   */
+  private async readSecret(prompt: string): Promise<string> {
+    // If not a TTY (piped, CI, etc.), read a line from stdin without prompting
+    if (!process.stdin.isTTY) {
+      return this.readLineFromStdin();
+    }
+
+    const { createInterface } = await import('node:readline');
+    return new Promise<string>((resolve) => {
+      // Write prompt to stderr so it doesn't mix with stdout output
+      process.stderr.write(prompt);
+
+      // Disable echo for password input
+      if (process.stdin.setRawMode) {
+        process.stdin.setRawMode(true);
+      }
+      process.stdin.resume();
+
+      let input = '';
+      const onData = (chunk: Buffer) => {
+        const char = chunk.toString();
+        // Enter
+        if (char === '\n' || char === '\r' || char === '\u0004') {
+          process.stderr.write('\n');
+          if (process.stdin.setRawMode) {
+            process.stdin.setRawMode(false);
+          }
+          process.stdin.pause();
+          process.stdin.removeListener('data', onData);
+          resolve(input);
+        // Backspace
+        } else if (char === '\u007F' || char === '\b') {
+          if (input.length > 0) {
+            input = input.slice(0, -1);
+            process.stderr.write('\b \b');
+          }
+        // Ctrl+C
+        } else if (char === '\u0003') {
+          process.stderr.write('\n');
+          if (process.stdin.setRawMode) {
+            process.stdin.setRawMode(false);
+          }
+          process.stdin.pause();
+          process.stdin.removeListener('data', onData);
+          resolve('');
+        } else {
+          input += char;
+          process.stderr.write('*');
+        }
+      };
+
+      process.stdin.on('data', onData);
+    });
+  }
+
+  private async readLineFromStdin(): Promise<string> {
+    // Non-TTY with no piped data — return empty immediately
+    // This prevents hanging in tests and non-interactive environments
+    if (!process.stdin.readable || process.stdin.readableEnded) {
+      return '';
+    }
+    const { createInterface } = await import('node:readline');
+    const rl = createInterface({ input: process.stdin });
+    return new Promise<string>((resolve) => {
+      const timeout = setTimeout(() => { rl.close(); resolve(''); }, 100);
+      rl.once('line', (line) => {
+        clearTimeout(timeout);
+        rl.close();
+        resolve(line.trim());
+      });
+      rl.once('close', () => { clearTimeout(timeout); resolve(''); });
+    });
   }
 
   // ── go ──────────────────────────────────────────────
