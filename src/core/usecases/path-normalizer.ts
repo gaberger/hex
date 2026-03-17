@@ -9,7 +9,30 @@
  * - Rust: crate paths like "crate::core::ports" → converted to file paths
  */
 
-import { posix } from 'node:path';
+// Pure string helpers replacing node:path/posix to keep usecases free of Node imports
+
+/** Return the directory portion of a forward-slash path (pure string). */
+function dirnamePosix(p: string): string {
+  const idx = p.lastIndexOf('/');
+  if (idx < 0) return '.';
+  if (idx === 0) return '/';
+  return p.slice(0, idx);
+}
+
+/** Join path segments with '/' and normalise (collapse '..' and '.', remove double slashes). */
+function joinPosix(...parts: string[]): string {
+  const joined = parts.join('/');
+  const segments: string[] = [];
+  for (const seg of joined.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..' && segments.length > 0 && segments[segments.length - 1] !== '..') {
+      segments.pop();
+    } else {
+      segments.push(seg);
+    }
+  }
+  return segments.join('/') || '.';
+}
 
 /**
  * Resolve an import path to a project-relative file path.
@@ -70,8 +93,8 @@ function resolveTsImport(fromFile: string, importPath: string): string {
   if (!importPath.startsWith('.')) {
     return normalizePath(importPath);
   }
-  const dir = posix.dirname(fromFile);
-  const resolved = posix.join(dir, importPath);
+  const dir = dirnamePosix(fromFile);
+  const resolved = joinPosix(dir, importPath);
   return normalizePath(resolved);
 }
 
@@ -80,8 +103,8 @@ function resolveGoImport(_fromFile: string, importPath: string, modulePrefix?: s
   // Relative imports within the same project use relative directory paths.
   // External imports (containing dots like "github.com") are kept as-is.
   if (importPath.startsWith('.')) {
-    const dir = posix.dirname(_fromFile);
-    return posix.join(dir, importPath);
+    const dir = dirnamePosix(_fromFile);
+    return joinPosix(dir, importPath);
   }
   // Strip Go module prefix to get project-relative path for layer classification
   if (modulePrefix && importPath.startsWith(modulePrefix + '/')) {
@@ -126,9 +149,9 @@ function resolveRustImport(importPath: string, fromFile: string): string {
 
   // "self::foo" — current module (resolve relative to importing file's directory)
   if (importPath.startsWith('self::')) {
-    const dir = posix.dirname(fromFile);
+    const dir = dirnamePosix(fromFile);
     const segments = importPath.slice(6).split('::');
-    return posix.join(dir, ...segments);
+    return joinPosix(dir, ...segments);
   }
 
   // "super::foo" — parent module
