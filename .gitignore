@@ -49,5 +49,6 @@ Volumes/
 .superset/
 examples/hex-worktrees/
 examples/hex-worktrees/
+target/
 examples/rust-api/target/
 hex-hub/target/
