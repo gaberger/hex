@@ -50,11 +50,27 @@ export interface ProjectReadme {
   sections: ReadmeSection[];
 }
 
+export interface BuildConfig {
+  /** Filename: package.json, go.mod, Cargo.toml */
+  filename: string;
+  /** Full file content */
+  content: string;
+}
+
+export interface StubFile {
+  /** Relative path from project root */
+  path: string;
+  /** File content */
+  content: string;
+}
+
 export interface ScaffoldResult {
   readme: ProjectReadme;
   scripts: StartScript[];
   envExample: string;         // .env.example content
   runtime: RuntimeRequirements;
+  buildConfigs: BuildConfig[];
+  stubs: StubFile[];
 }
 
 // ─── Output Port (Secondary / Driven) ────────────────────
@@ -77,7 +93,13 @@ export interface IScaffoldPort {
   /** Generate .env.example from env var specs */
   generateEnvExample(envVars: EnvVarSpec[]): string;
 
-  /** Full scaffold: analyze → scripts → readme → env → write all files */
+  /** Generate build config files (package.json, go.mod, Cargo.toml) for the target language */
+  generateBuildConfig(projectName: string, language: Language): BuildConfig[];
+
+  /** Generate stub files (domain types, port interface, adapter, composition root) for the target language */
+  generateStubFiles(projectName: string, language: Language): StubFile[];
+
+  /** Full scaffold: analyze → scripts → readme → env → build config → stubs → write all files */
   scaffold(rootPath: string, projectName: string, language: Language): Promise<ScaffoldResult>;
 
   /** Validate that a project can actually start (run dev command, check for errors) */

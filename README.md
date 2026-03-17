@@ -637,7 +637,7 @@ Powered by [tree-sitter](https://tree-sitter.github.io/) WASM for language-agnos
 | **Boundary validation** | Full | Full | Full |
 | **Code generation** | Full (TS rules) | Full (Go rules) | Full (Rust rules) |
 | **Path resolution** | `.js` → `.ts` | Module paths | `crate::` paths |
-| **Scaffold** | `package.json` | Planned | Planned |
+| **Scaffold** | `package.json` + `tsconfig.json` | `go.mod` | `Cargo.toml` |
 | **Example project** | 4 apps | 1 (weather) | 1 (rust-api) |
 
 <details>
