@@ -314,22 +314,32 @@ interface ISwarmPort {
   <img src="docs/hex-dashboard.png" alt="hex Dashboard — architecture health, token efficiency, dependency graph, swarm status" width="900"/>
 </p>
 
-hex-hub is a Rust-native dashboard service that runs as a system-wide daemon on port 5555. It provides real-time visibility into architecture health, token efficiency across summary levels, dependency graphs with violation detection, and swarm agent status — all streamed via SSE.
+hex-hub is a Rust-native dashboard service that runs as a system-wide daemon on port 5555. It provides real-time visibility into architecture health, token efficiency across summary levels, interactive dependency graphs with violation detection, and swarm agent/task status — all streamed via WebSocket.
 
 ```bash
 # Auto-starts on any hex command (if binary installed)
 hex analyze .
 
 # Manual control
-hex hub start           # Start daemon
-hex hub stop            # Stop daemon
+hex daemon start        # Start daemon
+hex daemon stop         # Stop daemon
 hex hub status          # Show status + connected projects
 
 # Open in browser
 open http://localhost:5555
 ```
 
-Features: multi-project tabs, real-time SSE events, WebSocket pub/sub, embedded dashboard UI. 1.5MB binary, zero runtime dependencies.
+**Dashboard features:**
+- **Multi-project tabs** — switch between projects with live freshness indicators
+- **Architecture health ring** — real-time score with violation/dead-export breakdown
+- **Token efficiency panel** — L0–L3 compression bars per file
+- **Swarm status** — agent list, task progress, status badges with pulse animations
+- **Dependency graph** — interactive canvas with hexagonal ring layout, zoom/pan, click-to-trace transitive deps, violation highlighting
+- **Command chat** — send commands (`hex analyze`, `hex claude <prompt>`, `spawn-agent`) directly from the browser
+- **Event log** — filterable real-time stream (errors, decisions, milestones)
+- **Decision modal** — interactive prompts for agent decisions requiring human input
+
+1.5MB binary, zero runtime dependencies. Modern dark theme optimized for extended developer use.
 
 See [hex-hub/README.md](hex-hub/README.md) for full API reference.
 
@@ -517,10 +527,11 @@ npx hex --help
 | `hex validate <path>` | Post-build semantic validation (blocking gate) |
 | `hex orchestrate` | Execute workplan steps via swarm agents |
 | `hex status` | Swarm progress report |
-| `hex hub [start\|stop\|status]` | Manage hex-hub daemon (Rust dashboard service) |
+| `hex daemon [start\|stop\|status]` | Manage hex-hub daemon (Rust dashboard service, port 5555) |
+| `hex hub [start\|stop\|status]` | Alias for `hex daemon` |
 | `hex dashboard` | Legacy Node.js dashboard (fallback if hex-hub binary not installed) |
 | `hex mcp` | Start MCP stdio server for Claude Code / IDE integration |
-| `hex setup` | Install tree-sitter grammars + skills + agents |
+| `hex setup` | Install tree-sitter grammars + skills + agents + hex-hub binary |
 | `hex init` | Initialize project with startup hooks |
 | `hex help` | Show all commands and usage |
 | `hex version` | Print current version |
@@ -575,6 +586,9 @@ Available via `hex mcp`:
 | `hex_dashboard_unregister` | Unregister project |
 | `hex_dashboard_list` | List registered projects |
 | `hex_dashboard_query` | Query dashboard data |
+| `hex_hub_command` | Send command to hub (analyze, build, validate, claude) |
+| `hex_hub_commands_list` | List pending/completed hub commands |
+| `hex_hub_command_status` | Check status of a hub command |
 
 </td>
 </tr>
@@ -754,6 +768,8 @@ cargo build --release -p hex-hub  # Build dashboard binary manually
 | **Pluggable secrets chain** | `ISecretsPort` adapters stack: Infisical → LocalVault → env-var; composition root selects |
 | **Dashboard auto-start** | Dashboard HTTP server launches on project load; port conflicts and stale locks self-heal |
 | **Rust hub over Node hub** | 1.5MB binary vs Node.js process; zero runtime deps; system-wide daemon serves all projects |
+| **WebSocket over SSE** | Unified bidirectional channel for events, commands, and chat; 25s keepalive pings detect dead connections |
+| **`run-claude` hub command** | Invoke Claude CLI from dashboard chat; enables browser-based agent interaction without terminal |
 
 </details>
 
