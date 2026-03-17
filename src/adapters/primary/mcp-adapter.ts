@@ -12,6 +12,7 @@
 
 import type { IArchAnalysisPort, IASTPort, IFileSystemPort, ICodeGenerationPort, IWorkplanPort, ASTSummary, Language, Specification } from '../../core/ports/index.js';
 import type { ISwarmOrchestrationPort } from '../../core/ports/swarm.js';
+import type { IScaffoldPort } from '../../core/ports/scaffold.js';
 import { formatArchReport } from '../../core/ports/index.js';
 
 // ─── MCP Tool Definitions ────────────────────────────────
@@ -298,6 +299,8 @@ export interface MCPContext {
   workplanExecutor?: IWorkplanPort | null;
   /** Optional: swarm orchestration for parallel execution. */
   swarmOrchestrator?: ISwarmOrchestrationPort | null;
+  /** Optional: scaffold service for project generation. */
+  scaffold?: IScaffoldPort | null;
 }
 
 export class MCPAdapter {
@@ -343,7 +346,7 @@ export class MCPAdapter {
         case 'hex_dead_exports':
           return await this.deadExports(call.arguments.path as string);
         case 'hex_scaffold':
-          return this.scaffold(
+          return await this.scaffold(
             call.arguments.name as string,
             (call.arguments.language as string) ?? 'typescript',
           );
@@ -483,24 +486,55 @@ export class MCPAdapter {
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 
-  private scaffold(name: string, language: string): MCPToolResult {
+  private async scaffold(name: string, language: string): Promise<MCPToolResult> {
+    const langMap: Record<string, Language> = { typescript: 'typescript', go: 'go', rust: 'rust', ts: 'typescript' };
+    const lang = langMap[language] || 'typescript';
+
+    if (this.ctx.scaffold) {
+      const result = await this.ctx.scaffold.scaffold('.', name, lang);
+      const files = [
+        ...result.buildConfigs.map((c) => c.filename),
+        ...result.stubs.map((s) => s.path),
+        'README.md',
+        'CLAUDE.md',
+        '.gitignore',
+      ];
+      if (result.envExample) files.push('.env.example');
+      return {
+        content: [{
+          type: 'text',
+          text: [
+            `Scaffolded "${name}" (${lang})`,
+            '',
+            `Files created (${files.length}):`,
+            ...files.map((f) => `  ${f}`),
+            '',
+            `Build configs: ${result.buildConfigs.map((c) => c.filename).join(', ') || 'none'}`,
+            `Stub files: ${result.stubs.length}`,
+            `Scripts: ${result.scripts.map((s) => s.name).join(', ')}`,
+            '',
+            'Next steps:',
+            ...result.scripts.filter((s) => s.phase === 'setup').map((s) => `  ${s.command}`),
+            '  hex analyze .',
+          ].join('\n'),
+        }],
+      };
+    }
+
+    // Fallback: return directory hints if no scaffold service wired
     const dirs = [
       `${name}/src/core/domain`,
       `${name}/src/core/ports`,
       `${name}/src/core/usecases`,
       `${name}/src/adapters/primary`,
       `${name}/src/adapters/secondary`,
-      `${name}/src/infrastructure`,
       `${name}/tests/unit`,
       `${name}/tests/integration`,
-      `${name}/config`,
-      `${name}/skills`,
-      `${name}/agents`,
     ];
     return {
       content: [{
         type: 'text',
-        text: `Scaffold for "${name}" (${language}):\n\nDirectories:\n${dirs.map((d) => `  mkdir -p ${d}`).join('\n')}\n\nNext: create port interfaces in src/core/ports/`,
+        text: `Scaffold for "${name}" (${lang}):\n\nDirectories:\n${dirs.map((d) => `  mkdir -p ${d}`).join('\n')}\n\nNote: ScaffoldService not available — build configs and stubs not generated.`,
       }],
     };
   }
