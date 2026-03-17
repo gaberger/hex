@@ -52,6 +52,30 @@ function isEntryPoint(filePath: string): boolean {
     || /\/src\/bin\/[^/]+\.rs$/.test(filePath);    // Rust: src/bin/appname.rs
 }
 
+/**
+ * Layer-based dead-export skip rules.
+ *
+ * Ports and adapters are consumed via composition-root DI (often dynamic import),
+ * making their exports invisible to static import tracing. Rather than annotating
+ * every adapter class, we leverage hex's layer classification to skip dead-export
+ * checks for layers where dynamic consumption is the norm.
+ *
+ * Strict checking remains for domain and usecases — these should have static consumers.
+ */
+function shouldSkipDeadExportCheck(filePath: string): boolean {
+  const layer = classifyLayer(filePath);
+
+  // Ports are contracts — they ARE the public API. Never flag as dead.
+  if (layer === 'ports') return true;
+
+  // Adapters are wired by composition-root via dynamic import().
+  // Their class/function exports are consumed at runtime, not via static imports.
+  if (layer === 'adapters/primary' || layer === 'adapters/secondary') return true;
+
+  // Domain, usecases, infrastructure: DO check for dead exports
+  return false;
+}
+
 function hasReExports(summary: ASTSummary): boolean {
   // A re-export file primarily re-exports — it has exports but its imports
   // reference the same names it exports.
@@ -88,8 +112,8 @@ export class ArchAnalyzer implements IArchAnalysisPort {
       '*.test.ts', '*.spec.ts',   // TypeScript tests
       '*_test.go',                 // Go tests
       '*.test.rs',                 // Rust tests
-      '/tests/',                   // Rust integration test directory
-      '/target/',                  // Rust/Cargo build artifacts
+      'tests/',                    // Rust integration test directory
+      'target/',                   // Rust/Cargo build artifacts
     ],
   ) {}
 
@@ -316,9 +340,20 @@ export class ArchAnalyzer implements IArchAnalysisPort {
       if (isEntryPoint(normalizedFile)) continue;
       if (hasReExports(summary)) continue;
 
+      // Layer 2: Skip dead-export checks for layers whose exports are consumed
+      // dynamically (adapters wired by composition-root, ports as public contracts).
+      if (shouldSkipDeadExportCheck(normalizedFile)) continue;
+
       const importedFromThis = importedByModule.get(normalizedFile) ?? new Set();
+
+      // If any importer uses '*' (dynamic import without destructuring),
+      // treat ALL exports from this module as used
+      if (importedFromThis.has('*')) continue;
+
       for (const exp of summary.exports) {
         if (!importedFromThis.has(exp.name) && !ENTRY_EXPORTS.has(exp.name)) {
+          // Layer 3: Check for @hex:public annotation on the export
+          if (exp.annotations?.includes('hex:public')) continue;
           dead.push({ filePath: normalizedFile, exportName: exp.name, kind: exp.kind });
         }
       }

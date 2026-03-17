@@ -6,11 +6,13 @@
  */
 import type {
   IASTPort,
+  ICodeGenerationPort,
   IFileSystemPort,
   ILLMPort,
   IWorkplanPort,
   Language,
   Message,
+  Specification,
   StepResult,
   TokenBudget,
   Workplan,
@@ -31,6 +33,10 @@ export class WorkplanExecutor implements IWorkplanPort {
     private readonly ast: IASTPort,
     private readonly fs: IFileSystemPort,
     private readonly swarm: ISwarmPort,
+    /** Optional code generator — when provided, executePlan generates real code per step */
+    private readonly codeGenerator?: ICodeGenerationPort,
+    /** Language for code generation — defaults to 'typescript' */
+    private readonly defaultLang: Language = 'typescript',
   ) {}
 
   async createPlan(requirements: string[], lang: Language): Promise<Workplan> {
@@ -117,20 +123,50 @@ export class WorkplanExecutor implements IWorkplanPort {
       yield { stepId: step.id, status: 'running' };
 
       try {
+        // Register task in swarm for tracking/dashboard visibility
         const task = await this.swarm.createTask({
           title: step.description,
           agentRole: 'coder',
           adapter: step.adapter,
         });
-
         await this.swarm.spawnAgent(`worker-${step.id}`, 'coder', task.id);
+
+        // Execute: generate real code if code generator is available
+        let output;
+        if (this.codeGenerator) {
+          const spec: Specification = {
+            title: step.description,
+            requirements: [step.description],
+            constraints: [
+              `Target adapter boundary: ${step.adapter}`,
+              'Follow hex architecture rules strictly',
+            ],
+            targetLanguage: this.defaultLang,
+            targetAdapter: step.adapter,
+          };
+
+          // Build context from completed steps' outputs
+          const priorOutputs = [...completed].map(id => {
+            const priorStep = sorted.find(s => s.id === id);
+            return priorStep ? `- [${id}] ${priorStep.description} (${priorStep.adapter})` : '';
+          }).filter(Boolean);
+
+          if (priorOutputs.length > 0) {
+            spec.constraints.push(
+              `Already completed:\n${priorOutputs.join('\n')}`,
+            );
+          }
+
+          output = await this.codeGenerator.generateFromSpec(spec, this.defaultLang);
+        }
+
         await this.swarm.completeTask(task.id, `Completed: ${step.description}`);
         completed.add(step.id);
 
         // Store successful step as a learned pattern
         await this.storeStepPattern(step, 'success');
 
-        yield { stepId: step.id, status: 'passed' };
+        yield { stepId: step.id, status: 'passed', output };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         failed.add(step.id);
@@ -158,22 +194,43 @@ export class WorkplanExecutor implements IWorkplanPort {
   // ── Private helpers ───────────────────────────────────────
 
   private async summarizeProject(): Promise<string> {
-    const files = await this.fs.glob('src/**/*.ts');
-    const filtered = files.filter(
-      (f) => !f.includes('node_modules') && !f.includes('dist') && !f.includes('.test.'),
+    const globResults = await Promise.all([
+      this.fs.glob('src/**/*.ts'),
+      this.fs.glob('src/**/*.go'),
+      this.fs.glob('src/**/*.rs'),
+      this.fs.glob('internal/**/*.go'),
+      this.fs.glob('cmd/**/*.go'),
+    ]);
+    const allFiles = globResults.flat().filter(
+      (f) => !f.includes('node_modules') && !f.includes('dist') && !f.includes('.test.') && !f.includes('_test.go'),
     );
 
-    const lines: string[] = [];
-    for (const file of filtered.slice(0, 20)) {
-      try {
-        const summary = await this.ast.extractSummary(file, 'L1');
-        const exports = summary.exports.map((e) => `${e.kind} ${e.name}`).join(', ');
-        lines.push(`- ${file}: ${exports || '(no exports)'}`);
-      } catch {
-        lines.push(`- ${file}: (parse error)`);
+    const sections: string[] = [];
+
+    // Tier 1: L0 overview of ALL source files (cheap — just filenames)
+    sections.push('### Project Files (L0)');
+    sections.push(...allFiles.map(f => `- ${f}`));
+    sections.push('');
+
+    // Tier 2: L1 detail for ports + usecases (the planning-critical layers)
+    const criticalFiles = allFiles.filter(f =>
+      f.includes('/ports/') || f.includes('/usecases/') || f.includes('/domain/'),
+    );
+
+    if (criticalFiles.length > 0) {
+      sections.push('### Core Layer Detail (L1)');
+      for (const file of criticalFiles.slice(0, 30)) {
+        try {
+          const summary = await this.ast.extractSummary(file, 'L1');
+          const exports = summary.exports.map((e) => `${e.kind} ${e.name}`).join(', ');
+          sections.push(`- ${file}: ${exports || '(no exports)'}`);
+        } catch {
+          sections.push(`- ${file}: (parse error)`);
+        }
       }
     }
-    return lines.join('\n');
+
+    return sections.join('\n');
   }
 
   private async findRelevantPatterns(requirements: string[]) {

@@ -39,8 +39,11 @@ export class CodeGenerator implements ICodeGenerationPort {
   ) {}
 
   async generateFromSpec(spec: Specification, lang: Language): Promise<CodeUnit> {
-    const portSummaries = await this.loadPortSummaries();
-    const systemPrompt = this.buildSystemPrompt(spec, portSummaries);
+    const [portSummaries, adjacentContext] = await Promise.all([
+      this.loadPortSummaries(),
+      this.loadAdjacentContext(spec),
+    ]);
+    const systemPrompt = this.buildSystemPrompt(spec, portSummaries, adjacentContext);
 
     const userContent = [
       `Generate a ${lang} implementation for: ${spec.title}`,
@@ -202,7 +205,7 @@ export class CodeGenerator implements ICodeGenerationPort {
     return this.refineFromFeedback(unit, lintErrors);
   }
 
-  private buildSystemPrompt(spec: Specification, portSummaries: ASTSummary[]): string {
+  private buildSystemPrompt(spec: Specification, portSummaries: ASTSummary[], adjacentContext: string): string {
     const portList = portSummaries
       .flatMap((s) => s.exports.map((e) => `  - ${e.kind} ${e.name}${e.signature ? `: ${e.signature}` : ''}`))
       .join('\n');
@@ -243,9 +246,66 @@ export class CodeGenerator implements ICodeGenerationPort {
       '## Available Port Interfaces',
       portList,
       '',
+      adjacentContext ? `## Adjacent Code (L1 Summaries)\n${adjacentContext}` : '',
+      '',
       '## Target Language',
       spec.targetLanguage,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
+  }
+
+  /**
+   * Load L1 summaries of sibling adapters and the composition root.
+   * Gives the LLM awareness of existing patterns, constructor signatures,
+   * and wiring conventions — critical for consistency in large projects.
+   */
+  private async loadAdjacentContext(spec: Specification): Promise<string> {
+    const sections: string[] = [];
+
+    if (spec.targetAdapter) {
+      // Determine which adapter layer (primary or secondary)
+      const layer = spec.targetAdapter.includes('primary') ? 'primary' : 'secondary';
+      const siblingGlobs = await Promise.all([
+        this.fs.glob(`src/adapters/${layer}/**/*.ts`),
+        this.fs.glob(`src/adapters/${layer}/**/*.go`),
+        this.fs.glob(`src/adapters/${layer}/**/*.rs`),
+      ]);
+      const siblings = siblingGlobs.flat()
+        .filter(f => !f.includes('.test.') && !f.includes('_test.go'));
+
+      // Show up to 5 sibling adapters (L1 — signatures only)
+      for (const sib of siblings.slice(0, 5)) {
+        try {
+          const summary = await this.ast.extractSummary(sib, 'L1');
+          const exports = summary.exports
+            .map(e => `  ${e.kind} ${e.name}${e.signature ? `: ${e.signature}` : ''}`)
+            .join('\n');
+          if (exports.trim()) {
+            sections.push(`### ${sib} (sibling adapter)\n${exports}`);
+          }
+        } catch { /* skip */ }
+      }
+    }
+
+    // Composition root — shows wiring patterns (how adapters are instantiated)
+    const crGlobs = await Promise.all([
+      this.fs.glob('src/composition-root.*'),
+      this.fs.glob('**/composition-root.*'),
+      this.fs.glob('**/composition_root.*'),
+    ]);
+    const crFiles = crGlobs.flat().slice(0, 1);
+    for (const cr of crFiles) {
+      try {
+        const summary = await this.ast.extractSummary(cr, 'L1');
+        const exports = summary.exports
+          .map(e => `  ${e.kind} ${e.name}${e.signature ? `: ${e.signature}` : ''}`)
+          .join('\n');
+        if (exports.trim()) {
+          sections.push(`### ${cr} (wiring)\n${exports}`);
+        }
+      } catch { /* skip */ }
+    }
+
+    return sections.join('\n\n');
   }
 
   private async loadPortSummaries(): Promise<ASTSummary[]> {
@@ -253,6 +313,8 @@ export class CodeGenerator implements ICodeGenerationPort {
       this.fs.glob('src/core/ports/**/*.ts'),
       this.fs.glob('src/core/ports/**/*.go'),
       this.fs.glob('src/core/ports/**/*.rs'),
+      this.fs.glob('internal/ports/**/*.go'),
+      this.fs.glob('pkg/**/*.go'),
     ])).flat();
     const summaries: ASTSummary[] = [];
     for (const file of portFiles) {
