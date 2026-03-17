@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -42,6 +42,15 @@ function makeCtx(rootPath: string, secrets: ISecretsPort): AppContext {
     mtime: async () => 0,
   };
 
+  // Always provide a vault manager — real adapter when vault is open, factory-only otherwise
+  const vaultManager = secrets instanceof LocalVaultAdapter
+    ? secrets
+    : {
+        createVault: (path: string, pw: string) => LocalVaultAdapter.createVault(path, pw),
+        addSecret() { throw new Error('No vault open'); },
+        removeSecret() { throw new Error('No vault open'); },
+      };
+
   return {
     rootPath,
     archAnalyzer, ast, fs,
@@ -49,6 +58,9 @@ function makeCtx(rootPath: string, secrets: ISecretsPort): AppContext {
     summaryService: { summarizeFile: async () => ast.extractSummary('', 'L1'), summarizeProject: async () => [] },
     outputDir: join(rootPath, '.hex'),
     secrets,
+    vaultManager,
+    version: { getCliVersion: () => ({ major: 0, minor: 0, patch: 0, toString: () => '0.0.0' }), getHubVersion: async () => null, getVersionInfo: async () => ({ cli: { major: 0, minor: 0, patch: 0, toString: () => '0.0.0' }, hub: null, mismatch: false }) },
+    hubLauncher: null,
     autoConfirm: false,
   } as unknown as AppContext;
 }
@@ -64,12 +76,23 @@ function envSecretsMock(): ISecretsPort {
 // ── Tests ───────────────────────────────────────────────
 
 const dirs: string[] = [];
+let savedVaultPw: string | undefined;
+
+beforeEach(() => {
+  savedVaultPw = process.env['HEX_VAULT_PASSWORD'];
+});
 
 afterEach(() => {
   for (const d of dirs) {
     rmSync(d, { recursive: true, force: true });
   }
   dirs.length = 0;
+  // Restore env to prevent test pollution
+  if (savedVaultPw !== undefined) {
+    process.env['HEX_VAULT_PASSWORD'] = savedVaultPw;
+  } else {
+    delete process.env['HEX_VAULT_PASSWORD'];
+  }
 });
 
 describe('CLI secrets init', () => {

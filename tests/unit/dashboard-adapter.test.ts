@@ -591,12 +591,18 @@ describe('DashboardAdapter', () => {
       adapter.stop();
     });
 
-    it('returns failed result for unknown command type', async () => {
+    it('silently ignores unknown command types (no result posted)', async () => {
       const ctx = makeCtx();
       const adapter = new DashboardAdapter(ctx, 9999);
       await adapter.start();
 
-      await new Promise((r) => setTimeout(r, 20));
+      // Wait for WS listener to be ready
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        if (latestWs && adapter.isListening()) break;
+      }
+
+      const beforeCount = httpRequests.length;
 
       const command = {
         event: 'command',
@@ -611,14 +617,14 @@ describe('DashboardAdapter', () => {
       };
       latestWs!.emit('message', Buffer.from(JSON.stringify(command)));
 
-      await new Promise((r) => setTimeout(r, 50));
+      // Give time for any async handling
+      await new Promise((r) => setTimeout(r, 100));
 
+      // Unknown commands are silently ignored — no HTTP result posted
       const resultReq = httpRequests.find(
         (r) => r.path.includes('/command/cmd-unknown/result'),
       );
-      expect(resultReq).toBeTruthy();
-      expect((resultReq!.body as any).status).toBe('failed');
-      expect((resultReq!.body as any).error).toContain('Unknown command type');
+      expect(resultReq).toBeUndefined();
 
       adapter.stop();
     });
