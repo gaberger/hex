@@ -1,12 +1,7 @@
 # ADR-019: CLI–MCP Parity — Every Command Must Have an MCP Equivalent
 
-## Status
-
-Accepted
-
-## Date
-
-2026-03-17
+## Status: Accepted
+## Date: 2026-03-17
 
 ## Context
 
