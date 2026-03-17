@@ -223,6 +223,41 @@ bun run build && git commit
 </tr>
 </table>
 
+### Feature Progress Display
+
+During feature development, hex shows a persistent status view that eliminates agent console noise:
+
+```
+hex feature: webhook-notifications
+────────────────────────────────────────────────────────────────────────
+Phase 1/7: SPECS     ✓ Complete (5 specs, 1 negative)
+Phase 2/7: PLAN      ✓ Complete (8 tasks, 3 tiers)
+Phase 3/7: WORKTREES ✓ Created 8 worktrees
+Phase 4/7: CODE      ⟳ In Progress (3/8 done, 5 running)
+
+Workplan:
+  Tier 0 (domain/ports)
+    ✓ domain-changes       (feat/webhook-notifications/domain)
+    ✓ port-changes         (feat/webhook-notifications/ports)
+
+  Tier 1 (adapters - parallel)
+    ✓ git-adapter          Q:95  [===========] test
+    ⟳ webhook-adapter      Q:82  [========---] lint
+    ⟳ cli-adapter          Q:78  [=======----] test
+    ⏳ mcp-adapter                [           ] queued
+    ⏳ fs-adapter                 [           ] queued
+
+  Tier 2 (integration)
+    ⏳ composition-root          [           ] queued
+    ⏳ integration-tests         [           ] queued
+
+Overall: 38% │ Tokens: 124k/500k │ Time: 3m42s │ Blockers: 0
+────────────────────────────────────────────────────────────────────────
+[Press 'd' for details | 'q' to abort | 'h' for help]
+```
+
+Agent logs are redirected to `.hex/logs/agent-<name>.log` to keep the console clean. Press 'd' to view detailed logs, 'q' to abort cleanly, or 'h' for help. This is powered by `IFeatureProgressPort` with structured event streaming via the event bus.
+
 <br/>
 
 ---
@@ -347,6 +382,59 @@ open http://localhost:5555
 - Multi-instance coordination uses `ICoordinationPort` with filesystem-based locking and heartbeats to prevent port conflicts (ADR-011)
 
 See [hex-hub/README.md](hex-hub/README.md) for full API reference.
+
+<br/>
+
+---
+
+<br/>
+
+## Multi-Channel Notifications
+
+hex provides real-time feedback through four notification channels behind a single `INotificationEmitPort` interface:
+
+<table>
+<tr>
+<th>Channel</th>
+<th>Adapter</th>
+<th>Purpose</th>
+</tr>
+<tr>
+<td><b>Terminal</b></td>
+<td><code>TerminalNotifier</code></td>
+<td>Color-coded messages, persistent status bar, interactive decision prompts</td>
+</tr>
+<tr>
+<td><b>File Log</b></td>
+<td><code>FileLogNotifier</code></td>
+<td>Structured JSONL audit trail in <code>.hex/activity.log</code>, rotated at 10 MB</td>
+</tr>
+<tr>
+<td><b>Webhook</b></td>
+<td><code>WebhookNotifier</code></td>
+<td>External integration (Slack, CI); batched delivery with exponential-backoff retry</td>
+</tr>
+<tr>
+<td><b>Event Bus</b></td>
+<td><code>EventBusNotifier</code></td>
+<td>In-memory pub/sub for agent-to-agent coordination; wildcard subscriptions</td>
+</tr>
+</table>
+
+### Decision Requests
+
+When agents encounter ambiguous choices (e.g., two valid architectural approaches), they emit a `DecisionRequest` with:
+- Numbered options with risk ratings
+- Configurable deadline (default: 5 minutes)
+- Auto-select default option if no human response (prevents agent stalls)
+
+### Status Line Format
+
+```
+[execute] coder-1: generating tests | quality: 85 | 3/6 adapters | ████░░ 50%
+```
+
+Fields: `[phase]`, active agent and step, quality score from `QualityScore.score`, adapter completion ratio, and a Unicode progress bar. All channels are independently testable via constructor-injected dependencies (no global state).
 
 <br/>
 
@@ -545,6 +633,24 @@ npx @anthropic-hex/hex --help
 | `hex help` | Show all commands and usage |
 | `hex version` | Print current version |
 
+### ADR Lifecycle
+
+Architecture Decision Records follow a tracked lifecycle with automated staleness detection:
+
+```
+proposed → accepted → (deprecated | superseded | rejected)
+    ↓           ↓
+  stale     abandoned (no git activity in 90 days)
+```
+
+**Commands:**
+- `hex adr list [--status accepted]` — Filter by lifecycle status (proposed, accepted, deprecated, superseded, rejected)
+- `hex adr status` — Show status distribution (e.g., "15 accepted, 3 proposed, 2 deprecated")
+- `hex adr search <query>` — Full-text search across all ADR content and metadata
+- `hex adr abandoned` — Detect stale ADRs with no related commits in 90 days (indicates forgotten decisions)
+
+ADRs are stored in `docs/adrs/` and tracked via frontmatter (status, date, supersedes). The lifecycle system helps teams identify which architectural decisions are active vs. historical.
+
 <br/>
 
 ---
@@ -655,6 +761,18 @@ Powered by [tree-sitter](https://tree-sitter.github.io/) WASM for language-agnos
 | **Path resolution** | `.js` → `.ts` | Module paths | `crate::` paths |
 | **Scaffold** | `package.json` + `tsconfig.json` | `go.mod` | `Cargo.toml` |
 | **Example project** | 4 apps | 1 (weather) | 1 (rust-api) |
+
+### Build Enforcement
+
+hex enforces compile/lint/test checks for all languages via `IBuildPort`:
+
+| Method    | TypeScript          | Go                    | Rust                    |
+|-----------|--------------------|-----------------------|-------------------------|
+| compile() | `tsc --noEmit`     | `go build ./...`      | `cargo check`           |
+| lint()    | `eslint --format json` | `golangci-lint run --out-format json` | `cargo clippy -- -D warnings` |
+| test()    | `bun test`         | `go test ./... -json` | `cargo test`            |
+
+The pre-commit hook automatically detects staged file languages and runs the corresponding toolchain checks. CI includes a `rust-check` job for hex-hub validation (compiles, lints, tests, and verifies `--build-hash` works).
 
 <details>
 <summary><b>Example: Go Backend (Weather API)</b></summary>
@@ -773,6 +891,7 @@ cargo build --release -p hex-hub  # Build dashboard binary manually
 | Decision | Rationale |
 |:---------|:---------|
 | **Tree-sitter over regex** | WASM-based AST extraction works across languages; regex breaks on edge cases |
+| **Hybrid TS+Rust via NAPI** | Tree-sitter hot path in native Rust (5-10x faster than WASM); falls back to WASM if binary unavailable (ADR-010) |
 | **Ruflo as required dep** | Swarm coordination is not optional; even solo workflows benefit from task tracking |
 | **Single composition root** | Only one file imports adapters; adapter swaps are one-line changes |
 | **L0-L3 summary levels** | AI agents need different detail at different phases; L1 is the sweet spot |
