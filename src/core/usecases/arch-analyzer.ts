@@ -72,6 +72,11 @@ function shouldSkipDeadExportCheck(filePath: string): boolean {
   // Their class/function exports are consumed at runtime, not via static imports.
   if (layer === 'adapters/primary' || layer === 'adapters/secondary') return true;
 
+  // Rust FFI boundaries (NAPI modules, daemon, extractors).
+  // These exports are consumed from TypeScript via native bindings, not static imports.
+  if (filePath.includes('hex-core/') || filePath.includes('hex-hub/')) return true;
+  if (filePath.includes('src/extractors/') && filePath.endsWith('.rs')) return true;
+
   // Domain, usecases, infrastructure: DO check for dead exports
   return false;
 }
