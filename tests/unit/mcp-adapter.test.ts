@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { MCPAdapter, HEX_TOOLS, HEX_DASHBOARD_TOOLS } from '../../src/adapters/primary/mcp-adapter.js';
+import { MCPAdapter, HEX_TOOLS, HEX_DASHBOARD_TOOLS, HEX_PARITY_TOOLS } from '../../src/adapters/primary/mcp-adapter.js';
 import type { MCPContext, MCPToolCall } from '../../src/adapters/primary/mcp-adapter.js';
 import type { IArchAnalysisPort, IASTPort, IFileSystemPort } from '../../src/core/ports/index.js';
 
@@ -90,7 +90,7 @@ describe('MCPAdapter', () => {
 
   it('returns all analysis + dashboard tools from getTools()', () => {
     const tools = adapter.getTools();
-    const expectedCount = HEX_TOOLS.length + HEX_DASHBOARD_TOOLS.length;
+    const expectedCount = HEX_TOOLS.length + HEX_DASHBOARD_TOOLS.length + HEX_PARITY_TOOLS.length;
     expect(tools.length).toBe(expectedCount);
   });
 
@@ -372,7 +372,15 @@ describe('MCPAdapter', () => {
 
 describe('HEX_DASHBOARD_TOOLS', () => {
   it('defines 8 dashboard tools', () => {
-    expect(HEX_DASHBOARD_TOOLS.length).toBe(8);
+    expect(HEX_DASHBOARD_TOOLS).toHaveLength(8);
+  });
+
+  it('does not contain ADR-019 parity tools', () => {
+    const names = HEX_DASHBOARD_TOOLS.map((t) => t.name);
+    expect(names).not.toContain('hex_daemon_status');
+    expect(names).not.toContain('hex_setup');
+    expect(names).not.toContain('hex_projects_list');
+    expect(names).not.toContain('hex_compare');
   });
 
   it('hex_dashboard_start requires rootPath', () => {
@@ -423,5 +431,30 @@ describe('HEX_DASHBOARD_TOOLS', () => {
     const tool = HEX_DASHBOARD_TOOLS.find((t) => t.name === 'hex_hub_commands_list');
     expect(tool).toBeDefined();
     expect(tool!.inputSchema.required).toContain('projectId');
+  });
+});
+
+// ── ADR-019 Parity Tool Tests ────────────────────────────
+
+describe('HEX_PARITY_TOOLS', () => {
+  it('defines 7 parity tools (ADR-019)', () => {
+    expect(HEX_PARITY_TOOLS).toHaveLength(7);
+  });
+
+  it('includes daemon, setup, projects, and compare tools', () => {
+    const names = HEX_PARITY_TOOLS.map((t) => t.name);
+    expect(names).toContain('hex_daemon_status');
+    expect(names).toContain('hex_daemon_start');
+    expect(names).toContain('hex_daemon_stop');
+    expect(names).toContain('hex_daemon_logs');
+    expect(names).toContain('hex_setup');
+    expect(names).toContain('hex_projects_list');
+    expect(names).toContain('hex_compare');
+  });
+
+  it('hex_compare requires specification', () => {
+    const tool = HEX_PARITY_TOOLS.find((t) => t.name === 'hex_compare');
+    expect(tool).toBeDefined();
+    expect(tool!.inputSchema.required).toContain('specification');
   });
 });

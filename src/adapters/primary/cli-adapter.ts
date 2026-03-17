@@ -348,6 +348,8 @@ export class CLIAdapter {
       switch (args.command) {
         case 'analyze':
           return await this.analyze(args);
+        case 'dead-exports':
+          return await this.deadExports(args);
         case 'summarize':
           return await this.summarize(args);
         case 'generate':
@@ -392,7 +394,7 @@ export class CLIAdapter {
         default: {
           this.writeLn(`${errorColor('Unknown command:')} ${args.command}`);
           const commands = [
-            'analyze', 'summarize', 'generate', 'plan', 'dashboard', 'hub',
+            'analyze', 'dead-exports', 'summarize', 'generate', 'plan', 'dashboard', 'hub',
             'status', 'daemon', 'setup', 'init', 'mcp', 'projects', 'secrets',
             'go', 'build', 'scaffold', 'validate', 'orchestrate', 'compare', 'adr', 'help',
           ];
@@ -470,6 +472,39 @@ export class CLIAdapter {
     }
 
     return s.healthScore >= 50 ? 0 : 1;
+  }
+
+  // ── dead-exports (ADR-019 parity) ──────────────────
+
+  private async deadExports(args: ParsedArgs): Promise<number> {
+    const targetPath = args.positional[0] ?? '.';
+    const jsonMode = args.flags.has('json');
+
+    if (!jsonMode) {
+      this.writeLn(`${muted('Scanning for dead exports in')} ${bold(targetPath)} ${muted('...')}`);
+      this.writeLn('');
+    }
+
+    const dead = await this.ctx.archAnalyzer.findDeadExports(targetPath);
+
+    if (jsonMode) {
+      this.writeLn(JSON.stringify(dead, null, 2));
+      return dead.length > 0 ? 1 : 0;
+    }
+
+    if (dead.length === 0) {
+      this.writeLn(green('No dead exports found.'));
+      return 0;
+    }
+
+    this.writeLn(`${yellow(`${dead.length} dead export(s) found:`)}`);
+    this.writeLn('');
+    for (const d of dead) {
+      this.writeLn(`  ${red(d.exportName)} ${muted(`(${d.kind})`)} in ${d.filePath}`);
+    }
+    this.writeLn('');
+    this.writeLn(`${muted('Dead exports are never imported by other files in the project.')}`);
+    return 1;
   }
 
   // ── summarize ───────────────────────────────────────

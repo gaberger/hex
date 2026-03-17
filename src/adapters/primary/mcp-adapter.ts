@@ -16,6 +16,9 @@ import type { IScaffoldPort } from '../../core/ports/scaffold.js';
 import type { ISecretsPort } from '../../core/ports/secrets.js';
 import type { IHubLauncherPort } from '../../core/ports/hub-launcher.js';
 import type { IDashboardClient } from '../../core/ports/app-context.js';
+import type { IRegistryPort } from '../../core/ports/registry.js';
+import type { IComparisonPort } from '../../core/ports/agent-executor.js';
+import type { IADRQueryPort } from '../../core/ports/adr.js';
 import { formatArchReport } from '../../core/ports/index.js';
 
 // ─── MCP Tool Definitions ────────────────────────────────
@@ -368,6 +371,85 @@ export const HEX_DASHBOARD_TOOLS: MCPToolDefinition[] = [
   },
 ];
 
+// ─── ADR-019 Parity Tool Definitions ─────────────────────
+
+export const HEX_PARITY_TOOLS: MCPToolDefinition[] = [
+  // ── Daemon tools ──
+  {
+    name: 'hex_daemon_status',
+    description: 'Check if the dashboard daemon is running, its PID, port, and uptime',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'hex_daemon_start',
+    description: 'Start the dashboard daemon process',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'hex_daemon_stop',
+    description: 'Stop the running dashboard daemon process',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'hex_daemon_logs',
+    description: 'Get recent daemon log output (last 50 lines)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        lines: { type: 'number', description: 'Number of log lines to return (default 50)' },
+      },
+      required: [],
+    },
+  },
+  // ── Setup tool ──
+  {
+    name: 'hex_setup',
+    description: 'Install hex dependencies (tree-sitter grammars, ruflo, agentdb) and verify setup',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rootPath: { type: 'string', description: 'Project root path (default: current directory)' },
+      },
+      required: [],
+    },
+  },
+  // ── Projects tool ──
+  {
+    name: 'hex_projects_list',
+    description: 'List all registered hex projects with status, port, and staleness',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  // ── Compare tool ──
+  {
+    name: 'hex_compare',
+    description: 'Run the same specification on Claude Code CLI and Anthropic API, then compare results (build success, test pass rate, arch health, speed, tokens)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        specification: { type: 'string', description: 'The task specification to run on both backends' },
+        model: { type: 'string', description: 'Model to use for API backend (optional)' },
+      },
+      required: ['specification'],
+    },
+  },
+];
+
 // ─── MCP Adapter ─────────────────────────────────────────
 
 export interface MCPContext {
@@ -388,6 +470,14 @@ export interface MCPContext {
   hubLauncher?: IHubLauncherPort | null;
   /** Optional: factory to create a dashboard client (avoids cross-adapter import). */
   createDashboard?: (rootPath: string) => Promise<IDashboardClient>;
+  /** Optional: project registry for listing registered hex projects. */
+  registry?: IRegistryPort | null;
+  /** Optional: dual-backend comparator (Claude Code vs Anthropic API). */
+  comparator?: IComparisonPort | null;
+  /** Optional: ADR lifecycle query service. */
+  adrQuery?: IADRQueryPort | null;
+  /** Project root path (needed for setup and daemon operations). */
+  rootPath?: string;
 }
 
 export class MCPAdapter {
@@ -409,7 +499,7 @@ export class MCPAdapter {
   }
 
   getTools(): MCPToolDefinition[] {
-    return [...HEX_TOOLS, ...HEX_DASHBOARD_TOOLS];
+    return [...HEX_TOOLS, ...HEX_DASHBOARD_TOOLS, ...HEX_PARITY_TOOLS];
   }
 
   async handleToolCall(call: MCPToolCall): Promise<MCPToolResult> {
@@ -503,6 +593,27 @@ export class MCPAdapter {
           return await this.secretsHas(call.arguments.key as string);
         case 'hex_secrets_resolve':
           return await this.secretsResolve(call.arguments.key as string);
+        // ── Daemon tools (ADR-019 parity) ──
+        case 'hex_daemon_status':
+          return await this.daemonStatus();
+        case 'hex_daemon_start':
+          return await this.daemonStart();
+        case 'hex_daemon_stop':
+          return await this.daemonStop();
+        case 'hex_daemon_logs':
+          return await this.daemonLogs(call.arguments.lines as number | undefined);
+        // ── Setup tool (ADR-019 parity) ──
+        case 'hex_setup':
+          return await this.setup(call.arguments.rootPath as string | undefined);
+        // ── Projects tool (ADR-019 parity) ──
+        case 'hex_projects_list':
+          return await this.projectsList();
+        // ── Compare tool (ADR-019 parity) ──
+        case 'hex_compare':
+          return await this.compare(
+            call.arguments.specification as string,
+            call.arguments.model as string | undefined,
+          );
         // ── ADR tools ──
         case 'hex_adr_list':
           return await this.adrList(call.arguments.status as string | undefined);
@@ -1326,6 +1437,176 @@ export class MCPAdapter {
       ? `${val.slice(0, 4)}${'*'.repeat(Math.min(val.length - 8, 20))}${val.slice(-4)}`
       : '********';
     return { content: [{ type: 'text', text: `Secret "${key}" resolved (masked): ${masked}` }] };
+  }
+
+  // ─── Daemon Tool Implementations (ADR-019 parity) ──────
+
+  private async daemonStatus(): Promise<MCPToolResult> {
+    const { DaemonManager } = await import('./daemon-manager.js');
+    const daemon = new DaemonManager();
+    const status = await daemon.status();
+    if (status.running) {
+      return {
+        content: [{
+          type: 'text',
+          text: [
+            'Dashboard daemon running',
+            `PID: ${status.pid}`,
+            `Port: ${status.port}`,
+            `Uptime: ${Math.round((status.uptime ?? 0) / 1000)}s`,
+            `URL: http://localhost:${status.port}`,
+          ].join('\n'),
+        }],
+      };
+    }
+    return { content: [{ type: 'text', text: 'Dashboard daemon is not running. Use hex_daemon_start to start it.' }] };
+  }
+
+  private async daemonStart(): Promise<MCPToolResult> {
+    const { DaemonManager } = await import('./daemon-manager.js');
+    const daemon = new DaemonManager();
+    const status = await daemon.status();
+    if (status.running) {
+      return { content: [{ type: 'text', text: `Already running at http://localhost:${status.port} (PID ${status.pid})` }] };
+    }
+    const entryPath = process.argv[1];
+    const result = await daemon.findOrStart(entryPath);
+    return { content: [{ type: 'text', text: `Dashboard daemon started at http://localhost:${result.port}` }] };
+  }
+
+  private async daemonStop(): Promise<MCPToolResult> {
+    const { DaemonManager } = await import('./daemon-manager.js');
+    const daemon = new DaemonManager();
+    const stopped = await daemon.stop();
+    return { content: [{ type: 'text', text: stopped ? 'Dashboard daemon stopped.' : 'No daemon running.' }] };
+  }
+
+  private async daemonLogs(lineCount?: number): Promise<MCPToolResult> {
+    const { DaemonManager } = await import('./daemon-manager.js');
+    const daemon = new DaemonManager();
+    const { readFileSync } = await import('node:fs');
+    try {
+      const log = readFileSync(daemon.paths.log, 'utf-8');
+      const lines = log.split('\n').slice(-(lineCount ?? 50));
+      return { content: [{ type: 'text', text: lines.join('\n') || '(empty log)' }] };
+    } catch {
+      return { content: [{ type: 'text', text: 'No logs found.' }] };
+    }
+  }
+
+  // ─── Setup Tool Implementation (ADR-019 parity) ───────
+
+  private async setup(rootPath?: string): Promise<MCPToolResult> {
+    const cwd = rootPath ?? this.ctx.rootPath ?? '.';
+    const { execFile: execFileCb } = await import('child_process');
+    const { promisify } = await import('util');
+    const run = promisify(execFileCb);
+    const lines: string[] = ['Setting up hex...', ''];
+
+    const coreDeps = [
+      { pkg: 'ruflo', check: 'node_modules/ruflo' },
+      { pkg: 'agentdb', check: 'node_modules/agentdb' },
+      { pkg: 'tree-sitter-wasms', check: 'node_modules/tree-sitter-wasms/out' },
+      { pkg: 'web-tree-sitter', check: 'node_modules/web-tree-sitter' },
+    ];
+
+    for (const dep of coreDeps) {
+      const exists = await this.ctx.fs.exists(dep.check);
+      if (!exists) {
+        try {
+          await run('bun', ['add', dep.pkg], { cwd, timeout: 60000 });
+          lines.push(`${dep.pkg}: installed`);
+        } catch {
+          lines.push(`${dep.pkg}: FAILED — run manually: bun add ${dep.pkg}`);
+        }
+      } else {
+        lines.push(`${dep.pkg}: already installed`);
+      }
+    }
+
+    // Check grammar availability
+    const { access } = await import('node:fs/promises');
+    const { resolve } = await import('node:path');
+    lines.push('', 'Tree-sitter grammars:');
+    for (const lang of ['typescript', 'go', 'rust']) {
+      const wasmPath = resolve(cwd, `node_modules/tree-sitter-wasms/out/tree-sitter-${lang}.wasm`);
+      try {
+        await access(wasmPath);
+        lines.push(`  ${lang}: OK`);
+      } catch {
+        lines.push(`  ${lang}: NOT FOUND`);
+      }
+    }
+
+    lines.push('', 'Setup complete.');
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
+  // ─── Projects Tool Implementation (ADR-019 parity) ────
+
+  private async projectsList(): Promise<MCPToolResult> {
+    if (!this.ctx.registry) {
+      return { content: [{ type: 'text', text: 'Project registry not available.' }], isError: true };
+    }
+    const projects = await this.ctx.registry.list();
+    if (projects.length === 0) {
+      return { content: [{ type: 'text', text: 'No registered projects. Run hex_scaffold or "hex init" to create one.' }] };
+    }
+    const lines = [`Registered projects (${projects.length}):`, ''];
+    for (const p of projects) {
+      const age = Math.round((Date.now() - p.lastSeenAt) / 60000);
+      const stale = age > 1440 ? ' (stale)' : '';
+      lines.push(`${p.id.slice(0, 8)}  ${p.name.padEnd(20)} :${p.port}  ${p.status}${stale}`);
+      lines.push(`         ${p.rootPath}`);
+    }
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
+  // ─── Compare Tool Implementation (ADR-019 parity) ─────
+
+  private async compare(specification: string, model?: string): Promise<MCPToolResult> {
+    if (!this.ctx.comparator) {
+      return {
+        content: [{
+          type: 'text',
+          text: 'Comparator not available — both ANTHROPIC_API_KEY and Claude Code CLI are required.',
+        }],
+        isError: true,
+      };
+    }
+
+    const progressLines: string[] = [];
+    const report = await this.ctx.comparator.compare(
+      specification,
+      { prompt: specification, role: 'coder', ...(model ? { model } : {}) },
+      (backend, chunk) => {
+        const prefix = backend === 'claude-code' ? '[CC] ' : '[API]';
+        const firstLine = chunk.split('\n')[0]?.slice(0, 80);
+        if (firstLine?.trim()) progressLines.push(`${prefix} ${firstLine}`);
+      },
+    );
+
+    const lines = ['═══ COMPARISON RESULTS ═══', ''];
+    for (const entry of report.entries) {
+      const tag = entry.backend === 'claude-code' ? 'Claude Code' : 'Anthropic API';
+      const status = entry.result.status === 'success' ? 'OK' : entry.result.status;
+      lines.push(`${tag}:`);
+      lines.push(`  Status:      ${status}`);
+      lines.push(`  Build:       ${entry.buildSuccess ? 'PASS' : 'FAIL'}`);
+      lines.push(`  Tests:       ${Math.round(entry.testPassRate * 100)}% pass rate`);
+      lines.push(`  Arch Score:  ${entry.archHealthScore}/100`);
+      lines.push(`  Tokens:      ${entry.result.metrics.totalInputTokens + entry.result.metrics.totalOutputTokens} total`);
+      lines.push(`  Duration:    ${(entry.result.metrics.durationMs / 1000).toFixed(1)}s`);
+      lines.push(`  Tool Calls:  ${entry.result.metrics.totalToolCalls}`);
+      lines.push(`  Turns:       ${entry.result.metrics.totalTurns}`);
+      lines.push('');
+    }
+
+    const winnerLabel = report.winner === 'tie' ? 'TIE'
+      : report.winner === 'claude-code' ? 'Claude Code' : 'Anthropic API';
+    lines.push(`Winner: ${winnerLabel}`);
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 
   // ─── ADR Tool Implementations ──────────────────────────
