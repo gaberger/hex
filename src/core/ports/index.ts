@@ -168,6 +168,23 @@ export { formatArchReport, formatCompactSummary } from '../domain/report-formatt
 export type { ActionItem, ActionItemReport, ActionPriority, ActionCategory } from '../domain/action-items.js';
 export { extractArchActions, extractValidationActions, buildActionItemReport, formatActionItems } from '../domain/action-items.js';
 
+// ─── Agent Executor Ports ────────────────────────────────
+
+export type { IAgentExecutorPort } from './agent-executor.js';
+export type {
+  AgentTask,
+  AgentResult,
+  AgentMetrics,
+  AgentResultStatus,
+  AgentToolCall,
+  AgentToolResult,
+  AgentContext,
+  AgentContextSource,
+  ExecutorBackend,
+  ComparisonEntry,
+  ComparisonReport,
+} from '../domain/agent-executor-types.js';
+
 // ─── Hub Command Ports (Bidirectional Hub ↔ Project) ───
 
 export type {

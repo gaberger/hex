@@ -320,7 +320,16 @@ export class CLIAdapter {
         case 'secrets':
           return await this.secrets(args);
         case 'go':
+        case 'build':
           return await this.go(args);
+        case 'scaffold':
+          return await this.scaffold(args);
+        case 'validate':
+          return await this.validate(args);
+        case 'orchestrate':
+          return await this.orchestrate(args);
+        case 'compare':
+          return await this.compare(args);
         case 'help':
         case '--help':
         case '-h':
@@ -1593,9 +1602,55 @@ export class CLIAdapter {
     const projectName = this.ctx.rootPath.split('/').pop() ?? 'project';
     let portsContext = '';
     try {
-      const portsContent = await this.ctx.fs.read('src/core/ports/index.ts');
-      portsContext = portsContent.slice(0, 3000); // Keep it token-efficient
-    } catch { /* ports file may not exist in target project */ }
+      // Use L1 tree-sitter summaries for ALL port files — 5-10x more coverage
+      // than raw-reading one file. L1 gives signatures without bodies (~6% tokens).
+      const portGlobs = await Promise.all([
+        this.ctx.fs.glob('src/core/ports/**/*.ts'),
+        this.ctx.fs.glob('src/core/ports/**/*.go'),
+        this.ctx.fs.glob('src/core/ports/**/*.rs'),
+        this.ctx.fs.glob('internal/ports/**/*.go'),
+        this.ctx.fs.glob('pkg/**/*.go'),
+      ]);
+      const portFiles = portGlobs.flat().filter(f => !f.includes('.test.'));
+      const portSections: string[] = [];
+
+      for (const pf of portFiles) {
+        try {
+          const summary = await this.ctx.summaryService.summarizeFile(pf, 'L1');
+          const exports = summary.exports
+            .map(e => `  ${e.kind} ${e.name}${e.signature ? `: ${e.signature}` : ''}`)
+            .join('\n');
+          if (exports.trim()) {
+            portSections.push(`### ${pf}\n${exports}`);
+          }
+        } catch { /* skip unparseable files */ }
+      }
+
+      portsContext = portSections.join('\n\n');
+
+      // Fallback: if tree-sitter found nothing (no grammars), use raw read
+      if (!portsContext) {
+        const raw = await this.ctx.fs.read('src/core/ports/index.ts');
+        portsContext = raw.slice(0, 3000);
+      }
+    } catch { /* ports files may not exist in target project */ }
+
+    // L0 project overview — full file list (~2% tokens, gives structural awareness)
+    let projectOverview = '';
+    try {
+      const allSourceGlobs = await Promise.all([
+        this.ctx.fs.glob('src/**/*.ts'),
+        this.ctx.fs.glob('src/**/*.go'),
+        this.ctx.fs.glob('src/**/*.rs'),
+        this.ctx.fs.glob('internal/**/*.go'),
+        this.ctx.fs.glob('cmd/**/*.go'),
+      ]);
+      const allSourceFiles = allSourceGlobs.flat()
+        .filter(f => !f.includes('node_modules') && !f.includes('dist') && !f.includes('.test.'));
+      if (allSourceFiles.length > 0) {
+        projectOverview = allSourceFiles.map(f => `- ${f}`).join('\n');
+      }
+    } catch { /* no source files found */ }
 
     let claudeMd = '';
     try {
@@ -1673,7 +1728,8 @@ export class CLIAdapter {
       '- All relative imports use .js extensions',
       '',
       claudeMd ? `## Project Instructions (CLAUDE.md)\n${claudeMd.slice(0, 2000)}` : '',
-      portsContext ? `## Port Interfaces (first 3000 chars)\n\`\`\`typescript\n${portsContext}\n\`\`\`` : '',
+      projectOverview ? `## Project Structure (L0)\n${projectOverview}` : '',
+      portsContext ? `## Port Interfaces (L1 Summaries)\n${portsContext}` : '',
       '',
       `## Workflow`,
       '1. Read the codebase structure (src/core/ports, src/adapters)',
@@ -1854,6 +1910,207 @@ export class CLIAdapter {
     return 0;
   }
 
+  // ── compare ──────────────────────────────────────────
+
+  private async compare(args: ParsedArgs): Promise<number> {
+    if (args.positional.length === 0) {
+      this.writeLn('Usage: hex compare <specification> [--model MODEL]');
+      this.writeLn('');
+      this.writeLn('Runs the same task on both Claude Code CLI and Anthropic API,');
+      this.writeLn('then compares build success, test pass rate, arch health, speed, and tokens.');
+      return 1;
+    }
+
+    if (!this.ctx.anthropicExecutor) {
+      this.writeLn('Error: ANTHROPIC_API_KEY is required for comparison mode.');
+      this.writeLn('Set it in your environment or .hex/secrets.json');
+      return 1;
+    }
+
+    if (!this.ctx.claudeCodeExecutor) {
+      this.writeLn('Error: Claude Code CLI is required for comparison mode.');
+      this.writeLn('Install it via: npm install -g @anthropic-ai/claude-code');
+      return 1;
+    }
+
+    const specification = args.positional.join(' ');
+    const model = args.flags.get('model');
+
+    this.writeLn('╔══════════════════════════════════════════════════════╗');
+    this.writeLn('║  hex compare — Claude Code vs Anthropic API         ║');
+    this.writeLn('╚══════════════════════════════════════════════════════╝');
+    this.writeLn('');
+    this.writeLn(`Specification: ${specification}`);
+    this.writeLn('');
+
+    const { DualSwarmComparator } = await import('../../core/usecases/dual-swarm-comparator.js');
+    const comparator = new DualSwarmComparator({
+      claudeCodeExecutor: this.ctx.claudeCodeExecutor,
+      anthropicApiExecutor: this.ctx.anthropicExecutor,
+      build: this.ctx.build,
+      archAnalyzer: this.ctx.archAnalyzer,
+      worktree: this.ctx.worktree,
+    });
+
+    this.writeLn('Starting parallel execution...');
+    this.writeLn('  [CC]  Claude Code CLI');
+    this.writeLn('  [API] Anthropic API (direct)');
+    this.writeLn('');
+
+    const report = await comparator.compare(
+      specification,
+      { prompt: specification, role: 'coder', ...(model ? { model } : {}) },
+      (backend, chunk) => {
+        const prefix = backend === 'claude-code' ? '[CC] ' : '[API]';
+        const firstLine = chunk.split('\n')[0]?.slice(0, 80);
+        if (firstLine?.trim()) {
+          this.writeLn(`  ${prefix} ${firstLine}`);
+        }
+      },
+    );
+
+    // Display results
+    this.writeLn('');
+    this.writeLn('════════════════════════════════════════════════════════');
+    this.writeLn('  RESULTS');
+    this.writeLn('════════════════════════════════════════════════════════');
+    this.writeLn('');
+
+    for (const entry of report.entries) {
+      const tag = entry.backend === 'claude-code' ? 'Claude Code' : 'Anthropic API';
+      const status = entry.result.status === 'success' ? 'OK' : entry.result.status;
+      this.writeLn(`  ${tag}:`);
+      this.writeLn(`    Status:      ${status}`);
+      this.writeLn(`    Build:       ${entry.buildSuccess ? 'PASS' : 'FAIL'}`);
+      this.writeLn(`    Tests:       ${Math.round(entry.testPassRate * 100)}% pass rate`);
+      this.writeLn(`    Arch Score:  ${entry.archHealthScore}/100`);
+      this.writeLn(`    Tokens:      ${entry.result.metrics.totalInputTokens + entry.result.metrics.totalOutputTokens} total`);
+      this.writeLn(`    Duration:    ${(entry.result.metrics.durationMs / 1000).toFixed(1)}s`);
+      this.writeLn(`    Tool Calls:  ${entry.result.metrics.totalToolCalls}`);
+      this.writeLn(`    Turns:       ${entry.result.metrics.totalTurns}`);
+      this.writeLn('');
+    }
+
+    this.writeLn('────────────────────────────────────────────────────────');
+    const winnerLabel = report.winner === 'tie' ? 'TIE'
+      : report.winner === 'claude-code' ? 'Claude Code' : 'Anthropic API';
+    this.writeLn(`  Winner: ${winnerLabel}`);
+    this.writeLn(`  Quality: CC=${report.summary.quality.claudeCode} vs API=${report.summary.quality.anthropicApi}`);
+    this.writeLn('────────────────────────────────────────────────────────');
+
+    // Write report to disk
+    const reportPath = `${this.ctx.outputDir}/compare-${report.id}.json`;
+    await this.ctx.fs.write(reportPath, JSON.stringify(report, null, 2));
+    this.writeLn(`\nFull report: ${reportPath}`);
+
+    return 0;
+  }
+
+  // ── scaffold (alias for init) ──────────────────────
+
+  private async scaffold(args: ParsedArgs): Promise<number> {
+    const name = args.positional[0];
+    if (name && !args.flags.has('skip-wizard')) {
+      args.flags.set('skip-wizard', 'true');
+    }
+    return this.init(args);
+  }
+
+  // ── validate ──────────────────────────────────────
+
+  private async validate(args: ParsedArgs): Promise<number> {
+    const targetPath = args.positional[0] ?? '.';
+
+    // Phase 1: Architecture validation (always available)
+    this.writeLn('Phase 1: Architecture validation');
+    const archResult = await this.ctx.archAnalyzer.analyzeArchitecture(targetPath);
+    const s = archResult.summary;
+
+    const archPass = s.violationCount === 0 && s.circularCount === 0;
+    this.writeLn(`  Hex violations:  ${s.violationCount}`);
+    this.writeLn(`  Circular deps:   ${s.circularCount}`);
+    this.writeLn(`  Dead exports:    ${s.deadExportCount}`);
+    this.writeLn(`  Health score:    ${s.healthScore}/100`);
+    this.writeLn(`  ${archPass ? 'PASS' : 'FAIL'}`);
+    this.writeLn('');
+
+    // Phase 2: Semantic validation (requires LLM for spec generation)
+    if (this.ctx.validator) {
+      this.writeLn('Phase 2: Semantic validation');
+      try {
+        const specs = await this.ctx.validator.generateBehavioralSpecs(
+          `Validate project at ${targetPath}`,
+        );
+        const properties = await this.ctx.validator.generatePropertySpecs([]);
+        const scenarios = await this.ctx.validator.generateSmokeScenarios(specs);
+        const conventions = await this.ctx.validator.auditSignConventions(targetPath);
+        const verdict = await this.ctx.validator.validate(specs, properties, scenarios, conventions);
+
+        this.writeLn(`  Behavioral:  ${verdict.behavioralPass ? 'PASS' : 'FAIL'}`);
+        this.writeLn(`  Properties:  ${verdict.propertyPass ? 'PASS' : 'FAIL'}`);
+        this.writeLn(`  Smoke:       ${verdict.smokePass ? 'PASS' : 'FAIL'}`);
+        this.writeLn(`  Verdict:     ${verdict.pass ? 'PASS' : 'FAIL'}`);
+
+        return (archPass && verdict.pass) ? 0 : 1;
+      } catch (err) {
+        this.writeLn(`  Error: ${err instanceof Error ? err.message : String(err)}`);
+        return archPass ? 0 : 1;
+      }
+    } else {
+      this.writeLn('Phase 2: Semantic validation (skipped — no LLM configured)');
+      this.writeLn('  Set ANTHROPIC_API_KEY to enable behavioral/property/smoke validation.');
+    }
+
+    return archPass ? 0 : 1;
+  }
+
+  // ── orchestrate ───────────────────────────────────
+
+  private async orchestrate(args: ParsedArgs): Promise<number> {
+    const workplanFile = args.positional[0];
+
+    if (!workplanFile) {
+      this.writeLn('Usage: hex orchestrate <workplan-file>');
+      this.writeLn('');
+      this.writeLn('Execute a workplan via swarm agents.');
+      this.writeLn('Generate a workplan first: hex plan <requirements>');
+      return 1;
+    }
+
+    if (!this.ctx.workplanExecutor) {
+      this.writeLn('LLM not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.');
+      this.writeLn('Tip: Inside Claude Code, use hex_orchestrate via MCP.');
+      return 1;
+    }
+
+    const content = await this.ctx.fs.read(workplanFile);
+    let workplan;
+    try {
+      workplan = JSON.parse(content);
+    } catch {
+      this.writeLn(`Error: ${workplanFile} is not valid JSON.`);
+      return 1;
+    }
+
+    this.writeLn(`Orchestrating: ${workplan.title ?? workplanFile}`);
+    this.writeLn(`Steps: ${workplan.steps?.length ?? 0}`);
+    this.writeLn('');
+
+    let stepNum = 0;
+    for await (const result of this.ctx.workplanExecutor.executePlan(workplan)) {
+      stepNum++;
+      const status = result.success ? 'PASS' : 'FAIL';
+      this.writeLn(`  [${stepNum}] ${result.stepId}: ${status}`);
+      if (!result.success && result.error) {
+        this.writeLn(`       ${result.error}`);
+      }
+    }
+
+    this.writeLn('');
+    this.writeLn('Orchestration complete.');
+    return 0;
+  }
+
   // ── help ────────────────────────────────────────────
 
   private help(): number {
@@ -1862,22 +2119,27 @@ export class CLIAdapter {
     this.writeLn('Usage: hex <command> [options]');
     this.writeLn('');
     this.writeLn('Commands:');
-    this.writeLn('  mcp                             Start as MCP server (stdio transport)');
-    this.writeLn('  analyze [path] [--json]         Analyze architecture health');
+    this.writeLn('  build <prompt> [--yolo|--review] Auto-plan, orchestrate, analyze, validate');
+    this.writeLn('  scaffold <name> [--lang L]       Create a new hex project (alias for init)');
+    this.writeLn('  analyze [path] [--json]          Analyze architecture health');
     this.writeLn('  summarize <file> [--level L]     Print AST summary (L0-L3)');
+    this.writeLn('  validate [path]                  Post-build validation (arch + semantic)');
     this.writeLn('  generate <spec> [--adapter N]    Generate code from a spec file');
     this.writeLn('    [--lang ts|go|rust] [--output path]');
     this.writeLn('  plan <requirements...>           Create a workplan from requirements');
     this.writeLn('    [--lang ts|go|rust]');
-    this.writeLn('  setup                           Download grammars + install skills/agents');
+    this.writeLn('  orchestrate <workplan.json>      Execute workplan steps via swarm agents');
+    this.writeLn('  setup                            Download grammars + install skills/agents');
     this.writeLn('  dashboard [--port N]             Start dashboard (auto-detects running daemon)');
     this.writeLn('  hub [start|stop|status]          Manage hex-hub daemon (Rust dashboard service)');
-    this.writeLn('  daemon [status|start|stop|logs] Background dashboard service');
-    this.writeLn('  status                          Show dashboard, tasks, agents, patterns');
-    this.writeLn('  init [--lang ts|go|rust]        Scaffold a hex project');
-    this.writeLn('  secrets [status|list] [--json]  Secrets backend status and listing');
-    this.writeLn('  go <prompt> [--yolo|--review]   Autonomous coding in isolated worktree');
-    this.writeLn('  help                            Show this help');
+    this.writeLn('  daemon [status|start|stop|logs]  Background dashboard service');
+    this.writeLn('  status                           Show dashboard, tasks, agents, patterns');
+    this.writeLn('  init [--lang ts|go|rust]         Scaffold a hex project (interactive wizard)');
+    this.writeLn('  secrets [status|list] [--json]   Secrets backend status and listing');
+    this.writeLn('  go <prompt> [--yolo|--review]    Autonomous coding (alias for build)');
+    this.writeLn('  compare <spec> [--model M]       Compare Claude Code vs Anthropic API');
+    this.writeLn('  mcp                              Start as MCP server (stdio transport)');
+    this.writeLn('  help                             Show this help');
     this.writeLn('');
     this.writeLn('MCP Server (add to any project):');
     this.writeLn('  # .claude/settings.local.json');

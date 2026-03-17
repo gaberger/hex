@@ -13,6 +13,7 @@
 import type { IArchAnalysisPort, IASTPort, IFileSystemPort, ICodeGenerationPort, IWorkplanPort, ASTSummary, Language, Specification } from '../../core/ports/index.js';
 import type { ISwarmOrchestrationPort } from '../../core/ports/swarm.js';
 import type { IScaffoldPort } from '../../core/ports/scaffold.js';
+import type { ISecretsPort } from '../../core/ports/secrets.js';
 import { formatArchReport } from '../../core/ports/index.js';
 
 // ─── MCP Tool Definitions ────────────────────────────────
@@ -182,6 +183,38 @@ export const HEX_TOOLS: MCPToolDefinition[] = [
       required: [],
     },
   },
+  // ── Secrets tools ──
+  {
+    name: 'hex_secrets_status',
+    description: 'Check secrets backend status and list available secret keys (never reveals values)',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'hex_secrets_has',
+    description: 'Check if a secret exists by key without retrieving its value',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Secret key name (e.g. ANTHROPIC_API_KEY)' },
+      },
+      required: ['key'],
+    },
+  },
+  {
+    name: 'hex_secrets_resolve',
+    description: 'Resolve a secret value by key. Use with caution — do not log or expose the returned value.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Secret key name to resolve' },
+      },
+      required: ['key'],
+    },
+  },
 ];
 
 // ─── Dashboard Hub Tool Definitions ───────────────────────
@@ -301,6 +334,8 @@ export interface MCPContext {
   swarmOrchestrator?: ISwarmOrchestrationPort | null;
   /** Optional: scaffold service for project generation. */
   scaffold?: IScaffoldPort | null;
+  /** Optional: secrets manager for resolving API keys and credentials. */
+  secrets?: ISecretsPort | null;
 }
 
 export class MCPAdapter {
@@ -409,6 +444,13 @@ export class MCPAdapter {
             call.arguments.projectId as string,
             call.arguments.limit as number | undefined,
           );
+        // ── Secrets tools ──
+        case 'hex_secrets_status':
+          return await this.secretsStatus();
+        case 'hex_secrets_has':
+          return await this.secretsHas(call.arguments.key as string);
+        case 'hex_secrets_resolve':
+          return await this.secretsResolve(call.arguments.key as string);
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${call.name}` }], isError: true };
       }
@@ -1188,5 +1230,48 @@ export class MCPAdapter {
       }
     }
     return null;
+  }
+
+  // ── Secrets handlers ────────────────────────────────────
+
+  private async secretsStatus(): Promise<MCPToolResult> {
+    if (!this.ctx.secrets) {
+      return { content: [{ type: 'text', text: 'Secrets backend not configured.' }], isError: true };
+    }
+    try {
+      const secrets = await this.ctx.secrets.listSecrets();
+      const lines = [`Secrets backend active. ${secrets.length} key(s) available:`];
+      for (const s of secrets) {
+        lines.push(`  ${s.key}  (version: ${s.version ?? 'n/a'}, updated: ${s.updatedAt ?? 'unknown'})`);
+      }
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { content: [{ type: 'text', text: `Secrets status error: ${msg}` }], isError: true };
+    }
+  }
+
+  private async secretsHas(key: string): Promise<MCPToolResult> {
+    if (!this.ctx.secrets) {
+      return { content: [{ type: 'text', text: 'Secrets backend not configured.' }], isError: true };
+    }
+    const exists = await this.ctx.secrets.hasSecret(key);
+    return { content: [{ type: 'text', text: exists ? `Secret "${key}" exists.` : `Secret "${key}" not found.` }] };
+  }
+
+  private async secretsResolve(key: string): Promise<MCPToolResult> {
+    if (!this.ctx.secrets) {
+      return { content: [{ type: 'text', text: 'Secrets backend not configured.' }], isError: true };
+    }
+    const result = await this.ctx.secrets.resolveSecret(key);
+    if (!result.ok) {
+      return { content: [{ type: 'text', text: `Secret "${key}" not found: ${result.error}` }], isError: true };
+    }
+    // Mask middle portion for safety
+    const val = result.value;
+    const masked = val.length > 8
+      ? `${val.slice(0, 4)}${'*'.repeat(Math.min(val.length - 8, 20))}${val.slice(-4)}`
+      : '********';
+    return { content: [{ type: 'text', text: `Secret "${key}" resolved (masked): ${masked}` }] };
   }
 }

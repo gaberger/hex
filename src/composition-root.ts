@@ -26,6 +26,9 @@ import { RufloAdapter } from './adapters/secondary/ruflo-adapter.js';
 import { RegistryAdapter } from './adapters/secondary/registry-adapter.js';
 import { LLMAdapter } from './adapters/secondary/llm-adapter.js';
 import type { LLMAdapterConfig } from './adapters/secondary/llm-adapter.js';
+import { AnthropicAgentAdapter } from './adapters/secondary/anthropic-agent-adapter.js';
+import { ClaudeCodeExecutorAdapter } from './adapters/secondary/claude-code-executor-adapter.js';
+import type { IAgentExecutorPort } from './core/ports/agent-executor.js';
 import { InMemoryEventBus } from './adapters/secondary/in-memory-event-bus.js';
 
 import { EnvSecretsAdapter } from './adapters/secondary/env-secrets-adapter.js';
@@ -281,8 +284,21 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     const model = anthropicKey ? 'claude-sonnet-4-20250514' : 'gpt-4o';
     llm = new LLMAdapter({ provider, apiKey, model });
     codeGenerator = new CodeGenerator(llm, ast, build, fs, archAnalyzer);
-    workplanExecutor = new WorkplanExecutor(llm, ast, fs, swarm);
+    workplanExecutor = new WorkplanExecutor(llm, ast, fs, swarm, codeGenerator);
   }
+
+  // Agent executors: Anthropic API (direct) + Claude Code CLI (baseline)
+  let anthropicExecutor: IAgentExecutorPort | null = null;
+  let claudeCodeExecutor: IAgentExecutorPort | null = null;
+
+  if (anthropicKey) {
+    anthropicExecutor = new AnthropicAgentAdapter(
+      { apiKey: anthropicKey, model: 'claude-sonnet-4-20250514' },
+      fs,
+    );
+  }
+  // Claude Code executor always available if binary is installed
+  claudeCodeExecutor = new ClaudeCodeExecutorAdapter({}, fs);
 
   return {
     rootPath: projectPath,
@@ -315,5 +331,7 @@ export async function createAppContext(projectPath: string): Promise<AppContext>
     serviceMesh,
     schema,
     hubCommandSender: null, // wired dynamically when hub is available
+    anthropicExecutor,
+    claudeCodeExecutor,
   };
 }

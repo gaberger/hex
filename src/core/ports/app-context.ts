@@ -18,6 +18,7 @@ import type { IScaffoldPort } from './scaffold.js';
 import type { IValidationPort } from './validation.js';
 import type { ISerializationPort, IWASMBridgePort, IFFIPort, IServiceMeshPort, ISchemaPort } from './cross-lang.js';
 import type { IHubCommandSenderPort } from './hub-command.js';
+import type { IAgentExecutorPort } from './agent-executor.js';
 
 export interface AppContext {
   rootPath: string;
@@ -78,6 +79,10 @@ export interface AppContext {
 
   /** Send commands to hex-hub (null when hub is not available) */
   hubCommandSender: IHubCommandSenderPort | null;
+
+  /** Agent executors for direct API comparison (null when no API key) */
+  anthropicExecutor: IAgentExecutorPort | null;
+  claudeCodeExecutor: IAgentExecutorPort | null;
 
   /** Local output directory for analysis reports, caches, and logs */
   outputDir: string; // defaults to '.hex/' — gitignored, project-scoped
