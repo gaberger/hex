@@ -9,6 +9,8 @@
 
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
+import { existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 const _require = createRequire(import.meta.url);
 const { execFile: execFileCb } = _require('node:child_process');
 import type {
@@ -40,6 +42,16 @@ class SwarmConnectionError extends Error {
   }
 }
 
+class SwarmTimeoutError extends SwarmConnectionError {
+  constructor(tool: string, timeoutMs: number) {
+    super(
+      `Ruflo command timed out after ${timeoutMs}ms: ${tool}`,
+      [tool],
+    );
+    this.name = 'SwarmTimeoutError';
+  }
+}
+
 class SwarmParseError extends Error {
   constructor(
     message: string,
@@ -51,8 +63,46 @@ class SwarmParseError extends Error {
   }
 }
 
-const CLI_BIN = 'npx';
-const CLI_PKG = '@claude-flow/cli@latest';
+// ─── CLI Binary Resolution ──────────────────────────────
+
+const RUFLO_TIMEOUT = 30_000; // 30 seconds default
+const HEALTH_CHECK_TTL = 60_000; // cache health check for 60 seconds
+
+/** Cached resolved binary path — resolved once per process. */
+let _resolvedBin: { bin: string; args: string[] } | null = null;
+
+/**
+ * Resolve the claude-flow CLI binary, preferring a local installation
+ * over npx to avoid fetching fresh on every invocation.
+ */
+function resolveCliBin(projectPath: string): { bin: string; args: string[] } {
+  if (_resolvedBin) return _resolvedBin;
+
+  // 1. Check for local node_modules binary
+  const localBin = join(projectPath, 'node_modules', '.bin', 'claude-flow');
+  if (existsSync(localBin)) {
+    _resolvedBin = { bin: localBin, args: [] };
+    return _resolvedBin;
+  }
+
+  // 2. Try require.resolve to find the package entry, then derive the bin
+  try {
+    const pkgMain = _require.resolve('@claude-flow/cli');
+    // Walk up from the resolved module to find the package's bin directory
+    const pkgDir = dirname(dirname(pkgMain)); // e.g. .../node_modules/@claude-flow/cli
+    const binPath = join(pkgDir, 'bin', 'claude-flow');
+    if (existsSync(binPath)) {
+      _resolvedBin = { bin: binPath, args: [] };
+      return _resolvedBin;
+    }
+  } catch {
+    // Package not installed locally — fall through to npx
+  }
+
+  // 3. Fall back to npx (without @latest to use cached version)
+  _resolvedBin = { bin: 'npx', args: ['@claude-flow/cli'] };
+  return _resolvedBin;
+}
 
 /** Validate that `data` is a non-null object with all `requiredKeys` present. */
 function validateShape<T>(data: unknown, requiredKeys: string[]): T {
@@ -68,7 +118,37 @@ function validateShape<T>(data: unknown, requiredKeys: string[]): T {
 }
 
 export class RufloAdapter implements ISwarmPort {
-  constructor(private readonly projectPath: string) {}
+  private _healthCache: { healthy: boolean; checkedAt: number } | null = null;
+
+  constructor(
+    private readonly projectPath: string,
+    private readonly timeoutMs: number = RUFLO_TIMEOUT,
+  ) {}
+
+  /**
+   * Check if the ruflo daemon is reachable.
+   * Result is cached for HEALTH_CHECK_TTL (60s) to avoid repeated checks.
+   */
+  async healthCheck(): Promise<boolean> {
+    const now = Date.now();
+    if (this._healthCache && (now - this._healthCache.checkedAt) < HEALTH_CHECK_TTL) {
+      return this._healthCache.healthy;
+    }
+
+    try {
+      await this.mcpExec('task_list');
+      this._healthCache = { healthy: true, checkedAt: now };
+      return true;
+    } catch {
+      this._healthCache = { healthy: false, checkedAt: now };
+      return false;
+    }
+  }
+
+  /** Clear the cached health check result (useful after reconnection). */
+  clearHealthCache(): void {
+    this._healthCache = null;
+  }
 
   async init(config: SwarmConfig): Promise<SwarmStatus> {
     const result = await this.mcpExec('swarm_init', {
@@ -324,24 +404,41 @@ export class RufloAdapter implements ISwarmPort {
    * MCP server process — same state that Claude Code's MCP tools see.
    */
   private async mcpExec(tool: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const args = ['mcp', 'exec', '--tool', tool];
+    const { bin, args: binPrefixArgs } = resolveCliBin(this.projectPath);
+    const args = [...binPrefixArgs, 'mcp', 'exec', '--tool', tool];
     if (params) {
       for (const [k, v] of Object.entries(params)) {
         args.push('--param', `${k}=${String(v)}`);
       }
     }
 
+    const fullCmd = [bin, ...args].join(' ');
+
     try {
-      const { stdout } = await execFile(CLI_BIN, [CLI_PKG, ...args], {
+      const { stdout, stderr } = await execFile(bin, args, {
         cwd: this.projectPath,
-        timeout: 30000,
+        timeout: this.timeoutMs,
       });
+
+      // Log stderr if present (don't swallow diagnostic output)
+      if (stderr && stderr.trim()) {
+        process.stderr.write(`[ruflo:${tool}] ${stderr}`);
+      }
+
       return this.extractJson(stdout);
-    } catch (err) {
+    } catch (err: unknown) {
+      // Detect timeout errors specifically
+      const isTimeout = err instanceof Error && 'killed' in err && (err as NodeJS.ErrnoException).killed;
+      if (isTimeout) {
+        throw new SwarmTimeoutError(tool, this.timeoutMs);
+      }
+
+      // Include the full command in the error for debugging
+      const cause = err instanceof Error ? err : undefined;
       throw new SwarmConnectionError(
-        `MCP exec failed: ${tool}`,
+        `MCP exec failed [${fullCmd}]: ${cause?.message ?? String(err)}`,
         [tool, ...Object.keys(params ?? {})],
-        err instanceof Error ? err : undefined,
+        cause,
       );
     }
   }

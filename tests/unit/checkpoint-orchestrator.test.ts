@@ -68,6 +68,7 @@ function makeMockSwarmPort(): Pick<ISwarmPort, 'status' | 'listTasks'> & Record<
     status: mock(() => Promise.resolve(makeSwarmStatus())),
     listTasks: mock(() => Promise.resolve([] as SwarmTask[])),
     // Stubs for remaining ISwarmPort methods (not used by orchestrator)
+    healthCheck: mock(() => Promise.resolve(true)),
     init: mock(() => Promise.resolve(makeSwarmStatus())),
     shutdown: mock(() => Promise.resolve()),
     createTask: mock(() => Promise.resolve(makeSwarmTask())),

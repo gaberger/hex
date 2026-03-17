@@ -105,6 +105,9 @@ export interface AgentDBProgressReport {
 // ─── Output Port (Secondary / Driven) ────────────────────
 
 export interface ISwarmPort {
+  /** Check if the swarm daemon is reachable (result cached for 60s) */
+  healthCheck(): Promise<boolean>;
+
   /** Initialize a new swarm with the given configuration */
   init(config: SwarmConfig): Promise<SwarmStatus>;
 
