@@ -1,7 +1,7 @@
 # ADR-020: Feature Development UX Improvement
 
-**Status**: Proposed
-**Date**: 2025-03-17
+**Status**: Accepted
+**Date**: 2026-03-17
 **Deciders**: Core Team
 **Related**: ADR-011 (Coordination), ADR-014 (No mock.module), ADR-015 (Hub Persistence)
 
