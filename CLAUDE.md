@@ -89,11 +89,12 @@ The dashboard hub is a **separate Rust binary** in `hex-hub/`. It uses `rust-emb
 
 When building new features or example applications, follow this order:
 
-1. **Specify** — Write behavioral specs BEFORE code (what "correct" looks like)
-2. **Build** — Generate code following hex architecture rules
-3. **Test** — Unit tests + property tests + smoke tests (3 levels)
-4. **Validate** — Run `hex analyze` + validation judge
-5. **Ship** — README + start scripts + commit
+1. **Decide** — If the change involves new ports, adapters, or external dependencies, write an ADR in `docs/adrs/`
+2. **Specify** — Write behavioral specs BEFORE code (what "correct" looks like)
+3. **Build** — Generate code following hex architecture rules
+4. **Test** — Unit tests + property tests + smoke tests (3 levels)
+5. **Validate** — Run `hex analyze` + validation judge
+6. **Ship** — README + start scripts + commit
 
 ## Feature Development Workflow
 
