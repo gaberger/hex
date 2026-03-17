@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="#installation"><img src="https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen?style=flat-square&logo=node.js&logoColor=white" alt="Node >= 20"/></a>
-  <a href="https://www.npmjs.com/package/hex"><img src="https://img.shields.io/badge/npm-hex-cb3837?style=flat-square&logo=npm&logoColor=white" alt="npm"/></a>
+  <a href="https://www.npmjs.com/package/@anthropic-hex/hex"><img src="https://img.shields.io/badge/npm-%40anthropic--hex%2Fhex-cb3837?style=flat-square&logo=npm&logoColor=white" alt="npm"/></a>
   <a href="#"><img src="https://img.shields.io/badge/bun-runtime-f9f1e1?style=flat-square&logo=bun&logoColor=black" alt="Bun"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License"/></a>
   <a href="#multi-language-support"><img src="https://img.shields.io/badge/languages-TS%20%7C%20Go%20%7C%20Rust-informational?style=flat-square" alt="Languages"/></a>
@@ -38,13 +38,13 @@ Traditional AI coding tools improve the *conversation* with AI. hex improves the
 
 ```bash
 # Scaffold a new hexagonal project
-npx hex scaffold my-app --lang typescript
+npx @anthropic-hex/hex scaffold my-app --lang typescript
 
 # Analyze architecture health
-npx hex analyze .
+npx @anthropic-hex/hex analyze .
 
 # Generate token-efficient summaries for AI context
-npx hex summarize src/ --level L1
+npx @anthropic-hex/hex summarize src/ --level L1
 ```
 
 <br/>
@@ -500,10 +500,10 @@ The difference compounds:
 
 ```bash
 # Global install
-npm install -g hex
+npm install -g @anthropic-hex/hex
 
 # Or use npx
-npx hex --help
+npx @anthropic-hex/hex --help
 ```
 
 **Requirements:** Node.js >= 20, [Bun](https://bun.sh/) (for build/test)

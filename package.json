@@ -1,5 +1,5 @@
 {
-  "name": "hex",
+  "name": "@anthropic-hex/hex",
   "version": "26.3.1",
   "description": "Hexagonal Architecture framework for LLM-driven development with token-efficient tree-sitter summaries",
   "type": "module",
@@ -22,7 +22,6 @@
     "clean": "rm -rf dist",
     "dev": "bun run --watch src/cli.ts",
     "start": "bun src/cli.ts",
-    "postinstall": "cd node_modules/agentdb/dist && ln -sf src/controllers controllers 2>/dev/null || true",
     "prepublishOnly": "bun run clean && bun run build && bun test"
   },
   "keywords": [

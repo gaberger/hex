@@ -10,7 +10,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "hex": "file:../../"
+    "@anthropic-hex/hex": "file:../../"
   },
   "devDependencies": {
     "typescript": "^5.0.0"
