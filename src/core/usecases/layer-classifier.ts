@@ -112,7 +112,7 @@ export function classifyLayer(filePath: string): DependencyDirection | 'unknown'
   return 'unknown';
 }
 
-export type SpecialFileRole = 'composition-root' | 'entry-point' | null;
+type SpecialFileRole = 'composition-root' | 'entry-point' | null;
 
 export function classifySpecialFile(filePath: string): SpecialFileRole {
   const normalized = '/' + filePath;

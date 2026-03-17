@@ -20,7 +20,6 @@ import type {
 
 export type {
   BehavioralSpec,
-  BehavioralAssertion,
   PropertySpec,
   SmokeScenario,
   SmokeStep,

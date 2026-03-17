@@ -14,7 +14,7 @@
 import { classifyLayer, isAllowedImport, getViolationRule } from './layer-classifier.js';
 import type { DependencyDirection, DependencyViolation } from '../domain/value-objects.js';
 
-export interface PlannedImport {
+interface PlannedImport {
   /** The file being written (e.g., "src/adapters/primary/http-adapter.ts") */
   fromFile: string;
   /** The import target (e.g., "../../../core/domain/entities.js") */
@@ -23,7 +23,7 @@ export interface PlannedImport {
   names: string[];
 }
 
-export interface BoundaryCheckResult {
+interface BoundaryCheckResult {
   valid: boolean;
   violations: DependencyViolation[];
   warnings: string[];

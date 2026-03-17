@@ -152,7 +152,6 @@ export interface IFileSystemPort {
 
 export type {
   BehavioralSpec,
-  BehavioralAssertion,
   PropertySpec,
   SmokeScenario,
   SmokeStep,
@@ -189,18 +188,7 @@ export type {
 
 export type {
   HubCommandType,
-  HubCommandPayload,
-  SpawnAgentPayload,
-  TerminateAgentPayload,
-  CreateTaskPayload,
-  CancelTaskPayload,
-  RunAnalyzePayload,
-  RunBuildPayload,
-  RunValidatePayload,
-  RunGeneratePayload,
-  RunSummarizePayload,
   HubCommand,
-  HubCommandStatus,
   HubCommandResult,
   HubCommandHandler,
   IHubCommandReceiverPort,

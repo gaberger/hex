@@ -6,7 +6,7 @@
  * banned in domain/ and usecases/ by ESLint (see eslint.config.js).
  */
 
-export class DomainError extends Error {
+class DomainError extends Error {
   readonly code: string;
 
   constructor(code: string, message: string) {
@@ -16,7 +16,7 @@ export class DomainError extends Error {
   }
 }
 
-export class ValidationError extends DomainError {
+class ValidationError extends DomainError {
   readonly field?: string;
 
   constructor(message: string, field?: string) {
@@ -26,14 +26,14 @@ export class ValidationError extends DomainError {
   }
 }
 
-export class InvariantViolation extends DomainError {
+class InvariantViolation extends DomainError {
   constructor(message: string) {
     super('INVARIANT_VIOLATION', message);
     this.name = 'InvariantViolation';
   }
 }
 
-export class BoundaryViolation extends DomainError {
+class BoundaryViolation extends DomainError {
   readonly fromLayer: string;
   readonly toLayer: string;
 
