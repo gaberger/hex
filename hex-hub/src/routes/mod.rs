@@ -95,6 +95,7 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/coordination/activities", get(coordination::get_activities))
         .route("/api/coordination/unstaged", get(coordination::get_unstaged))
+        .route("/api/coordination/cleanup", post(coordination::cleanup_stale_sessions))
         // WebSocket
         .route("/ws", get(ws::ws_handler))
         // Middleware
