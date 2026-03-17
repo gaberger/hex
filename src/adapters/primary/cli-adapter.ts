@@ -1488,8 +1488,16 @@ export class CLIAdapter {
       const hasEnvMarker = await this.ctx.secrets.hasSecret('PATH');
       if (hasEnvMarker) {
         // Environment variable backend (can see PATH)
-        this.writeLn('Backend:     Environment variables');
-        this.writeLn("Secrets:     (use 'hex secrets list' with Infisical or local vault)");
+        this.writeLn('Backend:     Environment variables (read-only)');
+        this.writeLn('');
+        this.writeLn('No vault configured. To manage secrets locally:');
+        this.writeLn('');
+        this.writeLn('  hex secrets init --password <pw>    Create encrypted vault');
+        this.writeLn('  hex secrets set <key> <value>       Store a secret');
+        this.writeLn('  hex secrets get <key>               Retrieve a secret');
+        this.writeLn('  hex secrets list                    List all keys');
+        this.writeLn('');
+        this.writeLn('Set HEX_VAULT_PASSWORD env var for subsequent operations.');
         return 0;
       }
     }
@@ -1513,7 +1521,9 @@ export class CLIAdapter {
         if (jsonMode) {
           this.writeLn(JSON.stringify([]));
         } else {
-          this.writeLn('Secret listing requires Infisical or local vault backend.');
+          this.writeLn('No vault configured. Create one with:');
+          this.writeLn('');
+          this.writeLn('  hex secrets init --password <pw>');
         }
         return 0;
       }

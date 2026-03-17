@@ -99,11 +99,11 @@ describe('CLI secrets command', () => {
     expect(result.output).toContain('2 keys accessible');
   });
 
-  it('secrets list with EnvSecretsAdapter shows "requires Infisical" message', async () => {
+  it('secrets list with EnvSecretsAdapter prompts to create vault', async () => {
     const ctx = makeCtx(envSecretsMock());
     const result = await runCLI(['secrets', 'list'], ctx, () => {});
     expect(result.exitCode).toBe(0);
-    expect(result.output).toContain('requires Infisical or local vault backend');
+    expect(result.output).toContain('hex secrets init');
   });
 
   it('secrets list --json outputs valid JSON array', async () => {
