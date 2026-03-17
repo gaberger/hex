@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type {
   ICoordinationPort,
+  InstanceSwarmState,
   UnstagedFile,
   WorktreeLock,
   LockResult,
@@ -77,7 +78,7 @@ export class CoordinationAdapter implements ICoordinationPort {
     return this.instanceId;
   }
 
-  async heartbeat(unstagedFiles?: UnstagedFile[]): Promise<void> {
+  async heartbeat(unstagedFiles?: UnstagedFile[], swarmState?: InstanceSwarmState): Promise<void> {
     if (!this.instanceId) return;
 
     // If no files provided, capture current git state
@@ -87,6 +88,12 @@ export class CoordinationAdapter implements ICoordinationPort {
       instanceId: this.instanceId,
       projectId: this.projectId,
       unstagedFiles: files,
+      ...(swarmState ? {
+        agentCount: swarmState.agentCount,
+        activeTaskCount: swarmState.activeTaskCount,
+        completedTaskCount: swarmState.completedTaskCount,
+        topology: swarmState.topology,
+      } : {}),
     });
   }
 

@@ -26,6 +26,10 @@ pub async fn register_instance(
         session_label: req.session_label.unwrap_or_default(),
         registered_at: now.clone(),
         last_seen: now,
+        agent_count: None,
+        active_task_count: None,
+        completed_task_count: None,
+        topology: None,
     };
     state.instances.write().await.insert(instance_id.clone(), info);
     Json(json!({ "instanceId": instance_id }))
@@ -37,10 +41,22 @@ pub async fn heartbeat_instance(
 ) -> Json<serde_json::Value> {
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Update instance last_seen
+    // Update instance last_seen and swarm state
     let mut instances = state.instances.write().await;
     if let Some(inst) = instances.get_mut(&req.instance_id) {
         inst.last_seen = now.clone();
+        if req.agent_count.is_some() {
+            inst.agent_count = req.agent_count;
+        }
+        if req.active_task_count.is_some() {
+            inst.active_task_count = req.active_task_count;
+        }
+        if req.completed_task_count.is_some() {
+            inst.completed_task_count = req.completed_task_count;
+        }
+        if req.topology.is_some() {
+            inst.topology = req.topology.clone();
+        }
     } else {
         return Json(json!({ "error": "instance not found" }));
     }

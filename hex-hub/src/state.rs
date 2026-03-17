@@ -84,6 +84,14 @@ pub struct InstanceInfo {
     pub session_label: String,
     pub registered_at: String,
     pub last_seen: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_task_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_task_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +127,10 @@ pub struct HeartbeatRequest {
     pub instance_id: String,
     pub project_id: String,
     pub unstaged_files: Option<Vec<UnstagedFile>>,
+    pub agent_count: Option<u32>,
+    pub active_task_count: Option<u32>,
+    pub completed_task_count: Option<u32>,
+    pub topology: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

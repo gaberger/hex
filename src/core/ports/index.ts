@@ -203,6 +203,7 @@ export type { CheckpointEntry, TaskSnapshot, FeatureProgress, FeaturePhase, IChe
 
 export type {
   ICoordinationPort,
+  InstanceSwarmState,
   UnstagedFile,
   WorktreeLock,
   LockResult,

@@ -33,7 +33,6 @@ a:hover{opacity:.85}
 .ast-real{background:rgba(63,185,80,.15);color:var(--green)}
 .ast-stub{background:rgba(210,153,34,.15);color:var(--yellow)}
 .health-updated{margin-top:10px;font-size:.78rem;color:var(--text3);text-align:right;font-variant-numeric:tabular-nums}
-.swarm-unavailable{color:var(--text2);font-size:.9rem;font-style:italic;padding:20px 0;text-align:center;line-height:1.5}
 .conn-badge{display:flex;align-items:center;gap:7px;font-size:.85rem}
 .conn-dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;box-shadow:0 0 6px rgba(63,185,80,.5);transition:background .3s,box-shadow .3s}
 .conn-dot.disconnected{background:var(--red);box-shadow:0 0 6px rgba(248,81,73,.5);animation:pulse 1.5s infinite}
@@ -79,22 +78,22 @@ a:hover{opacity:.85}
 .token-summary{margin-top:18px;padding-top:14px;border-top:1px solid var(--border);font-size:.9rem;color:var(--text2);display:flex;justify-content:space-between}
 .token-summary .val{color:var(--text);font-weight:700}
 
-/* Swarm Panel */
-.swarm-header{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+/* Instance Status Table */
 .status-badge{padding:5px 14px;border-radius:12px;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.7px;transition:var(--transition)}
 .status-idle{background:rgba(158,158,158,.12);color:var(--text2);border:1px solid rgba(158,158,158,.15)}
 .status-running{background:rgba(88,166,255,.12);color:var(--accent);border:1px solid rgba(88,166,255,.2);animation:status-pulse 2s ease-in-out infinite}
 .status-completed{background:rgba(63,185,80,.12);color:var(--green);border:1px solid rgba(63,185,80,.2)}
 .status-failed{background:rgba(248,81,73,.12);color:var(--red);border:1px solid rgba(248,81,73,.2)}
 @keyframes status-pulse{0%,100%{box-shadow:0 0 0 0 rgba(88,166,255,0)}50%{box-shadow:0 0 0 4px rgba(88,166,255,.12)}}
-.swarm-counts{display:flex;gap:24px;margin-bottom:18px;font-size:.9rem}
-.swarm-counts .num{font-weight:800;font-size:1.4rem;font-variant-numeric:tabular-nums;line-height:1.2}
-.swarm-counts .lbl{color:var(--text2);font-size:.82rem}
-.agent-list,.task-list{max-height:200px;overflow-y:auto}
-.agent-item,.task-item{display:flex;align-items:center;gap:10px;padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.04);font-size:.875rem;border-radius:var(--radius-sm);transition:background .12s}
-.agent-item:hover,.task-item:hover{background:rgba(255,255,255,.03)}
-.agent-role{color:var(--accent);min-width:72px;font-weight:600;font-size:.85rem}
-.task-status{font-size:.75rem;padding:3px 10px;border-radius:8px}
+.instance-table{width:100%;border-collapse:collapse;font-size:.85rem}
+.instance-table th{text-align:left;padding:8px 10px;font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:var(--text3);border-bottom:1px solid var(--border);font-weight:700}
+.instance-table td{padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}
+.instance-table tr:hover td{background:rgba(255,255,255,.03)}
+.instance-table .inst-id{display:inline-block;padding:2px 8px;border-radius:8px;font-size:.72rem;font-weight:600;background:rgba(63,185,80,.12);color:var(--green);font-family:'JetBrains Mono','SF Mono',monospace}
+.instance-table .inst-label{color:var(--text);font-weight:500;margin-left:6px}
+.instance-table .inst-num{font-variant-numeric:tabular-nums;color:var(--text2);font-family:'JetBrains Mono','SF Mono',monospace;font-size:.82rem}
+.instance-table .inst-topology{color:var(--purple);font-size:.78rem}
+.instance-table .inst-time{color:var(--text3);font-size:.78rem;font-variant-numeric:tabular-nums}
 
 /* Event Log */
 .event-controls{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
@@ -344,18 +343,10 @@ a:hover{opacity:.85}
     </div>
   </div>
 
-  <!-- Swarm Status -->
+  <!-- Instance Status -->
   <div class="card" id="swarmPanel">
-    <div class="card-title">Swarm Status</div>
-    <div class="swarm-header">
-      <span class="status-badge status-idle" id="swarmBadge">idle</span>
-    </div>
-    <div class="swarm-counts">
-      <div><span class="num" id="agentCount">0</span><br><span class="lbl">agents</span></div>
-      <div><span class="num" id="taskProgress">0/0</span><br><span class="lbl">tasks</span></div>
-    </div>
-    <div class="agent-list" id="agentList"></div>
-    <div class="task-list" id="taskList" style="margin-top:10px"></div>
+    <div class="card-title">Instance Status</div>
+    <div id="instanceStatusTable"><span class="coord-empty">No instances registered</span></div>
   </div>
 
   <!-- Event Log -->
@@ -382,10 +373,6 @@ a:hover{opacity:.85}
     <div class="card-title">Coordination</div>
     <div class="coord-grid">
       <div>
-        <div class="coord-sub">
-          <div class="coord-sub-title">Active Instances</div>
-          <div id="coordInstances"><span class="coord-empty">No instances registered</span></div>
-        </div>
         <div class="coord-sub">
           <div class="coord-sub-title">Worktree Locks</div>
           <div id="coordLocks"><span class="coord-empty">No locks held</span></div>
@@ -885,99 +872,15 @@ a:hover{opacity:.85}
     });
   }
 
-  // --- Swarm Panel ---
+  // --- Swarm Data (stored per-instance, rendered in Instance Status table) ---
+  var swarmData = null; // cached swarm response for merging into instance table
+
   function loadSwarm() {
     apiFetch('/api/swarm').then(function(data) {
       $('#swarmPanel').classList.remove('panel-loading');
-      if (!data) {
-        // Show unavailable message
-        var panel = $('#swarmPanel');
-        var existing = panel.querySelector('.swarm-unavailable');
-        if (!existing) {
-          existing = createEl('div', { className: 'swarm-unavailable', textContent: 'Swarm not connected. Start a swarm to see agent and task status.' });
-          panel.appendChild(existing);
-        }
-        return;
-      }
-
-      // Remove unavailable message if present
-      var unavail = $('#swarmPanel').querySelector('.swarm-unavailable');
-      if (unavail) unavail.remove();
-
-      // status may be a string or an object { status: 'idle', ... }
-      var statusObj = data.status || {};
-      var statusStr = (typeof statusObj === 'string' ? statusObj : (statusObj.status || 'idle')).toLowerCase();
-      var badge = $('#swarmBadge');
-      badge.textContent = statusStr;
-      badge.className = 'status-badge status-' + statusStr;
-
-      var agents = data.agents || [];
-      var tasks = data.tasks || [];
-      setText('#agentCount', agents.length);
-
-      var completed = tasks.filter(function(t) {
-        return t.status === 'completed' || t.status === 'done';
-      }).length;
-      setText('#taskProgress', completed + '/' + tasks.length);
-
-      // Agent list
-      var aList = $('#agentList');
-      clearChildren(aList);
-      aList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Agents' }));
-      if (agents.length > 0) {
-        agents.forEach(function(a) {
-          var item = createEl('div', { className: 'agent-item' }, [
-            createEl('span', { className: 'agent-role', textContent: a.role || a.type || 'agent' }),
-            createEl('span', { textContent: a.name || a.id || '--' }),
-            createEl('span', {
-              className: 'status-badge status-' + (a.status || 'idle').toLowerCase(),
-              textContent: a.status || 'idle',
-              style: 'font-size:.65rem;padding:2px 6px',
-            }),
-          ]);
-          if (a.currentTask) {
-            item.appendChild(createEl('span', {
-              textContent: a.currentTask,
-              style: 'color:var(--text2);margin-left:auto;font-size:.75rem',
-            }));
-          }
-          aList.appendChild(item);
-        });
-      } else {
-        aList.appendChild(createEl('div', { className: 'empty', textContent: 'No agents active' }));
-      }
-
-      // Task list
-      var tList = $('#taskList');
-      clearChildren(tList);
-      tList.appendChild(createEl('div', { className: 'section-heading', textContent: 'Tasks' }));
-      if (tasks.length > 0) {
-        tasks.forEach(function(t) {
-          var ts = (t.status || 'pending').toLowerCase();
-          var badgeClass = 'status-idle';
-          if (ts === 'completed' || ts === 'done') badgeClass = 'status-completed';
-          else if (ts === 'running' || ts === 'in-progress') badgeClass = 'status-running';
-          else if (ts === 'failed') badgeClass = 'status-failed';
-
-          var item = createEl('div', { className: 'task-item' }, [
-            createEl('span', {
-              className: 'task-status status-badge ' + badgeClass,
-              textContent: t.status || 'pending',
-              style: 'font-size:.65rem;padding:2px 6px',
-            }),
-            createEl('span', { textContent: t.title || t.name || t.id || '--' }),
-          ]);
-          if (t.assignee) {
-            item.appendChild(createEl('span', {
-              textContent: t.assignee,
-              style: 'color:var(--text2);margin-left:auto;font-size:.75rem',
-            }));
-          }
-          tList.appendChild(item);
-        });
-      } else {
-        tList.appendChild(createEl('div', { className: 'empty', textContent: 'No tasks registered' }));
-      }
+      swarmData = data || null;
+      // Re-render instance table to merge swarm info
+      loadCoordination();
     });
   }
 
@@ -1236,18 +1139,48 @@ a:hover{opacity:.85}
   }
 
   function renderCoordInstances(instances) {
-    var el = $('#coordInstances');
+    var el = $('#instanceStatusTable');
     if (!el) return;
     clearChildren(el);
     if (!instances.length) { el.appendChild(coordEmpty('No instances registered')); return; }
+
+    var table = createEl('table', { className: 'instance-table' });
+    var thead = createEl('thead');
+    thead.appendChild(createEl('tr', {}, [
+      createEl('th', { textContent: 'Instance' }),
+      createEl('th', { textContent: 'PID' }),
+      createEl('th', { textContent: 'Agents' }),
+      createEl('th', { textContent: 'Tasks' }),
+      createEl('th', { textContent: 'Topology' }),
+      createEl('th', { textContent: 'Last Seen' }),
+    ]));
+    table.appendChild(thead);
+
+    var tbody = createEl('tbody');
     instances.forEach(function(inst) {
-      el.appendChild(createEl('div', { className: 'coord-item' }, [
-        createEl('span', { className: 'coord-badge coord-badge-instance', textContent: inst.instanceId.slice(0, 8) }),
-        createEl('span', { className: 'coord-instance-label', textContent: inst.sessionLabel || 'unnamed' }),
-        createEl('span', { className: 'coord-label', textContent: 'PID ' + inst.pid }),
-        createEl('span', { className: 'coord-ttl', textContent: timeAgo(inst.lastSeen) }),
-      ]));
+      var agentCount = typeof inst.agentCount === 'number' ? inst.agentCount : 0;
+      var activeTasks = typeof inst.activeTaskCount === 'number' ? inst.activeTaskCount : 0;
+      var completedTasks = typeof inst.completedTaskCount === 'number' ? inst.completedTaskCount : 0;
+      var topology = inst.topology || '\u2014';
+
+      // Build instance cell: short ID badge + session label
+      var instCell = createEl('td', {}, [
+        createEl('span', { className: 'inst-id', textContent: inst.instanceId.slice(0, 8) }),
+        createEl('span', { className: 'inst-label', textContent: inst.sessionLabel || 'unnamed' }),
+      ]);
+
+      var row = createEl('tr', {}, [
+        instCell,
+        createEl('td', { className: 'inst-num', textContent: String(inst.pid) }),
+        createEl('td', { className: 'inst-num', textContent: String(agentCount) }),
+        createEl('td', { className: 'inst-num', textContent: activeTasks + '/' + completedTasks }),
+        createEl('td', { className: 'inst-topology', textContent: topology }),
+        createEl('td', { className: 'inst-time', textContent: timeAgo(inst.lastSeen) }),
+      ]);
+      tbody.appendChild(row);
     });
+    table.appendChild(tbody);
+    el.appendChild(table);
   }
 
   function renderCoordLocks(locks) {

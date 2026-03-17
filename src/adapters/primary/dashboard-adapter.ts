@@ -318,9 +318,12 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
     let result: HubCommandResult;
 
     if (!handler) {
-      // Silently ignore unknown commands — another adapter instance may handle them.
-      // This prevents stale processes from racing with newer ones that have new handlers.
-      return;
+      result = {
+        commandId: command.commandId,
+        status: 'failed',
+        error: `Unknown command type: ${command.type}`,
+        completedAt: new Date().toISOString(),
+      };
     } else {
       try {
         result = await handler(command);
@@ -711,6 +714,27 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   private async pushCoordination(): Promise<void> {
     if (!this.ctx.coordination) return;
     try {
+      // Gather swarm state for the coordination heartbeat
+      let swarmState: import('../../core/ports/coordination.js').InstanceSwarmState | undefined;
+      try {
+        const [swarmStatus, tasks, agents] = await Promise.all([
+          this.ctx.swarm.status(),
+          this.ctx.swarm.listTasks(),
+          this.ctx.swarm.listAgents(),
+        ]);
+        swarmState = {
+          agentCount: agents.length,
+          activeTaskCount: tasks.filter(t => t.status === 'in-progress' || t.status === 'pending').length,
+          completedTaskCount: tasks.filter(t => t.status === 'completed').length,
+          topology: swarmStatus.topology ?? 'unknown',
+        };
+      } catch {
+        // Swarm may not be running — heartbeat without swarm state
+      }
+
+      // Send heartbeat with swarm state included
+      await this.ctx.coordination.heartbeat(undefined, swarmState).catch(() => {});
+
       const [locks, claims, activities, unstaged] = await Promise.all([
         this.ctx.coordination.listLocks().catch(() => []),
         this.ctx.coordination.listClaims().catch(() => []),

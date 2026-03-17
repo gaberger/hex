@@ -8,6 +8,13 @@
 
 // ── Value Types ──────────────────────────────────────────
 
+export interface InstanceSwarmState {
+  agentCount: number;
+  activeTaskCount: number;
+  completedTaskCount: number;
+  topology: string;
+}
+
 export interface UnstagedFile {
   path: string;
   status: 'modified' | 'added' | 'deleted';
@@ -60,6 +67,7 @@ export interface InstanceInfo {
   sessionLabel: string;
   registeredAt: string;
   lastSeen: string;
+  swarmState?: InstanceSwarmState;
 }
 
 export interface UnstagedState {
@@ -74,7 +82,7 @@ export interface UnstagedState {
 export interface ICoordinationPort {
   // Instance lifecycle
   registerInstance(sessionLabel?: string): Promise<string>; // returns instanceId
-  heartbeat(unstagedFiles?: UnstagedFile[]): Promise<void>;
+  heartbeat(unstagedFiles?: UnstagedFile[], swarmState?: InstanceSwarmState): Promise<void>;
 
   // Worktree locks
   acquireLock(feature: string, layer: string): Promise<LockResult>;
