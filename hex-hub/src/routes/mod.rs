@@ -17,6 +17,7 @@ use crate::embed::serve_index;
 async fn get_version() -> Json<serde_json::Value> {
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
+        "buildHash": env!("HEX_HUB_BUILD_HASH"),
         "name": "hex-hub",
     }))
 }

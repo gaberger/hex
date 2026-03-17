@@ -27,6 +27,16 @@ import type {
 
 const execFileP = promisify(execFile);
 
+/**
+ * Injectable dependencies for CoordinationAdapter.
+ * Production code uses defaults; tests can inject fakes to avoid mock.module().
+ */
+export interface CoordinationAdapterDeps {
+  httpRequest?: typeof request;
+  execFileAsync?: (cmd: string, args: string[], opts: { cwd: string; timeout: number }) => Promise<{ stdout: string; stderr: string }>;
+  authToken?: string;
+}
+
 /** Read auth token from hub lock file. */
 function readHubToken(): string {
   try {
@@ -52,13 +62,18 @@ export class CoordinationAdapter implements ICoordinationPort {
   private instanceId: string | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly authToken: string;
+  private readonly _httpRequest: typeof request;
+  private readonly _execFileAsync: (cmd: string, args: string[], opts: { cwd: string; timeout: number }) => Promise<{ stdout: string; stderr: string }>;
 
   constructor(
     private readonly projectId: string,
     private readonly projectPath: string,
     private readonly hubPort: number = 5555,
+    deps?: CoordinationAdapterDeps,
   ) {
-    this.authToken = readHubToken();
+    this.authToken = deps?.authToken ?? readHubToken();
+    this._httpRequest = deps?.httpRequest ?? request;
+    this._execFileAsync = deps?.execFileAsync ?? ((cmd, args, opts) => execFileP(cmd, args, opts));
   }
 
   // ── Instance lifecycle ────────────────────────────────
@@ -188,7 +203,7 @@ export class CoordinationAdapter implements ICoordinationPort {
 
   private async captureUnstagedFiles(): Promise<UnstagedFile[]> {
     try {
-      const { stdout } = await execFileP('git', ['status', '--porcelain'], {
+      const { stdout } = await this._execFileAsync('git', ['status', '--porcelain'], {
         cwd: this.projectPath,
         timeout: 5000,
       });
@@ -216,7 +231,7 @@ export class CoordinationAdapter implements ICoordinationPort {
         'Content-Length': Buffer.byteLength(payload),
       };
       if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
-      const req = request(
+      const req = this._httpRequest(
         { hostname: '127.0.0.1', port: this.hubPort, path, method: 'POST', headers, timeout: 5000 },
         (res) => {
           const chunks: Buffer[] = [];
@@ -237,7 +252,7 @@ export class CoordinationAdapter implements ICoordinationPort {
     return new Promise((resolve) => {
       const headers: Record<string, string> = {};
       if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
-      const req = request(
+      const req = this._httpRequest(
         { hostname: '127.0.0.1', port: this.hubPort, path, method: 'GET', headers, timeout: 5000 },
         (res) => {
           const chunks: Buffer[] = [];
@@ -258,7 +273,7 @@ export class CoordinationAdapter implements ICoordinationPort {
     return new Promise((resolve) => {
       const headers: Record<string, string> = {};
       if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
-      const req = request(
+      const req = this._httpRequest(
         { hostname: '127.0.0.1', port: this.hubPort, path, method: 'DELETE', headers, timeout: 5000 },
         () => resolve(),
       );

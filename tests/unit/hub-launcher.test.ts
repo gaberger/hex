@@ -1,29 +1,37 @@
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+/**
+ * Unit tests for HubLauncher (secondary adapter)
+ *
+ * Uses dependency injection (HubLauncherDeps) instead of mock.module()
+ * to avoid cross-test contamination in parallel test runs.
+ */
 
-// Mock node:fs and node:child_process before importing
-const mockExistsSync = mock(() => false);
-const mockReadFileSync = mock(() => '{}');
+import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { HubLauncher, ensureHubRunning } from '../../src/adapters/secondary/hub-launcher.js';
+import type { HubLauncherDeps } from '../../src/adapters/secondary/hub-launcher.js';
+
+// ── Fake deps factory ────────────────────────────────────
+
+const mockExistsSync = mock(() => false as boolean);
+const mockReadFileSync = mock(() => '{}' as string);
 const mockSpawn = mock(() => ({ unref: () => {}, pid: 12345 }));
 
-mock.module('node:fs', () => ({
-  existsSync: mockExistsSync,
-  readFileSync: mockReadFileSync,
-}));
+function makeDeps(): HubLauncherDeps {
+  return {
+    existsSync: mockExistsSync as (path: string) => boolean,
+    readFileSync: mockReadFileSync as (path: string, encoding: string) => string,
+    spawn: mockSpawn as HubLauncherDeps['spawn'],
+    homedir: () => '/mock-home',
+    join: (...parts: string[]) => parts.join('/'),
+  };
+}
 
-mock.module('node:child_process', () => ({
-  spawn: mockSpawn,
-}));
-
-// Import after mocks are set up
-const { HubLauncher, ensureHubRunning } = await import(
-  '../../src/adapters/secondary/hub-launcher.js'
-);
+// ── Tests ────────────────────────────────────────────────
 
 describe('HubLauncher', () => {
-  let launcher: InstanceType<typeof HubLauncher>;
+  let launcher: HubLauncher;
 
   beforeEach(() => {
-    launcher = new HubLauncher();
+    launcher = new HubLauncher(makeDeps());
     mockExistsSync.mockReset();
     mockReadFileSync.mockReset();
     mockSpawn.mockReset();

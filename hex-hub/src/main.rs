@@ -20,6 +20,17 @@ async fn main() {
         .init();
 
     let args: Vec<String> = std::env::args().collect();
+
+    // Quick introspection flags (no daemon startup needed)
+    if args.iter().any(|a| a == "--build-hash") {
+        println!("{}", env!("HEX_HUB_BUILD_HASH"));
+        return;
+    }
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("hex-hub {} ({})", env!("CARGO_PKG_VERSION"), env!("HEX_HUB_BUILD_HASH"));
+        return;
+    }
+
     let is_daemon = args.iter().any(|a| a == "--daemon");
 
     let port = args

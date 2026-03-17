@@ -9,6 +9,7 @@ pub struct LockFile {
     pub token: String,
     pub started_at: String,
     pub version: String,
+    pub build_hash: String,
 }
 
 pub fn lock_file_path() -> PathBuf {
@@ -31,6 +32,7 @@ pub fn write_lock(port: u16, token: &str) -> std::io::Result<()> {
         token: token.to_string(),
         started_at: chrono::Utc::now().to_rfc3339(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        build_hash: env!("HEX_HUB_BUILD_HASH").to_string(),
     };
 
     let json = serde_json::to_string_pretty(&lock)

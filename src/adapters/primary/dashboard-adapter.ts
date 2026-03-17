@@ -502,8 +502,8 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
           completedAt: new Date().toISOString(),
         };
       }
-      const lang = (p.language ?? 'typescript') as import('../../core/domain/value-objects.js').Language;
-      const spec: import('../../core/domain/value-objects.js').Specification = {
+      const lang = (p.language ?? 'typescript') as import('../../core/ports/index.js').Language;
+      const spec: import('../../core/ports/index.js').Specification = {
         title: `Generate ${p.adapter} implementing ${p.portInterface}`,
         requirements: [`Implement ${p.portInterface} adapter: ${p.adapter}`],
         constraints: ['Follow hexagonal architecture rules', 'Only import from core/ports and core/domain'],
