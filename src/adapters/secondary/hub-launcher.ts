@@ -20,7 +20,9 @@ const SPAWN_POLL_MS = 100;
 
 const HUB_BINARY_PATHS = [
   join(homedir(), '.hex', 'bin', 'hex-hub'),
+  join(process.cwd(), 'target', 'release', 'hex-hub'),       // workspace target
   join(process.cwd(), 'hex-hub', 'target', 'release', 'hex-hub'),
+  join(process.cwd(), 'target', 'debug', 'hex-hub'),
   join(process.cwd(), 'hex-hub', 'target', 'debug', 'hex-hub'),
 ];
 

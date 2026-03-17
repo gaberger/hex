@@ -38,6 +38,11 @@
             "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR/.claude/helpers/hub-push.cjs\" edit",
             "timeout": 3000
+          },
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/helpers/hex-hub-rebuild.cjs\"",
+            "timeout": 5000
           }
         ]
       },
