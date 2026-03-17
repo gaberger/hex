@@ -4,9 +4,8 @@
 
 <p align="center">
   <a href="#installation"><img src="https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen?style=flat-square&logo=node.js&logoColor=white" alt="Node >= 20"/></a>
-  <a href="https://github.com/gaberger/hex"><img src="https://img.shields.io/badge/npm-%40anthropic--hex%2Fhex-cb3837?style=flat-square&logo=npm&logoColor=white" alt="npm"/></a>
+  <a href="https://www.npmjs.com/package/@anthropic-hex/hex"><img src="https://img.shields.io/badge/npm-%40anthropic--hex%2Fhex-cb3837?style=flat-square&logo=npm&logoColor=white" alt="npm"/></a>
   <a href="#"><img src="https://img.shields.io/badge/bun-runtime-f9f1e1?style=flat-square&logo=bun&logoColor=black" alt="Bun"/></a>
-  <a href="#"><img src="https://img.shields.io/badge/rust-native%20NAPI-dea584?style=flat-square&logo=rust&logoColor=black" alt="Rust"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License"/></a>
   <a href="#multi-language-support"><img src="https://img.shields.io/badge/languages-TS%20%7C%20Go%20%7C%20Rust-informational?style=flat-square" alt="Languages"/></a>
   <a href="#multi-agent-swarm-coordination"><img src="https://img.shields.io/badge/swarm-ruflo%20powered-blueviolet?style=flat-square" alt="Swarm"/></a>
@@ -14,7 +13,7 @@
 
 <p align="center">
   <b>Give AI coding agents mechanical architecture enforcement — not just prompt templates.</b><br/>
-  <sub>Typed port contracts &nbsp;|&nbsp; Static boundary analysis &nbsp;|&nbsp; Native Rust parsing &nbsp;|&nbsp; Multi-agent swarm coordination</sub>
+  <sub>Typed port contracts &nbsp;|&nbsp; Static boundary analysis &nbsp;|&nbsp; Multi-agent swarm coordination &nbsp;|&nbsp; Token-efficient AST summaries</sub>
 </p>
 
 ---
@@ -39,16 +38,13 @@ Traditional AI coding tools improve the *conversation* with AI. hex improves the
 
 ```bash
 # Scaffold a new hexagonal project
-hex scaffold my-app --lang ts
+npx @anthropic-hex/hex scaffold my-app --lang typescript
 
 # Analyze architecture health
-hex analyze .
+npx @anthropic-hex/hex analyze .
 
 # Generate token-efficient summaries for AI context
-hex summarize src/ --level L1
-
-# Post-build validation (architecture + semantic)
-hex validate .
+npx @anthropic-hex/hex summarize src/ --level L1
 ```
 
 <br/>
@@ -62,8 +58,6 @@ hex validate .
 <p align="center">
   <img src=".github/assets/architecture.svg" alt="Hexagonal Architecture Layers" width="800"/>
 </p>
-
-hex is a **hybrid TypeScript + Rust** system. TypeScript handles LLM-facing integration (CLI, MCP, dashboard). Rust handles performance-critical parsing via native NAPI-RS bindings. The boundary between them is the `IASTPort` interface — callers never know which backend is running.
 
 <details>
 <summary><b>How the layers work</b></summary>
@@ -82,31 +76,6 @@ hex is a **hybrid TypeScript + Rust** system. TypeScript handles LLM-facing inte
 **The golden rule:** Adapters NEVER import other adapters. This is the most common mistake AI agents make, and `hex analyze` catches it every time.
 
 </details>
-
-<br/>
-
-### Hybrid Runtime — TypeScript + Rust
-
-hex uses a **dual-backend strategy** for tree-sitter parsing:
-
-| Backend | Speed | When Used |
-|:--------|:------|:----------|
-| **Native (Rust/NAPI-RS)** | 5-10x faster | When Rust toolchain is available at install time |
-| **WASM fallback** | Baseline | Automatic if native build is skipped or unavailable |
-
-Both backends implement `IASTPort` — the adapter detects native availability at startup and falls back silently. No configuration needed.
-
-```
-hex-core/           ← Rust NAPI-RS crate (tree-sitter + extractors)
-  src/
-    lib.rs          ← initGrammars(), parseFile() — NAPI exports
-    parser.rs       ← Cached Parser instances via OnceLock
-    types.rs        ← ASTSummary/ExportEntry/ImportEntry (mirrors TS exactly)
-    extractors/
-      typescript.rs ← TS/TSX export/import extraction
-      go.rs         ← Go export/import extraction
-      rust.rs       ← Rust export/import extraction
-```
 
 <br/>
 
@@ -224,16 +193,13 @@ Three levels, integrated into the workflow:
 
 ```bash
 # Unit tests (mock ports, test logic)
-bun run test:unit
-
-# Property tests (invariants over all inputs)
-bun run test:property
-
-# Smoke tests (module imports + CLI lifecycle)
-bun run test:smoke
-
-# All three tiers at once
 bun test
+
+# Property tests (fuzz inputs)
+bun test --property
+
+# Smoke tests (can it start?)
+hex validate .
 ```
 
 </td>
@@ -282,11 +248,11 @@ hex coordinates multiple AI agents working in parallel via [**ruflo**](https://g
 | Role | Responsibility |
 |:-----|:--------------|
 | `planner` | Decomposes requirements into tasks |
-| `hex-coder` | Implements one adapter boundary (TDD) |
-| `validation-judge` | Post-build semantic validation (blocking) |
-| `dead-code-analyzer` | Finds dead exports + hex violations |
+| `coder` | Implements one adapter boundary |
+| `tester` | Writes unit + property tests |
+| `reviewer` | Checks hex boundary violations |
 | `integrator` | Merges worktrees, integration tests |
-| `status-monitor` | Tracks progress, reports status |
+| `monitor` | Tracks progress, reports status |
 
 </td>
 <td width="50%">
@@ -425,7 +391,7 @@ See [hex-hub/README.md](hex-hub/README.md) for full API reference.
 hex summarize src/ --level L1
 ```
 
-Powered by [tree-sitter](https://tree-sitter.github.io/) — native Rust via NAPI-RS (with WASM fallback) for language-agnostic AST extraction across TypeScript, Go, and Rust.
+Powered by [tree-sitter](https://tree-sitter.github.io/) (WASM) for language-agnostic AST extraction.
 
 <br/>
 
@@ -471,12 +437,6 @@ Powered by [tree-sitter](https://tree-sitter.github.io/) — native Rust via NAP
 <td align="center">-</td>
 <td align="center">Sharding</td>
 <td align="center"><img src="https://img.shields.io/badge/-tree--sitter%20L0--L3-3fb950?style=flat-square" alt="tree-sitter"/></td>
-</tr>
-<tr>
-<td><b>Native performance</b></td>
-<td align="center">-</td>
-<td align="center">-</td>
-<td align="center"><img src="https://img.shields.io/badge/-Rust%20NAPI--RS-3fb950?style=flat-square" alt="Rust NAPI"/></td>
 </tr>
 <tr>
 <td><b>Testing pipeline</b></td>
@@ -539,19 +499,14 @@ The difference compounds:
 ## Installation
 
 ```bash
-# Install from GitHub (npm name "hex" is taken by an unrelated package)
+# Global install
 npm install -g @anthropic-hex/hex
 
-# Or run directly via npx
+# Or use npx
 npx @anthropic-hex/hex --help
-
-# Or clone and build locally
-git clone https://github.com/gaberger/hex.git && cd hex && bun install && bun run build
 ```
 
 **Requirements:** Node.js >= 20, [Bun](https://bun.sh/) (for build/test)
-
-**Optional:** [Rust toolchain](https://rustup.rs/) — enables native tree-sitter parsing (5-10x faster). If Rust is not installed, hex falls back to WASM automatically.
 
 <br/>
 
@@ -563,23 +518,21 @@ git clone https://github.com/gaberger/hex.git && cd hex && bun install && bun ru
 
 | Command | Description |
 |:--------|:-----------|
-| `hex build <prompt>` | **Single entry point** — auto-plans, orchestrates, analyzes, validates (alias: `hex go`) |
-| `hex scaffold <name> [--lang L]` | Create a new hex project with full structure (alias for `hex init`) |
-| `hex analyze [path] [--json]` | Architecture health check (dead code, violations, cycles) |
-| `hex summarize <file> --level <L0-L3>` | Token-efficient AST summaries via tree-sitter |
-| `hex validate [path]` | Post-build validation — architecture + semantic (blocking gate) |
-| `hex generate <spec> [--adapter N]` | Generate code within an adapter boundary |
+| `hex build <requirements>` | **Single entry point** — auto-plans, orchestrates agents, generates code, analyzes, validates |
+| `hex scaffold <name>` | Create a new hex project with full structure |
+| `hex analyze <path>` | Architecture health check (dead code, violations, cycles) |
+| `hex summarize <path> --level <L0-L3>` | Token-efficient AST summaries via tree-sitter |
+| `hex generate` | Generate code within an adapter boundary |
 | `hex plan <requirements>` | Decompose requirements into workplan steps |
-| `hex orchestrate <workplan.json>` | Execute workplan steps via swarm agents |
+| `hex validate <path>` | Post-build semantic validation (blocking gate) |
+| `hex orchestrate` | Execute workplan steps via swarm agents |
 | `hex status` | Swarm progress report |
 | `hex daemon [start\|stop\|status]` | Manage hex-hub daemon (Rust dashboard service, port 5555) |
 | `hex hub [start\|stop\|status]` | Alias for `hex daemon` |
-| `hex dashboard` | Start dashboard (auto-starts hex-hub if installed) |
-| `hex secrets [status\|list]` | Secrets backend status and listing |
-| `hex compare <spec>` | Compare Claude Code vs Anthropic API on a task |
+| `hex dashboard` | Legacy Node.js dashboard (fallback if hex-hub binary not installed) |
 | `hex mcp` | Start MCP stdio server for Claude Code / IDE integration |
 | `hex setup` | Install tree-sitter grammars + skills + agents + hex-hub binary |
-| `hex init [--lang L]` | Interactive project initialization wizard |
+| `hex init` | Initialize project with startup hooks |
 | `hex help` | Show all commands and usage |
 | `hex version` | Print current version |
 
@@ -674,7 +627,7 @@ Pre-built YAML agents for swarm orchestration:
 
 ## Multi-Language Support
 
-Powered by [tree-sitter](https://tree-sitter.github.io/) — native Rust (NAPI-RS) with WASM fallback:
+Powered by [tree-sitter](https://tree-sitter.github.io/) WASM for language-agnostic AST extraction:
 
 | Capability | TypeScript | Go | Rust |
 |:-----------|:----------:|:--:|:----:|
@@ -685,9 +638,7 @@ Powered by [tree-sitter](https://tree-sitter.github.io/) — native Rust (NAPI-R
 | **Code generation** | Full (TS rules) | Full (Go rules) | Full (Rust rules) |
 | **Path resolution** | `.js` → `.ts` | Module paths | `crate::` paths |
 | **Scaffold** | `package.json` + `tsconfig.json` | `go.mod` | `Cargo.toml` |
-| **Native parsing** | NAPI-RS | NAPI-RS | NAPI-RS |
-| **Dead export detection** | Full | Full (skips `init()`) | Full (skips `main()`) |
-| **Example project** | 5 apps | 1 (weather) | 1 (rust-api) |
+| **Example project** | 4 apps | 1 (weather) | 1 (rust-api) |
 
 <details>
 <summary><b>Example: Go Backend (Weather API)</b></summary>
@@ -724,71 +675,29 @@ Same hexagonal rules, different language. The architecture transfers.
 ## Project Structure
 
 ```
-src/                         # TypeScript — LLM-facing integration
+src/
   core/
-    domain/                  # Value objects, entities, domain events
-    ports/                   # Typed interfaces (input + output)
-    usecases/                # Application logic (language-aware)
+    domain/              # Value objects, entities, domain events
+    ports/               # Typed interfaces (input + output)
+    usecases/            # Application logic
   adapters/
-    primary/                 # CLI, MCP, Dashboard, Notifications
-    secondary/               # FS, Git, TreeSitter (dual-backend), LLM, Ruflo, Build, Registry, Secrets
-  infrastructure/            # Tree-sitter query definitions
-  composition-root.ts        # Single DI wiring point
-  cli.ts                     # CLI entry point
-  index.ts                   # Library public API
-hex-core/                    # Rust — native NAPI-RS tree-sitter module
-  src/
-    lib.rs                   # NAPI exports: initGrammars(), parseFile()
-    parser.rs                # Cached Parser instances (OnceLock)
-    types.rs                 # ASTSummary/ExportEntry/ImportEntry (mirrors TS)
-    extractors/              # Language-specific extractors
-      typescript.rs
-      go.rs
-      rust.rs
-hex-hub/                     # Rust — dashboard daemon (axum, port 5555)
+    primary/             # CLI, MCP, Dashboard, Notifications
+    secondary/           # FS, Git, TreeSitter, LLM, Ruflo, Build, Registry, Secrets
+  infrastructure/        # Tree-sitter query definitions
+  composition-root.ts    # Single DI wiring point
+  cli.ts                 # CLI entry point
+  index.ts               # Library public API
 tests/
-  unit/                      # London-school mock-first tests
-  property/                  # Universal invariant tests (boundary rules, path normalization)
-  smoke/                     # Module import + CLI lifecycle tests
-  integration/               # Real adapter tests (incl. native vs WASM parity)
-examples/                    # Reference apps (flappy-bird, todo-app, weather, rust-api, etc.)
-agents/                      # Agent definitions (YAML)
-skills/                      # Skill definitions (Markdown)
-config/                      # Language configs, tree-sitter settings
-scripts/                     # Build and setup scripts (incl. build-hex-core.sh)
+  unit/                  # London-school mock-first tests
+  integration/           # Real adapter tests
+examples/                # Reference apps (weather, rust-api, flappy-bird, todo-app, test-app, summaries)
+hex-hub/                 # Rust dashboard daemon (axum, system-wide on port 5555)
+agents/                  # Agent definitions (YAML)
+skills/                  # Skill definitions (Markdown)
+config/                  # Language configs, tree-sitter settings
 docs/
-  adrs/                      # Architecture Decision Records
-  analysis/                  # Adversarial review reports
-```
-
-<br/>
-
----
-
-<br/>
-
-## Build & Test
-
-```bash
-# TypeScript only (CLI + library)
-bun run build
-
-# Native Rust module (optional — requires Rust toolchain)
-bun run build:native         # or: bash scripts/build-hex-core.sh
-
-# Everything (native + TypeScript)
-bun run build:all
-
-# Tests
-bun test                     # All tests (unit + property + smoke)
-bun run check                # TypeScript type check (no emit)
-
-# Architecture
-hex analyze .                # Architecture validation
-hex setup                    # Install grammars + skills + agents + hex-hub binary
-
-# Dashboard (Rust binary — separate from bun run build)
-cargo build --release -p hex-hub
+  adrs/                  # Architecture Decision Records
+  analysis/              # Adversarial review reports
 ```
 
 <br/>
@@ -821,6 +730,23 @@ Three-tier detection: `.hex/status.json` (written by hooks) → `~/.claude-flow/
 
 <br/>
 
+## Build & Test
+
+```bash
+bun run build        # Bundle CLI + library to dist/
+bun test             # Run all tests (unit + property + smoke)
+bun run check        # TypeScript type check (no emit)
+hex analyze .   # Architecture validation
+hex setup       # Install grammars + skills + agents + hex-hub binary
+cargo build --release -p hex-hub  # Build dashboard binary manually
+```
+
+<br/>
+
+---
+
+<br/>
+
 ## Design Decisions
 
 <details>
@@ -830,9 +756,7 @@ Three-tier detection: `.hex/status.json` (written by hooks) → `~/.claude-flow/
 
 | Decision | Rationale |
 |:---------|:---------|
-| **Hybrid TS + Rust** | TypeScript for LLM integration (MCP, CLI); Rust for parsing perf (5-10x via NAPI-RS) |
-| **Graceful degradation** | Native Rust is optional; WASM fallback is automatic and silent |
-| **Tree-sitter over regex** | WASM/native AST extraction works across languages; regex breaks on edge cases |
+| **Tree-sitter over regex** | WASM-based AST extraction works across languages; regex breaks on edge cases |
 | **Ruflo as required dep** | Swarm coordination is not optional; even solo workflows benefit from task tracking |
 | **Single composition root** | Only one file imports adapters; adapter swaps are one-line changes |
 | **L0-L3 summary levels** | AI agents need different detail at different phases; L1 is the sweet spot |
@@ -845,7 +769,7 @@ Three-tier detection: `.hex/status.json` (written by hooks) → `~/.claude-flow/
 | **Dashboard auto-start** | Dashboard HTTP server launches on project load; port conflicts and stale locks self-heal |
 | **Rust hub over Node hub** | 1.5MB binary vs Node.js process; zero runtime deps; system-wide daemon serves all projects |
 | **WebSocket over SSE** | Unified bidirectional channel for events, commands, and chat; 25s keepalive pings detect dead connections |
-| **Cargo workspace** | `hex-hub` + `hex-core` share workspace config, release profile, and workspace-level LTO |
+| **`run-claude` hub command** | Invoke Claude CLI from dashboard chat; enables browser-based agent interaction without terminal |
 
 </details>
 
@@ -898,7 +822,6 @@ hex builds on the **Hexagonal Architecture** pattern (also known as **Ports and 
 ### Key Technologies
 
 - **[tree-sitter](https://tree-sitter.github.io/)** — Max Brunsfeld et al. Language-agnostic parsing framework powering hex's L0-L3 AST summaries
-- **[NAPI-RS](https://napi.rs/)** — Native Node.js addon framework binding Rust to TypeScript via N-API
 - **[ruflo / claude-flow](https://github.com/ruvnet/claude-flow)** — Reuven Cohen ([@ruvnet](https://github.com/ruvnet)). Multi-agent swarm coordination framework
 - **[Infisical](https://github.com/Infisical/infisical)** — Open-source secrets management platform integrated via `ISecretsPort`
 
@@ -922,11 +845,9 @@ hex builds on the **Hexagonal Architecture** pattern (also known as **Ports and 
 <p align="center">
   <img src="https://img.shields.io/badge/architecture-hexagonal-58a6ff?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiPjxwb2x5Z29uIHBvaW50cz0iMTIgMiAyMiA4LjUgMjIgMTUuNSAxMiAyMiAyIDE1LjUgMiA4LjUiLz48L3N2Zz4=" alt="Hexagonal Architecture"/>
   &nbsp;
-  <img src="https://img.shields.io/badge/runtime-TypeScript%20%2B%20Rust-dea584?style=for-the-badge" alt="TypeScript + Rust"/>
-  &nbsp;
   <img src="https://img.shields.io/badge/agents-swarm%20powered-bc8cff?style=for-the-badge" alt="Swarm Powered"/>
   &nbsp;
-  <img src="https://img.shields.io/badge/parsing-tree--sitter%20NAPI-3fb950?style=for-the-badge" alt="Tree-sitter NAPI"/>
+  <img src="https://img.shields.io/badge/parsing-tree--sitter-3fb950?style=for-the-badge" alt="Tree-sitter"/>
 </p>
 
 <p align="center">
@@ -936,7 +857,6 @@ hex builds on the **Hexagonal Architecture** pattern (also known as **Ports and 
 <p align="center">
   <a href="#quick-start">Quick Start</a> &nbsp;&bull;&nbsp;
   <a href="#architecture">Architecture</a> &nbsp;&bull;&nbsp;
-  <a href="#hybrid-runtime--typescript--rust">Hybrid Runtime</a> &nbsp;&bull;&nbsp;
   <a href="#specs-first-workflow">Workflow</a> &nbsp;&bull;&nbsp;
   <a href="#multi-agent-swarm-coordination">Swarm</a> &nbsp;&bull;&nbsp;
   <a href="#cli-reference">CLI</a> &nbsp;&bull;&nbsp;

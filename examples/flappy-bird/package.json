@@ -19,6 +19,6 @@
     "vite": "^6.3.5"
   },
   "dependencies": {
-    "hex": "file:../../"
+    "@anthropic-hex/hex": "file:../../"
   }
 }
