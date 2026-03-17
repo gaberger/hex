@@ -20,13 +20,17 @@ import type {
   Blocker,
 } from '../ports/notification.js';
 import type { IFileSystemPort } from '../ports/index.js';
+import type { ICoordinationPort } from '../ports/coordination.js';
 
 export class FeatureProgressOrchestrator implements IFeatureProgressPort {
   private session: FeatureSession | null = null;
   private listeners: Array<(report: ProgressReport) => void> = [];
   private blockers: Blocker[] = [];
 
-  constructor(private readonly fs: IFileSystemPort) {}
+  constructor(
+    private readonly fs: IFileSystemPort,
+    private readonly coordination: ICoordinationPort | null = null,
+  ) {}
 
   // ─── Session Management ──────────────────────────────────
 
@@ -69,6 +73,14 @@ export class FeatureProgressOrchestrator implements IFeatureProgressPort {
       agents: new Map(),
     };
 
+    // Publish feature start to coordination activity stream
+    if (this.coordination) {
+      await this.coordination.publishActivity('feature-start', {
+        featureName,
+        tokenBudget,
+      }).catch(() => {});
+    }
+
     this.emitProgress();
     return this.session;
   }
@@ -103,6 +115,13 @@ export class FeatureProgressOrchestrator implements IFeatureProgressPort {
       durationSeconds,
       errorSummary: verdict === 'FAIL' ? this.buildErrorSummary() : undefined,
     };
+
+    // Publish feature completion
+    if (this.coordination) {
+      await this.coordination.publishActivity('feature-end', {
+        featureName: this.session.featureName,
+      }).catch(() => {});
+    }
 
     this.session = null;
     this.blockers = [];
@@ -174,6 +193,14 @@ export class FeatureProgressOrchestrator implements IFeatureProgressPort {
       nextPhase.status = 'in-progress';
       nextPhase.startedAt = Date.now();
       this.session.currentPhase = nextPhase.phase;
+    }
+
+    // Publish phase transition to coordination
+    if (this.coordination) {
+      await this.coordination.publishActivity('phase-transition', {
+        featureName: this.session.featureName,
+        phase,
+      }).catch(() => {});
     }
 
     this.emitProgress();

@@ -229,8 +229,8 @@ export async function createAppContext(
   const archAnalyzer = new ArchAnalyzer(ast, fs, git);
   const notificationOrchestrator = new NotificationOrchestrator(notifier);
   const summaryService = new SummaryService(ast, fs);
-  const swarmOrchestrator = new SwarmOrchestrator(swarm, worktree);
-  const featureProgress = new FeatureProgressOrchestrator(fs);
+  const swarmOrchestrator = new SwarmOrchestrator(swarm, worktree, null); // TODO: pass coordination once construction order is refactored
+  const featureProgress = new FeatureProgressOrchestrator(fs, null); // TODO: pass coordination once construction order is refactored
 
   // ── Initialize swarm + AgentDB in background (non-blocking) ──
   // Skip during tests — npx child processes cause timeouts.
@@ -376,7 +376,7 @@ export async function createAppContext(
     const model = anthropicKey ? 'claude-sonnet-4-20250514' : 'gpt-4o';
     llm = new LLMAdapter({ provider, apiKey, model });
     codeGenerator = new CodeGenerator(llm, ast, build, fs, archAnalyzer);
-    workplanExecutor = new WorkplanExecutor(llm, ast, fs, swarm, codeGenerator);
+    workplanExecutor = new WorkplanExecutor(llm, ast, fs, swarm, codeGenerator, 'typescript', null); // TODO: pass coordination once construction order is refactored
   }
 
   // Agent executors: Anthropic API (direct) + Claude Code CLI (baseline)

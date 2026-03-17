@@ -19,6 +19,8 @@ import type {
   AgentRole,
 } from '../ports/swarm.js';
 import type { IWorktreePort } from '../ports/index.js';
+import type { ICoordinationPort } from '../ports/coordination.js';
+import { WorktreeConflictError } from '../domain/errors.js';
 
 const DEFAULT_CONFIG: SwarmConfig = {
   topology: 'hierarchical',
@@ -42,6 +44,7 @@ export class SwarmOrchestrator implements ISwarmOrchestrationPort {
   constructor(
     private readonly swarm: ISwarmPort,
     private readonly worktree: IWorktreePort,
+    private readonly coordination: ICoordinationPort | null = null,
   ) {}
 
   async orchestrate(
@@ -112,11 +115,28 @@ export class SwarmOrchestrator implements ISwarmOrchestrationPort {
   private async executeStep(step: WorkplanStep, task: SwarmTask): Promise<void> {
     const branchName = `hex/${task.id}-${step.adapter ?? 'main'}`;
 
-    // Create isolated worktree
-    const worktreePath = await this.worktree.create(branchName);
-    task.worktreeBranch = branchName;
+    // Acquire coordination lock before creating worktree
+    let lockFeature: string | undefined;
+    let lockLayer: string | undefined;
+    if (this.coordination) {
+      lockFeature = task.id;
+      lockLayer = step.adapter ?? 'general';
+      const lockResult = await this.coordination.acquireLock(lockFeature, lockLayer);
+      if (!lockResult.acquired) {
+        const holder = lockResult.conflict?.instanceId ?? 'unknown';
+        throw new WorktreeConflictError(lockFeature, lockLayer, holder);
+      }
+      await this.coordination.publishActivity('worktree-create', {
+        taskId: task.id, branch: branchName, layer: lockLayer,
+      }).catch(() => {});
+    }
 
+    // Create isolated worktree (declared outside try so catch can clean up)
+    let worktreePath: string | undefined;
     try {
+      worktreePath = await this.worktree.create(branchName);
+      task.worktreeBranch = branchName;
+
       // Spawn an agent for this task
       const agent = await this.swarm.spawnAgent(
         `agent-${task.id}`,
@@ -140,9 +160,22 @@ export class SwarmOrchestrator implements ISwarmOrchestrationPort {
       // Mark task complete (actual code execution happens via Claude Agent tool)
       await this.swarm.completeTask(task.id, `Prepared worktree at ${worktreePath}`);
       await this.swarm.terminateAgent(agent.id);
+      // Release coordination lock after completion
+      if (this.coordination && lockFeature && lockLayer) {
+        await this.coordination.releaseLock(lockFeature, lockLayer).catch(() => {});
+        await this.coordination.publishActivity('worktree-complete', {
+          taskId: task.id, branch: branchName,
+        }).catch(() => {});
+      }
     } catch (err) {
+      // Release coordination lock on failure
+      if (this.coordination && lockFeature && lockLayer) {
+        await this.coordination.releaseLock(lockFeature, lockLayer).catch(() => {});
+      }
       // Clean up worktree on failure
-      await this.worktree.cleanup(worktreePath).catch(() => {});
+      if (worktreePath) {
+        await this.worktree.cleanup(worktreePath).catch(() => {});
+      }
       throw err;
     }
   }

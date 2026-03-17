@@ -19,7 +19,9 @@ import type {
   WorkplanStep,
 } from '../ports/index.js';
 import type { ISwarmPort } from '../ports/swarm.js';
+import type { ICoordinationPort } from '../ports/coordination.js';
 import { TaskGraph } from '../domain/entities.js';
+import { TaskConflictError } from '../domain/errors.js';
 
 const PLAN_BUDGET: TokenBudget = {
   maxTokens: 16000,
@@ -37,6 +39,7 @@ export class WorkplanExecutor implements IWorkplanPort {
     private readonly codeGenerator?: ICodeGenerationPort,
     /** Language for code generation — defaults to 'typescript' */
     private readonly defaultLang: Language = 'typescript',
+    private readonly coordination: ICoordinationPort | null = null,
   ) {}
 
   async createPlan(requirements: string[], lang: Language): Promise<Workplan> {
@@ -122,13 +125,39 @@ export class WorkplanExecutor implements IWorkplanPort {
 
       yield { stepId: step.id, status: 'running' };
 
+      let task: { id: string } | null = null;
       try {
         // Register task in swarm for tracking/dashboard visibility
-        const task = await this.swarm.createTask({
+        task = await this.swarm.createTask({
           title: step.description,
           agentRole: 'coder',
           adapter: step.adapter,
         });
+        // Claim task via coordination (prevents duplicate work across instances)
+        if (this.coordination) {
+          const claim = await this.coordination.claimTask(task.id);
+          if (!claim.claimed) {
+            const holder = claim.conflict?.instanceId ?? 'unknown';
+            throw new TaskConflictError(task.id, holder);
+          }
+        }
+
+        // Pass coordination context to agent via swarm memory
+        if (this.coordination) {
+          try {
+            const [unstaged, activities] = await Promise.all([
+              this.coordination.getUnstagedAcrossInstances(),
+              this.coordination.getActivities(10),
+            ]);
+            await this.swarm.memoryStore({
+              key: `task:${task.id}:coordination`,
+              value: JSON.stringify({ unstaged, activities }),
+              namespace: 'hex',
+              tags: ['coordination-context'],
+            });
+          } catch { /* coordination context is best-effort */ }
+        }
+
         await this.swarm.spawnAgent(`worker-${step.id}`, 'coder', task.id);
 
         // Execute: generate real code if code generator is available
@@ -161,6 +190,13 @@ export class WorkplanExecutor implements IWorkplanPort {
         }
 
         await this.swarm.completeTask(task.id, `Completed: ${step.description}`);
+        // Release task claim and publish activity
+        if (this.coordination) {
+          await this.coordination.releaseTask(task.id).catch(() => {});
+          await this.coordination.publishActivity('task-complete', {
+            taskId: task.id, stepId: step.id, adapter: step.adapter,
+          }).catch(() => {});
+        }
         completed.add(step.id);
 
         // Store successful step as a learned pattern
@@ -168,6 +204,10 @@ export class WorkplanExecutor implements IWorkplanPort {
 
         yield { stepId: step.id, status: 'passed', output };
       } catch (err) {
+        // Release task claim on failure
+        if (this.coordination && task) {
+          await this.coordination.releaseTask(task.id).catch(() => {});
+        }
         const message = err instanceof Error ? err.message : String(err);
         failed.add(step.id);
 
