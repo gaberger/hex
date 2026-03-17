@@ -67,6 +67,7 @@ const agentdbUp      = statusData ? !!statusData.agentdb : false;
 const dashUrl        = statusData ? (statusData.dashboard || '') : '';
 const dashProjectId  = statusData ? (statusData.projectId || '') : '';
 const activeAgents   = statusData ? (statusData.activeAgents || 0) : 0;
+const idleAgents     = statusData ? (statusData.idleAgents || 0) : 0;
 const totalTasks     = statusData ? (statusData.tasks || 0) : 0;
 const completedTasks = statusData ? (statusData.completedTasks || 0) : 0;
 
@@ -108,9 +109,8 @@ const hexMcp = !!(mcpJson && mcpJson.mcpServers && mcpJson.mcpServers.hex);
 const sep = `${BAR}${P.sep} │ `;
 const parts = [];
 
-// Brand + version
-const vTag = hexVersion ? `${P.dim}v${hexVersion}` : '';
-parts.push(`${P.brand}⬡ hex ${vTag}`);
+// Brand (no version — matches README format)
+parts.push(`${P.brand}⬡ hex`);
 
 // Project
 parts.push(`${P.project}${projectName}`);
@@ -119,41 +119,41 @@ parts.push(`${P.project}${projectName}`);
 const mark = isDirty ? `${P.dirty}✱` : `${P.clean}✓`;
 parts.push(`${P.branch}⎇ ${branch} ${mark}`);
 
-// Swarm
+// Swarm — README format: ●swarm 2⚡ [3/5]
 if (activeAgents > 0) {
-  const tasks = totalTasks ? ` ${completedTasks}/${totalTasks}` : '';
-  parts.push(`${P.active}⚡${activeAgents}${P.branch}${tasks}`);
-} else if (swarmShow) {
+  const agentCounts = `${activeAgents}⚡` + (idleAgents > 0 ? ` ${idleAgents}💤` : '');
   const tasks = totalTasks ? ` [${completedTasks}/${totalTasks}]` : '';
-  parts.push(`${P.idle}◆ swarm${P.dim}${tasks}`);
+  parts.push(`${P.active}●swarm ${agentCounts}${P.branch}${tasks}`);
+} else if (swarmShow) {
+  const idleTag = idleAgents > 0 ? ` ${idleAgents}💤` : '';
+  const tasks = totalTasks ? ` [${completedTasks}/${totalTasks}]` : '';
+  parts.push(`${P.idle}●swarm${idleTag}${P.dim}${tasks}`);
 } else {
-  parts.push(`${P.dim}○ swarm`);
+  parts.push(`${P.dim}○swarm`);
 }
 
-// Services — compact dot indicators
-const dot = (on, label) => on ? `${P.on}● ${label}` : `${P.off}○ ${label}`;
+// Services — README format: ●db │ ◉localhost:3456 │ ◉mcp
+const svcDot = (on, label) => on ? `${P.on}◉${label}` : `${P.off}○${label}`;
+parts.push(svcDot(dbShow, 'db'));
+
+// Dashboard — show clickable host:port when running
 const hubActive = hubRunning || !!dashUrl;
 const hubPort = (hubLock && hubLock.port) || 5555;
 const hubHash = dashProjectId ? `#/project/${dashProjectId}` : '';
 const hubLink = `http://localhost:${hubPort}/${hubHash}`;
-const hubIndicator = hubActive
-  ? `${P.on}● ${ESC}]8;;${hubLink}${ESC}\\dashboard${ESC}]8;;${ESC}\\`
-  : `${P.off}○ hub`;
-const svcs = [
-  dot(dbShow, 'db'),
-  hubIndicator,
-  dot(hexMcp, 'mcp'),
-].join(`${P.dim} · `);
-parts.push(svcs);
+if (hubActive) {
+  parts.push(`${P.on}◉${ESC}]8;;${hubLink}${ESC}\\localhost:${hubPort}${ESC}]8;;${ESC}\\`);
+} else {
+  parts.push(`${P.off}○hub`);
+}
 
-// Health score
+parts.push(svcDot(hexMcp, 'mcp'));
+
+// Health score — README format: 87/100
 if (score) {
   const s = parseInt(score);
   const col = s >= 80 ? P.scoreOk : s >= 50 ? P.scoreWn : P.scoreBd;
-  const icon = s >= 80 ? '✓' : s >= 50 ? '⚠' : '✗';
-  const filled = Math.round(s / 20);
-  const bar = '█'.repeat(filled) + '░'.repeat(5 - filled);
-  parts.push(`${col}${icon} ${score} ${D}${bar}`);
+  parts.push(`${col}${score}/100`);
 }
 
 // ─── Render ──────────────────────────────────────────────────────

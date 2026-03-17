@@ -34,8 +34,8 @@ function mockAST(): IASTPort {
 
 function mockFS(): IFileSystemPort {
   return {
-    async readFile() { return ''; },
-    async writeFile() {},
+    async read() { return ''; },
+    async write() {},
     async exists() { return true; },
     async glob() { return ['src/index.ts', 'src/core/domain/entities.ts']; },
     async mkdir() {},

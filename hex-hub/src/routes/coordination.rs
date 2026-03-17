@@ -113,6 +113,18 @@ pub async fn list_instances(
     Json(json!(list))
 }
 
+pub async fn cleanup_stale_sessions(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    match crate::cleanup::cleanup_stale_sessions(&state).await {
+        Ok(removed) => Json(json!({ "removed": removed })),
+        Err(e) => {
+            tracing::error!("Cleanup failed: {}", e);
+            Json(json!({ "error": "Cleanup failed", "removed": 0 }))
+        }
+    }
+}
+
 // ── Worktree Locks ──────────────────────────────────────
 
 pub async fn acquire_lock(

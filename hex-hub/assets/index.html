@@ -346,6 +346,12 @@ a:hover{opacity:.85}
   <!-- Instance Status -->
   <div class="card" id="swarmPanel">
     <div class="card-title">Instance Status</div>
+    <div class="cleanup-controls" style="margin: 10px 0;">
+      <button id="cleanup-btn" class="cleanup-button" style="padding: 6px 12px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">
+        🗑 Clean Stale Sessions
+      </button>
+      <span id="cleanup-result" style="margin-left: 10px; font-size: 0.9em;"></span>
+    </div>
     <div id="instanceStatusTable"><span class="coord-empty">No instances registered</span></div>
   </div>
 
@@ -1132,6 +1138,35 @@ a:hover{opacity:.85}
       renderCoordActivities(results[3] || []);
       renderCoordUnstaged(results[4] || []);
     });
+
+    // Cleanup button handler
+    var cleanupBtn = document.getElementById('cleanup-btn');
+    var cleanupResult = document.getElementById('cleanup-result');
+    if (cleanupBtn && !cleanupBtn.dataset.initialized) {
+      cleanupBtn.dataset.initialized = 'true';
+      cleanupBtn.addEventListener('click', function() {
+        cleanupBtn.disabled = true;
+        cleanupBtn.textContent = 'Cleaning...';
+        cleanupResult.textContent = '';
+
+        rawFetch('/api/coordination/cleanup', { method: 'POST' })
+          .then(function(data) {
+            cleanupResult.textContent = '✓ Removed ' + data.removed + ' stale sessions';
+            cleanupResult.style.color = '#4caf50';
+            setTimeout(function() { location.reload(); }, 1000);
+          })
+          .catch(function(error) {
+            cleanupResult.textContent = '✗ Cleanup failed';
+            cleanupResult.style.color = '#f44336';
+            console.error('Cleanup error:', error);
+          })
+          .finally(function() {
+            cleanupBtn.disabled = false;
+            cleanupBtn.textContent = '🗑 Clean Stale Sessions';
+            setTimeout(function() { cleanupResult.textContent = ''; }, 3000);
+          });
+      });
+    }
   }
 
   function coordEmpty(text) {

@@ -1,3 +1,4 @@
+mod cleanup;
 mod daemon;
 mod embed;
 mod middleware;
@@ -60,6 +61,10 @@ async fn main() {
 
     // Create shared state
     let state = Arc::new(state::AppState::new(token.clone(), swarm_db));
+
+    // Background task: cleanup stale coordination sessions
+    let cleanup_state = state.clone();
+    cleanup::CleanupService::spawn(cleanup_state);
 
     // Background task: evict completed commands older than 1 hour (every 60s)
     let evict_state = state.clone();
