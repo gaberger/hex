@@ -449,6 +449,10 @@ export class CLIAdapter {
     const result = await this.ctx.archAnalyzer.analyzeArchitecture(targetPath);
     const s = result.summary;
 
+    // Persist score for status line consumption (.hex/last-score.txt)
+    const hexDir = targetPath === '.' ? '.hex' : `${targetPath}/.hex`;
+    await this.ctx.fs.write(`${hexDir}/last-score.txt`, String(s.healthScore)).catch(() => {});
+
     // Machine-readable JSON output for CI/CD pipelines
     if (jsonMode) {
       this.writeLn(JSON.stringify(result, null, 2));

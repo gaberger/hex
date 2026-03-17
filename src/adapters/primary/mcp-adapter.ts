@@ -637,6 +637,10 @@ export class MCPAdapter {
   private async analyze(path: string): Promise<MCPToolResult> {
     const result = await this.ctx.archAnalyzer.analyzeArchitecture(path);
     const report = formatArchReport(result, path, { showRulesReference: false });
+    // Persist score for status line consumption (.hex/last-score.txt)
+    const score = String(result.summary.healthScore);
+    const hexDir = path === '.' ? '.hex' : `${path}/.hex`;
+    await this.ctx.fs.write(`${hexDir}/last-score.txt`, score).catch(() => {});
     return { content: [{ type: 'text', text: report }] };
   }
 
@@ -873,6 +877,9 @@ export class MCPAdapter {
 
   private async analyzeJson(path: string): Promise<MCPToolResult> {
     const result = await this.ctx.archAnalyzer.analyzeArchitecture(path);
+    const score = String(result.summary.healthScore);
+    const hexDir = path === '.' ? '.hex' : `${path}/.hex`;
+    await this.ctx.fs.write(`${hexDir}/last-score.txt`, score).catch(() => {});
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   }
 
