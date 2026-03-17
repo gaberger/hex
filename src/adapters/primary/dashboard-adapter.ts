@@ -498,12 +498,15 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
         const { execFile } = await import('node:child_process');
         const { promisify } = await import('node:util');
         const execFileP = promisify(execFile);
-        const args = ['-p', p.prompt, '--model', 'haiku'];
+        const model = (p as { model?: string }).model ?? 'haiku';
+        // Use the binary directly — shell wrappers add --settings/hooks that hang in -p mode
+        const claudeBin = process.env['CLAUDE_BIN'] ?? '/Users/gary/.local/bin/claude';
+        const args = ['-p', p.prompt, '--model', model];
         if (p.allowedTools) {
           args.push('--allowedTools', p.allowedTools);
         }
-        this.log(`run-claude: spawning claude ${args.slice(0, 3).join(' ')}...`);
-        const { stdout, stderr } = await execFileP('claude', args, {
+        this.log(`run-claude: ${claudeBin} ${args.slice(0, 3).join(' ')}...`);
+        const { stdout, stderr } = await execFileP(claudeBin, args, {
           cwd: this.ctx.rootPath,
           timeout: 120_000,
           maxBuffer: 1024 * 1024,
@@ -515,12 +518,14 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
           data: { output: stdout, stderr: stderr || undefined },
           completedAt: new Date().toISOString(),
         };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+      } catch (err: unknown) {
+        const e = err as { message?: string; stderr?: string; stdout?: string; code?: number };
+        const detail = e.stderr || e.stdout || e.message || String(err);
+        this.log(`run-claude error: ${detail.slice(0, 200)}`);
         return {
           commandId: cmd.commandId,
           status: 'failed',
-          error: `Claude CLI failed: ${msg}`,
+          error: `Claude CLI failed (exit ${e.code ?? '?'}): ${detail.slice(0, 500)}`,
           completedAt: new Date().toISOString(),
         };
       }

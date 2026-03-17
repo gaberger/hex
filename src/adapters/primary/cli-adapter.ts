@@ -19,6 +19,12 @@ import type {
 } from '../../core/ports/index.js';
 import type { AppContext } from '../../core/ports/app-context.js';
 import { formatArchReport } from '../../core/ports/index.js';
+import {
+  bold, dim, muted, green, cyan,
+  header, section, kv,
+  didYouMean, elapsed, setColorEnabled, setUnicodeEnabled,
+  error as errorColor, warn, accent, glyph, hr,
+} from './cli-fmt.js';
 
 /** Result from runCLI — captures output for testing */
 interface CLIResult {
@@ -246,6 +252,18 @@ const TEMPLATES = {
     '- Never commit `.env` files — use `.env.example`',
     '- Primary adapters MUST NOT use `innerHTML`/`outerHTML`/`insertAdjacentHTML` with any data that originates outside the domain layer. Use `textContent` or DOM APIs (`createElement`) instead.',
     '',
+    '## Architecture Decision Records (ADRs)',
+    '',
+    'Record significant architectural decisions in `docs/adrs/`. Use ADRs when:',
+    '',
+    '- Adding a new adapter or port interface',
+    '- Choosing a library, framework, or external service',
+    '- Changing dependency direction or layer boundaries',
+    '- Making trade-offs that affect multiple components',
+    '',
+    'Format: `docs/adrs/ADR-NNN-short-title.md` (see ADR-001 for template).',
+    'ADRs are immutable once accepted — supersede, don\'t edit.',
+    '',
     '## On Startup',
     '',
     'A SessionStart hook runs `scripts/hex-startup.sh` which outputs project status. You MUST:',
@@ -281,13 +299,17 @@ export class CLIAdapter {
   ) {}
 
   async run(argv: string[]): Promise<number> {
+    if (argv.includes('--no-color')) {
+      setColorEnabled(false);
+    }
+    if (argv.includes('--ascii')) {
+      setUnicodeEnabled(false);
+    }
     const args = parseArgs(argv);
 
     // Handle --version / version before command dispatch
     if (args.flags.has('version') || args.command === 'version' || args.command === '--version') {
-      const { VersionAdapter } = await import('../secondary/version-adapter.js');
-      const va = new VersionAdapter();
-      this.writeLn(`hex ${va.getCliVersion()}`);
+      this.writeLn(`${accent(glyph('\u2b21', '*'))} hex ${bold(this.ctx.version.getCliVersion().toString())}`);
       return 0;
     }
 
@@ -334,10 +356,20 @@ export class CLIAdapter {
         case '--help':
         case '-h':
           return this.help();
-        default:
-          this.writeLn(`Unknown command: ${args.command}`);
-          this.writeLn('Run "hex help" for usage.');
+        default: {
+          this.writeLn(`${errorColor('Unknown command:')} ${args.command}`);
+          const commands = [
+            'analyze', 'summarize', 'generate', 'plan', 'dashboard', 'hub',
+            'status', 'daemon', 'setup', 'init', 'mcp', 'projects', 'secrets',
+            'go', 'build', 'scaffold', 'validate', 'orchestrate', 'compare', 'help',
+          ];
+          const suggestion = didYouMean(args.command, commands);
+          if (suggestion) {
+            this.writeLn(`Did you mean ${bold(suggestion)}?`);
+          }
+          this.writeLn(`${muted('Run')} hex help ${muted('for usage.')}`);
           return 1;
+        }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -353,6 +385,30 @@ export class CLIAdapter {
     const jsonMode = args.flags.has('json');
     const compactMode = args.flags.has('compact');
     const fullPaths = args.flags.has('full-paths');
+    const startTime = Date.now();
+
+    // Guard: refuse to scan directories that don't look like a code project.
+    // Globbing **/*.ts from ~ or / would be catastrophically slow and hit
+    // permission-protected OS directories (Library/Caches, etc.).
+    const resolvedRoot = targetPath === '.' ? this.ctx.rootPath : targetPath;
+    const projectMarkers = ['package.json', 'go.mod', 'Cargo.toml', 'pyproject.toml', 'src'];
+    const looksLikeProject = await Promise.all(
+      projectMarkers.map((m) => this.ctx.fs.exists(
+        targetPath === '.' ? m : `${targetPath}/${m}`,
+      )),
+    );
+    if (!looksLikeProject.some(Boolean)) {
+      this.writeLn(`${errorColor('Error:')} ${bold(resolvedRoot)} does not look like a project directory.`);
+      this.writeLn(`${muted('Expected one of:')} ${projectMarkers.join(', ')}`);
+      this.writeLn(`${muted('Run')} hex analyze ${muted('from your project root, or pass the path explicitly.')}`);
+      return 1;
+    }
+
+    if (!jsonMode) {
+      this.writeLn(header());
+      this.writeLn(`${muted('Analyzing')} ${bold(targetPath)} ${muted('...')}`);
+      this.writeLn('');
+    }
 
     const result = await this.ctx.archAnalyzer.analyzeArchitecture(targetPath);
     const s = result.summary;
@@ -364,7 +420,7 @@ export class CLIAdapter {
     }
 
     if (this.ctx.astIsStub) {
-      this.writeLn('\u26a0 Running without tree-sitter grammars \u2014 results may be incomplete');
+      this.writeLn(`${glyph('\u26a0', '!')} Running without tree-sitter grammars ${glyph('\u2014', '--')} results may be incomplete`);
       this.writeLn('');
     }
 
@@ -374,6 +430,11 @@ export class CLIAdapter {
       showRulesReference: !compactMode,
     });
     this.writeLn(report);
+
+    if (!jsonMode) {
+      this.writeLn('');
+      this.writeLn(`${muted('Completed in')} ${elapsed(Date.now() - startTime)}`);
+    }
 
     return s.healthScore >= 50 ? 0 : 1;
   }
@@ -521,8 +582,8 @@ export class CLIAdapter {
   // ── dashboard ───────────────────────────────────────
 
   private async dashboard(_args: ParsedArgs): Promise<number> {
-    const { HubLauncher } = await import('../secondary/hub-launcher.js');
-    const launcher = new HubLauncher();
+    if (!this.ctx.hubLauncher) { this.writeLn('hex-hub not available'); return 1; }
+    const launcher = this.ctx.hubLauncher;
 
     // Ensure hex-hub is running
     if (!(await launcher.isRunning())) {
@@ -568,8 +629,8 @@ export class CLIAdapter {
   private async hub(args: ParsedArgs): Promise<number> {
     // HEX_DAEMON=1 or --daemon: start hex-hub as background daemon
     if (process.env['HEX_DAEMON'] === '1' || args.flags.has('daemon')) {
-      const { HubLauncher: DaemonLauncher } = await import('../secondary/hub-launcher.js');
-      const launcher = new DaemonLauncher();
+      if (!this.ctx.hubLauncher) { this.writeLn('hex-hub not available'); return 1; }
+      const launcher = this.ctx.hubLauncher;
       try {
         const { started, url } = await launcher.start();
         this.writeLn(started ? `hex-hub daemon at ${url}` : `hex-hub already running at ${url}`);
@@ -581,8 +642,8 @@ export class CLIAdapter {
     }
 
     const subCmd = args.positional[0] ?? 'status';
-    const { HubLauncher } = await import('../secondary/hub-launcher.js');
-    const launcher = new HubLauncher();
+    if (!this.ctx.hubLauncher) { this.writeLn('hex-hub not available'); return 1; }
+    const launcher = this.ctx.hubLauncher;
 
     switch (subCmd) {
       case 'start': {
@@ -612,9 +673,7 @@ export class CLIAdapter {
           this.writeLn(`Projects: ${status.projects} registered`);
           // Show version info
           try {
-            const { VersionAdapter } = await import('../secondary/version-adapter.js');
-            const va = new VersionAdapter();
-            const info = await va.getVersionInfo();
+            const info = await this.ctx.version.getVersionInfo();
             this.writeLn(`  CLI:  ${info.cli}`);
             if (info.hub) this.writeLn(`  Hub:  ${info.hub}${info.hubBinaryPath ? ` (${info.hubBinaryPath})` : ''}`);
             if (info.mismatch) this.writeLn(`  Warning: version mismatch — run "hex setup" to rebuild hex-hub`);
@@ -643,8 +702,8 @@ export class CLIAdapter {
    * Used by both `dashboard` and `hub` commands.
    */
   private async startHub(_args: ParsedArgs, isDaemon: boolean): Promise<number> {
-    const { HubLauncher } = await import('../secondary/hub-launcher.js');
-    const launcher = new HubLauncher();
+    if (!this.ctx.hubLauncher) { this.writeLn('hex-hub not available'); return 1; }
+    const launcher = this.ctx.hubLauncher;
 
     const token = isDaemon ? (process.env['HEX_DAEMON_TOKEN'] ?? undefined) : undefined;
     const { started, url } = await launcher.start(token);
@@ -739,11 +798,9 @@ export class CLIAdapter {
   private async status(): Promise<number> {
     // Version info
     try {
-      const { VersionAdapter } = await import('../secondary/version-adapter.js');
-      const va = new VersionAdapter();
-      const info = await va.getVersionInfo();
-      this.writeLn(`hex ${info.cli}`);
-      if (info.hub) this.writeLn(`Hub:        ${info.hub}${info.mismatch ? ' (outdated — run "hex setup")' : ''}`);
+      const info = await this.ctx.version.getVersionInfo();
+      this.writeLn(header());
+      this.writeLn(kv('Version', `${info.cli}${info.hub ? ` ${muted('|')} Hub ${info.hub}${info.mismatch ? ` ${warn('(outdated)')}` : ''}` : ''}`));
     } catch { /* best-effort */ }
 
     const { DaemonManager } = await import('./daemon-manager.js');
@@ -754,7 +811,7 @@ export class CLIAdapter {
       this.writeLn(`Dashboard:  http://localhost:${daemonStatus.port} (PID ${daemonStatus.pid})`);
       this.writeLn(`Uptime:     ${Math.round((daemonStatus.uptime ?? 0) / 1000)}s`);
     } else {
-      this.writeLn('Dashboard:  not running (start with: hex dashboard)');
+      this.writeLn(kv('Dashboard', `${muted('not running')} ${dim('(start with: hex dashboard)')}`));
     }
 
     try {
@@ -763,7 +820,7 @@ export class CLIAdapter {
       this.writeLn(`Agents:     ${progress.agents.length}`);
       this.writeLn(`Patterns:   ${progress.patterns.total} (${progress.patterns.recentlyUsed} recently used)`);
     } catch {
-      this.writeLn('Swarm:      unavailable');
+      this.writeLn(kv('Swarm', muted('unavailable')));
     }
 
     return 0;
@@ -1001,6 +1058,62 @@ export class CLIAdapter {
       await safeWrite('tests/integration/.gitkeep', '');
     }
 
+    // ── Docs directory (ADRs + specs) ──────────────────
+
+    const adrTemplate = [
+      '# ADR-001: Hexagonal Architecture',
+      '',
+      '**Status:** Accepted',
+      `**Date:** ${new Date().toISOString().split('T')[0]}`,
+      '',
+      '## Context',
+      '',
+      'This project uses hexagonal architecture (ports & adapters) to enforce',
+      'clean dependency boundaries and enable adapter swappability.',
+      '',
+      '## Decision',
+      '',
+      '- Domain layer has zero external dependencies',
+      '- All cross-boundary communication flows through typed port interfaces',
+      '- Adapters are the only layer that touches external systems',
+      '- composition-root is the single wiring point',
+      '',
+      '## Consequences',
+      '',
+      '- New features decompose inside-out: domain → ports → adapters',
+      '- Testing is straightforward: mock ports, test use cases in isolation',
+      '- Adapter swaps (e.g., DB migration) require zero domain changes',
+      '',
+      '## ADR Template',
+      '',
+      'When making architectural decisions, copy this file and fill in:',
+      '',
+      '```',
+      '# ADR-NNN: Title',
+      '',
+      '**Status:** Proposed | Accepted | Deprecated | Superseded',
+      '**Date:** YYYY-MM-DD',
+      '',
+      '## Context',
+      'What is the issue? What forces are at play?',
+      '',
+      '## Decision',
+      'What did we decide? Why?',
+      '',
+      '## Consequences',
+      'What are the trade-offs? What becomes easier or harder?',
+      '```',
+      '',
+    ].join('\n');
+
+    if (isMultiStack) {
+      await safeWrite('docs/adrs/ADR-001-hexagonal-architecture.md', adrTemplate);
+      await safeWrite('docs/specs/.gitkeep', '');
+    } else {
+      await safeWrite('docs/adrs/ADR-001-hexagonal-architecture.md', adrTemplate);
+      await safeWrite('docs/specs/.gitkeep', '');
+    }
+
     // ── Config directory ──────────────────────────────
 
     await safeWrite('config/.gitkeep', '');
@@ -1165,7 +1278,7 @@ export class CLIAdapter {
   // ── scopeWizard ────────────────────────────────
 
   private async scopeWizard(args: ParsedArgs): Promise<{ name: string; summary: string; lang: string }> {
-    this.writeLn('─── hex project setup ───────────────────');
+    this.writeLn(`${hr(3)} hex project setup ${hr(23)}`);
     this.writeLn('');
 
     const name = await this.prompt('Project name', 'my-hex-project');
@@ -1480,12 +1593,13 @@ export class CLIAdapter {
 
   private async secretsStatus(): Promise<number> {
     // Determine backend type by probing listSecrets behavior
-    const metadata = await this.ctx.secrets.listSecrets();
+    const adapter = await this.resolveSecretsAdapter();
+    const metadata = await adapter.listSecrets();
 
     if (metadata.length === 0) {
       // EnvSecretsAdapter always returns [] — check if it can resolve anything
       // to distinguish "env backend" from "Infisical with zero secrets"
-      const hasEnvMarker = await this.ctx.secrets.hasSecret('PATH');
+      const hasEnvMarker = await adapter.hasSecret('PATH');
       if (hasEnvMarker) {
         // Environment variable backend (can see PATH)
         this.writeLn('Backend:     Environment variables (read-only)');
@@ -1512,11 +1626,12 @@ export class CLIAdapter {
 
   private async secretsList(args: ParsedArgs): Promise<number> {
     const jsonMode = args.flags.has('json');
-    const metadata = await this.ctx.secrets.listSecrets();
+    const adapter = await this.resolveSecretsAdapter();
+    const metadata = await adapter.listSecrets();
 
     if (metadata.length === 0) {
       // Check if this is the env adapter (no metadata support)
-      const hasEnvMarker = await this.ctx.secrets.hasSecret('PATH');
+      const hasEnvMarker = await adapter.hasSecret('PATH');
       if (hasEnvMarker) {
         if (jsonMode) {
           this.writeLn(JSON.stringify([]));
@@ -1541,7 +1656,7 @@ export class CLIAdapter {
 
     // Table header
     this.writeLn('Key                            Env       Version  Updated');
-    this.writeLn('─'.repeat(72));
+    this.writeLn(hr(72));
     for (const m of metadata) {
       const key = m.key.padEnd(30);
       const env = m.environment.padEnd(9);
@@ -1583,11 +1698,10 @@ export class CLIAdapter {
       }
     }
 
-    const { LocalVaultAdapter } = await import('../secondary/local-vault-adapter.js');
     const { mkdir } = await import('node:fs/promises');
     await mkdir(resolve(this.ctx.rootPath, '.hex'), { recursive: true }).catch(() => {});
 
-    LocalVaultAdapter.createVault(vaultPath, password);
+    this.ctx.vaultManager.createVault(vaultPath, password);
 
     // Write secrets config to use local vault
     const configPath = resolve(this.ctx.rootPath, '.hex/secrets.json');
@@ -1622,10 +1736,8 @@ export class CLIAdapter {
       }
     }
 
-    const adapter = await this.getLocalVaultAdapter();
-    if (!adapter) return 1;
-
-    adapter.addSecret(key, value);
+    const vault = this.resolveVaultManager();
+    vault.addSecret(key, value);
     this.writeLn(`Secret "${key}" saved.`);
     return 0;
   }
@@ -1637,7 +1749,8 @@ export class CLIAdapter {
       return 1;
     }
 
-    const result = await this.ctx.secrets.resolveSecret(key);
+    const adapter = await this.resolveSecretsAdapter();
+    const result = await adapter.resolveSecret(key);
     if (!result.ok) {
       this.writeLn(`Secret "${key}" not found.`);
       return 1;
@@ -1655,50 +1768,49 @@ export class CLIAdapter {
       return 1;
     }
 
-    const adapter = await this.getLocalVaultAdapter();
-    if (!adapter) return 1;
-
-    const exists = await adapter.hasSecret(key);
+    const vault = this.resolveVaultManager();
+    const exists = await this.ctx.secrets.hasSecret(key);
     if (!exists) {
       this.writeLn(`Secret "${key}" not found.`);
       return 1;
     }
 
-    adapter.removeSecret(key);
+    vault.removeSecret(key);
     this.writeLn(`Secret "${key}" removed.`);
     return 0;
   }
 
-  /** Resolve the local vault adapter (requires .hex/secrets.json with local-vault backend) */
-  private async getLocalVaultAdapter(): Promise<import('../secondary/local-vault-adapter.js').LocalVaultAdapter | null> {
+  /**
+   * Resolve the best available secrets adapter for read operations.
+   * If a local-vault config exists, prompts for password (or reads HEX_VAULT_PASSWORD)
+   * so that list/get/status work without pre-setting the env var.
+   * Falls back to this.ctx.secrets (the startup-wired adapter) otherwise.
+   */
+  private async resolveSecretsAdapter(): Promise<import('../../core/ports/secrets.js').ISecretsPort> {
     const { resolve } = await import('node:path');
     const { existsSync, readFileSync } = await import('node:fs');
 
     const configPath = resolve(this.ctx.rootPath, '.hex/secrets.json');
     if (!existsSync(configPath)) {
-      this.writeLn('No secrets config found. Run "hex secrets init" first.');
-      return null;
+      return this.ctx.secrets;
     }
 
-    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-    if (config.backend !== 'local-vault') {
-      this.writeLn('Secret mutation requires local vault backend.');
-      this.writeLn(`Current backend: ${config.backend}`);
-      return null;
-    }
-
-    const vaultPath = resolve(this.ctx.rootPath, config.localVault?.path ?? '.hex/vault.enc');
-    let password = process.env['HEX_VAULT_PASSWORD'];
-    if (!password) {
-      password = await this.readSecret('Vault password: ');
-      if (!password) {
-        this.writeLn('Error: vault password required (or set HEX_VAULT_PASSWORD).');
-        return null;
+    try {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      if (config.backend !== 'local-vault') {
+        return this.ctx.secrets;
       }
+    } catch {
+      return this.ctx.secrets;
     }
 
-    const { LocalVaultAdapter } = await import('../secondary/local-vault-adapter.js');
-    return new LocalVaultAdapter(vaultPath, password);
+    // If vault is open, this.ctx.secrets IS the LocalVaultAdapter (wired by composition-root)
+    return this.ctx.secrets;
+  }
+
+  /** Resolve the vault manager from AppContext */
+  private resolveVaultManager(): AppContext['vaultManager'] {
+    return this.ctx.vaultManager;
   }
 
   /**
@@ -2189,9 +2301,9 @@ export class CLIAdapter {
     const specification = args.positional.join(' ');
     const model = args.flags.get('model');
 
-    this.writeLn('╔══════════════════════════════════════════════════════╗');
-    this.writeLn('║  hex compare — Claude Code vs Anthropic API         ║');
-    this.writeLn('╚══════════════════════════════════════════════════════╝');
+    this.writeLn(`${glyph('╔', '+')}${glyph('═', '=').repeat(54)}${glyph('╗', '+')}`);
+    this.writeLn(`${glyph('║', '|')}  hex compare ${glyph('—', '--')} Claude Code vs Anthropic API         ${glyph('║', '|')}`);
+    this.writeLn(`${glyph('╚', '+')}${glyph('═', '=').repeat(54)}${glyph('╝', '+')}`);
     this.writeLn('');
     this.writeLn(`Specification: ${specification}`);
     this.writeLn('');
@@ -2224,9 +2336,9 @@ export class CLIAdapter {
 
     // Display results
     this.writeLn('');
-    this.writeLn('════════════════════════════════════════════════════════');
+    this.writeLn(glyph('═', '=').repeat(56));
     this.writeLn('  RESULTS');
-    this.writeLn('════════════════════════════════════════════════════════');
+    this.writeLn(glyph('═', '=').repeat(56));
     this.writeLn('');
 
     for (const entry of report.entries) {
@@ -2244,12 +2356,12 @@ export class CLIAdapter {
       this.writeLn('');
     }
 
-    this.writeLn('────────────────────────────────────────────────────────');
+    this.writeLn(hr(56));
     const winnerLabel = report.winner === 'tie' ? 'TIE'
       : report.winner === 'claude-code' ? 'Claude Code' : 'Anthropic API';
     this.writeLn(`  Winner: ${winnerLabel}`);
     this.writeLn(`  Quality: CC=${report.summary.quality.claudeCode} vs API=${report.summary.quality.anthropicApi}`);
-    this.writeLn('────────────────────────────────────────────────────────');
+    this.writeLn(hr(56));
 
     // Write report to disk
     const reportPath = `${this.ctx.outputDir}/compare-${report.id}.json`;
@@ -2367,44 +2479,48 @@ export class CLIAdapter {
   // ── help ────────────────────────────────────────────
 
   private help(): number {
-    this.writeLn('hex - Hexagonal Architecture framework for agentic coding');
+    this.writeLn(header());
     this.writeLn('');
-    this.writeLn('Usage: hex <command> [options]');
+    this.writeLn(`${bold('Usage:')} hex ${muted('<command>')} ${muted('[options]')}`);
+
+    this.writeLn(section('Build & Ship'));
+    this.writeLn(`  ${bold('go')} ${muted('<prompt>')} ${muted('[--yolo|--review]')}     Autonomous coding agent`);
+    this.writeLn(`  ${bold('build')} ${muted('<prompt>')}                       ${dim('Alias for go')}`);
+    this.writeLn(`  ${bold('orchestrate')} ${muted('<workplan.json>')}          Execute workplan via swarm agents`);
+
+    this.writeLn(section('Scaffold & Generate'));
+    this.writeLn(`  ${bold('init')} ${muted('[--lang ts|go|rust]')}             Scaffold a new hex project`);
+    this.writeLn(`  ${bold('scaffold')} ${muted('<name> [--lang L]')}           ${dim('Alias for init')}`);
+    this.writeLn(`  ${bold('generate')} ${muted('<spec> [--adapter N]')}        Generate code from a spec file`);
+    this.writeLn(`  ${bold('plan')} ${muted('<requirements...>')}               Create a workplan from requirements`);
+
+    this.writeLn(section('Analyze & Validate'));
+    this.writeLn(`  ${bold('analyze')} ${muted('[path] [--json|--compact]')}    Architecture health check`);
+    this.writeLn(`  ${bold('validate')} ${muted('[path]')}                      Post-build semantic validation`);
+    this.writeLn(`  ${bold('summarize')} ${muted('<file> [--level L0-L3]')}     Print AST summary`);
+    this.writeLn(`  ${bold('compare')} ${muted('<spec> [--model M]')}           Compare agent backends`);
+
+    this.writeLn(section('Dashboard & Services'));
+    this.writeLn(`  ${bold('dashboard')}                             Start live dashboard`);
+    this.writeLn(`  ${bold('hub')} ${muted('[start|stop|status]')}              Manage hex-hub daemon`);
+    this.writeLn(`  ${bold('daemon')} ${muted('[status|start|stop|logs]')}      Background service`);
+    this.writeLn(`  ${bold('status')}                                Show project status`);
+    this.writeLn(`  ${bold('projects')}                              List registered projects`);
+
+    this.writeLn(section('Configuration'));
+    this.writeLn(`  ${bold('setup')}                                 Install grammars + skills + agents`);
+    this.writeLn(`  ${bold('secrets')} ${muted('<cmd> [args]')}                 Local vault management`);
+    this.writeLn(`  ${bold('mcp')}                                   Start as MCP server (stdio)`);
+
     this.writeLn('');
-    this.writeLn('Commands:');
-    this.writeLn('  build <prompt> [--yolo|--review] Auto-plan, orchestrate, analyze, validate');
-    this.writeLn('  scaffold <name> [--lang L]       Create a new hex project (alias for init)');
-    this.writeLn('  analyze [path] [--json]          Analyze architecture health');
-    this.writeLn('  summarize <file> [--level L]     Print AST summary (L0-L3)');
-    this.writeLn('  validate [path]                  Post-build validation (arch + semantic)');
-    this.writeLn('  generate <spec> [--adapter N]    Generate code from a spec file');
-    this.writeLn('    [--lang ts|go|rust] [--output path]');
-    this.writeLn('  plan <requirements...>           Create a workplan from requirements');
-    this.writeLn('    [--lang ts|go|rust]');
-    this.writeLn('  orchestrate <workplan.json>      Execute workplan steps via swarm agents');
-    this.writeLn('  setup                            Download grammars + install skills/agents');
-    this.writeLn('  dashboard [--port N]             Start dashboard (auto-detects running daemon)');
-    this.writeLn('  hub [start|stop|status]          Manage hex-hub daemon (Rust dashboard service)');
-    this.writeLn('  daemon [status|start|stop|logs]  Background dashboard service');
-    this.writeLn('  status                           Show dashboard, tasks, agents, patterns');
-    this.writeLn('  init [--lang ts|go|rust]         Scaffold a hex project (interactive wizard)');
-    this.writeLn('  secrets <cmd> [args]              Local vault: init, set, get, remove, list, status');
-    this.writeLn('  go <prompt> [--yolo|--review]    Autonomous coding (alias for build)');
-    this.writeLn('  compare <spec> [--model M]       Compare Claude Code vs Anthropic API');
-    this.writeLn('  mcp                              Start as MCP server (stdio transport)');
-    this.writeLn('  help                             Show this help');
+    this.writeLn(`${muted('MCP integration (add to any project):')}`);
+    this.writeLn(`  ${dim('{')} ${cyan('"mcpServers"')}: ${dim('{')} ${cyan('"hex"')}: ${dim('{')} ${cyan('"command"')}: ${green('"npx"')}, ${cyan('"args"')}: [${green('"hex"')}, ${green('"mcp"')}] ${dim('} } }')}`);
+
     this.writeLn('');
-    this.writeLn('MCP Server (add to any project):');
-    this.writeLn('  # .claude/settings.local.json');
-    this.writeLn('  { "mcpServers": { "hex": { "command": "npx", "args": ["hex", "mcp"] } } }');
-    this.writeLn('');
-    this.writeLn('Examples:');
-    this.writeLn('  hex mcp                                 # Start MCP server');
-    this.writeLn('  hex analyze ./src --json                # CI-friendly output');
-    this.writeLn('  hex generate spec.txt --output src/adapters/primary/api.ts');
-    this.writeLn('  hex plan "add caching layer" "implement retry logic"');
-    this.writeLn('  hex init --lang ts');
-    this.writeLn('  hex go "add user authentication" --yolo');
+    this.writeLn(`${muted('Examples:')}`);
+    this.writeLn(`  ${dim('$')} hex go "add user authentication" --yolo`);
+    this.writeLn(`  ${dim('$')} hex analyze ./src --json`);
+    this.writeLn(`  ${dim('$')} hex init --lang rust`);
 
     return 0;
   }
@@ -2622,9 +2738,7 @@ export class CLIAdapter {
         }
       } else {
         // Check if pre-built binary exists in CWD search paths
-        const { HubLauncher } = await import('../secondary/hub-launcher.js');
-        const launcher = new HubLauncher();
-        const found = launcher.findBinary();
+        const found = this.ctx.hubLauncher?.findBinary();
         if (found) {
           const { mkdirSync, copyFileSync, chmodSync } = await import('node:fs');
           mkdirSync(hexBinDir, { recursive: true });
