@@ -1,7 +1,7 @@
 # ADR-021: Hex Initialization Memory Exhaustion in Existing Large Projects
 
-**Status**: Accepted
-**Date**: 2026-03-17
+## Status: Accepted
+## Date: 2026-03-17
 **Deciders**: Core Team
 **Related**: ADR-001 (Hexagonal Architecture), ADR-009 (Ruflo Required)
 

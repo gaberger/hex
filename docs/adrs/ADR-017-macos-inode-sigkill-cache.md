@@ -1,9 +1,6 @@
 # ADR-017: Unlink Binary Before Copy to Avoid macOS Inode-Based SIGKILL Cache
 
-## Status
-
-Accepted
-
+## Status: Accepted
 ## Date
 
 2026-03-17

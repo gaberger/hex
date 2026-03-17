@@ -1,7 +1,7 @@
 # ADR-006: Skills, Agent Definitions, and npm Packaging
 
-**Status:** Accepted
-**Date:** 2026-03-15
+## Status: Accepted
+## Date: 2026-03-15
 
 ## Context
 

@@ -1,9 +1,6 @@
 # ADR-011: Coordination and Multi-Instance Locking
 
-## Status
-
-Accepted
-
+## Status: Accepted
 ## Date
 
 2026-03-17

@@ -1,7 +1,7 @@
 # ADR-005: Compile-Lint-Test Feedback Loop with Quality Gates
 
-**Status:** Accepted
-**Date:** 2026-03-15
+## Status: Accepted
+## Date: 2026-03-15
 
 ## Context
 

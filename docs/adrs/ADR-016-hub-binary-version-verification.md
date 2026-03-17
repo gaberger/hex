@@ -1,9 +1,6 @@
 # ADR-016: Hub Binary Version Verification
 
-## Status
-
-Accepted
-
+## Status: Accepted
 ## Date
 
 2026-03-17

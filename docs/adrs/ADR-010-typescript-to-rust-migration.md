@@ -1,7 +1,7 @@
 # ADR-010: TypeScript-to-Rust Migration Cost and Risk Analysis
 
-**Status:** Accepted
-**Date:** 2026-03-15
+## Status: Accepted
+## Date: 2026-03-15
 **Decision:** Recommend hybrid architecture (Option C) over full rewrite
 
 ---

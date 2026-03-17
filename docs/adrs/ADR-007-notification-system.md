@@ -1,9 +1,6 @@
 # ADR-007: Multi-Channel Notification System
 
-## Status
-
-Accepted
-
+## Status: Accepted
 ## Date
 
 2026-03-15

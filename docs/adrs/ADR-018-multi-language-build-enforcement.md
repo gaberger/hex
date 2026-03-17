@@ -1,12 +1,10 @@
 # ADR-018: Multi-Language Build Enforcement (Go + Rust)
 
-| Field      | Value                        |
-|------------|------------------------------|
-| Status     | Accepted                     |
-| Date       | 2026-03-17                   |
-| Deciders   | Gary, Claude                 |
-| Supersedes | —                            |
-| Relates to | ADR-003 (Multi-Language), ADR-005 (Quality Gates) |
+## Status: Accepted
+## Date: 2026-03-17
+## Deciders: Gary, Claude
+## Supersedes: —
+## Relates to: ADR-003 (Multi-Language), ADR-005 (Quality Gates)
 
 ## Context
 

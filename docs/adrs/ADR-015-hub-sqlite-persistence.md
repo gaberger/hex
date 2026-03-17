@@ -1,9 +1,6 @@
 # ADR-015: SQLite Persistence for Hub Swarm State
 
-## Status
-
-Accepted
-
+## Status: Accepted
 ## Date
 
 2026-03-17
