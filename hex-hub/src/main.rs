@@ -73,6 +73,9 @@ async fn main() {
                     evicted_cmds, evicted_results
                 );
             }
+
+            // Coordination eviction: dead instances, expired locks/claims
+            routes::coordination::evict_stale(&evict_state).await;
         }
     });
 

@@ -189,6 +189,34 @@ a:hover{opacity:.85}
 .graph-tooltip .tt-path{color:var(--accent);font-family:'JetBrains Mono','SF Mono',monospace;font-size:.78rem;word-break:break-all;font-weight:500}
 .graph-tooltip .tt-layer{color:var(--text2);font-size:.75rem;margin-top:4px;line-height:1.4}
 
+/* Coordination Panel */
+.coord-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.coord-sub{margin-bottom:14px}
+.coord-sub-title{font-size:.75rem;text-transform:uppercase;letter-spacing:1.2px;color:var(--text2);margin-bottom:8px;font-weight:700;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,.04)}
+.coord-item{display:flex;align-items:center;gap:8px;padding:5px 6px;border-bottom:1px solid rgba(255,255,255,.04);font-size:.85rem;border-radius:var(--radius-sm);transition:background .12s}
+.coord-item:hover{background:rgba(255,255,255,.03)}
+.coord-id{color:var(--accent);font-family:'JetBrains Mono','SF Mono',monospace;font-size:.78rem;min-width:70px}
+.coord-label{color:var(--text2);font-size:.82rem}
+.coord-badge{padding:2px 8px;border-radius:8px;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.coord-badge-lock{background:rgba(248,81,73,.12);color:var(--red)}
+.coord-badge-claim{background:rgba(88,166,255,.12);color:var(--accent)}
+.coord-badge-instance{background:rgba(63,185,80,.12);color:var(--green)}
+.coord-ttl{color:var(--text3);font-size:.75rem;margin-left:auto;font-variant-numeric:tabular-nums}
+.coord-activity-list{max-height:160px;overflow-y:auto;font-size:.82rem;font-family:'JetBrains Mono','SF Mono',monospace}
+.coord-activity-item{padding:3px 4px;border-bottom:1px solid rgba(255,255,255,.03);display:flex;gap:8px}
+.coord-activity-time{color:var(--text3);flex-shrink:0;min-width:58px;font-variant-numeric:tabular-nums}
+.coord-activity-action{color:var(--accent);min-width:90px}
+.coord-unstaged-list{max-height:140px;overflow-y:auto}
+.coord-unstaged-item{display:flex;align-items:center;gap:6px;padding:3px 4px;font-size:.82rem;border-bottom:1px solid rgba(255,255,255,.03)}
+.coord-unstaged-status{font-size:.72rem;padding:1px 6px;border-radius:6px;font-weight:600;text-transform:uppercase}
+.coord-unstaged-status.modified{background:rgba(227,179,65,.12);color:var(--yellow)}
+.coord-unstaged-status.added{background:rgba(63,185,80,.12);color:var(--green)}
+.coord-unstaged-status.deleted{background:rgba(248,81,73,.12);color:var(--red)}
+.coord-unstaged-path{color:var(--text);font-family:'JetBrains Mono','SF Mono',monospace;font-size:.78rem;word-break:break-all}
+.coord-unstaged-layer{color:var(--text3);font-size:.72rem;margin-left:auto;flex-shrink:0}
+.coord-instance-label{color:var(--text);font-weight:500}
+.coord-empty{color:var(--text3);font-size:.82rem;font-style:italic;padding:8px 0}
+
 /* Bottom Row: Chat + Graph side by side */
 .bottom-row{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:minmax(420px,auto);gap:var(--gap);padding:0 24px var(--gap);align-items:stretch}
 
@@ -344,6 +372,39 @@ a:hover{opacity:.85}
     </div>
     <div class="event-log-list" id="eventLog">
       <div class="empty">Waiting for events...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Coordination Panel (full width) -->
+<div style="padding:0 24px var(--gap)">
+  <div class="card" id="coordPanel">
+    <div class="card-title">Coordination</div>
+    <div class="coord-grid">
+      <div>
+        <div class="coord-sub">
+          <div class="coord-sub-title">Active Instances</div>
+          <div id="coordInstances"><span class="coord-empty">No instances registered</span></div>
+        </div>
+        <div class="coord-sub">
+          <div class="coord-sub-title">Worktree Locks</div>
+          <div id="coordLocks"><span class="coord-empty">No locks held</span></div>
+        </div>
+        <div class="coord-sub">
+          <div class="coord-sub-title">Task Claims</div>
+          <div id="coordClaims"><span class="coord-empty">No tasks claimed</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="coord-sub">
+          <div class="coord-sub-title">Activity Stream</div>
+          <div class="coord-activity-list" id="coordActivities"><span class="coord-empty">No recent activity</span></div>
+        </div>
+        <div class="coord-sub">
+          <div class="coord-sub-title">Unstaged Files</div>
+          <div class="coord-unstaged-list" id="coordUnstaged"><span class="coord-empty">No unstaged changes</span></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -639,6 +700,7 @@ a:hover{opacity:.85}
     loadTokenOverview();
     loadSwarm();
     loadGraph();
+    loadCoordination();
   }
 
   // --- API Fetch ---
@@ -1147,6 +1209,133 @@ a:hover{opacity:.85}
       }
     }
     return best;
+  }
+
+  // --- Coordination Panel ---
+  function loadCoordination() {
+    if (!state.currentProject) return;
+    var pid = state.currentProject;
+    var qs = '?projectId=' + encodeURIComponent(pid);
+    Promise.all([
+      rawFetch('/api/coordination/instances' + qs),
+      rawFetch('/api/coordination/worktree/locks' + qs),
+      rawFetch('/api/coordination/task/claims' + qs),
+      rawFetch('/api/coordination/activities' + qs + '&limit=30'),
+      rawFetch('/api/coordination/unstaged' + qs),
+    ]).then(function(results) {
+      renderCoordInstances(results[0] || []);
+      renderCoordLocks(results[1] || []);
+      renderCoordClaims(results[2] || []);
+      renderCoordActivities(results[3] || []);
+      renderCoordUnstaged(results[4] || []);
+    });
+  }
+
+  function coordEmpty(text) {
+    return createEl('span', { className: 'coord-empty', textContent: text });
+  }
+
+  function renderCoordInstances(instances) {
+    var el = $('#coordInstances');
+    if (!el) return;
+    clearChildren(el);
+    if (!instances.length) { el.appendChild(coordEmpty('No instances registered')); return; }
+    instances.forEach(function(inst) {
+      el.appendChild(createEl('div', { className: 'coord-item' }, [
+        createEl('span', { className: 'coord-badge coord-badge-instance', textContent: inst.instanceId.slice(0, 8) }),
+        createEl('span', { className: 'coord-instance-label', textContent: inst.sessionLabel || 'unnamed' }),
+        createEl('span', { className: 'coord-label', textContent: 'PID ' + inst.pid }),
+        createEl('span', { className: 'coord-ttl', textContent: timeAgo(inst.lastSeen) }),
+      ]));
+    });
+  }
+
+  function renderCoordLocks(locks) {
+    var el = $('#coordLocks');
+    if (!el) return;
+    clearChildren(el);
+    if (!locks.length) { el.appendChild(coordEmpty('No locks held')); return; }
+    locks.forEach(function(lock) {
+      el.appendChild(createEl('div', { className: 'coord-item' }, [
+        createEl('span', { className: 'coord-badge coord-badge-lock', textContent: 'locked' }),
+        createEl('span', { className: 'coord-id', textContent: lock.instanceId.slice(0, 8) }),
+        createEl('span', { textContent: lock.feature + '/' + lock.layer }),
+        createEl('span', { className: 'coord-ttl', textContent: ttlRemaining(lock.heartbeatAt, lock.ttlSecs) }),
+      ]));
+    });
+  }
+
+  function renderCoordClaims(claims) {
+    var el = $('#coordClaims');
+    if (!el) return;
+    clearChildren(el);
+    if (!claims.length) { el.appendChild(coordEmpty('No tasks claimed')); return; }
+    claims.forEach(function(claim) {
+      el.appendChild(createEl('div', { className: 'coord-item' }, [
+        createEl('span', { className: 'coord-badge coord-badge-claim', textContent: 'claimed' }),
+        createEl('span', { className: 'coord-id', textContent: claim.instanceId.slice(0, 8) }),
+        createEl('span', { textContent: claim.taskId.slice(0, 16) }),
+        createEl('span', { className: 'coord-ttl', textContent: timeAgo(claim.claimedAt) }),
+      ]));
+    });
+  }
+
+  function renderCoordActivities(activities) {
+    var el = $('#coordActivities');
+    if (!el) return;
+    clearChildren(el);
+    if (!activities.length) { el.appendChild(coordEmpty('No recent activity')); return; }
+    activities.forEach(function(act) {
+      el.appendChild(createEl('div', { className: 'coord-activity-item' }, [
+        createEl('span', { className: 'coord-activity-time', textContent: formatTime(act.timestamp) }),
+        createEl('span', { className: 'coord-activity-action', textContent: act.action }),
+        createEl('span', { className: 'coord-id', textContent: act.instanceId.slice(0, 8) }),
+      ]));
+    });
+  }
+
+  function renderCoordUnstaged(unstagedStates) {
+    var el = $('#coordUnstaged');
+    if (!el) return;
+    clearChildren(el);
+    var allFiles = [];
+    (unstagedStates || []).forEach(function(us) {
+      (us.files || []).forEach(function(f) {
+        allFiles.push({ path: f.path, status: f.status, layer: f.layer });
+      });
+    });
+    if (!allFiles.length) { el.appendChild(coordEmpty('No unstaged changes')); return; }
+    allFiles.slice(0, 50).forEach(function(f) {
+      el.appendChild(createEl('div', { className: 'coord-unstaged-item' }, [
+        createEl('span', { className: 'coord-unstaged-status ' + f.status, textContent: f.status }),
+        createEl('span', { className: 'coord-unstaged-path', textContent: f.path }),
+        createEl('span', { className: 'coord-unstaged-layer', textContent: f.layer }),
+      ]));
+    });
+  }
+
+  function ttlRemaining(heartbeatAt, ttlSecs) {
+    if (!heartbeatAt || !ttlSecs) return '';
+    var elapsed = (Date.now() - new Date(heartbeatAt).getTime()) / 1000;
+    var remain = Math.max(0, ttlSecs - elapsed);
+    if (remain <= 0) return 'expired';
+    if (remain < 60) return Math.round(remain) + 's';
+    return Math.round(remain / 60) + 'm';
+  }
+
+  function timeAgo(ts) {
+    if (!ts) return '';
+    var secs = (Date.now() - new Date(ts).getTime()) / 1000;
+    if (secs < 5) return 'now';
+    if (secs < 60) return Math.round(secs) + 's ago';
+    if (secs < 3600) return Math.round(secs / 60) + 'm ago';
+    return Math.round(secs / 3600) + 'h ago';
+  }
+
+  function formatTime(ts) {
+    if (!ts) return '';
+    var d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
   function loadGraph() {
@@ -2799,6 +2988,7 @@ a:hover{opacity:.85}
       });
       loadHealth();
       loadSwarm();
+      loadCoordination();
     }, 10000);
   }
 

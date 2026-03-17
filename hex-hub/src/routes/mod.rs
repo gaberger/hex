@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod coordination;
 pub mod decisions;
 pub mod projects;
 pub mod push;
@@ -23,6 +24,7 @@ async fn get_version() -> Json<serde_json::Value> {
 const PUSH_BODY_LIMIT: usize = 256 * 1024;  // 256KB for /api/push
 const EVENT_BODY_LIMIT: usize = 16 * 1024;  // 16KB for /api/event
 const SMALL_BODY_LIMIT: usize = 4 * 1024;   // 4KB for register/decisions
+const COORD_BODY_LIMIT: usize = 32 * 1024;  // 32KB for coordination (unstaged files can be large)
 
 pub fn build_router(state: SharedState) -> Router {
     let cors = CorsLayer::new()
@@ -66,6 +68,24 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/{project_id}/commands", get(commands::list_commands))
         // Decisions (browser → hub → WS)
         .route("/api/{project_id}/decisions/{decision_id}", post(decisions::handle_decision))
+        // Coordination (multi-instance)
+        .route("/api/coordination/instance/register", post(coordination::register_instance)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/coordination/instance/heartbeat", post(coordination::heartbeat_instance)
+            .layer(DefaultBodyLimit::max(COORD_BODY_LIMIT)))
+        .route("/api/coordination/instances", get(coordination::list_instances))
+        .route("/api/coordination/worktree/lock", post(coordination::acquire_lock)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/coordination/worktree/lock/{key}", delete(coordination::release_lock))
+        .route("/api/coordination/worktree/locks", get(coordination::list_locks))
+        .route("/api/coordination/task/claim", post(coordination::claim_task)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/coordination/task/claim/{task_id}", delete(coordination::release_task))
+        .route("/api/coordination/task/claims", get(coordination::list_claims))
+        .route("/api/coordination/activity", post(coordination::publish_activity)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/coordination/activities", get(coordination::get_activities))
+        .route("/api/coordination/unstaged", get(coordination::get_unstaged))
         // WebSocket
         .route("/ws", get(ws::ws_handler))
         // Middleware
