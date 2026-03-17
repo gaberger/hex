@@ -1,6 +1,7 @@
 mod daemon;
 mod embed;
 mod middleware;
+mod persistence;
 mod routes;
 mod state;
 
@@ -34,8 +35,20 @@ async fn main() {
         .and_then(|i| args.get(i + 1).cloned())
         .or_else(|| std::env::var("HEX_DASHBOARD_TOKEN").ok());
 
+    // Initialize persistent swarm database
+    let swarm_db = match persistence::SwarmDb::open() {
+        Ok(db) => {
+            tracing::info!("Swarm persistence initialized at ~/.hex/hub.db");
+            Some(db)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to open swarm database: {} — running without persistence", e);
+            None
+        }
+    };
+
     // Create shared state
-    let state = Arc::new(state::AppState::new(token.clone()));
+    let state = Arc::new(state::AppState::new(token.clone(), swarm_db));
 
     // Background task: evict completed commands older than 1 hour (every 60s)
     let evict_state = state.clone();
@@ -73,9 +86,6 @@ async fn main() {
                     evicted_cmds, evicted_results
                 );
             }
-
-            // Coordination eviction: dead instances, expired locks/claims
-            routes::coordination::evict_stale(&evict_state).await;
         }
     });
 
