@@ -48,6 +48,8 @@ const RUST_NODE_KIND_MAP: Record<string, string> = {
 export class TreeSitterAdapter implements IASTPort {
   private parser: Parser | undefined;
   private langMap = new Map<Language, TSLanguage>();
+  /** Cache: filePath:level → { mtime, summary }. Avoids re-parsing unchanged files. */
+  private summaryCache = new Map<string, { mtime: number; summary: ASTSummary }>();
   private _isStub = false;
 
   private constructor(
@@ -114,6 +116,14 @@ export class TreeSitterAdapter implements IASTPort {
   // ── IASTPort ──────────────────────────────────────────────
 
   async extractSummary(filePath: string, level: ASTSummary['level']): Promise<ASTSummary> {
+    // Check mtime cache — skip re-parsing unchanged files
+    const cacheKey = `${filePath}:${level}`;
+    const mtime = await this.fs.mtime(filePath).catch(() => 0);
+    const cached = this.summaryCache.get(cacheKey);
+    if (cached && cached.mtime === mtime && mtime > 0) {
+      return cached.summary;
+    }
+
     const source = await this.fs.read(filePath);
     const lang = detectLanguage(filePath);
     const lineCount = source.split('\n').length;
@@ -122,31 +132,37 @@ export class TreeSitterAdapter implements IASTPort {
     // When tree-sitter has no grammars, return a clearly-stubbed summary
     // with empty analysis results so callers know data is not real.
     if (this._isStub) {
-      return {
+      const stub = {
         filePath, language: lang, level,
         exports: [], imports: [], dependencies: [],
         lineCount, tokenEstimate: fullTokenEstimate,
         stubbed: true,
         ...(level === 'L3' ? { raw: source } : {}),
       };
+      if (mtime > 0) this.summaryCache.set(cacheKey, { mtime, summary: stub });
+      return stub;
     }
 
     if (level === 'L0') {
-      return {
+      const l0 = {
         filePath, language: lang, level,
         exports: [], imports: [], dependencies: [],
         lineCount,
         tokenEstimate: Math.ceil((filePath.length + 20) / 4), // ~filename + metadata
       };
+      if (mtime > 0) this.summaryCache.set(cacheKey, { mtime, summary: l0 });
+      return l0;
     }
 
     if (level === 'L3') {
-      return {
+      const l3 = {
         filePath, language: lang, level,
         exports: [], imports: [], dependencies: [],
         lineCount, tokenEstimate: fullTokenEstimate,
         raw: source,
       };
+      // Don't cache L3 — it contains the full source string (memory heavy)
+      return l3;
     }
 
     // L1 or L2 — parse and extract structural summary
@@ -170,6 +186,7 @@ export class TreeSitterAdapter implements IASTPort {
       + '\n' + base.imports.map(i => `import {${i.names.join(',')}} from '${i.from}'`).join('\n');
     base.tokenEstimate = Math.ceil(summaryText.length / 4);
 
+    if (mtime > 0) this.summaryCache.set(cacheKey, { mtime, summary: base });
     return base;
   }
 

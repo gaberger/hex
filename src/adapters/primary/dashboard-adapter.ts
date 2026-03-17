@@ -63,6 +63,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   private watchers: FSWatcher[] = [];
   private fileChangeDebounce = new Map<string, ReturnType<typeof setTimeout>>();
   private stopped = false;
+  private _pushing = false;
   private readonly authToken: string;
 
   // ── WebSocket command listener state ──────────────
@@ -497,14 +498,19 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
   private async pushAll(): Promise<void> {
     if (!this.projectId) return;
-
-    // Push health, tokens, swarm, graph in parallel
-    await Promise.allSettled([
-      this.pushHealth(),
-      this.pushTokens(),
-      this.pushSwarm(),
-      this.pushGraph(),
-    ]);
+    if (this._pushing) return; // Concurrency guard — prevent overlapping scans
+    this._pushing = true;
+    try {
+      // Push health, tokens, swarm, graph in parallel
+      await Promise.allSettled([
+        this.pushHealth(),
+        this.pushTokens(),
+        this.pushSwarm(),
+        this.pushGraph(),
+      ]);
+    } finally {
+      this._pushing = false;
+    }
   }
 
   private async pushHealth(): Promise<void> {
@@ -531,22 +537,23 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
           && !f.includes('examples'),
       );
 
+      // Only compute L1 (summary, requires parse) and L3 (raw source, no parse).
+      // L0 is derived from filepath length; L2 ≈ L1 for dashboard display.
+      // This cuts tree-sitter parses from 2/file to 1/file and file reads from 4 to 2.
       const files = await Promise.all(
         sourceFiles.map(async (filePath) => {
-          const [l0, l1, l2, l3] = await Promise.all([
-            this.ctx.ast.extractSummary(filePath, 'L0'),
+          const [l1, l3] = await Promise.all([
             this.ctx.ast.extractSummary(filePath, 'L1'),
-            this.ctx.ast.extractSummary(filePath, 'L2'),
             this.ctx.ast.extractSummary(filePath, 'L3'),
           ]);
+          // Derive L0 (metadata only) and L2 (≈L1 for display) without extra parses
+          const l0Tokens = Math.ceil((filePath.length + 20) / 4);
           return {
             path: filePath,
-            l0Tokens: l0.tokenEstimate,
+            l0Tokens,
             l1Tokens: l1.tokenEstimate,
-            l2Tokens: l2.tokenEstimate,
+            l2Tokens: l1.tokenEstimate, // L2 ≈ L1 (avoids second parse)
             l3Tokens: l3.tokenEstimate,
-            // Compression ratio: fraction of tokens saved (0-1).
-            // L1 is the summary, L3 is the full source.
             ratio: l3.tokenEstimate > 0 ? +(1 - l1.tokenEstimate / l3.tokenEstimate).toFixed(3) : 0,
             lineCount: l1.lineCount,
           };
