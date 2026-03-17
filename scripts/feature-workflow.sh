@@ -33,6 +33,12 @@ cmd_setup() {
   local feature_name="$1"
   local workplan="$PROJECT_ROOT/docs/workplans/feat-${feature_name}.json"
 
+  # Check for behavioral spec (warn but don't block)
+  local specfile="$PROJECT_ROOT/docs/specs/${feature_name}.json"
+  if [ ! -f "$specfile" ]; then
+    log_warn "No behavioral spec found at docs/specs/${feature_name}.json — consider running specs phase first"
+  fi
+
   if [ ! -f "$workplan" ]; then
     log_err "Workplan not found: $workplan"
     log_info "Run the planner agent first to generate the workplan."
