@@ -58,7 +58,10 @@ function classifyLayer(filePath: string): string {
 // ── Dashboard Client ─────────────────────────────────────
 
 export class DashboardAdapter implements IHubCommandReceiverPort {
-  private projectId: string | null = null;
+  private _projectId: string | null = null;
+
+  /** Hub-assigned project ID (available after start/startAndPushOnce). */
+  get projectId(): string | null { return this._projectId; }
   private pushTimer: ReturnType<typeof setInterval> | null = null;
   private watchers: FSWatcher[] = [];
   private fileChangeDebounce = new Map<string, ReturnType<typeof setTimeout>>();
@@ -102,7 +105,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       throw new Error('Hub registration failed');
     }
 
-    this.projectId = regResult.id as string;
+    this._projectId = regResult.id as string;
 
     // Initial push — fire and forget (don't block registration)
     void this.pushAll().catch((err) => this.log('initial push failed:', err));
@@ -143,7 +146,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       throw new Error('Hub registration failed');
     }
 
-    this.projectId = regResult.id as string;
+    this._projectId = regResult.id as string;
 
     // Single synchronous push — no timer, no watcher
     await this.pushAll();
@@ -183,7 +186,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   // ── IHubCommandReceiverPort implementation ─────────
 
   async startListening(): Promise<void> {
-    if (!this.projectId || this._isListening) return;
+    if (!this._projectId || this._isListening) return;
     this._isListening = true; // Set immediately to prevent concurrent calls (H2)
 
     const tokenParam = this.authToken ? `?token=${encodeURIComponent(this.authToken)}` : '';
@@ -241,7 +244,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       // Subscribe to command topic for this project
       this.wsSend({
         type: 'subscribe',
-        topic: `project:${this.projectId}:command`,
+        topic: `project:${this._projectId}:command`,
       });
 
       // Start WS keepalive ping every 25s to detect dead connections early
@@ -333,7 +336,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
     // Report result back to hub via HTTP POST (hub broadcasts to WS subscribers)
     await this.post(
-      `/api/${this.projectId}/command/${command.commandId}/result`,
+      `/api/${this._projectId}/command/${command.commandId}/result`,
       result,
     );
   }
@@ -346,7 +349,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
     this.onCommand('ping', async (cmd) => ({
       commandId: cmd.commandId,
       status: 'completed',
-      data: { pong: true, projectId: this.projectId, timestamp: Date.now() },
+      data: { pong: true, projectId: this._projectId, timestamp: Date.now() },
       completedAt: new Date().toISOString(),
     }));
 
@@ -566,7 +569,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   }
 
   private async pushAll(): Promise<void> {
-    if (!this.projectId) return;
+    if (!this._projectId) return;
     if (this._pushing) return; // Concurrency guard — prevent overlapping scans
     this._pushing = true;
     try {
@@ -637,7 +640,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       await Promise.all(
         files.map((f) =>
           this.post('/api/push', {
-            projectId: this.projectId,
+            projectId: this._projectId,
             type: 'tokenFile',
             filePath: f.path,
             data: {
@@ -752,7 +755,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
   private pushState(type: string, data: unknown): Promise<void> {
     return this.post('/api/push', {
-      projectId: this.projectId,
+      projectId: this._projectId,
       type,
       data,
     }).then(() => {});
@@ -760,7 +763,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
 
   private pushEvent(event: string, data: unknown): Promise<void> {
     return this.post('/api/event', {
-      projectId: this.projectId,
+      projectId: this._projectId,
       event,
       data,
     }).then(() => {});
@@ -808,7 +811,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   /** Broadcast to local SSE clients (kept for backward compat). */
   broadcast(event: string, data: unknown): void {
     // Forward to hub as an event
-    if (this.projectId) {
+    if (this._projectId) {
       void this.pushEvent(event, data);
     }
   }

@@ -640,11 +640,25 @@ export class CLIAdapter {
       this.writeLn(`Dashboard: ${url}`);
       this.writeLn('Data pushed. Listening for commands... (Ctrl+C to stop)');
 
+      // Register a coordination instance so the dashboard's Coordination panel is populated.
+      // Uses the same hub-assigned project ID that the DashboardAdapter registered.
+      let coordCleanup: (() => void) | null = null;
+      if (adapter.projectId && this.ctx.createCoordination) {
+        try {
+          const coord = await this.ctx.createCoordination(adapter.projectId);
+          const instanceId = await coord.registerInstance('hex-dashboard');
+          coordCleanup = () => coord.stop();
+          this.writeLn(`[coordination] Instance ${instanceId.slice(0, 8)}… registered`);
+        } catch {
+          // Non-critical — dashboard works without coordination
+        }
+      }
+
       // Keep process alive to handle WebSocket commands from the hub.
       // Use setInterval (not bare Promise) — Bun busy-waits on unresolved promises.
       await new Promise<void>((resolve) => {
         const keepAlive = setInterval(() => {}, 60_000);
-        const onSignal = () => { clearInterval(keepAlive); adapter.stop(); resolve(); };
+        const onSignal = () => { clearInterval(keepAlive); coordCleanup?.(); adapter.stop(); resolve(); };
         process.on('SIGINT', onSignal);
         process.on('SIGTERM', onSignal);
       });

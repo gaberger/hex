@@ -488,6 +488,10 @@ export async function createAppContext(
       } as any;
       return new DashboardAdapter(dashCtx);
     },
+    createCoordination: async (hubProjectId: string) => {
+      const { CoordinationAdapter } = await import('./adapters/secondary/coordination-adapter.js');
+      return new CoordinationAdapter(hubProjectId, projectPath);
+    },
     anthropicExecutor,
     claudeCodeExecutor,
     comparator,

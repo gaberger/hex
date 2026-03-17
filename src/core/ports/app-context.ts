@@ -103,6 +103,9 @@ export interface AppContext {
   /** Multi-instance coordination via hex-hub (null when hub unavailable) */
   coordination: ICoordinationPort | null;
 
+  /** Factory to create a coordination adapter for a given hub project ID. */
+  createCoordination?: (hubProjectId: string) => Promise<ICoordinationPort>;
+
   /** Agent executors for direct API comparison (null when no API key) */
   anthropicExecutor: IAgentExecutorPort | null;
   claudeCodeExecutor: IAgentExecutorPort | null;
