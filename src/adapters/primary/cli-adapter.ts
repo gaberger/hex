@@ -530,9 +530,11 @@ export class CLIAdapter {
       this.writeLn(`Dashboard: ${url}`);
       this.writeLn('Data pushed. Listening for commands... (Ctrl+C to stop)');
 
-      // Keep process alive to handle WebSocket commands from the hub
+      // Keep process alive to handle WebSocket commands from the hub.
+      // Use setInterval (not bare Promise) — Bun busy-waits on unresolved promises.
       await new Promise<void>((resolve) => {
-        const onSignal = () => { adapter.stop(); resolve(); };
+        const keepAlive = setInterval(() => {}, 60_000);
+        const onSignal = () => { clearInterval(keepAlive); adapter.stop(); resolve(); };
         process.on('SIGINT', onSignal);
         process.on('SIGTERM', onSignal);
       });
