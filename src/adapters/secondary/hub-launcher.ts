@@ -139,13 +139,23 @@ export class HubLauncher {
     });
     child.unref();
 
-    // Wait for hub to become healthy
+    // Wait for hub to become healthy AND lock file to exist.
+    // The lock file is critical — without it, clients can't read the auth token
+    // and all POST requests will fail with 401.
+    const lockPath = this.deps.join(this.deps.homedir(), '.hex', 'daemon', 'hub.lock');
     const deadline = Date.now() + SPAWN_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, SPAWN_POLL_MS));
-      if (await this.isRunning()) {
+      if (await this.isRunning() && this.deps.existsSync(lockPath)) {
         return { started: true, url: `http://127.0.0.1:${HUB_PORT}` };
       }
+    }
+    // Hub may be healthy but lock file missing (race condition from ADR-016 restart)
+    if (await this.isRunning()) {
+      process.stderr.write(
+        '[hex] Warning: hub is running but lock file is missing — clients may fail auth\n',
+      );
+      return { started: true, url: `http://127.0.0.1:${HUB_PORT}` };
     }
     throw new Error('hex-hub started but did not become healthy within 5 seconds');
   }

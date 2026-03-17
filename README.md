@@ -341,6 +341,11 @@ open http://localhost:5555
 
 1.5MB binary, zero runtime dependencies. Modern dark theme optimized for extended developer use.
 
+**Persistence & coordination:**
+- Swarm state (agents, tasks, events) is persisted in **SQLite** (`hex_hub.db`) — survives daemon restarts (ADR-015)
+- Hub binary embeds a **compile-time build hash** for version verification against the TypeScript CLI (ADR-016)
+- Multi-instance coordination uses `ICoordinationPort` with filesystem-based locking and heartbeats to prevent port conflicts (ADR-011)
+
 See [hex-hub/README.md](hex-hub/README.md) for full API reference.
 
 <br/>
@@ -533,6 +538,10 @@ npx @anthropic-hex/hex --help
 | `hex mcp` | Start MCP stdio server for Claude Code / IDE integration |
 | `hex setup` | Install tree-sitter grammars + skills + agents + hex-hub binary |
 | `hex init` | Initialize project with startup hooks |
+| `hex adr list` | List all ADRs with status |
+| `hex adr status` | Show ADR lifecycle summary |
+| `hex adr search <query>` | Search ADRs by keyword |
+| `hex adr abandoned` | Detect stale/abandoned ADRs |
 | `hex help` | Show all commands and usage |
 | `hex version` | Print current version |
 
@@ -589,6 +598,13 @@ Available via `hex mcp`:
 | `hex_hub_command` | Send command to hub (analyze, build, validate, claude) |
 | `hex_hub_commands_list` | List pending/completed hub commands |
 | `hex_hub_command_status` | Check status of a hub command |
+| `hex_adr_list` | List all ADRs with status |
+| `hex_adr_search` | Search ADRs by keyword |
+| `hex_adr_status` | ADR lifecycle summary |
+| `hex_adr_abandoned` | Detect stale/abandoned ADRs |
+| `hex_secrets_has` | Check if a secret key exists |
+| `hex_secrets_resolve` | Resolve a secret value |
+| `hex_secrets_status` | Show secrets adapter chain status |
 
 </td>
 </tr>
@@ -764,6 +780,7 @@ cargo build --release -p hex-hub  # Build dashboard binary manually
 | **`safePath()` protection** | FileSystemAdapter prevents path traversal outside project root |
 | **`execFile` not `exec`** | RufloAdapter prevents shell injection from untrusted inputs |
 | **London-school testing** | Mock ports, test logic; hexagonal architecture makes this natural |
+| **No `mock.module()`** | Tests use dependency injection (Deps pattern), never `mock.module()` — prevents mock/prod divergence (ADR-014) |
 | **`hex_build` single entry point** | Users describe what to build; hex handles plan → orchestrate → analyze → validate internally |
 | **Pluggable secrets chain** | `ISecretsPort` adapters stack: Infisical → LocalVault → env-var; composition root selects |
 | **Dashboard auto-start** | Dashboard HTTP server launches on project load; port conflicts and stale locks self-heal |

@@ -311,8 +311,15 @@ const handlers = {
         }
       } catch (e) { /* non-fatal */ }
     }
-    // Register this project with hex-hub and write initial status
+    // Register this project with hex-hub and auto-register coordination instance
     hubEnsureRegistered();
+    // Auto-register a coordination instance so the Coordination panel populates on startup
+    const pid = getProjectId();
+    hubPost('/api/coordination/instance/register', {
+      projectId: pid,
+      pid: process.pid,
+      sessionLabel: `session-${Date.now()}`,
+    });
     const rufloUp = isRufloConfigured();
     writeHexStatus({
       swarm: rufloUp,

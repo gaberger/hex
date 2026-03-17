@@ -16,6 +16,7 @@ hex provides token-efficient code summaries via tree-sitter, swarm coordination 
 - NEVER commit secrets, credentials, or .env files
 - ALWAYS run `bun test` after making code changes
 - ALWAYS run `bun run build` before committing
+- NEVER use `mock.module()` in tests — use dependency injection via the Deps pattern instead (ADR-014)
 
 ## Hexagonal Architecture Rules (ENFORCED)
 
@@ -72,6 +73,10 @@ bun test             # Run all tests (unit + property + smoke)
 bun run check        # TypeScript type check (no emit)
 hex analyze .        # Architecture health check
 hex setup            # Install grammars + skills + agents
+hex adr list         # List all ADRs with status
+hex adr status       # Show ADR lifecycle summary
+hex adr search <q>   # Search ADRs by keyword
+hex adr abandoned    # Detect stale/abandoned ADRs
 ```
 
 ### hex-hub (Dashboard Hub)
@@ -84,6 +89,9 @@ The dashboard hub is a **separate Rust binary** in `hex-hub/`. It uses `rust-emb
   ```
 - Then restart the hub daemon and hard-refresh the browser (Cmd+Shift+R)
 - `bun run build` does NOT update the hub — it only bundles the TypeScript CLI/library
+- Hub state (swarms, agents, tasks) is persisted in **SQLite** (`hex_hub.db`) — see ADR-015
+- The hub binary embeds a **compile-time build hash** for version verification against the TypeScript CLI (ADR-016)
+- Multi-instance coordination uses `ICoordinationPort` with filesystem-based locking and heartbeats (ADR-011)
 
 ## Development Pipeline (Specs-First)
 

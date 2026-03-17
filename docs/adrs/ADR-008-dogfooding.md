@@ -23,12 +23,13 @@ hex is built using its own hexagonal architecture:
 
 ### Compliance Rules
 
-1. `src/core/domain/` may only import from `src/core/ports/`
-2. `src/core/usecases/` may only import from `src/core/domain/` and `src/core/ports/`
-3. `src/adapters/` may only import from `src/core/ports/` (never from domain or other adapters)
-4. No adapter may import another adapter — cross-cutting concerns go through the domain
-5. All external libraries (tree-sitter, simple-git, etc.) are wrapped in adapters
-6. The notification system is driven by DomainEvents, not by adapters directly
+1. `src/core/domain/` must only import from `src/core/domain/` (value-objects, entities — zero external deps)
+2. `src/core/ports/` may import from `src/core/domain/` (for value types) but nothing else
+3. `src/core/usecases/` may only import from `src/core/domain/` and `src/core/ports/`
+4. `src/adapters/` may only import from `src/core/ports/` (never from domain or other adapters)
+5. No adapter may import another adapter — cross-cutting concerns go through the domain
+6. All external libraries (tree-sitter, simple-git, etc.) are wrapped in adapters
+7. The notification system is driven by DomainEvents, not by adapters directly
 
 ### Self-Hosting Test
 

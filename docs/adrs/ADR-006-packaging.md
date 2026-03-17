@@ -11,13 +11,19 @@ hex produces reusable artifacts: project scaffolds, code generation workflows, a
 
 We support **three packaging formats**, each targeting a different adoption level.
 
-### 1. Claude Skill YAML
+### 1. Claude Skill Markdown
 
-For end users who invoke capabilities via natural language triggers.
+For end users who invoke capabilities via natural language triggers. Skills are Markdown files (`.md`) with YAML frontmatter for metadata.
 
-```yaml
+```markdown
+---
 name: hex-scaffold
+description: Scaffold a new hexagonal architecture project
 triggers: ["create hex project", "scaffold hexagonal", "new ports and adapters"]
+---
+
+# hex-scaffold
+Prompt content loaded when triggered...
 ```
 
 **Skill triggers** use progressive disclosure: the trigger phrase loads a minimal prompt, which then loads additional context only if the user's request requires it. This keeps the initial token cost near zero.
@@ -64,7 +70,7 @@ The npm package exposes the full port interface programmatically, enabling custo
 
 - **Semver** for all three formats, tracked in a single `version` field in `package.json`
 - Skills and agent definitions are embedded in the npm package under `skills/` and `agents/`
-- npm is the sole distribution channel; skills and agent YAMLs are extracted at install time
+- npm is the sole distribution channel; skills (Markdown) and agent definitions (YAML) are extracted at install time
 - Breaking port interface changes require a major version bump
 - Agent definitions pin a minimum hex version to ensure port compatibility
 
@@ -79,6 +85,6 @@ The npm package exposes the full port interface programmatically, enabling custo
 
 ### Negative
 
-- YAML skill format is Claude-specific; other LLM platforms need their own format
+- Markdown skill format is Claude-specific; other LLM platforms need their own format
 - Embedding skills inside npm means non-Node consumers must extract manually
 - Agent definitions couple to Ruflo's task model; alternative orchestrators need adapters

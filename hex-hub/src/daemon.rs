@@ -42,7 +42,27 @@ pub fn write_lock(port: u16, token: &str) -> std::io::Result<()> {
 
 pub fn remove_lock() {
     let path = lock_file_path();
-    let _ = std::fs::remove_file(path);
+    // Only remove if we own it — prevents race where a restarted hub's lock
+    // gets deleted by the old process's shutdown handler (ADR-016 scenario).
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            if let Ok(lock) = serde_json::from_str::<LockFile>(&content) {
+                if lock.pid == std::process::id() {
+                    let _ = std::fs::remove_file(&path);
+                } else {
+                    tracing::debug!(
+                        "Lock file owned by PID {}, not removing (we are PID {})",
+                        lock.pid,
+                        std::process::id()
+                    );
+                }
+            } else {
+                // Corrupt lock file — safe to remove
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        Err(_) => {} // No lock file — nothing to remove
+    }
 }
 
 pub fn generate_token() -> String {

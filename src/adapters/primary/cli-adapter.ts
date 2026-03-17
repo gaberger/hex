@@ -2860,8 +2860,12 @@ export class CLIAdapter {
 
         if (existsSync(prebuilt)) {
           // Pre-built binary exists — just copy it
-          const { mkdirSync, copyFileSync, chmodSync } = await import('node:fs');
+          // IMPORTANT: remove old binary first so copyFileSync creates a new inode.
+          // macOS caches process-kill decisions by inode — reusing an inode that was
+          // previously SIGKILL'd causes the new binary to be killed on sight.
+          const { mkdirSync, copyFileSync, chmodSync, unlinkSync } = await import('node:fs');
           mkdirSync(hexBinDir, { recursive: true });
+          try { unlinkSync(hexBinDest); } catch { /* not present */ }
           copyFileSync(prebuilt, hexBinDest);
           chmodSync(hexBinDest, 0o755);
           this.writeLn(`  hex-hub installed from pre-built binary to ${hexBinDest}`);
@@ -2877,8 +2881,9 @@ export class CLIAdapter {
               timeout: 120_000,
             });
 
-            const { mkdirSync, copyFileSync, chmodSync } = await import('node:fs');
+            const { mkdirSync, copyFileSync, chmodSync, unlinkSync } = await import('node:fs');
             mkdirSync(hexBinDir, { recursive: true });
+            try { unlinkSync(hexBinDest); } catch { /* not present */ }
             copyFileSync(prebuilt, hexBinDest);
             chmodSync(hexBinDest, 0o755);
             this.writeLn(`  hex-hub installed to ${hexBinDest}`);
@@ -2892,8 +2897,9 @@ export class CLIAdapter {
         // Check if pre-built binary exists in CWD search paths
         const found = this.ctx.hubLauncher?.findBinary();
         if (found) {
-          const { mkdirSync, copyFileSync, chmodSync } = await import('node:fs');
+          const { mkdirSync, copyFileSync, chmodSync, unlinkSync } = await import('node:fs');
           mkdirSync(hexBinDir, { recursive: true });
+          try { unlinkSync(hexBinDest); } catch { /* not present */ }
           copyFileSync(found, hexBinDest);
           chmodSync(hexBinDest, 0o755);
           this.writeLn(`  hex-hub installed from ${found} to ${hexBinDest}`);
