@@ -215,6 +215,8 @@ export async function createAppContext(
           const coord = new CoordinationAdapter(projId, projectPath, HUB_PORT);
           const instanceId = await coord.registerInstance();
           status.coordinationInstanceId = instanceId;
+          // Wire into AppContext so CLI/MCP/dashboard can access coordination
+          (appContext as any).coordination = coord;
           process.stderr.write(`[hex] Coordination registered: ${instanceId.slice(0, 8)}…\n`);
         } catch (coordErr) {
           process.stderr.write(`[hex] Coordination skipped: ${coordErr instanceof Error ? coordErr.message : String(coordErr)}\n`);
