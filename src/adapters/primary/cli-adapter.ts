@@ -20,11 +20,42 @@ import type {
 import type { AppContext } from '../../core/ports/app-context.js';
 import { formatArchReport } from '../../core/ports/index.js';
 import {
-  bold, dim, muted, green, cyan,
+  bold, dim, muted, green, cyan, red, yellow, gray,
   header, section, kv,
   didYouMean, elapsed, setColorEnabled, setUnicodeEnabled,
   error as errorColor, warn, accent, glyph, hr,
 } from './cli-fmt.js';
+
+/** Colorize a plain-text architecture report with ANSI colors.
+ *  Uses cli-fmt helpers already imported above (green, red, yellow, etc.). */
+function colorizeReport(report: string, _score: number): string {
+  return report
+    // Status badges
+    .replace(/\bPASS\b/g, green('PASS'))
+    .replace(/\bFAIL\b/g, red('FAIL'))
+    .replace(/\bWARN\b/g, yellow('WARN'))
+    .replace(/\bINFO\b/g, cyan('INFO'))
+    .replace(/\bOK\b/g, green('OK'))
+    .replace(/\bSKIP\b/g, gray('SKIP'))
+    // Severity tags
+    .replace(/\[CRITICAL\]/g, red('[CRITICAL]'))
+    .replace(/\[WARNING\]/g, yellow('[WARNING]'))
+    .replace(/\[INFO\]/g, cyan('[INFO]'))
+    // Section headers
+    .replace(/^(={60})$/gm, bold('$1'))
+    .replace(/^( {2}HEXAGONAL ARCHITECTURE HEALTH REPORT)$/gm, bold('$1'))
+    .replace(/^( {2}[A-Z &]+)$/gm, bold('$1'))
+    // Grade and score in footer
+    .replace(/Score: (\d+)\/100/g, (_: string, s: string) => {
+      const n = parseInt(s, 10);
+      const colorFn = n >= 80 ? green : n >= 50 ? yellow : red;
+      return `Score: ${colorFn(`${s}/100`)}`;
+    })
+    .replace(/Grade: ([A-F])/g, (_: string, g: string) => {
+      const colorFn = g === 'A' || g === 'B' ? green : g === 'C' ? yellow : red;
+      return `Grade: ${colorFn(g)}`;
+    });
+}
 
 /** Result from runCLI — captures output for testing */
 interface CLIResult {
@@ -352,6 +383,8 @@ export class CLIAdapter {
           return await this.orchestrate(args);
         case 'compare':
           return await this.compare(args);
+        case 'adr':
+          return await this.adr(args);
         case 'help':
         case '--help':
         case '-h':
@@ -361,7 +394,7 @@ export class CLIAdapter {
           const commands = [
             'analyze', 'summarize', 'generate', 'plan', 'dashboard', 'hub',
             'status', 'daemon', 'setup', 'init', 'mcp', 'projects', 'secrets',
-            'go', 'build', 'scaffold', 'validate', 'orchestrate', 'compare', 'help',
+            'go', 'build', 'scaffold', 'validate', 'orchestrate', 'compare', 'adr', 'help',
           ];
           const suggestion = didYouMean(args.command, commands);
           if (suggestion) {
@@ -424,12 +457,12 @@ export class CLIAdapter {
       this.writeLn('');
     }
 
-    // Generate the formatted report
+    // Generate the formatted report and add CLI colors
     const report = formatArchReport(result, targetPath, {
       fullPaths,
       showRulesReference: !compactMode,
     });
-    this.writeLn(report);
+    this.writeLn(colorizeReport(report, s.healthScore));
 
     if (!jsonMode) {
       this.writeLn('');
@@ -1780,6 +1813,106 @@ export class CLIAdapter {
     return 0;
   }
 
+  // ── adr ────────────────────────────────────────────
+
+  private async adr(args: ParsedArgs): Promise<number> {
+    if (!this.ctx.adrQuery) {
+      this.writeLn('ADR tracking not available.');
+      return 1;
+    }
+    const subCmd = args.positional[0] ?? 'list';
+
+    switch (subCmd) {
+      case 'list': {
+        const statusFilter = args.flags.get('status');
+        const entries = await this.ctx.adrQuery.list(statusFilter);
+        if (entries.length === 0) {
+          this.writeLn('No ADRs found.');
+          return 0;
+        }
+        for (const e of entries) {
+          const statusTag = e.status === 'accepted' ? green(e.status)
+            : e.status === 'proposed' ? warn(e.status)
+            : muted(e.status);
+          this.writeLn(`  ${bold(e.id)}  ${statusTag}  ${e.title}`);
+        }
+        this.writeLn(`${muted(`\n${entries.length} ADR(s)`)}`);
+        return 0;
+      }
+
+      case 'status': {
+        const id = args.positional[1];
+        if (!id) {
+          this.writeLn('Usage: hex adr status <ADR-ID>');
+          return 1;
+        }
+        const entry = await this.ctx.adrQuery.status(id.toUpperCase());
+        if (!entry) {
+          this.writeLn(`ADR "${id}" not found.`);
+          return 1;
+        }
+        this.writeLn(kv(bold(entry.id), entry.title));
+        this.writeLn(kv('Status', entry.status));
+        this.writeLn(kv('Date', entry.date || muted('unknown')));
+        this.writeLn(kv('File', entry.filePath));
+        if (entry.sections.length > 0) {
+          this.writeLn(kv('Sections', entry.sections.join(', ')));
+        }
+        if (entry.linkedFeatures.length > 0) {
+          this.writeLn(kv('Features', entry.linkedFeatures.join(', ')));
+        }
+        return 0;
+      }
+
+      case 'search': {
+        const query = args.positional.slice(1).join(' ') || args.flags.get('query') || '';
+        if (!query) {
+          this.writeLn('Usage: hex adr search <query>');
+          return 1;
+        }
+        const results = await this.ctx.adrQuery.search(query);
+        if (results.length === 0) {
+          this.writeLn(`No ADRs matching "${query}".`);
+          return 0;
+        }
+        for (const e of results) {
+          this.writeLn(`  ${bold(e.id)}  ${muted(e.status)}  ${e.title}`);
+        }
+        return 0;
+      }
+
+      case 'abandoned': {
+        const days = parseInt(args.flags.get('days') ?? '14', 10);
+        const reports = await this.ctx.adrQuery.findAbandoned(days);
+        if (reports.length === 0) {
+          this.writeLn(green('No abandoned ADRs found.'));
+          return 0;
+        }
+        for (const r of reports) {
+          const age = r.daysSinceModified < 0 ? 'unknown' : `${r.daysSinceModified}d`;
+          const rec = r.recommendation === 'close' ? errorColor(r.recommendation)
+            : r.recommendation === 'review' ? warn(r.recommendation)
+            : muted(r.recommendation);
+          this.writeLn(`  ${bold(r.adrId)}  ${muted(age)} old  worktree:${muted(r.linkedWorktreeStatus)}  ${rec}`);
+        }
+        this.writeLn(`${muted(`\n${reports.length} ADR(s) need attention`)}`);
+        return 0;
+      }
+
+      case 'reindex': {
+        this.writeLn('Re-indexing ADRs into AgentDB...');
+        const result = await this.ctx.adrQuery.reindex();
+        this.writeLn(`Indexed: ${result.indexed}, Errors: ${result.errors}`);
+        return result.errors > 0 ? 1 : 0;
+      }
+
+      default:
+        this.writeLn(`Unknown adr command: ${subCmd}`);
+        this.writeLn('Usage: hex adr <list|status|search|abandoned|reindex>');
+        return 1;
+    }
+  }
+
   /**
    * Resolve the best available secrets adapter for read operations.
    * If a local-vault config exists, prompts for password (or reads HEX_VAULT_PASSWORD)
@@ -2506,6 +2639,13 @@ export class CLIAdapter {
     this.writeLn(`  ${bold('daemon')} ${muted('[status|start|stop|logs]')}      Background service`);
     this.writeLn(`  ${bold('status')}                                Show project status`);
     this.writeLn(`  ${bold('projects')}                              List registered projects`);
+
+    this.writeLn(section('Architecture Decisions'));
+    this.writeLn(`  ${bold('adr')} ${muted('list [--status S]')}                 List ADRs with optional filter`);
+    this.writeLn(`  ${bold('adr')} ${muted('status <id>')}                      Show ADR detail`);
+    this.writeLn(`  ${bold('adr')} ${muted('search <query>')}                   Search ADRs via AgentDB`);
+    this.writeLn(`  ${bold('adr')} ${muted('abandoned [--days N]')}             Find stale proposed ADRs`);
+    this.writeLn(`  ${bold('adr')} ${muted('reindex')}                          Re-index ADRs into AgentDB`);
 
     this.writeLn(section('Configuration'));
     this.writeLn(`  ${bold('setup')}                                 Install grammars + skills + agents`);
