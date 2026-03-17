@@ -13,6 +13,7 @@ function mockSwarm(): ISwarmPort {
   let agentCounter = 0;
 
   return {
+    async healthCheck() { return true; },
     async init() {
       return { id: 'swarm-1', topology: 'hierarchical', agentCount: 0, activeTaskCount: 0, completedTaskCount: 0, status: 'running' } as SwarmStatus;
     },

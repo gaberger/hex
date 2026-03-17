@@ -48,6 +48,7 @@ function mockSwarm(): ISwarmPort & { createdTasks: string[] } {
   let tid = 0;
   const s: ISwarmPort & { createdTasks: string[] } = {
     createdTasks: [],
+    healthCheck: async () => true,
     init: async () => ({ ...SS, status: 'running' }), status: async () => ({ ...SS, status: 'idle' }),
     shutdown: async () => {}, completeTask: async () => {}, listTasks: async () => [],
     createTask: async (t) => {
