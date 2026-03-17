@@ -158,6 +158,12 @@ mcp__ruflo__task_complete({
 })
 ```
 
+**IMPORTANT**: `feature-workflow.sh setup` now **enforces** spec existence. The setup command will exit with an error if `docs/specs/<feature>.json` does not exist. This is intentional -- specs must be written before worktrees are created. For emergency hotfixes only, pass `--skip-specs` to bypass this check:
+
+```bash
+./scripts/feature-workflow.sh setup {{feature-name}} --skip-specs
+```
+
 ## Phase 3: Planning — Decompose into Adapter-Bounded Tasks
 
 ### Register planning task with ruflo:
