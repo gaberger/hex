@@ -114,8 +114,8 @@ export interface AppContext {
   /** Dual-swarm comparator (null when both executors are not available) */
   comparator: IComparisonPort | null;
 
-  /** ADR lifecycle queries (null when ADR directory doesn't exist) */
-  adrQuery: IADRQueryPort | null;
+  /** ADR lifecycle queries (always available - gracefully handles missing docs/adrs/) */
+  adrQuery: IADRQueryPort;
 
   /** Feature progress tracking for clean UX during multi-agent development */
   featureProgress: IFeatureProgressPort;

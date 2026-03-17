@@ -324,6 +324,8 @@ export class ArchAnalyzer implements IArchAnalysisPort {
   private findDeadFromSummaries(summaries: ASTSummary[]): DeadExport[] {
     const goMod = this.goModulePrefix || undefined;
     const importedByModule = new Map<string, Set<string>>();
+
+    // Step 1: Build direct import map
     for (const summary of summaries) {
       for (const imp of summary.imports) {
         const target = resolveImportPath(summary.filePath, imp.from, goMod);
@@ -334,6 +336,60 @@ export class ArchAnalyzer implements IArchAnalysisPort {
       }
     }
 
+    // Step 2: Build re-export chain map
+    // reExportChain[reExporterFile][exportName] = originalSourceFile
+    const reExportChain = new Map<string, Map<string, string>>();
+    for (const summary of summaries) {
+      const normalizedFile = normalizePath(summary.filePath);
+      if (!hasReExports(summary)) continue;
+
+      const exportNames = new Set(summary.exports.map((e) => e.name));
+      for (const imp of summary.imports) {
+        const sourceFile = resolveImportPath(summary.filePath, imp.from, goMod);
+        for (const name of imp.names) {
+          // This file imports 'name' and also exports 'name' — it's a re-export
+          if (exportNames.has(name) || imp.names.includes('*')) {
+            if (!reExportChain.has(normalizedFile)) {
+              reExportChain.set(normalizedFile, new Map());
+            }
+            if (imp.names.includes('*')) {
+              // export * from 'source' — mark all exports from source as re-exported
+              reExportChain.get(normalizedFile)!.set('*', sourceFile);
+            } else {
+              reExportChain.get(normalizedFile)!.set(name, sourceFile);
+            }
+          }
+        }
+      }
+    }
+
+    // Step 3: Transitively mark re-exported symbols as used in original files
+    const transitiveUsage = new Map<string, Set<string>>();
+    for (const [reExporter, chain] of reExportChain) {
+      const importedFromReExporter = importedByModule.get(reExporter) ?? new Set();
+      for (const importedName of importedFromReExporter) {
+        // Someone imports 'importedName' from the re-exporter
+        // Find the original source file for this name
+        const originalSource = chain.get(importedName) || chain.get('*');
+        if (originalSource) {
+          if (!transitiveUsage.has(originalSource)) {
+            transitiveUsage.set(originalSource, new Set());
+          }
+          transitiveUsage.get(originalSource)!.add(importedName);
+        }
+      }
+      // If the re-exporter itself is imported with '*', mark all re-exports as used
+      if (importedFromReExporter.has('*')) {
+        for (const [name, source] of chain) {
+          if (!transitiveUsage.has(source)) {
+            transitiveUsage.set(source, new Set());
+          }
+          transitiveUsage.get(source)!.add(name === '*' ? '*' : name);
+        }
+      }
+    }
+
+    // Step 4: Find dead exports, considering both direct and transitive usage
     const dead: DeadExport[] = [];
     for (const summary of summaries) {
       const normalizedFile = normalizePath(summary.filePath);
@@ -345,13 +401,18 @@ export class ArchAnalyzer implements IArchAnalysisPort {
       if (shouldSkipDeadExportCheck(normalizedFile)) continue;
 
       const importedFromThis = importedByModule.get(normalizedFile) ?? new Set();
+      const transitiveFromThis = transitiveUsage.get(normalizedFile) ?? new Set();
 
       // If any importer uses '*' (dynamic import without destructuring),
       // treat ALL exports from this module as used
-      if (importedFromThis.has('*')) continue;
+      if (importedFromThis.has('*') || transitiveFromThis.has('*')) continue;
 
       for (const exp of summary.exports) {
-        if (!importedFromThis.has(exp.name) && !ENTRY_EXPORTS.has(exp.name)) {
+        const isDirectlyUsed = importedFromThis.has(exp.name);
+        const isTransitivelyUsed = transitiveFromThis.has(exp.name);
+        const isEntryExport = ENTRY_EXPORTS.has(exp.name);
+
+        if (!isDirectlyUsed && !isTransitivelyUsed && !isEntryExport) {
           // Layer 3: Check for @hex:public annotation on the export
           if (exp.annotations?.includes('hex:public')) continue;
           dead.push({ filePath: normalizedFile, exportName: exp.name, kind: exp.kind });

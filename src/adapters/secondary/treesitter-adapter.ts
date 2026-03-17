@@ -466,7 +466,30 @@ export class TreeSitterAdapter implements IASTPort {
       results.push({ names, from });
     }
 
-    // Pass 2: Dynamic imports — const { Foo } = await import('./bar.js')
+    // Pass 2: Re-exports (export { Foo } from './bar.js')
+    // These are export_statement nodes with a source field.
+    // Track them as imports so the dead-export analyzer can follow re-export chains.
+    for (let i = 0; i < root.childCount; i++) {
+      const node = root.child(i)!;
+      if (node.type !== 'export_statement') continue;
+      const srcNode = node.childForFieldName('source');
+      if (!srcNode) continue; // Not a re-export
+      const from = srcNode.text.replace(/['"]/g, '');
+      if (!from) continue;
+
+      const names: string[] = [];
+      const exportClause = node.namedChildren.find((c) => c != null && c.type === 'export_clause');
+      if (exportClause) {
+        // export { X, Y } from './foo.js'
+        collectNames(exportClause, names);
+      } else {
+        // export * from './foo.js' or export * as namespace from './foo.js'
+        names.push('*');
+      }
+      results.push({ names, from });
+    }
+
+    // Pass 3: Dynamic imports — const { Foo } = await import('./bar.js')
     // These appear as call_expression nodes with `import` as the function.
     // Critical for composition-root patterns where adapters are loaded lazily.
     collectDynamicImports(root, results);

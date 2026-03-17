@@ -474,8 +474,8 @@ export interface MCPContext {
   registry?: IRegistryPort | null;
   /** Optional: dual-backend comparator (Claude Code vs Anthropic API). */
   comparator?: IComparisonPort | null;
-  /** Optional: ADR lifecycle query service. */
-  adrQuery?: IADRQueryPort | null;
+  /** ADR lifecycle query service (always available). */
+  adrQuery: IADRQueryPort;
   /** Project root path (needed for setup and daemon operations). */
   rootPath?: string;
 }
@@ -1612,9 +1612,6 @@ export class MCPAdapter {
   // ─── ADR Tool Implementations ──────────────────────────
 
   private async adrList(statusFilter?: string): Promise<MCPToolResult> {
-    if (!this.ctx.adrQuery) {
-      return { content: [{ type: 'text', text: 'ADR tracking not available.' }], isError: true };
-    }
     const entries = await this.ctx.adrQuery.list(statusFilter);
     if (entries.length === 0) {
       return { content: [{ type: 'text', text: 'No ADRs found.' }] };
@@ -1625,9 +1622,6 @@ export class MCPAdapter {
   }
 
   private async adrSearch(query: string, limit: number): Promise<MCPToolResult> {
-    if (!this.ctx.adrQuery) {
-      return { content: [{ type: 'text', text: 'ADR tracking not available.' }], isError: true };
-    }
     const results = await this.ctx.adrQuery.search(query, limit);
     if (results.length === 0) {
       return { content: [{ type: 'text', text: `No ADRs matching "${query}".` }] };
@@ -1637,9 +1631,6 @@ export class MCPAdapter {
   }
 
   private async adrAbandoned(days: number): Promise<MCPToolResult> {
-    if (!this.ctx.adrQuery) {
-      return { content: [{ type: 'text', text: 'ADR tracking not available.' }], isError: true };
-    }
     const reports = await this.ctx.adrQuery.findAbandoned(days);
     if (reports.length === 0) {
       return { content: [{ type: 'text', text: 'No abandoned ADRs found.' }] };
@@ -1653,9 +1644,6 @@ export class MCPAdapter {
   }
 
   private async adrStatus(id: string): Promise<MCPToolResult> {
-    if (!this.ctx.adrQuery) {
-      return { content: [{ type: 'text', text: 'ADR tracking not available.' }], isError: true };
-    }
     const entry = await this.ctx.adrQuery.status(id.toUpperCase());
     if (!entry) {
       return { content: [{ type: 'text', text: `ADR "${id}" not found.` }], isError: true };

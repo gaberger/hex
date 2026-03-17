@@ -926,6 +926,7 @@ export class CLIAdapter {
       swarmOrchestrator: this.ctx.swarmOrchestrator,
       scaffold: this.ctx.scaffold,
       createDashboard: this.ctx.createDashboard,
+      adrQuery: this.ctx.adrQuery,
     });
 
     const hexTools = adapter.getTools();
@@ -1866,10 +1867,6 @@ export class CLIAdapter {
   // ── adr ────────────────────────────────────────────
 
   private async adr(args: ParsedArgs): Promise<number> {
-    if (!this.ctx.adrQuery) {
-      this.writeLn('ADR tracking not available.');
-      return 1;
-    }
     const subCmd = args.positional[0] ?? 'list';
 
     switch (subCmd) {

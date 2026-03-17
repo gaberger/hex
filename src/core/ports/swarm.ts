@@ -7,7 +7,7 @@
  * tests can mock swarm behavior without starting a real daemon.
  */
 
-import type { Language, WorkplanStep } from './index.js';
+import type { Language, WorkplanStep } from '../domain/value-objects.js';
 
 // ─── Swarm Types ─────────────────────────────────────────
 
