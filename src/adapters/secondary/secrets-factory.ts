@@ -57,7 +57,7 @@ const CONFIG_FILENAME = '.hex/secrets.json';
  * Falls back to EnvSecretsAdapter when no config exists, config is
  * invalid, or the requested backend cannot be initialised.
  */
-export interface BuildSecretsOptions {
+interface BuildSecretsOptions {
   /** Override vault password instead of reading from process.env (useful for testing). */
   vaultPassword?: string;
 }

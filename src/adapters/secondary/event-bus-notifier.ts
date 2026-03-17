@@ -43,7 +43,7 @@ interface Subscription {
  * No external dependencies. Subscriptions are stored in a plain array;
  * this is sufficient for the expected scale (tens of agents, not thousands).
  */
-export class EventBusNotifier implements INotificationEmitPort {
+class EventBusNotifier implements INotificationEmitPort {
   private subscriptions: Subscription[] = [];
   private decisionHandlers: Map<string, (response: DecisionResponse) => void> = new Map();
 

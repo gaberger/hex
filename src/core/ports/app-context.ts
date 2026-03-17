@@ -84,4 +84,4 @@ export interface AppContext {
 }
 
 /** Factory that creates an AppContext for a given project root path. */
-export type AppContextFactory = (rootPath: string) => Promise<AppContext>;
+type AppContextFactory = (rootPath: string) => Promise<AppContext>;

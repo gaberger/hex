@@ -18,7 +18,7 @@ import type {
 } from '../../core/ports/notification.js';
 
 /** Abstraction over fs operations for testability. */
-export interface FileSystem {
+interface FileSystem {
   appendFile(path: string, data: string): Promise<void>;
   rename(oldPath: string, newPath: string): Promise<void>;
   stat(path: string): Promise<{ size: number }>;
@@ -27,7 +27,7 @@ export interface FileSystem {
 }
 
 /** JSONL log entry written to disk. */
-export interface LogEntry {
+interface LogEntry {
   ts: number;
   id: string;
   level: string;
@@ -50,7 +50,7 @@ const DEFAULT_LOG_FILE = 'activity.log';
  *
  * Inject a {@link FileSystem} for testing without touching real disk.
  */
-export class FileLogNotifier implements INotificationEmitPort {
+class FileLogNotifier implements INotificationEmitPort {
   private readonly logDir: string;
   private readonly logFile: string;
   private currentSize = 0;

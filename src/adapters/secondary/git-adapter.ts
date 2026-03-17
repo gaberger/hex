@@ -13,7 +13,7 @@ import type { IGitPort, GitStatusEntry, GitWorktreeEntry } from '../../core/port
 
 const execFile = promisify(execFileCb);
 
-export class GitError extends Error {
+class GitError extends Error {
   override readonly name = 'GitError';
   constructor(
     message: string,

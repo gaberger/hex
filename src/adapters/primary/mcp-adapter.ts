@@ -16,7 +16,7 @@ import { formatArchReport } from '../../core/ports/index.js';
 
 // ─── MCP Tool Definitions ────────────────────────────────
 
-export interface MCPToolDefinition {
+interface MCPToolDefinition {
   name: string;
   description: string;
   inputSchema: {
@@ -31,7 +31,7 @@ export interface MCPToolCall {
   arguments: Record<string, unknown>;
 }
 
-export interface MCPToolResult {
+interface MCPToolResult {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
 }

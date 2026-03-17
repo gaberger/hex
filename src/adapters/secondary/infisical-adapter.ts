@@ -18,7 +18,7 @@ import type {
   SecretResult,
 } from '../../core/ports/secrets.js';
 
-export interface InfisicalAdapterConfig {
+interface InfisicalAdapterConfig {
   /** Base URL of Infisical instance (e.g. "https://secrets.example.com") */
   siteUrl: string;
   /** Machine Identity client ID */

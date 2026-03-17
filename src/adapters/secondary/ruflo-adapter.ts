@@ -29,7 +29,7 @@ const execFile = promisify(execFileCb);
 
 // ─── Typed Errors ────────────────────────────────────────
 
-export class SwarmConnectionError extends Error {
+class SwarmConnectionError extends Error {
   constructor(
     message: string,
     readonly command: string[],
@@ -40,7 +40,7 @@ export class SwarmConnectionError extends Error {
   }
 }
 
-export class SwarmParseError extends Error {
+class SwarmParseError extends Error {
   constructor(
     message: string,
     readonly rawOutput: string,

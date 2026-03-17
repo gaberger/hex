@@ -14,7 +14,7 @@
   --radius:8px;--gap:16px;
 }
 html{font-size:14px}
-body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-width:1024px;padding:0;display:flex;flex-direction:column;min-height:100vh}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-width:1024px;padding:0;display:flex;flex-direction:column;height:100vh;overflow:hidden}
 a{color:var(--accent);text-decoration:none}
 
 /* Header */
@@ -36,6 +36,7 @@ a{color:var(--accent);text-decoration:none}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
 /* Grid */
+.dashboard-scroll{flex:1;overflow-y:auto;min-height:0}
 .grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto auto;gap:var(--gap);padding:var(--gap) 24px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;overflow:hidden}
 .card-title{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);margin-bottom:16px;font-weight:600}
@@ -230,6 +231,7 @@ a{color:var(--accent);text-decoration:none}
   <div class="no-projects">Waiting for projects to connect...</div>
 </nav>
 
+<div class="dashboard-scroll">
 <div class="grid">
   <!-- Architecture Health -->
   <div class="card" id="healthPanel">
@@ -394,6 +396,7 @@ a{color:var(--accent);text-decoration:none}
 <div class="graph-tooltip" id="graphTooltip"></div>
 
 </div><!-- /bottom-row -->
+</div><!-- /dashboard-scroll -->
 
 <!-- Decision Modal -->
 <div class="modal-overlay" id="decisionModal">
@@ -1351,7 +1354,7 @@ a{color:var(--accent);text-decoration:none}
 
     // Gentle overlap nudge — only push within same ring to preserve structure
     var nodeIds = Object.keys(positions);
-    for (var iter = 0; iter < 8; iter++) {
+    for (var iter = 0; iter < 12; iter++) {
       for (var i = 0; i < nodeIds.length; i++) {
         for (var j = i + 1; j < nodeIds.length; j++) {
           var a = positions[nodeIds[i]];
@@ -1360,7 +1363,7 @@ a{color:var(--accent);text-decoration:none}
           var dx = b.x - a.x;
           var dy = b.y - a.y;
           var dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          var minDist = 35;
+          var minDist = 48;
           if (dist < minDist) {
             var push = (minDist - dist) / 2;
             var nx = (dx / dist) * push;
@@ -1401,6 +1404,69 @@ a{color:var(--accent);text-decoration:none}
 
     graphState.positions = positions;
     graphState.ringRadii = ringRadii;
+  }
+
+  /**
+   * Truncate a filename label for graph display.
+   * Strips common suffixes to save horizontal space.
+   */
+  function truncateLabel(filename, maxLen) {
+    var s = filename
+      .replace(/\.(ts|js|go|rs)$/, '')          // strip extension
+      .replace(/-adapter$/, '-adp')              // shorten -adapter
+      .replace(/^composition-root$/, 'comp-root');
+    if (s.length > maxLen) s = s.substring(0, maxLen - 1) + '…';
+    return s;
+  }
+
+  /**
+   * Build a set of label rectangles and only return those that don't overlap.
+   * Returns { nodeId: true } for nodes whose labels should be shown.
+   */
+  function computeVisibleLabels(nodes, positions, ctx, zoom) {
+    // At very low zoom, only show labels for selected/hovered nodes
+    if (zoom < 0.45) return {};
+
+    var maxLen = zoom < 0.7 ? 10 : (zoom < 1.0 ? 14 : 30);
+    var rects = [];
+    var visible = {};
+
+    // Priority: selected > hovered > violation > larger export count > alphabetical
+    var sorted = nodes.slice().sort(function(a, b) {
+      if (selectedNode === a.id) return -1;
+      if (selectedNode === b.id) return 1;
+      var aInSel = selectedTransitive[a.id] ? 1 : 0;
+      var bInSel = selectedTransitive[b.id] ? 1 : 0;
+      if (aInSel !== bInSel) return bInSel - aInSel;
+      return (b.exports || 0) - (a.exports || 0);
+    });
+
+    sorted.forEach(function(n) {
+      var pos = positions[n.id];
+      if (!pos) return;
+      var label = truncateLabel(n.id.split('/').pop() || n.id, maxLen);
+      var tw = ctx.measureText(label).width;
+      var r = 6 + Math.min(n.exports || 0, 20);
+      var lx = pos.x - tw / 2;
+      var ly = pos.y + r + 6;
+      var lw = tw + 4;
+      var lh = 14;
+
+      // Check overlap with already-placed labels
+      var overlaps = false;
+      for (var i = 0; i < rects.length; i++) {
+        var o = rects[i];
+        if (lx < o.x + o.w && lx + lw > o.x && ly < o.y + o.h && ly + lh > o.y) {
+          overlaps = true;
+          break;
+        }
+      }
+      if (!overlaps) {
+        rects.push({ x: lx, y: ly, w: lw, h: lh });
+        visible[n.id] = maxLen;
+      }
+    });
+    return visible;
   }
 
   // Cached canvas dimensions to avoid reflow on every frame
@@ -1746,6 +1812,10 @@ a{color:var(--accent);text-decoration:none}
       }
     });
 
+    // ── Compute which labels can be shown without overlap ──
+    ctx.font = '10px system-ui, sans-serif';
+    var visibleLabels = computeVisibleLabels(nodes, positions, ctx, camera.zoom);
+
     // ── Draw nodes ──
     nodes.forEach(function(n) {
       var pos = positions[n.id];
@@ -1825,12 +1895,19 @@ a{color:var(--accent);text-decoration:none}
       }
       ctx.stroke();
 
-      // Label
-      var label = n.id.split('/').pop();
-      ctx.font = (active || isSelected) ? 'bold 11px system-ui, sans-serif' : (inSel ? '11px system-ui, sans-serif' : '10px system-ui, sans-serif');
-      ctx.fillStyle = dimNode ? 'rgba(255,255,255,0.12)' : (active || isSelected ? '#ffffff' : (inSel ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.55)'));
-      ctx.textAlign = 'center';
-      ctx.fillText(label, pos.x, pos.y + r + 14);
+      // Label — only if collision-free (or always for selected/active)
+      var showLabel = visibleLabels[n.id] || isSelected || active;
+      if (showLabel) {
+        var maxLen = visibleLabels[n.id] || 30;
+        var label = truncateLabel(n.id.split('/').pop() || n.id, maxLen);
+        var fontSize = (active || isSelected) ? 11 : (inSel ? 10 : 9);
+        ctx.font = (active || isSelected) ? 'bold ' + fontSize + 'px system-ui, sans-serif'
+                 : (inSel ? fontSize + 'px system-ui, sans-serif'
+                 : fontSize + 'px system-ui, sans-serif');
+        ctx.fillStyle = dimNode ? 'rgba(255,255,255,0.12)' : (active || isSelected ? '#ffffff' : (inSel ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.45)'));
+        ctx.textAlign = 'center';
+        ctx.fillText(label, pos.x, pos.y + r + 12);
+      }
     });
 
     // ── Draw dep count badge on selected node ──
@@ -2505,7 +2582,9 @@ a{color:var(--accent);text-decoration:none}
         while (graphTooltip.firstChild) graphTooltip.removeChild(graphTooltip.firstChild);
         var pathDiv = createEl('div', { className: 'tt-path', textContent: hit });
         graphTooltip.appendChild(pathDiv);
-        var layerText = 'Layer: ' + layer + ' \u00B7 Exports: ' + exports;
+        var inEdges = graphState.edges.filter(function(ed) { return ed.to === hit; }).length;
+        var outEdges = graphState.edges.filter(function(ed) { return ed.from === hit; }).length;
+        var layerText = 'Layer: ' + layer + ' \u00B7 Exports: ' + exports + ' \u00B7 In: ' + inEdges + ' Out: ' + outEdges;
         var layerDiv = createEl('div', { className: 'tt-layer', textContent: layerText });
         if (hasVio) {
           layerDiv.appendChild(document.createTextNode(' \u00B7 '));

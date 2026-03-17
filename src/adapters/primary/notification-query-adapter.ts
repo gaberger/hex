@@ -19,7 +19,7 @@ import type {
 } from '../../core/ports/notification.js';
 
 /** Filter criteria for querying stored notifications. */
-export interface NotificationFilter {
+interface NotificationFilter {
   adapter?: string;
   agentName?: string;
   minLevel?: NotificationLevel;
@@ -37,7 +37,7 @@ const LEVEL_ORDER: NotificationLevel[] = [
  * delegates real-time output to one or more {@link INotificationEmitPort}
  * implementations (terminal, file, webhook, event bus).
  */
-export class NotificationQueryAdapter implements INotificationQueryPort {
+class NotificationQueryAdapter implements INotificationQueryPort {
   private notifications: (Notification & { id: string; timestamp: number })[] = [];
   private pendingDecisions: Map<string, DecisionRequest> = new Map();
   private preferences: NotificationPreferences;
