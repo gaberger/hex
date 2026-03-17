@@ -570,12 +570,13 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
     if (this._pushing) return; // Concurrency guard — prevent overlapping scans
     this._pushing = true;
     try {
-      // Push health, tokens, swarm, graph in parallel
+      // Push health, tokens, swarm, graph, coordination in parallel
       await Promise.allSettled([
         this.pushHealth(),
         this.pushTokens(),
         this.pushSwarm(),
         this.pushGraph(),
+        this.pushCoordination(),
       ]);
     } finally {
       this._pushing = false;
@@ -701,6 +702,21 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
       await this.pushState('graph', { nodes, edges: graphEdges });
     } catch (err) {
       this.log('graph push failed:', err);
+    }
+  }
+
+  private async pushCoordination(): Promise<void> {
+    if (!this.ctx.coordination) return;
+    try {
+      const [locks, claims, activities, unstaged] = await Promise.all([
+        this.ctx.coordination.listLocks().catch(() => []),
+        this.ctx.coordination.listClaims().catch(() => []),
+        this.ctx.coordination.getActivities(20).catch(() => []),
+        this.ctx.coordination.getUnstagedAcrossInstances().catch(() => []),
+      ]);
+      await this.pushState('coordination', { locks, claims, activities, unstaged });
+    } catch (err) {
+      this.log('coordination push failed:', err);
     }
   }
 

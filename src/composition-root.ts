@@ -366,7 +366,7 @@ export async function createAppContext(
         removeSecret() { throw new Error('No vault open — run `hex secrets init` first'); },
       };
 
-  return {
+  const appContext: AppContext = {
     rootPath: projectPath,
     autoConfirm: false,
     outputDir,
@@ -431,5 +431,7 @@ export async function createAppContext(
     anthropicExecutor,
     claudeCodeExecutor,
     comparator,
-  };
+  } as AppContext;
+
+  return appContext;
 }
