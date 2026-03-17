@@ -19,6 +19,10 @@ import type { IValidationPort } from './validation.js';
 import type { ISerializationPort, IWASMBridgePort, IFFIPort, IServiceMeshPort, ISchemaPort } from './cross-lang.js';
 import type { IHubCommandSenderPort } from './hub-command.js';
 import type { IAgentExecutorPort } from './agent-executor.js';
+import type { IVersionPort } from './index.js';
+import type { IHubLauncherPort } from './hub-launcher.js';
+import type { IVaultManagementPort } from './vault.js';
+import type { ICoordinationPort } from './coordination.js';
 
 export interface AppContext {
   rootPath: string;
@@ -77,8 +81,20 @@ export interface AppContext {
   /** JSON Schema validation for cross-language type contracts */
   schema: ISchemaPort;
 
+  /** CLI/hub version information */
+  version: IVersionPort;
+
+  /** hex-hub daemon lifecycle (null when binary not installed) */
+  hubLauncher: IHubLauncherPort | null;
+
+  /** Vault CRUD for `hex secrets` commands — always available (factory-only when no vault open) */
+  vaultManager: IVaultManagementPort;
+
   /** Send commands to hex-hub (null when hub is not available) */
   hubCommandSender: IHubCommandSenderPort | null;
+
+  /** Multi-instance coordination via hex-hub (null when hub unavailable) */
+  coordination: ICoordinationPort | null;
 
   /** Agent executors for direct API comparison (null when no API key) */
   anthropicExecutor: IAgentExecutorPort | null;

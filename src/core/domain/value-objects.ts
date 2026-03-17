@@ -73,6 +73,8 @@ export interface ExportEntry {
   name: string;
   kind: 'function' | 'class' | 'interface' | 'type' | 'const' | 'enum';
   signature?: string; // Present at L2+
+  /** JSDoc annotations like 'hex:public', 'hex:dynamic' extracted from preceding comments */
+  annotations?: string[];
 }
 
 export interface ImportEntry {
