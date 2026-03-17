@@ -1454,9 +1454,26 @@ export class CLIAdapter {
         return this.secretsStatus();
       case 'list':
         return this.secretsList(args);
+      case 'init':
+        return await this.secretsInit(args);
+      case 'set':
+        return await this.secretsSet(args);
+      case 'get':
+        return await this.secretsGet(args);
+      case 'remove':
+      case 'rm':
+        return await this.secretsRemove(args);
       default:
         this.writeLn(`Unknown secrets command: ${subCmd}`);
-        this.writeLn('Usage: hex secrets [status|list] [--json]');
+        this.writeLn('Usage: hex secrets <command>');
+        this.writeLn('');
+        this.writeLn('Commands:');
+        this.writeLn('  status              Show secrets backend info');
+        this.writeLn('  list [--json]       List secret keys (no values)');
+        this.writeLn('  init                Create a local encrypted vault');
+        this.writeLn('  set <key> <value>   Add or update a secret');
+        this.writeLn('  get <key>           Retrieve a secret value');
+        this.writeLn('  remove <key>        Remove a secret from the vault');
         return 1;
     }
   }
@@ -1478,7 +1495,9 @@ export class CLIAdapter {
     }
 
     // Infisical or local vault backend — has metadata
-    this.writeLn('Backend:     Infisical');
+    // Detect local vault vs Infisical by checking environment field
+    const isLocal = metadata.length > 0 && metadata[0].environment === 'local';
+    this.writeLn(`Backend:     ${isLocal ? 'Local vault' : 'Infisical'}`);
     this.writeLn(`Secrets:     ${metadata.length} keys accessible`);
     return 0;
   }
@@ -1523,6 +1542,132 @@ export class CLIAdapter {
     this.writeLn(`Total: ${metadata.length} secrets`);
 
     return 0;
+  }
+
+  private async secretsInit(args: ParsedArgs): Promise<number> {
+    const { resolve } = await import('node:path');
+    const { existsSync } = await import('node:fs');
+
+    const vaultPath = resolve(this.ctx.rootPath, '.hex/vault.enc');
+
+    if (existsSync(vaultPath)) {
+      this.writeLn(`Vault already exists at ${vaultPath}`);
+      this.writeLn('To reset, delete the file and run this command again.');
+      return 1;
+    }
+
+    // Get password from flag or env
+    const password = args.flags.get('password') ?? process.env['HEX_VAULT_PASSWORD'];
+    if (!password) {
+      this.writeLn('Error: vault password required.');
+      this.writeLn('Provide via --password <pw> or HEX_VAULT_PASSWORD env var.');
+      return 1;
+    }
+
+    const { LocalVaultAdapter } = await import('../secondary/local-vault-adapter.js');
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(resolve(this.ctx.rootPath, '.hex'), { recursive: true }).catch(() => {});
+
+    LocalVaultAdapter.createVault(vaultPath, password);
+
+    // Write secrets config to use local vault
+    const configPath = resolve(this.ctx.rootPath, '.hex/secrets.json');
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(configPath, JSON.stringify({ backend: 'local-vault', localVault: { path: vaultPath } }, null, 2));
+
+    this.writeLn(`Vault created at ${vaultPath}`);
+    this.writeLn('Config written to .hex/secrets.json');
+    this.writeLn('');
+    this.writeLn('Usage:');
+    this.writeLn('  hex secrets set ANTHROPIC_API_KEY sk-ant-...');
+    this.writeLn('  hex secrets get ANTHROPIC_API_KEY');
+    this.writeLn('  hex secrets list');
+    return 0;
+  }
+
+  private async secretsSet(args: ParsedArgs): Promise<number> {
+    const key = args.positional[1];
+    const value = args.positional[2];
+
+    if (!key || !value) {
+      this.writeLn('Usage: hex secrets set <key> <value>');
+      return 1;
+    }
+
+    const adapter = await this.getLocalVaultAdapter();
+    if (!adapter) return 1;
+
+    adapter.addSecret(key, value);
+    this.writeLn(`Secret "${key}" saved.`);
+    return 0;
+  }
+
+  private async secretsGet(args: ParsedArgs): Promise<number> {
+    const key = args.positional[1];
+    if (!key) {
+      this.writeLn('Usage: hex secrets get <key>');
+      return 1;
+    }
+
+    const result = await this.ctx.secrets.resolveSecret(key);
+    if (!result.ok) {
+      this.writeLn(`Secret "${key}" not found.`);
+      return 1;
+    }
+
+    // Print the value (user explicitly asked for it)
+    this.writeLn(result.value);
+    return 0;
+  }
+
+  private async secretsRemove(args: ParsedArgs): Promise<number> {
+    const key = args.positional[1];
+    if (!key) {
+      this.writeLn('Usage: hex secrets remove <key>');
+      return 1;
+    }
+
+    const adapter = await this.getLocalVaultAdapter();
+    if (!adapter) return 1;
+
+    const exists = await adapter.hasSecret(key);
+    if (!exists) {
+      this.writeLn(`Secret "${key}" not found.`);
+      return 1;
+    }
+
+    adapter.removeSecret(key);
+    this.writeLn(`Secret "${key}" removed.`);
+    return 0;
+  }
+
+  /** Resolve the local vault adapter (requires .hex/secrets.json with local-vault backend) */
+  private async getLocalVaultAdapter(): Promise<import('../secondary/local-vault-adapter.js').LocalVaultAdapter | null> {
+    const { resolve } = await import('node:path');
+    const { existsSync, readFileSync } = await import('node:fs');
+
+    const configPath = resolve(this.ctx.rootPath, '.hex/secrets.json');
+    if (!existsSync(configPath)) {
+      this.writeLn('No secrets config found. Run "hex secrets init" first.');
+      return null;
+    }
+
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    if (config.backend !== 'local-vault') {
+      this.writeLn('Secret mutation requires local vault backend.');
+      this.writeLn(`Current backend: ${config.backend}`);
+      return null;
+    }
+
+    const vaultPath = resolve(this.ctx.rootPath, config.localVault?.path ?? '.hex/vault.enc');
+    const password = process.env['HEX_VAULT_PASSWORD'];
+    if (!password) {
+      this.writeLn('Error: HEX_VAULT_PASSWORD environment variable required.');
+      return null;
+    }
+
+    const { LocalVaultAdapter } = await import('../secondary/local-vault-adapter.js');
+    return new LocalVaultAdapter(vaultPath, password);
   }
 
   // ── go ──────────────────────────────────────────────
@@ -2135,7 +2280,7 @@ export class CLIAdapter {
     this.writeLn('  daemon [status|start|stop|logs]  Background dashboard service');
     this.writeLn('  status                           Show dashboard, tasks, agents, patterns');
     this.writeLn('  init [--lang ts|go|rust]         Scaffold a hex project (interactive wizard)');
-    this.writeLn('  secrets [status|list] [--json]   Secrets backend status and listing');
+    this.writeLn('  secrets <cmd> [args]              Local vault: init, set, get, remove, list, status');
     this.writeLn('  go <prompt> [--yolo|--review]    Autonomous coding (alias for build)');
     this.writeLn('  compare <spec> [--model M]       Compare Claude Code vs Anthropic API');
     this.writeLn('  mcp                              Start as MCP server (stdio transport)');
