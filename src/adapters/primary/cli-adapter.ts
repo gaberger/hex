@@ -876,6 +876,7 @@ export class CLIAdapter {
       workplanExecutor: this.ctx.workplanExecutor,
       swarmOrchestrator: this.ctx.swarmOrchestrator,
       scaffold: this.ctx.scaffold,
+      createDashboard: this.ctx.createDashboard,
     });
 
     const hexTools = adapter.getTools();

@@ -400,6 +400,32 @@ export async function createAppContext(
     adrQuery,
     coordination: null, // wired dynamically via CoordinationAdapter when hub is available
     hubCommandSender: null, // wired dynamically when hub is available
+    createDashboard: async (rootPath: string) => {
+      const { DashboardAdapter } = await import('./adapters/primary/dashboard-adapter.js');
+      const dashCtx = {
+        rootPath,
+        astIsStub,
+        autoConfirm: false,
+        archAnalyzer,
+        ast,
+        fs,
+        git,
+        worktree,
+        build,
+        swarm,
+        registry,
+        notifier,
+        eventBus,
+        summaryService,
+        notificationOrchestrator,
+        llm: null,
+        codeGenerator: null,
+        workplanExecutor: null,
+        swarmOrchestrator,
+        outputDir,
+      } as any;
+      return new DashboardAdapter(dashCtx);
+    },
     anthropicExecutor,
     claudeCodeExecutor,
     comparator,

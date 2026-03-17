@@ -15,6 +15,7 @@ import type { ISwarmOrchestrationPort } from '../../core/ports/swarm.js';
 import type { IScaffoldPort } from '../../core/ports/scaffold.js';
 import type { ISecretsPort } from '../../core/ports/secrets.js';
 import type { IHubLauncherPort } from '../../core/ports/hub-launcher.js';
+import type { IDashboardClient } from '../../core/ports/app-context.js';
 import { formatArchReport } from '../../core/ports/index.js';
 
 // ─── MCP Tool Definitions ────────────────────────────────
@@ -385,13 +386,15 @@ export interface MCPContext {
   secrets?: ISecretsPort | null;
   /** Optional: hub daemon launcher. */
   hubLauncher?: IHubLauncherPort | null;
+  /** Optional: factory to create a dashboard client (avoids cross-adapter import). */
+  createDashboard?: (rootPath: string) => Promise<IDashboardClient>;
 }
 
 export class MCPAdapter {
   private hubRunning = false;
   private hubUrl: string | null = null;
   private hubCloseFn: (() => void) | null = null;
-  private dashboardClient: import('./dashboard-adapter.js').DashboardAdapter | null = null;
+  private dashboardClient: IDashboardClient | null = null;
 
   constructor(private readonly ctx: MCPContext) {}
 
@@ -1011,18 +1014,10 @@ export class MCPAdapter {
   private async ensureClient(rootPath: string): Promise<void> {
     if (this.dashboardClient) return;
 
-    // Build a minimal AppContext if we have the required ports
-    const { DashboardAdapter } = await import('./dashboard-adapter.js');
-    const ctx = {
-      rootPath,
-      astIsStub: true,
-      autoConfirm: false,
-      archAnalyzer: this.ctx.archAnalyzer,
-      ast: this.ctx.ast,
-      fs: this.ctx.fs,
-      outputDir: '.hex/',
-    } as any;
-    this.dashboardClient = new DashboardAdapter(ctx);
+    if (!this.ctx.createDashboard) {
+      throw new Error('Dashboard factory not available — wire createDashboard in composition root');
+    }
+    this.dashboardClient = await this.ctx.createDashboard(rootPath);
     await this.dashboardClient.start();
   }
 

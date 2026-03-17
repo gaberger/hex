@@ -25,6 +25,12 @@ import type { IVaultManagementPort } from './vault.js';
 import type { ICoordinationPort } from './coordination.js';
 import type { IADRQueryPort } from './adr.js';
 
+/** Minimal interface for a dashboard client (avoids adapter-to-adapter imports). */
+export interface IDashboardClient {
+  start(): Promise<{ url: string; close: () => void }>;
+  stop(): void;
+}
+
 export interface AppContext {
   rootPath: string;
   astIsStub: boolean;
@@ -109,6 +115,9 @@ export interface AppContext {
 
   /** Local output directory for analysis reports, caches, and logs */
   outputDir: string; // defaults to '.hex/' — gitignored, project-scoped
+
+  /** Factory to create a dashboard client (wired in composition root to avoid cross-adapter imports). */
+  createDashboard?: (rootPath: string) => Promise<IDashboardClient>;
 }
 
 /** Factory that creates an AppContext for a given project root path. */

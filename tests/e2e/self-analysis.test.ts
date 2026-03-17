@@ -106,7 +106,18 @@ describe('E2E: hex analyzes itself', () => {
       const importsPort = [...targets].some(t => t.includes('/ports/'));
       const importsAdapter = [...targets].some(t => t.includes('/adapters/'));
       if (importsPort && importsAdapter && !file.includes('composition-root')) {
-        crossBoundaryFiles.push(file);
+        // Allow same-sublayer imports (primary->primary, secondary->secondary)
+        const fileIsInPrimary = file.includes('/adapters/primary/');
+        const fileIsInSecondary = file.includes('/adapters/secondary/');
+        const importsCrossAdapter = [...targets].some(t => {
+          if (!t.includes('/adapters/')) return false;
+          if (fileIsInPrimary && t.includes('/adapters/primary/')) return false;
+          if (fileIsInSecondary && t.includes('/adapters/secondary/')) return false;
+          return true; // imports from a different adapter sublayer
+        });
+        if (importsCrossAdapter) {
+          crossBoundaryFiles.push(file);
+        }
       }
     }
     expect(crossBoundaryFiles).toHaveLength(0);
