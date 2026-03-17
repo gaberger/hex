@@ -16,6 +16,33 @@ import type {
   StructuralDiff,
 } from '../../core/ports/index.js';
 
+// ── Native NAPI-RS backend (optional) ─────────────────────
+
+type NativeModule = {
+  initGrammars(): boolean;
+  parseFile(filePath: string, source: string, level: 'L0' | 'L1' | 'L2' | 'L3'): ASTSummary;
+};
+
+let nativeModule: NativeModule | null = null;
+let nativeProbed = false;
+
+function tryLoadNative(): NativeModule | null {
+  if (nativeProbed) return nativeModule;
+  nativeProbed = true;
+  try {
+    // Dynamic require — only works if @hex/native is installed
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('@hex/native');
+    if (typeof mod.initGrammars === 'function' && mod.initGrammars()) {
+      nativeModule = mod as NativeModule;
+      return nativeModule;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Maps tree-sitter node types to ExportEntry.kind values per language. */
 const TS_NODE_KIND_MAP: Record<string, string> = {
   function_declaration: 'function',
@@ -233,6 +260,9 @@ export class TreeSitterAdapter implements IASTPort {
       const node = root.child(i)!;
       if (node.type !== 'export_statement') continue;
 
+      // Extract @hex: annotations from preceding comment (Layer 3 of dead-export fix)
+      const annotations = extractHexAnnotations(root, i);
+
       // Handle re-exports: `export type { X, Y } from './foo.js'`
       const exportClause = node.namedChildren.find((c) => c != null && c.type === 'export_clause');
       if (exportClause) {
@@ -243,7 +273,7 @@ export class TreeSitterAdapter implements IASTPort {
             const name = spec.childForFieldName('name');
             const exportName = (alias ?? name)?.text;
             if (exportName) {
-              results.push({ name: exportName, kind: 'type' });
+              results.push({ name: exportName, kind: 'type', ...(annotations.length > 0 ? { annotations } : {}) });
             }
           }
         }
@@ -259,7 +289,7 @@ export class TreeSitterAdapter implements IASTPort {
         const nameNode = decl.childForFieldName('name')
           ?? decl.namedChildren.find((c) => c != null && (c.type === 'identifier' || c.type === 'type_identifier'));
         const exportName = nameNode?.text ?? 'default';
-        const entry: ExportEntry = { name: exportName, kind: kind ?? 'const' };
+        const entry: ExportEntry = { name: exportName, kind: kind ?? 'const', ...(annotations.length > 0 ? { annotations } : {}) };
         if (withSigs) {
           if (kind) {
             const body = decl.childForFieldName('body');
@@ -422,6 +452,8 @@ export class TreeSitterAdapter implements IASTPort {
   private extractTsImports(tree: Tree): ImportEntry[] {
     const results: ImportEntry[] = [];
     const root = tree.rootNode;
+
+    // Pass 1: Static imports (import { Foo } from './bar.js')
     for (let i = 0; i < root.childCount; i++) {
       const node = root.child(i)!;
       if (node.type !== 'import_statement') continue;
@@ -433,6 +465,12 @@ export class TreeSitterAdapter implements IASTPort {
       if (clause) collectNames(clause, names);
       results.push({ names, from });
     }
+
+    // Pass 2: Dynamic imports — const { Foo } = await import('./bar.js')
+    // These appear as call_expression nodes with `import` as the function.
+    // Critical for composition-root patterns where adapters are loaded lazily.
+    collectDynamicImports(root, results);
+
     return results;
   }
 
@@ -507,6 +545,90 @@ export class TreeSitterAdapter implements IASTPort {
 
     return results;
   }
+  /**
+   * Factory -- tries native Rust/NAPI-RS backend first, falls back to WASM.
+   *
+   * Usage:
+   *   const ast = await TreeSitterAdapter.createWithNativeFallback(grammarDirs, fs, rootPath);
+   */
+  static async createWithNativeFallback(
+    grammarDirs: string | string[],
+    fs: IFileSystemPort,
+    rootPath?: string,
+  ): Promise<IASTPort> {
+    // Try native first
+    const native = tryLoadNative();
+    if (native) {
+      process.stderr.write('[hex] Using native tree-sitter backend (Rust/NAPI-RS)\n');
+      return NativeTreeSitterAdapter.create(native, fs);
+    }
+
+    // Fall back to WASM
+    process.stderr.write('[hex] Using WASM tree-sitter backend\n');
+    return TreeSitterAdapter.create(grammarDirs, fs, rootPath);
+  }
+}
+
+/**
+ * Native tree-sitter adapter — delegates parsing to the @hex/native NAPI-RS module.
+ *
+ * Same IASTPort interface, same mtime-based caching, but parsing runs through
+ * compiled Rust instead of WASM. Instantiated only via TreeSitterAdapter.createWithNativeFallback().
+ */
+export class NativeTreeSitterAdapter implements IASTPort {
+  private summaryCache = new Map<string, { mtime: number; summary: ASTSummary }>();
+
+  private constructor(
+    private readonly native: NativeModule,
+    private readonly fs: IFileSystemPort,
+  ) {}
+
+  static create(native: NativeModule, fs: IFileSystemPort): NativeTreeSitterAdapter {
+    return new NativeTreeSitterAdapter(native, fs);
+  }
+
+  /** Native module is fully functional — never a stub. */
+  isStub(): boolean {
+    return false;
+  }
+
+  async extractSummary(filePath: string, level: ASTSummary['level']): Promise<ASTSummary> {
+    // Same mtime caching logic as WASM adapter
+    const cacheKey = `${filePath}:${level}`;
+    const mtime = await this.fs.mtime(filePath).catch(() => 0);
+    const cached = this.summaryCache.get(cacheKey);
+    if (cached && cached.mtime === mtime && mtime > 0) {
+      return cached.summary;
+    }
+
+    const source = await this.fs.read(filePath);
+    const summary = this.native.parseFile(filePath, source, level);
+
+    // Don't cache L3 (full source, memory heavy)
+    if (level !== 'L3' && mtime > 0) {
+      this.summaryCache.set(cacheKey, { mtime, summary });
+    }
+    return summary;
+  }
+
+  diffStructural(before: ASTSummary, after: ASTSummary): StructuralDiff {
+    const toMap = (list: ExportEntry[]) => new Map(list.map((e) => [e.name, e]));
+    const bMap = toMap(before.exports);
+    const aMap = toMap(after.exports);
+    const added: ExportEntry[] = [];
+    const removed: ExportEntry[] = [];
+    const modified: StructuralDiff['modified'] = [];
+    for (const [name, entry] of aMap) {
+      const prev = bMap.get(name);
+      if (!prev) added.push(entry);
+      else if (prev.kind !== entry.kind || prev.signature !== entry.signature)
+        modified.push({ before: prev, after: entry });
+    }
+    for (const [, entry] of bMap) {
+      if (!aMap.has(entry.name)) removed.push(entry);
+    }
+    return { added, removed, modified };
+  }
 }
 
 // ── Module-level helpers ──────────────────────────────────────
@@ -578,4 +700,106 @@ function collectNames(node: TSNode, out: string[]): void {
   for (let i = 0; i < node.namedChildCount; i++) {
     collectNames(node.namedChild(i)!, out);
   }
+}
+
+/**
+ * Extract @hex: annotations from a comment preceding an export_statement.
+ *
+ * Checks the previous sibling in the root node's children. If it's a comment
+ * containing `@hex:` tags (e.g., `@hex:public`, `@hex:dynamic`, `@hex:entry`),
+ * returns the tag names as an array.
+ */
+function extractHexAnnotations(root: TSNode, exportIndex: number): string[] {
+  if (exportIndex <= 0) return [];
+
+  // Check the immediately preceding sibling
+  const prev = root.child(exportIndex - 1);
+  if (!prev || prev.type !== 'comment') return [];
+
+  const text = prev.text;
+  const matches = text.matchAll(/@hex:(\w+)/g);
+  const tags: string[] = [];
+  for (const m of matches) {
+    tags.push(`hex:${m[1]}`);
+  }
+  return tags;
+}
+
+/**
+ * Walk the AST to find dynamic `import()` calls and extract destructured names.
+ *
+ * Handles two patterns:
+ *   const { Foo } = await import('./bar.js');         // variable_declaration
+ *   const { Foo } = await import('./bar.js');         // nested in lexical_declaration
+ *
+ * The tree-sitter node structure for `const { Foo } = await import('./bar.js')`:
+ *   lexical_declaration
+ *     variable_declarator
+ *       object_pattern → { Foo }
+ *       await_expression
+ *         call_expression
+ *           import → keyword
+ *           arguments → string literal
+ */
+function collectDynamicImports(node: TSNode, out: ImportEntry[]): void {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i)!;
+
+    // Look for call_expression where the function is `import`
+    if (child.type === 'call_expression') {
+      const fn = child.child(0);
+      if (fn && fn.type === 'import') {
+        const args = child.childForFieldName('arguments');
+        const firstArg = args?.namedChildren.find((c): c is TSNode => c != null && c.type === 'string');
+        const from = firstArg?.text.replace(/['"]/g, '') ?? '';
+        if (from) {
+          // Walk up to find destructured names: const { Foo, Bar } = await import(...)
+          const names = extractDestructuredNames(child);
+          out.push({ names, from });
+        }
+        continue; // Don't recurse into this call_expression
+      }
+    }
+
+    // Recurse into block-level statements (function bodies, if blocks, etc.)
+    if (child.namedChildCount > 0) {
+      collectDynamicImports(child, out);
+    }
+  }
+}
+
+/**
+ * Given a `call_expression` for `import(...)`, walk up the AST to find
+ * the destructuring pattern: `const { Foo } = await import(...)`.
+ *
+ * Returns extracted names or ['*'] if no destructuring found (namespace import).
+ */
+function extractDestructuredNames(importCall: TSNode): string[] {
+  // Walk up: import() → await_expression → variable_declarator
+  let current: TSNode | null = importCall;
+  for (let depth = 0; depth < 4 && current; depth++) {
+    current = current.parent;
+    if (!current) break;
+
+    if (current.type === 'variable_declarator') {
+      const pattern = current.childForFieldName('name');
+      if (pattern && pattern.type === 'object_pattern') {
+        const names: string[] = [];
+        for (let j = 0; j < pattern.namedChildCount; j++) {
+          const prop = pattern.namedChild(j)!;
+          if (prop.type === 'shorthand_property_identifier_pattern' || prop.type === 'shorthand_property_identifier') {
+            names.push(prop.text);
+          } else if (prop.type === 'pair_pattern') {
+            const value = prop.childForFieldName('value');
+            if (value) names.push(value.text);
+          }
+        }
+        if (names.length > 0) return names;
+      }
+      // Non-destructured: const mod = await import(...) → treat as namespace
+      return ['*'];
+    }
+  }
+  // No destructuring found (bare `await import(...)` without assignment)
+  return ['*'];
 }
