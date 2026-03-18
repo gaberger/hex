@@ -101,7 +101,7 @@ fn generate_agent_name(agent_id: &str) -> String {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     // Initialize tracing
     let filter = if args.verbose { "debug" } else { "info" };
@@ -167,6 +167,18 @@ async fn main() -> anyhow::Result<()> {
     // SpacetimeDB config: check env vars first (injected by hub at spawn time),
     // then fall back to ~/.hex/state.json for standalone agent execution.
     let (stdb_host, stdb_skill_db, stdb_agent_def_db) = resolve_stdb_config();
+
+    // Auto-discover hub when --hub-url is not provided.
+    // Check lock file first, then probe default port.
+    if args.hub_url.is_none() {
+        if let Some((url, token)) = discover_hub().await {
+            tracing::info!(hub = %url, "Auto-discovered running hub");
+            args.hub_url = Some(url);
+            if args.hub_token.is_none() {
+                args.hub_token = Some(token);
+            }
+        }
+    }
 
     let hub_connected = if let Some(ref hub_url) = args.hub_url {
         // Probe hub health endpoint
@@ -588,4 +600,55 @@ fn load_hex_state_config() -> Option<(String, String, String)> {
 
     let _ = default_db; // used for backwards compat when single-DB model returns
     Some((host, skill_db, agent_def_db))
+}
+
+/// Auto-discover a running hex-hub instance.
+///
+/// Checks (in order):
+/// 1. `~/.hex/daemon/hub.lock` — written by hub on startup, contains port + token
+/// 2. Probe default port 5555 on localhost
+///
+/// Returns `(url, token)` if a hub is found and healthy.
+async fn discover_hub() -> Option<(String, String)> {
+    // 1. Try lock file
+    let home = std::env::var("HOME").ok()?;
+    let lock_path = std::path::PathBuf::from(&home)
+        .join(".hex")
+        .join("daemon")
+        .join("hub.lock");
+
+    if let Ok(contents) = std::fs::read_to_string(&lock_path) {
+        if let Ok(lock) = serde_json::from_str::<serde_json::Value>(&contents) {
+            let port = lock.get("port").and_then(|v| v.as_u64()).unwrap_or(5555) as u16;
+            let token = lock
+                .get("token")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let url = format!("http://127.0.0.1:{}", port);
+
+            if probe_hub_health(&url).await {
+                return Some((url, token));
+            }
+        }
+    }
+
+    // 2. Probe default port (no token — hub may not require auth)
+    let default_url = "http://127.0.0.1:5555".to_string();
+    if probe_hub_health(&default_url).await {
+        return Some((default_url, String::new()));
+    }
+
+    None
+}
+
+/// Quick health check against a hub URL.
+async fn probe_hub_health(url: &str) -> bool {
+    reqwest::Client::new()
+        .get(format!("{}/health", url))
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
 }
