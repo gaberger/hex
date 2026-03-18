@@ -7,6 +7,7 @@ pub mod hooks;
 pub mod agents;
 pub mod workplan;
 pub mod hub;
+pub mod rl;
 
 pub use anthropic::AnthropicPort;
 pub use context::ContextManagerPort;

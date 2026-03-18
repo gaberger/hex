@@ -3,8 +3,7 @@ use crate::ports::anthropic::{AnthropicError, AnthropicPort, AnthropicResponse, 
 use async_trait::async_trait;
 use futures::stream::{self, Stream};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use std::pin::Pin;
+use serde::Deserialize;
 
 /// Adapter for the Anthropic Messages API.
 ///

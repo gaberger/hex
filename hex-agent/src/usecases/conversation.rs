@@ -1,10 +1,11 @@
 use crate::domain::{
-    ContentBlock, ConversationState, Message, Role, StopReason,
+    ContentBlock, ConversationState, Message, Role,
     TokenBudget, ToolCall, ToolDefinition,
 };
 use crate::ports::anthropic::AnthropicPort;
 use crate::ports::context::ContextManagerPort;
 use crate::ports::conversation::{ConversationEvent, ConversationError, ConversationPort};
+use crate::ports::rl::{ContextStrategy, RlPort, RlReward, RlState};
 use crate::ports::tools::ToolExecutorPort;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -12,11 +13,12 @@ use std::sync::Arc;
 /// The core conversation loop — multi-turn interaction with tool_use support.
 ///
 /// This is the use case that replaces Claude Code's internal agent loop.
-/// It orchestrates: context packing → API call → tool execution → repeat.
+/// It orchestrates: RL query → context packing → API call → tool execution → reward.
 pub struct ConversationLoop {
     anthropic: Arc<dyn AnthropicPort>,
     context_mgr: Arc<dyn ContextManagerPort>,
     tool_executor: Arc<dyn ToolExecutorPort>,
+    rl: Arc<dyn RlPort>,
     tools: Vec<ToolDefinition>,
     budget: TokenBudget,
     max_response_tokens: u32,
@@ -28,6 +30,7 @@ impl ConversationLoop {
         anthropic: Arc<dyn AnthropicPort>,
         context_mgr: Arc<dyn ContextManagerPort>,
         tool_executor: Arc<dyn ToolExecutorPort>,
+        rl: Arc<dyn RlPort>,
         tools: Vec<ToolDefinition>,
         budget: TokenBudget,
         max_response_tokens: u32,
@@ -36,6 +39,7 @@ impl ConversationLoop {
             anthropic,
             context_mgr,
             tool_executor,
+            rl,
             tools,
             budget,
             max_response_tokens,
@@ -54,16 +58,43 @@ impl ConversationLoop {
         user_input: &str,
         event_tx: &tokio::sync::mpsc::UnboundedSender<ConversationEvent>,
     ) -> Result<(), ConversationError> {
+        // Query RL engine for optimal context strategy
+        let rl_state = RlState {
+            task_type: "conversation".to_string(),
+            codebase_size: 0, // TODO: inject from project metadata
+            agent_count: 1,
+            token_usage: state.total_estimated_tokens() as u64,
+        };
+        let rl_action = self.rl.select_action(&rl_state).await.ok();
+        let strategy = rl_action
+            .as_ref()
+            .map(|a| ContextStrategy::from_action(&a.action))
+            .unwrap_or(ContextStrategy::Balanced);
+
+        // Adjust budget based on RL-selected strategy
+        let mut budget = self.budget.clone();
+        budget.partitions.history_fraction *= strategy.history_multiplier();
+        budget.partitions.tool_fraction *= strategy.tool_multiplier();
+
+        if strategy != ContextStrategy::Balanced {
+            tracing::info!(
+                strategy = ?strategy,
+                action = rl_action.as_ref().map(|a| a.action.as_str()).unwrap_or("default"),
+                "RL selected context strategy"
+            );
+        }
+
         // Add user message
         state.push(Message::user(user_input));
 
         let mut tool_rounds = 0;
+        let turn_start_tokens = state.total_estimated_tokens();
 
         loop {
-            // Pack context to fit within budget
+            // Pack context to fit within RL-adjusted budget
             let packed = self
                 .context_mgr
-                .pack(state, &self.budget)
+                .pack(state, &budget)
                 .await
                 .map_err(|e| ConversationError::ContextError(e.to_string()))?;
 
@@ -164,6 +195,58 @@ impl ConversationLoop {
                 stop_reason: response.stop_reason,
             });
             break;
+        }
+
+        // Report reward to RL engine: token efficiency as signal
+        if let Some(ref action) = rl_action {
+            let turn_end_tokens = state.total_estimated_tokens();
+            let tokens_used = turn_end_tokens.saturating_sub(turn_start_tokens) as f64;
+            // Reward: higher for fewer tokens used (efficient), penalize tool round overflow
+            let efficiency = if tokens_used > 0.0 {
+                (1.0 - (tokens_used / self.budget.available() as f64)).max(0.0)
+            } else {
+                0.5
+            };
+            let tool_penalty = if tool_rounds >= self.max_tool_rounds {
+                -0.5
+            } else {
+                0.0
+            };
+            let reward = efficiency + tool_penalty;
+
+            let _next_state = RlState {
+                task_type: "conversation".to_string(),
+                codebase_size: 0,
+                agent_count: 1,
+                token_usage: turn_end_tokens as u64,
+            };
+            // Best-effort — don't fail the turn if reward reporting fails
+            let next_key = format!(
+                "conversation:sz0:ag1:tk{}",
+                match turn_end_tokens {
+                    0..=1000 => 0,
+                    1001..=10000 => 1,
+                    10001..=50000 => 2,
+                    50001..=200000 => 3,
+                    _ => 4,
+                }
+            );
+            let _ = self
+                .rl
+                .report_reward(&RlReward {
+                    state_key: action.state_key.clone(),
+                    action: action.action.clone(),
+                    reward,
+                    next_state_key: next_key,
+                })
+                .await;
+
+            tracing::debug!(
+                reward = reward,
+                tokens_used = tokens_used,
+                tool_rounds = tool_rounds,
+                "RL reward reported"
+            );
         }
 
         Ok(())

@@ -66,7 +66,7 @@ impl ContextManagerPort for ContextManagerAdapter {
         let mut evicted_count: u32 = 0;
 
         // Walk messages from newest to oldest, accumulating until budget is hit
-        let mut candidates: Vec<(usize, &Message, u32)> = state
+        let candidates: Vec<(usize, &Message, u32)> = state
             .messages
             .iter()
             .enumerate()

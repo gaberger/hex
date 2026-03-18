@@ -182,6 +182,7 @@ impl HookRunnerPort for SpacetimeHookRunner {
 #[serde(rename_all = "camelCase")]
 struct HookEntryDto {
     event_type: String,
+    #[allow(dead_code)]
     handler_type: String,
     handler_config_json: String,
     timeout_secs: u32,

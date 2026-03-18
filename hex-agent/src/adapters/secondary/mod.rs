@@ -3,3 +3,8 @@ pub mod context_manager;
 pub mod tools;
 pub mod skill_loader;
 pub mod agent_loader;
+pub mod hub_client;
+pub mod rl_client;
+pub mod spacetime_skill;
+pub mod spacetime_hook;
+pub mod spacetime_agent;
