@@ -167,7 +167,7 @@ async fn main() -> anyhow::Result<()> {
         project_dir.display()
     );
 
-    let cli = CliAdapter::new(conversation);
+    let cli = CliAdapter::new(Box::new(conversation));
     cli.run().await?;
 
     Ok(())

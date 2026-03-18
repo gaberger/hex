@@ -1,5 +1,5 @@
-use crate::domain::{ConversationState, StopReason};
-use crate::usecases::conversation::{ConversationEvent, ConversationLoop};
+use crate::ports::{ConversationState, StopReason};
+use crate::ports::conversation::{ConversationEvent, ConversationPort};
 use std::io::{self, BufRead, Write};
 use tokio::sync::mpsc;
 
@@ -8,12 +8,12 @@ use tokio::sync::mpsc;
 /// This is the primary adapter for standalone hex-agent usage
 /// (not managed by hex-hub).
 pub struct CliAdapter {
-    conversation_loop: ConversationLoop,
+    conversation: Box<dyn ConversationPort>,
 }
 
 impl CliAdapter {
-    pub fn new(conversation_loop: ConversationLoop) -> Self {
-        Self { conversation_loop }
+    pub fn new(conversation: Box<dyn ConversationPort>) -> Self {
+        Self { conversation }
     }
 
     /// Run the interactive REPL.
@@ -105,7 +105,7 @@ impl CliAdapter {
             });
 
             // Run the conversation
-            if let Err(e) = self.conversation_loop.process_message(&mut state, input, &tx).await {
+            if let Err(e) = self.conversation.process_message(&mut state, input, &tx).await {
                 eprintln!("\x1b[31mConversation error: {}\x1b[0m", e);
             }
 

@@ -1,10 +1,12 @@
 use crate::domain::{
     ContentBlock, ConversationState, Message, Role, StopReason,
-    TokenBudget, TokenUsage, ToolCall, ToolDefinition,
+    TokenBudget, ToolCall, ToolDefinition,
 };
 use crate::ports::anthropic::AnthropicPort;
 use crate::ports::context::ContextManagerPort;
+use crate::ports::conversation::{ConversationEvent, ConversationError, ConversationPort};
 use crate::ports::tools::ToolExecutorPort;
+use async_trait::async_trait;
 use std::sync::Arc;
 
 /// The core conversation loop — multi-turn interaction with tool_use support.
@@ -19,23 +21,6 @@ pub struct ConversationLoop {
     budget: TokenBudget,
     max_response_tokens: u32,
     max_tool_rounds: u32,
-}
-
-/// Events emitted during the conversation for UI/hub streaming.
-#[derive(Debug, Clone)]
-pub enum ConversationEvent {
-    /// Text output from the assistant
-    TextChunk(String),
-    /// A tool call is being executed
-    ToolCallStart { name: String, input: String },
-    /// Tool call completed
-    ToolCallResult { name: String, content: String, is_error: bool },
-    /// Token usage update
-    TokenUpdate(TokenUsage),
-    /// Turn completed
-    TurnComplete { stop_reason: StopReason },
-    /// Error occurred
-    Error(String),
 }
 
 impl ConversationLoop {
@@ -63,7 +48,7 @@ impl ConversationLoop {
     /// This handles multi-round tool_use: if the model responds with tool calls,
     /// we execute them and continue until the model produces a text-only response
     /// or we hit the tool round limit.
-    pub async fn process_message(
+    async fn run_turn(
         &self,
         state: &mut ConversationState,
         user_input: &str,
@@ -185,12 +170,14 @@ impl ConversationLoop {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ConversationError {
-    #[error("API error: {0}")]
-    ApiError(String),
-    #[error("Context error: {0}")]
-    ContextError(String),
-    #[error("Tool execution error: {0}")]
-    ToolError(String),
+#[async_trait]
+impl ConversationPort for ConversationLoop {
+    async fn process_message(
+        &self,
+        state: &mut ConversationState,
+        user_input: &str,
+        event_tx: &tokio::sync::mpsc::UnboundedSender<ConversationEvent>,
+    ) -> Result<(), ConversationError> {
+        self.run_turn(state, user_input, event_tx).await
+    }
 }

@@ -1,5 +1,4 @@
-use crate::domain::AgentDefinition;
-use crate::ports::agents::{AgentLoadError, AgentLoaderPort};
+use crate::ports::{AgentDefinition, agents::{AgentLoadError, AgentLoaderPort}};
 use async_trait::async_trait;
 use std::path::Path;
 
