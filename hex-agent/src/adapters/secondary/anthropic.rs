@@ -1,4 +1,4 @@
-use crate::domain::{ContentBlock, Message, StopReason, TokenUsage, ToolDefinition};
+use crate::ports::{ContentBlock, Message, StopReason, TokenUsage, ToolDefinition};
 use crate::ports::anthropic::{AnthropicError, AnthropicPort, AnthropicResponse, StreamChunk};
 use async_trait::async_trait;
 use futures::stream::{self, Stream};

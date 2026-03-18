@@ -1,4 +1,4 @@
-use crate::domain::{Skill, SkillManifest, SkillTrigger};
+use crate::ports::{Skill, SkillManifest, SkillTrigger};
 use crate::ports::skills::{SkillLoadError, SkillLoaderPort};
 use async_trait::async_trait;
 use std::path::Path;

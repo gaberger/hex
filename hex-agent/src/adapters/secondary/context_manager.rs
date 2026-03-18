@@ -1,4 +1,4 @@
-use crate::domain::{ContentBlock, ConversationState, Message, TokenBudget};
+use crate::ports::{ContentBlock, ConversationState, Message, TokenBudget};
 use crate::ports::context::{ContextError, ContextManagerPort, PackedContext};
 use async_trait::async_trait;
 

@@ -1,4 +1,4 @@
-use crate::domain::{ToolCall, ToolResult};
+use crate::ports::{ToolCall, ToolResult};
 use crate::ports::tools::ToolExecutorPort;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
