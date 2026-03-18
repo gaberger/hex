@@ -87,6 +87,16 @@ export function normalizePath(filePath: string): string {
   return p;
 }
 
+/**
+ * Return the two candidate file paths for a Rust module path.
+ * Rust resolves `mod foo` as either `foo/mod.rs` or `foo.rs`.
+ */
+export function rustModuleCandidates(basePath: string): [string, string] {
+  // Strip trailing slash if present
+  const p = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath;
+  return [`${p}.rs`, `${p}/mod.rs`];
+}
+
 // ── Language-specific resolvers ─────────────────────────────
 
 function resolveTsImport(fromFile: string, importPath: string): string {

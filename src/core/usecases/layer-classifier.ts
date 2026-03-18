@@ -120,6 +120,24 @@ export function isAllowedImport(
   return ALLOWED_IMPORTS[fromLayer]?.has(toLayer) ?? false;
 }
 
+/**
+ * Classify special files that don't fit neatly into hex layers.
+ * Returns a role label or null if not a recognised special file.
+ */
+export function classifySpecialFile(filePath: string): string | null {
+  const normalized = filePath.replace(/\\/g, '/');
+  const basename = normalized.split('/').pop() ?? '';
+
+  // Composition roots
+  if (basename === 'lib.rs' || basename.startsWith('composition-root')) return 'composition-root';
+  // Entry points
+  if (basename === 'main.rs' || basename === 'main.go' || basename === 'main.ts') return 'entry-point';
+  // Build files
+  if (basename === 'build.rs' || basename === 'Cargo.toml') return 'build-config';
+
+  return null;
+}
+
 export function getViolationRule(
   fromLayer: DependencyDirection,
   toLayer: DependencyDirection,
