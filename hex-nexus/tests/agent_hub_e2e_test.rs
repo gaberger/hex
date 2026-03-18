@@ -18,7 +18,9 @@ use std::net::SocketAddr;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 /// Spin up an embedded hub server on an ephemeral port and return its address.
+/// Forces SQLite backend so tests aren't affected by global ~/.hex/state.json.
 async fn start_hub() -> SocketAddr {
+    std::env::set_var("HEX_STATE_BACKEND", "sqlite");
     let config = HubConfig {
         port: 0,
         bind: "127.0.0.1".to_string(),
