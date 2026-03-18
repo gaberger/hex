@@ -5,6 +5,7 @@ use crate::domain::{
 use crate::ports::anthropic::{AnthropicError, AnthropicPort};
 use crate::ports::context::ContextManagerPort;
 use crate::ports::conversation::{ConversationEvent, ConversationError, ConversationPort};
+use crate::ports::preflight::PreflightPort;
 use crate::ports::rate_limiter::RateLimiterPort;
 use crate::ports::rl::{ContextStrategy, ModelSelection, RlPort, RlReward, RlState};
 use crate::ports::token_metrics::TokenMetricsPort;
@@ -24,6 +25,7 @@ pub struct ConversationLoop {
     rl: Arc<dyn RlPort>,
     rate_limiter: Arc<dyn RateLimiterPort>,
     metrics: Arc<dyn TokenMetricsPort>,
+    preflight: Arc<dyn PreflightPort>,
     tools: Vec<ToolDefinition>,
     budget: TokenBudget,
     max_response_tokens: u32,
@@ -34,6 +36,8 @@ pub struct ConversationLoop {
     enable_cache: bool,
     /// Extended thinking budget (0 = disabled).
     thinking_budget: u32,
+    /// Context utilization threshold (0.0-1.0) that triggers auto-compaction.
+    compact_threshold: f32,
 }
 
 impl ConversationLoop {
@@ -44,6 +48,7 @@ impl ConversationLoop {
         rl: Arc<dyn RlPort>,
         rate_limiter: Arc<dyn RateLimiterPort>,
         metrics: Arc<dyn TokenMetricsPort>,
+        preflight: Arc<dyn PreflightPort>,
         tools: Vec<ToolDefinition>,
         budget: TokenBudget,
         max_response_tokens: u32,
@@ -55,13 +60,15 @@ impl ConversationLoop {
             rl,
             rate_limiter,
             metrics,
+            preflight,
             tools,
             budget,
             max_response_tokens,
             max_tool_rounds: 25,
             model_pinned: false,
-            enable_cache: true,   // On by default — free savings
+            enable_cache: true,
             thinking_budget: 0,
+            compact_threshold: 0.85,
         }
     }
 
@@ -84,12 +91,20 @@ impl ConversationLoop {
         self
     }
 
+    /// Set the context utilization threshold for auto-compaction (0.0-1.0).
+    pub fn with_compact_threshold(mut self, threshold: f32) -> Self {
+        self.compact_threshold = threshold.clamp(0.0, 1.0);
+        self
+    }
+
     /// Fallback chain for rate-limited models.
     /// Returns the next model to try after `current`, or `None` if exhausted.
     fn fallback_model(current: &ModelSelection) -> Option<ModelSelection> {
         match current {
             ModelSelection::Opus => Some(ModelSelection::Sonnet),
-            ModelSelection::Sonnet => Some(ModelSelection::Haiku),
+            ModelSelection::Sonnet => Some(ModelSelection::MiniMax),
+            ModelSelection::MiniMax => Some(ModelSelection::MiniMaxFast),
+            ModelSelection::MiniMaxFast => Some(ModelSelection::Haiku),
             ModelSelection::Haiku => Some(ModelSelection::Local),
             ModelSelection::Local => None,
         }
@@ -106,6 +121,55 @@ impl ConversationLoop {
         user_input: &str,
         event_tx: &tokio::sync::mpsc::UnboundedSender<ConversationEvent>,
     ) -> Result<(), ConversationError> {
+        // --- Preflight: topic change detection ---
+        // On turns after the first, ask Haiku if this is a new topic.
+        // If so, compact context automatically to avoid pollution.
+        if state.turn_count > 0 {
+            let recent_context = state
+                .messages
+                .last()
+                .map(|m| m.text_content())
+                .unwrap_or_default();
+
+            match self.preflight.is_new_topic(&recent_context, user_input).await {
+                Ok(true) => {
+                    tracing::info!("Topic change detected — auto-compacting context");
+                    let _ = event_tx.send(ConversationEvent::TextChunk(
+                        "\n*New topic detected — compacting context...*\n".to_string(),
+                    ));
+                    // Use reset_context from the ConversationPort impl (self)
+                    let checkpoint = self.reset_context(state, None).await?;
+                    let _ = event_tx.send(ConversationEvent::ContextReset {
+                        summary: checkpoint.summary,
+                    });
+                }
+                Ok(false) => {} // continuation — proceed normally
+                Err(e) => {
+                    // Best-effort — don't block the turn on classification failure
+                    tracing::debug!(error = %e, "Topic classification failed, continuing");
+                }
+            }
+        }
+
+        // --- Auto-compaction: threshold-based ---
+        // If context utilization exceeds threshold, compact before packing.
+        let estimated_tokens = state.total_estimated_tokens() as f32;
+        let available = self.budget.available() as f32;
+        if available > 0.0 && (estimated_tokens / available) > self.compact_threshold {
+            tracing::info!(
+                utilization = estimated_tokens / available,
+                threshold = self.compact_threshold,
+                "Context utilization exceeded threshold — auto-compacting"
+            );
+            let _ = event_tx.send(ConversationEvent::TextChunk(
+                "\n*Context window near capacity — compacting...*\n".to_string(),
+            ));
+            let checkpoint = self.reset_context(state, None).await?;
+            let _ = event_tx.send(ConversationEvent::ContextReset {
+                summary: checkpoint.summary,
+            });
+        }
+
         // Query RL engine for optimal context strategy + model selection
         let rl_state = RlState {
             task_type: "conversation".to_string(),

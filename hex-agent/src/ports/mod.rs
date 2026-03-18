@@ -13,6 +13,7 @@ pub mod inference;
 pub mod rate_limiter;
 pub mod batch;
 pub mod token_metrics;
+pub mod preflight;
 
 pub use anthropic::AnthropicPort;
 pub use context::ContextManagerPort;
@@ -27,6 +28,7 @@ pub use inference::InferenceDiscoveryPort;
 pub use rate_limiter::RateLimiterPort;
 pub use batch::BatchPort;
 pub use token_metrics::TokenMetricsPort;
+pub use preflight::PreflightPort;
 
 // Re-export domain types that adapters need (so adapters import from ports, not domain)
 #[allow(unused_imports)]
@@ -38,4 +40,5 @@ pub use crate::domain::{
     ToolCall, ToolResult, ToolDefinition,
     Skill, SkillTrigger, SkillManifest,
     Hook, HookEvent, HookConfig, HookResult,
+    ApiRequestOptions,
 };

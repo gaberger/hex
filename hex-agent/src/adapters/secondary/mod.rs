@@ -12,3 +12,5 @@ pub mod env_secrets;
 pub mod hub_claim_secrets;
 pub mod rate_limiter;
 pub mod token_metrics;
+pub mod haiku_preflight;
+pub mod openai_compat;

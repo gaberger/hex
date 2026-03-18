@@ -34,6 +34,10 @@ pub enum ModelSelection {
     Sonnet,
     /// claude-haiku — fast/cheap
     Haiku,
+    /// MiniMax M2.5 — near-Opus quality, 10-50x cheaper
+    MiniMax,
+    /// MiniMax M2.5-Lightning — 2x speed, slightly higher output cost
+    MiniMaxFast,
     /// ollama/vllm — no rate limits
     Local,
 }
@@ -51,6 +55,8 @@ impl ModelSelection {
         match action {
             "model:opus" => Self::Opus,
             "model:haiku" => Self::Haiku,
+            "model:minimax" => Self::MiniMax,
+            "model:minimax_fast" => Self::MiniMaxFast,
             "model:local" => Self::Local,
             _ => Self::Sonnet,
         }
@@ -62,6 +68,8 @@ impl ModelSelection {
             Self::Opus => "claude-opus-4-6",
             Self::Sonnet => "claude-sonnet-4-6",
             Self::Haiku => "claude-haiku-4-5-20251001",
+            Self::MiniMax => "MiniMax-M2.5",
+            Self::MiniMaxFast => "MiniMax-M2.5-highspeed",
             Self::Local => "local",
         }
     }
@@ -69,6 +77,11 @@ impl ModelSelection {
     /// Whether this selection routes to a local inference engine.
     pub fn is_local(&self) -> bool {
         matches!(self, Self::Local)
+    }
+
+    /// Whether this selection routes to an OpenAI-compatible provider (not Anthropic).
+    pub fn is_openai_compat(&self) -> bool {
+        matches!(self, Self::MiniMax | Self::MiniMaxFast | Self::Local)
     }
 }
 

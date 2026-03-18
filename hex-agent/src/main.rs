@@ -18,6 +18,8 @@ use adapters::secondary::hub_client::HubClientAdapter;
 use adapters::secondary::rl_client::{RlClientAdapter, NoopRlAdapter};
 use adapters::secondary::rate_limiter::RateLimiterAdapter;
 use adapters::secondary::token_metrics::TokenMetricsAdapter;
+use adapters::secondary::haiku_preflight::{HaikuPreflightAdapter, NoopPreflight};
+use adapters::secondary::openai_compat::OpenAiCompatAdapter;
 use domain::{TokenBudget, tools::builtin_tools};
 use ports::skills::SkillLoaderPort;
 use ports::agents::AgentLoaderPort;
@@ -73,6 +75,18 @@ struct Args {
     /// Extended thinking budget tokens (0 = disabled)
     #[arg(long, default_value = "0")]
     thinking_budget: u32,
+
+    /// Disable preflight checks (startup quota + topic detection)
+    #[arg(long)]
+    no_preflight: bool,
+
+    /// Context utilization % that triggers auto-compaction (default: 85)
+    #[arg(long, default_value = "85")]
+    compact_threshold: u32,
+
+    /// LLM provider: anthropic, minimax, or auto (default: auto)
+    #[arg(long, default_value = "auto")]
+    provider: String,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -161,15 +175,41 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Composition Root: wire adapters to ports ---
 
-    // Resolve API key
-    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| {
-        eprintln!("\x1b[31mError: ANTHROPIC_API_KEY environment variable not set\x1b[0m");
-        std::process::exit(1);
-    });
+    // Resolve API keys based on provider selection
+    let provider = args.provider.to_lowercase();
+    let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
+    let minimax_key = std::env::var("MINIMAX_API_KEY").ok();
 
-    // Secondary adapters
-    let anthropic: Arc<dyn ports::AnthropicPort> =
-        Arc::new(AnthropicAdapter::new(api_key, args.model.clone()));
+    // Build the primary LLM adapter based on --provider
+    let anthropic: Arc<dyn ports::AnthropicPort> = match provider.as_str() {
+        "minimax" => {
+            let key = minimax_key.clone().unwrap_or_else(|| {
+                eprintln!("\x1b[31mError: MINIMAX_API_KEY environment variable not set\x1b[0m");
+                std::process::exit(1);
+            });
+            tracing::info!(model = "MiniMax-M2.5", "Using MiniMax provider");
+            Arc::new(OpenAiCompatAdapter::minimax(key))
+        }
+        "anthropic" => {
+            let key = anthropic_key.clone().unwrap_or_else(|| {
+                eprintln!("\x1b[31mError: ANTHROPIC_API_KEY environment variable not set\x1b[0m");
+                std::process::exit(1);
+            });
+            Arc::new(AnthropicAdapter::new(key, args.model.clone()))
+        }
+        _ => {
+            // "auto" — prefer Anthropic, fall back to MiniMax
+            if let Some(key) = anthropic_key.clone() {
+                Arc::new(AnthropicAdapter::new(key, args.model.clone()))
+            } else if let Some(key) = minimax_key.clone() {
+                tracing::info!("No ANTHROPIC_API_KEY — using MiniMax as primary provider");
+                Arc::new(OpenAiCompatAdapter::minimax(key))
+            } else {
+                eprintln!("\x1b[31mError: No API key found. Set ANTHROPIC_API_KEY or MINIMAX_API_KEY\x1b[0m");
+                std::process::exit(1);
+            }
+        }
+    };
     let context_mgr: Arc<dyn ports::ContextManagerPort> =
         Arc::new(ContextManagerAdapter::new());
     let tool_executor: Arc<dyn ports::ToolExecutorPort> =
@@ -336,10 +376,42 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(NoopRlAdapter)
     };
 
-    // Build conversation loop (use case)
-    let tools = builtin_tools();
+    // Rate limiter + token metrics + preflight adapters
     let rate_limiter: Arc<dyn ports::rate_limiter::RateLimiterPort> = Arc::new(RateLimiterAdapter::new());
     let metrics: Arc<dyn ports::token_metrics::TokenMetricsPort> = Arc::new(TokenMetricsAdapter::new());
+
+    // Preflight: cheap model for quota check + topic detection (or noop if disabled)
+    let preflight: Arc<dyn ports::PreflightPort> = if args.no_preflight {
+        Arc::new(NoopPreflight)
+    } else if let Some(ref key) = anthropic_key {
+        // Haiku for preflight — cheapest Anthropic model
+        let preflight_llm: Arc<dyn ports::AnthropicPort> = Arc::new(
+            AnthropicAdapter::new(key.clone(), "claude-haiku-4-5-20251001".to_string()),
+        );
+        Arc::new(HaikuPreflightAdapter::new(preflight_llm))
+    } else if let Some(ref key) = minimax_key {
+        // MiniMax-Lightning for preflight when no Anthropic key
+        let preflight_llm: Arc<dyn ports::AnthropicPort> =
+            Arc::new(OpenAiCompatAdapter::minimax_fast(key.clone()));
+        Arc::new(HaikuPreflightAdapter::new(preflight_llm))
+    } else {
+        Arc::new(NoopPreflight)
+    };
+
+    // Startup quota check — fail fast if API key is bad
+    if !args.no_preflight {
+        match preflight.check_quota().await {
+            Ok(()) => tracing::info!("Preflight quota check passed"),
+            Err(e) => {
+                eprintln!("\x1b[31mPreflight failed: {}\x1b[0m", e);
+                eprintln!("Use --no-preflight to skip this check");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Build conversation loop (use case)
+    let tools = builtin_tools();
     let conversation = ConversationLoop::new(
         anthropic,
         context_mgr,
@@ -347,13 +419,15 @@ async fn main() -> anyhow::Result<()> {
         rl,
         rate_limiter,
         metrics,
+        preflight,
         tools,
         budget,
         args.max_response,
     )
     .with_model_pinned(args.model_pinned)
     .with_cache(!args.no_cache)
-    .with_thinking_budget(args.thinking_budget);
+    .with_thinking_budget(args.thinking_budget)
+    .with_compact_threshold(args.compact_threshold as f32 / 100.0);
 
     // Decide mode: hub-managed or interactive CLI
     if let (Some(hub_url), Some(hub_token)) = (&args.hub_url, &args.hub_token) {
