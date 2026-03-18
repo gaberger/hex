@@ -317,7 +317,17 @@ function connect() {
   };
   ws.onerror = function() { ws.close(); };
   ws.onmessage = function(e) {
-    try { handleMessage(JSON.parse(e.data)); } catch(err) { console.error("ws parse error", err); }
+    try {
+      var raw = JSON.parse(e.data);
+      // Unwrap WsEnvelope: {topic, event, data} → {type: event, ...data}
+      var msg;
+      if (raw.event && raw.data) {
+        msg = Object.assign({}, raw.data, { type: raw.event });
+      } else {
+        msg = raw;
+      }
+      handleMessage(msg);
+    } catch(err) { console.error("ws parse error", err); }
   };
 }
 
