@@ -96,8 +96,34 @@ impl HubClientPort for HubClientAdapter {
 
             match msg {
                 Some(Ok(WsMessage::Text(text))) => {
-                    let msg: HubMessage = serde_json::from_str(&text)
-                        .map_err(|e| HubError::ReceiveFailed(e.to_string()))?;
+                    // Hub sends WsEnvelope: {"topic":..,"event":..,"data":{..}}
+                    // Try to unwrap envelope first, then fall back to direct parse
+                    let msg: HubMessage = if let Ok(envelope) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if let (Some(event), Some(data)) = (envelope.get("event").and_then(|e| e.as_str()), envelope.get("data")) {
+                            // Reconstruct as {"type": event, ...data_fields}
+                            let mut flat = data.clone();
+                            if let Some(obj) = flat.as_object_mut() {
+                                obj.insert("type".to_string(), serde_json::Value::String(event.to_string()));
+                            }
+                            serde_json::from_value(flat).unwrap_or_else(|_| {
+                                // If reconstruction fails, try the raw text
+                                serde_json::from_str(&text).unwrap_or(HubMessage::Unknown)
+                            })
+                        } else {
+                            // No envelope — try direct parse
+                            serde_json::from_str(&text).unwrap_or(HubMessage::Unknown)
+                        }
+                    } else {
+                        serde_json::from_str(&text)
+                            .map_err(|e| HubError::ReceiveFailed(e.to_string()))?
+                    };
+
+                    // Skip unknown messages silently
+                    if matches!(msg, HubMessage::Unknown) {
+                        tracing::debug!("Skipping unknown hub message: {}", &text[..text.len().min(100)]);
+                        continue;
+                    }
+
                     return Ok(msg);
                 }
                 Some(Ok(WsMessage::Ping(data))) => {
