@@ -12,6 +12,9 @@ use tokio::process::Command;
 /// Security: All file paths are resolved through safe_path() which prevents
 /// directory traversal attacks. Bash commands use tokio::process::Command
 /// (equivalent to execFile, not shell exec) with working directory pinning.
+/// Maximum tool output size in bytes (100 KB). Results exceeding this are truncated.
+const MAX_OUTPUT_BYTES: usize = 100 * 1024;
+
 pub struct ToolExecutorAdapter {
     working_dir: PathBuf,
 }
@@ -611,6 +614,11 @@ impl ToolExecutorPort for ToolExecutorAdapter {
             unknown => tool_error("unknown", &format!("Unknown tool: {}", unknown)),
         };
         result.tool_use_id = call.id.clone();
+        // Truncate oversized output to prevent context window blowout
+        if result.content.len() > MAX_OUTPUT_BYTES {
+            result.content.truncate(MAX_OUTPUT_BYTES);
+            result.content.push_str("\n[truncated]");
+        }
         result
     }
 

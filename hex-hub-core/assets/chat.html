@@ -15,7 +15,7 @@
   --amber:#ffb347;--amber-dim:rgba(255,179,71,.12);
   --red:#ff4444;--red-dim:rgba(255,68,68,.12);
   --green:#3fb950;--yellow:#e3b341;
-  --text:#e0e0e0;--text2:#9e9eb0;--text3:#6a6a80;
+  --text:#e0e0e0;--text2:#9e9eb0;--text3:#8b8ba0;
   --radius:10px;--radius-sm:6px;
   --user-bg:#1a2744;--user-border:#2a3f6a;
   --asst-bg:#1a1a28;--asst-border:#2a2a40;
@@ -276,8 +276,8 @@ var sidebarToggle = document.getElementById("sidebarToggle");
 /* ── Escape helper (XSS-safe) ── */
 function esc(s) {
   var d = document.createElement("div");
-  d.appendChild(document.createTextNode(s));
-  return d.textContent;
+  d.textContent = s;
+  return d.innerHTML;
 }
 function truncate(s, n) { return s.length > n ? s.slice(0, n) + "..." : s; }
 function fmt(n) { return n >= 1e6 ? (n/1e6).toFixed(1)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(n); }
@@ -348,23 +348,37 @@ function wsSend(content) {
 /* ── Message dispatch ── */
 function handleMessage(msg) {
   switch (msg.type) {
-    case "connected":    handleConnected(msg);   break;
-    case "stream_chunk": handleStreamChunk(msg); break;
-    case "tool_call":    handleToolCall(msg);    break;
-    case "tool_result":  handleToolResult(msg);  break;
-    case "token_update": handleTokenUpdate(msg); break;
-    case "agent_status": handleAgentStatus(msg); break;
-    case "chat_message": addAssistantMessage(msg.data ? msg.data.content : (msg.content || "")); break;
+    case "connected":          handleConnected(msg);   break;
+    case "stream_chunk":       handleStreamChunk(msg); break;
+    case "tool_call":          handleToolCall(msg);    break;
+    case "tool_result":        handleToolResult(msg);  break;
+    case "token_update":       handleTokenUpdate(msg); break;
+    case "agent_status":       handleAgentStatus(msg); break;
+    case "agent_connected":    handleAgentConnected(msg); break;
+    case "agent_disconnected": handleAgentDisconnected(msg); break;
+    case "chat_message":       addAssistantMessage(msg.content || ""); break;
   }
 }
 
 function handleConnected(msg) {
-  var data = msg.data || {};
-  if (data.llmBridge) {
+  if (msg.llmBridge) {
     modelBadge.textContent = "LLM bridge";
     modelBadge.style.background = "rgba(63,185,80,.15)";
     modelBadge.style.color = "#3fb950";
   }
+}
+
+function handleAgentConnected(msg) {
+  agentStatus.textContent = "connected";
+  agentStatus.className = "status-pill active";
+  if (msg.agentName) modelBadge.textContent = msg.agentName;
+  if (msg.projectDir) projectDir.textContent = msg.projectDir;
+}
+
+function handleAgentDisconnected(msg) {
+  if (state.streaming) endStream();
+  agentStatus.textContent = "disconnected";
+  agentStatus.className = "status-pill idle";
 }
 
 /* ── Markdown renderer (safe: all text goes through esc() first) ── */
@@ -454,20 +468,28 @@ function handleStreamChunk(msg) {
     state.currentAssistantEl = createMsgEl("assistant");
   }
   var body = state.currentAssistantEl.querySelector(".msg-body");
-  body.dataset.raw = (body.dataset.raw || "") + msg.text;
-  setBodyContent(body, body.dataset.raw);
+  body.dataset.raw = (body.dataset.raw || "") + (msg.text || "");
+  /* Append only the new chunk as escaped text (avoids O(n^2) re-render) */
+  var span = document.createElement("span");
+  span.textContent = msg.text || "";
+  body.appendChild(span);
   body.classList.add("streaming-cursor");
   scrollToBottom();
 }
 
 function endStream() {
   if (state.currentAssistantEl) {
-    state.currentAssistantEl.querySelector(".msg-body").classList.remove("streaming-cursor");
+    var body = state.currentAssistantEl.querySelector(".msg-body");
+    body.classList.remove("streaming-cursor");
+    /* Render markdown once at end of stream */
+    if (body.dataset.raw) {
+      setBodyContent(body, body.dataset.raw);
+    }
+    state.turnCount++;
+    turnCountEl.textContent = state.turnCount;
   }
   state.streaming = false;
   state.currentAssistantEl = null;
-  state.turnCount++;
-  turnCountEl.textContent = state.turnCount;
 }
 
 /* ── Tool calls ── */
@@ -481,7 +503,7 @@ function handleToolCall(msg) {
 
   var card = document.createElement("div");
   card.className = "tool-card";
-  card.dataset.tool = msg.tool_name;
+  card.dataset.toolId = msg.tool_use_id || msg.tool_name + "_" + Date.now();
 
   var header = document.createElement("div");
   header.className = "tool-header";
@@ -532,8 +554,17 @@ function handleToolCall(msg) {
 
 function handleToolResult(msg) {
   if (!state.currentAssistantEl) return;
-  var cards = state.currentAssistantEl.querySelectorAll('.tool-card[data-tool="' + CSS.escape(msg.tool_name) + '"]');
-  var card = cards[cards.length - 1];
+  var card = null;
+  if (msg.tool_use_id) {
+    card = state.currentAssistantEl.querySelector('.tool-card[data-tool-id="' + CSS.escape(msg.tool_use_id) + '"]');
+  }
+  if (!card) {
+    /* Fallback: match by tool name (last card) for backwards compatibility */
+    var cards = state.currentAssistantEl.querySelectorAll('.tool-card[data-tool-id]');
+    for (var i = cards.length - 1; i >= 0; i--) {
+      if (cards[i].dataset.toolId.indexOf(msg.tool_name) === 0) { card = cards[i]; break; }
+    }
+  }
   if (!card) return;
   if (msg.is_error) {
     card.querySelector(".tool-header").classList.add("error");
@@ -554,8 +585,8 @@ function handleToolResult(msg) {
 
 /* ── Token gauge ── */
 function handleTokenUpdate(msg) {
-  state.totalInput = msg.total_input || state.totalInput;
-  state.totalOutput = msg.total_output || state.totalOutput;
+  state.totalInput = msg.total_input !== undefined ? msg.total_input : state.totalInput;
+  state.totalOutput = msg.total_output !== undefined ? msg.total_output : state.totalOutput;
   var total = state.totalInput + state.totalOutput;
   var pct = Math.min(total / state.tokenBudget, 1);
   updateGauge(pct);

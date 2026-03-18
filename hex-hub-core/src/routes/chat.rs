@@ -6,7 +6,7 @@ use axum::{
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -33,15 +33,17 @@ enum ChatInbound {
         model: Option<String>,
         agent_name: Option<String>,
     },
+    /// Agent registration — sent by hex-agent on connect
+    AgentRegister {
+        agent_id: String,
+        agent_name: String,
+        project_dir: String,
+    },
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ChatOutbound {
-    #[serde(rename = "type")]
-    msg_type: String,
-    data: serde_json::Value,
-}
+// ChatOutbound removed — we now send WsEnvelope directly on the wire.
+// Both browser (checks raw.event && raw.data) and agent (checks envelope["event"])
+// know how to unwrap WsEnvelope into flat {type, ...fields} messages.
 
 /// GET /ws/chat — WebSocket upgrade handler for chat
 pub async fn chat_ws_handler(
@@ -68,10 +70,11 @@ async fn handle_chat_ws(
     let (mut sender, mut receiver) = socket.split();
     let session_id = Uuid::new_v4().to_string();
 
-    // Send welcome
+    // Send welcome as WsEnvelope so both browser and agent can unwrap it
     let has_llm = state.anthropic_api_key.is_some();
-    let welcome = serde_json::to_string(&ChatOutbound {
-        msg_type: "connected".to_string(),
+    let welcome = serde_json::to_string(&WsEnvelope {
+        topic: format!("chat:{}:control", session_id),
+        event: "connected".to_string(),
         data: json!({
             "sessionId": session_id,
             "authenticated": authenticated,
@@ -87,18 +90,26 @@ async fn handle_chat_ws(
     let session_id_for_send = session_id.clone();
     let agent_id_for_send = initial_agent_id.clone();
 
-    // Task: forward agent output and LLM bridge responses to the chat client
+    // Task: forward agent output and LLM bridge responses to the chat client.
+    // We send WsEnvelope directly on the wire so both browser and agent can unwrap:
+    //   browser: checks raw.event && raw.data → {type: event, ...data}
+    //   agent:   checks envelope["event"] → reconstructs HubMessage
     let mut send_task = tokio::spawn(async move {
         loop {
             match ws_rx.recv().await {
                 Ok(envelope) => {
-                    // Forward agent-related events to chat
+                    // Forward agent-related events and session-specific LLM events
                     let dominated = envelope.topic.starts_with("agent:")
                         || envelope.topic == format!("chat:{}:llm", session_id_for_send)
+                        || envelope.topic == format!("chat:{}:control", session_id_for_send)
                         || envelope.event == "token_update"
                         || envelope.event == "tool_call"
                         || envelope.event == "tool_result"
                         || envelope.event == "agent_output"
+                        || envelope.event == "agent_status"
+                        || envelope.event == "agent_register"
+                        || envelope.event == "agent_connected"
+                        || envelope.event == "agent_disconnected"
                         || envelope.event == "chat_response"
                         || envelope.event == "stream_chunk"
                         || envelope.event == "chat_message";
@@ -107,9 +118,12 @@ async fn handle_chat_ws(
                         continue;
                     }
 
-                    // If we have a specific agent_id, filter for it (but always allow session-specific LLM events)
+                    // If we have a specific agent_id, filter for it
+                    // (but always allow session-specific LLM/control events)
                     if let Some(ref aid) = agent_id_for_send {
-                        let is_session_event = envelope.topic == format!("chat:{}:llm", session_id_for_send);
+                        let is_session_event =
+                            envelope.topic == format!("chat:{}:llm", session_id_for_send)
+                            || envelope.topic == format!("chat:{}:control", session_id_for_send);
                         if !is_session_event
                             && envelope.topic != format!("agent:{}", aid)
                             && !envelope.topic.starts_with(&format!("agent:{}:", aid))
@@ -118,11 +132,8 @@ async fn handle_chat_ws(
                         }
                     }
 
-                    let msg = serde_json::to_string(&ChatOutbound {
-                        msg_type: envelope.event.clone(),
-                        data: envelope.data,
-                    })
-                    .unwrap_or_default();
+                    // Send WsEnvelope directly — no ChatOutbound wrapping
+                    let msg = serde_json::to_string(&envelope).unwrap_or_default();
 
                     if sender.send(Message::Text(msg.into())).await.is_err() {
                         break;
@@ -138,9 +149,12 @@ async fn handle_chat_ws(
     let conversation: std::sync::Arc<tokio::sync::Mutex<Vec<serde_json::Value>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
-    // Task: handle inbound chat messages from the user
+    // Task: handle inbound chat messages from the user (or agent)
     let state2 = state.clone();
     let mut recv_task = tokio::spawn(async move {
+        // Track connected agent for disconnect notification
+        let mut registered_agent_id: Option<String> = None;
+
         while let Some(Ok(msg)) = receiver.next().await {
             let text = match msg {
                 Message::Text(t) => t.to_string(),
@@ -170,9 +184,10 @@ async fn handle_chat_ws(
             match parsed {
                 ChatInbound::ChatMessage { content, agent_id } => {
                     // If no agent is connected and we have an API key, use the LLM bridge
-                    let use_bridge = agent_id.is_none()
-                        && initial_agent_id.is_none()
-                        && state2.anthropic_api_key.is_some();
+                    let has_agent = agent_id.is_some()
+                        || initial_agent_id.is_some()
+                        || registered_agent_id.is_some();
+                    let use_bridge = !has_agent && state2.anthropic_api_key.is_some();
 
                     if use_bridge {
                         let api_key = state2.anthropic_api_key.clone().unwrap();
@@ -185,7 +200,9 @@ async fn handle_chat_ws(
                         });
                     } else {
                         // Forward as a broadcast so the agent (or agent bridge) can pick it up
-                        let target = agent_id.unwrap_or_else(|| "broadcast".to_string());
+                        let target = agent_id
+                            .or_else(|| registered_agent_id.clone())
+                            .unwrap_or_else(|| "broadcast".to_string());
                         let _ = state2.ws_tx.send(WsEnvelope {
                             topic: format!("agent:{}:input", target),
                             event: "chat_message".to_string(),
@@ -197,10 +214,36 @@ async fn handle_chat_ws(
                     }
                 }
                 ChatInbound::ConnectAgent { agent_id } => {
+                    registered_agent_id = Some(agent_id.clone());
                     let _ = state2.ws_tx.send(WsEnvelope {
                         topic: format!("chat:{}:control", session_id),
                         event: "agent_connected".to_string(),
                         data: json!({ "agentId": agent_id }),
+                    });
+                }
+                ChatInbound::AgentRegister {
+                    agent_id,
+                    agent_name,
+                    project_dir,
+                } => {
+                    // Store the agent_id for this session so we can notify on disconnect
+                    registered_agent_id = Some(agent_id.clone());
+                    tracing::info!(
+                        agent_id = %agent_id,
+                        agent_name = %agent_name,
+                        project_dir = %project_dir,
+                        "Agent registered on chat session {}",
+                        session_id
+                    );
+                    // Broadcast agent_connected so browser clients know
+                    let _ = state2.ws_tx.send(WsEnvelope {
+                        topic: format!("agent:{}:output", session_id),
+                        event: "agent_connected".to_string(),
+                        data: json!({
+                            "agentId": agent_id,
+                            "agentName": agent_name,
+                            "projectDir": project_dir,
+                        }),
                     });
                 }
                 ChatInbound::SpawnAgent {
@@ -242,6 +285,17 @@ async fn handle_chat_ws(
                     }
                 }
             }
+        }
+
+        // When the receive loop exits (WS closed), broadcast agent_disconnected
+        // if an agent was registered on this session
+        if let Some(agent_id) = registered_agent_id {
+            tracing::info!(agent_id = %agent_id, "Agent disconnected from chat session {}", session_id);
+            let _ = state2.ws_tx.send(WsEnvelope {
+                topic: format!("agent:{}:output", session_id),
+                event: "agent_disconnected".to_string(),
+                data: json!({ "agentId": agent_id }),
+            });
         }
     });
 

@@ -310,7 +310,8 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!(agent_id = %agent_id, hub = %hub_url, "Running in hub-managed mode");
 
         // Conversation state persists across turns
-        let mut conv_state = domain::ConversationState::new(system_prompt.clone());
+        let mut conv_state = domain::ConversationState::new(uuid::Uuid::new_v4().to_string());
+        conv_state.system_prompt = system_prompt.clone();
 
         loop {
             let msg = match hub_client.recv().await {
@@ -363,6 +364,18 @@ async fn main() -> anyhow::Result<()> {
                                         output_tokens: usage.output_tokens,
                                         total_input: usage.input_tokens as u64,
                                         total_output: usage.output_tokens as u64,
+                                    })
+                                }
+                                ConversationEvent::TurnComplete { .. } => {
+                                    Some(HubMessage::AgentStatus {
+                                        status: "idle".into(),
+                                        detail: String::new(),
+                                    })
+                                }
+                                ConversationEvent::Error(msg) => {
+                                    Some(HubMessage::AgentStatus {
+                                        status: "error".into(),
+                                        detail: msg.clone(),
                                     })
                                 }
                                 _ => None,

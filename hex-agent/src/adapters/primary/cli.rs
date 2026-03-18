@@ -60,6 +60,7 @@ impl CliAdapter {
             }
 
             // /plan triggers context reset — fresh window for planning
+            let plan_input: String;
             let input = if input.starts_with("/plan ") || input == "/plan" {
                 let plan_args = input.strip_prefix("/plan").unwrap_or("").trim();
                 match self.conversation.reset_context(&mut state, None).await {
@@ -77,11 +78,8 @@ impl CliAdapter {
                 if plan_args.is_empty() {
                     "You are now in planning mode. What would you like to plan?"
                 } else {
-                    // Leak is safe here — the string lives for the loop iteration
-                    // and the borrow checker needs a &str, not String
-                    Box::leak(format!(
-                        "Create a hex workplan for: {}", plan_args
-                    ).into_boxed_str()) as &str
+                    plan_input = format!("Create a hex workplan for: {}", plan_args);
+                    plan_input.as_str()
                 }
             } else {
                 input
