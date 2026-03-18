@@ -20,7 +20,10 @@ use adapters::secondary::rate_limiter::RateLimiterAdapter;
 use adapters::secondary::token_metrics::TokenMetricsAdapter;
 use adapters::secondary::haiku_preflight::{HaikuPreflightAdapter, NoopPreflight};
 use adapters::secondary::openai_compat::OpenAiCompatAdapter;
+use adapters::secondary::env_secrets::EnvSecretsAdapter;
+use adapters::secondary::hub_claim_secrets::{HubClaimSecretsAdapter, HubClaimConfig};
 use domain::{TokenBudget, tools::builtin_tools};
+use ports::secret_broker::SecretBrokerPort;
 use ports::skills::SkillLoaderPort;
 use ports::agents::AgentLoaderPort;
 use usecases::context_packer::ContextPacker;
@@ -175,41 +178,7 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Composition Root: wire adapters to ports ---
 
-    // Resolve API keys based on provider selection
     let provider = args.provider.to_lowercase();
-    let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
-    let minimax_key = std::env::var("MINIMAX_API_KEY").ok();
-
-    // Build the primary LLM adapter based on --provider
-    let anthropic: Arc<dyn ports::AnthropicPort> = match provider.as_str() {
-        "minimax" => {
-            let key = minimax_key.clone().unwrap_or_else(|| {
-                eprintln!("\x1b[31mError: MINIMAX_API_KEY environment variable not set\x1b[0m");
-                std::process::exit(1);
-            });
-            tracing::info!(model = "MiniMax-M2.5", "Using MiniMax provider");
-            Arc::new(OpenAiCompatAdapter::minimax(key))
-        }
-        "anthropic" => {
-            let key = anthropic_key.clone().unwrap_or_else(|| {
-                eprintln!("\x1b[31mError: ANTHROPIC_API_KEY environment variable not set\x1b[0m");
-                std::process::exit(1);
-            });
-            Arc::new(AnthropicAdapter::new(key, args.model.clone()))
-        }
-        _ => {
-            // "auto" — prefer Anthropic, fall back to MiniMax
-            if let Some(key) = anthropic_key.clone() {
-                Arc::new(AnthropicAdapter::new(key, args.model.clone()))
-            } else if let Some(key) = minimax_key.clone() {
-                tracing::info!("No ANTHROPIC_API_KEY — using MiniMax as primary provider");
-                Arc::new(OpenAiCompatAdapter::minimax(key))
-            } else {
-                eprintln!("\x1b[31mError: No API key found. Set ANTHROPIC_API_KEY or MINIMAX_API_KEY\x1b[0m");
-                std::process::exit(1);
-            }
-        }
-    };
     let context_mgr: Arc<dyn ports::ContextManagerPort> =
         Arc::new(ContextManagerAdapter::new());
     let tool_executor: Arc<dyn ports::ToolExecutorPort> =
@@ -243,6 +212,63 @@ async fn main() -> anyhow::Result<()> {
         reqwest::get(format!("{}/health", hub_url)).await.is_ok()
     } else {
         false
+    };
+
+    // --- Secret Broker: resolve API keys via hex secrets (ADR-026) ---
+    //
+    // Hub-connected agents claim secrets from hex-hub (one-shot HTTP).
+    // Standalone agents read from env vars (the original behavior).
+    // Either way, the composition root uses the same SecretBrokerPort interface.
+    let secrets: Arc<dyn SecretBrokerPort> = if hub_connected {
+        let hub_url = args.hub_url.as_deref().unwrap();
+        Arc::new(HubClaimSecretsAdapter::new(HubClaimConfig {
+            hub_url: hub_url.to_string(),
+            ..Default::default()
+        }))
+    } else {
+        Arc::new(EnvSecretsAdapter::new())
+    };
+
+    // Resolve API keys through the secret broker
+    let anthropic_key = secrets.resolve_secret("ANTHROPIC_API_KEY").await.ok();
+    let minimax_key = secrets.resolve_secret("MINIMAX_API_KEY").await.ok();
+
+    if anthropic_key.is_some() {
+        tracing::info!("Resolved ANTHROPIC_API_KEY via secrets broker");
+    }
+    if minimax_key.is_some() {
+        tracing::info!("Resolved MINIMAX_API_KEY via secrets broker");
+    }
+
+    // Build the primary LLM adapter based on --provider + resolved keys
+    let anthropic: Arc<dyn ports::AnthropicPort> = match provider.as_str() {
+        "minimax" => {
+            let key = minimax_key.clone().unwrap_or_else(|| {
+                eprintln!("\x1b[31mError: MINIMAX_API_KEY not found in secrets or environment\x1b[0m");
+                std::process::exit(1);
+            });
+            tracing::info!(model = "MiniMax-M2.5", "Using MiniMax provider");
+            Arc::new(OpenAiCompatAdapter::minimax(key))
+        }
+        "anthropic" => {
+            let key = anthropic_key.clone().unwrap_or_else(|| {
+                eprintln!("\x1b[31mError: ANTHROPIC_API_KEY not found in secrets or environment\x1b[0m");
+                std::process::exit(1);
+            });
+            Arc::new(AnthropicAdapter::new(key, args.model.clone()))
+        }
+        _ => {
+            // "auto" — prefer Anthropic, fall back to MiniMax
+            if let Some(key) = anthropic_key.clone() {
+                Arc::new(AnthropicAdapter::new(key, args.model.clone()))
+            } else if let Some(key) = minimax_key.clone() {
+                tracing::info!("No ANTHROPIC_API_KEY — using MiniMax as primary provider");
+                Arc::new(OpenAiCompatAdapter::minimax(key))
+            } else {
+                eprintln!("\x1b[31mError: No API key found. Register keys in hex-hub or set ANTHROPIC_API_KEY / MINIMAX_API_KEY\x1b[0m");
+                std::process::exit(1);
+            }
+        }
     };
 
     let (skills, agent_def) = if hub_connected {
