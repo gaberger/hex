@@ -4,7 +4,10 @@
 mod commands;
 mod tray;
 
+use commands::{HubState, SharedHubState};
 use hex_hub_core::HubConfig;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 
 fn main() {
@@ -22,15 +25,22 @@ fn main() {
 
     let token = std::env::var("HEX_DASHBOARD_TOKEN").ok();
 
+    // Create shared hub state for Tauri commands
+    let hub_state: SharedHubState = Arc::new(Mutex::new(HubState::new(port)));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
+        .manage(hub_state)
         .invoke_handler(tauri::generate_handler![
             commands::get_hub_status,
             commands::get_hub_version,
             commands::open_project,
+            commands::spawn_agent,
+            commands::kill_agent,
+            commands::list_agents,
         ])
         .setup(move |app| {
             // Set up system tray

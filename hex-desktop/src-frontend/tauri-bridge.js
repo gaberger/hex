@@ -17,6 +17,10 @@
       notify: function () {},
       getHubStatus: async function () { return null; },
       getVersion: async function () { return null; },
+      spawnAgent: async function () { return null; },
+      killAgent: async function () { return null; },
+      listAgents: async function () { return []; },
+      onAgentEvent: function () { return function () {}; },
     };
     return;
   }
@@ -62,6 +66,55 @@
         console.error('[hexNative] getVersion failed:', e);
         return null;
       }
+    },
+
+    /** Spawn an agent with the given definition in the specified project directory. */
+    spawnAgent: async function (definition, projectPath) {
+      try {
+        return await invoke('spawn_agent', { definition: definition, projectPath: projectPath });
+      } catch (e) {
+        console.error('[hexNative] spawnAgent failed:', e);
+        return null;
+      }
+    },
+
+    /** Kill a running agent by its ID. */
+    killAgent: async function (agentId) {
+      try {
+        return await invoke('kill_agent', { agentId: agentId });
+      } catch (e) {
+        console.error('[hexNative] killAgent failed:', e);
+        return null;
+      }
+    },
+
+    /** List all currently registered agents. */
+    listAgents: async function () {
+      try {
+        return await invoke('list_agents');
+      } catch (e) {
+        console.error('[hexNative] listAgents failed:', e);
+        return [];
+      }
+    },
+
+    /** Subscribe to agent lifecycle events. Returns an unlisten function. */
+    onAgentEvent: function (callback) {
+      if (window.__TAURI_INTERNALS__.event && window.__TAURI_INTERNALS__.event.listen) {
+        var unlisten = window.__TAURI_INTERNALS__.event.listen('agent-event', function (event) {
+          try {
+            callback(event.payload);
+          } catch (e) {
+            console.error('[hexNative] onAgentEvent callback error:', e);
+          }
+        });
+        // listen() returns a Promise<UnlistenFn>
+        return function () {
+          unlisten.then(function (fn) { fn(); });
+        };
+      }
+      console.warn('[hexNative] event.listen not available — agent events will not fire');
+      return function () {};
     },
   };
 
