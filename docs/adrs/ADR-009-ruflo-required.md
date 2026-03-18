@@ -1,6 +1,6 @@
 # ADR-009: Ruflo (claude-flow) as Required Dependency
 
-## Status: Accepted
+## Status: Superseded by ADR-027 (HexFlo)
 ## Date: 2026-03-15
 
 ## Context
