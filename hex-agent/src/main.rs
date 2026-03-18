@@ -164,16 +164,9 @@ async fn main() -> anyhow::Result<()> {
     // loaders (the original behavior). This is the hexagonal architecture
     // composition root pattern — same ports, different adapters.
 
-    // SpacetimeDB config is injected by hex-hub at spawn time via env vars.
-    // Agents don't resolve config themselves — that's the hub's responsibility.
-    // Per-module database names allow each loader to connect to its own DB.
-    let stdb_host = std::env::var("HEX_STDB_HOST").unwrap_or_default();
-    let stdb_skill_db = std::env::var("HEX_STDB_SKILL_DB")
-        .or_else(|_| std::env::var("HEX_STDB_DATABASE"))
-        .unwrap_or_default();
-    let stdb_agent_def_db = std::env::var("HEX_STDB_AGENT_DEF_DB")
-        .or_else(|_| std::env::var("HEX_STDB_DATABASE"))
-        .unwrap_or_default();
+    // SpacetimeDB config: check env vars first (injected by hub at spawn time),
+    // then fall back to ~/.hex/state.json for standalone agent execution.
+    let (stdb_host, stdb_skill_db, stdb_agent_def_db) = resolve_stdb_config();
 
     let hub_connected = if let Some(ref hub_url) = args.hub_url {
         // Probe hub health endpoint
@@ -531,4 +524,68 @@ async fn main() -> anyhow::Result<()> {
     cli.run().await?;
 
     Ok(())
+}
+
+/// Resolve SpacetimeDB connection config for the agent.
+///
+/// Priority:
+/// 1. Env vars injected by hex-hub at spawn time (`HEX_STDB_HOST`, per-module DB vars)
+/// 2. `~/.hex/state.json` config file (for standalone agent execution)
+/// 3. Empty strings (triggers REST fallback in the loaders)
+fn resolve_stdb_config() -> (String, String, String) {
+    let host_from_env = std::env::var("HEX_STDB_HOST").unwrap_or_default();
+
+    // If the hub injected a host, use env vars directly
+    if !host_from_env.is_empty() {
+        let skill_db = std::env::var("HEX_STDB_SKILL_DB")
+            .or_else(|_| std::env::var("HEX_STDB_DATABASE"))
+            .unwrap_or_default();
+        let agent_def_db = std::env::var("HEX_STDB_AGENT_DEF_DB")
+            .or_else(|_| std::env::var("HEX_STDB_DATABASE"))
+            .unwrap_or_default();
+        return (host_from_env, skill_db, agent_def_db);
+    }
+
+    // No env vars — try reading ~/.hex/state.json
+    if let Some(cfg) = load_hex_state_config() {
+        tracing::info!(host = %cfg.0, "SpacetimeDB config loaded from ~/.hex/state.json");
+        return cfg;
+    }
+
+    // No config found — loaders will fall back to REST
+    (String::new(), String::new(), String::new())
+}
+
+/// Read SpacetimeDB connection details from ~/.hex/state.json.
+fn load_hex_state_config() -> Option<(String, String, String)> {
+    let home = std::env::var("HOME").ok()?;
+    let path = std::path::PathBuf::from(home).join(".hex/state.json");
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+
+    let backend = json.get("backend")?.as_str()?;
+    if backend != "spacetimedb" {
+        return None;
+    }
+
+    let host = json.get("host")?.as_str()?.to_string();
+    if host.is_empty() {
+        return None;
+    }
+
+    // Per-module database names, falling back to the single "database" field
+    let default_db = json.get("database").and_then(|v| v.as_str()).unwrap_or("hex-nexus");
+    let skill_db = json
+        .get("skill_db")
+        .and_then(|v| v.as_str())
+        .unwrap_or("hex-skill-registry")
+        .to_string();
+    let agent_def_db = json
+        .get("agent_def_db")
+        .and_then(|v| v.as_str())
+        .unwrap_or("hex-agent-definition-registry")
+        .to_string();
+
+    let _ = default_db; // used for backwards compat when single-DB model returns
+    Some((host, skill_db, agent_def_db))
 }
