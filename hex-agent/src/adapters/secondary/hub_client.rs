@@ -46,7 +46,7 @@ impl HubClientPort for HubClientAdapter {
             hub_url.replacen("http", "ws", 1)
         };
 
-        let url = format!("{}/ws/agent?token={}", ws_url, auth_token);
+        let url = format!("{}/ws/chat?token={}", ws_url, auth_token);
 
         let (ws_stream, _response) = connect_async(&url)
             .await

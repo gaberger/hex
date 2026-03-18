@@ -49,6 +49,17 @@ pub enum HubMessage {
         summary: String,
         exit_code: i32,
     },
+    /// Hub welcome message (sent on WebSocket connect)
+    #[serde(rename = "connected")]
+    Connected {
+        #[serde(default)]
+        session_id: String,
+        #[serde(default)]
+        authenticated: bool,
+    },
+    /// Catch-all for unknown message types from the hub
+    #[serde(other)]
+    Unknown,
 }
 
 /// Port for communicating back to hex-hub.

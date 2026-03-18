@@ -146,36 +146,68 @@ async fn main() -> anyhow::Result<()> {
 
     let (skills, agent_def) = if hub_connected {
         let hub_url = args.hub_url.as_deref().unwrap();
-        tracing::info!(hub_url = %hub_url, "Using SpacetimeDB-backed adapters via hub");
 
-        // SpacetimeDB-backed skill loader
-        let skill_loader = SpacetimeSkillLoader::new(hub_url);
-        if let Err(e) = skill_loader.connect("", "").await {
-            tracing::warn!("SpacetimeDB skill sync failed, falling back: {}", e);
-        }
-        let skills = skill_loader.load(&[]).await.unwrap_or_default();
+        // Try SpacetimeDB-backed loaders first, fall back to filesystem
+        let skill_loader_st = SpacetimeSkillLoader::new(hub_url);
+        let st_skills_ok = skill_loader_st.connect("", "").await.is_ok();
+        let st_skills = if st_skills_ok {
+            skill_loader_st.load(&[]).await.unwrap_or_default()
+        } else {
+            Default::default()
+        };
 
-        // SpacetimeDB-backed agent loader
-        let agent_loader = SpacetimeAgentLoader::new(hub_url);
-        if let Err(e) = agent_loader.connect("", "").await {
-            tracing::warn!("SpacetimeDB agent sync failed, falling back: {}", e);
-        }
-        let agent_def = if let Some(agent_name) = &args.agent {
-            match agent_loader.load_by_name(&[], agent_name).await {
-                Ok(def) => {
-                    tracing::info!(agent = %def.name, "Loaded agent from hub");
-                    Some(def)
-                }
-                Err(e) => {
-                    tracing::warn!("Agent '{}' not found in hub: {}", agent_name, e);
-                    None
-                }
+        let agent_loader_st = SpacetimeAgentLoader::new(hub_url);
+        let st_agents_ok = agent_loader_st.connect("", "").await.is_ok();
+        let st_agent_def = if st_agents_ok {
+            if let Some(agent_name) = &args.agent {
+                agent_loader_st.load_by_name(&[], agent_name).await.ok()
+            } else {
+                None
             }
         } else {
             None
         };
 
-        (skills, agent_def)
+        // If SpacetimeDB didn't have what we need, fall back to filesystem
+        let use_fs = st_skills.skills.is_empty() || (args.agent.is_some() && st_agent_def.is_none());
+
+        if use_fs {
+            tracing::info!("Hub state APIs not available — loading skills/agents from filesystem");
+            let skill_loader = SkillLoaderAdapter::new();
+            let agent_loader = AgentLoaderAdapter::new();
+
+            let skill_dirs = vec![
+                format!("{}/.claude/skills", project_dir.display()),
+                format!("{}/skills", project_dir.display()),
+            ];
+            let skill_dir_refs: Vec<&str> = skill_dirs.iter().map(|s| s.as_str()).collect();
+            let skills = skill_loader.load(&skill_dir_refs).await.unwrap_or_default();
+
+            let agent_def = if let Some(agent_name) = &args.agent {
+                let agent_dirs = vec![
+                    format!("{}/.claude/agents", project_dir.display()),
+                    format!("{}/agents", project_dir.display()),
+                ];
+                let agent_dir_refs: Vec<&str> = agent_dirs.iter().map(|s| s.as_str()).collect();
+                match agent_loader.load_by_name(&agent_dir_refs, agent_name).await {
+                    Ok(def) => {
+                        tracing::info!(agent = %def.name, "Loaded agent from filesystem");
+                        Some(def)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Agent '{}' not found: {}", agent_name, e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            (skills, agent_def)
+        } else {
+            tracing::info!("Using SpacetimeDB-backed adapters via hub");
+            (st_skills, st_agent_def)
+        }
     } else {
         // Filesystem fallback — original behavior
         if args.hub_url.is_some() {
@@ -364,6 +396,9 @@ async fn main() -> anyhow::Result<()> {
                         })
                         .await
                         .ok();
+                }
+                HubMessage::Connected { session_id, .. } => {
+                    tracing::info!(session_id = %session_id, "Hub confirmed connection");
                 }
                 HubMessage::Done { .. } => {
                     tracing::info!("Hub requested shutdown");

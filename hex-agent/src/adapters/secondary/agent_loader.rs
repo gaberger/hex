@@ -28,43 +28,27 @@ impl AgentLoaderPort for AgentLoaderAdapter {
                 reason: e.to_string(),
             })?;
 
-            for entry in paths.flatten() {
-                let content =
-                    tokio::fs::read_to_string(&entry)
-                        .await
-                        .map_err(|e| AgentLoadError::ReadError {
-                            path: entry.display().to_string(),
-                            reason: e.to_string(),
-                        })?;
-
-                let agent: AgentDefinition =
-                    serde_yaml::from_str(&content).map_err(|e| AgentLoadError::ParseError {
-                        path: entry.display().to_string(),
-                        reason: e.to_string(),
-                    })?;
-
-                agents.push(agent);
-            }
-
-            // Also check .yaml extension
+            // Collect both .yml and .yaml files
             let pattern_yaml = format!("{}/**/*.yaml", dir);
-            if let Ok(paths) = glob::glob(&pattern_yaml) {
-                for entry in paths.flatten() {
-                    let content =
-                        tokio::fs::read_to_string(&entry)
-                            .await
-                            .map_err(|e| AgentLoadError::ReadError {
-                                path: entry.display().to_string(),
-                                reason: e.to_string(),
-                            })?;
+            let all_paths = paths.flatten().chain(
+                glob::glob(&pattern_yaml).into_iter().flatten().flatten()
+            );
 
-                    let agent: AgentDefinition = serde_yaml::from_str(&content)
-                        .map_err(|e| AgentLoadError::ParseError {
-                            path: entry.display().to_string(),
-                            reason: e.to_string(),
-                        })?;
+            for entry in all_paths {
+                let content = match tokio::fs::read_to_string(&entry).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::debug!("Skipping {}: {}", entry.display(), e);
+                        continue;
+                    }
+                };
 
-                    agents.push(agent);
+                match serde_yaml::from_str::<AgentDefinition>(&content) {
+                    Ok(agent) => agents.push(agent),
+                    Err(e) => {
+                        tracing::debug!("Skipping {}: {}", entry.display(), e);
+                        continue;
+                    }
                 }
             }
         }
