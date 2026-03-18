@@ -9,6 +9,7 @@ members = [
     "hook-registry",
     "agent-definition-registry",
     "secret-grant",
+    "hexflo-coordination",
 ]
 resolver = "2"
 
