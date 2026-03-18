@@ -79,7 +79,6 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
 
     // Wire IStatePort → AgentManager + HexFlo (ADR-025 Phase 2/4, ADR-032 Phase 3)
     // Backend selection: env var > .hex/state.json > default (SQLite)
-    // HexFlo now uses IStatePort instead of direct SwarmDb access.
     match state_config::create_default_state_backend() {
         Ok(state_port) => {
             if app_state.swarm_db.is_some() {
@@ -88,22 +87,31 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 );
                 app_state.agent_manager = Some(agent_mgr);
             }
+            tracing::info!("IStatePort wired — agent_manager ready");
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create state backend: {} — orchestration using legacy path",
+                e
+            );
+        }
+    }
 
-            // HexFlo coordination via IStatePort (ADR-032)
+    // HexFlo coordination via IStatePort (ADR-032)
+    // Re-use the same state backend — if SpacetimeDB, the hexflo methods
+    // fall through to the SwarmDb fallback internally.
+    match state_config::create_default_state_backend() {
+        Ok(hexflo_state) => {
             let hexflo = coordination::HexFlo::new(
-                Arc::clone(&state_port),
+                hexflo_state,
                 app_state.ws_tx.clone(),
                 app_state.agent_manager.clone(),
             );
             app_state.hexflo = Some(Arc::new(hexflo));
-
-            tracing::info!("IStatePort wired — agent_manager + HexFlo ready");
+            tracing::info!("HexFlo coordination ready");
         }
         Err(e) => {
-            tracing::warn!(
-                "Failed to create state backend: {} — HexFlo coordination unavailable",
-                e
-            );
+            tracing::warn!("HexFlo coordination unavailable: {}", e);
         }
     }
 

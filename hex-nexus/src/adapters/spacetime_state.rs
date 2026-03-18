@@ -56,8 +56,8 @@ mod real {
         config: SpacetimeConfig,
         event_tx: broadcast::Sender<StateEvent>,
         connected: RwLock<bool>,
-        // When generated bindings are available, this will hold:
-        // connection: RwLock<Option<DbConnection>>,
+        /// HTTP client for calling hexflo-coordination reducers via SpacetimeDB HTTP API.
+        http: reqwest::Client,
     }
 
     impl SpacetimeStateAdapter {
@@ -67,7 +67,53 @@ mod real {
                 config,
                 event_tx,
                 connected: RwLock::new(false),
+                http: reqwest::Client::new(),
             }
+        }
+
+        /// Call a SpacetimeDB reducer via the HTTP API.
+        /// POST {host}/database/call/{database}/{reducer}
+        async fn call_reducer(&self, reducer: &str, args: serde_json::Value) -> Result<serde_json::Value, StateError> {
+            let url = format!(
+                "{}/database/call/{}/{}",
+                self.config.host, self.config.database, reducer
+            );
+            let mut req = self.http.post(&url).json(&args);
+            if let Some(ref token) = self.config.auth_token {
+                if !token.is_empty() {
+                    req = req.header("Authorization", format!("Bearer {}", token));
+                }
+            }
+            let resp = req.send().await.map_err(|e| StateError::Connection(e.to_string()))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(StateError::Storage(format!("Reducer {} failed ({}): {}", reducer, status, body)));
+            }
+            resp.json().await.map_err(|e| StateError::Storage(e.to_string()))
+        }
+
+        /// Query a SpacetimeDB table via the HTTP API.
+        /// POST {host}/database/sql/{database} with SQL query
+        async fn query_table(&self, sql: &str) -> Result<Vec<serde_json::Value>, StateError> {
+            let url = format!(
+                "{}/database/sql/{}",
+                self.config.host, self.config.database
+            );
+            let mut req = self.http.post(&url).body(sql.to_string());
+            if let Some(ref token) = self.config.auth_token {
+                if !token.is_empty() {
+                    req = req.header("Authorization", format!("Bearer {}", token));
+                }
+            }
+            let resp = req.send().await.map_err(|e| StateError::Connection(e.to_string()))?;
+            if !resp.status().is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(StateError::Storage(format!("SQL query failed: {}", body)));
+            }
+            let body: serde_json::Value = resp.json().await.map_err(|e| StateError::Storage(e.to_string()))?;
+            // SpacetimeDB returns rows in a nested structure
+            Ok(body.as_array().cloned().unwrap_or_default())
         }
 
         /// Connect to SpacetimeDB and subscribe to all tables.
@@ -383,87 +429,135 @@ mod real {
             Err(Self::not_connected())
         }
 
-        // ── HexFlo Coordination ──────────────────────────
-        // Maps to: hexflo-coordination module
+        // ── HexFlo Coordination (via SpacetimeDB HTTP API) ──
+        // Calls hexflo-coordination module reducers directly.
 
-        async fn swarm_init(&self, _id: &str, _name: &str, _topology: &str, _project_id: &str) -> Result<(), StateError> {
-            // POST /api/swarms { id, name, topology, project_id }
-            Err(Self::not_connected())
+        async fn swarm_init(&self, id: &str, name: &str, topology: &str, project_id: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("swarm_init", serde_json::json!([id, name, topology, project_id, now])).await?;
+            Ok(())
         }
 
-        async fn swarm_complete(&self, _id: &str) -> Result<(), StateError> {
-            // PATCH /api/swarms/:id { status: "completed" }
-            Err(Self::not_connected())
+        async fn swarm_complete(&self, id: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("swarm_complete", serde_json::json!([id, now])).await?;
+            Ok(())
         }
 
-        async fn swarm_fail(&self, _id: &str, _reason: &str) -> Result<(), StateError> {
-            // PATCH /api/swarms/:id { status: "failed", reason }
-            Err(Self::not_connected())
+        async fn swarm_fail(&self, id: &str, reason: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("swarm_fail", serde_json::json!([id, reason, now])).await?;
+            Ok(())
         }
 
         async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError> {
-            // GET /api/swarms
-            Err(Self::not_connected())
+            let rows = self.query_table("SELECT * FROM swarm WHERE status = 'active'").await?;
+            Ok(rows.into_iter().filter_map(|r| {
+                Some(SwarmInfo {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    project_id: r.get("project_id")?.as_str()?.to_string(),
+                    name: r.get("name")?.as_str()?.to_string(),
+                    topology: r.get("topology")?.as_str()?.to_string(),
+                    status: r.get("status")?.as_str()?.to_string(),
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    updated_at: r.get("updated_at")?.as_str()?.to_string(),
+                })
+            }).collect())
         }
 
-        async fn swarm_task_create(&self, _id: &str, _swarm_id: &str, _title: &str) -> Result<(), StateError> {
-            // POST /api/swarms/:swarm_id/tasks { id, title }
-            Err(Self::not_connected())
+        async fn swarm_task_create(&self, id: &str, swarm_id: &str, title: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("task_create", serde_json::json!([id, swarm_id, title, now])).await?;
+            Ok(())
         }
 
-        async fn swarm_task_assign(&self, _task_id: &str, _agent_id: &str) -> Result<(), StateError> {
-            // PATCH /api/swarms/tasks/:task_id { agent_id }
-            Err(Self::not_connected())
+        async fn swarm_task_assign(&self, task_id: &str, agent_id: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("task_assign", serde_json::json!([task_id, agent_id, now])).await?;
+            Ok(())
         }
 
-        async fn swarm_task_complete(&self, _task_id: &str, _result: &str) -> Result<(), StateError> {
-            // PATCH /api/swarms/tasks/:task_id { status: "completed", result }
-            Err(Self::not_connected())
+        async fn swarm_task_complete(&self, task_id: &str, result: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("task_complete", serde_json::json!([task_id, result, now])).await?;
+            Ok(())
         }
 
-        async fn swarm_task_fail(&self, _task_id: &str, _reason: &str) -> Result<(), StateError> {
-            // PATCH /api/swarms/tasks/:task_id { status: "failed", reason }
-            Err(Self::not_connected())
+        async fn swarm_task_fail(&self, task_id: &str, reason: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("task_fail", serde_json::json!([task_id, reason, now])).await?;
+            Ok(())
         }
 
-        async fn swarm_task_list(&self, _swarm_id: Option<&str>) -> Result<Vec<SwarmTaskInfo>, StateError> {
-            // GET /api/swarms or GET /api/swarms/:swarm_id/tasks
-            Err(Self::not_connected())
+        async fn swarm_task_list(&self, swarm_id: Option<&str>) -> Result<Vec<SwarmTaskInfo>, StateError> {
+            let sql = match swarm_id {
+                Some(sid) => format!("SELECT * FROM swarm_task WHERE swarm_id = '{}'", sid),
+                None => "SELECT * FROM swarm_task".to_string(),
+            };
+            let rows = self.query_table(&sql).await?;
+            Ok(rows.into_iter().filter_map(|r| {
+                Some(SwarmTaskInfo {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    swarm_id: r.get("swarm_id")?.as_str()?.to_string(),
+                    title: r.get("title")?.as_str()?.to_string(),
+                    status: r.get("status")?.as_str()?.to_string(),
+                    agent_id: r.get("agent_id")?.as_str()?.to_string(),
+                    result: r.get("result")?.as_str()?.to_string(),
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    completed_at: r.get("completed_at")?.as_str()?.to_string(),
+                })
+            }).collect())
         }
 
-        async fn swarm_agent_register(&self, _id: &str, _swarm_id: &str, _name: &str, _role: &str, _worktree_path: &str) -> Result<(), StateError> {
-            // POST /api/swarms/:swarm_id/agents { id, name, role, worktree_path }
-            Err(Self::not_connected())
+        async fn swarm_agent_register(&self, id: &str, swarm_id: &str, name: &str, role: &str, worktree_path: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("agent_register", serde_json::json!([id, swarm_id, name, role, worktree_path, now])).await?;
+            Ok(())
         }
 
-        async fn swarm_agent_heartbeat(&self, _id: &str) -> Result<(), StateError> {
-            // POST /api/swarms/agents/:id/heartbeat
-            Err(Self::not_connected())
+        async fn swarm_agent_heartbeat(&self, id: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("agent_heartbeat", serde_json::json!([id, now])).await?;
+            Ok(())
         }
 
-        async fn swarm_agent_remove(&self, _id: &str) -> Result<(), StateError> {
-            // DELETE /api/swarms/agents/:id
-            Err(Self::not_connected())
+        async fn swarm_agent_remove(&self, id: &str) -> Result<(), StateError> {
+            self.call_reducer("agent_remove", serde_json::json!([id])).await?;
+            Ok(())
         }
 
         async fn swarm_cleanup_stale(&self, _stale_secs: u64, _dead_secs: u64) -> Result<CleanupReport, StateError> {
-            // POST /api/hexflo/cleanup { stale_secs, dead_secs }
-            Err(Self::not_connected())
+            let stale_cutoff = (chrono::Utc::now() - chrono::Duration::seconds(_stale_secs as i64)).to_rfc3339();
+            let dead_cutoff = (chrono::Utc::now() - chrono::Duration::seconds(_dead_secs as i64)).to_rfc3339();
+            self.call_reducer("agent_mark_stale", serde_json::json!([stale_cutoff])).await?;
+            self.call_reducer("agent_mark_dead", serde_json::json!([dead_cutoff])).await?;
+            // SpacetimeDB doesn't return affected row counts from reducers,
+            // so we report zeros and let the caller query if needed.
+            Ok(CleanupReport { stale_count: 0, dead_count: 0, reclaimed_tasks: 0 })
         }
 
-        async fn hexflo_memory_store(&self, _key: &str, _value: &str, _scope: &str) -> Result<(), StateError> {
-            // POST /api/hexflo/memory { key, value, scope }
-            Err(Self::not_connected())
+        async fn hexflo_memory_store(&self, key: &str, value: &str, scope: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("memory_store", serde_json::json!([key, value, scope, now])).await?;
+            Ok(())
         }
 
-        async fn hexflo_memory_retrieve(&self, _key: &str) -> Result<Option<String>, StateError> {
-            // GET /api/hexflo/memory/:key
-            Err(Self::not_connected())
+        async fn hexflo_memory_retrieve(&self, key: &str) -> Result<Option<String>, StateError> {
+            let rows = self.query_table(&format!("SELECT value FROM hexflo_memory WHERE key = '{}'", key)).await?;
+            Ok(rows.first().and_then(|r| r.get("value")?.as_str().map(String::from)))
         }
 
-        async fn hexflo_memory_search(&self, _query: &str) -> Result<Vec<(String, String)>, StateError> {
-            // GET /api/hexflo/memory/search?q=query
-            Err(Self::not_connected())
+        async fn hexflo_memory_search(&self, query: &str) -> Result<Vec<(String, String)>, StateError> {
+            let sql = format!(
+                "SELECT key, value FROM hexflo_memory WHERE key LIKE '%{}%' OR value LIKE '%{}%'",
+                query, query
+            );
+            let rows = self.query_table(&sql).await?;
+            Ok(rows.into_iter().filter_map(|r| {
+                let k = r.get("key")?.as_str()?.to_string();
+                let v = r.get("value")?.as_str()?.to_string();
+                Some((k, v))
+            }).collect())
         }
 
         async fn hexflo_memory_delete(&self, _key: &str) -> Result<(), StateError> {
