@@ -6,6 +6,7 @@
       "name": "hex-intf",
       "dependencies": {
         "@claude-flow/cli": "^3.5.15",
+        "ruflo": "^3.5.25",
         "tree-sitter-wasms": "^0.1.13",
         "web-tree-sitter": "0.25.10",
         "ws": "^8.19.0",
@@ -1185,6 +1186,8 @@
     "rimraf": ["rimraf@5.0.10", "", { "dependencies": { "glob": "^10.3.7" }, "bin": { "rimraf": "dist/esm/bin.mjs" } }, "sha512-l0OE8wL34P4nJH/H2ffoaniAokM2qSmrtXHmlpvYr5AVVX8msAyW0l8NVJFDxlSK4u3Uh/f41cQheDVdnYijwQ=="],
 
     "router": ["router@2.2.0", "", { "dependencies": { "debug": "^4.4.0", "depd": "^2.0.0", "is-promise": "^4.0.0", "parseurl": "^1.3.3", "path-to-regexp": "^8.0.0" } }, "sha512-nLTrUKm2UyiL7rlhapu/Zl45FwNgkZGaCpZbIHajDYgwlJCOzLSk+cIPAnsEqV955GjILJnKbdQC1nVPz+gAYQ=="],
+
+    "ruflo": ["ruflo@3.5.25", "", { "dependencies": { "@claude-flow/cli": ">=3.0.0-alpha.1" }, "bin": { "ruflo": "bin/ruflo.js" } }, "sha512-EPO/zd2R5PfOOsNra3v+M5BS0a/50XIlDO98SF9W0YOEb5EJuSRH0sDA5z8bvs7mFKFLLC9BFBVgaTV6jLgtIA=="],
 
     "run-async": ["run-async@3.0.0", "", {}, "sha512-540WwVDOMxA6dN6We19EcT9sc3hkXPw5mzRNGM3FkdN/vtE9NFvj5lFAPNwUDmJjXidm3v7TC1cTE7t17Ulm1Q=="],
 

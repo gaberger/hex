@@ -61,6 +61,19 @@ if [ -n "$GO_STAGED" ]; then
   fi
 fi
 
+# ── Pattern check: nullable-but-always-initialized anti-pattern ──
+echo "⬡ hex pre-commit: checking for learned anti-patterns..."
+if command -v bun &>/dev/null; then
+  if [ -f "scripts/hooks/pattern-detector.ts" ]; then
+    bun scripts/hooks/pattern-detector.ts || {
+      echo "  ⬡ BLOCKED: pattern violations detected — fix before committing"
+      exit 1
+    }
+  fi
+else
+  echo "  ⬡ WARNING: bun not found — skipping pattern detection"
+fi
+
 echo "⬡ hex pre-commit: checking architecture boundaries..."
 
 # Run analysis in JSON mode
