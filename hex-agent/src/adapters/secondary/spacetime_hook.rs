@@ -117,6 +117,11 @@ mod real {
         /// If the connection fails or the subscription does not apply within 5s,
         /// seeds the cache from REST as a fallback.
         pub async fn connect(&self, host: &str, database: &str) -> Result<(), HookError> {
+            // Guard: empty URI causes SDK panic — fall back to REST
+            if host.is_empty() || database.is_empty() {
+                tracing::info!("SpacetimeDB hook runner: no host/database configured, using REST fallback");
+                return Ok(());
+            }
             let cache = Arc::clone(&self.cache);
             let subscribed = Arc::clone(&self.subscribed);
 

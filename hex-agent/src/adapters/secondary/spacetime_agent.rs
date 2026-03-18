@@ -142,6 +142,12 @@ mod real {
         ///
         /// If connection fails, falls back to REST and logs a warning.
         pub async fn connect(&self, host: &str, database: &str) -> Result<(), AgentLoadError> {
+            // Guard: empty URI causes SDK panic — fall back to REST
+            if host.is_empty() || database.is_empty() {
+                tracing::info!("SpacetimeDB agent loader: no host/database configured, using REST fallback");
+                return Ok(());
+            }
+
             let cache = self.cache.clone();
             let subscribed = self.subscribed.clone();
 
