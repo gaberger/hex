@@ -946,4 +946,124 @@ describe('DashboardAdapter', () => {
       result.close();
     });
   });
+
+  // ── run-plan command handler ───────────────────────
+
+  describe('run-plan command handler', () => {
+    async function sendCommand(adapter: DashboardAdapter, type: string, payload: Record<string, unknown>) {
+      // Wait for WS connection to establish and handlers to register
+      await new Promise((r) => setTimeout(r, 20));
+
+      const command = {
+        event: 'command',
+        data: {
+          commandId: `cmd-plan-${Date.now()}`,
+          projectId: 'proj-123',
+          type,
+          payload,
+          issuedAt: new Date().toISOString(),
+          source: 'browser',
+        },
+      };
+      latestWs!.emit('message', Buffer.from(JSON.stringify(command)));
+      await new Promise((r) => setTimeout(r, 50));
+      return command.data.commandId;
+    }
+
+    it('dispatches run-plan and returns completed result with plan output', async () => {
+      const ctx = makeCtx({
+        workplanExecutor: {
+          async createPlan() {
+            return {
+              id: 'wp-test', title: 'Test Plan', estimatedTokenBudget: 4000,
+              steps: [
+                { id: 's1', description: 'Add port', adapter: 'ports', dependencies: [] },
+                { id: 's2', description: 'Add adapter', adapter: 'secondary/db', dependencies: ['s1'] },
+              ],
+            };
+          },
+          async *executePlan() {},
+        },
+      });
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
+      await adapter.start();
+
+      const cmdId = await sendCommand(adapter, 'run-plan', { requirements: 'Add database support' });
+
+      const resultReq = httpRequests.find((r) => r.path.includes(`/command/${cmdId}/result`));
+      expect(resultReq).toBeTruthy();
+      expect((resultReq!.body as any).status).toBe('completed');
+      expect((resultReq!.body as any).data.planId).toBe('wp-test');
+      expect((resultReq!.body as any).data.title).toBe('Test Plan');
+      expect((resultReq!.body as any).data.steps).toBe(2);
+      expect((resultReq!.body as any).data.output).toContain('Add port');
+
+      adapter.stop();
+    });
+
+    it('broadcasts plan-started and plan-output events via /api/event', async () => {
+      const ctx = makeCtx({
+        workplanExecutor: {
+          async createPlan() {
+            return {
+              id: 'wp-ev', title: 'Event Plan', estimatedTokenBudget: 2000,
+              steps: [{ id: 's1', description: 'Add port', adapter: 'ports', dependencies: [] }],
+            };
+          },
+          async *executePlan() {},
+        },
+      });
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
+      await adapter.start();
+
+      await sendCommand(adapter, 'run-plan', { requirements: 'Add events' });
+
+      // Check that plan events were pushed via /api/event
+      const eventReqs = httpRequests.filter((r) => r.path === '/api/event');
+      const planStarted = eventReqs.find((r) => (r.body as any).event === 'plan-started');
+      const planOutput = eventReqs.find((r) => (r.body as any).event === 'plan-output');
+
+      expect(planStarted).toBeTruthy();
+      expect((planStarted!.body as any).data.requirements).toEqual(['Add events']);
+      expect(planOutput).toBeTruthy();
+      expect((planOutput!.body as any).data.title).toBe('Event Plan');
+
+      adapter.stop();
+    });
+
+    it('returns failed result when requirements are missing', async () => {
+      const ctx = makeCtx();
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
+      await adapter.start();
+
+      const cmdId = await sendCommand(adapter, 'run-plan', {});
+
+      const resultReq = httpRequests.find((r) => r.path.includes(`/command/${cmdId}/result`));
+      expect(resultReq).toBeTruthy();
+      expect((resultReq!.body as any).status).toBe('failed');
+      expect((resultReq!.body as any).error).toContain('Missing required payload');
+
+      adapter.stop();
+    });
+
+    it('falls back to structural decomposition without workplanExecutor', async () => {
+      const ctx = makeCtx({ workplanExecutor: null });
+      const deps = makeDeps();
+      const adapter = new DashboardAdapter(ctx, 9999, deps);
+      await adapter.start();
+
+      const cmdId = await sendCommand(adapter, 'run-plan', { requirements: 'Add auth, Add cache' });
+
+      const resultReq = httpRequests.find((r) => r.path.includes(`/command/${cmdId}/result`));
+      expect(resultReq).toBeTruthy();
+      expect((resultReq!.body as any).status).toBe('completed');
+      expect((resultReq!.body as any).data.output).toContain('step-1');
+      expect((resultReq!.body as any).data.output).toContain('step-2');
+
+      adapter.stop();
+    });
+  });
 });

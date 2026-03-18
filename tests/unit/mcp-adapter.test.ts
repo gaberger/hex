@@ -302,6 +302,77 @@ describe('MCPAdapter', () => {
     expect(result.content[0].text).toContain('Add auth port');
   });
 
+  // ── Plan → WebSocket Broadcast ──
+
+  it('hex_plan broadcasts plan-started, plan-progress, plan-output events (no executor)', async () => {
+    const events: Array<{ event: string; data: unknown }> = [];
+    const ctx = createCtx();
+    ctx.broadcastEvent = (event: string, data: unknown) => {
+      events.push({ event, data });
+    };
+    const adapterWithBroadcast = new MCPAdapter(ctx);
+    await adapterWithBroadcast.handleToolCall({
+      name: 'hex_plan',
+      arguments: { requirements: 'Add caching' },
+    });
+
+    expect(events.length).toBe(3);
+    expect(events[0].event).toBe('plan-started');
+    expect((events[0].data as any).requirements).toEqual(['Add caching']);
+    expect(events[1].event).toBe('plan-progress');
+    expect((events[1].data as any).phase).toBe('structural');
+    expect(events[2].event).toBe('plan-output');
+    expect((events[2].data as any).output).toContain('WORKPLAN');
+    expect((events[2].data as any).title).toBe('Structural Workplan');
+  });
+
+  it('hex_plan broadcasts plan events with LLM executor', async () => {
+    const events: Array<{ event: string; data: unknown }> = [];
+    const ctx = createCtx();
+    ctx.broadcastEvent = (event: string, data: unknown) => {
+      events.push({ event, data });
+    };
+    ctx.workplanExecutor = {
+      async createPlan() {
+        return {
+          id: 'wp-2', title: 'Cache Plan', estimatedTokenBudget: 3000,
+          steps: [
+            { id: 's1', description: 'Add cache port', adapter: 'ports', dependencies: [] },
+            { id: 's2', description: 'Redis adapter', adapter: 'secondary/redis', dependencies: ['s1'] },
+          ],
+        };
+      },
+      async *executePlan() {},
+    };
+    const adapterWithBroadcast = new MCPAdapter(ctx);
+    await adapterWithBroadcast.handleToolCall({
+      name: 'hex_plan',
+      arguments: { requirements: 'Add caching' },
+    });
+
+    expect(events.length).toBe(3);
+    expect(events[0].event).toBe('plan-started');
+    expect(events[1].event).toBe('plan-progress');
+    expect((events[1].data as any).phase).toBe('llm');
+    expect(events[2].event).toBe('plan-output');
+    expect((events[2].data as any).planId).toBe('wp-2');
+    expect((events[2].data as any).stepCount).toBe(2);
+    expect((events[2].data as any).output).toContain('Cache Plan');
+    expect((events[2].data as any).output).toContain('Redis adapter');
+  });
+
+  it('hex_plan works without broadcastEvent (graceful degradation)', async () => {
+    const ctx = createCtx();
+    // No broadcastEvent set — should not throw
+    const adapterNoBroadcast = new MCPAdapter(ctx);
+    const result = await adapterNoBroadcast.handleToolCall({
+      name: 'hex_plan',
+      arguments: { requirements: 'Add logging' },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('WORKPLAN');
+  });
+
   it('hex_analyze_json returns raw JSON', async () => {
     const result = await adapter.handleToolCall({
       name: 'hex_analyze_json',

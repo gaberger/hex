@@ -26,6 +26,7 @@ export type HubCommandType =
   | 'run-generate'
   | 'run-summarize'
   | 'run-claude'
+  | 'run-plan'
   | 'ping';
 
 // ─── Command Payloads ───────────────────────────────────

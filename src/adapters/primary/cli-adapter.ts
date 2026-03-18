@@ -25,6 +25,7 @@ import {
   didYouMean, elapsed, setColorEnabled, setUnicodeEnabled,
   error as errorColor, warn, accent, glyph, hr,
 } from './cli-fmt.js';
+import { request } from 'node:http';
 import { ProgressReporter } from './progress-reporter.js';
 
 /** Colorize a plain-text architecture report with ANSI colors.
@@ -658,7 +659,7 @@ export class CLIAdapter {
     if (!this.ctx.hubLauncher) { this.writeLn('hex-hub not available'); return 1; }
     const launcher = this.ctx.hubLauncher;
 
-    // Ensure hex-hub is running
+    // Ensure hex-hub (Rust binary) is running — it IS the dashboard
     if (!(await launcher.isRunning())) {
       try {
         const result = await launcher.start();
@@ -670,18 +671,42 @@ export class CLIAdapter {
       }
     }
 
-    // Register project AND push all data (health, tokens, swarm, graph)
+    // Register + push lightweight data (health, swarm, graph) + listen for commands.
+    // Skips pushTokens() which OOMs on large projects (parses every file with tree-sitter).
     try {
       const { DashboardAdapter } = await import('./dashboard-adapter.js');
       const adapter = new DashboardAdapter(this.ctx);
-      this.writeLn('Registering project and pushing architecture data...');
+      this.writeLn('Registering project with hex-hub...');
 
-      const { url } = await adapter.startAndPushOnce();
-      this.writeLn(`Dashboard: ${url}`);
-      this.writeLn('Data pushed. Listening for commands... (Ctrl+C to stop)');
+      const hubUrl = `http://localhost:${5555}`;
+      const name = this.ctx.rootPath.split('/').pop() ?? 'unknown';
+      const regResult = await (adapter as any).post('/api/projects/register', {
+        name,
+        rootPath: this.ctx.rootPath,
+        astIsStub: this.ctx.astIsStub,
+      });
 
-      // Register a coordination instance so the dashboard's Coordination panel is populated.
-      // Uses the same hub-assigned project ID that the DashboardAdapter registered.
+      if (!regResult || !regResult.id) {
+        throw new Error('Hub registration failed');
+      }
+
+      (adapter as any).projectId = regResult.id;
+      this.writeLn(`Dashboard: ${hubUrl}`);
+      this.writeLn(`Project registered: ${regResult.id}`);
+
+      // Push lightweight data (health, swarm, graph) — skip tokens (OOM risk)
+      await Promise.allSettled([
+        (adapter as any).pushHealth(),
+        (adapter as any).pushSwarm(),
+        (adapter as any).pushGraph(),
+      ]);
+      this.writeLn('Project data pushed (health, swarm, graph)');
+
+      // Start WS command listener (lightweight — handles run-plan, run-analyze, etc.)
+      await adapter.startListening();
+      this.writeLn('Listening for commands... (Ctrl+C to stop)');
+
+      // Register coordination instance (non-critical)
       let coordCleanup: (() => void) | null = null;
       if (adapter.projectId && this.ctx.createCoordination) {
         try {
@@ -690,12 +715,11 @@ export class CLIAdapter {
           coordCleanup = () => coord.stop();
           this.writeLn(`[coordination] Instance ${instanceId.slice(0, 8)}… registered`);
         } catch {
-          // Non-critical — dashboard works without coordination
+          // Non-critical
         }
       }
 
-      // Keep process alive to handle WebSocket commands from the hub.
-      // Use setInterval (not bare Promise) — Bun busy-waits on unresolved promises.
+      // Keep process alive for WS command dispatch only
       await new Promise<void>((resolve) => {
         const keepAlive = setInterval(() => {}, 60_000);
         const onSignal = () => { clearInterval(keepAlive); coordCleanup?.(); adapter.stop(); resolve(); };
@@ -704,8 +728,8 @@ export class CLIAdapter {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.writeLn(`Dashboard data push failed: ${msg}`);
-      this.writeLn('Dashboard: http://127.0.0.1:5555 (connected without data)');
+      this.writeLn(`Registration failed: ${msg}`);
+      this.writeLn('Dashboard: http://127.0.0.1:5555 (hub running without project data)');
     }
 
     return 0;
@@ -913,6 +937,30 @@ export class CLIAdapter {
     return 0;
   }
 
+  // ── Hub broadcast helper ────────────────────────────
+
+  /**
+   * Creates a lightweight event broadcaster that POSTs to the hex-hub
+   * /api/event endpoint. This avoids cross-adapter imports — just raw HTTP.
+   */
+  private createHubBroadcast(): ((event: string, data: unknown) => void) | undefined {
+    const projectId = this.ctx.rootPath.split('/').pop() ?? 'unknown';
+    const hubPort = 5555;
+
+    return (event: string, data: unknown) => {
+      const payload = JSON.stringify({ projectId, event, data });
+      const req = request(
+        { hostname: '127.0.0.1', port: hubPort, path: '/api/event', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+          timeout: 2000 },
+        (res) => { res.resume(); },
+      );
+      req.on('error', () => {});
+      req.on('timeout', () => { req.destroy(); });
+      req.end(payload);
+    };
+  }
+
   // ── mcp ────────────────────────────────────────────
   // Starts hex as a stdio MCP server so any project can use it:
   //   npx hex mcp
@@ -921,6 +969,10 @@ export class CLIAdapter {
 
   private async mcp(): Promise<number> {
     const { MCPAdapter } = await import('./mcp-adapter.js');
+
+    // Wire broadcastEvent so plan output is mirrored to hex-hub chat via WS.
+    // Uses a lightweight HTTP POST to the hub — no cross-adapter import needed.
+    const hubBroadcast = this.createHubBroadcast();
 
     const adapter = new MCPAdapter({
       archAnalyzer: this.ctx.archAnalyzer,
@@ -932,6 +984,7 @@ export class CLIAdapter {
       scaffold: this.ctx.scaffold,
       createDashboard: this.ctx.createDashboard,
       adrQuery: this.ctx.adrQuery,
+      broadcastEvent: hubBroadcast,
     });
 
     const hexTools = adapter.getTools();

@@ -14,7 +14,7 @@
 import { classifyLayer, isAllowedImport, getViolationRule } from './layer-classifier.js';
 import type { DependencyDirection, DependencyViolation } from '../domain/value-objects.js';
 
-interface PlannedImport {
+export interface PlannedImport {
   /** The file being written (e.g., "src/adapters/primary/http-adapter.ts") */
   fromFile: string;
   /** The import target (e.g., "../../../core/domain/entities.js") */
@@ -23,7 +23,7 @@ interface PlannedImport {
   names: string[];
 }
 
-interface BoundaryCheckResult {
+export interface BoundaryCheckResult {
   valid: boolean;
   violations: DependencyViolation[];
   warnings: string[];
@@ -32,9 +32,8 @@ interface BoundaryCheckResult {
 /**
  * Check a single planned import against hex boundary rules.
  * Returns null if allowed, or a DependencyViolation if forbidden.
- * (Internal helper - not part of public API)
  */
-function checkImport(fromFile: string, toFile: string, _names: string[]): DependencyViolation | null {
+export function checkImport(fromFile: string, toFile: string, _names: string[]): DependencyViolation | null {
   const fromLayer = classifyLayer(fromFile);
   const toLayer = classifyLayer(toFile);
 
@@ -58,6 +57,58 @@ function checkImport(fromFile: string, toFile: string, _names: string[]): Depend
   };
 }
 
-// NOTE: validatePlannedImports and allowedImportsFor were removed as unused.
-// They were planned for the hex-coder agent's pre-generation validation but never implemented.
-// If needed in the future, the logic exists in checkImport() above and layer-classifier.ts.
+/**
+ * Validate all planned imports for a file against hex boundary rules.
+ * Returns a result with violations and warnings.
+ */
+export function validatePlannedImports(_fromFile: string, imports: PlannedImport[]): BoundaryCheckResult {
+  const violations: DependencyViolation[] = [];
+  const warnings: string[] = [];
+
+  for (const imp of imports) {
+    const violation = checkImport(imp.fromFile, imp.toFile, imp.names);
+    if (violation) {
+      violations.push(violation);
+      // Adapter→domain is a particularly common mistake — add a warning
+      if (violation.fromLayer.startsWith('adapters/') && violation.toLayer === 'domain') {
+        warnings.push(
+          `${violation.fromLayer} imports domain directly (${imp.names.join(', ')}). ` +
+          `Import from ports instead to keep adapter decoupled.`,
+        );
+      }
+    }
+  }
+
+  return {
+    valid: violations.length === 0,
+    violations,
+    warnings,
+  };
+}
+
+/**
+ * Returns the list of layer names that the given file is allowed to import from.
+ * Includes the file's own layer (same-layer imports are always valid).
+ */
+export function allowedImportsFor(filePath: string): string[] {
+  const layer = classifyLayer(filePath);
+  if (layer === 'unknown') return [];
+
+  const allLayers: DependencyDirection[] = [
+    'domain', 'ports', 'usecases',
+    'adapters/primary', 'adapters/secondary',
+    'infrastructure',
+  ];
+
+  const allowed: string[] = [];
+  for (const target of allLayers) {
+    if (layer === target) {
+      // Same-layer imports are always allowed
+      allowed.push(target);
+    } else if (isAllowedImport(layer as DependencyDirection, target)) {
+      allowed.push(target);
+    }
+  }
+
+  return allowed;
+}

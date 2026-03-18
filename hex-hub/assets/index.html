@@ -2260,6 +2260,28 @@ a:hover{opacity:.85}
       return;
     }
 
+    // Plan output events — mirror to chat window
+    if (event === 'plan-started') {
+      var planMsg = '⬡ Plan started — ' + (data.requirements || []).join(', ');
+      chatAddMessage('system', planMsg, data.project || state.currentProject);
+      addEvent({ level: 'info', message: planMsg, timestamp: data.timestamp || Date.now() });
+      return;
+    }
+    if (event === 'plan-progress') {
+      chatAddMessage('system', '⏳ ' + (data.message || data.phase || 'working…'), data.project || state.currentProject);
+      return;
+    }
+    if (event === 'plan-output') {
+      var title = data.title || 'Workplan';
+      var header = '✓ ' + title;
+      if (data.stepCount) header += ' (' + data.stepCount + ' steps)';
+      var body = data.output || '';
+      if (body.length > 3000) body = body.slice(0, 3000) + '\n… (truncated)';
+      chatAddMessage('received', header + '\n' + body, data.project || state.currentProject);
+      addEvent({ level: 'success', message: 'Plan generated: ' + title, timestamp: data.timestamp || Date.now() });
+      return;
+    }
+
     // Notification-level events (info, success, warning, error, milestone, etc.)
     var notificationLevels = { trace:1, info:1, success:1, warning:1, error:1, decision:1, milestone:1 };
     if (notificationLevels[event]) {
@@ -2474,6 +2496,7 @@ a:hover{opacity:.85}
     'validate':  'run-validate',
     'generate':  'run-generate',
     'claude':    'run-claude',
+    'plan':      'run-plan',
     'status':    'ping',
     'ping':      'ping',
   };
@@ -2504,8 +2527,11 @@ a:hover{opacity:.85}
     }
 
     var payload = {};
+    // run-plan: treat entire rest as the requirements string
+    if (type === 'run-plan' && rest && rest.charAt(0) !== '{') {
+      payload = { requirements: rest };
     // run-claude: treat entire rest as the prompt string
-    if (type === 'run-claude' && rest && rest.charAt(0) !== '{') {
+    } else if (type === 'run-claude' && rest && rest.charAt(0) !== '{') {
       payload = { prompt: rest };
     } else if (rest.charAt(0) === '{') {
       try { payload = JSON.parse(rest); } catch(e) { /* treat as empty */ }

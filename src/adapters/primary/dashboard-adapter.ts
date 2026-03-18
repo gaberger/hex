@@ -376,7 +376,7 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
   // ── Default command handlers ──────────────────────
 
   private registerDefaultHandlers(): void {
-    this.log(`registering ${['ping','spawn-agent','terminate-agent','create-task','cancel-task','run-analyze','run-build','run-validate','run-generate','run-claude','run-summarize'].length} command handlers (including run-claude)`);
+    this.log(`registering ${['ping','spawn-agent','terminate-agent','create-task','cancel-task','run-analyze','run-build','run-validate','run-generate','run-claude','run-summarize','run-plan'].length} command handlers`);
 
     this.onCommand('ping', async (cmd) => ({
       commandId: cmd.commandId,
@@ -583,6 +583,94 @@ export class DashboardAdapter implements IHubCommandReceiverPort {
         commandId: cmd.commandId,
         status: 'completed',
         data: { files: summaries.length, summaries },
+        completedAt: new Date().toISOString(),
+      };
+    });
+
+    this.onCommand('run-plan', async (cmd) => {
+      const p = cmd.payload as { requirements?: string; language?: string };
+      if (!p.requirements) {
+        return {
+          commandId: cmd.commandId,
+          status: 'failed',
+          error: 'Missing required payload: requirements (e.g. run-plan "add user auth")',
+          completedAt: new Date().toISOString(),
+        };
+      }
+
+      const lang = (p.language ?? 'typescript') as import('../../core/ports/index.js').Language;
+      const reqList = p.requirements.split(/[,\n]/).map((r: string) => r.trim()).filter(Boolean);
+
+      // Broadcast plan-started event to chat
+      void this.pushEvent('plan-started', {
+        requirements: reqList,
+        language: lang,
+        commandId: cmd.commandId,
+        timestamp: Date.now(),
+      });
+
+      if (!this.ctx.workplanExecutor) {
+        // No LLM — return structural decomposition
+        void this.pushEvent('plan-progress', {
+          phase: 'structural',
+          message: 'Decomposing structurally (no LLM configured)…',
+          timestamp: Date.now(),
+        });
+
+        const output = reqList.map((r: string, i: number) =>
+          `[step-${i + 1}] ${r}`
+        ).join('\n');
+
+        void this.pushEvent('plan-output', {
+          planId: null,
+          title: 'Structural Workplan',
+          stepCount: reqList.length,
+          output,
+          timestamp: Date.now(),
+        });
+
+        return {
+          commandId: cmd.commandId,
+          status: 'completed',
+          data: { output },
+          completedAt: new Date().toISOString(),
+        };
+      }
+
+      void this.pushEvent('plan-progress', {
+        phase: 'llm',
+        message: 'Generating workplan via LLM…',
+        timestamp: Date.now(),
+      });
+
+      const workplan = await this.ctx.workplanExecutor.createPlan(reqList, lang);
+
+      const lines: string[] = [
+        `PLAN: ${workplan.title}`,
+        `ID: ${workplan.id}`,
+        `STEPS: ${workplan.steps.length}`,
+        `BUDGET: ~${workplan.estimatedTokenBudget} tokens`,
+        '',
+      ];
+      for (const step of workplan.steps) {
+        const deps = step.dependencies.length > 0 ? ` (deps: ${step.dependencies.join(', ')})` : '';
+        lines.push(`[${step.id}] ${step.description}`);
+        lines.push(`  adapter: ${step.adapter}${deps}`);
+      }
+      const output = lines.join('\n');
+
+      void this.pushEvent('plan-output', {
+        planId: workplan.id,
+        title: workplan.title,
+        stepCount: workplan.steps.length,
+        output,
+        timestamp: Date.now(),
+      });
+
+      return {
+        commandId: cmd.commandId,
+        status: 'completed',
+        data: { planId: workplan.id, title: workplan.title, steps: workplan.steps.length, output },
         completedAt: new Date().toISOString(),
       };
     });

@@ -478,6 +478,8 @@ export interface MCPContext {
   adrQuery: IADRQueryPort;
   /** Project root path (needed for setup and daemon operations). */
   rootPath?: string;
+  /** Optional: broadcast events to the dashboard hub (wired by composition root). */
+  broadcastEvent?: (event: string, data: unknown) => void;
 }
 
 export class MCPAdapter {
@@ -822,9 +824,23 @@ export class MCPAdapter {
     const langMap: Record<string, Language> = { typescript: 'typescript', go: 'go', rust: 'rust', ts: 'typescript' };
     const lang = langMap[language] ?? 'typescript' as Language;
     const reqList = requirements.split(/[,\n]/).map((r) => r.trim()).filter(Boolean);
+    const broadcast = this.ctx.broadcastEvent;
+
+    // Notify hub that planning has started
+    broadcast?.('plan-started', {
+      requirements: reqList,
+      language: lang,
+      timestamp: Date.now(),
+    });
 
     // If an LLM adapter is configured, use it for richer plans
     if (this.ctx.workplanExecutor) {
+      broadcast?.('plan-progress', {
+        phase: 'llm',
+        message: 'Generating workplan via LLM…',
+        timestamp: Date.now(),
+      });
+
       const workplan = await this.ctx.workplanExecutor.createPlan(reqList, lang);
 
       const lines = [
@@ -839,11 +855,27 @@ export class MCPAdapter {
         lines.push(`[${step.id}] ${step.description}`);
         lines.push(`  adapter: ${step.adapter}${deps}`);
       }
-      return { content: [{ type: 'text', text: lines.join('\n') }] };
+
+      const output = lines.join('\n');
+      broadcast?.('plan-output', {
+        planId: workplan.id,
+        title: workplan.title,
+        stepCount: workplan.steps.length,
+        output,
+        timestamp: Date.now(),
+      });
+
+      return { content: [{ type: 'text', text: output }] };
     }
 
     // No LLM — decompose structurally using hex conventions.
     // Claude IS the LLM when running inside Claude Code.
+    broadcast?.('plan-progress', {
+      phase: 'structural',
+      message: 'Decomposing structurally (no LLM configured)…',
+      timestamp: Date.now(),
+    });
+
     const lines = [
       '═══ WORKPLAN ═══',
       `Language: ${lang}`,
@@ -872,7 +904,16 @@ export class MCPAdapter {
     lines.push('═══ EXECUTE NOW ═══');
     lines.push('Implement tasks in tier order. Tiers 1 and 2 can run in parallel.');
 
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
+    const output = lines.join('\n');
+    broadcast?.('plan-output', {
+      planId: null,
+      title: 'Structural Workplan',
+      stepCount: reqList.length,
+      output,
+      timestamp: Date.now(),
+    });
+
+    return { content: [{ type: 'text', text: output }] };
   }
 
   private async analyzeJson(path: string): Promise<MCPToolResult> {

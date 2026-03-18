@@ -17,6 +17,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { spawn, type Subprocess } from 'bun';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 
 // ── Hub Process Management ───────────────────────────────
 
@@ -24,7 +25,8 @@ let hubProcess: Subprocess | null = null;
 let hubPort: number;
 const hubToken = 'e2e-test-token-' + Date.now();
 
-const BINARY_PATH = join(import.meta.dir, '../../hex-hub/target/release/hex-hub');
+// Cargo workspace puts the binary in the project root's target/, not hex-hub/target/
+const BINARY_PATH = join(import.meta.dir, '../../target/release/hex-hub');
 const HUB_START_TIMEOUT = 5000;
 
 /** Find a random available port. */
@@ -115,14 +117,11 @@ function waitForWsMessage(
 
 // ── Test Suite ────────────────────────────────────────────
 
-describe('hex-hub E2E', () => {
-  beforeAll(async () => {
-    // Check binary exists
-    const file = Bun.file(BINARY_PATH);
-    if (!(await file.exists())) {
-      throw new Error(`hex-hub binary not found at ${BINARY_PATH}. Run: cd hex-hub && cargo build --release`);
-    }
+const binaryExists = existsSync(BINARY_PATH);
+const describeIfBinary = binaryExists ? describe : describe.skip;
 
+describeIfBinary('hex-hub E2E', () => {
+  beforeAll(async () => {
     hubPort = await findFreePort();
 
     hubProcess = spawn({

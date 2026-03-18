@@ -120,7 +120,7 @@ function resolveGoImport(_fromFile: string, importPath: string, modulePrefix?: s
  * The caller (arch-analyzer) should match against actual files.
  * (Internal helper - not currently used)
  */
-function rustModuleCandidates(basePath: string): string[] {
+export function rustModuleCandidates(basePath: string): string[] {
   return [basePath + '.rs', basePath + '/mod.rs'];
 }
 
