@@ -197,6 +197,14 @@ impl AgentManager {
             );
         }
 
+        // Inject SpacetimeDB connection config so agents can subscribe directly.
+        // The hub inherits these from its own environment or state_config resolution.
+        for key in &["HEX_STDB_HOST", "HEX_STDB_DATABASE", "HEX_STATE_BACKEND"] {
+            if let Ok(value) = std::env::var(key) {
+                cmd.env(key, &value);
+            }
+        }
+
         // Pipe stdin for chat messages, capture stdout/stderr
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());

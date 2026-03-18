@@ -164,22 +164,9 @@ async fn main() -> anyhow::Result<()> {
     // loaders (the original behavior). This is the hexagonal architecture
     // composition root pattern — same ports, different adapters.
 
-    // Resolve SpacetimeDB connection config from .hex/state.json or env vars
-    let stdb_host = std::env::var("HEX_STDB_HOST")
-        .unwrap_or_else(|_| {
-            // Try reading from .hex/state.json in project dir
-            let config_path = project_dir.join(".hex/state.json");
-            if let Ok(content) = std::fs::read_to_string(&config_path) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if json.get("backend").and_then(|b| b.as_str()) == Some("spacetimedb") {
-                        let host = json.get("host").and_then(|h| h.as_str()).unwrap_or("127.0.0.1");
-                        let port = json.get("port").and_then(|p| p.as_u64()).unwrap_or(3000);
-                        return format!("http://{}:{}", host, port);
-                    }
-                }
-            }
-            String::new()
-        });
+    // SpacetimeDB config is injected by hex-hub at spawn time via env vars.
+    // Agents don't resolve config themselves — that's the hub's responsibility.
+    let stdb_host = std::env::var("HEX_STDB_HOST").unwrap_or_default();
     let stdb_database = std::env::var("HEX_STDB_DATABASE").unwrap_or_default();
 
     let hub_connected = if let Some(ref hub_url) = args.hub_url {
