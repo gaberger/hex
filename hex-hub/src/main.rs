@@ -1,4 +1,4 @@
-use hex_hub_core::HubConfig;
+use hex_nexus::HubConfig;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -14,14 +14,14 @@ async fn main() {
 
     // Quick introspection flags (no daemon startup needed)
     if args.iter().any(|a| a == "--build-hash") {
-        println!("{}", hex_hub_core::build_hash());
+        println!("{}", hex_nexus::build_hash());
         return;
     }
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!(
             "hex-hub {} ({})",
-            hex_hub_core::version(),
-            hex_hub_core::build_hash()
+            hex_nexus::version(),
+            hex_nexus::build_hash()
         );
         return;
     }
@@ -33,7 +33,7 @@ async fn main() {
         .position(|a| a == "--port")
         .and_then(|i| args.get(i + 1))
         .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(hex_hub_core::DEFAULT_PORT);
+        .unwrap_or(hex_nexus::DEFAULT_PORT);
 
     let token = args
         .iter()
@@ -47,7 +47,7 @@ async fn main() {
         .and_then(|i| args.get(i + 1).cloned())
         .unwrap_or_else(|| "127.0.0.1".to_string());
 
-    hex_hub_core::start_server(HubConfig {
+    hex_nexus::start_server(HubConfig {
         port,
         bind,
         token,

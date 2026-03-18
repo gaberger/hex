@@ -12,11 +12,11 @@
       "tasks": [
         {
           "id": "R1.1",
-          "name": "Stage and commit hex-hub-core extraction",
+          "name": "Stage and commit hex-nexus extraction",
           "layer": "infrastructure",
-          "description": "hex-hub-core/ is a new crate extracted from hex-hub/ (lib vs binary split). All source files are untracked or modified. Stage hex-hub-core/, updated hex-hub/, and root Cargo.toml workspace changes. Commit as a single logical unit.",
+          "description": "hex-nexus/ is a new crate extracted from hex-hub/ (lib vs binary split). All source files are untracked or modified. Stage hex-nexus/, updated hex-hub/, and root Cargo.toml workspace changes. Commit as a single logical unit.",
           "deps": [],
-          "files": ["hex-hub-core/", "hex-hub/", "Cargo.toml", "Cargo.lock"]
+          "files": ["hex-nexus/", "hex-hub/", "Cargo.toml", "Cargo.lock"]
         },
         {
           "id": "R1.2",
@@ -47,7 +47,7 @@
           "id": "R2.1",
           "name": "Verify workspace builds cleanly",
           "layer": "infrastructure",
-          "description": "Run 'cargo build --workspace' and fix any compilation errors in hex-agent, hex-hub, hex-hub-core, hex-desktop. Ensure feature flags (spacetimedb) compile correctly.",
+          "description": "Run 'cargo build --workspace' and fix any compilation errors in hex-agent, hex-hub, hex-nexus, hex-desktop. Ensure feature flags (spacetimedb) compile correctly.",
           "deps": ["R1.1", "R1.2"],
           "files": []
         }
@@ -64,7 +64,7 @@
           "layer": "test",
           "description": "Test that hex-hub can spawn a hex-agent process, establish WebSocket connection, and exchange heartbeats. Use mock Anthropic endpoint.",
           "deps": ["R2.1"],
-          "files": ["hex-hub-core/tests/agent_spawn_test.rs"]
+          "files": ["hex-nexus/tests/agent_spawn_test.rs"]
         },
         {
           "id": "R3.2",
@@ -72,7 +72,7 @@
           "layer": "test",
           "description": "Send chat message via WS → hub routes to agent → agent calls mock Anthropic → response streams back via WS. Verify tool_use round-trip.",
           "deps": ["R3.1"],
-          "files": ["hex-hub-core/tests/chat_roundtrip_test.rs"]
+          "files": ["hex-nexus/tests/chat_roundtrip_test.rs"]
         },
         {
           "id": "R3.3",
@@ -80,7 +80,7 @@
           "layer": "test",
           "description": "After a successful agent task, verify that an RL experience is recorded in the Q-table and patterns are stored with correct confidence scores.",
           "deps": ["R2.1"],
-          "files": ["hex-hub-core/tests/rl_integration_test.rs"]
+          "files": ["hex-nexus/tests/rl_integration_test.rs"]
         },
         {
           "id": "R3.4",
@@ -88,7 +88,7 @@
           "layer": "test",
           "description": "Feed a 2-phase workplan JSON to the orchestration API. Verify phases execute in tier order, tasks are tracked, and completion status is reported via WS.",
           "deps": ["R3.1"],
-          "files": ["hex-hub-core/tests/workplan_e2e_test.rs"]
+          "files": ["hex-nexus/tests/workplan_e2e_test.rs"]
         }
       ]
     }

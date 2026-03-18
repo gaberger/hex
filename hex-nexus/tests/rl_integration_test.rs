@@ -1,8 +1,8 @@
 //! Integration tests for the RL Q-learning engine and pattern store,
 //! exercised through the IStatePort trait on SqliteStateAdapter.
 
-use hex_hub_core::adapters::sqlite_state::SqliteStateAdapter;
-use hex_hub_core::ports::state::*;
+use hex_nexus::adapters::sqlite_state::SqliteStateAdapter;
+use hex_nexus::ports::state::*;
 
 fn make_adapter() -> SqliteStateAdapter {
     SqliteStateAdapter::new(":memory:").expect("Failed to create in-memory SqliteStateAdapter")

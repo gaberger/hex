@@ -6,13 +6,13 @@ description = "Dashboard hub for hex — hexagonal architecture framework"
 license = "MIT"
 
 [dependencies]
-hex-hub-core = { path = "../hex-hub-core" }
+hex-nexus = { path = "../hex-nexus" }
 tokio = { version = "1", features = ["full"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
 default = []
-spacetimedb = ["hex-hub-core/spacetimedb"]
+spacetimedb = ["hex-nexus/spacetimedb"]
 
 [profile.release]
 opt-level = "z"

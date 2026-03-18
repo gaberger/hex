@@ -5,9 +5,9 @@
 //! (workplan_update_task / workplan_get_tasks) and the Workplan JSON parsing,
 //! which are the portable, testable parts of the pipeline.
 
-use hex_hub_core::adapters::sqlite_state::SqliteStateAdapter;
-use hex_hub_core::orchestration::workplan_executor::Workplan;
-use hex_hub_core::ports::state::*;
+use hex_nexus::adapters::sqlite_state::SqliteStateAdapter;
+use hex_nexus::orchestration::workplan_executor::Workplan;
+use hex_nexus::ports::state::*;
 
 fn make_adapter() -> SqliteStateAdapter {
     SqliteStateAdapter::new(":memory:").expect("Failed to create in-memory SqliteStateAdapter")

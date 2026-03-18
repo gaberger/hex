@@ -3,12 +3,12 @@
 **Date**: 2026-03-18
 **Scope**: Complete protocol analysis of the hex-hub ↔ hex-agent ↔ browser chat WebSocket system
 **Files analyzed**:
-- `hex-hub-core/src/routes/chat.rs` — chat WS handler
-- `hex-hub-core/src/routes/ws.rs` — general WS handler
-- `hex-hub-core/src/state.rs` — WsEnvelope, SharedState, broadcast channel
+- `hex-nexus/src/routes/chat.rs` — chat WS handler
+- `hex-nexus/src/routes/ws.rs` — general WS handler
+- `hex-nexus/src/state.rs` — WsEnvelope, SharedState, broadcast channel
 - `hex-agent/src/ports/hub.rs` — HubMessage enum
 - `hex-agent/src/adapters/secondary/hub_client.rs` — agent WS adapter
-- `hex-hub-core/assets/chat.html` — browser chat UI
+- `hex-nexus/assets/chat.html` — browser chat UI
 - `hex-agent/src/main.rs` (lines 285–413) — hub-managed agent loop
 
 ---

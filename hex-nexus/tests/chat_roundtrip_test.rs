@@ -12,7 +12,7 @@
 //! embedded hub server. No real hex-agent or Anthropic API needed.
 
 use futures::{SinkExt, StreamExt};
-use hex_hub_core::HubConfig;
+use hex_nexus::HubConfig;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -25,7 +25,7 @@ async fn start_hub() -> SocketAddr {
         is_daemon: false,
     };
 
-    let (router, _state) = hex_hub_core::build_app(&config).await;
+    let (router, _state) = hex_nexus::build_app(&config).await;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -33,7 +33,7 @@ async fn start_hub() -> SocketAddr {
     let addr = listener.local_addr().unwrap();
 
     tokio::spawn(async move {
-        hex_hub_core::axum::serve(listener, router)
+        hex_nexus::axum::serve(listener, router)
             .await
             .expect("server error");
     });

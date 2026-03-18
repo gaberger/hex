@@ -52,8 +52,8 @@ mod real {
     use spacetimedb_sdk::DbContext;
     use spacetimedb_sdk::Table as SdkTable;
 
-    // Generated hook-registry bindings from hex-hub-core.
-    use hex_hub_core::spacetime_bindings::hook_registry::{
+    // Generated hook-registry bindings from hex-nexus.
+    use hex_nexus::spacetime_bindings::hook_registry::{
         DbConnection,
         hook_table::HookTableAccess,
         log_execution_reducer::log_execution,
@@ -61,7 +61,7 @@ mod real {
 
     /// Convert a SpacetimeDB `hook` row into the domain `Hook` type.
     fn stdb_row_to_hook(
-        row: &hex_hub_core::spacetime_bindings::hook_registry::Hook,
+        row: &hex_nexus::spacetime_bindings::hook_registry::Hook,
     ) -> Result<Hook, HookError> {
         let event = parse_event_type(&row.event_type)?;
 

@@ -28,12 +28,12 @@ However, ruflo has significant limitations for hex's evolving architecture:
 
 ## Decision
 
-Replace ruflo with **HexFlo** — a native coordination layer built into hex-hub-core that provides the same swarm orchestration API surface as ruflo but implemented in Rust, using `IStatePort` as the persistence backend.
+Replace ruflo with **HexFlo** — a native coordination layer built into hex-nexus that provides the same swarm orchestration API surface as ruflo but implemented in Rust, using `IStatePort` as the persistence backend.
 
 ### HexFlo Architecture
 
 ```
-hex-hub-core/src/
+hex-nexus/src/
   coordination/
     mod.rs              # HexFlo public API
     swarm.rs            # Swarm lifecycle (init, status, teardown)
@@ -58,7 +58,7 @@ hex-hub-core/src/
 ### Access Patterns
 
 1. **From Claude Code (TypeScript)**: MCP tools (`mcp__hex__hexflo_*`) that call hex-hub's REST API
-2. **From hex-agent (Rust)**: Direct function calls via hex-hub-core library, or REST API when running as separate process
+2. **From hex-agent (Rust)**: Direct function calls via hex-nexus library, or REST API when running as separate process
 3. **From hex-hub dashboard**: WebSocket events for real-time swarm monitoring
 4. **From CLI**: `hex swarm init`, `hex task create`, etc.
 
@@ -100,7 +100,7 @@ mcp__hex__hexflo_memory_search   → GET  /api/memory/search
 
 ### Migration Path
 
-1. **Phase 1**: Implement HexFlo coordination module in hex-hub-core
+1. **Phase 1**: Implement HexFlo coordination module in hex-nexus
 2. **Phase 2**: Add MCP tools and REST endpoints
 3. **Phase 3**: Update CLAUDE.md to reference HexFlo instead of ruflo
 4. **Phase 4**: Remove ruflo from dependencies (`package.json`)

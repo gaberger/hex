@@ -102,17 +102,46 @@ impl ConversationLoop {
                 tracing::info!(evicted = packed.evicted_count, "Context window trimmed");
             }
 
-            // Send to Anthropic API
-            let response = self
-                .anthropic
-                .send_message(
-                    &packed.system_prompt,
-                    &packed.messages,
-                    &self.tools,
-                    self.max_response_tokens,
-                )
-                .await
-                .map_err(|e| ConversationError::ApiError(e.to_string()))?;
+            // Send to Anthropic API with retry on rate limits
+            let response = {
+                let mut attempt = 0u32;
+                loop {
+                    match self
+                        .anthropic
+                        .send_message(
+                            &packed.system_prompt,
+                            &packed.messages,
+                            &self.tools,
+                            self.max_response_tokens,
+                        )
+                        .await
+                    {
+                        Ok(resp) => break resp,
+                        Err(crate::ports::anthropic::AnthropicError::RateLimited { retry_after_ms }) => {
+                            attempt += 1;
+                            if attempt > 3 {
+                                return Err(ConversationError::ApiError(
+                                    format!("Rate limited after {} retries", attempt),
+                                ));
+                            }
+                            let wait = std::cmp::min(retry_after_ms, 60_000);
+                            tracing::warn!(
+                                attempt,
+                                wait_ms = wait,
+                                "Rate limited — retrying in {}s",
+                                wait / 1000
+                            );
+                            let _ = event_tx.send(ConversationEvent::TextChunk(
+                                format!("\n*Rate limited — retrying in {}s...*\n", wait / 1000),
+                            ));
+                            tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+                        }
+                        Err(e) => {
+                            return Err(ConversationError::ApiError(e.to_string()));
+                        }
+                    }
+                }
+            };
 
             // Report token usage
             let _ = event_tx.send(ConversationEvent::TokenUpdate(response.usage.clone()));

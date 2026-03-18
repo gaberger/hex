@@ -1,5 +1,5 @@
 [workspace]
-members = ["hex-hub", "hex-hub-core", "hex-desktop", "hex-core", "hex-agent"]
+members = ["hex-hub", "hex-nexus", "hex-desktop", "hex-core", "hex-agent"]
 resolver = "2"
 
 [profile.release]

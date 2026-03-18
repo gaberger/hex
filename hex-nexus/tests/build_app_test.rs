@@ -1,11 +1,11 @@
-//! Integration tests for hex-hub-core's public API.
+//! Integration tests for hex-nexus's public API.
 //!
 //! Verifies that `build_app()` produces a working Axum router that responds
 //! to all critical endpoints. These tests start a real TCP server on an
 //! ephemeral port, ensuring the full middleware stack (CORS, auth, body limits)
 //! is exercised.
 
-use hex_hub_core::{HubConfig, DEFAULT_PORT};
+use hex_nexus::{HubConfig, DEFAULT_PORT};
 use std::net::SocketAddr;
 
 /// Helper: build app with default config, bind to port 0 (OS-assigned),
@@ -18,7 +18,7 @@ async fn start_test_server() -> SocketAddr {
         is_daemon: false,
     };
 
-    let (router, _state) = hex_hub_core::build_app(&config).await;
+    let (router, _state) = hex_nexus::build_app(&config).await;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -26,7 +26,7 @@ async fn start_test_server() -> SocketAddr {
     let addr = listener.local_addr().unwrap();
 
     tokio::spawn(async move {
-        hex_hub_core::axum::serve(listener, router)
+        hex_nexus::axum::serve(listener, router)
             .await
             .expect("server error");
     });
@@ -161,14 +161,14 @@ async fn auth_token_blocks_unauthenticated_posts() {
         is_daemon: false,
     };
 
-    let (router, _state) = hex_hub_core::build_app(&config).await;
+    let (router, _state) = hex_nexus::build_app(&config).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
 
     tokio::spawn(async move {
-        hex_hub_core::axum::serve(listener, router).await.unwrap();
+        hex_nexus::axum::serve(listener, router).await.unwrap();
     });
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -201,6 +201,6 @@ async fn default_port_constant_is_5555() {
 
 #[tokio::test]
 async fn version_and_build_hash_are_nonempty() {
-    assert!(!hex_hub_core::version().is_empty());
-    assert!(!hex_hub_core::build_hash().is_empty());
+    assert!(!hex_nexus::version().is_empty());
+    assert!(!hex_nexus::build_hash().is_empty());
 }

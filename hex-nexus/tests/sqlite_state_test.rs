@@ -1,8 +1,8 @@
 //! Integration tests for SqliteStateAdapter implementing IStatePort.
 //! Uses in-memory SQLite for isolation.
 
-use hex_hub_core::adapters::sqlite_state::SqliteStateAdapter;
-use hex_hub_core::ports::state::*;
+use hex_nexus::adapters::sqlite_state::SqliteStateAdapter;
+use hex_nexus::ports::state::*;
 
 /// Helper: create an in-memory SqliteStateAdapter.
 fn make_adapter() -> SqliteStateAdapter {

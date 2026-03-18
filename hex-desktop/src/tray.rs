@@ -37,7 +37,7 @@ pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "open_dashboard" => {
                 if let Some(window) = app.get_webview_window("main") {
-                    let port = hex_hub_core::DEFAULT_PORT;
+                    let port = hex_nexus::DEFAULT_PORT;
                     let url: Url = format!("http://127.0.0.1:{}/", port).parse().unwrap();
                     let _ = window.navigate(url);
                     let _ = window.set_focus();
@@ -45,7 +45,7 @@ pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             }
             "open_chat" => {
                 if let Some(window) = app.get_webview_window("main") {
-                    let port = hex_hub_core::DEFAULT_PORT;
+                    let port = hex_nexus::DEFAULT_PORT;
                     let url: Url = format!("http://127.0.0.1:{}/chat", port).parse().unwrap();
                     let _ = window.navigate(url);
                     let _ = window.set_focus();
@@ -54,7 +54,7 @@ pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             "start_agent" => {
                 // Navigate to the dashboard which has the agent spawn UI
                 if let Some(window) = app.get_webview_window("main") {
-                    let port = hex_hub_core::DEFAULT_PORT;
+                    let port = hex_nexus::DEFAULT_PORT;
                     let url: Url = format!("http://127.0.0.1:{}/", port).parse().unwrap();
                     let _ = window.navigate(url);
                     let _ = window.set_focus();
@@ -67,7 +67,7 @@ pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 });
             }
             "quit" => {
-                hex_hub_core::daemon::remove_lock();
+                hex_nexus::daemon::remove_lock();
                 app.exit(0);
             }
             _ => {}

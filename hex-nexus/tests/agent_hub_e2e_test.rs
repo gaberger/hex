@@ -12,7 +12,7 @@
 //! Instead tests the hub's own endpoints and WebSocket protocol.
 
 use futures::{SinkExt, StreamExt};
-use hex_hub_core::HubConfig;
+use hex_nexus::HubConfig;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -26,7 +26,7 @@ async fn start_hub() -> SocketAddr {
         is_daemon: false,
     };
 
-    let (router, _state) = hex_hub_core::build_app(&config).await;
+    let (router, _state) = hex_nexus::build_app(&config).await;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -34,7 +34,7 @@ async fn start_hub() -> SocketAddr {
     let addr = listener.local_addr().unwrap();
 
     tokio::spawn(async move {
-        hex_hub_core::axum::serve(listener, router)
+        hex_nexus::axum::serve(listener, router)
             .await
             .expect("server error");
     });
@@ -85,7 +85,7 @@ async fn ws_chat_sends_welcome_on_connect() {
     let text = msg.into_text().expect("expected text frame");
     let welcome: Value = serde_json::from_str(&text).expect("invalid JSON");
 
-    assert_eq!(welcome["type"], "connected", "first message type should be 'connected'");
+    assert_eq!(welcome["event"], "connected", "first message type should be 'connected'");
     assert!(welcome["data"]["sessionId"].is_string(), "welcome should include sessionId");
     assert_eq!(welcome["data"]["authenticated"], true, "no auth token means authenticated=true");
 
@@ -111,7 +111,7 @@ async fn ws_chat_message_broadcasts_to_agent_topic() {
         .expect("ws error");
     let welcome_text = welcome_msg.into_text().unwrap();
     let welcome: Value = serde_json::from_str(&welcome_text).unwrap();
-    assert_eq!(welcome["type"], "connected");
+    assert_eq!(welcome["event"], "connected");
 
     // Send a chat message (no agent_id => broadcast path, no LLM bridge without API key)
     let chat_msg = json!({
@@ -291,7 +291,7 @@ async fn multiple_ws_clients_can_connect_simultaneously() {
 
         let text = msg.into_text().unwrap();
         let welcome: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(welcome["type"], "connected");
+        assert_eq!(welcome["event"], "connected");
 
         let sid = welcome["data"]["sessionId"].as_str().unwrap().to_string();
         session_ids.push(sid);

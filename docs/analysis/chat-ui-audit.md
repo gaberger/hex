@@ -1,6 +1,6 @@
 # hex-hub Chat UI Frontend Audit
 
-**File**: `hex-hub-core/assets/chat.html`
+**File**: `hex-nexus/assets/chat.html`
 **Date**: 2026-03-18
 **Scope**: Single-file SPA (~681 lines) with embedded CSS and JavaScript
 

@@ -39,11 +39,11 @@ gray_matter = "0.2"
 # SpacetimeDB subscription support (optional)
 dashmap = { version = "6", optional = true }
 spacetimedb-sdk = { version = "2.0", optional = true }
-hex-hub-core = { path = "../hex-hub-core", optional = true, features = ["spacetimedb"] }
+hex-nexus = { path = "../hex-nexus", optional = true, features = ["spacetimedb"] }
 
 [features]
 default = ["spacetimedb"]
-spacetimedb = ["dep:dashmap", "dep:spacetimedb-sdk", "dep:hex-hub-core"]
+spacetimedb = ["dep:dashmap", "dep:spacetimedb-sdk", "dep:hex-nexus"]
 
 [profile.release]
 opt-level = "z"

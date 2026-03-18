@@ -10,14 +10,14 @@ use serde_json::json;
 use std::net::SocketAddr;
 
 async fn start_test_server_with_token(token: Option<String>) -> SocketAddr {
-    let config = hex_hub_core::HubConfig {
+    let config = hex_nexus::HubConfig {
         port: 0,
         bind: "127.0.0.1".to_string(),
         token,
         is_daemon: false,
     };
 
-    let (router, _state) = hex_hub_core::build_app(&config).await;
+    let (router, _state) = hex_nexus::build_app(&config).await;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -25,7 +25,7 @@ async fn start_test_server_with_token(token: Option<String>) -> SocketAddr {
     let addr = listener.local_addr().unwrap();
 
     tokio::spawn(async move {
-        hex_hub_core::axum::serve(listener, router)
+        hex_nexus::axum::serve(listener, router)
             .await
             .expect("server error");
     });
@@ -53,7 +53,8 @@ async fn chat_ws_upgrade_sends_welcome() {
     let text = msg.to_text().unwrap();
     let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
 
-    assert_eq!(parsed["type"], "connected");
+    // WsEnvelope format: {topic, event, data}
+    assert_eq!(parsed["event"], "connected");
     assert!(parsed["data"]["sessionId"].is_string());
     assert_eq!(parsed["data"]["authenticated"], true); // no token = always authed
 }

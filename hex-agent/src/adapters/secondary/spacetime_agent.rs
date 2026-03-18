@@ -91,7 +91,7 @@ mod real {
     use tokio::sync::RwLock;
 
     // Generated client bindings for the agent-definition-registry module.
-    use hex_hub_core::spacetime_bindings::agent_definition_registry::{
+    use hex_nexus::spacetime_bindings::agent_definition_registry::{
         AgentDefinition as StdbAgentDef,
         AgentDefinitionTableAccess,
         DbConnection,

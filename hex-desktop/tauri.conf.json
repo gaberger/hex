@@ -34,7 +34,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["app", "dmg"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,8 +42,17 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "category": "DeveloperTool",
+    "shortDescription": "Hexagonal architecture orchestration desktop app",
+    "longDescription": "hex-desktop wraps the hex-hub orchestration engine in a native Tauri v2 app with system tray, native notifications, and embedded Axum server.",
+    "copyright": "Copyright 2026 hex contributors",
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "entitlements": null,
+      "exceptionDomain": "localhost",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null
     }
   }
 }

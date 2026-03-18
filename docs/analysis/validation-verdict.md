@@ -2,7 +2,7 @@
 
 **Date**: 2026-03-18
 **Verdict**: **PASS** (Score: 89/100)
-**Previous**: WARN (72/100) — improved by +17 points via hex-hub-core extraction and test coverage
+**Previous**: WARN (72/100) — improved by +17 points via hex-nexus extraction and test coverage
 
 ---
 
@@ -43,7 +43,7 @@
 | Test | Result |
 |------|--------|
 | `cargo build -p hex-hub` | PASS |
-| `cargo build -p hex-hub-core` | PASS |
+| `cargo build -p hex-nexus` | PASS |
 | `cargo build -p hex-desktop` | PASS |
 | `cargo test --workspace` (84 tests) | PASS |
 | `bun test` (1247 tests) | PASS |
@@ -78,8 +78,8 @@
 
 ## Test Inventory (New)
 
-- `hex-hub-core/tests/build_app_test.rs` — 10 integration tests
-- `hex-hub-core/tests/chat_test.rs` — 7 chat WebSocket tests
+- `hex-nexus/tests/build_app_test.rs` — 10 integration tests
+- `hex-nexus/tests/chat_test.rs` — 7 chat WebSocket tests
 - `hex-desktop/tests/commands_test.rs` — 7 command unit tests
 
 ## Minor Improvements (Non-blocking)
