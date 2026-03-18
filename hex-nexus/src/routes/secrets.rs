@@ -136,6 +136,14 @@ pub async fn claim_secrets(
         }
     }
 
+    // Collect keys to claim before dropping the read guard
+    let claimed_keys: Vec<String> = agent_grants
+        .iter()
+        .filter(|(_, g)| !g.claimed)
+        .map(|(_, g)| g.secret_key.clone())
+        .collect();
+
+    drop(agent_grants);
     drop(grants);
 
     if resolved.is_empty() {
@@ -145,7 +153,22 @@ pub async fn claim_secrets(
         );
     }
 
-    // Mark grants as claimed
+    // Try SpacetimeDB claim_grant reducer for each key
+    if let Some(ref stdb) = state.spacetime_secrets {
+        if stdb.is_connected().await {
+            for key in &claimed_keys {
+                if let Err(e) = stdb.claim(&body.agent_id, key, &body.nonce).await {
+                    tracing::warn!(
+                        key = %key,
+                        error = %e,
+                        "SpacetimeDB claim_grant failed — local cache still updated"
+                    );
+                }
+            }
+        }
+    }
+
+    // Always update local cache
     let mut grants = state.secret_grants.write().await;
     for (_, grant) in grants.iter_mut() {
         if grant.agent_id == body.agent_id && !grant.claimed {
@@ -154,10 +177,17 @@ pub async fn claim_secrets(
         }
     }
 
+    let backend = if state.spacetime_secrets.is_some() {
+        "spacetimedb+in-memory"
+    } else {
+        "in-memory"
+    };
+
     tracing::info!(
         agent = %body.agent_id,
         secrets_count = resolved.len(),
         expires_in = min_ttl,
+        backend,
         "Secrets claimed successfully"
     );
 
@@ -171,6 +201,10 @@ pub async fn claim_secrets(
 }
 
 /// POST /secrets/grant — Create a secret grant for an agent.
+///
+/// When SpacetimeDB is available, delegates to the `grant_secret` reducer
+/// so grant metadata is persisted in the distributed store. Falls back to
+/// the in-memory HashMap when SpacetimeDB is unavailable.
 pub async fn grant_secret(
     State(state): State<SharedState>,
     Json(body): Json<GrantRequest>,
@@ -178,13 +212,56 @@ pub async fn grant_secret(
     let ttl = body.ttl_secs.unwrap_or(3600);
     let now = chrono::Utc::now();
     let expires = now + chrono::Duration::seconds(ttl as i64);
+    let now_str = now.to_rfc3339();
+    let expires_str = expires.to_rfc3339();
 
+    // Try SpacetimeDB first
+    if let Some(ref stdb) = state.spacetime_secrets {
+        if stdb.is_connected().await {
+            match stdb
+                .grant(&body.agent_id, &body.secret_key, &body.purpose, &now_str, &expires_str)
+                .await
+            {
+                Ok(id) => {
+                    // Also update the local fallback cache for consistency
+                    let grant = SecretGrantEntry {
+                        agent_id: body.agent_id.clone(),
+                        secret_key: body.secret_key.clone(),
+                        purpose: body.purpose,
+                        granted_at: now_str,
+                        expires_at: expires_str.clone(),
+                        claimed: false,
+                        claimed_nonce: None,
+                    };
+                    state.secret_grants.write().await.insert(id.clone(), grant);
+
+                    tracing::info!(
+                        agent = %body.agent_id,
+                        key = %body.secret_key,
+                        ttl_secs = ttl,
+                        backend = "spacetimedb",
+                        "Secret grant created"
+                    );
+                    return (StatusCode::CREATED, Json(json!({ "id": id, "expiresAt": expires_str })));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "SpacetimeDB grant_secret failed — falling back to in-memory"
+                    );
+                    // Fall through to in-memory path
+                }
+            }
+        }
+    }
+
+    // Fallback: in-memory only
     let grant = SecretGrantEntry {
         agent_id: body.agent_id.clone(),
         secret_key: body.secret_key.clone(),
         purpose: body.purpose,
-        granted_at: now.to_rfc3339(),
-        expires_at: expires.to_rfc3339(),
+        granted_at: now_str,
+        expires_at: expires_str.clone(),
         claimed: false,
         claimed_nonce: None,
     };
@@ -196,17 +273,40 @@ pub async fn grant_secret(
         agent = %body.agent_id,
         key = %body.secret_key,
         ttl_secs = ttl,
+        backend = "in-memory",
         "Secret grant created"
     );
 
-    (StatusCode::CREATED, Json(json!({ "id": id, "expiresAt": expires.to_rfc3339() })))
+    (StatusCode::CREATED, Json(json!({ "id": id, "expiresAt": expires_str })))
 }
 
 /// POST /secrets/revoke — Revoke grants for an agent.
+///
+/// Delegates to SpacetimeDB `revoke_secret` / `revoke_all_for_agent` reducers
+/// when available, always updates local cache.
 pub async fn revoke_secret(
     State(state): State<SharedState>,
     Json(body): Json<RevokeRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    // Try SpacetimeDB first
+    if let Some(ref stdb) = state.spacetime_secrets {
+        if stdb.is_connected().await {
+            let result = if let Some(ref key) = body.secret_key {
+                stdb.revoke(&body.agent_id, key).await.map(|_| 1)
+            } else {
+                stdb.revoke_all(&body.agent_id).await
+            };
+
+            if let Err(e) = &result {
+                tracing::warn!(
+                    error = %e,
+                    "SpacetimeDB revoke failed — falling back to in-memory"
+                );
+            }
+        }
+    }
+
+    // Always update local cache
     let mut grants = state.secret_grants.write().await;
     let before = grants.len();
 
@@ -222,11 +322,24 @@ pub async fn revoke_secret(
 }
 
 /// GET /secrets/grants — List all active grants (metadata only, no values).
+///
+/// Reads from the SpacetimeDB client's local cache when available,
+/// otherwise falls back to the in-memory HashMap.
 pub async fn list_grants(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let grants = state.secret_grants.read().await;
-    let list: Vec<_> = grants
+    // Prefer SpacetimeDB client cache if connected (it's the authoritative source)
+    let grants_source = if let Some(ref stdb) = state.spacetime_secrets {
+        if stdb.is_connected().await {
+            stdb.cache().read().await.clone()
+        } else {
+            state.secret_grants.read().await.clone()
+        }
+    } else {
+        state.secret_grants.read().await.clone()
+    };
+
+    let list: Vec<_> = grants_source
         .values()
         .map(|g| {
             json!({

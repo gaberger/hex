@@ -141,3 +141,141 @@ TypeScript:  1263 pass, 1 fail (pre-existing), 4 skip
 ```
 
 Total Rust tests across three crates: **71 passed, 0 failed**.
+
+---
+---
+
+# Validation Verdict: API Optimization Layer (ADR-028/029/030/031)
+
+**Date**: 2026-03-18
+**Scope**: Prompt caching, rate limiting, batch API, extended thinking, workload routing, Haiku preflight, auto-compaction, multi-provider (MiniMax), RL model selection, SecretBrokerPort wiring
+**Overall Verdict**: **PASS**
+**Weighted Score**: **83/100**
+
+---
+
+## Category Scores
+
+| Category | Weight | Score | Weighted |
+|----------|--------|-------|----------|
+| Behavioral Specs | 40% | 85 | 34.0 |
+| Property Tests | 20% | 60 | 12.0 |
+| Smoke Tests | 25% | 100 | 25.0 |
+| Sign Conventions | 15% | 80 | 12.0 |
+| **Total** | **100%** | | **83.0** |
+
+---
+
+## 1. Behavioral Specs (85/100)
+
+| ID | Behavior | Test | Status |
+|----|----------|------|--------|
+| B1 | Prompt caching adds cache_control to system blocks | No isolated test | UNTESTED |
+| B2 | Rate limiter tracks per-model usage | `rate_limit_reset_on_success`, `rate_limit_peak_utilization` | PASS |
+| B3 | Exponential backoff on 429 | `rate_limit_backoff_exponential` | PASS |
+| B4 | Workload classifier routes batch tasks | `workload_classification` | PASS |
+| B5 | Thinking config respects budget | `thinking_config_with_budget`, `thinking_config_defaults` | PASS |
+| B6 | Cache metrics track savings ratio | `cache_metrics_savings_ratio` | PASS |
+| B7 | OpenAI adapter strips thinking tags | `strip_thinking_with_tags`, `strip_thinking_no_tags` | PASS |
+| B8 | OpenAI adapter normalizes tool calls | `to_openai_tools_conversion`, `to_openai_messages_basic` | PASS |
+| B9 | ModelSelection fallback chain complete | No chain traversal test | PARTIAL |
+| B10 | SecretBrokerPort resolves API keys | 10 tests across `env_secrets` + `hub_claim_secrets` | PASS |
+
+**Deduction (-15)**: B1 cache_control JSON structure untested; B9 fallback chain not tested as a sequence.
+
+---
+
+## 2. Property Tests (60/100)
+
+**Verified via unit tests** (no formal property framework):
+- Rate limit monotonicity (record_usage always increments)
+- Cache savings ratio bounds [0.0, 1.0]
+- WorkloadClass::classify totality (never panics)
+- ModelSelection round-trip stability
+- ThinkingConfig::with_budget(0) disables thinking
+
+**Missing (-40)**:
+- No `proptest`/`quickcheck` in hex-agent Cargo.toml
+- RateLimitState transitions not fuzz-tested
+- CacheMetrics not tested with adversarial inputs
+- No property test for backoff ceiling (should never exceed 60s)
+
+---
+
+## 3. Smoke Tests (100/100)
+
+| Check | Result |
+|-------|--------|
+| `cargo build -p hex-agent` | PASS |
+| `cargo test` — 233 tests, 0 failures | PASS |
+| `hex-agent --help` — all 6 new CLI args present | PASS |
+| `hex-agent build-hash` — returns commit hash | PASS |
+| `--no-cache` arg visible | PASS |
+| `--thinking-budget` arg visible (default: 0) | PASS |
+| `--no-preflight` arg visible | PASS |
+| `--compact-threshold` arg visible (default: 85) | PASS |
+| `--provider` arg visible (default: auto) | PASS |
+| `hex analyze` — Grade A (96/100), 0 violations | PASS |
+
+---
+
+## 4. Sign Convention Audit (80/100)
+
+| Convention | Status |
+|------------|--------|
+| Error types use `thiserror` derive | PASS — all 6 new error types |
+| Ports use `async_trait` | PASS — 4 new ports (RateLimiterPort, BatchPort, TokenMetricsPort, PreflightPort) |
+| Adapters import from ports, not domain | PASS — verified via hex analyze |
+| Domain types derive `Debug, Clone` | PASS |
+| Serde naming: `camelCase` for API, `snake_case` for Rust | PASS |
+| Builder pattern for config | PASS — `with_cache()`, `with_thinking_budget()`, `with_compact_threshold()` |
+| Noop adapters for optional deps | PASS — `NoopRateLimiter`, `NoopPreflight`, `NoopRlAdapter` |
+| Test naming: descriptive `snake_case` | PASS |
+
+**Deduction (-20)**: `cache_control` block structure untested in isolation; `OpenAiCompatAdapter` streaming fallback (non-streaming emulation) not explicitly documented as limitation.
+
+---
+
+## Files Validated
+
+### New (11 files, 1035 lines)
+- `domain/api_optimization.rs` — 8 domain types + 7 tests
+- `ports/rate_limiter.rs` — RateLimiterPort
+- `ports/batch.rs` — BatchPort
+- `ports/token_metrics.rs` — TokenMetricsPort
+- `ports/preflight.rs` — PreflightPort
+- `adapters/secondary/rate_limiter.rs` — In-memory per-model tracking
+- `adapters/secondary/token_metrics.rs` — Metrics aggregation
+- `adapters/secondary/haiku_preflight.rs` — Haiku/MiniMax classification
+- `adapters/secondary/openai_compat.rs` — OpenAI-compatible adapter + 4 tests
+- `usecases/workload_router.rs` — Interactive/batch routing
+
+### Modified (6 files)
+- `domain/tokens.rs` — cache fields on TokenUsage
+- `ports/anthropic.rs` — options parameter
+- `ports/rl.rs` — MiniMax + MiniMaxFast variants
+- `adapters/secondary/anthropic.rs` — cache_control, beta headers, rate limit parsing
+- `usecases/conversation.rs` — preflight, auto-compaction, rate limiter, metrics
+- `main.rs` — SecretBrokerPort, multi-provider, 6 new CLI args
+
+---
+
+## Test Summary
+
+```
+hex-agent unit:        45 passed, 0 failed
+hex-agent domain:      11 passed, 0 failed
+hex-agent hub:          4 passed, 0 failed
+hex-agent rl:           6 passed, 0 failed
+hex-nexus:             64 passed, 0 failed, 1 ignored
+Full workspace:       233 passed, 0 failed, 2 ignored
+```
+
+---
+
+## Recommendations (non-blocking)
+
+1. Add `#[test] fn fallback_chain_traversal()` — verify full Opus→...→Local→None chain
+2. Add `#[test] fn cache_control_json_structure()` — verify system block has cache_control field
+3. Add `proptest` dependency for domain type fuzzing
+4. Document OpenAI adapter's non-streaming limitation (emulates via buffered response)
