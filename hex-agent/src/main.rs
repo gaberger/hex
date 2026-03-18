@@ -164,6 +164,24 @@ async fn main() -> anyhow::Result<()> {
     // loaders (the original behavior). This is the hexagonal architecture
     // composition root pattern — same ports, different adapters.
 
+    // Resolve SpacetimeDB connection config from .hex/state.json or env vars
+    let stdb_host = std::env::var("HEX_STDB_HOST")
+        .unwrap_or_else(|_| {
+            // Try reading from .hex/state.json in project dir
+            let config_path = project_dir.join(".hex/state.json");
+            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if json.get("backend").and_then(|b| b.as_str()) == Some("spacetimedb") {
+                        let host = json.get("host").and_then(|h| h.as_str()).unwrap_or("127.0.0.1");
+                        let port = json.get("port").and_then(|p| p.as_u64()).unwrap_or(3000);
+                        return format!("http://{}:{}", host, port);
+                    }
+                }
+            }
+            String::new()
+        });
+    let stdb_database = std::env::var("HEX_STDB_DATABASE").unwrap_or_default();
+
     let hub_connected = if let Some(ref hub_url) = args.hub_url {
         // Probe hub health endpoint
         reqwest::get(format!("{}/health", hub_url)).await.is_ok()
@@ -176,7 +194,7 @@ async fn main() -> anyhow::Result<()> {
 
         // Try SpacetimeDB-backed loaders first, fall back to filesystem
         let skill_loader_st = SpacetimeSkillLoader::new(hub_url);
-        let st_skills_ok = skill_loader_st.connect("", "").await.is_ok();
+        let st_skills_ok = skill_loader_st.connect(&stdb_host, &stdb_database).await.is_ok();
         let st_skills = if st_skills_ok {
             skill_loader_st.load(&[]).await.unwrap_or_default()
         } else {
@@ -184,7 +202,7 @@ async fn main() -> anyhow::Result<()> {
         };
 
         let agent_loader_st = SpacetimeAgentLoader::new(hub_url);
-        let st_agents_ok = agent_loader_st.connect("", "").await.is_ok();
+        let st_agents_ok = agent_loader_st.connect(&stdb_host, &stdb_database).await.is_ok();
         let st_agent_def = if st_agents_ok {
             if let Some(agent_name) = &args.agent {
                 agent_loader_st.load_by_name(&[], agent_name).await.ok()
