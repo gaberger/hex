@@ -199,11 +199,15 @@ impl AgentManager {
 
         // Inject SpacetimeDB connection config so agents can subscribe directly.
         // Resolve from state_config (which reads .hex/state.json or env vars).
+        // Per-module database names let each loader connect to its own DB.
         match crate::state_config::resolve_config() {
             #[cfg(feature = "spacetimedb")]
             crate::state_config::StateBackendConfig::Spacetimedb { ref host, ref database, .. } => {
                 cmd.env("HEX_STDB_HOST", host);
                 cmd.env("HEX_STDB_DATABASE", database);
+                // Per-module database names (convention: hex-<module-name>)
+                cmd.env("HEX_STDB_SKILL_DB", "hex-skill-registry");
+                cmd.env("HEX_STDB_AGENT_DEF_DB", "hex-agent-definition-registry");
                 cmd.env("HEX_STATE_BACKEND", "spacetimedb");
                 tracing::debug!(agent_id = %id, host = %host, db = %database, "Injecting SpacetimeDB config");
             }

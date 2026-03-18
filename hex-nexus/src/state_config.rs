@@ -92,6 +92,7 @@ pub fn resolve_config() -> StateBackendConfig {
                     "Unknown HEX_STATE_BACKEND value '{}' — falling back to SQLite",
                     other,
                 );
+                return StateBackendConfig::default();
             }
         }
     }
@@ -107,17 +108,35 @@ pub fn resolve_config() -> StateBackendConfig {
     StateBackendConfig::default()
 }
 
-/// Try to read `.hex/state.json` from the current working directory.
+/// Try to read `.hex/state.json` from the current working directory,
+/// falling back to `~/.hex/state.json` for global configuration.
 fn load_config_file() -> Option<StateBackendConfig> {
-    let path = PathBuf::from(".hex/state.json");
-    let contents = std::fs::read_to_string(&path).ok()?;
-    match serde_json::from_str::<StateBackendConfig>(&contents) {
-        Ok(cfg) => Some(cfg),
-        Err(e) => {
-            tracing::warn!("Failed to parse .hex/state.json: {}", e);
-            None
+    let candidates = [
+        PathBuf::from(".hex/state.json"),
+        dirs_next().map(|h| h.join(".hex/state.json")).unwrap_or_default(),
+    ];
+
+    for path in &candidates {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            match serde_json::from_str::<StateBackendConfig>(&contents) {
+                Ok(cfg) => {
+                    tracing::info!(path = %path.display(), "Loaded state config");
+                    return Some(cfg);
+                }
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), "Failed to parse state.json: {}", e);
+                }
+            }
         }
     }
+    None
+}
+
+/// Return the user's home directory.
+fn dirs_next() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(PathBuf::from)
 }
 
 // ── Factory ──────────────────────────────────────────────

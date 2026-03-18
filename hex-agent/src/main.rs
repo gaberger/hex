@@ -166,8 +166,14 @@ async fn main() -> anyhow::Result<()> {
 
     // SpacetimeDB config is injected by hex-hub at spawn time via env vars.
     // Agents don't resolve config themselves — that's the hub's responsibility.
+    // Per-module database names allow each loader to connect to its own DB.
     let stdb_host = std::env::var("HEX_STDB_HOST").unwrap_or_default();
-    let stdb_database = std::env::var("HEX_STDB_DATABASE").unwrap_or_default();
+    let stdb_skill_db = std::env::var("HEX_STDB_SKILL_DB")
+        .or_else(|_| std::env::var("HEX_STDB_DATABASE"))
+        .unwrap_or_default();
+    let stdb_agent_def_db = std::env::var("HEX_STDB_AGENT_DEF_DB")
+        .or_else(|_| std::env::var("HEX_STDB_DATABASE"))
+        .unwrap_or_default();
 
     let hub_connected = if let Some(ref hub_url) = args.hub_url {
         // Probe hub health endpoint
@@ -179,9 +185,10 @@ async fn main() -> anyhow::Result<()> {
     let (skills, agent_def) = if hub_connected {
         let hub_url = args.hub_url.as_deref().unwrap();
 
-        // Try SpacetimeDB-backed loaders first, fall back to filesystem
+        // Try SpacetimeDB-backed loaders first, fall back to filesystem.
+        // Each loader connects to its own per-module database.
         let skill_loader_st = SpacetimeSkillLoader::new(hub_url);
-        let st_skills_ok = skill_loader_st.connect(&stdb_host, &stdb_database).await.is_ok();
+        let st_skills_ok = skill_loader_st.connect(&stdb_host, &stdb_skill_db).await.is_ok();
         let st_skills = if st_skills_ok {
             skill_loader_st.load(&[]).await.unwrap_or_default()
         } else {
@@ -189,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
         };
 
         let agent_loader_st = SpacetimeAgentLoader::new(hub_url);
-        let st_agents_ok = agent_loader_st.connect(&stdb_host, &stdb_database).await.is_ok();
+        let st_agents_ok = agent_loader_st.connect(&stdb_host, &stdb_agent_def_db).await.is_ok();
         let st_agent_def = if st_agents_ok {
             if let Some(agent_name) = &args.agent {
                 agent_loader_st.load_by_name(&[], agent_name).await.ok()
