@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>hex Chat</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%2300d4aa'/%3E%3Cstop offset='100%25' style='stop-color:%2358a6ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpolygon points='32,4 58,19 58,45 32,60 6,45 6,19' fill='url(%23g)' opacity='0.12' stroke='url(%23g)' stroke-width='2.5' stroke-linejoin='round'/%3E%3Cpolygon points='32,16 46,24 46,40 32,48 18,40 18,24' fill='url(%23g)' opacity='0.25' stroke='url(%23g)' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpolygon points='32,27 37,30 37,34 32,37 27,34 27,30' fill='url(%23g)' opacity='0.8'/%3E%3C/svg%3E">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0f;--bg2:#0e0e16;--card:#141420;--card2:#1a1a2a;
+  --border:#252535;--border-hi:#353550;
+  --accent:#00d4aa;--accent-dim:rgba(0,212,170,.12);--accent-glow:rgba(0,212,170,.3);
+  --blue:#3b82f6;--blue-dim:rgba(59,130,246,.15);
+  --amber:#ffb347;--amber-dim:rgba(255,179,71,.12);
+  --red:#ff4444;--red-dim:rgba(255,68,68,.12);
+  --green:#3fb950;--yellow:#e3b341;
+  --text:#e0e0e0;--text2:#9e9eb0;--text3:#6a6a80;
+  --radius:10px;--radius-sm:6px;
+  --user-bg:#1a2744;--user-border:#2a3f6a;
+  --asst-bg:#1a1a28;--asst-border:#2a2a40;
+  --font:-apple-system,'Inter',system-ui,'Segoe UI',sans-serif;
+  --mono:'SF Mono','Fira Code','Cascadia Code',Consolas,monospace;
+}
+html{font-size:17px;-webkit-font-smoothing:antialiased}
+body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh;overflow:hidden;display:grid;grid-template-rows:48px 1fr;grid-template-columns:1fr 280px}
+@media(max-width:768px){body{grid-template-columns:1fr}
+  .sidebar{position:fixed;right:0;top:48px;bottom:0;width:280px;transform:translateX(100%);transition:transform .25s ease;z-index:100;border-left:1px solid var(--border)}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar-toggle{display:flex !important}
+}
+
+/* Top Bar */
+.topbar{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:0 16px;background:var(--card);border-bottom:1px solid var(--border);gap:12px}
+.topbar-left{display:flex;align-items:center;gap:10px}
+.hex-logo{width:28px;height:28px}
+.topbar h1{font-size:1rem;font-weight:700;letter-spacing:.3px;color:var(--text)}
+.topbar h1 span{color:var(--accent)}
+.model-badge{font-size:.75rem;padding:2px 8px;border-radius:4px;background:var(--accent-dim);color:var(--accent);font-weight:600}
+.conn-status{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--text2)}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px rgba(63,185,80,.5);transition:background .3s,box-shadow .3s}
+.conn-dot.disconnected{background:var(--red);box-shadow:0 0 6px rgba(255,68,68,.5);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.sidebar-toggle{display:none;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:var(--text2);cursor:pointer;font-size:1.1rem}
+
+/* Main Chat Area */
+.chat-area{display:flex;flex-direction:column;overflow:hidden}
+.messages{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px;scroll-behavior:smooth}
+.messages::-webkit-scrollbar{width:6px}
+.messages::-webkit-scrollbar-track{background:transparent}
+.messages::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* Message Bubbles */
+.msg{max-width:82%;display:flex;flex-direction:column;gap:4px;animation:fadeIn .2s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{align-self:flex-end}
+.msg.assistant{align-self:flex-start}
+.msg-role{font-size:.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--text3);padding:0 4px}
+.msg.user .msg-role{text-align:right}
+.msg-body{padding:10px 14px;border-radius:var(--radius);line-height:1.55;font-size:.92rem;word-wrap:break-word;overflow-wrap:break-word}
+.msg.user .msg-body{background:var(--user-bg);border:1px solid var(--user-border);border-bottom-right-radius:3px}
+.msg.assistant .msg-body{background:var(--asst-bg);border:1px solid var(--asst-border);border-bottom-left-radius:3px}
+
+/* Markdown in messages */
+.msg-body strong{font-weight:700;color:#fff}
+.msg-body em{font-style:italic;color:var(--text2)}
+.msg-body code{font-family:var(--mono);font-size:.85em;background:rgba(255,255,255,.07);padding:1px 5px;border-radius:3px;color:#d4d4ff}
+.msg-body pre{position:relative;margin:8px 0;padding:12px;background:#0d0d18;border:1px solid var(--border);border-radius:var(--radius-sm);overflow-x:auto;font-size:.82rem;line-height:1.5}
+.msg-body pre code{background:none;padding:0;color:#d4d4d4}
+.copy-btn{position:absolute;top:6px;right:6px;padding:3px 8px;background:var(--border);border:none;border-radius:4px;color:var(--text3);cursor:pointer;font-size:.7rem;font-family:var(--font);opacity:0;transition:opacity .15s}
+.msg-body pre:hover .copy-btn{opacity:1}
+.copy-btn:hover{background:var(--border-hi);color:var(--text)}
+.msg-body a{color:var(--accent);text-decoration:underline}
+.msg-body ul,.msg-body ol{margin:6px 0 6px 20px}
+.msg-body li{margin:2px 0}
+.msg-body blockquote{border-left:3px solid var(--accent);padding:4px 12px;margin:6px 0;color:var(--text2)}
+
+/* Tool Call Cards */
+.tool-card{margin:6px 0;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;font-size:.85rem}
+.tool-header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--amber-dim);border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
+.tool-header.error{background:var(--red-dim)}
+.tool-icon{font-size:.9rem}
+.tool-name{font-weight:700;color:var(--amber);font-family:var(--mono);font-size:.8rem}
+.tool-header.error .tool-name{color:var(--red)}
+.tool-chevron{margin-left:auto;color:var(--text3);transition:transform .2s;font-size:.7rem}
+.tool-card.expanded .tool-chevron{transform:rotate(90deg)}
+.tool-detail{display:none;padding:10px 12px;background:var(--bg2);font-family:var(--mono);font-size:.78rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;color:var(--text2);max-height:300px;overflow-y:auto}
+.tool-card.expanded .tool-detail{display:block}
+.tool-label{font-size:.65rem;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:4px;font-family:var(--font)}
+.tool-section{margin-bottom:8px}
+.tool-section:last-child{margin-bottom:0}
+
+/* Streaming cursor */
+.streaming-cursor::after{content:'';display:inline-block;width:7px;height:14px;background:var(--accent);margin-left:2px;animation:blink .6s infinite;vertical-align:text-bottom;border-radius:1px}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+
+/* Input Area */
+.input-area{padding:12px 20px 16px;border-top:1px solid var(--border);background:var(--card)}
+.input-row{display:flex;gap:8px;align-items:flex-end}
+.input-row textarea{flex:1;resize:none;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);color:var(--text);font-family:var(--font);font-size:.9rem;padding:10px 14px;line-height:1.45;min-height:42px;max-height:160px;outline:none;transition:border-color .2s}
+.input-row textarea:focus{border-color:var(--accent)}
+.input-row textarea::placeholder{color:var(--text3)}
+.send-btn{width:42px;height:42px;border:none;border-radius:var(--radius);background:var(--accent);color:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:opacity .15s,transform .1s;flex-shrink:0}
+.send-btn:hover{opacity:.85}
+.send-btn:active{transform:scale(.95)}
+.send-btn:disabled{opacity:.4;cursor:default;transform:none}
+.send-btn svg{width:18px;height:18px}
+.input-hint{font-size:.7rem;color:var(--text3);margin-top:4px;text-align:right}
+
+/* Sidebar */
+.sidebar{display:flex;flex-direction:column;background:var(--card);border-left:1px solid var(--border);overflow-y:auto}
+.sidebar::-webkit-scrollbar{width:4px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.sb-section{padding:14px 16px;border-bottom:1px solid var(--border)}
+.sb-title{font-size:.7rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text3);margin-bottom:10px;font-weight:700}
+
+/* Token Gauge */
+.gauge-wrap{display:flex;flex-direction:column;align-items:center;gap:6px}
+.gauge-svg{width:110px;height:110px}
+.gauge-bg{fill:none;stroke:var(--border);stroke-width:8}
+.gauge-fill{fill:none;stroke:var(--accent);stroke-width:8;stroke-linecap:round;transition:stroke-dashoffset .6s ease,stroke .3s}
+.gauge-text{font-size:1.4rem;font-weight:700;fill:var(--text);font-family:var(--font)}
+.gauge-label{font-size:.55rem;fill:var(--text3);text-transform:uppercase;letter-spacing:1px;font-family:var(--font)}
+.token-detail{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:.78rem;margin-top:6px}
+.token-detail dt{color:var(--text3)}
+.token-detail dd{color:var(--text);text-align:right;font-variant-numeric:tabular-nums}
+
+/* Agent Info */
+.agent-info{display:flex;flex-direction:column;gap:6px;font-size:.82rem}
+.agent-row{display:flex;justify-content:space-between;align-items:center}
+.agent-row .label{color:var(--text3)}
+.agent-row .value{color:var(--text);font-weight:600;text-align:right;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.status-pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:.72rem;font-weight:600}
+.status-pill.active{background:rgba(0,212,170,.15);color:var(--accent)}
+.status-pill.idle{background:rgba(158,158,176,.1);color:var(--text3)}
+
+/* Controls */
+.controls{display:flex;gap:6px;flex-wrap:wrap}
+.ctrl-btn{padding:5px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:var(--text2);cursor:pointer;font-size:.78rem;font-family:var(--font);transition:all .15s}
+.ctrl-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* RL Insights */
+.rl-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;font-size:.78rem}
+.rl-action{color:var(--accent);font-weight:700;font-family:var(--mono)}
+.rl-conf{color:var(--text3);margin-top:4px}
+
+/* Welcome message */
+.welcome{text-align:center;color:var(--text3);padding:40px 20px;align-self:center}
+.welcome h2{font-size:1.1rem;color:var(--text2);margin-bottom:6px;font-weight:600}
+.welcome p{font-size:.85rem}
+</style>
+</head>
+<body>
+
+<!-- Top Bar -->
+<div class="topbar">
+  <div class="topbar-left">
+    <svg class="hex-logo" viewBox="0 0 64 64" fill="none">
+      <defs><linearGradient id="lg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#00d4aa"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>
+      <polygon points="32,4 58,19 58,45 32,60 6,45 6,19" fill="url(#lg)" opacity=".12" stroke="url(#lg)" stroke-width="2.5" stroke-linejoin="round"/>
+      <polygon points="32,16 46,24 46,40 32,48 18,40 18,24" fill="url(#lg)" opacity=".25" stroke="url(#lg)" stroke-width="1.5" stroke-linejoin="round"/>
+      <polygon points="32,27 37,30 37,34 32,37 27,34 27,30" fill="url(#lg)" opacity=".8"/>
+    </svg>
+    <h1><span>hex</span> chat</h1>
+    <span class="model-badge" id="modelBadge">claude-sonnet-4-20250514</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:14px">
+    <div class="conn-status">
+      <span class="conn-dot disconnected" id="connDot"></span>
+      <span id="connLabel">disconnected</span>
+    </div>
+    <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">&#9776;</button>
+  </div>
+</div>
+
+<!-- Chat Area -->
+<div class="chat-area">
+  <div class="messages" id="messages">
+    <div class="welcome">
+      <h2>hex agent</h2>
+      <p>Send a message to begin.</p>
+    </div>
+  </div>
+  <div class="input-area">
+    <div class="input-row">
+      <textarea id="input" rows="1" placeholder="Message hex agent..." autocomplete="off"></textarea>
+      <button class="send-btn" id="sendBtn" disabled aria-label="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
+    <div class="input-hint">Enter to send, Shift+Enter for new line</div>
+  </div>
+</div>
+
+<!-- Right Sidebar -->
+<div class="sidebar" id="sidebar">
+  <div class="sb-section">
+    <div class="sb-title">Token Budget</div>
+    <div class="gauge-wrap">
+      <svg class="gauge-svg" viewBox="0 0 120 120">
+        <circle class="gauge-bg" cx="60" cy="60" r="50"/>
+        <circle class="gauge-fill" id="gaugeFill" cx="60" cy="60" r="50"
+          stroke-dasharray="314.16" stroke-dashoffset="314.16"
+          transform="rotate(-90 60 60)"/>
+        <text class="gauge-text" x="60" y="58" text-anchor="middle" id="gaugePct">0%</text>
+        <text class="gauge-label" x="60" y="74" text-anchor="middle">tokens used</text>
+      </svg>
+      <dl class="token-detail">
+        <dt>Input</dt><dd id="tokIn">0</dd>
+        <dt>Output</dt><dd id="tokOut">0</dd>
+        <dt>Total In</dt><dd id="tokTotalIn">0</dd>
+        <dt>Total Out</dt><dd id="tokTotalOut">0</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="sb-section">
+    <div class="sb-title">Agent Info</div>
+    <div class="agent-info">
+      <div class="agent-row"><span class="label">Status</span><span class="status-pill idle" id="agentStatus">idle</span></div>
+      <div class="agent-row"><span class="label">Turns</span><span class="value" id="turnCount">0</span></div>
+      <div class="agent-row"><span class="label">Project</span><span class="value" id="projectDir">--</span></div>
+    </div>
+  </div>
+
+  <div class="sb-section">
+    <div class="sb-title">Controls</div>
+    <div class="controls">
+      <button class="ctrl-btn" data-cmd="/clear">/clear</button>
+      <button class="ctrl-btn" data-cmd="/tokens">/tokens</button>
+      <button class="ctrl-btn" data-cmd="/status">/status</button>
+    </div>
+  </div>
+
+  <div class="sb-section">
+    <div class="sb-title">RL Insights</div>
+    <div class="rl-card">
+      <div class="rl-action" id="rlAction">--</div>
+      <div class="rl-conf" id="rlConf">No data yet</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ── State ── */
+var state = {
+  ws: null, connected: false, reconnectDelay: 1000, reconnectTimer: null,
+  turnCount: 0, streaming: false, currentAssistantEl: null, authToken: null,
+  totalInput: 0, totalOutput: 0, tokenBudget: 200000
+};
+
+/* ── DOM refs ── */
+var messages = document.getElementById("messages");
+var input = document.getElementById("input");
+var sendBtn = document.getElementById("sendBtn");
+var connDot = document.getElementById("connDot");
+var connLabel = document.getElementById("connLabel");
+var gaugeFill = document.getElementById("gaugeFill");
+var gaugePct = document.getElementById("gaugePct");
+var tokIn = document.getElementById("tokIn");
+var tokOut = document.getElementById("tokOut");
+var tokTotalIn = document.getElementById("tokTotalIn");
+var tokTotalOut = document.getElementById("tokTotalOut");
+var agentStatus = document.getElementById("agentStatus");
+var turnCountEl = document.getElementById("turnCount");
+var projectDir = document.getElementById("projectDir");
+var rlAction = document.getElementById("rlAction");
+var rlConf = document.getElementById("rlConf");
+var modelBadge = document.getElementById("modelBadge");
+var sidebar = document.getElementById("sidebar");
+var sidebarToggle = document.getElementById("sidebarToggle");
+
+/* ── Escape helper (XSS-safe) ── */
+function esc(s) {
+  var d = document.createElement("div");
+  d.appendChild(document.createTextNode(s));
+  return d.textContent;
+}
+function truncate(s, n) { return s.length > n ? s.slice(0, n) + "..." : s; }
+function fmt(n) { return n >= 1e6 ? (n/1e6).toFixed(1)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(n); }
+
+/* ── Auth ── */
+function getAuthToken() {
+  /* Try URL hash first, then query param ?token=..., then prompt */
+  var h = location.hash.slice(1);
+  if (h) return h;
+  var params = new URLSearchParams(location.search);
+  var t = params.get("token");
+  if (t) { location.hash = t; return t; }
+  t = prompt("Enter hub auth token:", "");
+  if (t) { location.hash = t; return t; }
+  return null;
+}
+
+/* ── WebSocket ── */
+function connect() {
+  state.authToken = state.authToken || getAuthToken();
+  if (!state.authToken) return;
+  var proto = location.protocol === "https:" ? "wss:" : "ws:";
+  var host = location.host || "localhost:5555";
+  var url = proto + "//" + host + "/ws/chat?token=" + encodeURIComponent(state.authToken);
+  var ws = new WebSocket(url);
+  state.ws = ws;
+  ws.onopen = function() {
+    state.connected = true; state.reconnectDelay = 1000;
+    connDot.classList.remove("disconnected");
+    connLabel.textContent = "connected";
+  };
+  ws.onclose = function() {
+    state.connected = false;
+    connDot.classList.add("disconnected");
+    connLabel.textContent = "disconnected";
+    scheduleReconnect();
+  };
+  ws.onerror = function() { ws.close(); };
+  ws.onmessage = function(e) {
+    try { handleMessage(JSON.parse(e.data)); } catch(err) { console.error("ws parse error", err); }
+  };
+}
+
+function scheduleReconnect() {
+  if (state.reconnectTimer) return;
+  state.reconnectTimer = setTimeout(function() {
+    state.reconnectTimer = null;
+    state.reconnectDelay = Math.min(state.reconnectDelay * 2, 30000);
+    connect();
+  }, state.reconnectDelay);
+}
+
+function wsSend(content) {
+  if (!state.ws || state.ws.readyState !== 1) return;
+  state.ws.send(JSON.stringify({ type: "chat_message", content: content }));
+}
+
+/* ── Message dispatch ── */
+function handleMessage(msg) {
+  switch (msg.type) {
+    case "connected":    handleConnected(msg);   break;
+    case "stream_chunk": handleStreamChunk(msg); break;
+    case "tool_call":    handleToolCall(msg);    break;
+    case "tool_result":  handleToolResult(msg);  break;
+    case "token_update": handleTokenUpdate(msg); break;
+    case "agent_status": handleAgentStatus(msg); break;
+    case "chat_message": addAssistantMessage(msg.data ? msg.data.content : (msg.content || "")); break;
+  }
+}
+
+function handleConnected(msg) {
+  var data = msg.data || {};
+  if (data.llmBridge) {
+    modelBadge.textContent = "LLM bridge";
+    modelBadge.style.background = "rgba(63,185,80,.15)";
+    modelBadge.style.color = "#3fb950";
+  }
+}
+
+/* ── Markdown renderer (safe: all text goes through esc() first) ── */
+function renderMarkdown(src) {
+  if (!src) return "";
+  /* Escape all HTML entities so raw tags are neutralized */
+  var h = esc(src);
+  /* Fenced code blocks */
+  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
+    return '<pre><code class="lang-' + lang + '">' + code.trim() + '</code></pre>';
+  });
+  /* Inline code */
+  h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  /* Bold */
+  h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  /* Italic */
+  h = h.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+  /* Links */
+  h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  /* Blockquote */
+  h = h.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+  /* Unordered list items */
+  h = h.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
+  h = h.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+  /* Line breaks */
+  h = h.replace(/\n/g, '<br>');
+  /* Clean up <br> inside <pre> and <ul> */
+  h = h.replace(/<pre>([\s\S]*?)<\/pre>/g, function(m) { return m.replace(/<br>/g, '\n'); });
+  h = h.replace(/<ul>([\s\S]*?)<\/ul>/g, function(m) { return m.replace(/<br>/g, ''); });
+  return h;
+}
+
+/* ── DOM construction helpers (use safe DOM APIs where possible) ── */
+function createMsgEl(role) {
+  clearWelcome();
+  var wrap = document.createElement("div");
+  wrap.className = "msg " + role;
+  var roleEl = document.createElement("div");
+  roleEl.className = "msg-role";
+  roleEl.textContent = role;
+  var body = document.createElement("div");
+  body.className = "msg-body";
+  wrap.appendChild(roleEl);
+  wrap.appendChild(body);
+  messages.appendChild(wrap);
+  scrollToBottom();
+  return wrap;
+}
+
+function setBodyContent(body, markdownSrc) {
+  /* Markdown needs HTML structure (bold, code blocks, lists) so we parse
+     through renderMarkdown which escapes raw text first, then set via
+     the trusted template. This is safe because renderMarkdown calls esc()
+     on the entire input before any tag insertion. */
+  var rendered = renderMarkdown(markdownSrc);
+  body.innerHTML = rendered; // eslint-disable-line -- input is esc()-sanitized
+  attachCopyButtons(body);
+}
+
+function attachCopyButtons(container) {
+  var pres = container.querySelectorAll("pre");
+  for (var i = 0; i < pres.length; i++) {
+    var pre = pres[i];
+    if (pre.querySelector(".copy-btn")) continue;
+    var btn = document.createElement("button");
+    btn.className = "copy-btn";
+    btn.textContent = "copy";
+    btn.addEventListener("click", (function(preEl) {
+      return function() {
+        var code = preEl.querySelector("code");
+        if (!code) return;
+        navigator.clipboard.writeText(code.textContent).then(function() {
+          var b = preEl.querySelector(".copy-btn");
+          b.textContent = "copied!";
+          setTimeout(function() { b.textContent = "copy"; }, 1500);
+        });
+      };
+    })(pre));
+    pre.appendChild(btn);
+  }
+}
+
+/* ── Stream handling ── */
+function handleStreamChunk(msg) {
+  if (!state.streaming || !state.currentAssistantEl) {
+    state.streaming = true;
+    state.currentAssistantEl = createMsgEl("assistant");
+  }
+  var body = state.currentAssistantEl.querySelector(".msg-body");
+  body.dataset.raw = (body.dataset.raw || "") + msg.text;
+  setBodyContent(body, body.dataset.raw);
+  body.classList.add("streaming-cursor");
+  scrollToBottom();
+}
+
+function endStream() {
+  if (state.currentAssistantEl) {
+    state.currentAssistantEl.querySelector(".msg-body").classList.remove("streaming-cursor");
+  }
+  state.streaming = false;
+  state.currentAssistantEl = null;
+  state.turnCount++;
+  turnCountEl.textContent = state.turnCount;
+}
+
+/* ── Tool calls ── */
+function handleToolCall(msg) {
+  if (!state.currentAssistantEl) {
+    state.streaming = true;
+    state.currentAssistantEl = createMsgEl("assistant");
+  }
+  var body = state.currentAssistantEl.querySelector(".msg-body");
+  body.classList.remove("streaming-cursor");
+
+  var card = document.createElement("div");
+  card.className = "tool-card";
+  card.dataset.tool = msg.tool_name;
+
+  var header = document.createElement("div");
+  header.className = "tool-header";
+  header.addEventListener("click", function() { card.classList.toggle("expanded"); });
+  var icon = document.createElement("span");
+  icon.className = "tool-icon";
+  icon.textContent = "\u2699";
+  var nameEl = document.createElement("span");
+  nameEl.className = "tool-name";
+  nameEl.textContent = msg.tool_name;
+  var chevron = document.createElement("span");
+  chevron.className = "tool-chevron";
+  chevron.textContent = "\u25B6";
+  header.appendChild(icon);
+  header.appendChild(nameEl);
+  header.appendChild(chevron);
+
+  var detail = document.createElement("div");
+  detail.className = "tool-detail";
+  var inputSection = document.createElement("div");
+  inputSection.className = "tool-section";
+  var inputLabel = document.createElement("div");
+  inputLabel.className = "tool-label";
+  inputLabel.textContent = "Input";
+  inputSection.appendChild(inputLabel);
+  inputSection.appendChild(document.createTextNode(
+    truncate(JSON.stringify(msg.tool_input, null, 2), 200)
+  ));
+
+  var resultSection = document.createElement("div");
+  resultSection.className = "tool-section tool-result-section";
+  var resultLabel = document.createElement("div");
+  resultLabel.className = "tool-label";
+  resultLabel.textContent = "Result";
+  var runningSpan = document.createElement("span");
+  runningSpan.style.color = "var(--text3)";
+  runningSpan.textContent = "running...";
+  resultSection.appendChild(resultLabel);
+  resultSection.appendChild(runningSpan);
+
+  detail.appendChild(inputSection);
+  detail.appendChild(resultSection);
+  card.appendChild(header);
+  card.appendChild(detail);
+  body.appendChild(card);
+  scrollToBottom();
+}
+
+function handleToolResult(msg) {
+  if (!state.currentAssistantEl) return;
+  var cards = state.currentAssistantEl.querySelectorAll('.tool-card[data-tool="' + CSS.escape(msg.tool_name) + '"]');
+  var card = cards[cards.length - 1];
+  if (!card) return;
+  if (msg.is_error) {
+    card.querySelector(".tool-header").classList.add("error");
+  }
+  var resSection = card.querySelector(".tool-result-section");
+  resSection.textContent = "";
+  var label = document.createElement("div");
+  label.className = "tool-label";
+  label.textContent = msg.is_error ? "Result (error)" : "Result";
+  resSection.appendChild(label);
+  var content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content, null, 2);
+  resSection.appendChild(document.createTextNode(truncate(content, 800)));
+
+  var body = state.currentAssistantEl.querySelector(".msg-body");
+  body.classList.add("streaming-cursor");
+  scrollToBottom();
+}
+
+/* ── Token gauge ── */
+function handleTokenUpdate(msg) {
+  state.totalInput = msg.total_input || state.totalInput;
+  state.totalOutput = msg.total_output || state.totalOutput;
+  var total = state.totalInput + state.totalOutput;
+  var pct = Math.min(total / state.tokenBudget, 1);
+  updateGauge(pct);
+  tokIn.textContent = fmt(msg.input_tokens || 0);
+  tokOut.textContent = fmt(msg.output_tokens || 0);
+  tokTotalIn.textContent = fmt(state.totalInput);
+  tokTotalOut.textContent = fmt(state.totalOutput);
+}
+
+function updateGauge(pct) {
+  var circ = 314.16;
+  gaugeFill.style.strokeDashoffset = circ * (1 - pct);
+  gaugePct.textContent = Math.round(pct * 100) + "%";
+  gaugeFill.style.stroke = pct < 0.6 ? "#3fb950" : pct < 0.85 ? "#e3b341" : "#ff4444";
+}
+
+/* ── Agent status ── */
+function handleAgentStatus(msg) {
+  var s = msg.status || "idle";
+  agentStatus.textContent = s;
+  agentStatus.className = "status-pill " + (s === "idle" ? "idle" : "active");
+  if (msg.detail) projectDir.textContent = msg.detail;
+  if (msg.model) modelBadge.textContent = msg.model;
+  if (s === "idle" && state.streaming) endStream();
+}
+
+/* ── UI actions ── */
+function addUserMessage(text) {
+  clearWelcome();
+  var el = createMsgEl("user");
+  setBodyContent(el.querySelector(".msg-body"), text);
+  state.turnCount++;
+  turnCountEl.textContent = state.turnCount;
+  scrollToBottom();
+}
+
+function addAssistantMessage(text) {
+  endStream();
+  var el = createMsgEl("assistant");
+  setBodyContent(el.querySelector(".msg-body"), text);
+  scrollToBottom();
+}
+
+function clearMessages() {
+  messages.textContent = "";
+  var w = document.createElement("div");
+  w.className = "welcome";
+  var h2 = document.createElement("h2");
+  h2.textContent = "hex agent";
+  var p = document.createElement("p");
+  p.textContent = "Send a message to begin.";
+  w.appendChild(h2);
+  w.appendChild(p);
+  messages.appendChild(w);
+  state.turnCount = 0; turnCountEl.textContent = "0";
+  state.streaming = false; state.currentAssistantEl = null;
+}
+
+function clearWelcome() {
+  var w = messages.querySelector(".welcome");
+  if (w) w.remove();
+}
+
+function scrollToBottom() {
+  requestAnimationFrame(function() { messages.scrollTop = messages.scrollHeight; });
+}
+
+/* ── Input handling ── */
+input.addEventListener("input", function() {
+  sendBtn.disabled = !input.value.trim();
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 160) + "px";
+});
+
+input.addEventListener("keydown", function(e) {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); }
+});
+
+sendBtn.addEventListener("click", doSend);
+
+function doSend() {
+  var text = input.value.trim();
+  if (!text) return;
+  addUserMessage(text);
+  wsSend(text);
+  input.value = "";
+  input.style.height = "auto";
+  sendBtn.disabled = true;
+}
+
+/* ── Control buttons ── */
+var ctrls = document.querySelectorAll(".ctrl-btn");
+for (var i = 0; i < ctrls.length; i++) {
+  ctrls[i].addEventListener("click", (function(btn) {
+    return function() {
+      var cmd = btn.dataset.cmd;
+      if (cmd === "/clear") { clearMessages(); return; }
+      wsSend(cmd);
+      addUserMessage(cmd);
+    };
+  })(ctrls[i]));
+}
+
+/* ── Sidebar toggle (mobile) ── */
+sidebarToggle.addEventListener("click", function() { sidebar.classList.toggle("open"); });
+
+/* ── RL Insights polling ── */
+function fetchRLStats() {
+  fetch("/api/rl/stats").then(function(r) { return r.json(); }).then(function(d) {
+    if (d.action) rlAction.textContent = d.action;
+    if (d.confidence != null) rlConf.textContent = "confidence: " + Math.round(d.confidence * 100) + "%";
+  }).catch(function() {});
+}
+setInterval(fetchRLStats, 15000);
+fetchRLStats();
+
+/* ── Init ── */
+connect();
+
+})();
+</script>
+</body>
+</html>

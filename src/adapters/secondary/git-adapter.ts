@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 const _require = createRequire(import.meta.url);
 const { execFile: execFileCb } = _require('node:child_process');
 import { promisify } from 'node:util';
-import { readdir, stat } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IGitPort, GitStatusEntry, GitWorktreeEntry } from '../../core/ports/index.js';
 

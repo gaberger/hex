@@ -5,7 +5,7 @@
  * This replaces the Node.js DashboardHub with the Rust hex-hub binary.
  */
 
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';

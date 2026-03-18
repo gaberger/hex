@@ -41,20 +41,20 @@ const HEX_DEPENDENCY_PATHS = [
 // Result types
 // ---------------------------------------------------------------------------
 
-export interface ProjectStats {
+interface ProjectStats {
   estimatedFiles: number;
   estimatedSizeBytes: number;
   isLargeProject: boolean;
 }
 
-export interface InitGuardResult {
+interface InitGuardResult {
   canProceed: boolean;
   warnings: string[];
   errors: string[];
   projectStats: ProjectStats;
 }
 
-export interface DependencyCheckResult {
+interface DependencyCheckResult {
   missing: string[];
   warnings: string[];
 }

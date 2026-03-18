@@ -12,7 +12,6 @@
 import type {
   ProgressReport,
   AgentProgress,
-  StatusLine,
 } from '../ports/notification.js';
 
 // ─── ANSI Color Helpers ─────────────────────────────────
@@ -116,7 +115,7 @@ type OutputMode = 'ansi' | 'plain' | 'json';
 
 // ─── Compact Format ─────────────────────────────────────
 
-function formatCompact(
+export function formatCompact(
   report: ProgressReport,
   mode: OutputMode = 'ansi',
 ): string {
@@ -172,7 +171,7 @@ function formatCompact(
 
 // ─── Expanded Format ────────────────────────────────────
 
-function formatExpanded(
+export function formatExpanded(
   report: ProgressReport,
   mode: OutputMode = 'ansi',
   elapsed?: number,
@@ -255,20 +254,6 @@ function formatExpanded(
   lines.push(divider);
 
   return lines;
-}
-
-// ─── StatusLine Builder ─────────────────────────────────
-
-function buildStatusLine(
-  report: ProgressReport,
-  elapsed?: number,
-  tokenUsage?: { used: number; budget: number },
-): StatusLine {
-  return {
-    compact: formatCompact(report, 'plain'),
-    expanded: formatExpanded(report, 'plain', elapsed, tokenUsage),
-    ansiCompact: formatCompact(report, 'ansi'),
-  };
 }
 
 // ─── JSON Payload ───────────────────────────────────────

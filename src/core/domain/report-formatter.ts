@@ -72,10 +72,6 @@ function padRight(str: string, len: number): string {
   return str.length >= len ? str.slice(0, len) : str + ' '.repeat(len - str.length);
 }
 
-function padLeft(str: string, len: number): string {
-  return str.length >= len ? str.slice(0, len) : ' '.repeat(len - str.length) + str;
-}
-
 function table(headers: string[], rows: string[][], colWidths?: number[]): string {
   if (rows.length === 0) return '';
 

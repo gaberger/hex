@@ -6,7 +6,6 @@
  */
 
 import type {
-  HygieneCategory,
   HygieneFinding,
   HygieneSeverity,
   RepoHygieneResult,

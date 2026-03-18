@@ -67,7 +67,7 @@ export class WASMBridgeAdapter implements IWASMBridgePort {
       shared: descriptor.memory.shared,
     });
 
-    const importObject: WebAssembly.Imports = {
+    const importObject = {
       env: { memory },
     };
 

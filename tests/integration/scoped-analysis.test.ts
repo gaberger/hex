@@ -25,9 +25,9 @@ describe('Scoped architecture analysis', () => {
   it('scoped analysis of hex-hub finds only Rust files', async () => {
     const result = await ctx.archAnalyzer.analyzeArchitecture('hex-hub');
 
-    // Should find Rust source files (main.rs, state.rs, embed.rs, daemon.rs,
-    // routes/*.rs, middleware/*.rs) — 13 files in hex-hub/src/
-    expect(result.summary.totalFiles).toBeGreaterThanOrEqual(5);
+    // hex-hub is now a thin binary (main.rs only) — logic lives in hex-hub-core.
+    // Should still find at least 1 Rust source file.
+    expect(result.summary.totalFiles).toBeGreaterThanOrEqual(1);
 
     // Verify NO TypeScript or Go files leaked in
     const edges = await ctx.archAnalyzer.buildDependencyGraph('hex-hub');
@@ -146,8 +146,8 @@ describe('Scoped architecture analysis', () => {
     }
 
     // The file count should match only src/ files (not target/ artifacts)
-    // hex-hub/src/ has 13 .rs files, target/ could have hundreds
+    // hex-hub is now a thin binary (main.rs) — logic moved to hex-hub-core
     // A reasonable upper bound proves target/ was excluded
-    expect(result.summary.totalFiles).toBeLessThan(30);
+    expect(result.summary.totalFiles).toBeLessThan(10);
   }, 15000);
 });

@@ -130,6 +130,3 @@ export interface AppContext {
   /** Factory to create a dashboard client (wired in composition root to avoid cross-adapter imports). */
   createDashboard?: (rootPath: string) => Promise<IDashboardClient>;
 }
-
-/** Factory that creates an AppContext for a given project root path. */
-type AppContextFactory = (rootPath: string) => Promise<AppContext>;

@@ -1,0 +1,27 @@
+[package]
+name = "hex-desktop"
+version = "26.3.1"
+edition = "2021"
+description = "Native desktop app for hex-hub — Tauri v2 with embedded Axum server"
+license = "MIT"
+
+[dependencies]
+hex-hub-core = { path = "../hex-hub-core" }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-shell = "2"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+spacetimedb = ["hex-hub-core/spacetimedb"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

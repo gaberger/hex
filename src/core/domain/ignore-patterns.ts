@@ -87,7 +87,7 @@ function globMatch(pattern: string, segment: string): boolean {
 // ─── IgnoreEngine ────────────────────────────────────────
 
 /** Minimal filesystem operations needed by `fromProject`. */
-export interface IgnoreFS {
+interface IgnoreFS {
   read: (path: string) => Promise<string>;
   exists: (path: string) => Promise<boolean>;
 }

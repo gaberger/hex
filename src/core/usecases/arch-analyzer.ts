@@ -77,6 +77,12 @@ function shouldSkipDeadExportCheck(filePath: string): boolean {
   if (filePath.includes('hex-core/') || filePath.includes('hex-hub/')) return true;
   if (filePath.includes('src/extractors/') && filePath.endsWith('.rs')) return true;
 
+  // Rust crates use `pub use` re-export chains that the analyzer can't trace.
+  // All Rust domain/usecase/port exports appear dead because the static import
+  // tracer only follows TypeScript/Go import statements, not Rust `use` paths.
+  // Skip all .rs files from dead export checks — `cargo test` validates Rust usage.
+  if (filePath.endsWith('.rs')) return true;
+
   // Domain, usecases, infrastructure: DO check for dead exports
   return false;
 }
@@ -240,6 +246,17 @@ export class ArchAnalyzer implements IArchAnalysisPort {
     return cycles;
   }
 
+  /** Collect L1 summaries from test files — used only for their imports
+   *  so we can mark test-consumed exports as alive. */
+  private async collectTestImports(rootPath: string): Promise<ASTSummary[]> {
+    const prefix = ArchAnalyzer.normalizeScopePrefix(rootPath);
+    const testGlobs = ['tests/**/*.ts', 'tests/**/*.test.ts'];
+    const results = await Promise.all(testGlobs.map((g) => this.fs.glob(prefix + g)));
+    const testFiles = results.flat();
+    if (testFiles.length === 0) return [];
+    return Promise.all(testFiles.map((f) => this.ast.extractSummary(f, 'L1')));
+  }
+
   async analyzeArchitecture(rootPath: string): Promise<ArchAnalysisResult> {
     // Reset Go module prefix for fresh detection on each analysis run
     this.goModulePrefix = null;
@@ -247,7 +264,11 @@ export class ArchAnalyzer implements IArchAnalysisPort {
     const summaries = await this.collectSummaries(rootPath);
     const edges = this.buildEdgesFromSummaries(summaries);
 
-    const deadExports = this.findDeadFromSummaries(summaries);
+    // Also collect test file summaries — their imports count as consumers
+    // for dead export detection (prevents false positives for test-only APIs).
+    // Only their imports are used; their exports are NOT checked for deadness.
+    const testSummaries = await this.collectTestImports(rootPath);
+    const deadExports = this.findDeadFromSummaries(summaries, testSummaries);
     const violations = this.findViolationsFromEdges(edges);
     const circularDeps = this.findCyclesFromEdges(edges);
 
@@ -326,12 +347,15 @@ export class ArchAnalyzer implements IArchAnalysisPort {
     return edges;
   }
 
-  private findDeadFromSummaries(summaries: ASTSummary[]): DeadExport[] {
+  private findDeadFromSummaries(
+    summaries: ASTSummary[],
+    additionalImportSources: ASTSummary[] = [],
+  ): DeadExport[] {
     const goMod = this.goModulePrefix || undefined;
     const importedByModule = new Map<string, Set<string>>();
 
-    // Step 1: Build direct import map
-    for (const summary of summaries) {
+    // Step 1: Build direct import map (from source files AND test files)
+    for (const summary of [...summaries, ...additionalImportSources]) {
       for (const imp of summary.imports) {
         const target = resolveImportPath(summary.filePath, imp.from, goMod);
         if (!importedByModule.has(target)) importedByModule.set(target, new Set());

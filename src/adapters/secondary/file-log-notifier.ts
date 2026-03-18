@@ -50,7 +50,7 @@ const DEFAULT_LOG_FILE = 'activity.log';
  *
  * Inject a {@link FileSystem} for testing without touching real disk.
  */
-class FileLogNotifier implements INotificationEmitPort {
+export class FileLogNotifier implements INotificationEmitPort {
   private readonly logDir: string;
   private readonly logFile: string;
   private currentSize = 0;

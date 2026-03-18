@@ -12,8 +12,6 @@ import type { Language, CodeUnit } from './index.js';
 
 export type SerializationFormat = 'json' | 'protobuf' | 'messagepack';
 
-type BridgeType = 'wasm' | 'ffi' | 'grpc' | 'rest' | 'nats';
-
 export interface SerializedPayload {
   format: SerializationFormat;
   data: Uint8Array;

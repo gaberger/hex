@@ -111,7 +111,7 @@ function extractNullablePorts(rootPath: string): Map<string, number> {
 /**
  * Detect nullable-but-always-initialized anti-pattern
  */
-export function detectNullableButAlwaysInitialized(rootPath: string): PatternViolation[] {
+function detectNullableButAlwaysInitialized(rootPath: string): PatternViolation[] {
   const violations: PatternViolation[] = [];
 
   const alwaysInitialized = extractAlwaysInitializedPorts(rootPath);

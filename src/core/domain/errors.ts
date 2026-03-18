@@ -16,7 +16,7 @@ class DomainError extends Error {
   }
 }
 
-class ValidationError extends DomainError {
+export class ValidationError extends DomainError {
   readonly field?: string;
 
   constructor(message: string, field?: string) {
@@ -26,14 +26,14 @@ class ValidationError extends DomainError {
   }
 }
 
-class InvariantViolation extends DomainError {
+export class InvariantViolation extends DomainError {
   constructor(message: string) {
     super('INVARIANT_VIOLATION', message);
     this.name = 'InvariantViolation';
   }
 }
 
-class BoundaryViolation extends DomainError {
+export class BoundaryViolation extends DomainError {
   readonly fromLayer: string;
   readonly toLayer: string;
 

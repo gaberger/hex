@@ -22,7 +22,7 @@ import type {
   ExecutorBackend,
 } from '../domain/agent-executor-types.js';
 
-export interface DualSwarmComparatorDeps {
+interface DualSwarmComparatorDeps {
   claudeCodeExecutor: IAgentExecutorPort;
   anthropicApiExecutor: IAgentExecutorPort;
   build: IBuildPort;

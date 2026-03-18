@@ -428,7 +428,7 @@ export class RufloAdapter implements ISwarmPort {
       return this.extractJson(stdout);
     } catch (err: unknown) {
       // Detect timeout errors specifically
-      const isTimeout = err instanceof Error && 'killed' in err && (err as NodeJS.ErrnoException).killed;
+      const isTimeout = err instanceof Error && 'killed' in err && (err as Error & { killed?: boolean }).killed;
       if (isTimeout) {
         throw new SwarmTimeoutError(tool, this.timeoutMs);
       }

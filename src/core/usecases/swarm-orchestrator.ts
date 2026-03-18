@@ -18,7 +18,7 @@ import type {
   AgentDBProgressReport,
   AgentRole,
 } from '../ports/swarm.js';
-import type { IWorktreePort } from '../ports/index.js';
+import type { IWorktreePort, WorktreePath } from '../ports/index.js';
 import type { ICoordinationPort } from '../ports/coordination.js';
 import { WorktreeConflictError } from '../domain/errors.js';
 
@@ -63,7 +63,7 @@ export class SwarmOrchestrator implements ISwarmOrchestrationPort {
         title: step.description,
         agentRole: inferRole(step),
         adapter: step.adapter,
-        language: step.language,
+        language: undefined,
       });
       taskMap.set(step.id, task);
     }
@@ -132,7 +132,7 @@ export class SwarmOrchestrator implements ISwarmOrchestrationPort {
     }
 
     // Create isolated worktree (declared outside try so catch can clean up)
-    let worktreePath: string | undefined;
+    let worktreePath: WorktreePath | undefined;
     try {
       worktreePath = await this.worktree.create(branchName);
       task.worktreeBranch = branchName;
@@ -150,7 +150,7 @@ export class SwarmOrchestrator implements ISwarmOrchestrationPort {
         value: JSON.stringify({
           description: step.description,
           adapter: step.adapter,
-          worktree: worktreePath,
+          worktree: worktreePath.absolutePath,
           dependencies: step.dependencies,
         }),
         namespace: 'hex',
@@ -158,7 +158,7 @@ export class SwarmOrchestrator implements ISwarmOrchestrationPort {
       });
 
       // Mark task complete (actual code execution happens via Claude Agent tool)
-      await this.swarm.completeTask(task.id, `Prepared worktree at ${worktreePath}`);
+      await this.swarm.completeTask(task.id, `Prepared worktree at ${worktreePath.absolutePath}`);
       await this.swarm.terminateAgent(agent.id);
       // Release coordination lock after completion
       if (this.coordination && lockFeature && lockLayer) {

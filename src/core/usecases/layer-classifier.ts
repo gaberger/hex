@@ -112,21 +112,6 @@ export function classifyLayer(filePath: string): DependencyDirection | 'unknown'
   return 'unknown';
 }
 
-export type SpecialFileRole = 'composition-root' | 'entry-point' | null;
-
-/** Classify special files like composition-root or entry-point. */
-export function classifySpecialFile(filePath: string): SpecialFileRole {
-  const normalized = '/' + filePath;
-  for (const [regex, classification] of FILENAME_PATTERNS) {
-    if (regex.test(normalized)) {
-      if (classification === 'composition-root' || classification === 'entry-point') {
-        return classification;
-      }
-    }
-  }
-  return null;
-}
-
 export function isAllowedImport(
   fromLayer: DependencyDirection,
   toLayer: DependencyDirection,

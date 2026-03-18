@@ -17,7 +17,7 @@ export interface BehavioralSpec {
   assertions: BehavioralAssertion[];
 }
 
-export interface BehavioralAssertion {
+interface BehavioralAssertion {
   given: string;                   // "bird is at y=300, velocity=0"
   when: string;                    // "flap() is called"
   then: string;                    // "bird velocity is negative (upward)"

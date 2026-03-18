@@ -63,7 +63,7 @@ const DEFAULT_CONFIG: WebhookConfig = {
  *
  * Inject an {@link HttpClient} so tests never hit the network.
  */
-class WebhookNotifier implements INotificationEmitPort {
+export class WebhookNotifier implements INotificationEmitPort {
   private config: WebhookConfig;
   private queue: QueuedPayload[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | null = null;

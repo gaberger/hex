@@ -1,6 +1,6 @@
 # ADR-023: Dashboard Session Cleanup and State Synchronization
 
-## Status: Proposed
+## Status: Accepted
 ## Date: 2026-03-17
 ## Deciders: Core Team
 ## Related: ADR-011 (Coordination), ADR-015 (Hub SQLite), ADR-022 (Coordination Wiring)

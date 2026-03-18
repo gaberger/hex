@@ -1,0 +1,49 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nickel-lang/tauri/dev/tooling/cli/schema.json",
+  "productName": "hex-desktop",
+  "version": "26.3.1",
+  "identifier": "dev.hex.desktop",
+  "build": {
+    "frontendDist": "src-frontend",
+    "devUrl": "http://localhost:5555"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "hex-hub Dashboard",
+        "label": "main",
+        "url": "http://127.0.0.1:5555",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src http://127.0.0.1:5555 ws://127.0.0.1:5555; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+    },
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "tooltip": "hex-hub"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  }
+}
