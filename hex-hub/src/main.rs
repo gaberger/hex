@@ -1,22 +1,5 @@
-pub mod adapters;
-mod cleanup;
-mod daemon;
-mod embed;
-mod middleware;
-pub mod orchestration;
-mod persistence;
-pub mod ports;
-pub mod remote;
-mod rl;
-mod routes;
-mod state;
-mod spacetime_bindings;
-pub mod spacetime_launcher;
-
-use std::sync::Arc;
+use hex_hub_core::HubConfig;
 use tracing_subscriber::EnvFilter;
-
-const DEFAULT_PORT: u16 = 5555;
 
 #[tokio::main]
 async fn main() {
@@ -31,11 +14,15 @@ async fn main() {
 
     // Quick introspection flags (no daemon startup needed)
     if args.iter().any(|a| a == "--build-hash") {
-        println!("{}", env!("HEX_HUB_BUILD_HASH"));
+        println!("{}", hex_hub_core::build_hash());
         return;
     }
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("hex-hub {} ({})", env!("CARGO_PKG_VERSION"), env!("HEX_HUB_BUILD_HASH"));
+        println!(
+            "hex-hub {} ({})",
+            hex_hub_core::version(),
+            hex_hub_core::build_hash()
+        );
         return;
     }
 
@@ -46,7 +33,7 @@ async fn main() {
         .position(|a| a == "--port")
         .and_then(|i| args.get(i + 1))
         .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(DEFAULT_PORT);
+        .unwrap_or(hex_hub_core::DEFAULT_PORT);
 
     let token = args
         .iter()
@@ -54,149 +41,17 @@ async fn main() {
         .and_then(|i| args.get(i + 1).cloned())
         .or_else(|| std::env::var("HEX_DASHBOARD_TOKEN").ok());
 
-    // Initialize persistent swarm database
-    let swarm_db = match persistence::SwarmDb::open() {
-        Ok(db) => {
-            tracing::info!("Swarm persistence initialized at ~/.hex/hub.db");
-            Some(db)
-        }
-        Err(e) => {
-            tracing::warn!("Failed to open swarm database: {} — running without persistence", e);
-            None
-        }
-    };
+    let bind = args
+        .iter()
+        .position(|a| a == "--bind")
+        .and_then(|i| args.get(i + 1).cloned())
+        .unwrap_or_else(|| "127.0.0.1".to_string());
 
-    // Create shared state
-    let mut app_state = state::AppState::new(token.clone(), swarm_db);
-
-    // Wire IStatePort → AgentManager + WorkplanExecutor (ADR-025 Phase 2)
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let db_path = format!("{}/.hex/hub.db", home);
-
-    if app_state.swarm_db.is_some() {
-        match adapters::sqlite_state::SqliteStateAdapter::new(&db_path) {
-            Ok(state_port) => {
-                let state_port: Arc<dyn ports::state::IStatePort> = Arc::new(state_port);
-                let agent_mgr = Arc::new(
-                    orchestration::agent_manager::AgentManager::new(Arc::clone(&state_port)),
-                );
-                app_state.agent_manager = Some(agent_mgr);
-                tracing::info!("IStatePort wired — agent_manager using SqliteStateAdapter");
-            }
-            Err(e) => {
-                tracing::warn!("Failed to create SqliteStateAdapter: {} — orchestration using legacy path", e);
-            }
-        }
-    }
-
-    // Wrap in Arc, then create WorkplanExecutor (needs SharedState = Arc<AppState>)
-    let state = Arc::new(app_state);
-
-    if state.agent_manager.is_some() {
-        if let Ok(state_port) = adapters::sqlite_state::SqliteStateAdapter::new(&db_path) {
-            let sp: Arc<dyn ports::state::IStatePort> = Arc::new(state_port);
-            let wp = Arc::new(orchestration::workplan_executor::WorkplanExecutor::new(
-                sp,
-                state.clone(),
-            ));
-            state.workplan_executor.set(wp).ok();
-        }
-    }
-
-    // Background task: cleanup stale coordination sessions
-    let cleanup_state = state.clone();
-    cleanup::CleanupService::spawn(cleanup_state);
-
-    // Background task: evict completed commands older than 1 hour (every 60s)
-    let evict_state = state.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-        let ttl = chrono::Duration::hours(1);
-        loop {
-            interval.tick().await;
-            let cutoff = chrono::Utc::now() - ttl;
-            let cutoff_str = cutoff.to_rfc3339();
-
-            // Evict completed/failed commands
-            let mut commands = evict_state.commands.write().await;
-            let before = commands.len();
-            commands.retain(|_, cmd| {
-                if cmd.status == "completed" || cmd.status == "failed" {
-                    cmd.issued_at > cutoff_str
-                } else {
-                    true // keep pending/dispatched/running
-                }
-            });
-            let evicted_cmds = before - commands.len();
-            drop(commands);
-
-            // Evict matching results
-            let mut results = evict_state.results.write().await;
-            let before = results.len();
-            results.retain(|_, res| res.completed_at > cutoff_str);
-            let evicted_results = before - results.len();
-            drop(results);
-
-            if evicted_cmds > 0 || evicted_results > 0 {
-                tracing::debug!(
-                    "Evicted {} commands, {} results (TTL 1h)",
-                    evicted_cmds, evicted_results
-                );
-            }
-        }
-    });
-
-    // Build router
-    let app = routes::build_router(state);
-
-    let lock_token = token.unwrap_or_else(|| daemon::generate_token());
-
-    // Setup graceful shutdown
-    let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    let shutdown = async {
-        tokio::select! {
-            _ = ctrl_c => {},
-            _ = terminate => {},
-        }
-        tracing::info!("Shutdown signal received");
-        daemon::remove_lock();
-    };
-
-    // Bind FIRST, then write lock file — prevents clients from connecting before we're ready (H4)
-    let addr = format!("127.0.0.1:{}", port);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .expect("Failed to bind");
-
-    // Write lock file AFTER bind succeeds — clients reading this file can now connect
-    if let Err(e) = daemon::write_lock(port, &lock_token) {
-        tracing::warn!("Failed to write lock file: {}", e);
-    }
-
-    if is_daemon {
-        tracing::info!("hex-hub v{} daemon started on http://{}", env!("CARGO_PKG_VERSION"), addr);
-    } else {
-        tracing::info!("hex-hub v{} running on http://{}", env!("CARGO_PKG_VERSION"), addr);
-    }
-
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
-        .await
-        .expect("Server error");
+    hex_hub_core::start_server(HubConfig {
+        port,
+        bind,
+        token,
+        is_daemon,
+    })
+    .await;
 }

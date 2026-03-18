@@ -6,38 +6,13 @@ description = "Dashboard hub for hex — hexagonal architecture framework"
 license = "MIT"
 
 [dependencies]
-axum = { version = "0.8", features = ["ws"] }
+hex-hub-core = { path = "../hex-hub-core" }
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-rust-embed = "8"
-async-stream = "0.3"
-chrono = { version = "0.4", features = ["serde"] }
-rand = "0.8"
-tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-futures = "0.3"
-mime_guess = "2"
-http = "1"
-url = "2"
-urlencoding = "2"
-uuid = { version = "1", features = ["v4"] }
-rusqlite = { version = "0.31", features = ["bundled"] }
-libc = "0.2.183"
-reqwest = { version = "0.12", features = ["json", "stream"] }
-russh = "0.46"
-russh-keys = "0.46"
-async-trait = "0.1"
-thiserror = "2"
-sha2 = "0.10"
-hex-literal = "0.4"
-# SpacetimeDB client SDK — optional, enabled via --features spacetimedb
-spacetimedb-sdk = { version = "1.0", optional = true }
 
 [features]
 default = []
-spacetimedb = ["spacetimedb-sdk"]
+spacetimedb = ["hex-hub-core/spacetimedb"]
 
 [profile.release]
 opt-level = "z"

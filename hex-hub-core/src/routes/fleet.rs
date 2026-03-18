@@ -2,13 +2,12 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::Json,
-    routing::{delete, get, post},
+    routing::{get, post},
     Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::remote::fleet::{FleetManager, NodeStatus};
 use crate::remote::ssh::SshConfig;
 use crate::state::AppState;
 
@@ -37,12 +36,6 @@ pub struct RegisterRequest {
 pub struct DeployRequest {
     binary_path: String,
     install_dir: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct FleetResponse<T: Serialize> {
-    ok: bool,
-    data: T,
 }
 
 pub async fn list_nodes(

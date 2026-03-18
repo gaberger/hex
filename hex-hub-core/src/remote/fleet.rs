@@ -1,4 +1,4 @@
-use super::ssh::{SshAdapter, SshConfig, SshError};
+use super::ssh::{SshAdapter, SshConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

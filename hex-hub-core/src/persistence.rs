@@ -167,6 +167,9 @@ impl SwarmDb {
         // RL engine tables (Q-learning, experiences, patterns)
         crate::rl::schema::migrate_rl(conn)?;
 
+        // Seed RL with domain knowledge defaults (idempotent — INSERT OR IGNORE)
+        crate::rl::schema::seed_rl(conn)?;
+
         // Orchestration tables (hex_agents, workplan_executions)
         crate::orchestration::schema::migrate_orchestration(conn)
     }
