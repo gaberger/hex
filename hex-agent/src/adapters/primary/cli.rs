@@ -59,6 +59,34 @@ impl CliAdapter {
                 continue;
             }
 
+            // /plan triggers context reset — fresh window for planning
+            let input = if input.starts_with("/plan ") || input == "/plan" {
+                let plan_args = input.strip_prefix("/plan").unwrap_or("").trim();
+                match self.conversation.reset_context(&mut state, None).await {
+                    Ok(checkpoint) => {
+                        eprintln!(
+                            "\x1b[35m↻ Context reset (checkpoint: {} turns, id: {})\x1b[0m",
+                            checkpoint.turn_count, checkpoint.conversation_id
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("\x1b[33mWarning: context reset failed: {}\x1b[0m", e);
+                    }
+                }
+                // Rewrite as a planning prompt with full budget
+                if plan_args.is_empty() {
+                    "You are now in planning mode. What would you like to plan?"
+                } else {
+                    // Leak is safe here — the string lives for the loop iteration
+                    // and the borrow checker needs a &str, not String
+                    Box::leak(format!(
+                        "Create a hex workplan for: {}", plan_args
+                    ).into_boxed_str()) as &str
+                }
+            } else {
+                input
+            };
+
             // Process through conversation loop
             let (tx, mut rx) = mpsc::unbounded_channel::<ConversationEvent>();
 
@@ -96,6 +124,9 @@ impl CliAdapter {
                             if stop_reason == StopReason::MaxTokens {
                                 eprintln!("\x1b[33m⚠ Response truncated (max tokens)\x1b[0m");
                             }
+                        }
+                        ConversationEvent::ContextReset { summary } => {
+                            eprintln!("\x1b[35m↻ Context reset: {}\x1b[0m", summary);
                         }
                         ConversationEvent::Error(msg) => {
                             eprintln!("\x1b[31mError: {}\x1b[0m", msg);

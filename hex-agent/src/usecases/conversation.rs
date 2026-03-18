@@ -170,6 +170,8 @@ impl ConversationLoop {
     }
 }
 
+use crate::ports::conversation::ConversationCheckpoint;
+
 #[async_trait]
 impl ConversationPort for ConversationLoop {
     async fn process_message(
@@ -179,5 +181,60 @@ impl ConversationPort for ConversationLoop {
         event_tx: &tokio::sync::mpsc::UnboundedSender<ConversationEvent>,
     ) -> Result<(), ConversationError> {
         self.run_turn(state, user_input, event_tx).await
+    }
+
+    async fn reset_context(
+        &self,
+        state: &mut ConversationState,
+        new_system_prompt: Option<String>,
+    ) -> Result<ConversationCheckpoint, ConversationError> {
+        // 1. Build summary from current conversation
+        let summary = if state.messages.is_empty() {
+            "Empty conversation".to_string()
+        } else {
+            let msg_count = state.messages.len();
+            let last_text = state.messages.last()
+                .map(|m| m.text_content())
+                .unwrap_or_default();
+            let truncated = if last_text.len() > 200 {
+                format!("{}...", &last_text[..200])
+            } else {
+                last_text
+            };
+            format!(
+                "Conversation with {} messages, {} turns. Last: {}",
+                msg_count, state.turn_count, truncated
+            )
+        };
+
+        // 2. Create checkpoint
+        let checkpoint = ConversationCheckpoint {
+            conversation_id: state.conversation_id.clone(),
+            turn_count: state.turn_count,
+            summary: summary.clone(),
+            total_input_tokens: state.total_estimated_tokens() as u64,
+            total_output_tokens: 0,
+        };
+
+        // 3. Clear message history
+        state.messages.clear();
+        state.turn_count = 0;
+        state.last_stop_reason = None;
+
+        // 4. Inject new system prompt if provided
+        if let Some(prompt) = new_system_prompt {
+            state.system_prompt = prompt;
+        }
+
+        // 5. Generate new conversation ID for the fresh context
+        state.conversation_id = uuid::Uuid::new_v4().to_string();
+
+        tracing::info!(
+            old_turns = checkpoint.turn_count,
+            new_id = %state.conversation_id,
+            "Context reset — fresh window for new task"
+        );
+
+        Ok(checkpoint)
     }
 }
