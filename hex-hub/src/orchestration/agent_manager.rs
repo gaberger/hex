@@ -1,8 +1,13 @@
-use rusqlite::{params, OptionalExtension};
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::state::SharedState;
+use crate::ports::state::{
+    AgentInfo, AgentMetricsData as PortMetrics, AgentStatus as PortAgentStatus, IStatePort,
+};
 
 // ── Types ──────────────────────────────────────────────
 
@@ -69,19 +74,81 @@ pub struct SpawnConfig {
     pub hub_token: Option<String>,
 }
 
+// ── Conversion helpers ─────────────────────────────────
+
+fn local_status_to_port(s: &AgentStatus) -> PortAgentStatus {
+    match s {
+        AgentStatus::Spawning => PortAgentStatus::Spawning,
+        AgentStatus::Running => PortAgentStatus::Running,
+        AgentStatus::Completed => PortAgentStatus::Completed,
+        AgentStatus::Failed => PortAgentStatus::Failed,
+    }
+}
+
+fn port_status_to_local(s: &PortAgentStatus) -> AgentStatus {
+    match s {
+        PortAgentStatus::Spawning => AgentStatus::Spawning,
+        PortAgentStatus::Running => AgentStatus::Running,
+        PortAgentStatus::Completed => AgentStatus::Completed,
+        PortAgentStatus::Failed => AgentStatus::Failed,
+    }
+}
+
+pub fn local_metrics_to_port(m: &AgentMetricsData) -> PortMetrics {
+    PortMetrics {
+        input_tokens: m.input_tokens,
+        output_tokens: m.output_tokens,
+        tool_calls: m.tool_calls,
+        turns: m.turns,
+    }
+}
+
+fn agent_info_to_instance(info: AgentInfo, pid: u32) -> AgentInstance {
+    AgentInstance {
+        id: info.id,
+        process_id: pid,
+        agent_name: info.name,
+        project_dir: info.project_dir,
+        model: info.model,
+        status: port_status_to_local(&info.status),
+        started_at: info.started_at,
+        ended_at: None,
+        metrics: None,
+    }
+}
+
+fn instance_to_agent_info(inst: &AgentInstance) -> AgentInfo {
+    AgentInfo {
+        id: inst.id.clone(),
+        name: inst.agent_name.clone(),
+        project_dir: inst.project_dir.clone(),
+        model: inst.model.clone(),
+        status: local_status_to_port(&inst.status),
+        started_at: inst.started_at.clone(),
+    }
+}
+
 // ── Agent Manager ──────────────────────────────────────
 
-pub struct AgentManager;
+pub struct AgentManager {
+    state_port: Arc<dyn IStatePort>,
+    /// In-memory map of agent ID → process ID (port doesn't track PIDs)
+    pid_map: Mutex<HashMap<String, u32>>,
+}
 
 impl AgentManager {
-    /// Spawn a hex-agent child process. Tracks the PID in SQLite.
+    pub fn new(state_port: Arc<dyn IStatePort>) -> Self {
+        Self {
+            state_port,
+            pid_map: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Spawn a hex-agent child process. Registers it via the state port.
     pub async fn spawn_agent(
-        state: &SharedState,
+        &self,
         config: SpawnConfig,
     ) -> Result<AgentInstance, String> {
-        let db = state.swarm_db.as_ref().ok_or("No database available")?;
-        let conn = db.conn().clone();
-
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let agent_name = config.agent_name.unwrap_or_else(|| "hex-agent".to_string());
@@ -120,19 +187,15 @@ impl AgentManager {
             metrics: None,
         };
 
-        // Persist to SQLite
-        let inst = instance.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            conn.execute(
-                "INSERT INTO hex_agents (id, process_id, agent_name, project_dir, model, status, started_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![inst.id, inst.process_id, inst.agent_name, inst.project_dir, inst.model, "running", inst.started_at],
-            )
-        })
-        .await
-        .map_err(|e| format!("DB insert failed: {}", e))?
-        .map_err(|e| format!("SQL error: {}", e))?;
+        // Persist via state port
+        let info = instance_to_agent_info(&instance);
+        self.state_port
+            .agent_register(info)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Track PID in memory
+        self.pid_map.lock().await.insert(id.clone(), pid);
 
         tracing::info!(
             agent_id = %id,
@@ -144,89 +207,36 @@ impl AgentManager {
         Ok(instance)
     }
 
-    /// List all tracked agents from SQLite.
-    pub async fn list_agents(state: &SharedState) -> Result<Vec<AgentInstance>, String> {
-        let db = state.swarm_db.as_ref().ok_or("No database available")?;
-        let conn = db.conn().clone();
+    /// List all tracked agents from the state port.
+    pub async fn list_agents(&self) -> Result<Vec<AgentInstance>, String> {
+        let agents = self.state_port.agent_list().await.map_err(|e| e.to_string())?;
+        let pid_map = self.pid_map.lock().await;
 
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            let mut stmt = conn
-                .prepare(
-                    "SELECT id, process_id, agent_name, project_dir, model, status, started_at, ended_at, metrics_json
-                     FROM hex_agents ORDER BY started_at DESC",
-                )
-                .map_err(|e| format!("SQL error: {}", e))?;
+        let instances = agents
+            .into_iter()
+            .map(|info| {
+                let pid = pid_map.get(&info.id).copied().unwrap_or(0);
+                agent_info_to_instance(info, pid)
+            })
+            .collect();
 
-            let rows = stmt
-                .query_map([], |row| {
-                    let metrics_json: Option<String> = row.get(8)?;
-                    let metrics = metrics_json.and_then(|j| serde_json::from_str(&j).ok());
-                    let status_str: String = row.get(5)?;
-                    Ok(AgentInstance {
-                        id: row.get(0)?,
-                        process_id: row.get(1)?,
-                        agent_name: row.get(2)?,
-                        project_dir: row.get(3)?,
-                        model: row.get(4)?,
-                        status: AgentStatus::from_str(&status_str),
-                        started_at: row.get(6)?,
-                        ended_at: row.get(7)?,
-                        metrics,
-                    })
-                })
-                .map_err(|e| format!("SQL error: {}", e))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("Row error: {}", e))?;
-
-            Ok(rows)
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
+        Ok(instances)
     }
 
     /// Get a single agent by ID.
-    pub async fn get_agent(state: &SharedState, id: &str) -> Result<Option<AgentInstance>, String> {
-        let db = state.swarm_db.as_ref().ok_or("No database available")?;
-        let conn = db.conn().clone();
-        let id = id.to_string();
+    pub async fn get_agent(&self, id: &str) -> Result<Option<AgentInstance>, String> {
+        let info = self.state_port.agent_get(id).await.map_err(|e| e.to_string())?;
+        let pid_map = self.pid_map.lock().await;
 
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            let result = conn
-                .query_row(
-                    "SELECT id, process_id, agent_name, project_dir, model, status, started_at, ended_at, metrics_json
-                     FROM hex_agents WHERE id = ?1",
-                    params![id],
-                    |row| {
-                        let metrics_json: Option<String> = row.get(8)?;
-                        let metrics = metrics_json.and_then(|j| serde_json::from_str(&j).ok());
-                        let status_str: String = row.get(5)?;
-                        Ok(AgentInstance {
-                            id: row.get(0)?,
-                            process_id: row.get(1)?,
-                            agent_name: row.get(2)?,
-                            project_dir: row.get(3)?,
-                            model: row.get(4)?,
-                            status: AgentStatus::from_str(&status_str),
-                            started_at: row.get(6)?,
-                            ended_at: row.get(7)?,
-                            metrics,
-                        })
-                    },
-                )
-                .optional()
-                .map_err(|e| format!("SQL error: {}", e))?;
-
-            Ok(result)
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
+        Ok(info.map(|i| {
+            let pid = pid_map.get(&i.id).copied().unwrap_or(0);
+            agent_info_to_instance(i, pid)
+        }))
     }
 
-    /// Send SIGTERM to the agent process and update status in DB.
-    pub async fn terminate_agent(state: &SharedState, id: &str) -> Result<bool, String> {
-        let agent = Self::get_agent(state, id).await?;
+    /// Send SIGTERM to the agent process and update status via the state port.
+    pub async fn terminate_agent(&self, id: &str) -> Result<bool, String> {
+        let agent = self.get_agent(id).await?;
         let Some(agent) = agent else {
             return Ok(false);
         };
@@ -242,30 +252,22 @@ impl AgentManager {
             }
         }
 
-        // Update DB status
-        let db = state.swarm_db.as_ref().ok_or("No database available")?;
-        let conn = db.conn().clone();
-        let id = id.to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        // Update status via state port
+        self.state_port
+            .agent_update_status(id, PortAgentStatus::Completed, None)
+            .await
+            .map_err(|e| e.to_string())?;
 
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            conn.execute(
-                "UPDATE hex_agents SET status = 'completed', ended_at = ?1 WHERE id = ?2",
-                params![now, id],
-            )
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
-        .map_err(|e| format!("SQL error: {}", e))?;
+        // Remove from PID map
+        self.pid_map.lock().await.remove(id);
 
         tracing::info!(agent_id = %agent.id, pid = agent.process_id, "Terminated hex-agent");
         Ok(true)
     }
 
     /// Check if tracked agents are still running (via PID). Mark dead ones as failed.
-    pub async fn check_health(state: &SharedState) -> Result<Vec<String>, String> {
-        let agents = Self::list_agents(state).await?;
+    pub async fn check_health(&self) -> Result<Vec<String>, String> {
+        let agents = self.list_agents().await?;
         let mut dead_agents = Vec::new();
 
         for agent in &agents {
@@ -277,22 +279,14 @@ impl AgentManager {
             if !alive {
                 dead_agents.push(agent.id.clone());
 
-                // Mark as failed in DB
-                let db = state.swarm_db.as_ref().ok_or("No database available")?;
-                let conn = db.conn().clone();
-                let id = agent.id.clone();
-                let now = chrono::Utc::now().to_rfc3339();
+                // Mark as failed via state port
+                self.state_port
+                    .agent_update_status(&agent.id, PortAgentStatus::Failed, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
 
-                tokio::task::spawn_blocking(move || {
-                    let conn = conn.blocking_lock();
-                    conn.execute(
-                        "UPDATE hex_agents SET status = 'failed', ended_at = ?1 WHERE id = ?2",
-                        params![now, id],
-                    )
-                })
-                .await
-                .map_err(|e| format!("Task join error: {}", e))?
-                .map_err(|e| format!("SQL error: {}", e))?;
+                // Remove from PID map
+                self.pid_map.lock().await.remove(&agent.id);
 
                 tracing::warn!(
                     agent_id = %agent.id,

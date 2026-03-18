@@ -1,8 +1,10 @@
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::orchestration::agent_manager::{AgentManager, SpawnConfig};
+use crate::orchestration::agent_manager::SpawnConfig;
+use crate::ports::state::{IStatePort, WorkplanTaskUpdate};
 use crate::state::SharedState;
 
 // ── Types ──────────────────────────────────────────────
@@ -87,13 +89,23 @@ pub struct WorkplanTask {
 
 // ── Workplan Executor ──────────────────────────────────
 
-pub struct WorkplanExecutor;
+pub struct WorkplanExecutor {
+    state_port: Arc<dyn IStatePort>,
+    shared_state: SharedState,
+}
 
 impl WorkplanExecutor {
+    pub fn new(state_port: Arc<dyn IStatePort>, shared_state: SharedState) -> Self {
+        Self {
+            state_port,
+            shared_state,
+        }
+    }
+
     /// Start executing a workplan from the given JSON file path.
     /// Parses the workplan, persists execution state, and begins from tier 0.
     pub async fn start(
-        state: &SharedState,
+        &self,
         workplan_path: &str,
     ) -> Result<ExecutionState, String> {
         // Read and parse workplan
@@ -108,7 +120,7 @@ impl WorkplanExecutor {
             return Err("Workplan has no phases".to_string());
         }
 
-        let db = state.swarm_db.as_ref().ok_or("No database available")?;
+        let db = self.shared_state.swarm_db.as_ref().ok_or("No database available")?;
         let conn = db.conn().clone();
 
         let id = Uuid::new_v4().to_string();
@@ -148,22 +160,28 @@ impl WorkplanExecutor {
         );
 
         // Begin executing the first phase in the background
-        let state_clone = state.clone();
+        let state_port = Arc::clone(&self.state_port);
+        let shared_state = self.shared_state.clone();
         let id_clone = id.clone();
         tokio::spawn(async move {
-            Self::run_phases(state_clone, id_clone, workplan).await;
+            Self::run_phases(state_port, shared_state, id_clone, workplan).await;
         });
 
         Ok(exec_state)
     }
 
     /// Internal: run all phases sequentially in the background.
-    async fn run_phases(state: SharedState, execution_id: String, workplan: Workplan) {
+    async fn run_phases(
+        state_port: Arc<dyn IStatePort>,
+        shared_state: SharedState,
+        execution_id: String,
+        workplan: Workplan,
+    ) {
         let mut all_agent_ids = Vec::new();
 
         for phase in &workplan.phases {
             // Check if paused or failed
-            if let Ok(Some(current)) = Self::get_status_by_id(&state, &execution_id).await {
+            if let Ok(Some(current)) = Self::get_status_by_id(&shared_state, &execution_id).await {
                 if current.status == ExecutionStatus::Paused {
                     tracing::info!(execution_id = %execution_id, "Execution paused, stopping");
                     return;
@@ -174,31 +192,42 @@ impl WorkplanExecutor {
             }
 
             // Update current phase
-            Self::update_phase(&state, &execution_id, &phase.name).await.ok();
+            Self::update_phase(&shared_state, &execution_id, &phase.name).await.ok();
 
-            match Self::execute_phase(&state, &workplan, phase).await {
+            // Track per-task status via IStatePort: mark tasks as running
+            for task in &phase.tasks {
+                let _ = state_port.workplan_update_task(WorkplanTaskUpdate {
+                    task_id: task.title.clone(),
+                    status: "running".to_string(),
+                    agent_id: None,
+                    result: None,
+                }).await;
+            }
+
+            match Self::execute_phase(&state_port, &shared_state, &workplan, phase).await {
                 Ok(result) => {
                     all_agent_ids.extend(result.agent_ids);
                     if result.status == "failed" {
-                        Self::mark_status(&state, &execution_id, "failed", Some(&result.errors)).await.ok();
+                        Self::mark_status(&shared_state, &execution_id, "failed", Some(&result.errors)).await.ok();
                         return;
                     }
                 }
                 Err(e) => {
                     tracing::error!(execution_id = %execution_id, phase = %phase.name, error = %e, "Phase failed");
-                    Self::mark_status(&state, &execution_id, "failed", Some(&[e])).await.ok();
+                    Self::mark_status(&shared_state, &execution_id, "failed", Some(&[e])).await.ok();
                     return;
                 }
             }
         }
 
-        Self::mark_status(&state, &execution_id, "completed", None).await.ok();
+        Self::mark_status(&shared_state, &execution_id, "completed", None).await.ok();
         tracing::info!(execution_id = %execution_id, "Workplan execution completed");
     }
 
     /// Execute a single phase: spawn one hex-agent per task, wait for all to complete.
     pub async fn execute_phase(
-        state: &SharedState,
+        state_port: &Arc<dyn IStatePort>,
+        shared_state: &SharedState,
         _workplan: &Workplan,
         phase: &WorkplanPhase,
     ) -> Result<PhaseResult, String> {
@@ -215,13 +244,37 @@ impl WorkplanExecutor {
                 hub_token: None,
             };
 
-            let state_clone = state.clone();
             let task_title = task.title.clone();
+            let sp = Arc::clone(state_port);
+            let agent_mgr = shared_state.agent_manager.clone();
 
             handles.push(tokio::spawn(async move {
-                match AgentManager::spawn_agent(&state_clone, config).await {
-                    Ok(agent) => Ok(agent.id),
-                    Err(e) => Err(format!("Task '{}': {}", task_title, e)),
+                let spawn_result = if let Some(ref mgr) = agent_mgr {
+                    mgr.spawn_agent(config).await
+                } else {
+                    Err("AgentManager not initialized".to_string())
+                };
+                match spawn_result {
+                    Ok(agent) => {
+                        // Track task completion via IStatePort
+                        let _ = sp.workplan_update_task(WorkplanTaskUpdate {
+                            task_id: task_title.clone(),
+                            status: "completed".to_string(),
+                            agent_id: Some(agent.id.clone()),
+                            result: None,
+                        }).await;
+                        Ok(agent.id)
+                    }
+                    Err(e) => {
+                        // Track task failure via IStatePort
+                        let _ = sp.workplan_update_task(WorkplanTaskUpdate {
+                            task_id: task_title.clone(),
+                            status: "failed".to_string(),
+                            agent_id: None,
+                            result: Some(e.clone()),
+                        }).await;
+                        Err(format!("Task '{}': {}", task_title, e))
+                    }
                 }
             }));
         }
@@ -252,8 +305,8 @@ impl WorkplanExecutor {
     }
 
     /// Get the current execution status.
-    pub async fn get_status(state: &SharedState) -> Result<Option<ExecutionState>, String> {
-        let db = state.swarm_db.as_ref().ok_or("No database available")?;
+    pub async fn get_status(&self) -> Result<Option<ExecutionState>, String> {
+        let db = self.shared_state.swarm_db.as_ref().ok_or("No database available")?;
         let conn = db.conn().clone();
 
         tokio::task::spawn_blocking(move || {
@@ -287,13 +340,13 @@ impl WorkplanExecutor {
     }
 
     /// Pause the currently running execution.
-    pub async fn pause(state: &SharedState) -> Result<bool, String> {
-        Self::set_active_status(state, "running", "paused").await
+    pub async fn pause(&self) -> Result<bool, String> {
+        Self::set_active_status(&self.shared_state, "running", "paused").await
     }
 
     /// Resume a paused execution.
-    pub async fn resume(state: &SharedState) -> Result<bool, String> {
-        let exec = Self::get_status(state).await?;
+    pub async fn resume(&self) -> Result<bool, String> {
+        let exec = self.get_status().await?;
         let Some(exec) = exec else {
             return Ok(false);
         };
@@ -302,7 +355,7 @@ impl WorkplanExecutor {
             return Ok(false);
         }
 
-        Self::set_active_status(state, "paused", "running").await?;
+        Self::set_active_status(&self.shared_state, "paused", "running").await?;
 
         // Re-read the workplan and resume from current phase
         let workplan_path = exec.workplan_path.clone();
@@ -313,7 +366,8 @@ impl WorkplanExecutor {
         let workplan: Workplan =
             serde_json::from_str(&content).map_err(|e| format!("Invalid workplan JSON: {}", e))?;
 
-        let state_clone = state.clone();
+        let state_port = Arc::clone(&self.state_port);
+        let shared_state = self.shared_state.clone();
         let execution_id = exec.id.clone();
         let current_phase = exec.current_phase.clone();
 
@@ -328,22 +382,22 @@ impl WorkplanExecutor {
                     continue;
                 }
 
-                if let Ok(Some(current)) = Self::get_status_by_id(&state_clone, &execution_id).await {
+                if let Ok(Some(current)) = Self::get_status_by_id(&shared_state, &execution_id).await {
                     if current.status != ExecutionStatus::Running {
                         return;
                     }
                 }
 
-                Self::update_phase(&state_clone, &execution_id, &phase.name).await.ok();
+                Self::update_phase(&shared_state, &execution_id, &phase.name).await.ok();
 
-                if let Err(e) = Self::execute_phase(&state_clone, &workplan, phase).await {
+                if let Err(e) = Self::execute_phase(&state_port, &shared_state, &workplan, phase).await {
                     tracing::error!(error = %e, "Phase failed on resume");
-                    Self::mark_status(&state_clone, &execution_id, "failed", Some(&[e])).await.ok();
+                    Self::mark_status(&shared_state, &execution_id, "failed", Some(&[e])).await.ok();
                     return;
                 }
             }
 
-            Self::mark_status(&state_clone, &execution_id, "completed", None).await.ok();
+            Self::mark_status(&shared_state, &execution_id, "completed", None).await.ok();
         });
 
         Ok(true)
@@ -352,10 +406,10 @@ impl WorkplanExecutor {
     // ── Private helpers ────────────────────────────────
 
     async fn get_status_by_id(
-        state: &SharedState,
+        shared_state: &SharedState,
         execution_id: &str,
     ) -> Result<Option<ExecutionState>, String> {
-        let db = state.swarm_db.as_ref().ok_or("No database available")?;
+        let db = shared_state.swarm_db.as_ref().ok_or("No database available")?;
         let conn = db.conn().clone();
         let id = execution_id.to_string();
 
@@ -388,11 +442,11 @@ impl WorkplanExecutor {
     }
 
     async fn set_active_status(
-        state: &SharedState,
+        shared_state: &SharedState,
         from_status: &str,
         to_status: &str,
     ) -> Result<bool, String> {
-        let db = state.swarm_db.as_ref().ok_or("No database available")?;
+        let db = shared_state.swarm_db.as_ref().ok_or("No database available")?;
         let conn = db.conn().clone();
         let from = from_status.to_string();
         let to = to_status.to_string();
@@ -413,11 +467,11 @@ impl WorkplanExecutor {
     }
 
     async fn update_phase(
-        state: &SharedState,
+        shared_state: &SharedState,
         execution_id: &str,
         phase: &str,
     ) -> Result<(), String> {
-        let db = state.swarm_db.as_ref().ok_or("No database available")?;
+        let db = shared_state.swarm_db.as_ref().ok_or("No database available")?;
         let conn = db.conn().clone();
         let id = execution_id.to_string();
         let phase = phase.to_string();
@@ -437,12 +491,12 @@ impl WorkplanExecutor {
     }
 
     async fn mark_status(
-        state: &SharedState,
+        shared_state: &SharedState,
         execution_id: &str,
         status: &str,
         errors: Option<&[String]>,
     ) -> Result<(), String> {
-        let db = state.swarm_db.as_ref().ok_or("No database available")?;
+        let db = shared_state.swarm_db.as_ref().ok_or("No database available")?;
         let conn = db.conn().clone();
         let id = execution_id.to_string();
         let status = status.to_string();

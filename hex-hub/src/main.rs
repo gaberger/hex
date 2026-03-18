@@ -65,7 +65,41 @@ async fn main() {
     };
 
     // Create shared state
-    let state = Arc::new(state::AppState::new(token.clone(), swarm_db));
+    let mut app_state = state::AppState::new(token.clone(), swarm_db);
+
+    // Wire IStatePort → AgentManager + WorkplanExecutor (ADR-025 Phase 2)
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let db_path = format!("{}/.hex/hub.db", home);
+
+    if app_state.swarm_db.is_some() {
+        match adapters::sqlite_state::SqliteStateAdapter::new(&db_path) {
+            Ok(state_port) => {
+                let state_port: Arc<dyn ports::state::IStatePort> = Arc::new(state_port);
+                let agent_mgr = Arc::new(
+                    orchestration::agent_manager::AgentManager::new(Arc::clone(&state_port)),
+                );
+                app_state.agent_manager = Some(agent_mgr);
+                tracing::info!("IStatePort wired — agent_manager using SqliteStateAdapter");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to create SqliteStateAdapter: {} — orchestration using legacy path", e);
+            }
+        }
+    }
+
+    // Wrap in Arc, then create WorkplanExecutor (needs SharedState = Arc<AppState>)
+    let state = Arc::new(app_state);
+
+    if state.agent_manager.is_some() {
+        if let Ok(state_port) = adapters::sqlite_state::SqliteStateAdapter::new(&db_path) {
+            let sp: Arc<dyn ports::state::IStatePort> = Arc::new(state_port);
+            let wp = Arc::new(orchestration::workplan_executor::WorkplanExecutor::new(
+                sp,
+                state.clone(),
+            ));
+            state.workplan_executor.set(wp).ok();
+        }
+    }
 
     // Background task: cleanup stale coordination sessions
     let cleanup_state = state.clone();

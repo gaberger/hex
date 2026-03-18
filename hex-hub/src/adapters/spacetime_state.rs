@@ -184,6 +184,93 @@ impl IStatePort for SpacetimeStateAdapter {
         Err(StateError::Connection("SpacetimeDB not connected".into()))
     }
 
+    // ── Skill Registry ────────────────────────────────
+
+    async fn skill_register(&self, _skill: SkillEntry) -> Result<String, StateError> {
+        // TODO: call skill_registry::register_skill reducer
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn skill_update(&self, _id: &str, _description: &str, _triggers_json: &str, _body: &str) -> Result<(), StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn skill_remove(&self, _id: &str) -> Result<(), StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn skill_list(&self) -> Result<Vec<SkillEntry>, StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn skill_get(&self, _id: &str) -> Result<Option<SkillEntry>, StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn skill_search(&self, _trigger_type: &str, _query: &str) -> Result<Vec<SkillEntry>, StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    // ── Hook Registry ──────────────────────────────────
+
+    async fn hook_register(&self, _hook: HookEntry) -> Result<String, StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn hook_update(&self, _id: &str, _handler_config_json: &str, _timeout_secs: u32, _blocking: bool, _tool_pattern: &str) -> Result<(), StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn hook_remove(&self, _id: &str) -> Result<(), StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn hook_toggle(&self, _id: &str, _enabled: bool) -> Result<(), StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn hook_list(&self) -> Result<Vec<HookEntry>, StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn hook_list_by_event(&self, _event_type: &str) -> Result<Vec<HookEntry>, StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn hook_log_execution(&self, _entry: HookExecutionEntry) -> Result<(), StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    // ── Agent Definition Registry ──────────────────────
+
+    async fn agent_def_register(&self, _def: AgentDefinitionEntry) -> Result<String, StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn agent_def_update(
+        &self, _id: &str, _description: &str, _role_prompt: &str,
+        _allowed_tools_json: &str, _constraints_json: &str, _model: &str,
+        _max_turns: u32, _metadata_json: &str,
+    ) -> Result<(), StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn agent_def_remove(&self, _id: &str) -> Result<(), StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn agent_def_list(&self) -> Result<Vec<AgentDefinitionEntry>, StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn agent_def_get_by_name(&self, _name: &str) -> Result<Option<AgentDefinitionEntry>, StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
+    async fn agent_def_versions(&self, _definition_id: &str) -> Result<Vec<AgentDefinitionVersionEntry>, StateError> {
+        Err(StateError::Connection("SpacetimeDB not connected".into()))
+    }
+
     // ── Subscriptions ───────────────────────────────
 
     fn subscribe(&self) -> broadcast::Receiver<StateEvent> {

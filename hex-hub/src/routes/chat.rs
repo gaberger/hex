@@ -205,11 +205,12 @@ async fn handle_chat_ws(
                         hub_url: None,
                         hub_token: None,
                     };
-                    match crate::orchestration::agent_manager::AgentManager::spawn_agent(
-                        &state2, config,
-                    )
-                    .await
-                    {
+                    let spawn_result = if let Some(ref mgr) = state2.agent_manager {
+                        mgr.spawn_agent(config).await
+                    } else {
+                        Err("AgentManager not initialized".to_string())
+                    };
+                    match spawn_result {
                         Ok(agent) => {
                             let _ = state2.ws_tx.send(WsEnvelope {
                                 topic: format!("chat:{}:control", session_id),

@@ -6,9 +6,22 @@ use http::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::orchestration::agent_manager::{AgentManager, SpawnConfig};
-use crate::orchestration::workplan_executor::WorkplanExecutor;
+use crate::orchestration::agent_manager::SpawnConfig;
 use crate::state::SharedState;
+
+fn no_manager() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({ "error": "Agent manager not initialized" })),
+    )
+}
+
+fn no_executor() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({ "error": "Workplan executor not initialized" })),
+    )
+}
 
 // ── Agent Routes ───────────────────────────────────────
 
@@ -27,6 +40,11 @@ pub async fn spawn_agent(
     State(state): State<SharedState>,
     Json(body): Json<SpawnRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    let mgr = match &state.agent_manager {
+        Some(m) => m,
+        None => return no_manager(),
+    };
+
     let config = SpawnConfig {
         project_dir: body.project_dir,
         model: body.model,
@@ -35,7 +53,7 @@ pub async fn spawn_agent(
         hub_token: body.hub_token,
     };
 
-    match AgentManager::spawn_agent(&state, config).await {
+    match mgr.spawn_agent(config).await {
         Ok(agent) => (
             StatusCode::OK,
             Json(json!({
@@ -54,7 +72,12 @@ pub async fn spawn_agent(
 pub async fn list_agents(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match AgentManager::list_agents(&state).await {
+    let mgr = match &state.agent_manager {
+        Some(m) => m,
+        None => return no_manager(),
+    };
+
+    match mgr.list_agents().await {
         Ok(agents) => (StatusCode::OK, Json(json!({ "agents": agents }))),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -68,7 +91,12 @@ pub async fn get_agent(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match AgentManager::get_agent(&state, &id).await {
+    let mgr = match &state.agent_manager {
+        Some(m) => m,
+        None => return no_manager(),
+    };
+
+    match mgr.get_agent(&id).await {
         Ok(Some(agent)) => (StatusCode::OK, Json(json!({ "agent": agent }))),
         Ok(None) => (
             StatusCode::NOT_FOUND,
@@ -86,7 +114,12 @@ pub async fn terminate_agent(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match AgentManager::terminate_agent(&state, &id).await {
+    let mgr = match &state.agent_manager {
+        Some(m) => m,
+        None => return no_manager(),
+    };
+
+    match mgr.terminate_agent(&id).await {
         Ok(true) => (StatusCode::OK, Json(json!({ "ok": true, "terminated": id }))),
         Ok(false) => (
             StatusCode::NOT_FOUND,
@@ -103,7 +136,12 @@ pub async fn terminate_agent(
 pub async fn health_check(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match AgentManager::check_health(&state).await {
+    let mgr = match &state.agent_manager {
+        Some(m) => m,
+        None => return no_manager(),
+    };
+
+    match mgr.check_health().await {
         Ok(dead) => (
             StatusCode::OK,
             Json(json!({
@@ -132,11 +170,16 @@ pub async fn execute_workplan(
     State(state): State<SharedState>,
     Json(body): Json<ExecuteWorkplanRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match WorkplanExecutor::start(&state, &body.workplan_path).await {
-        Ok(exec) => (
+    let exec = match state.workplan_executor.get() {
+        Some(e) => e,
+        None => return no_executor(),
+    };
+
+    match exec.start(&body.workplan_path).await {
+        Ok(result) => (
             StatusCode::OK,
             Json(json!({
-                "execution": exec,
+                "execution": result,
                 "status": "started",
             })),
         ),
@@ -151,8 +194,13 @@ pub async fn execute_workplan(
 pub async fn workplan_status(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match WorkplanExecutor::get_status(&state).await {
-        Ok(Some(exec)) => (StatusCode::OK, Json(json!({ "execution": exec }))),
+    let exec = match state.workplan_executor.get() {
+        Some(e) => e,
+        None => return no_executor(),
+    };
+
+    match exec.get_status().await {
+        Ok(Some(status)) => (StatusCode::OK, Json(json!({ "execution": status }))),
         Ok(None) => (StatusCode::OK, Json(json!({ "execution": null }))),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -165,7 +213,12 @@ pub async fn workplan_status(
 pub async fn pause_workplan(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match WorkplanExecutor::pause(&state).await {
+    let exec = match state.workplan_executor.get() {
+        Some(e) => e,
+        None => return no_executor(),
+    };
+
+    match exec.pause().await {
         Ok(true) => (StatusCode::OK, Json(json!({ "ok": true, "status": "paused" }))),
         Ok(false) => (
             StatusCode::NOT_FOUND,
@@ -182,7 +235,12 @@ pub async fn pause_workplan(
 pub async fn resume_workplan(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match WorkplanExecutor::resume(&state).await {
+    let exec = match state.workplan_executor.get() {
+        Some(e) => e,
+        None => return no_executor(),
+    };
+
+    match exec.resume().await {
         Ok(true) => (StatusCode::OK, Json(json!({ "ok": true, "status": "resumed" }))),
         Ok(false) => (
             StatusCode::NOT_FOUND,

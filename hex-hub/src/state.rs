@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::{broadcast, RwLock};
 
+use crate::orchestration::agent_manager::AgentManager;
+use crate::orchestration::workplan_executor::WorkplanExecutor;
 use crate::persistence::SwarmDb;
 use crate::remote::fleet::FleetManager;
 
@@ -27,6 +29,9 @@ pub struct AppState {
     pub unstaged: RwLock<HashMap<String, UnstagedState>>,
     pub fleet: FleetManager,
     pub anthropic_api_key: Option<String>,
+    // Port-backed orchestration services (ADR-025 Phase 2)
+    pub agent_manager: Option<Arc<AgentManager>>,
+    pub workplan_executor: OnceLock<Arc<WorkplanExecutor>>,
 }
 
 impl AppState {
@@ -52,6 +57,8 @@ impl AppState {
             unstaged: RwLock::new(HashMap::new()),
             fleet: FleetManager::new(),
             anthropic_api_key,
+            agent_manager: None,
+            workplan_executor: OnceLock::new(),
         }
     }
 }
