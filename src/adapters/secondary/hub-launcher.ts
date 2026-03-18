@@ -47,11 +47,11 @@ export class HubLauncher {
   /** Find the hex-hub binary on disk */
   findBinary(): string | null {
     const binaryPaths = [
-      this.deps.join(this.deps.homedir(), '.hex', 'bin', 'hex-hub'),
-      this.deps.join(process.cwd(), 'target', 'release', 'hex-hub'),       // workspace root target
-      this.deps.join(process.cwd(), 'hex-hub', 'target', 'release', 'hex-hub'),
-      this.deps.join(process.cwd(), 'target', 'debug', 'hex-hub'),
-      this.deps.join(process.cwd(), 'hex-hub', 'target', 'debug', 'hex-hub'),
+      this.deps.join(this.deps.homedir(), '.hex', 'bin', 'hex-nexus'),
+      this.deps.join(process.cwd(), 'target', 'release', 'hex-nexus'),       // workspace root target
+      this.deps.join(process.cwd(), 'hex-hub', 'target', 'release', 'hex-nexus'),
+      this.deps.join(process.cwd(), 'target', 'debug', 'hex-nexus'),
+      this.deps.join(process.cwd(), 'hex-hub', 'target', 'debug', 'hex-nexus'),
     ];
     for (const p of binaryPaths) {
       if (this.deps.existsSync(p)) return p;
@@ -125,7 +125,7 @@ export class HubLauncher {
     const binary = this.findBinary();
     if (!binary) {
       throw new Error(
-        'hex-hub binary not found. Run "hex setup" to install it, or build from hex-hub/ with "cargo build --release".',
+        'hex-nexus binary not found. Run "hex setup" to install it, or build from hex-hub/ with "cargo build --release".',
       );
     }
 
@@ -157,7 +157,7 @@ export class HubLauncher {
       );
       return { started: true, url: `http://127.0.0.1:${HUB_PORT}` };
     }
-    throw new Error('hex-hub started but did not become healthy within 5 seconds');
+    throw new Error('hex-nexus started but did not become healthy within 5 seconds');
   }
 
   /** Stop the running hub by reading the lock file PID and sending SIGTERM */

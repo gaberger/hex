@@ -664,17 +664,17 @@ export class CLIAdapter {
   // ── dashboard ───────────────────────────────────────
 
   private async dashboard(_args: ParsedArgs): Promise<number> {
-    if (!this.ctx.hubLauncher) { this.writeLn('hex-hub not available'); return 1; }
+    if (!this.ctx.hubLauncher) { this.writeLn('hex-nexus not available'); return 1; }
     const launcher = this.ctx.hubLauncher;
 
-    // Ensure hex-hub (Rust binary) is running — it IS the dashboard
+    // Ensure hex-nexus (Rust binary) is running — it IS the dashboard
     if (!(await launcher.isRunning())) {
       try {
         const result = await launcher.start();
-        this.writeLn(`hex-hub started at ${result.url}`);
+        this.writeLn(`hex-nexus started at ${result.url}`);
       } catch (err) {
         this.writeLn(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        this.writeLn('Run "hex setup" to build and install the hex-hub binary.');
+        this.writeLn('Run "hex setup" to build and install the hex-nexus binary.');
         return 1;
       }
     }
@@ -684,7 +684,7 @@ export class CLIAdapter {
     try {
       const { DashboardAdapter } = await import('./dashboard-adapter.js');
       const adapter = new DashboardAdapter(this.ctx);
-      this.writeLn('Registering project with hex-hub...');
+      this.writeLn('Registering project with hex-nexus...');
 
       const hubUrl = `http://localhost:${5555}`;
       const name = this.ctx.rootPath.split('/').pop() ?? 'unknown';
@@ -743,16 +743,16 @@ export class CLIAdapter {
     return 0;
   }
 
-  // ── hub (Rust hex-hub binary management) ────────────
+  // ── hub (Rust hex-nexus binary management) ────────────
 
   private async hub(args: ParsedArgs): Promise<number> {
-    // HEX_DAEMON=1 or --daemon: start hex-hub as background daemon
+    // HEX_DAEMON=1 or --daemon: start hex-nexus as background daemon
     if (process.env['HEX_DAEMON'] === '1' || args.flags.has('daemon')) {
-      if (!this.ctx.hubLauncher) { this.writeLn('hex-hub not available'); return 1; }
+      if (!this.ctx.hubLauncher) { this.writeLn('hex-nexus not available'); return 1; }
       const launcher = this.ctx.hubLauncher;
       try {
         const { started, url } = await launcher.start();
-        this.writeLn(started ? `hex-hub daemon at ${url}` : `hex-hub already running at ${url}`);
+        this.writeLn(started ? `hex-nexus daemon at ${url}` : `hex-nexus already running at ${url}`);
         return 0;
       } catch (err) {
         this.writeLn(`Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -761,7 +761,7 @@ export class CLIAdapter {
     }
 
     const subCmd = args.positional[0] ?? 'status';
-    if (!this.ctx.hubLauncher) { this.writeLn('hex-hub not available'); return 1; }
+    if (!this.ctx.hubLauncher) { this.writeLn('hex-nexus not available'); return 1; }
     const launcher = this.ctx.hubLauncher;
 
     switch (subCmd) {
@@ -770,9 +770,9 @@ export class CLIAdapter {
         try {
           const { started, url } = await launcher.start(token);
           if (started) {
-            this.writeLn(`hex-hub started at ${url}`);
+            this.writeLn(`hex-nexus started at ${url}`);
           } else {
-            this.writeLn(`hex-hub already running at ${url}`);
+            this.writeLn(`hex-nexus already running at ${url}`);
           }
           return 0;
         } catch (err) {
@@ -782,23 +782,23 @@ export class CLIAdapter {
       }
       case 'stop': {
         const stopped = await launcher.stop();
-        this.writeLn(stopped ? 'hex-hub stopped.' : 'hex-hub was not running.');
+        this.writeLn(stopped ? 'hex-nexus stopped.' : 'hex-nexus was not running.');
         return stopped ? 0 : 1;
       }
       case 'status': {
         const status = await launcher.status();
         if (status.running) {
-          this.writeLn(`hex-hub: running at ${status.url}`);
+          this.writeLn(`hex-nexus: running at ${status.url}`);
           this.writeLn(`Projects: ${status.projects} registered`);
           // Show version info
           try {
             const info = await this.ctx.version.getVersionInfo();
             this.writeLn(`  CLI:  ${info.cli}`);
             if (info.hub) this.writeLn(`  Hub:  ${info.hub}${info.hubBinaryPath ? ` (${info.hubBinaryPath})` : ''}`);
-            if (info.mismatch) this.writeLn(`  Warning: version mismatch — run "hex setup" to rebuild hex-hub`);
+            if (info.mismatch) this.writeLn(`  Warning: version mismatch — run "hex setup" to rebuild hex-nexus`);
           } catch { /* version check is best-effort */ }
         } else {
-          this.writeLn('hex-hub: not running');
+          this.writeLn('hex-nexus: not running');
           const binary = launcher.findBinary();
           if (binary) {
             this.writeLn(`Binary: ${binary}`);
@@ -821,16 +821,16 @@ export class CLIAdapter {
    * Used by both `dashboard` and `hub` commands.
    */
   private async startHub(_args: ParsedArgs, isDaemon: boolean): Promise<number> {
-    if (!this.ctx.hubLauncher) { this.writeLn('hex-hub not available'); return 1; }
+    if (!this.ctx.hubLauncher) { this.writeLn('hex-nexus not available'); return 1; }
     const launcher = this.ctx.hubLauncher;
 
     const token = isDaemon ? (process.env['HEX_DAEMON_TOKEN'] ?? undefined) : undefined;
     const { started, url } = await launcher.start(token);
 
     if (started) {
-      this.writeLn(`hex-hub started at ${url}`);
+      this.writeLn(`hex-nexus started at ${url}`);
     } else {
-      this.writeLn(`hex-hub already running at ${url}`);
+      this.writeLn(`hex-nexus already running at ${url}`);
     }
     this.writeLn(`Projects push data to this hub on port 5555.`);
 
@@ -2789,7 +2789,7 @@ export class CLIAdapter {
 
     this.writeLn(section('Dashboard & Services'));
     this.writeLn(`  ${bold('dashboard')}                             Start live dashboard`);
-    this.writeLn(`  ${bold('hub')} ${muted('[start|stop|status]')}              Manage hex-hub daemon`);
+    this.writeLn(`  ${bold('hub')} ${muted('[start|stop|status]')}              Manage hex-nexus daemon`);
     this.writeLn(`  ${bold('daemon')} ${muted('[status|start|stop|logs]')}      Background service`);
     this.writeLn(`  ${bold('status')}                                Show project status`);
     this.writeLn(`  ${bold('projects')}                              List registered projects`);
@@ -2965,20 +2965,20 @@ export class CLIAdapter {
     this.writeLn('');
     this.writeLn('  HexFlo: built-in (via hex-nexus)');
 
-    // Build/install hex-hub Rust binary
+    // Build/install hex-nexus Rust binary
     this.writeLn('');
-    this.writeLn('Installing hex-hub dashboard...');
+    this.writeLn('Installing hex-nexus dashboard...');
     const { existsSync } = await import('node:fs');
     const { homedir } = await import('node:os');
     const { dirname: pathDirname } = await import('node:path');
     const { fileURLToPath } = await import('node:url');
 
     const hexBinDir = join(homedir(), '.hex', 'bin');
-    const hexBinDest = join(hexBinDir, 'hex-hub');
+    const hexBinDest = join(hexBinDir, 'hex-nexus');
 
     // Check if already installed
     if (existsSync(hexBinDest)) {
-      this.writeLn(`  hex-hub already installed at ${hexBinDest}`);
+      this.writeLn(`  hex-nexus already installed at ${hexBinDest}`);
     } else {
       // Search for Cargo.toml in: CWD/hex-hub, rootPath/hex-hub, and relative to this module
       const thisDir = pathDirname(fileURLToPath(import.meta.url));
@@ -2999,7 +2999,7 @@ export class CLIAdapter {
 
       if (cargoToml) {
         const hubDir = pathDirname(cargoToml);
-        const prebuilt = join(hubDir, 'target', 'release', 'hex-hub');
+        const prebuilt = join(hubDir, 'target', 'release', 'hex-nexus');
 
         if (existsSync(prebuilt)) {
           // Pre-built binary exists — just copy it
@@ -3011,7 +3011,7 @@ export class CLIAdapter {
           try { unlinkSync(hexBinDest); } catch { /* not present */ }
           copyFileSync(prebuilt, hexBinDest);
           chmodSync(hexBinDest, 0o755);
-          this.writeLn(`  hex-hub installed from pre-built binary to ${hexBinDest}`);
+          this.writeLn(`  hex-nexus installed from pre-built binary to ${hexBinDest}`);
         } else {
           // Build from source
           try {
@@ -3019,7 +3019,7 @@ export class CLIAdapter {
             const { execFile: execFileCb } = await import('child_process');
             const execFile = promisify(execFileCb);
 
-            this.writeLn('  Building hex-hub from source (cargo build --release)...');
+            this.writeLn('  Building hex-nexus from source (cargo build --release)...');
             await execFile('cargo', ['build', '--release', '--manifest-path', cargoToml], {
               timeout: 120_000,
             });
@@ -3029,10 +3029,10 @@ export class CLIAdapter {
             try { unlinkSync(hexBinDest); } catch { /* not present */ }
             copyFileSync(prebuilt, hexBinDest);
             chmodSync(hexBinDest, 0o755);
-            this.writeLn(`  hex-hub installed to ${hexBinDest}`);
+            this.writeLn(`  hex-nexus installed to ${hexBinDest}`);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            this.writeLn(`  hex-hub build failed: ${msg}`);
+            this.writeLn(`  hex-nexus build failed: ${msg}`);
             this.writeLn('  Install Rust toolchain (rustup.rs) and retry.');
           }
         }
@@ -3045,9 +3045,9 @@ export class CLIAdapter {
           try { unlinkSync(hexBinDest); } catch { /* not present */ }
           copyFileSync(found, hexBinDest);
           chmodSync(hexBinDest, 0o755);
-          this.writeLn(`  hex-hub installed from ${found} to ${hexBinDest}`);
+          this.writeLn(`  hex-nexus installed from ${found} to ${hexBinDest}`);
         } else {
-          this.writeLn('  hex-hub binary not found.');
+          this.writeLn('  hex-nexus binary not found.');
           this.writeLn('  To install: clone the hex repo and run "cargo build --release" in hex-hub/');
           this.writeLn('  Then re-run "hex setup".');
         }
@@ -3125,7 +3125,7 @@ export class CLIAdapter {
       }
       return 0;
     } catch {
-      this.writeLn(`${red('Error')}: hex-hub not running on port 5555`);
+      this.writeLn(`${red('Error')}: hex-nexus not running on port 5555`);
       this.writeLn(muted('Start it with: hex daemon start'));
       return 1;
     }
@@ -3171,7 +3171,7 @@ export class CLIAdapter {
       this.writeLn(muted('Run hex inference health to verify connectivity.'));
       return 0;
     } catch {
-      this.writeLn(`${red('Error')}: hex-hub not running on port 5555`);
+      this.writeLn(`${red('Error')}: hex-nexus not running on port 5555`);
       return 1;
     }
   }
@@ -3199,7 +3199,7 @@ export class CLIAdapter {
       this.writeLn(`${green('Removed')} endpoint ${bold(id)}`);
       return 0;
     } catch {
-      this.writeLn(`${red('Error')}: hex-hub not running on port 5555`);
+      this.writeLn(`${red('Error')}: hex-nexus not running on port 5555`);
       return 1;
     }
   }
@@ -3237,7 +3237,7 @@ export class CLIAdapter {
       }
       return allHealthy ? 0 : 1;
     } catch {
-      this.writeLn(`${red('Error')}: hex-hub not running on port 5555`);
+      this.writeLn(`${red('Error')}: hex-nexus not running on port 5555`);
       return 1;
     }
   }
@@ -3274,7 +3274,7 @@ export class CLIAdapter {
       }
       return 0;
     } catch {
-      this.writeLn(`${red('Error')}: hex-hub not running. Start with: hex daemon start`);
+      this.writeLn(`${red('Error')}: hex-nexus not running. Start with: hex daemon start`);
       return 1;
     }
   }
@@ -3308,7 +3308,7 @@ export class CLIAdapter {
       }
       return 0;
     } catch {
-      this.writeLn(`${red('Error')}: hex-hub not running. Start with: hex daemon start`);
+      this.writeLn(`${red('Error')}: hex-nexus not running. Start with: hex daemon start`);
       return 1;
     }
   }
@@ -3338,7 +3338,7 @@ export class CLIAdapter {
       }
       return 0;
     } catch {
-      this.writeLn(`${red('Error')}: hex-hub not running. Start with: hex daemon start`);
+      this.writeLn(`${red('Error')}: hex-nexus not running. Start with: hex daemon start`);
       return 1;
     }
   }

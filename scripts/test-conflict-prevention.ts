@@ -73,9 +73,9 @@ console.log(`Project: ${PROJECT_ID}\n`);
 try {
   await fetch(`${HUB_URL}/api/version`);
 } catch {
-  console.error('\n❌ hex-hub is not running. Start it with:');
+  console.error('\n❌ hex-nexus is not running. Start it with:');
   console.error('   cd /Volumes/ExtendedStorage/PARA/01-Projects/hex-intf');
-  console.error('   target/release/hex-hub --daemon');
+  console.error('   target/release/hex-nexus --daemon');
   process.exit(1);
 }
 

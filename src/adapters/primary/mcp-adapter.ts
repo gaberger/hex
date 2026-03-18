@@ -1290,7 +1290,7 @@ export class MCPAdapter {
     if (this.hubRunning && this.hubUrl) return this.hubUrl;
 
     const launcher = this.ctx.hubLauncher;
-    if (!launcher) throw new Error('hex-hub binary not available');
+    if (!launcher) throw new Error('hex-nexus binary not available');
     const { url } = await launcher.start();
     this.hubRunning = true;
     this.hubUrl = url;

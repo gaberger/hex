@@ -1,9 +1,13 @@
 [package]
-name = "hex-hub"
+name = "hex-nexus-hub"
 version = "26.3.1"
 edition = "2021"
 description = "Dashboard hub for hex — hexagonal architecture framework"
 license = "MIT"
+
+[[bin]]
+name = "hex-nexus"
+path = "src/main.rs"
 
 [dependencies]
 hex-nexus = { path = "../hex-nexus" }

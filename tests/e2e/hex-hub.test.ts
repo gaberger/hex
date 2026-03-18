@@ -26,7 +26,7 @@ let hubPort: number;
 const hubToken = 'e2e-test-token-' + Date.now();
 
 // Cargo workspace puts the binary in the project root's target/, not hex-hub/target/
-const BINARY_PATH = join(import.meta.dir, '../../target/release/hex-hub');
+const BINARY_PATH = join(import.meta.dir, '../../target/release/hex-nexus');
 const HUB_START_TIMEOUT = 5000;
 
 /** Find a random available port. */

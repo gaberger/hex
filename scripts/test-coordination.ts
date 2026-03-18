@@ -266,7 +266,7 @@ async function main() {
   try {
     await get('/api/version');
   } catch {
-    console.error('\n❌ hex-hub is not running. Start it with: hex daemon start');
+    console.error('\n❌ hex-nexus is not running. Start it with: hex daemon start');
     process.exit(1);
   }
 

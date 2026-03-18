@@ -18,11 +18,11 @@ import type { IVersionPort, VersionInfo } from '../../core/ports/index.js';
 const execFileAsync = promisify(execFile);
 
 const HUB_BINARY_PATHS = [
-  join(homedir(), '.hex', 'bin', 'hex-hub'),
-  join(process.cwd(), 'target', 'release', 'hex-hub'),       // workspace target
-  join(process.cwd(), 'hex-hub', 'target', 'release', 'hex-hub'),
-  join(process.cwd(), 'target', 'debug', 'hex-hub'),
-  join(process.cwd(), 'hex-hub', 'target', 'debug', 'hex-hub'),
+  join(homedir(), '.hex', 'bin', 'hex-nexus'),
+  join(process.cwd(), 'target', 'release', 'hex-nexus'),       // workspace target
+  join(process.cwd(), 'hex-hub', 'target', 'release', 'hex-nexus'),
+  join(process.cwd(), 'target', 'debug', 'hex-nexus'),
+  join(process.cwd(), 'hex-hub', 'target', 'debug', 'hex-nexus'),
 ];
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -77,7 +77,7 @@ export class VersionAdapter implements IVersionPort {
       const { stdout } = await execFileAsync(binary, ['--version'], {
         timeout: 3000,
       });
-      // Output may be "hex-hub 26.3" or just "26.3.1"
+      // Output may be "hex-nexus 26.3" or just "26.3.1"
       const match = stdout.trim().match(/(\d+\.\d+(?:\.\d+)?)\s*$/);
       if (match) return Version.parse(match[1]);
     } catch { /* binary may not support --version */ }

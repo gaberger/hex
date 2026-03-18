@@ -52,7 +52,7 @@ describe('HubLauncher', () => {
       });
       const result = launcher.findBinary();
       expect(result).not.toBeNull();
-      expect(result).toContain('hex-hub');
+      expect(result).toContain('hex-nexus');
     });
   });
 

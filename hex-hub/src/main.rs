@@ -19,7 +19,7 @@ async fn main() {
     }
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!(
-            "hex-hub {} ({})",
+            "hex-nexus {} ({})",
             hex_nexus::version(),
             hex_nexus::build_hash()
         );
