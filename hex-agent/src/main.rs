@@ -16,6 +16,8 @@ use adapters::secondary::spacetime_skill::SpacetimeSkillLoader;
 use adapters::secondary::spacetime_agent::SpacetimeAgentLoader;
 use adapters::secondary::hub_client::HubClientAdapter;
 use adapters::secondary::rl_client::{RlClientAdapter, NoopRlAdapter};
+use adapters::secondary::rate_limiter::RateLimiterAdapter;
+use adapters::secondary::token_metrics::TokenMetricsAdapter;
 use domain::{TokenBudget, tools::builtin_tools};
 use ports::skills::SkillLoaderPort;
 use ports::agents::AgentLoaderPort;
@@ -63,6 +65,14 @@ struct Args {
     /// Enable verbose logging
     #[arg(long, short)]
     verbose: bool,
+
+    /// Disable prompt caching (enabled by default)
+    #[arg(long)]
+    no_cache: bool,
+
+    /// Extended thinking budget tokens (0 = disabled)
+    #[arg(long, default_value = "0")]
+    thinking_budget: u32,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -328,16 +338,22 @@ async fn main() -> anyhow::Result<()> {
 
     // Build conversation loop (use case)
     let tools = builtin_tools();
+    let rate_limiter: Arc<dyn ports::rate_limiter::RateLimiterPort> = Arc::new(RateLimiterAdapter::new());
+    let metrics: Arc<dyn ports::token_metrics::TokenMetricsPort> = Arc::new(TokenMetricsAdapter::new());
     let conversation = ConversationLoop::new(
         anthropic,
         context_mgr,
         tool_executor,
         rl,
+        rate_limiter,
+        metrics,
         tools,
         budget,
         args.max_response,
     )
-    .with_model_pinned(args.model_pinned);
+    .with_model_pinned(args.model_pinned)
+    .with_cache(!args.no_cache)
+    .with_thinking_budget(args.thinking_budget);
 
     // Decide mode: hub-managed or interactive CLI
     if let (Some(hub_url), Some(hub_token)) = (&args.hub_url, &args.hub_token) {
