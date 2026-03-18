@@ -47,9 +47,9 @@ async function get(path: string): Promise<unknown> {
 
 async function registerInstance(label: string): Promise<InstanceInfo> {
   const result = (await post('/api/coordination/instance/register', {
-    project_id: PROJECT_ID,
+    projectId: PROJECT_ID,
     pid: process.pid,
-    session_label: label,
+    sessionLabel: label,
   })) as { instanceId: string };
 
   return {
@@ -61,10 +61,10 @@ async function registerInstance(label: string): Promise<InstanceInfo> {
 
 async function heartbeat(instanceId: string, state?: { agents?: number; tasks?: number }): Promise<void> {
   await post('/api/coordination/instance/heartbeat', {
-    instance_id: instanceId,
-    project_id: PROJECT_ID,
-    agent_count: state?.agents,
-    active_task_count: state?.tasks,
+    instanceId: instanceId,
+    projectId: PROJECT_ID,
+    agentCount: state?.agents,
+    activeTaskCount: state?.tasks,
   });
 }
 
@@ -98,7 +98,7 @@ async function testNormalHeartbeat(): Promise<void> {
   }
 
   const instances = await listInstances();
-  const found = instances.find((i: any) => i.instance_id === instance.instanceId);
+  const found = instances.find((i: any) => i.instanceId === instance.instanceId);
 
   if (found) {
     console.log('  ✅ PASS: Instance still registered after heartbeats');
@@ -121,7 +121,7 @@ async function testStaleSession(): Promise<void> {
   console.log(`  ✓ Manual cleanup removed ${result.removed} session(s)`);
 
   const instances = await listInstances();
-  const found = instances.find((i: any) => i.instance_id === instance.instanceId);
+  const found = instances.find((i: any) => i.instanceId === instance.instanceId);
 
   if (!found) {
     console.log('  ✅ PASS: Stale instance was removed');
@@ -143,7 +143,7 @@ async function testDeadPID(): Promise<void> {
   // Override instance PID to the child process
   // (In real usage, each instance would have its own PID)
   await post('/api/coordination/instance/register', {
-    project_id: PROJECT_ID,
+    projectId: PROJECT_ID,
     pid: childPid,
     session_label: 'test-dead-pid-child',
   });
@@ -193,9 +193,9 @@ async function testManualCleanup(): Promise<void> {
   console.log(`  ✓ Manual cleanup removed ${result.removed} session(s)`);
 
   const remaining = await listInstances();
-  const activeFound = remaining.find((i: any) => i.instance_id === instances[0].instanceId);
-  const stale1Found = remaining.find((i: any) => i.instance_id === instances[1].instanceId);
-  const stale2Found = remaining.find((i: any) => i.instance_id === instances[2].instanceId);
+  const activeFound = remaining.find((i: any) => i.instanceId === instances[0].instanceId);
+  const stale1Found = remaining.find((i: any) => i.instanceId === instances[1].instanceId);
+  const stale2Found = remaining.find((i: any) => i.instanceId === instances[2].instanceId);
 
   if (activeFound && !stale1Found && !stale2Found) {
     console.log('  ✅ PASS: Active instance kept, stale instances removed');
@@ -212,25 +212,25 @@ async function testCoordinationState(): Promise<void> {
 
   // Acquire a worktree lock
   await post('/api/coordination/worktree/lock', {
-    instance_id: instance.instanceId,
-    project_id: PROJECT_ID,
+    instanceId: instance.instanceId,
+    projectId: PROJECT_ID,
     feature: 'test-feature',
     layer: 'adapters/primary',
-    ttl_secs: 300,
+    ttlSecs: 300,
   });
   console.log('  ✓ Acquired worktree lock');
 
   // Claim a task
   await post('/api/coordination/task/claim', {
-    instance_id: instance.instanceId,
-    task_id: 'test-task-123',
+    instanceId: instance.instanceId,
+    taskId: 'test-task-123',
   });
   console.log('  ✓ Claimed task');
 
   // Publish activity
   await post('/api/coordination/activity', {
-    instance_id: instance.instanceId,
-    project_id: PROJECT_ID,
+    instanceId: instance.instanceId,
+    projectId: PROJECT_ID,
     action: 'test-action',
     details: { test: true },
   });
@@ -243,9 +243,9 @@ async function testCoordinationState(): Promise<void> {
     get(`/api/coordination/activities?projectId=${PROJECT_ID}&limit=10`),
   ]);
 
-  const hasLock = (locks as any[]).some((l) => l.instance_id === instance.instanceId);
-  const hasClaim = (claims as any[]).some((c) => c.instance_id === instance.instanceId);
-  const hasActivity = (activities as any[]).some((a) => a.instance_id === instance.instanceId);
+  const hasLock = (locks as any[]).some((l) => l.instanceId === instance.instanceId);
+  const hasClaim = (claims as any[]).some((c) => c.instanceId === instance.instanceId);
+  const hasActivity = (activities as any[]).some((a) => a.instanceId === instance.instanceId);
 
   if (hasLock && hasClaim && hasActivity) {
     console.log('  ✅ PASS: Coordination state verified');
