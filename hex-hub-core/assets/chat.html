@@ -57,6 +57,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 .msg.assistant{align-self:flex-start}
 .msg-role{font-size:.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--text3);padding:0 4px}
 .msg.user .msg-role{text-align:right}
+.agent-badge{display:inline-block;font-size:.68rem;font-weight:700;padding:1px 7px;border-radius:4px;margin-right:6px;letter-spacing:.5px;font-family:var(--mono)}
 .msg-body{padding:10px 14px;border-radius:var(--radius);line-height:1.55;font-size:.92rem;word-wrap:break-word;overflow-wrap:break-word}
 .msg.user .msg-body{background:var(--user-bg);border:1px solid var(--user-border);border-bottom-right-radius:3px}
 .msg.assistant .msg-body{background:var(--asst-bg);border:1px solid var(--asst-border);border-bottom-left-radius:3px}
@@ -249,7 +250,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 var state = {
   ws: null, connected: false, reconnectDelay: 1000, reconnectTimer: null,
   turnCount: 0, streaming: false, currentAssistantEl: null, authToken: null,
-  totalInput: 0, totalOutput: 0, tokenBudget: 200000
+  totalInput: 0, totalOutput: 0, tokenBudget: 200000,
+  connectedAgents: {}, /* agentId -> {name, status, uptime, lastSeen} */
+  currentAgentName: null /* agent name for current streaming message */
 };
 
 /* ── DOM refs ── */
@@ -281,6 +284,32 @@ function esc(s) {
 }
 function truncate(s, n) { return s.length > n ? s.slice(0, n) + "..." : s; }
 function fmt(n) { return n >= 1e6 ? (n/1e6).toFixed(1)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(n); }
+
+/* ── Agent color from name (consistent hash) ── */
+var agentColors = [
+  "#00d4aa","#3b82f6","#f472b6","#a78bfa","#fbbf24",
+  "#34d399","#f87171","#60a5fa","#c084fc","#fb923c"
+];
+function agentColor(name) {
+  if (!name) return agentColors[0];
+  var h = 0;
+  for (var i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+  return agentColors[Math.abs(h) % agentColors.length];
+}
+function makeAgentBadge(name) {
+  var span = document.createElement("span");
+  span.className = "agent-badge";
+  var c = agentColor(name);
+  span.style.background = c + "22";
+  span.style.color = c;
+  span.textContent = name;
+  return span;
+}
+function updateModelBadge() {
+  var names = Object.values(state.connectedAgents).map(function(a) { return a.name; });
+  if (names.length === 0) return;
+  modelBadge.textContent = names.join(", ");
+}
 
 /* ── Auth ── */
 function getAuthToken() {
@@ -342,7 +371,21 @@ function scheduleReconnect() {
 
 function wsSend(content) {
   if (!state.ws || state.ws.readyState !== 1) return;
-  state.ws.send(JSON.stringify({ type: "chat_message", content: content }));
+  /* Parse @agent-name prefix to target a specific agent */
+  var payload = { type: "chat_message", content: content };
+  var atMatch = content.match(/^@(\S+)\s+([\s\S]*)$/);
+  if (atMatch) {
+    /* Find matching agent_id by name */
+    var targetName = atMatch[1];
+    for (var id in state.connectedAgents) {
+      if (state.connectedAgents[id].name === targetName) {
+        payload.agent_id = id.replace(/^auto_/, "");
+        payload.content = atMatch[2];
+        break;
+      }
+    }
+  }
+  state.ws.send(JSON.stringify(payload));
 }
 
 /* ── Message dispatch ── */
@@ -371,14 +414,22 @@ function handleConnected(msg) {
 function handleAgentConnected(msg) {
   agentStatus.textContent = "connected";
   agentStatus.className = "status-pill active";
-  if (msg.agentName) modelBadge.textContent = msg.agentName;
+  if (msg.agentId && msg.agentName) {
+    state.connectedAgents[msg.agentId] = {
+      name: msg.agentName, status: "idle", uptime: 0, lastSeen: Date.now()
+    };
+  }
+  updateModelBadge();
   if (msg.projectDir) projectDir.textContent = msg.projectDir;
 }
 
 function handleAgentDisconnected(msg) {
   if (state.streaming) endStream();
-  agentStatus.textContent = "disconnected";
-  agentStatus.className = "status-pill idle";
+  if (msg.agentId) delete state.connectedAgents[msg.agentId];
+  var remaining = Object.keys(state.connectedAgents).length;
+  agentStatus.textContent = remaining > 0 ? "connected" : "disconnected";
+  agentStatus.className = "status-pill " + (remaining > 0 ? "active" : "idle");
+  updateModelBadge();
 }
 
 /* ── Markdown renderer (safe: all text goes through esc() first) ── */
@@ -463,9 +514,19 @@ function attachCopyButtons(container) {
 
 /* ── Stream handling ── */
 function handleStreamChunk(msg) {
-  if (!state.streaming || !state.currentAssistantEl) {
+  var incomingAgent = msg.agent_name || null;
+  /* Start a new message bubble if not streaming or if a different agent is talking */
+  if (!state.streaming || !state.currentAssistantEl || (incomingAgent && incomingAgent !== state.currentAgentName)) {
+    if (state.streaming) endStream();
     state.streaming = true;
+    state.currentAgentName = incomingAgent;
     state.currentAssistantEl = createMsgEl("assistant");
+    /* Show agent badge if we have a name */
+    if (incomingAgent) {
+      var roleEl = state.currentAssistantEl.querySelector(".msg-role");
+      roleEl.textContent = "";
+      roleEl.appendChild(makeAgentBadge(incomingAgent));
+    }
   }
   var body = state.currentAssistantEl.querySelector(".msg-body");
   body.dataset.raw = (body.dataset.raw || "") + (msg.text || "");
@@ -490,13 +551,20 @@ function endStream() {
   }
   state.streaming = false;
   state.currentAssistantEl = null;
+  state.currentAgentName = null;
 }
 
 /* ── Tool calls ── */
 function handleToolCall(msg) {
   if (!state.currentAssistantEl) {
     state.streaming = true;
+    state.currentAgentName = msg.agent_name || null;
     state.currentAssistantEl = createMsgEl("assistant");
+    if (msg.agent_name) {
+      var roleEl = state.currentAssistantEl.querySelector(".msg-role");
+      roleEl.textContent = "";
+      roleEl.appendChild(makeAgentBadge(msg.agent_name));
+    }
   }
   var body = state.currentAssistantEl.querySelector(".msg-body");
   body.classList.remove("streaming-cursor");
@@ -610,6 +678,26 @@ function handleAgentStatus(msg) {
   agentStatus.className = "status-pill " + (s === "idle" ? "idle" : "active");
   if (msg.detail) projectDir.textContent = msg.detail;
   if (msg.model) modelBadge.textContent = msg.model;
+  /* Update tracked agent info from heartbeat */
+  if (msg.agent_name) {
+    var agents = state.connectedAgents;
+    var found = false;
+    for (var id in agents) {
+      if (agents[id].name === msg.agent_name) {
+        agents[id].status = s;
+        if (msg.uptime_secs !== undefined) agents[id].uptime = msg.uptime_secs;
+        agents[id].lastSeen = Date.now();
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      state.connectedAgents["auto_" + msg.agent_name] = {
+        name: msg.agent_name, status: s, uptime: msg.uptime_secs || 0, lastSeen: Date.now()
+      };
+      updateModelBadge();
+    }
+  }
   if (s === "idle" && state.streaming) endStream();
 }
 

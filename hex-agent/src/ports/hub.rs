@@ -12,14 +12,28 @@ pub enum HubMessage {
         agent_name: String,
         project_dir: String,
     },
+    /// Heartbeat from agent to hub
+    #[serde(rename = "heartbeat")]
+    Heartbeat {
+        agent_id: String,
+        agent_name: String,
+        status: String,
+        uptime_secs: u64,
+    },
     /// Streaming text chunk from agent
     #[serde(rename = "stream_chunk")]
-    StreamChunk { text: String },
+    StreamChunk {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent_name: Option<String>,
+    },
     /// Tool call started
     #[serde(rename = "tool_call")]
     ToolCall {
         tool_name: String,
         tool_input: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent_name: Option<String>,
     },
     /// Tool call result
     #[serde(rename = "tool_result")]
@@ -27,6 +41,8 @@ pub enum HubMessage {
         tool_name: String,
         content: String,
         is_error: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent_name: Option<String>,
     },
     /// Token usage update
     #[serde(rename = "token_update")]
@@ -35,10 +51,17 @@ pub enum HubMessage {
         output_tokens: u32,
         total_input: u64,
         total_output: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent_name: Option<String>,
     },
     /// Agent status change
     #[serde(rename = "agent_status")]
-    AgentStatus { status: String, detail: String },
+    AgentStatus {
+        status: String,
+        detail: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent_name: Option<String>,
+    },
     /// Chat message from hub to agent (user input routed through hub)
     #[serde(rename = "chat_message")]
     ChatMessage { content: String },

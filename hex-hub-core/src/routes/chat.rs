@@ -112,7 +112,8 @@ async fn handle_chat_ws(
                         || envelope.event == "agent_disconnected"
                         || envelope.event == "chat_response"
                         || envelope.event == "stream_chunk"
-                        || envelope.event == "chat_message";
+                        || envelope.event == "chat_message"
+                        || envelope.event == "heartbeat";
 
                     if !dominated {
                         continue;
@@ -166,15 +167,32 @@ async fn handle_chat_ws(
             let parsed: ChatInbound = match serde_json::from_str(&text) {
                 Ok(m) => m,
                 Err(_) => {
-                    // Not a ChatInbound — might be agent output (stream_chunk, tool_call, etc.)
+                    // Not a ChatInbound — might be agent output (stream_chunk, tool_call, heartbeat, etc.)
                     // Forward it to the broadcast channel so browser clients can see it
                     if let Ok(raw) = serde_json::from_str::<serde_json::Value>(&text) {
                         if let Some(msg_type) = raw.get("type").and_then(|t| t.as_str()) {
-                            let _ = state2.ws_tx.send(WsEnvelope {
-                                topic: format!("agent:{}:output", session_id),
-                                event: msg_type.to_string(),
-                                data: raw,
-                            });
+                            // Handle heartbeat: broadcast as agent_status with last_seen
+                            if msg_type == "heartbeat" {
+                                let agent_name = raw.get("agent_name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                let status = raw.get("status").and_then(|v| v.as_str()).unwrap_or("idle");
+                                let uptime = raw.get("uptime_secs").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let _ = state2.ws_tx.send(WsEnvelope {
+                                    topic: format!("agent:{}:output", session_id),
+                                    event: "agent_status".to_string(),
+                                    data: json!({
+                                        "status": status,
+                                        "agent_name": agent_name,
+                                        "uptime_secs": uptime,
+                                        "last_seen": chrono::Utc::now().to_rfc3339(),
+                                    }),
+                                });
+                            } else {
+                                let _ = state2.ws_tx.send(WsEnvelope {
+                                    topic: format!("agent:{}:output", session_id),
+                                    event: msg_type.to_string(),
+                                    data: raw,
+                                });
+                            }
                         }
                     }
                     continue;
