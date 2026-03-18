@@ -1,3 +1,18 @@
 [workspace]
-members = ["rl-engine", "workplan-state", "agent-registry", "chat-relay", "fleet-state"]
+members = [
+    "rl-engine",
+    "workplan-state",
+    "agent-registry",
+    "chat-relay",
+    "fleet-state",
+    "skill-registry",
+    "hook-registry",
+    "agent-definition-registry",
+]
 resolver = "2"
+
+[workspace.dependencies]
+spacetimedb = "1.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"

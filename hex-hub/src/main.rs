@@ -10,6 +10,8 @@ pub mod remote;
 mod rl;
 mod routes;
 mod state;
+mod spacetime_bindings;
+pub mod spacetime_launcher;
 
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
