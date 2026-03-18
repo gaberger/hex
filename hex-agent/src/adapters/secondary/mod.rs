@@ -14,3 +14,5 @@ pub mod rate_limiter;
 pub mod token_metrics;
 pub mod haiku_preflight;
 pub mod openai_compat;
+pub mod mcp_stdio_client;
+pub mod mcp_config;

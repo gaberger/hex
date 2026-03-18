@@ -7,6 +7,8 @@ pub mod hooks;
 pub mod workplan;
 pub mod secret_grant;
 pub mod api_optimization;
+pub mod hex_knowledge;
+pub mod mcp;
 
 // Re-export core types for convenience
 pub use messages::{Message, Role, ContentBlock, StopReason, ConversationState};

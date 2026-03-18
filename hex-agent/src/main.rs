@@ -181,8 +181,6 @@ async fn main() -> anyhow::Result<()> {
     let provider = args.provider.to_lowercase();
     let context_mgr: Arc<dyn ports::ContextManagerPort> =
         Arc::new(ContextManagerAdapter::new());
-    let tool_executor: Arc<dyn ports::ToolExecutorPort> =
-        Arc::new(ToolExecutorAdapter::new(project_dir.clone()));
 
     // --- Adapter Selection: SpacetimeDB (via hub) or filesystem fallback ---
     //
@@ -208,8 +206,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let hub_connected = if let Some(ref hub_url) = args.hub_url {
-        // Probe hub health endpoint
-        reqwest::get(format!("{}/health", hub_url)).await.is_ok()
+        // Probe nexus health endpoint
+        reqwest::get(format!("{}/api/version", hub_url)).await.is_ok()
     } else {
         false
     };
@@ -229,7 +227,26 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(EnvSecretsAdapter::new())
     };
 
-    // Resolve API keys through the secret broker
+    // Claim secrets from nexus if hub-connected (populates the adapter's cache)
+    tracing::info!(hub_connected, "Secret broker: hub_connected={}", hub_connected);
+    if hub_connected {
+        let claim_id = args.agent.as_deref().unwrap_or("hex-agent");
+        tracing::info!(claim_id, "Claiming secrets from nexus for agent '{}'", claim_id);
+        match secrets.claim_secrets(claim_id).await {
+            Ok(claimed) => {
+                tracing::info!(
+                    count = claimed.len(),
+                    "Claimed {} secret(s) from nexus",
+                    claimed.len()
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Secret claim failed — falling back to env vars");
+            }
+        }
+    }
+
+    // Resolve API keys through the secret broker (cache → env)
     let anthropic_key = secrets.resolve_secret("ANTHROPIC_API_KEY").await.ok();
     let minimax_key = secrets.resolve_secret("MINIMAX_API_KEY").await.ok();
 
@@ -436,8 +453,54 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // --- MCP Tool Discovery (ADR-033) ---
+    //
+    // Load MCP server configs from .claude/settings.json, connect to each
+    // server, discover tools, and merge with builtins. Failures are non-fatal:
+    // we log a warning and skip unreachable servers.
+    let mcp_configs = adapters::secondary::mcp_config::load_mcp_configs(&project_dir);
+    let (mcp_client, mcp_tools) = if !mcp_configs.is_empty() {
+        tracing::info!(servers = mcp_configs.len(), "Loading MCP server configs");
+        let client = Arc::new(adapters::secondary::mcp_stdio_client::McpStdioClient::new());
+        let discovery = usecases::mcp_discovery::discover_mcp_tools(
+            &(client.clone() as Arc<dyn ports::mcp_client::McpClientPort>),
+            &mcp_configs,
+        )
+        .await;
+
+        if !discovery.failed.is_empty() {
+            for (name, err) in &discovery.failed {
+                tracing::warn!(server = %name, error = %err, "MCP server connection failed");
+            }
+        }
+        if discovery.connected_count > 0 {
+            tracing::info!(
+                servers = discovery.connected_count,
+                tools = discovery.tools.len(),
+                "MCP tools discovered"
+            );
+        }
+
+        (
+            Some(client as Arc<dyn ports::mcp_client::McpClientPort>),
+            discovery.tools,
+        )
+    } else {
+        (None, vec![])
+    };
+
+    // Build tool executor — inject MCP client if available
+    let tool_executor: Arc<dyn ports::ToolExecutorPort> = {
+        let adapter = ToolExecutorAdapter::new(project_dir.clone());
+        Arc::new(match mcp_client {
+            Some(ref client) => adapter.with_mcp_client(client.clone()),
+            None => adapter,
+        })
+    };
+
     // Build conversation loop (use case)
-    let tools = builtin_tools();
+    let mut tools = builtin_tools();
+    tools.extend(mcp_tools);
     let conversation = ConversationLoop::new(
         anthropic,
         context_mgr,
@@ -453,7 +516,23 @@ async fn main() -> anyhow::Result<()> {
     .with_model_pinned(args.model_pinned)
     .with_cache(!args.no_cache)
     .with_thinking_budget(args.thinking_budget)
-    .with_compact_threshold(args.compact_threshold as f32 / 100.0);
+    .with_compact_threshold(args.compact_threshold as f32 / 100.0)
+    .with_available_models({
+        use ports::rl::ModelSelection;
+        let mut models = Vec::new();
+        if anthropic_key.is_some() {
+            models.push(ModelSelection::Opus);
+            models.push(ModelSelection::Sonnet);
+            models.push(ModelSelection::Haiku);
+        }
+        if minimax_key.is_some() {
+            models.push(ModelSelection::MiniMax);
+            models.push(ModelSelection::MiniMaxFast);
+        }
+        // Local is always available (no key needed)
+        models.push(ModelSelection::Local);
+        models
+    });
 
     // Decide mode: hub-managed or interactive CLI
     if let (Some(hub_url), Some(hub_token)) = (&args.hub_url, &args.hub_token) {
@@ -735,13 +814,27 @@ fn load_hex_state_config() -> Option<(String, String, String)> {
 ///
 /// Returns `(url, token)` if a hub is found and healthy.
 async fn discover_hub() -> Option<(String, String)> {
-    // 1. Try lock file
-    let home = std::env::var("HOME").ok()?;
-    let lock_path = std::path::PathBuf::from(&home)
-        .join(".hex")
-        .join("daemon")
-        .join("hub.lock");
+    let hex_dir = dirs::home_dir()?.join(".hex");
 
+    // 1. HEX_NEXUS_URL env var (explicit override)
+    if let Ok(url) = std::env::var("HEX_NEXUS_URL") {
+        if probe_hub_health(&url).await {
+            return Some((url, String::new()));
+        }
+    }
+
+    // 2. Persisted nexus.port file (written by `hex nexus start`)
+    if let Ok(port_str) = std::fs::read_to_string(hex_dir.join("nexus.port")) {
+        if let Ok(port) = port_str.trim().parse::<u16>() {
+            let url = format!("http://127.0.0.1:{}", port);
+            if probe_hub_health(&url).await {
+                return Some((url, String::new()));
+            }
+        }
+    }
+
+    // 3. Legacy lock file (daemon/hub.lock)
+    let lock_path = hex_dir.join("daemon").join("hub.lock");
     if let Ok(contents) = std::fs::read_to_string(&lock_path) {
         if let Ok(lock) = serde_json::from_str::<serde_json::Value>(&contents) {
             let port = lock.get("port").and_then(|v| v.as_u64()).unwrap_or(5555) as u16;
@@ -758,7 +851,7 @@ async fn discover_hub() -> Option<(String, String)> {
         }
     }
 
-    // 2. Probe default port (no token — hub may not require auth)
+    // 4. Probe default port
     let default_url = "http://127.0.0.1:5555".to_string();
     if probe_hub_health(&default_url).await {
         return Some((default_url, String::new()));
@@ -767,10 +860,10 @@ async fn discover_hub() -> Option<(String, String)> {
     None
 }
 
-/// Quick health check against a hub URL.
+/// Quick health check against a nexus URL.
 async fn probe_hub_health(url: &str) -> bool {
     reqwest::Client::new()
-        .get(format!("{}/health", url))
+        .get(format!("{}/api/version", url))
         .timeout(std::time::Duration::from_secs(2))
         .send()
         .await

@@ -1,7 +1,9 @@
 use crate::ports::{ToolCall, ToolResult};
 use crate::ports::tools::ToolExecutorPort;
+use crate::ports::mcp_client::McpClientPort;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::process::Command;
 
 /// Filesystem + bash tool executor.
@@ -17,11 +19,18 @@ const MAX_OUTPUT_BYTES: usize = 100 * 1024;
 
 pub struct ToolExecutorAdapter {
     working_dir: PathBuf,
+    mcp_client: Option<Arc<dyn McpClientPort>>,
 }
 
 impl ToolExecutorAdapter {
     pub fn new(working_dir: PathBuf) -> Self {
-        Self { working_dir }
+        Self { working_dir, mcp_client: None }
+    }
+
+    /// Set an MCP client for routing mcp__* tool calls.
+    pub fn with_mcp_client(mut self, client: Arc<dyn McpClientPort>) -> Self {
+        self.mcp_client = Some(client);
+        self
     }
 
     /// Resolve a path relative to working_dir, with traversal protection.
@@ -594,6 +603,101 @@ impl ToolExecutorAdapter {
             is_error: false,
         }
     }
+
+    /// Execute a hex CLI command as a tool.
+    ///
+    /// Maps tool names to `hex <subcommand>` invocations.
+    /// `arg_keys` specifies which JSON input fields to pass as positional args.
+    async fn hex_cli_tool(
+        &self,
+        subcommand: &str,
+        input: &serde_json::Value,
+        arg_keys: &[&str],
+    ) -> ToolResult {
+        let mut cmd = Command::new("hex");
+
+        // Split subcommand on '-' for nested commands (e.g. "adr-search" → "adr" "search")
+        for part in subcommand.split('-') {
+            cmd.arg(part);
+        }
+
+        // Add positional args from input JSON
+        for key in arg_keys {
+            if let Some(val) = input.get(key).and_then(|v| v.as_str()) {
+                if !val.is_empty() {
+                    cmd.arg(val);
+                }
+            }
+        }
+
+        cmd.current_dir(&self.working_dir);
+
+        match cmd.output().await {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let content = if output.status.success() {
+                    stdout.to_string()
+                } else {
+                    format!("{}\n{}", stdout, stderr).trim().to_string()
+                };
+                ToolResult {
+                    tool_use_id: String::new(),
+                    content,
+                    is_error: !output.status.success(),
+                }
+            }
+            Err(e) => tool_error(subcommand, &format!("Failed to run hex {}: {}", subcommand, e)),
+        }
+    }
+
+    // ── MCP Tool Routing ────────────────────────────────────────
+
+    /// Route an MCP tool call to the appropriate connected server.
+    ///
+    /// Tool names follow the convention `mcp__<server>__<tool>`.
+    /// Parses the name, finds the server, and delegates via McpClientPort.
+    async fn execute_mcp_tool(&self, name: &str, call: &ToolCall) -> ToolResult {
+        let mcp = match &self.mcp_client {
+            Some(client) => client,
+            None => return tool_error("mcp", "MCP client not configured"),
+        };
+
+        // Parse: mcp__<server>__<tool>
+        let parts: Vec<&str> = name.splitn(3, "__").collect();
+        if parts.len() != 3 {
+            return tool_error(
+                "mcp",
+                &format!("Invalid MCP tool name format: '{}' (expected mcp__<server>__<tool>)", name),
+            );
+        }
+        let server_name = parts[1];
+        let tool_name = parts[2];
+
+        match mcp.call_tool(server_name, tool_name, call.input.clone()).await {
+            Ok(result) => {
+                let text = result
+                    .content
+                    .iter()
+                    .filter_map(|c| match c {
+                        crate::domain::mcp::McpContent::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                ToolResult {
+                    tool_use_id: String::new(),
+                    content: text,
+                    is_error: result.is_error,
+                }
+            }
+            Err(e) => ToolResult {
+                tool_use_id: String::new(),
+                content: format!("MCP tool error: {}", e),
+                is_error: true,
+            },
+        }
+    }
 }
 
 #[async_trait]
@@ -611,6 +715,12 @@ impl ToolExecutorPort for ToolExecutorAdapter {
             "worktree_status" => self.worktree_status().await,
             "worktree_merge" => self.worktree_merge(&call.input).await,
             "worktree_remove" => self.worktree_remove(&call.input).await,
+            "hex_analyze" => self.hex_cli_tool("analyze", &call.input, &["path"]).await,
+            "hex_plan" => self.hex_cli_tool("plan", &call.input, &["requirements"]).await,
+            "hex_summarize" => self.hex_cli_tool("summarize", &call.input, &["path"]).await,
+            "hex_adr_search" => self.hex_cli_tool("adr-search", &call.input, &["query"]).await,
+            "hex_adr_list" => self.hex_cli_tool("adr-list", &call.input, &[]).await,
+            name if name.starts_with("mcp__") => self.execute_mcp_tool(name, call).await,
             unknown => tool_error("unknown", &format!("Unknown tool: {}", unknown)),
         };
         result.tool_use_id = call.id.clone();
@@ -623,6 +733,9 @@ impl ToolExecutorPort for ToolExecutorAdapter {
     }
 
     fn has_tool(&self, name: &str) -> bool {
+        if name.starts_with("mcp__") && self.mcp_client.is_some() {
+            return true;
+        }
         matches!(
             name,
             "read_file"
@@ -636,6 +749,11 @@ impl ToolExecutorPort for ToolExecutorAdapter {
                 | "worktree_status"
                 | "worktree_merge"
                 | "worktree_remove"
+                | "hex_analyze"
+                | "hex_plan"
+                | "hex_summarize"
+                | "hex_adr_search"
+                | "hex_adr_list"
         )
     }
 
