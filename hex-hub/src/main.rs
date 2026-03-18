@@ -1,8 +1,13 @@
+pub mod adapters;
 mod cleanup;
 mod daemon;
 mod embed;
 mod middleware;
+pub mod orchestration;
 mod persistence;
+pub mod ports;
+pub mod remote;
+mod rl;
 mod routes;
 mod state;
 

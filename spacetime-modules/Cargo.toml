@@ -1,0 +1,3 @@
+[workspace]
+members = ["rl-engine", "workplan-state", "agent-registry", "chat-relay", "fleet-state"]
+resolver = "2"

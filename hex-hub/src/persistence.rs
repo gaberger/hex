@@ -88,6 +88,13 @@ pub struct SwarmDb {
 }
 
 impl SwarmDb {
+    /// Expose the inner connection handle for other modules (e.g. RL engine).
+    pub fn conn(&self) -> &Arc<Mutex<Connection>> {
+        &self.conn
+    }
+}
+
+impl SwarmDb {
     /// Open (or create) the SQLite database at ~/.hex/hub.db.
     /// Runs migrations on first use.
     pub fn open() -> Result<Self, rusqlite::Error> {
@@ -118,6 +125,7 @@ impl SwarmDb {
     }
 
     fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
+        // Core swarm tables
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS swarms (
@@ -154,7 +162,13 @@ impl SwarmDb {
             CREATE INDEX IF NOT EXISTS idx_swarm_agents_swarm ON swarm_agents(swarm_id);
             CREATE INDEX IF NOT EXISTS idx_swarms_status ON swarms(status);
             ",
-        )
+        )?;
+
+        // RL engine tables (Q-learning, experiences, patterns)
+        crate::rl::schema::migrate_rl(conn)?;
+
+        // Orchestration tables (hex_agents, workplan_executions)
+        crate::orchestration::schema::migrate_orchestration(conn)
     }
 
     // ── Swarm CRUD ─────────────────────────────────────
