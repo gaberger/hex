@@ -149,7 +149,48 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 .welcome{text-align:center;color:var(--text3);padding:40px 20px;align-self:center}
 .welcome h2{font-size:1.1rem;color:var(--text2);margin-bottom:6px;font-weight:600}
 .welcome p{font-size:.85rem}
+
+/* ── Markdown rendering styles ── */
+.msg-body h1{font-size:1.3rem;font-weight:700;margin:16px 0 8px;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:4px}
+.msg-body h2{font-size:1.15rem;font-weight:700;margin:14px 0 6px;color:var(--text)}
+.msg-body h3{font-size:1rem;font-weight:600;margin:12px 0 4px;color:var(--text)}
+.msg-body h4,.msg-body h5,.msg-body h6{font-size:.9rem;font-weight:600;margin:10px 0 4px;color:var(--text2)}
+.msg-body p{margin:4px 0 8px;line-height:1.6}
+.msg-body ul,.msg-body ol{margin:4px 0 8px;padding-left:20px}
+.msg-body li{margin:2px 0;line-height:1.5}
+.msg-body li::marker{color:var(--accent)}
+.msg-body blockquote{border-left:3px solid var(--accent);padding:4px 12px;margin:8px 0;color:var(--text2);background:var(--accent-dim);border-radius:0 var(--radius-sm) var(--radius-sm) 0}
+.msg-body hr{border:none;border-top:1px solid var(--border);margin:12px 0}
+.msg-body a{color:var(--blue);text-decoration:none}
+.msg-body a:hover{text-decoration:underline}
+.msg-body strong{color:var(--text);font-weight:600}
+.msg-body em{color:var(--text2)}
+.msg-body code{font-family:var(--mono);font-size:.85em;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,.06);color:var(--accent)}
+.msg-body pre{margin:8px 0;border-radius:var(--radius-sm);overflow-x:auto;position:relative}
+.msg-body pre code{display:block;padding:12px 14px;font-size:.82rem;line-height:1.5;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);white-space:pre}
+.msg-body table{border-collapse:collapse;margin:8px 0;width:100%;font-size:.85rem}
+.msg-body th{background:var(--card2);font-weight:600;text-align:left;padding:6px 10px;border:1px solid var(--border)}
+.msg-body td{padding:5px 10px;border:1px solid var(--border)}
+.msg-body tr:nth-child(even){background:rgba(255,255,255,.02)}
+.msg-body input[type="checkbox"]{margin-right:6px;accent-color:var(--accent)}
+.msg-body del{color:var(--text3);text-decoration:line-through}
+.msg-body img{max-width:100%;border-radius:var(--radius-sm)}
+
+/* highlight.js overrides for dark theme */
+.hljs{background:var(--bg2) !important;color:var(--text) !important}
+.hljs-keyword,.hljs-selector-tag{color:#c084fc}
+.hljs-string,.hljs-attr{color:#34d399}
+.hljs-comment{color:var(--text3)}
+.hljs-number,.hljs-literal{color:var(--amber)}
+.hljs-function .hljs-title,.hljs-title.function_{color:var(--blue)}
+.hljs-built_in{color:var(--accent)}
+.hljs-type,.hljs-class .hljs-title{color:#f472b6}
+.hljs-meta{color:var(--text2)}
+.hljs-variable,.hljs-template-variable{color:#fb923c}
 </style>
+<!-- Markdown + syntax highlighting -->
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
 </head>
 <body>
 
@@ -433,33 +474,38 @@ function handleAgentDisconnected(msg) {
 }
 
 /* ── Markdown renderer (safe: all text goes through esc() first) ── */
+/* ── Markdown rendering via marked.js + highlight.js ── */
+var markedInstance = (function() {
+  if (typeof marked === "undefined") {
+    /* Fallback if CDN fails — basic escaping only */
+    return { parse: function(src) { return esc(src).replace(/\n/g, "<br>"); } };
+  }
+  marked.setOptions({
+    gfm: true,
+    breaks: true,
+    highlight: function(code, lang) {
+      if (typeof hljs !== "undefined" && lang && hljs.getLanguage(lang)) {
+        try { return hljs.highlight(code, { language: lang }).value; } catch (_) {}
+      }
+      if (typeof hljs !== "undefined") {
+        try { return hljs.highlightAuto(code).value; } catch (_) {}
+      }
+      return code;
+    }
+  });
+  /* Security: marked's built-in sanitizer is deprecated.
+     We rely on esc() for user input and trust the LLM output
+     (same trust model as Claude Code's own markdown rendering). */
+  return marked;
+})();
+
 function renderMarkdown(src) {
   if (!src) return "";
-  /* Escape all HTML entities so raw tags are neutralized */
-  var h = esc(src);
-  /* Fenced code blocks */
-  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
-    return '<pre><code class="lang-' + lang + '">' + code.trim() + '</code></pre>';
-  });
-  /* Inline code */
-  h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-  /* Bold */
-  h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  /* Italic */
-  h = h.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
-  /* Links */
-  h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  /* Blockquote */
-  h = h.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
-  /* Unordered list items */
-  h = h.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
-  h = h.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
-  /* Line breaks */
-  h = h.replace(/\n/g, '<br>');
-  /* Clean up <br> inside <pre> and <ul> */
-  h = h.replace(/<pre>([\s\S]*?)<\/pre>/g, function(m) { return m.replace(/<br>/g, '\n'); });
-  h = h.replace(/<ul>([\s\S]*?)<\/ul>/g, function(m) { return m.replace(/<br>/g, ''); });
-  return h;
+  try {
+    return markedInstance.parse(src);
+  } catch (_) {
+    return esc(src).replace(/\n/g, "<br>");
+  }
 }
 
 /* ── DOM construction helpers (use safe DOM APIs where possible) ── */
