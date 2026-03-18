@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 use crate::orchestration::agent_manager::{AgentInstance, AgentManager, SpawnConfig};
-use crate::persistence::{CreateSwarmRequest, Swarm, SwarmDb, SwarmDetail, SwarmTask};
+use crate::persistence::SwarmTask;
+use crate::ports::state::{IStatePort, SwarmInfo, SwarmTaskInfo};
 use crate::state::WsEnvelope;
 
 pub use memory::MemoryEntry;
@@ -26,22 +27,31 @@ pub struct TaskFilter {
     pub status: Option<String>,
 }
 
+/// Full swarm detail including tasks and agents (composed from IStatePort queries).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmDetail {
+    #[serde(flatten)]
+    pub swarm: SwarmInfo,
+    pub tasks: Vec<SwarmTaskInfo>,
+}
+
 // ── HexFlo ─────────────────────────────────────────────
 
 pub struct HexFlo {
-    swarm_db: Option<SwarmDb>,
+    state: Arc<dyn IStatePort>,
     ws_tx: broadcast::Sender<WsEnvelope>,
     agent_manager: Option<Arc<AgentManager>>,
 }
 
 impl HexFlo {
     pub fn new(
-        swarm_db: Option<SwarmDb>,
+        state: Arc<dyn IStatePort>,
         ws_tx: broadcast::Sender<WsEnvelope>,
         agent_manager: Option<Arc<AgentManager>>,
     ) -> Self {
         Self {
-            swarm_db,
+            state,
             ws_tx,
             agent_manager,
         }
@@ -49,54 +59,67 @@ impl HexFlo {
 
     // ── Swarm operations ───────────────────────────────
 
-    /// Create a new swarm. Delegates to SwarmDb::create_swarm.
+    /// Create a new swarm via IStatePort.
     pub async fn swarm_init(
         &self,
         project_id: &str,
         name: &str,
         topology: Option<String>,
-    ) -> Result<Swarm, String> {
-        let db = self.require_db()?;
-        let req = CreateSwarmRequest {
+    ) -> Result<SwarmInfo, String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let topo = topology.unwrap_or_else(|| "mesh".to_string());
+
+        self.state
+            .swarm_init(&id, name, &topo, project_id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let info = SwarmInfo {
+            id: id.clone(),
             project_id: project_id.to_string(),
             name: name.to_string(),
-            topology,
+            topology: topo,
+            status: "active".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
         };
-        db.create_swarm(&req).await.map_err(|e| e.to_string())
+
+        // Broadcast event
+        let _ = self.ws_tx.send(WsEnvelope {
+            topic: "hexflo".to_string(),
+            event: "swarm:init".to_string(),
+            data: serde_json::to_value(&info).unwrap_or_default(),
+        });
+
+        Ok(info)
     }
 
-    /// List active swarms with full detail (tasks + agents).
+    /// List active swarms with tasks.
     pub async fn swarm_status(&self) -> Result<Vec<SwarmDetail>, String> {
-        let db = self.require_db()?;
-        let swarms = db.list_active_swarms().await.map_err(|e| e.to_string())?;
+        let swarms = self.state
+            .swarm_list_active()
+            .await
+            .map_err(|e| e.to_string())?;
+
         let mut details = Vec::with_capacity(swarms.len());
-        for s in &swarms {
-            if let Some(detail) = db.get_swarm(&s.id).await.map_err(|e| e.to_string())? {
-                details.push(detail);
-            }
+        for s in swarms {
+            let tasks = self.state
+                .swarm_task_list(Some(&s.id))
+                .await
+                .map_err(|e| e.to_string())?;
+            details.push(SwarmDetail { swarm: s, tasks });
         }
         Ok(details)
     }
 
     /// Mark a swarm as completed (teardown).
     pub async fn swarm_teardown(&self, swarm_id: &str) -> Result<(), String> {
-        let db = self.require_db()?;
-        let conn = db.conn().clone();
-        let id = swarm_id.to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        self.state
+            .swarm_complete(swarm_id)
+            .await
+            .map_err(|e| e.to_string())?;
 
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            conn.execute(
-                "UPDATE swarms SET status = 'completed', updated_at = ?1 WHERE id = ?2",
-                rusqlite::params![now, id],
-            )
-        })
-        .await
-        .expect("spawn_blocking join")
-        .map_err(|e| e.to_string())?;
-
-        // Broadcast event
         let _ = self.ws_tx.send(WsEnvelope {
             topic: "hexflo".to_string(),
             event: "swarm:teardown".to_string(),
@@ -108,94 +131,60 @@ impl HexFlo {
 
     // ── Task operations ────────────────────────────────
 
-    /// Create a task in a swarm. Inserts directly into swarm_tasks.
+    /// Create a task in a swarm via IStatePort.
     pub async fn task_create(
         &self,
         swarm_id: &str,
         title: &str,
     ) -> Result<SwarmTask, String> {
-        let db = self.require_db()?;
-        let conn = db.conn().clone();
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
-        let sid = swarm_id.to_string();
-        let t = title.to_string();
 
-        let task = SwarmTask {
-            id: id.clone(),
-            swarm_id: sid.clone(),
-            title: t.clone(),
+        self.state
+            .swarm_task_create(&id, swarm_id, title)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(SwarmTask {
+            id,
+            swarm_id: swarm_id.to_string(),
+            title: title.to_string(),
             status: "pending".to_string(),
             agent_id: None,
             result: None,
-            created_at: now.clone(),
+            created_at: now,
             completed_at: None,
-        };
-
-        let task_clone = task.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            conn.execute(
-                "INSERT INTO swarm_tasks (id, swarm_id, title, status, created_at)
-                 VALUES (?1, ?2, ?3, 'pending', ?4)",
-                rusqlite::params![task_clone.id, task_clone.swarm_id, task_clone.title, task_clone.created_at],
-            )
         })
-        .await
-        .expect("spawn_blocking join")
-        .map_err(|e| e.to_string())?;
-
-        Ok(task)
     }
 
-    /// List tasks, optionally filtered by swarm_id and/or status.
+    /// List tasks, optionally filtered by swarm_id.
     pub async fn task_list(&self, filter: TaskFilter) -> Result<Vec<SwarmTask>, String> {
-        let db = self.require_db()?;
-        let conn = db.conn().clone();
+        let tasks = self.state
+            .swarm_task_list(filter.swarm_id.as_deref())
+            .await
+            .map_err(|e| e.to_string())?;
 
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-
-            let mut sql = String::from(
-                "SELECT id, swarm_id, title, status, agent_id, result, created_at, completed_at
-                 FROM swarm_tasks WHERE 1=1",
-            );
-            let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-            if let Some(ref sid) = filter.swarm_id {
-                sql.push_str(" AND swarm_id = ?");
-                param_values.push(Box::new(sid.clone()));
-            }
-            if let Some(ref st) = filter.status {
-                sql.push_str(" AND status = ?");
-                param_values.push(Box::new(st.clone()));
-            }
-            sql.push_str(" ORDER BY created_at ASC");
-
-            let params: Vec<&dyn rusqlite::types::ToSql> =
-                param_values.iter().map(|v| v.as_ref()).collect();
-            let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map(params.as_slice(), |row| {
-                    Ok(SwarmTask {
-                        id: row.get(0)?,
-                        swarm_id: row.get(1)?,
-                        title: row.get(2)?,
-                        status: row.get(3)?,
-                        agent_id: row.get(4)?,
-                        result: row.get(5)?,
-                        created_at: row.get(6)?,
-                        completed_at: row.get(7)?,
-                    })
-                })
-                .map_err(|e| e.to_string())?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?;
-
-            Ok(rows)
-        })
-        .await
-        .expect("spawn_blocking join")
+        // Convert SwarmTaskInfo → SwarmTask for backwards compat with routes
+        Ok(tasks
+            .into_iter()
+            .filter(|t| {
+                if let Some(ref st) = filter.status {
+                    t.status == *st
+                } else {
+                    true
+                }
+            })
+            .map(|t| SwarmTask {
+                id: t.id,
+                swarm_id: t.swarm_id,
+                title: t.title,
+                status: t.status,
+                agent_id: if t.agent_id.is_empty() { None } else { Some(t.agent_id) },
+                result: if t.result.is_empty() { None } else { Some(t.result) },
+                created_at: t.created_at,
+                completed_at: if t.completed_at.is_empty() { None } else { Some(t.completed_at) },
+            })
+            .collect())
     }
 
     /// Complete a task and broadcast the event.
@@ -205,25 +194,18 @@ impl HexFlo {
         result: Option<String>,
         commit_hash: Option<String>,
     ) -> Result<(), String> {
-        let db = self.require_db()?;
-
         let combined_result = match (&result, &commit_hash) {
-            (Some(r), Some(h)) => Some(format!("{} — commit {}", r, h)),
-            (Some(r), None) => Some(r.clone()),
-            (None, Some(h)) => Some(format!("commit {}", h)),
-            (None, None) => None,
+            (Some(r), Some(h)) => format!("{} — commit {}", r, h),
+            (Some(r), None) => r.clone(),
+            (None, Some(h)) => format!("commit {}", h),
+            (None, None) => String::new(),
         };
 
-        let ok = db
-            .complete_task(task_id, combined_result)
+        self.state
+            .swarm_task_complete(task_id, &combined_result)
             .await
             .map_err(|e| e.to_string())?;
 
-        if !ok {
-            return Err(format!("Task '{}' not found", task_id));
-        }
-
-        // Broadcast event
         let _ = self.ws_tx.send(WsEnvelope {
             topic: "hexflo".to_string(),
             event: "task:completed".to_string(),
@@ -261,12 +243,6 @@ impl HexFlo {
     }
 
     // ── Helpers ────────────────────────────────────────
-
-    fn require_db(&self) -> Result<&SwarmDb, String> {
-        self.swarm_db
-            .as_ref()
-            .ok_or_else(|| "Swarm database not initialized".to_string())
-    }
 
     fn require_agent_manager(&self) -> Result<&Arc<AgentManager>, String> {
         self.agent_manager

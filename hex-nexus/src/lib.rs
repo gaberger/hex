@@ -77,39 +77,56 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
     // Create shared state
     let mut app_state = AppState::new(config.token.clone(), swarm_db);
 
-    // Wire IStatePort → AgentManager + WorkplanExecutor (ADR-025 Phase 2/4)
+    // Wire IStatePort → AgentManager + HexFlo (ADR-025 Phase 2/4, ADR-032 Phase 3)
     // Backend selection: env var > .hex/state.json > default (SQLite)
-    if app_state.swarm_db.is_some() {
-        match state_config::create_default_state_backend() {
-            Ok(state_port) => {
+    // HexFlo now uses IStatePort instead of direct SwarmDb access.
+    match state_config::create_default_state_backend() {
+        Ok(state_port) => {
+            if app_state.swarm_db.is_some() {
                 let agent_mgr = Arc::new(
                     orchestration::agent_manager::AgentManager::new(Arc::clone(&state_port)),
                 );
                 app_state.agent_manager = Some(agent_mgr);
-                tracing::info!("IStatePort wired — agent_manager ready");
             }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to create state backend: {} — orchestration using legacy path",
-                    e
-                );
-            }
+
+            // HexFlo coordination via IStatePort (ADR-032)
+            let hexflo = coordination::HexFlo::new(
+                Arc::clone(&state_port),
+                app_state.ws_tx.clone(),
+                app_state.agent_manager.clone(),
+            );
+            app_state.hexflo = Some(Arc::new(hexflo));
+
+            tracing::info!("IStatePort wired — agent_manager + HexFlo ready");
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create state backend: {} — HexFlo coordination unavailable",
+                e
+            );
         }
     }
 
-    // Initialize HexFlo coordination layer (ADR-027)
+    // Initialize SpacetimeDB secret client (ADR-026 integration)
+    // Connects to the same SpacetimeDB instance used by IStatePort.
     {
-        let hexflo = coordination::HexFlo::new(
-            // SwarmDb doesn't implement Clone, so we re-open for HexFlo.
-            // Both share the same SQLite file; HexFlo uses its own connection.
-            match persistence::SwarmDb::open() {
-                Ok(db) => Some(db),
-                Err(_) => None,
-            },
-            app_state.ws_tx.clone(),
-            app_state.agent_manager.clone(),
+        let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+        let stdb_database = std::env::var("HEX_SPACETIMEDB_DATABASE")
+            .unwrap_or_else(|_| "hex".to_string());
+
+        let client = adapters::spacetime_secrets::SpacetimeSecretClient::new(
+            stdb_host,
+            stdb_database,
         );
-        app_state.hexflo = Some(Arc::new(hexflo));
+        if client.connect().await {
+            app_state.spacetime_secrets = Some(Arc::new(client));
+            tracing::info!("SpacetimeDB secret broker integration active");
+        } else {
+            tracing::info!(
+                "SpacetimeDB secret broker unavailable — using in-memory fallback"
+            );
+        }
     }
 
     // Wrap in Arc, then create WorkplanExecutor (needs SharedState = Arc<AppState>)
@@ -123,6 +140,14 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             ));
             state.workplan_executor.set(wp).ok();
         }
+    }
+
+    // Background task: prune expired secret grants (every 60s)
+    if let Some(ref stdb) = state.spacetime_secrets {
+        adapters::spacetime_secrets::spawn_prune_task(
+            Arc::clone(stdb),
+            std::time::Duration::from_secs(60),
+        );
     }
 
     // Background task: cleanup stale coordination sessions
@@ -194,7 +219,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
 
 /// Start the headless Axum server with graceful shutdown.
 ///
-/// This is what the `hex-hub` binary calls. It handles:
+/// This is what the `hex-nexus` binary calls. It handles:
 /// - TCP binding
 /// - Lock file management
 /// - Ctrl+C / SIGTERM graceful shutdown
