@@ -198,11 +198,16 @@ impl AgentManager {
         }
 
         // Inject SpacetimeDB connection config so agents can subscribe directly.
-        // The hub inherits these from its own environment or state_config resolution.
-        for key in &["HEX_STDB_HOST", "HEX_STDB_DATABASE", "HEX_STATE_BACKEND"] {
-            if let Ok(value) = std::env::var(key) {
-                cmd.env(key, &value);
+        // Resolve from state_config (which reads .hex/state.json or env vars).
+        match crate::state_config::resolve_config() {
+            #[cfg(feature = "spacetimedb")]
+            crate::state_config::StateBackendConfig::Spacetimedb { ref host, ref database, .. } => {
+                cmd.env("HEX_STDB_HOST", host);
+                cmd.env("HEX_STDB_DATABASE", database);
+                cmd.env("HEX_STATE_BACKEND", "spacetimedb");
+                tracing::debug!(agent_id = %id, host = %host, db = %database, "Injecting SpacetimeDB config");
             }
+            _ => {}
         }
 
         // Pipe stdin for chat messages, capture stdout/stderr
