@@ -16,35 +16,6 @@ class DomainError extends Error {
   }
 }
 
-export class ValidationError extends DomainError {
-  readonly field?: string;
-
-  constructor(message: string, field?: string) {
-    super('VALIDATION_ERROR', message);
-    this.name = 'ValidationError';
-    this.field = field;
-  }
-}
-
-export class InvariantViolation extends DomainError {
-  constructor(message: string) {
-    super('INVARIANT_VIOLATION', message);
-    this.name = 'InvariantViolation';
-  }
-}
-
-export class BoundaryViolation extends DomainError {
-  readonly fromLayer: string;
-  readonly toLayer: string;
-
-  constructor(fromLayer: string, toLayer: string, rule: string) {
-    super('BOUNDARY_VIOLATION', `${fromLayer} -> ${toLayer}: ${rule}`);
-    this.name = 'BoundaryViolation';
-    this.fromLayer = fromLayer;
-    this.toLayer = toLayer;
-  }
-}
-
 export class WorktreeConflictError extends DomainError {
   readonly feature: string;
   readonly layer: string;
