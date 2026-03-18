@@ -167,6 +167,53 @@ pub struct AgentDefinitionVersionEntry {
     pub created_at: String,
 }
 
+// ── HexFlo Coordination Types ─────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmInfo {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub topology: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmTaskInfo {
+    pub id: String,
+    pub swarm_id: String,
+    pub title: String,
+    pub status: String,
+    pub agent_id: String,
+    pub result: String,
+    pub created_at: String,
+    pub completed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmAgentInfo {
+    pub id: String,
+    pub swarm_id: String,
+    pub name: String,
+    pub role: String,
+    pub status: String,
+    pub worktree_path: String,
+    pub last_heartbeat: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupReport {
+    pub stale_count: u32,
+    pub dead_count: u32,
+    pub reclaimed_tasks: u32,
+}
+
 // ── State Change Events (for subscriptions) ─────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,6 +233,12 @@ pub enum StateEvent {
     HookChanged { hook: HookEntry },
     #[serde(rename = "agent_definition_changed")]
     AgentDefinitionChanged { definition: AgentDefinitionEntry },
+    #[serde(rename = "swarm_changed")]
+    SwarmChanged { swarm: SwarmInfo },
+    #[serde(rename = "swarm_task_changed")]
+    SwarmTaskChanged { task: SwarmTaskInfo },
+    #[serde(rename = "swarm_agent_changed")]
+    SwarmAgentChanged { agent: SwarmAgentInfo },
 }
 
 // ── The Port ────────────────────────────────────────────
@@ -311,6 +364,55 @@ pub trait IStatePort: Send + Sync {
         &self,
         definition_id: &str,
     ) -> Result<Vec<AgentDefinitionVersionEntry>, StateError>;
+
+    // ── HexFlo Coordination ───────────────────────────
+    async fn swarm_init(
+        &self,
+        id: &str,
+        name: &str,
+        topology: &str,
+        project_id: &str,
+    ) -> Result<(), StateError>;
+    async fn swarm_complete(&self, id: &str) -> Result<(), StateError>;
+    async fn swarm_fail(&self, id: &str, reason: &str) -> Result<(), StateError>;
+    async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError>;
+
+    async fn swarm_task_create(
+        &self,
+        id: &str,
+        swarm_id: &str,
+        title: &str,
+    ) -> Result<(), StateError>;
+    async fn swarm_task_assign(&self, task_id: &str, agent_id: &str) -> Result<(), StateError>;
+    async fn swarm_task_complete(&self, task_id: &str, result: &str) -> Result<(), StateError>;
+    async fn swarm_task_fail(&self, task_id: &str, reason: &str) -> Result<(), StateError>;
+    async fn swarm_task_list(&self, swarm_id: Option<&str>) -> Result<Vec<SwarmTaskInfo>, StateError>;
+
+    async fn swarm_agent_register(
+        &self,
+        id: &str,
+        swarm_id: &str,
+        name: &str,
+        role: &str,
+        worktree_path: &str,
+    ) -> Result<(), StateError>;
+    async fn swarm_agent_heartbeat(&self, id: &str) -> Result<(), StateError>;
+    async fn swarm_agent_remove(&self, id: &str) -> Result<(), StateError>;
+    async fn swarm_cleanup_stale(
+        &self,
+        stale_secs: u64,
+        dead_secs: u64,
+    ) -> Result<CleanupReport, StateError>;
+
+    async fn hexflo_memory_store(
+        &self,
+        key: &str,
+        value: &str,
+        scope: &str,
+    ) -> Result<(), StateError>;
+    async fn hexflo_memory_retrieve(&self, key: &str) -> Result<Option<String>, StateError>;
+    async fn hexflo_memory_search(&self, query: &str) -> Result<Vec<(String, String)>, StateError>;
+    async fn hexflo_memory_delete(&self, key: &str) -> Result<(), StateError>;
 
     // ── Subscriptions (real-time sync) ──────────────
     fn subscribe(&self) -> broadcast::Receiver<StateEvent>;

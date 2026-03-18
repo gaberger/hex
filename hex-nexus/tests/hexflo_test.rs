@@ -216,20 +216,20 @@ async fn memory_search_matches_values_too() {
     api_post(
         addr,
         "/api/hexflo/memory",
-        json!({ "key": "k1", "value": "the quick brown fox" }),
+        json!({ "key": "valmatch:k1", "value": "the quick brown foxjump" }),
     )
     .await;
     api_post(
         addr,
         "/api/hexflo/memory",
-        json!({ "key": "k2", "value": "lazy dog" }),
+        json!({ "key": "valmatch:k2", "value": "lazy dog" }),
     )
     .await;
 
-    let (_, body) = api_get(addr, "/api/hexflo/memory/search?q=fox").await;
+    let (_, body) = api_get(addr, "/api/hexflo/memory/search?q=foxjump").await;
     let results = body["results"].as_array().unwrap();
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0]["key"], "k1");
+    assert_eq!(results[0]["key"], "valmatch:k1");
 }
 
 #[tokio::test]

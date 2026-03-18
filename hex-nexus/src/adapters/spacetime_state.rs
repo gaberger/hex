@@ -383,6 +383,94 @@ mod real {
             Err(Self::not_connected())
         }
 
+        // ── HexFlo Coordination ──────────────────────────
+        // Maps to: hexflo-coordination module
+
+        async fn swarm_init(&self, _id: &str, _name: &str, _topology: &str, _project_id: &str) -> Result<(), StateError> {
+            // POST /api/swarms { id, name, topology, project_id }
+            Err(Self::not_connected())
+        }
+
+        async fn swarm_complete(&self, _id: &str) -> Result<(), StateError> {
+            // PATCH /api/swarms/:id { status: "completed" }
+            Err(Self::not_connected())
+        }
+
+        async fn swarm_fail(&self, _id: &str, _reason: &str) -> Result<(), StateError> {
+            // PATCH /api/swarms/:id { status: "failed", reason }
+            Err(Self::not_connected())
+        }
+
+        async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError> {
+            // GET /api/swarms
+            Err(Self::not_connected())
+        }
+
+        async fn swarm_task_create(&self, _id: &str, _swarm_id: &str, _title: &str) -> Result<(), StateError> {
+            // POST /api/swarms/:swarm_id/tasks { id, title }
+            Err(Self::not_connected())
+        }
+
+        async fn swarm_task_assign(&self, _task_id: &str, _agent_id: &str) -> Result<(), StateError> {
+            // PATCH /api/swarms/tasks/:task_id { agent_id }
+            Err(Self::not_connected())
+        }
+
+        async fn swarm_task_complete(&self, _task_id: &str, _result: &str) -> Result<(), StateError> {
+            // PATCH /api/swarms/tasks/:task_id { status: "completed", result }
+            Err(Self::not_connected())
+        }
+
+        async fn swarm_task_fail(&self, _task_id: &str, _reason: &str) -> Result<(), StateError> {
+            // PATCH /api/swarms/tasks/:task_id { status: "failed", reason }
+            Err(Self::not_connected())
+        }
+
+        async fn swarm_task_list(&self, _swarm_id: Option<&str>) -> Result<Vec<SwarmTaskInfo>, StateError> {
+            // GET /api/swarms or GET /api/swarms/:swarm_id/tasks
+            Err(Self::not_connected())
+        }
+
+        async fn swarm_agent_register(&self, _id: &str, _swarm_id: &str, _name: &str, _role: &str, _worktree_path: &str) -> Result<(), StateError> {
+            // POST /api/swarms/:swarm_id/agents { id, name, role, worktree_path }
+            Err(Self::not_connected())
+        }
+
+        async fn swarm_agent_heartbeat(&self, _id: &str) -> Result<(), StateError> {
+            // POST /api/swarms/agents/:id/heartbeat
+            Err(Self::not_connected())
+        }
+
+        async fn swarm_agent_remove(&self, _id: &str) -> Result<(), StateError> {
+            // DELETE /api/swarms/agents/:id
+            Err(Self::not_connected())
+        }
+
+        async fn swarm_cleanup_stale(&self, _stale_secs: u64, _dead_secs: u64) -> Result<CleanupReport, StateError> {
+            // POST /api/hexflo/cleanup { stale_secs, dead_secs }
+            Err(Self::not_connected())
+        }
+
+        async fn hexflo_memory_store(&self, _key: &str, _value: &str, _scope: &str) -> Result<(), StateError> {
+            // POST /api/hexflo/memory { key, value, scope }
+            Err(Self::not_connected())
+        }
+
+        async fn hexflo_memory_retrieve(&self, _key: &str) -> Result<Option<String>, StateError> {
+            // GET /api/hexflo/memory/:key
+            Err(Self::not_connected())
+        }
+
+        async fn hexflo_memory_search(&self, _query: &str) -> Result<Vec<(String, String)>, StateError> {
+            // GET /api/hexflo/memory/search?q=query
+            Err(Self::not_connected())
+        }
+
+        async fn hexflo_memory_delete(&self, _key: &str) -> Result<(), StateError> {
+            // DELETE /api/hexflo/memory/:key
+            Err(Self::not_connected())
+        }
+
         // ── Subscriptions ───────────────────────────────
         // SpacetimeDB forwards table change callbacks through this channel
 
@@ -460,6 +548,23 @@ mod stub {
         async fn agent_def_list(&self) -> Result<Vec<AgentDefinitionEntry>, StateError> { Err(Self::err()) }
         async fn agent_def_get_by_name(&self, _: &str) -> Result<Option<AgentDefinitionEntry>, StateError> { Err(Self::err()) }
         async fn agent_def_versions(&self, _: &str) -> Result<Vec<AgentDefinitionVersionEntry>, StateError> { Err(Self::err()) }
+        async fn swarm_init(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_complete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError> { Err(Self::err()) }
+        async fn swarm_task_create(&self, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_task_assign(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_task_complete(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_task_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_task_list(&self, _: Option<&str>) -> Result<Vec<SwarmTaskInfo>, StateError> { Err(Self::err()) }
+        async fn swarm_agent_register(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_agent_heartbeat(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_agent_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_cleanup_stale(&self, _: u64, _: u64) -> Result<CleanupReport, StateError> { Err(Self::err()) }
+        async fn hexflo_memory_store(&self, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn hexflo_memory_retrieve(&self, _: &str) -> Result<Option<String>, StateError> { Err(Self::err()) }
+        async fn hexflo_memory_search(&self, _: &str) -> Result<Vec<(String, String)>, StateError> { Err(Self::err()) }
+        async fn hexflo_memory_delete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         fn subscribe(&self) -> broadcast::Receiver<StateEvent> { self.event_tx.subscribe() }
     }
 }

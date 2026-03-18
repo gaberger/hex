@@ -655,6 +655,273 @@ impl IStatePort for SqliteStateAdapter {
         Ok(versions)
     }
 
+    // ── HexFlo Coordination ─────────────────────────
+
+    async fn swarm_init(
+        &self,
+        id: &str,
+        name: &str,
+        topology: &str,
+        project_id: &str,
+    ) -> Result<(), StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO swarms (id, project_id, name, topology, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5)",
+            rusqlite::params![id, project_id, name, topology, now],
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+
+        let swarm = SwarmInfo {
+            id: id.to_string(), project_id: project_id.to_string(),
+            name: name.to_string(), topology: topology.to_string(),
+            status: "active".to_string(), created_at: now.clone(), updated_at: now,
+        };
+        let _ = self.event_tx.send(StateEvent::SwarmChanged { swarm });
+        Ok(())
+    }
+
+    async fn swarm_complete(&self, id: &str) -> Result<(), StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE swarms SET status = 'completed', updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![now, id],
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn swarm_fail(&self, id: &str, reason: &str) -> Result<(), StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE swarms SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![format!("failed: {}", reason), now, id],
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT id, project_id, name, topology, status, created_at, updated_at FROM swarms WHERE status = 'active'"
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+        let swarms = stmt.query_map([], |row| {
+            Ok(SwarmInfo {
+                id: row.get(0)?, project_id: row.get(1)?, name: row.get(2)?,
+                topology: row.get(3)?, status: row.get(4)?,
+                created_at: row.get(5)?, updated_at: row.get(6)?,
+            })
+        }).map_err(|e| StateError::Storage(e.to_string()))?.filter_map(|r| r.ok()).collect();
+        Ok(swarms)
+    }
+
+    async fn swarm_task_create(
+        &self,
+        id: &str,
+        swarm_id: &str,
+        title: &str,
+    ) -> Result<(), StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO swarm_tasks (id, swarm_id, title, status, created_at) VALUES (?1, ?2, ?3, 'pending', ?4)",
+            rusqlite::params![id, swarm_id, title, now],
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+
+        let task = SwarmTaskInfo {
+            id: id.to_string(), swarm_id: swarm_id.to_string(),
+            title: title.to_string(), status: "pending".to_string(),
+            agent_id: String::new(), result: String::new(),
+            created_at: now, completed_at: String::new(),
+        };
+        let _ = self.event_tx.send(StateEvent::SwarmTaskChanged { task });
+        Ok(())
+    }
+
+    async fn swarm_task_assign(&self, task_id: &str, agent_id: &str) -> Result<(), StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        conn.execute(
+            "UPDATE swarm_tasks SET agent_id = ?1, status = 'assigned' WHERE id = ?2",
+            rusqlite::params![agent_id, task_id],
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn swarm_task_complete(&self, task_id: &str, result: &str) -> Result<(), StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE swarm_tasks SET status = 'completed', result = ?1, completed_at = ?2 WHERE id = ?3",
+            rusqlite::params![result, now, task_id],
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn swarm_task_fail(&self, task_id: &str, reason: &str) -> Result<(), StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE swarm_tasks SET status = 'failed', result = ?1, completed_at = ?2 WHERE id = ?3",
+            rusqlite::params![reason, now, task_id],
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn swarm_task_list(&self, swarm_id: Option<&str>) -> Result<Vec<SwarmTaskInfo>, StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let (sql, params_vec): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = match swarm_id {
+            Some(sid) => (
+                "SELECT id, swarm_id, title, status, COALESCE(agent_id,''), COALESCE(result,''), created_at, COALESCE(completed_at,'') FROM swarm_tasks WHERE swarm_id = ?1 ORDER BY created_at",
+                vec![Box::new(sid.to_string())],
+            ),
+            None => (
+                "SELECT id, swarm_id, title, status, COALESCE(agent_id,''), COALESCE(result,''), created_at, COALESCE(completed_at,'') FROM swarm_tasks ORDER BY created_at",
+                vec![],
+            ),
+        };
+        let mut stmt = conn.prepare(sql).map_err(|e| StateError::Storage(e.to_string()))?;
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let tasks = stmt.query_map(params_refs.as_slice(), |row| {
+            Ok(SwarmTaskInfo {
+                id: row.get(0)?, swarm_id: row.get(1)?, title: row.get(2)?,
+                status: row.get(3)?, agent_id: row.get(4)?, result: row.get(5)?,
+                created_at: row.get(6)?, completed_at: row.get(7)?,
+            })
+        }).map_err(|e| StateError::Storage(e.to_string()))?.filter_map(|r| r.ok()).collect();
+        Ok(tasks)
+    }
+
+    async fn swarm_agent_register(
+        &self,
+        id: &str,
+        swarm_id: &str,
+        name: &str,
+        role: &str,
+        worktree_path: &str,
+    ) -> Result<(), StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        // Ensure last_heartbeat column exists (idempotent migration)
+        let _ = conn.execute_batch("ALTER TABLE swarm_agents ADD COLUMN last_heartbeat TEXT");
+        conn.execute(
+            "INSERT OR REPLACE INTO swarm_agents (id, swarm_id, name, role, status, worktree_path, last_heartbeat) VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?6)",
+            rusqlite::params![id, swarm_id, name, role, worktree_path, chrono::Utc::now().to_rfc3339()],
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+
+        let agent = SwarmAgentInfo {
+            id: id.to_string(), swarm_id: swarm_id.to_string(),
+            name: name.to_string(), role: role.to_string(),
+            status: "active".to_string(), worktree_path: worktree_path.to_string(),
+            last_heartbeat: chrono::Utc::now().to_rfc3339(),
+        };
+        let _ = self.event_tx.send(StateEvent::SwarmAgentChanged { agent });
+        Ok(())
+    }
+
+    async fn swarm_agent_heartbeat(&self, id: &str) -> Result<(), StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        // Ensure last_heartbeat column exists (idempotent migration)
+        let _ = conn.execute_batch("ALTER TABLE swarm_agents ADD COLUMN last_heartbeat TEXT");
+        conn.execute(
+            "UPDATE swarm_agents SET status = 'active', last_heartbeat = ?1 WHERE id = ?2",
+            rusqlite::params![now, id],
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn swarm_agent_remove(&self, id: &str) -> Result<(), StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM swarm_agents WHERE id = ?1",
+            rusqlite::params![id],
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn swarm_cleanup_stale(
+        &self,
+        stale_secs: u64,
+        dead_secs: u64,
+    ) -> Result<CleanupReport, StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let now = chrono::Utc::now();
+        // Ensure last_heartbeat column exists (idempotent migration)
+        let _ = conn.execute_batch("ALTER TABLE swarm_agents ADD COLUMN last_heartbeat TEXT");
+
+        // Mark stale agents (no heartbeat for stale_secs)
+        let stale_cutoff = (now - chrono::Duration::seconds(stale_secs as i64)).to_rfc3339();
+        let dead_cutoff = (now - chrono::Duration::seconds(dead_secs as i64)).to_rfc3339();
+
+        let stale_count = conn.execute(
+            "UPDATE swarm_agents SET status = 'stale' WHERE status = 'active' AND last_heartbeat < ?1 AND last_heartbeat >= ?2",
+            rusqlite::params![stale_cutoff, dead_cutoff],
+        ).map_err(|e| StateError::Storage(e.to_string()))? as u32;
+
+        // Mark dead agents and reclaim their tasks
+        let dead_count = conn.execute(
+            "UPDATE swarm_agents SET status = 'dead' WHERE status IN ('active', 'stale') AND last_heartbeat < ?1",
+            rusqlite::params![dead_cutoff],
+        ).map_err(|e| StateError::Storage(e.to_string()))? as u32;
+
+        // Reclaim tasks assigned to dead agents
+        let reclaimed_tasks = conn.execute(
+            "UPDATE swarm_tasks SET status = 'pending', agent_id = NULL WHERE agent_id IN (SELECT id FROM swarm_agents WHERE status = 'dead') AND status NOT IN ('completed', 'failed')",
+            [],
+        ).map_err(|e| StateError::Storage(e.to_string()))? as u32;
+
+        Ok(CleanupReport { stale_count, dead_count, reclaimed_tasks })
+    }
+
+    async fn hexflo_memory_store(
+        &self,
+        key: &str,
+        value: &str,
+        scope: &str,
+    ) -> Result<(), StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT OR REPLACE INTO hexflo_memory (key, value, scope, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![key, value, scope, now],
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn hexflo_memory_retrieve(&self, key: &str) -> Result<Option<String>, StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let result = conn.query_row(
+            "SELECT value FROM hexflo_memory WHERE key = ?1",
+            rusqlite::params![key],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(val) => Ok(Some(val)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StateError::Storage(e.to_string())),
+        }
+    }
+
+    async fn hexflo_memory_search(&self, query: &str) -> Result<Vec<(String, String)>, StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        let pattern = format!("%{}%", query);
+        let mut stmt = conn.prepare(
+            "SELECT key, value FROM hexflo_memory WHERE key LIKE ?1 OR value LIKE ?1 ORDER BY updated_at DESC"
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+        let results = stmt.query_map(rusqlite::params![pattern], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }).map_err(|e| StateError::Storage(e.to_string()))?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    async fn hexflo_memory_delete(&self, key: &str) -> Result<(), StateError> {
+        let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM hexflo_memory WHERE key = ?1",
+            rusqlite::params![key],
+        ).map_err(|e| StateError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
     // ── Subscriptions ───────────────────────────────
 
     fn subscribe(&self) -> broadcast::Receiver<StateEvent> {
