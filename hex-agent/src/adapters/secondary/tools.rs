@@ -343,6 +343,254 @@ impl ToolExecutorAdapter {
             ),
         }
     }
+
+    // ── Worktree Tools ──────────────────────────────────────────
+
+    async fn worktree_create(&self, input: &serde_json::Value) -> ToolResult {
+        let branch = match input.get("branch").and_then(|v| v.as_str()) {
+            Some(b) => b,
+            None => return tool_error("worktree_create", "missing 'branch' parameter"),
+        };
+        let base = input.get("base").and_then(|v| v.as_str()).unwrap_or("HEAD");
+
+        // Worktree path: ../<repo-name>-worktrees/<branch-slug>
+        let repo_name = self.working_dir.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project");
+        let slug = branch.replace('/', "-");
+        let wt_path = self.working_dir.parent()
+            .unwrap_or(&self.working_dir)
+            .join(format!("{}-worktrees", repo_name))
+            .join(&slug);
+
+        // Create the worktree
+        let output = Command::new("git")
+            .args(["worktree", "add", "-b", branch, wt_path.to_str().unwrap_or("."), base])
+            .current_dir(&self.working_dir)
+            .output()
+            .await;
+
+        match output {
+            Ok(o) if o.status.success() => {
+                let path_str = wt_path.to_string_lossy();
+                ToolResult {
+                    tool_use_id: String::new(),
+                    content: format!("Worktree created:\n  branch: {}\n  path: {}\n\nAll file operations now target this worktree. Run `cd {}` or use absolute paths.", branch, path_str, path_str),
+                    is_error: false,
+                }
+            }
+            Ok(o) => tool_error("worktree_create", &String::from_utf8_lossy(&o.stderr)),
+            Err(e) => tool_error("worktree_create", &e.to_string()),
+        }
+    }
+
+    async fn worktree_status(&self) -> ToolResult {
+        let output = Command::new("git")
+            .args(["worktree", "list", "--porcelain"])
+            .current_dir(&self.working_dir)
+            .output()
+            .await;
+
+        match output {
+            Ok(o) if o.status.success() => {
+                let raw = String::from_utf8_lossy(&o.stdout);
+                // Parse porcelain output into readable format
+                let mut lines = Vec::new();
+                let mut current_path = String::new();
+                let mut current_branch = String::new();
+
+                for line in raw.lines() {
+                    if let Some(path) = line.strip_prefix("worktree ") {
+                        current_path = path.to_string();
+                    } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+                        current_branch = branch.to_string();
+                    } else if line.is_empty() && !current_path.is_empty() {
+                        // Check if dirty
+                        let dirty = Command::new("git")
+                            .args(["status", "--porcelain"])
+                            .current_dir(&current_path)
+                            .output()
+                            .await
+                            .map(|o| !o.stdout.is_empty())
+                            .unwrap_or(false);
+
+                        let status = if dirty { "dirty" } else { "clean" };
+                        lines.push(format!("  {} [{}] ({})", current_branch, status, current_path));
+                        current_path.clear();
+                        current_branch.clear();
+                    }
+                }
+                // Flush last entry
+                if !current_path.is_empty() {
+                    lines.push(format!("  {} ({})", current_branch, current_path));
+                }
+
+                ToolResult {
+                    tool_use_id: String::new(),
+                    content: if lines.is_empty() {
+                        "No worktrees found.".into()
+                    } else {
+                        format!("Active worktrees:\n{}", lines.join("\n"))
+                    },
+                    is_error: false,
+                }
+            }
+            Ok(o) => tool_error("worktree_status", &String::from_utf8_lossy(&o.stderr)),
+            Err(e) => tool_error("worktree_status", &e.to_string()),
+        }
+    }
+
+    async fn worktree_merge(&self, input: &serde_json::Value) -> ToolResult {
+        let branch = match input.get("branch").and_then(|v| v.as_str()) {
+            Some(b) => b,
+            None => return tool_error("worktree_merge", "missing 'branch' parameter"),
+        };
+        let target = input.get("target").and_then(|v| v.as_str()).unwrap_or("main");
+        let verify_cmd = input.get("verify_command").and_then(|v| v.as_str());
+
+        // Find the worktree path for this branch
+        let wt_list = Command::new("git")
+            .args(["worktree", "list", "--porcelain"])
+            .current_dir(&self.working_dir)
+            .output()
+            .await
+            .map_err(|e| e.to_string());
+
+        let wt_path = match wt_list {
+            Ok(o) => {
+                let raw = String::from_utf8_lossy(&o.stdout);
+                let mut path = None;
+                let mut current = String::new();
+                for line in raw.lines() {
+                    if let Some(p) = line.strip_prefix("worktree ") {
+                        current = p.to_string();
+                    } else if line.strip_prefix("branch refs/heads/") == Some(branch) {
+                        path = Some(current.clone());
+                    }
+                }
+                match path {
+                    Some(p) => p,
+                    None => return tool_error("worktree_merge", &format!("No worktree found for branch '{}'", branch)),
+                }
+            }
+            Err(e) => return tool_error("worktree_merge", &e),
+        };
+
+        // Run verification command in the worktree if specified
+        if let Some(cmd) = verify_cmd {
+            let verify = Command::new("sh")
+                .args(["-c", cmd])
+                .current_dir(&wt_path)
+                .output()
+                .await;
+
+            match verify {
+                Ok(o) if !o.status.success() => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    return tool_error("worktree_merge", &format!(
+                        "Verification failed — refusing to merge.\nCommand: {}\nOutput:\n{}",
+                        cmd, stderr
+                    ));
+                }
+                Err(e) => return tool_error("worktree_merge", &format!("Verify command failed: {}", e)),
+                _ => {} // success
+            }
+        }
+
+        // Merge: checkout target, merge branch
+        let merge = Command::new("git")
+            .args(["merge", branch, "--no-ff", "-m", &format!("merge: {} into {}", branch, target)])
+            .current_dir(&self.working_dir)
+            .output()
+            .await;
+
+        match merge {
+            Ok(o) if o.status.success() => {
+                // Clean up worktree
+                let _ = Command::new("git")
+                    .args(["worktree", "remove", &wt_path])
+                    .current_dir(&self.working_dir)
+                    .output()
+                    .await;
+
+                ToolResult {
+                    tool_use_id: String::new(),
+                    content: format!("Merged '{}' into '{}' and removed worktree.", branch, target),
+                    is_error: false,
+                }
+            }
+            Ok(o) => tool_error("worktree_merge", &String::from_utf8_lossy(&o.stderr)),
+            Err(e) => tool_error("worktree_merge", &e.to_string()),
+        }
+    }
+
+    async fn worktree_remove(&self, input: &serde_json::Value) -> ToolResult {
+        let branch = match input.get("branch").and_then(|v| v.as_str()) {
+            Some(b) => b,
+            None => return tool_error("worktree_remove", "missing 'branch' parameter"),
+        };
+        let delete_branch = input.get("delete_branch").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        // Find worktree path
+        let wt_list = Command::new("git")
+            .args(["worktree", "list", "--porcelain"])
+            .current_dir(&self.working_dir)
+            .output()
+            .await;
+
+        let wt_path = match wt_list {
+            Ok(o) => {
+                let raw = String::from_utf8_lossy(&o.stdout);
+                let mut path = None;
+                let mut current = String::new();
+                for line in raw.lines() {
+                    if let Some(p) = line.strip_prefix("worktree ") {
+                        current = p.to_string();
+                    } else if line.strip_prefix("branch refs/heads/") == Some(branch) {
+                        path = Some(current.clone());
+                    }
+                }
+                path
+            }
+            Err(_) => None,
+        };
+
+        let mut messages = Vec::new();
+
+        if let Some(path) = wt_path {
+            let remove = Command::new("git")
+                .args(["worktree", "remove", "--force", &path])
+                .current_dir(&self.working_dir)
+                .output()
+                .await;
+            match remove {
+                Ok(o) if o.status.success() => messages.push(format!("Removed worktree at {}", path)),
+                Ok(o) => return tool_error("worktree_remove", &String::from_utf8_lossy(&o.stderr)),
+                Err(e) => return tool_error("worktree_remove", &e.to_string()),
+            }
+        } else {
+            messages.push(format!("No worktree found for branch '{}'", branch));
+        }
+
+        if delete_branch {
+            let del = Command::new("git")
+                .args(["branch", "-D", branch])
+                .current_dir(&self.working_dir)
+                .output()
+                .await;
+            match del {
+                Ok(o) if o.status.success() => messages.push(format!("Deleted branch '{}'", branch)),
+                Ok(o) => messages.push(format!("Warning: branch delete failed: {}", String::from_utf8_lossy(&o.stderr).trim())),
+                Err(e) => messages.push(format!("Warning: branch delete failed: {}", e)),
+            }
+        }
+
+        ToolResult {
+            tool_use_id: String::new(),
+            content: messages.join("\n"),
+            is_error: false,
+        }
+    }
 }
 
 #[async_trait]
@@ -356,6 +604,10 @@ impl ToolExecutorPort for ToolExecutorAdapter {
             "grep_search" => self.grep_search(&call.input).await,
             "bash" => self.bash_tool(&call.input).await,
             "list_directory" => self.list_directory(&call.input).await,
+            "worktree_create" => self.worktree_create(&call.input).await,
+            "worktree_status" => self.worktree_status().await,
+            "worktree_merge" => self.worktree_merge(&call.input).await,
+            "worktree_remove" => self.worktree_remove(&call.input).await,
             unknown => tool_error("unknown", &format!("Unknown tool: {}", unknown)),
         };
         result.tool_use_id = call.id.clone();
@@ -372,6 +624,10 @@ impl ToolExecutorPort for ToolExecutorAdapter {
                 | "grep_search"
                 | "bash"
                 | "list_directory"
+                | "worktree_create"
+                | "worktree_status"
+                | "worktree_merge"
+                | "worktree_remove"
         )
     }
 

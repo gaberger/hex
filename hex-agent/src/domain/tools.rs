@@ -125,5 +125,51 @@ pub fn builtin_tools() -> Vec<ToolDefinition> {
                 required: vec!["path".into()],
             },
         },
+        ToolDefinition {
+            name: "worktree_create".into(),
+            description: "Create an isolated git worktree for safe refactoring. All file changes happen in the worktree, not the main branch. Returns the worktree path.".into(),
+            input_schema: ToolInputSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({
+                    "branch": { "type": "string", "description": "Branch name for the worktree (e.g., 'refactor/extract-traits')" },
+                    "base": { "type": "string", "description": "Base branch to create from (default: current HEAD)" }
+                }),
+                required: vec!["branch".into()],
+            },
+        },
+        ToolDefinition {
+            name: "worktree_status".into(),
+            description: "List all active worktrees with their branch, path, and status (clean/dirty).".into(),
+            input_schema: ToolInputSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({}),
+                required: vec![],
+            },
+        },
+        ToolDefinition {
+            name: "worktree_merge".into(),
+            description: "Merge a worktree branch back into the base branch and clean up the worktree. Fails if tests don't pass.".into(),
+            input_schema: ToolInputSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({
+                    "branch": { "type": "string", "description": "Worktree branch to merge" },
+                    "target": { "type": "string", "description": "Target branch to merge into (default: main)" },
+                    "verify_command": { "type": "string", "description": "Command that must pass before merge (e.g., 'cargo test')" }
+                }),
+                required: vec!["branch".into()],
+            },
+        },
+        ToolDefinition {
+            name: "worktree_remove".into(),
+            description: "Remove a worktree and optionally delete its branch. Use after merge or to abandon changes.".into(),
+            input_schema: ToolInputSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({
+                    "branch": { "type": "string", "description": "Worktree branch to remove" },
+                    "delete_branch": { "type": "boolean", "description": "Also delete the branch (default: false)" }
+                }),
+                required: vec!["branch".into()],
+            },
+        },
     ]
 }
