@@ -156,6 +156,23 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         }
     });
 
+    // Background task: prune expired secret grants (every 60s) — ADR-026
+    let prune_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let now = chrono::Utc::now().to_rfc3339();
+            let mut grants = prune_state.secret_grants.write().await;
+            let before = grants.len();
+            grants.retain(|_, g| g.expires_at > now);
+            let pruned = before - grants.len();
+            if pruned > 0 {
+                tracing::debug!("Pruned {} expired secret grants", pruned);
+            }
+        }
+    });
+
     // Build router
     let app = routes::build_router(state.clone());
 

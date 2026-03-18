@@ -72,6 +72,11 @@ pub struct SpawnConfig {
     pub agent_name: Option<String>,
     pub hub_url: Option<String>,
     pub hub_token: Option<String>,
+    /// Secret key names to grant to this agent (ADR-026).
+    /// hex-hub resolves these from its own environment and injects
+    /// the values as env vars into the child process.
+    #[serde(default)]
+    pub secret_keys: Vec<String>,
 }
 
 // ── Conversion helpers ─────────────────────────────────
@@ -165,6 +170,31 @@ impl AgentManager {
         }
         if let Some(ref hub_token) = config.hub_token {
             cmd.arg("--hub-token").arg(hub_token);
+        }
+
+        // ADR-026: Inject granted secrets as env vars into child process.
+        // Secrets are resolved from hex-hub's own environment (the broker's
+        // trusted source) — never from SpacetimeDB.
+        let mut injected_count = 0u32;
+        for key in &config.secret_keys {
+            if let Ok(value) = std::env::var(key) {
+                cmd.env(key, &value);
+                injected_count += 1;
+                tracing::debug!(key = %key, agent_id = %id, "Injected secret into agent env");
+            } else {
+                tracing::warn!(
+                    key = %key,
+                    agent_id = %id,
+                    "Secret not available in broker environment — skipping"
+                );
+            }
+        }
+        if injected_count > 0 {
+            tracing::info!(
+                agent_id = %id,
+                count = injected_count,
+                "Injected secrets into agent process"
+            );
         }
 
         // Pipe stdin for chat messages, capture stdout/stderr

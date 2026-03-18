@@ -155,6 +155,7 @@ pub async fn publish_all_modules(
         "skill-registry",
         "hook-registry",
         "agent-definition-registry",
+        "secret-grant",
     ];
 
     let mut results = Vec::new();

@@ -7,6 +7,7 @@ use crate::orchestration::agent_manager::AgentManager;
 use crate::orchestration::workplan_executor::WorkplanExecutor;
 use crate::persistence::SwarmDb;
 use crate::remote::fleet::FleetManager;
+use crate::routes::secrets::{SecretGrantEntry, InferenceEndpointEntry};
 
 // ── App State ───────────────────────────────────────────
 
@@ -32,6 +33,9 @@ pub struct AppState {
     // Port-backed orchestration services (ADR-025 Phase 2)
     pub agent_manager: Option<Arc<AgentManager>>,
     pub workplan_executor: OnceLock<Arc<WorkplanExecutor>>,
+    // Secret broker state (ADR-026)
+    pub secret_grants: RwLock<HashMap<String, SecretGrantEntry>>,
+    pub inference_endpoints: RwLock<HashMap<String, InferenceEndpointEntry>>,
 }
 
 impl AppState {
@@ -59,6 +63,8 @@ impl AppState {
             anthropic_api_key,
             agent_manager: None,
             workplan_executor: OnceLock::new(),
+            secret_grants: RwLock::new(HashMap::new()),
+            inference_endpoints: RwLock::new(HashMap::new()),
         }
     }
 }

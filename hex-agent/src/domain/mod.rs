@@ -5,6 +5,7 @@ pub mod agents;
 pub mod skills;
 pub mod hooks;
 pub mod workplan;
+pub mod secret_grant;
 
 // Re-export core types for convenience
 pub use messages::{Message, Role, ContentBlock, StopReason, ConversationState};

@@ -204,6 +204,7 @@ async fn handle_chat_ws(
                         agent_name,
                         hub_url: None,
                         hub_token: None,
+                        secret_keys: vec![],
                     };
                     let spawn_result = if let Some(ref mgr) = state2.agent_manager {
                         mgr.spawn_agent(config).await

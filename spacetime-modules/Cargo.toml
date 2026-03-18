@@ -8,6 +8,7 @@ members = [
     "skill-registry",
     "hook-registry",
     "agent-definition-registry",
+    "secret-grant",
 ]
 resolver = "2"
 

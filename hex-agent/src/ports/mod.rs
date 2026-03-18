@@ -8,6 +8,8 @@ pub mod agents;
 pub mod workplan;
 pub mod hub;
 pub mod rl;
+pub mod secret_broker;
+pub mod inference;
 
 pub use anthropic::AnthropicPort;
 pub use context::ContextManagerPort;
@@ -17,6 +19,8 @@ pub use hooks::HookRunnerPort;
 pub use agents::AgentLoaderPort;
 pub use workplan::WorkplanPort;
 pub use hub::HubClientPort;
+pub use secret_broker::SecretBrokerPort;
+pub use inference::InferenceDiscoveryPort;
 
 // Re-export domain types that adapters need (so adapters import from ports, not domain)
 #[allow(unused_imports)]

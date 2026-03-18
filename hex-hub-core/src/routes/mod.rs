@@ -8,6 +8,7 @@ pub mod projects;
 pub mod push;
 pub mod query;
 pub mod rl;
+pub mod secrets;
 pub mod swarms;
 pub mod ws;
 
@@ -136,6 +137,20 @@ pub fn build_router(state: SharedState) -> Router {
             .delete(fleet::unregister_node))
         .route("/api/fleet/{id}/deploy", post(fleet::deploy_to_node)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        // Secret broker (ADR-026) — localhost-only, single-use claims
+        .route("/secrets/claim", post(secrets::claim_secrets)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/secrets/grant", post(secrets::grant_secret)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/secrets/revoke", post(secrets::revoke_secret)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/secrets/grants", get(secrets::list_grants))
+        // Inference endpoint discovery (ADR-026)
+        .route("/api/inference/register", post(secrets::register_inference)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/inference/endpoints", get(secrets::list_inference))
+        .route("/api/inference/endpoints/{id}", delete(secrets::remove_inference))
+        .route("/api/inference/health", post(secrets::check_inference_health))
         // WebSocket
         .route("/ws", get(ws::ws_handler))
         .route("/ws/chat", get(chat::chat_ws_handler))

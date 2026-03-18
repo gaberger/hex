@@ -11,10 +11,11 @@ import type {
   TokenBudget,
 } from '../../core/ports/index.js';
 
-type LLMProvider = 'anthropic' | 'openai';
+type LLMProvider = 'anthropic' | 'openai' | 'ollama' | 'openai-compatible';
 
 export interface LLMAdapterConfig {
   provider: LLMProvider;
+  /** API key. Empty string is valid for local providers that don't require auth. */
   apiKey: string;
   model?: string;
   baseUrl?: string;
@@ -23,11 +24,15 @@ export interface LLMAdapterConfig {
 const DEFAULT_MODELS: Record<LLMProvider, string> = {
   anthropic: 'claude-sonnet-4-20250514',
   openai: 'gpt-4o',
+  ollama: 'llama3.1:latest',
+  'openai-compatible': 'default',
 };
 
-const DEFAULT_URLS: Record<LLMAdapterConfig['provider'], string> = {
+const DEFAULT_URLS: Record<LLMProvider, string> = {
   anthropic: 'https://api.anthropic.com',
   openai: 'https://api.openai.com',
+  ollama: 'http://127.0.0.1:11434',
+  'openai-compatible': 'http://127.0.0.1:8000',
 };
 
 export class LLMAdapter implements ILLMPort {
@@ -106,13 +111,18 @@ export class LLMAdapter implements ILLMPort {
         },
       };
     }
-    // OpenAI-compatible
+    // OpenAI-compatible (covers 'openai', 'ollama', 'openai-compatible')
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    // Only set Authorization header when an API key is provided.
+    // Local providers (ollama) typically don't require auth.
+    if (this.config.apiKey) {
+      headers['Authorization'] = `Bearer ${this.config.apiKey}`;
+    }
     return {
       url: `${this.baseUrl}/v1/chat/completions`,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.config.apiKey}`,
-      },
+      headers,
       body: {
         model: this.model,
         max_tokens: budget.reservedForResponse,
@@ -122,8 +132,13 @@ export class LLMAdapter implements ILLMPort {
     };
   }
 
+  /** Whether this provider uses the OpenAI-compatible response format. */
+  private get isOpenAIFormat(): boolean {
+    return this.config.provider !== 'anthropic';
+  }
+
   private parseResponse(json: Record<string, unknown>): LLMResponse {
-    if (this.config.provider === 'anthropic') {
+    if (!this.isOpenAIFormat) {
       if (!Array.isArray(json.content) || typeof json.usage !== 'object' || json.usage === null) {
         throw new Error('Invalid Anthropic response: missing content array or usage object');
       }
@@ -152,7 +167,7 @@ export class LLMAdapter implements ILLMPort {
     if (!trimmed.startsWith('data: ') || trimmed === 'data: [DONE]') return null;
     try {
       const data = JSON.parse(trimmed.slice(6)) as Record<string, unknown>;
-      if (this.config.provider === 'anthropic') {
+      if (!this.isOpenAIFormat) {
         if (data.type === 'content_block_delta') {
           const delta = data.delta as { text?: string };
           return delta.text ?? null;

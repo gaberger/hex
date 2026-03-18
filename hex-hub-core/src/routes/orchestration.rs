@@ -33,6 +33,8 @@ pub struct SpawnRequest {
     pub agent_name: Option<String>,
     pub hub_url: Option<String>,
     pub hub_token: Option<String>,
+    /// Secret key names to inject into the agent process (ADR-026).
+    pub secret_keys: Option<Vec<String>>,
 }
 
 /// POST /api/agents/spawn — spawn a new hex-agent process
@@ -51,6 +53,7 @@ pub async fn spawn_agent(
         agent_name: body.agent_name,
         hub_url: body.hub_url,
         hub_token: body.hub_token,
+        secret_keys: body.secret_keys.unwrap_or_default(),
     };
 
     match mgr.spawn_agent(config).await {

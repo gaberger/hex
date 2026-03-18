@@ -8,3 +8,5 @@ pub mod rl_client;
 pub mod spacetime_skill;
 pub mod spacetime_hook;
 pub mod spacetime_agent;
+pub mod env_secrets;
+pub mod hub_claim_secrets;

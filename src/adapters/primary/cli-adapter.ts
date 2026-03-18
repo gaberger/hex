@@ -389,6 +389,8 @@ export class CLIAdapter {
           return await this.compare(args);
         case 'adr':
           return await this.adr(args);
+        case 'inference':
+          return await this.inference(args);
         case 'help':
         case '--help':
         case '-h':
@@ -397,7 +399,7 @@ export class CLIAdapter {
           this.writeLn(`${errorColor('Unknown command:')} ${args.command}`);
           const commands = [
             'analyze', 'dead-exports', 'summarize', 'generate', 'plan', 'dashboard', 'hub',
-            'status', 'daemon', 'setup', 'init', 'mcp', 'projects', 'secrets',
+            'status', 'daemon', 'setup', 'init', 'mcp', 'projects', 'secrets', 'inference',
             'go', 'build', 'scaffold', 'validate', 'orchestrate', 'compare', 'adr', 'help',
           ];
           const suggestion = didYouMean(args.command, commands);
@@ -3112,5 +3114,190 @@ export class CLIAdapter {
     this.writeLn(`  Ruflo MCP: registered in .claude/settings.local.json`);
     this.writeLn(`  Binary: ${rufloPath}`);
     this.writeLn('  Restart Claude Code to activate swarm tools');
+  }
+
+  // ── Inference Endpoint Management (ADR-026) ──────────────
+
+  private async inference(args: ParsedArgs): Promise<number> {
+    const subCmd = args.positional[0] ?? 'list';
+
+    switch (subCmd) {
+      case 'list':
+      case 'ls':
+        return this.inferenceList();
+      case 'add':
+        return this.inferenceAdd(args);
+      case 'remove':
+      case 'rm':
+        return this.inferenceRemove(args);
+      case 'health':
+        return this.inferenceHealth();
+      default:
+        this.writeLn(`Unknown inference command: ${subCmd}`);
+        this.writeLn('Usage: hex inference <command>');
+        this.writeLn('');
+        this.writeLn('Commands:');
+        this.writeLn('  list                       List registered inference endpoints');
+        this.writeLn('  add <url> --provider <p>    Register an endpoint (ollama, vllm, llama-cpp, openai-compatible)');
+        this.writeLn('  remove <id>                Remove an endpoint');
+        this.writeLn('  health                     Health-check all endpoints');
+        return 1;
+    }
+  }
+
+  private async inferenceList(): Promise<number> {
+    const hubUrl = 'http://127.0.0.1:5555';
+    try {
+      const res = await fetch(`${hubUrl}/api/inference/endpoints`);
+      if (!res.ok) {
+        this.writeLn(`${red('Error')}: hub returned ${res.status}`);
+        return 1;
+      }
+      const data = await res.json() as { endpoints: Array<Record<string, unknown>> };
+      const endpoints = data.endpoints ?? [];
+
+      if (endpoints.length === 0) {
+        this.writeLn(dim('No inference endpoints registered.'));
+        this.writeLn(muted('Register one with: hex inference add http://127.0.0.1:11434 --provider ollama'));
+        return 0;
+      }
+
+      this.writeLn(header('Inference Endpoints'));
+      for (const ep of endpoints) {
+        const statusColor = ep.status === 'healthy' ? green : ep.status === 'unhealthy' ? red : yellow;
+        this.writeLn(`  ${bold(String(ep.id))}  ${statusColor(String(ep.status))}`);
+        this.writeLn(`    ${kv('URL', String(ep.url))}`);
+        this.writeLn(`    ${kv('Provider', String(ep.provider))}  ${kv('Model', String(ep.model))}`);
+        if (ep.requiresAuth) {
+          this.writeLn(`    ${kv('Auth', 'required')}`);
+        }
+        if (ep.healthCheckedAt) {
+          this.writeLn(`    ${kv('Last check', String(ep.healthCheckedAt))}`);
+        }
+      }
+      return 0;
+    } catch {
+      this.writeLn(`${red('Error')}: hex-hub not running on port 5555`);
+      this.writeLn(muted('Start it with: hex daemon start'));
+      return 1;
+    }
+  }
+
+  private async inferenceAdd(args: ParsedArgs): Promise<number> {
+    const url = args.positional[1];
+    if (!url) {
+      this.writeLn(`${red('Error')}: URL is required`);
+      this.writeLn('Usage: hex inference add <url> --provider <provider> [--model <model>] [--id <id>]');
+      return 1;
+    }
+
+    const provider = args.flags.get('provider') ?? this.guessProvider(url);
+    if (!provider) {
+      this.writeLn(`${red('Error')}: --provider is required (ollama, vllm, llama-cpp, openai-compatible)`);
+      return 1;
+    }
+
+    const model = args.flags.get('model') ?? 'default';
+    const id = args.flags.get('id') ?? `${provider}-${Date.now().toString(36)}`;
+    const requiresAuth = args.flags.has('auth');
+    const secretKey = args.flags.get('secret-key') ?? '';
+
+    const hubUrl = 'http://127.0.0.1:5555';
+    try {
+      const res = await fetch(`${hubUrl}/api/inference/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, url, provider, model, requiresAuth, secretKey }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json() as { error?: string };
+        this.writeLn(`${red('Error')}: ${body.error ?? `HTTP ${res.status}`}`);
+        return 1;
+      }
+
+      this.writeLn(`${green('Registered')} inference endpoint ${bold(id)}`);
+      this.writeLn(`  ${kv('URL', url)}`);
+      this.writeLn(`  ${kv('Provider', provider)}`);
+      this.writeLn(`  ${kv('Model', model)}`);
+      this.writeLn(muted('Run hex inference health to verify connectivity.'));
+      return 0;
+    } catch {
+      this.writeLn(`${red('Error')}: hex-hub not running on port 5555`);
+      return 1;
+    }
+  }
+
+  private async inferenceRemove(args: ParsedArgs): Promise<number> {
+    const id = args.positional[1];
+    if (!id) {
+      this.writeLn(`${red('Error')}: endpoint ID is required`);
+      this.writeLn('Usage: hex inference remove <id>');
+      return 1;
+    }
+
+    const hubUrl = 'http://127.0.0.1:5555';
+    try {
+      const res = await fetch(`${hubUrl}/api/inference/endpoints/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const body = await res.json() as { error?: string };
+        this.writeLn(`${red('Error')}: ${body.error ?? `HTTP ${res.status}`}`);
+        return 1;
+      }
+
+      this.writeLn(`${green('Removed')} endpoint ${bold(id)}`);
+      return 0;
+    } catch {
+      this.writeLn(`${red('Error')}: hex-hub not running on port 5555`);
+      return 1;
+    }
+  }
+
+  private async inferenceHealth(): Promise<number> {
+    const hubUrl = 'http://127.0.0.1:5555';
+    try {
+      this.writeLn(dim('Checking inference endpoints...'));
+      const res = await fetch(`${hubUrl}/api/inference/health`, { method: 'POST' });
+
+      if (!res.ok) {
+        this.writeLn(`${red('Error')}: hub returned ${res.status}`);
+        return 1;
+      }
+
+      const data = await res.json() as { results: Array<{ id: string; status: string }> };
+      const results = data.results ?? [];
+
+      if (results.length === 0) {
+        this.writeLn(dim('No endpoints registered.'));
+        return 0;
+      }
+
+      this.writeLn(header('Health Check Results'));
+      let allHealthy = true;
+      for (const r of results) {
+        const icon = r.status === 'healthy' ? green(glyph('\u2714', 'OK')) : red(glyph('\u2718', 'FAIL'));
+        this.writeLn(`  ${icon}  ${bold(r.id)}  ${r.status}`);
+        if (r.status !== 'healthy') allHealthy = false;
+      }
+
+      if (allHealthy) {
+        this.writeLn('');
+        this.writeLn(green('All endpoints healthy.'));
+      }
+      return allHealthy ? 0 : 1;
+    } catch {
+      this.writeLn(`${red('Error')}: hex-hub not running on port 5555`);
+      return 1;
+    }
+  }
+
+  /** Guess provider from URL heuristics. */
+  private guessProvider(url: string): string | undefined {
+    if (url.includes(':11434')) return 'ollama';
+    if (url.includes(':8080')) return 'llama-cpp';
+    return undefined;
   }
 }

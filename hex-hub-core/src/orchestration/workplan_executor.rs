@@ -85,6 +85,8 @@ pub struct WorkplanTask {
     pub agent_name: Option<String>,
     pub model: Option<String>,
     pub project_dir: Option<String>,
+    /// Secret key names to inject into the agent process (ADR-026).
+    pub secret_keys: Option<Vec<String>>,
 }
 
 // ── Workplan Executor ──────────────────────────────────
@@ -242,6 +244,7 @@ impl WorkplanExecutor {
                 agent_name: task.agent_name.clone(),
                 hub_url: None,
                 hub_token: None,
+                secret_keys: task.secret_keys.clone().unwrap_or_default(),
             };
 
             let task_title = task.title.clone();
