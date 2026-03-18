@@ -2,7 +2,7 @@
 //!
 //! Reads MCP server configurations from .claude/settings.json files.
 
-use crate::domain::mcp::McpServerConfig;
+use crate::ports::mcp_client::ServerConfig as McpServerConfig;
 use std::path::Path;
 
 /// Load MCP server configs from Claude Code settings files.

@@ -10,8 +10,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
-use crate::domain::mcp::*;
-use crate::ports::mcp_client::{McpClientPort, McpError};
+use crate::ports::mcp_client::{
+    McpClientPort, McpError,
+    ServerConfig as McpServerConfig, ToolDef as McpToolDef, ToolResult as McpToolResult,
+    JsonRpcRequest, JsonRpcResponse, JsonRpcNotification,
+};
 
 struct McpProcess {
     #[allow(dead_code)]

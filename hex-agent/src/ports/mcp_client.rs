@@ -3,6 +3,15 @@
 use async_trait::async_trait;
 use crate::domain::mcp::{McpServerConfig, McpToolDef, McpToolResult};
 
+// Re-export domain types so adapters can import from ports (hex boundary rule)
+pub use crate::domain::mcp::{
+    McpServerConfig as ServerConfig,
+    McpToolDef as ToolDef,
+    McpToolResult as ToolResult,
+    McpContent, McpConnection,
+    JsonRpcRequest, JsonRpcResponse, JsonRpcNotification, JsonRpcError,
+};
+
 #[derive(Debug, thiserror::Error)]
 pub enum McpError {
     #[error("Connection failed: {0}")]
