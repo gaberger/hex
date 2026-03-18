@@ -151,7 +151,20 @@ async fn handle_chat_ws(
 
             let parsed: ChatInbound = match serde_json::from_str(&text) {
                 Ok(m) => m,
-                Err(_) => continue,
+                Err(_) => {
+                    // Not a ChatInbound — might be agent output (stream_chunk, tool_call, etc.)
+                    // Forward it to the broadcast channel so browser clients can see it
+                    if let Ok(raw) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if let Some(msg_type) = raw.get("type").and_then(|t| t.as_str()) {
+                            let _ = state2.ws_tx.send(WsEnvelope {
+                                topic: format!("agent:{}:output", session_id),
+                                event: msg_type.to_string(),
+                                data: raw,
+                            });
+                        }
+                    }
+                    continue;
+                }
             };
 
             match parsed {
