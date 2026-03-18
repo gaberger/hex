@@ -26,29 +26,41 @@ impl __sdk::InModule for GetDefinitionByNameArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait get_definition_by_name {
     /// Request that the remote module invoke the reducer `get_definition_by_name` to run as soon as possible.
-    fn get_definition_by_name(&self, name: String,) -> __sdk::Result<()>;
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and this method provides no way to listen for its completion status.
+    /// /// Use [`get_definition_by_name:get_definition_by_name_then`] to run a callback after the reducer completes.
+    fn get_definition_by_name(&self, name: String) -> __sdk::Result<()> {
+        self.get_definition_by_name_then(name, |_, _| {})
+    }
 
-    /// Register a callback to run whenever we are notified of an invocation of the reducer `get_definition_by_name`.
-    fn on_get_definition_by_name(&self, callback: impl FnMut(&super::ReducerEventContext, &GetDefinitionByNameArgs) + Send + 'static) -> __sdk::CallbackId;
+    /// Request that the remote module invoke the reducer `get_definition_by_name` to run as soon as possible,
+    /// registering `callback` to run when we are notified that the reducer completed.
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and its status can be observed with the `callback`.
+    fn get_definition_by_name_then(
+        &self,
+        name: String,
 
-    /// Unregister a previously-registered callback.
-    fn remove_on_get_definition_by_name(&self, callback: __sdk::CallbackId);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()>;
 }
 
 impl get_definition_by_name for super::RemoteReducers {
-    fn get_definition_by_name(&self, name: String,) -> __sdk::Result<()> {
-        self.imp.call_reducer("get_definition_by_name", GetDefinitionByNameArgs { name })
-    }
+    fn get_definition_by_name_then(
+        &self,
+        name: String,
 
-    fn on_get_definition_by_name(&self, mut callback: impl FnMut(&super::ReducerEventContext, &GetDefinitionByNameArgs) + Send + 'static) -> __sdk::CallbackId {
-        self.imp.on_reducer("get_definition_by_name", Box::new(move |ctx: &super::ReducerEventContext| {
-            let super::Reducer::GetDefinitionByName { name } = &ctx.event.reducer else { unreachable!() };
-            let args = GetDefinitionByNameArgs { name: name.clone() };
-            callback(ctx, &args);
-        }))
-    }
-
-    fn remove_on_get_definition_by_name(&self, callback: __sdk::CallbackId) {
-        self.imp.remove_on_reducer("get_definition_by_name", callback);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()> {
+        self.imp
+            .invoke_reducer_with_callback(GetDefinitionByNameArgs { name }, callback)
     }
 }

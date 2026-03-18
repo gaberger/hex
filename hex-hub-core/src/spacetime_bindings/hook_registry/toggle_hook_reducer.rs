@@ -32,29 +32,51 @@ impl __sdk::InModule for ToggleHookArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait toggle_hook {
     /// Request that the remote module invoke the reducer `toggle_hook` to run as soon as possible.
-    fn toggle_hook(&self, id: String, enabled: bool, timestamp: String,) -> __sdk::Result<()>;
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and this method provides no way to listen for its completion status.
+    /// /// Use [`toggle_hook:toggle_hook_then`] to run a callback after the reducer completes.
+    fn toggle_hook(&self, id: String, enabled: bool, timestamp: String) -> __sdk::Result<()> {
+        self.toggle_hook_then(id, enabled, timestamp, |_, _| {})
+    }
 
-    /// Register a callback to run whenever we are notified of an invocation of the reducer `toggle_hook`.
-    fn on_toggle_hook(&self, callback: impl FnMut(&super::ReducerEventContext, &ToggleHookArgs) + Send + 'static) -> __sdk::CallbackId;
+    /// Request that the remote module invoke the reducer `toggle_hook` to run as soon as possible,
+    /// registering `callback` to run when we are notified that the reducer completed.
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and its status can be observed with the `callback`.
+    fn toggle_hook_then(
+        &self,
+        id: String,
+        enabled: bool,
+        timestamp: String,
 
-    /// Unregister a previously-registered callback.
-    fn remove_on_toggle_hook(&self, callback: __sdk::CallbackId);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()>;
 }
 
 impl toggle_hook for super::RemoteReducers {
-    fn toggle_hook(&self, id: String, enabled: bool, timestamp: String,) -> __sdk::Result<()> {
-        self.imp.call_reducer("toggle_hook", ToggleHookArgs { id, enabled, timestamp })
-    }
+    fn toggle_hook_then(
+        &self,
+        id: String,
+        enabled: bool,
+        timestamp: String,
 
-    fn on_toggle_hook(&self, mut callback: impl FnMut(&super::ReducerEventContext, &ToggleHookArgs) + Send + 'static) -> __sdk::CallbackId {
-        self.imp.on_reducer("toggle_hook", Box::new(move |ctx: &super::ReducerEventContext| {
-            let super::Reducer::ToggleHook { id, enabled, timestamp } = &ctx.event.reducer else { unreachable!() };
-            let args = ToggleHookArgs { id: id.clone(), enabled: enabled.clone(), timestamp: timestamp.clone() };
-            callback(ctx, &args);
-        }))
-    }
-
-    fn remove_on_toggle_hook(&self, callback: __sdk::CallbackId) {
-        self.imp.remove_on_reducer("toggle_hook", callback);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()> {
+        self.imp.invoke_reducer_with_callback(
+            ToggleHookArgs {
+                id,
+                enabled,
+                timestamp,
+            },
+            callback,
+        )
     }
 }

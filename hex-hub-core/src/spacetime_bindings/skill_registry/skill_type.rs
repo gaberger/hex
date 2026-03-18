@@ -69,3 +69,4 @@ impl __sdk::__query_builder::HasIxCols for Skill {
     }
 }
 
+impl __sdk::__query_builder::CanBeLookupTable for Skill {}

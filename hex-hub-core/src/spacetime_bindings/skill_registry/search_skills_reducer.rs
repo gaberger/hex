@@ -30,29 +30,48 @@ impl __sdk::InModule for SearchSkillsArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait search_skills {
     /// Request that the remote module invoke the reducer `search_skills` to run as soon as possible.
-    fn search_skills(&self, trigger_type: String, query: String,) -> __sdk::Result<()>;
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and this method provides no way to listen for its completion status.
+    /// /// Use [`search_skills:search_skills_then`] to run a callback after the reducer completes.
+    fn search_skills(&self, trigger_type: String, query: String) -> __sdk::Result<()> {
+        self.search_skills_then(trigger_type, query, |_, _| {})
+    }
 
-    /// Register a callback to run whenever we are notified of an invocation of the reducer `search_skills`.
-    fn on_search_skills(&self, callback: impl FnMut(&super::ReducerEventContext, &SearchSkillsArgs) + Send + 'static) -> __sdk::CallbackId;
+    /// Request that the remote module invoke the reducer `search_skills` to run as soon as possible,
+    /// registering `callback` to run when we are notified that the reducer completed.
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and its status can be observed with the `callback`.
+    fn search_skills_then(
+        &self,
+        trigger_type: String,
+        query: String,
 
-    /// Unregister a previously-registered callback.
-    fn remove_on_search_skills(&self, callback: __sdk::CallbackId);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()>;
 }
 
 impl search_skills for super::RemoteReducers {
-    fn search_skills(&self, trigger_type: String, query: String,) -> __sdk::Result<()> {
-        self.imp.call_reducer("search_skills", SearchSkillsArgs { trigger_type, query })
-    }
+    fn search_skills_then(
+        &self,
+        trigger_type: String,
+        query: String,
 
-    fn on_search_skills(&self, mut callback: impl FnMut(&super::ReducerEventContext, &SearchSkillsArgs) + Send + 'static) -> __sdk::CallbackId {
-        self.imp.on_reducer("search_skills", Box::new(move |ctx: &super::ReducerEventContext| {
-            let super::Reducer::SearchSkills { trigger_type, query } = &ctx.event.reducer else { unreachable!() };
-            let args = SearchSkillsArgs { trigger_type: trigger_type.clone(), query: query.clone() };
-            callback(ctx, &args);
-        }))
-    }
-
-    fn remove_on_search_skills(&self, callback: __sdk::CallbackId) {
-        self.imp.remove_on_reducer("search_skills", callback);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()> {
+        self.imp.invoke_reducer_with_callback(
+            SearchSkillsArgs {
+                trigger_type,
+                query,
+            },
+            callback,
+        )
     }
 }

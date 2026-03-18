@@ -75,7 +75,7 @@ mod real {
         /// Once generated bindings are available, this will:
         /// 1. DbConnection::builder()
         ///      .with_uri(&self.config.host)
-        ///      .with_module_name(&self.config.database)
+        ///      .with_database_name(&self.config.database)
         ///      .on_connect(|ctx| {
         ///          ctx.subscription_builder()
         ///              .on_applied(|ctx| { /* cache ready */ })
@@ -234,7 +234,7 @@ mod real {
         // Maps to: chat-relay module
 
         async fn chat_send(&self, _message: ChatMessage) -> Result<(), StateError> {
-            // conn.reducers().send_message(id, conversation_id, role, content, timestamp)
+            // conn.reducers().send_message(conversation_id, role, sender_name, content)
             Err(Self::not_connected())
         }
 
@@ -243,7 +243,14 @@ mod real {
             _conversation_id: &str,
             _limit: u32,
         ) -> Result<Vec<ChatMessage>, StateError> {
-            // conn.db().message().iter().filter(|m| m.conversation_id == conversation_id).take(limit)
+            // conn.db().message().iter()
+            //     .filter(|m| m.conversation_id == conversation_id)
+            //     .map(|m| ChatMessage {
+            //         id: m.id, conversation_id: m.conversation_id,
+            //         role: m.role, sender_name: m.sender_name,
+            //         content: m.content, timestamp: m.timestamp,
+            //     })
+            //     .take(limit)
             Err(Self::not_connected())
         }
 

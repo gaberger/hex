@@ -61,3 +61,4 @@ impl __sdk::__query_builder::HasIxCols for WorkplanExecution {
     }
 }
 
+impl __sdk::__query_builder::CanBeLookupTable for WorkplanExecution {}

@@ -128,7 +128,7 @@ mod real {
 
             match DbConnection::builder()
                 .with_uri(host)
-                .with_module_name(database)
+                .with_database_name(database)
                 .on_connect(move |conn, _identity, _token| {
                     // Register table callbacks before subscribing
                     conn.db().hook().on_insert({
@@ -176,8 +176,8 @@ mod real {
                                 tracing::info!("SpacetimeDB hook subscription applied");
                             }
                         })
-                        .on_error(|_ctx| {
-                            tracing::error!("SpacetimeDB hook subscription error");
+                        .on_error(|_ctx, err| {
+                            tracing::error!(?err, "SpacetimeDB hook subscription error");
                         })
                         .subscribe(["SELECT * FROM hook"]);
                 })
@@ -194,13 +194,8 @@ mod real {
                 .build()
             {
                 Ok(conn) => {
-                    // Spawn the async message loop to process subscription updates
-                    let conn_for_loop = conn.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = conn_for_loop.run_async().await {
-                            tracing::warn!("SpacetimeDB hook run_async ended: {}", e);
-                        }
-                    });
+                    // Spawn a background thread to process WebSocket messages
+                    conn.run_threaded();
 
                     // Wait briefly for initial subscription to apply
                     let deadline =

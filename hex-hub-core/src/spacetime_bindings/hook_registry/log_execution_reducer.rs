@@ -44,29 +44,91 @@ impl __sdk::InModule for LogExecutionArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait log_execution {
     /// Request that the remote module invoke the reducer `log_execution` to run as soon as possible.
-    fn log_execution(&self, hook_id: String, agent_id: String, event_type: String, exit_code: i32, stdout: String, stderr: String, duration_ms: u64, timed_out: bool, timestamp: String,) -> __sdk::Result<()>;
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and this method provides no way to listen for its completion status.
+    /// /// Use [`log_execution:log_execution_then`] to run a callback after the reducer completes.
+    fn log_execution(
+        &self,
+        hook_id: String,
+        agent_id: String,
+        event_type: String,
+        exit_code: i32,
+        stdout: String,
+        stderr: String,
+        duration_ms: u64,
+        timed_out: bool,
+        timestamp: String,
+    ) -> __sdk::Result<()> {
+        self.log_execution_then(
+            hook_id,
+            agent_id,
+            event_type,
+            exit_code,
+            stdout,
+            stderr,
+            duration_ms,
+            timed_out,
+            timestamp,
+            |_, _| {},
+        )
+    }
 
-    /// Register a callback to run whenever we are notified of an invocation of the reducer `log_execution`.
-    fn on_log_execution(&self, callback: impl FnMut(&super::ReducerEventContext, &LogExecutionArgs) + Send + 'static) -> __sdk::CallbackId;
+    /// Request that the remote module invoke the reducer `log_execution` to run as soon as possible,
+    /// registering `callback` to run when we are notified that the reducer completed.
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and its status can be observed with the `callback`.
+    fn log_execution_then(
+        &self,
+        hook_id: String,
+        agent_id: String,
+        event_type: String,
+        exit_code: i32,
+        stdout: String,
+        stderr: String,
+        duration_ms: u64,
+        timed_out: bool,
+        timestamp: String,
 
-    /// Unregister a previously-registered callback.
-    fn remove_on_log_execution(&self, callback: __sdk::CallbackId);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()>;
 }
 
 impl log_execution for super::RemoteReducers {
-    fn log_execution(&self, hook_id: String, agent_id: String, event_type: String, exit_code: i32, stdout: String, stderr: String, duration_ms: u64, timed_out: bool, timestamp: String,) -> __sdk::Result<()> {
-        self.imp.call_reducer("log_execution", LogExecutionArgs { hook_id, agent_id, event_type, exit_code, stdout, stderr, duration_ms, timed_out, timestamp })
-    }
+    fn log_execution_then(
+        &self,
+        hook_id: String,
+        agent_id: String,
+        event_type: String,
+        exit_code: i32,
+        stdout: String,
+        stderr: String,
+        duration_ms: u64,
+        timed_out: bool,
+        timestamp: String,
 
-    fn on_log_execution(&self, mut callback: impl FnMut(&super::ReducerEventContext, &LogExecutionArgs) + Send + 'static) -> __sdk::CallbackId {
-        self.imp.on_reducer("log_execution", Box::new(move |ctx: &super::ReducerEventContext| {
-            let super::Reducer::LogExecution { hook_id, agent_id, event_type, exit_code, stdout, stderr, duration_ms, timed_out, timestamp } = &ctx.event.reducer else { unreachable!() };
-            let args = LogExecutionArgs { hook_id: hook_id.clone(), agent_id: agent_id.clone(), event_type: event_type.clone(), exit_code: exit_code.clone(), stdout: stdout.clone(), stderr: stderr.clone(), duration_ms: duration_ms.clone(), timed_out: timed_out.clone(), timestamp: timestamp.clone() };
-            callback(ctx, &args);
-        }))
-    }
-
-    fn remove_on_log_execution(&self, callback: __sdk::CallbackId) {
-        self.imp.remove_on_reducer("log_execution", callback);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()> {
+        self.imp.invoke_reducer_with_callback(
+            LogExecutionArgs {
+                hook_id,
+                agent_id,
+                event_type,
+                exit_code,
+                stdout,
+                stderr,
+                duration_ms,
+                timed_out,
+                timestamp,
+            },
+            callback,
+        )
     }
 }

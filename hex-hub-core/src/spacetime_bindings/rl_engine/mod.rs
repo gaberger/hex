@@ -57,20 +57,6 @@ impl __sdk::InModule for Reducer {
     type Module = RemoteModule;
 }
 
-
-impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
-    type Error = __sdk::Error;
-    fn try_from(raw: __ws::ReducerCallInfo<__ws::BsatnFormat>) -> Result<Self, Self::Error> {
-        match &raw.reducer_name[..] {
-            "record_reward" => Ok(__sdk::parse_reducer_args::<record_reward_reducer::RecordRewardArgs>("record_reward", &raw.args)?.into()),
-            "select_action" => Ok(__sdk::parse_reducer_args::<select_action_reducer::SelectActionArgs>("select_action", &raw.args)?.into()),
-            "store_pattern" => Ok(__sdk::parse_reducer_args::<store_pattern_reducer::StorePatternArgs>("store_pattern", &raw.args)?.into()),
-            unknown => Err(
-                __sdk::InternalError::unknown_name("reducer", unknown, "ReducerCallInfo").into(),
-            ),
-        }
-    }
-}
 impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
@@ -81,9 +67,43 @@ impl __sdk::Reducer for Reducer {
             _ => unreachable!(),
         }
     }
+    #[allow(clippy::clone_on_copy)]
+    fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
+        match self {
+            Reducer::DecayPatterns => {
+                __sats::bsatn::to_vec(&decay_patterns_reducer::DecayPatternsArgs {})
+            }
+            Reducer::RecordReward {
+                state_key,
+                action,
+                reward,
+                next_state_key,
+            } => __sats::bsatn::to_vec(&record_reward_reducer::RecordRewardArgs {
+                state_key: state_key.clone(),
+                action: action.clone(),
+                reward: reward.clone(),
+                next_state_key: next_state_key.clone(),
+            }),
+            Reducer::SelectAction { state_key } => {
+                __sats::bsatn::to_vec(&select_action_reducer::SelectActionArgs {
+                    state_key: state_key.clone(),
+                })
+            }
+            Reducer::StorePattern {
+                category,
+                content,
+                confidence,
+            } => __sats::bsatn::to_vec(&store_pattern_reducer::StorePatternArgs {
+                category: category.clone(),
+                content: content.clone(),
+                confidence: confidence.clone(),
+            }),
+            _ => unreachable!(),
+        }
+    }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct DbUpdate {
@@ -92,11 +112,11 @@ pub struct DbUpdate {
     rl_q_entry: __sdk::TableUpdate<RlQEntry>,
 }
 
-impl TryFrom<__ws::DatabaseUpdate<__ws::BsatnFormat>> for DbUpdate {
+impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
     type Error = __sdk::Error;
-    fn try_from(raw: __ws::DatabaseUpdate<__ws::BsatnFormat>) -> Result<Self, Self::Error> {
+    fn try_from(raw: __ws::v2::TransactionUpdate) -> Result<Self, Self::Error> {
         let mut db_update = DbUpdate::default();
-        for table_update in raw.tables {
+        for table_update in __sdk::transaction_update_iter_table_updates(raw) {
             match &table_update.table_name[..] {
                 "rl_experience" => db_update
                     .rl_experience
@@ -139,6 +159,50 @@ impl __sdk::DbUpdate for DbUpdate {
         diff.rl_q_entry = cache.apply_diff_to_table::<RlQEntry>("rl_q_entry", &self.rl_q_entry);
 
         diff
+    }
+    fn parse_initial_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
+        let mut db_update = DbUpdate::default();
+        for table_rows in raw.tables {
+            match &table_rows.table[..] {
+                "rl_experience" => db_update
+                    .rl_experience
+                    .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "rl_pattern" => db_update
+                    .rl_pattern
+                    .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "rl_q_entry" => db_update
+                    .rl_q_entry
+                    .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                unknown => {
+                    return Err(
+                        __sdk::InternalError::unknown_name("table", unknown, "QueryRows").into(),
+                    );
+                }
+            }
+        }
+        Ok(db_update)
+    }
+    fn parse_unsubscribe_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
+        let mut db_update = DbUpdate::default();
+        for table_rows in raw.tables {
+            match &table_rows.table[..] {
+                "rl_experience" => db_update
+                    .rl_experience
+                    .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "rl_pattern" => db_update
+                    .rl_pattern
+                    .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "rl_q_entry" => db_update
+                    .rl_q_entry
+                    .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                unknown => {
+                    return Err(
+                        __sdk::InternalError::unknown_name("table", unknown, "QueryRows").into(),
+                    );
+                }
+            }
+        }
+        Ok(db_update)
     }
 }
 
@@ -200,16 +264,6 @@ impl __sdk::InModule for RemoteProcedures {
     type Module = RemoteModule;
 }
 
-/// The `set_reducer_flags` field of [`DbConnection`] and other [`DbContext`] types,
-/// with methods provided by extension traits for each reducer defined by the module.
-pub struct RemoteSetReducerFlags {
-    imp: __sdk::DbContextImpl<RemoteModule>,
-}
-
-impl __sdk::InModule for RemoteSetReducerFlags {
-    type Module = RemoteModule;
-}
-
 /// The `db` field of [`EventContext`] and [`DbConnection`],
 /// with methods provided by extension traits for each table defined by the module.
 pub struct RemoteTables {
@@ -246,8 +300,6 @@ pub struct DbConnection {
     /// Access to procedures defined by the module via extension traits implemented for [`RemoteProcedures`].
     pub procedures: RemoteProcedures,
 
-    pub set_reducer_flags: RemoteSetReducerFlags,
-
     imp: __sdk::DbContextImpl<RemoteModule>,
 }
 
@@ -259,7 +311,6 @@ impl __sdk::DbContext for DbConnection {
     type DbView = RemoteTables;
     type Reducers = RemoteReducers;
     type Procedures = RemoteProcedures;
-    type SetReducerFlags = RemoteSetReducerFlags;
 
     fn db(&self) -> &Self::DbView {
         &self.db
@@ -269,9 +320,6 @@ impl __sdk::DbContext for DbConnection {
     }
     fn procedures(&self) -> &Self::Procedures {
         &self.procedures
-    }
-    fn set_reducer_flags(&self) -> &Self::SetReducerFlags {
-        &self.set_reducer_flags
     }
 
     fn is_active(&self) -> bool {
@@ -376,7 +424,6 @@ impl __sdk::DbConnection for DbConnection {
             db: RemoteTables { imp: imp.clone() },
             reducers: RemoteReducers { imp: imp.clone() },
             procedures: RemoteProcedures { imp: imp.clone() },
-            set_reducer_flags: RemoteSetReducerFlags { imp: imp.clone() },
             imp,
         }
     }
@@ -451,7 +498,6 @@ pub struct EventContext {
     pub reducers: RemoteReducers,
     /// Access to procedures defined by the module via extension traits implemented for [`RemoteProcedures`].
     pub procedures: RemoteProcedures,
-    pub set_reducer_flags: RemoteSetReducerFlags,
     /// The event which caused these callbacks to run.
     pub event: __sdk::Event<Reducer>,
     imp: __sdk::DbContextImpl<RemoteModule>,
@@ -467,7 +513,6 @@ impl __sdk::AbstractEventContext for EventContext {
             db: RemoteTables { imp: imp.clone() },
             reducers: RemoteReducers { imp: imp.clone() },
             procedures: RemoteProcedures { imp: imp.clone() },
-            set_reducer_flags: RemoteSetReducerFlags { imp: imp.clone() },
             event,
             imp,
         }
@@ -482,7 +527,6 @@ impl __sdk::DbContext for EventContext {
     type DbView = RemoteTables;
     type Reducers = RemoteReducers;
     type Procedures = RemoteProcedures;
-    type SetReducerFlags = RemoteSetReducerFlags;
 
     fn db(&self) -> &Self::DbView {
         &self.db
@@ -492,9 +536,6 @@ impl __sdk::DbContext for EventContext {
     }
     fn procedures(&self) -> &Self::Procedures {
         &self.procedures
-    }
-    fn set_reducer_flags(&self) -> &Self::SetReducerFlags {
-        &self.set_reducer_flags
     }
 
     fn is_active(&self) -> bool {
@@ -533,7 +574,6 @@ pub struct ReducerEventContext {
     pub reducers: RemoteReducers,
     /// Access to procedures defined by the module via extension traits implemented for [`RemoteProcedures`].
     pub procedures: RemoteProcedures,
-    pub set_reducer_flags: RemoteSetReducerFlags,
     /// The event which caused these callbacks to run.
     pub event: __sdk::ReducerEvent<Reducer>,
     imp: __sdk::DbContextImpl<RemoteModule>,
@@ -549,7 +589,6 @@ impl __sdk::AbstractEventContext for ReducerEventContext {
             db: RemoteTables { imp: imp.clone() },
             reducers: RemoteReducers { imp: imp.clone() },
             procedures: RemoteProcedures { imp: imp.clone() },
-            set_reducer_flags: RemoteSetReducerFlags { imp: imp.clone() },
             event,
             imp,
         }
@@ -564,7 +603,6 @@ impl __sdk::DbContext for ReducerEventContext {
     type DbView = RemoteTables;
     type Reducers = RemoteReducers;
     type Procedures = RemoteProcedures;
-    type SetReducerFlags = RemoteSetReducerFlags;
 
     fn db(&self) -> &Self::DbView {
         &self.db
@@ -574,9 +612,6 @@ impl __sdk::DbContext for ReducerEventContext {
     }
     fn procedures(&self) -> &Self::Procedures {
         &self.procedures
-    }
-    fn set_reducer_flags(&self) -> &Self::SetReducerFlags {
-        &self.set_reducer_flags
     }
 
     fn is_active(&self) -> bool {
@@ -614,7 +649,6 @@ pub struct ProcedureEventContext {
     pub reducers: RemoteReducers,
     /// Access to procedures defined by the module via extension traits implemented for [`RemoteProcedures`].
     pub procedures: RemoteProcedures,
-    pub set_reducer_flags: RemoteSetReducerFlags,
     imp: __sdk::DbContextImpl<RemoteModule>,
 }
 
@@ -628,7 +662,6 @@ impl __sdk::AbstractEventContext for ProcedureEventContext {
             db: RemoteTables { imp: imp.clone() },
             reducers: RemoteReducers { imp: imp.clone() },
             procedures: RemoteProcedures { imp: imp.clone() },
-            set_reducer_flags: RemoteSetReducerFlags { imp: imp.clone() },
             imp,
         }
     }
@@ -642,7 +675,6 @@ impl __sdk::DbContext for ProcedureEventContext {
     type DbView = RemoteTables;
     type Reducers = RemoteReducers;
     type Procedures = RemoteProcedures;
-    type SetReducerFlags = RemoteSetReducerFlags;
 
     fn db(&self) -> &Self::DbView {
         &self.db
@@ -652,9 +684,6 @@ impl __sdk::DbContext for ProcedureEventContext {
     }
     fn procedures(&self) -> &Self::Procedures {
         &self.procedures
-    }
-    fn set_reducer_flags(&self) -> &Self::SetReducerFlags {
-        &self.set_reducer_flags
     }
 
     fn is_active(&self) -> bool {
@@ -692,7 +721,6 @@ pub struct SubscriptionEventContext {
     pub reducers: RemoteReducers,
     /// Access to procedures defined by the module via extension traits implemented for [`RemoteProcedures`].
     pub procedures: RemoteProcedures,
-    pub set_reducer_flags: RemoteSetReducerFlags,
     imp: __sdk::DbContextImpl<RemoteModule>,
 }
 
@@ -706,7 +734,6 @@ impl __sdk::AbstractEventContext for SubscriptionEventContext {
             db: RemoteTables { imp: imp.clone() },
             reducers: RemoteReducers { imp: imp.clone() },
             procedures: RemoteProcedures { imp: imp.clone() },
-            set_reducer_flags: RemoteSetReducerFlags { imp: imp.clone() },
             imp,
         }
     }
@@ -720,7 +747,6 @@ impl __sdk::DbContext for SubscriptionEventContext {
     type DbView = RemoteTables;
     type Reducers = RemoteReducers;
     type Procedures = RemoteProcedures;
-    type SetReducerFlags = RemoteSetReducerFlags;
 
     fn db(&self) -> &Self::DbView {
         &self.db
@@ -730,9 +756,6 @@ impl __sdk::DbContext for SubscriptionEventContext {
     }
     fn procedures(&self) -> &Self::Procedures {
         &self.procedures
-    }
-    fn set_reducer_flags(&self) -> &Self::SetReducerFlags {
-        &self.set_reducer_flags
     }
 
     fn is_active(&self) -> bool {
@@ -771,7 +794,6 @@ pub struct ErrorContext {
     pub reducers: RemoteReducers,
     /// Access to procedures defined by the module via extension traits implemented for [`RemoteProcedures`].
     pub procedures: RemoteProcedures,
-    pub set_reducer_flags: RemoteSetReducerFlags,
     /// The event which caused these callbacks to run.
     pub event: Option<__sdk::Error>,
     imp: __sdk::DbContextImpl<RemoteModule>,
@@ -787,7 +809,6 @@ impl __sdk::AbstractEventContext for ErrorContext {
             db: RemoteTables { imp: imp.clone() },
             reducers: RemoteReducers { imp: imp.clone() },
             procedures: RemoteProcedures { imp: imp.clone() },
-            set_reducer_flags: RemoteSetReducerFlags { imp: imp.clone() },
             event,
             imp,
         }
@@ -802,7 +823,6 @@ impl __sdk::DbContext for ErrorContext {
     type DbView = RemoteTables;
     type Reducers = RemoteReducers;
     type Procedures = RemoteProcedures;
-    type SetReducerFlags = RemoteSetReducerFlags;
 
     fn db(&self) -> &Self::DbView {
         &self.db
@@ -812,9 +832,6 @@ impl __sdk::DbContext for ErrorContext {
     }
     fn procedures(&self) -> &Self::Procedures {
         &self.procedures
-    }
-    fn set_reducer_flags(&self) -> &Self::SetReducerFlags {
-        &self.set_reducer_flags
     }
 
     fn is_active(&self) -> bool {
@@ -854,7 +871,7 @@ impl __sdk::SpacetimeModule for RemoteModule {
     type Reducer = Reducer;
     type DbView = RemoteTables;
     type Reducers = RemoteReducers;
-    type SetReducerFlags = RemoteSetReducerFlags;
+    type Procedures = RemoteProcedures;
     type DbUpdate = DbUpdate;
     type AppliedDiff<'r> = AppliedDiff<'r>;
     type SubscriptionHandle = SubscriptionHandle;
@@ -865,4 +882,5 @@ impl __sdk::SpacetimeModule for RemoteModule {
         rl_pattern_table::register_table(client_cache);
         rl_q_entry_table::register_table(client_cache);
     }
+    const ALL_TABLE_NAMES: &'static [&'static str] = &["rl_experience", "rl_pattern", "rl_q_entry"];
 }

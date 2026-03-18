@@ -457,6 +457,7 @@ mod contract_tests {
             id: "msg-1".into(),
             conversation_id: "conv-1".into(),
             role: "user".into(),
+            sender_name: "user".into(),
             content: "Hello, agent!".into(),
             timestamp: "2025-01-01T00:00:00Z".into(),
         };
@@ -696,6 +697,7 @@ mod contract_tests {
                 id: "m".into(),
                 conversation_id: "c".into(),
                 role: "user".into(),
+                sender_name: "user".into(),
                 content: "hi".into(),
                 timestamp: "t".into(),
             })

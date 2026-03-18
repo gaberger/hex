@@ -217,6 +217,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
   <div class="sb-section">
     <div class="sb-title">Agent Info</div>
     <div class="agent-info">
+      <div class="agent-row"><span class="label">Name</span><span class="value" id="agentNameDisplay" style="color:var(--accent);font-weight:600">--</span></div>
       <div class="agent-row"><span class="label">Status</span><span class="status-pill idle" id="agentStatus">idle</span></div>
       <div class="agent-row"><span class="label">Turns</span><span class="value" id="turnCount">0</span></div>
       <div class="agent-row"><span class="label">Project</span><span class="value" id="projectDir">--</span></div>
@@ -249,7 +250,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 var state = {
   ws: null, connected: false, reconnectDelay: 1000, reconnectTimer: null,
   turnCount: 0, streaming: false, currentAssistantEl: null, authToken: null,
-  totalInput: 0, totalOutput: 0, tokenBudget: 200000
+  totalInput: 0, totalOutput: 0, tokenBudget: 200000,
+  agentName: null, conversationId: null
 };
 
 /* ── DOM refs ── */
@@ -265,6 +267,7 @@ var tokOut = document.getElementById("tokOut");
 var tokTotalIn = document.getElementById("tokTotalIn");
 var tokTotalOut = document.getElementById("tokTotalOut");
 var agentStatus = document.getElementById("agentStatus");
+var agentNameDisplay = document.getElementById("agentNameDisplay");
 var turnCountEl = document.getElementById("turnCount");
 var projectDir = document.getElementById("projectDir");
 var rlAction = document.getElementById("rlAction");
@@ -317,7 +320,17 @@ function connect() {
   };
   ws.onerror = function() { ws.close(); };
   ws.onmessage = function(e) {
-    try { handleMessage(JSON.parse(e.data)); } catch(err) { console.error("ws parse error", err); }
+    try {
+      var raw = JSON.parse(e.data);
+      /* Unwrap WsEnvelope: {topic, event, data} → {type: event, ...data} */
+      var msg;
+      if (raw.event && raw.data) {
+        msg = Object.assign({ type: raw.event }, typeof raw.data === "object" ? raw.data : { content: raw.data });
+      } else {
+        msg = raw;
+      }
+      handleMessage(msg);
+    } catch(err) { console.error("ws parse error", err); }
   };
 }
 
@@ -338,22 +351,84 @@ function wsSend(content) {
 /* ── Message dispatch ── */
 function handleMessage(msg) {
   switch (msg.type) {
-    case "connected":    handleConnected(msg);   break;
-    case "stream_chunk": handleStreamChunk(msg); break;
-    case "tool_call":    handleToolCall(msg);    break;
-    case "tool_result":  handleToolResult(msg);  break;
-    case "token_update": handleTokenUpdate(msg); break;
-    case "agent_status": handleAgentStatus(msg); break;
-    case "chat_message": addAssistantMessage(msg.data ? msg.data.content : (msg.content || "")); break;
+    case "connected":          handleConnected(msg);       break;
+    case "stream_chunk":       handleStreamChunk(msg);     break;
+    case "tool_call":          handleToolCall(msg);        break;
+    case "tool_result":        handleToolResult(msg);      break;
+    case "token_update":       handleTokenUpdate(msg);     break;
+    case "agent_status":       handleAgentStatus(msg);     break;
+    case "agent_connected":    handleAgentConnected(msg);  break;
+    case "agent_disconnected": handleAgentDisconnected(msg); break;
+    case "chat_history":       handleChatHistory(msg);     break;
+    case "chat_message":
+      var data = msg.data || msg;
+      var name = data.senderName || data.sender_name || state.agentName;
+      addAssistantMessage(data.content || "", name);
+      break;
   }
 }
 
 function handleConnected(msg) {
   var data = msg.data || {};
+  state.conversationId = data.sessionId || null;
   if (data.llmBridge) {
     modelBadge.textContent = "LLM bridge";
     modelBadge.style.background = "rgba(63,185,80,.15)";
     modelBadge.style.color = "#3fb950";
+  }
+}
+
+function handleAgentConnected(msg) {
+  var data = msg.data || msg;
+  var name = data.agentName || data.agent_name;
+  if (name) {
+    state.agentName = name;
+    agentNameDisplay.textContent = name;
+    agentStatus.textContent = "connected";
+    agentStatus.className = "status-pill active";
+    /* Show a system message so the user knows who they're talking to */
+    var sysEl = document.createElement("div");
+    sysEl.className = "msg system";
+    sysEl.style.cssText = "align-self:center;max-width:100%;text-align:center";
+    var sysBody = document.createElement("div");
+    sysBody.className = "msg-body";
+    sysBody.style.cssText = "background:var(--accent-dim);color:var(--accent);font-size:.8rem;padding:6px 14px;border-radius:20px;display:inline-block";
+    sysBody.textContent = name + " joined the conversation";
+    sysEl.appendChild(sysBody);
+    messages.appendChild(sysEl);
+    scrollToBottom();
+  }
+  if (data.projectDir) projectDir.textContent = truncate(data.projectDir, 40);
+}
+
+function handleAgentDisconnected(msg) {
+  var data = msg.data || msg;
+  var name = state.agentName || "agent";
+  var sysEl = document.createElement("div");
+  sysEl.className = "msg system";
+  sysEl.style.cssText = "align-self:center;max-width:100%;text-align:center";
+  var sysBody = document.createElement("div");
+  sysBody.className = "msg-body";
+  sysBody.style.cssText = "background:var(--red-dim);color:var(--red);font-size:.8rem;padding:6px 14px;border-radius:20px;display:inline-block";
+  sysBody.textContent = name + " disconnected";
+  sysEl.appendChild(sysBody);
+  messages.appendChild(sysEl);
+  scrollToBottom();
+  agentStatus.textContent = "disconnected";
+  agentStatus.className = "status-pill idle";
+}
+
+function handleChatHistory(msg) {
+  var data = msg.data || msg;
+  var history = data.messages || [];
+  /* Render history oldest-first */
+  for (var i = 0; i < history.length; i++) {
+    var m = history[i];
+    if (m.role === "user") {
+      addUserMessage(m.content);
+    } else {
+      addAssistantMessage(m.content, m.sender_name || m.senderName);
+    }
   }
 }
 
@@ -388,13 +463,15 @@ function renderMarkdown(src) {
 }
 
 /* ── DOM construction helpers (use safe DOM APIs where possible) ── */
-function createMsgEl(role) {
+function createMsgEl(role, senderName) {
   clearWelcome();
   var wrap = document.createElement("div");
   wrap.className = "msg " + role;
   var roleEl = document.createElement("div");
   roleEl.className = "msg-role";
-  roleEl.textContent = role;
+  /* Show the agent's unique name instead of generic "assistant" */
+  var displayName = senderName || (role === "assistant" ? (state.agentName || "assistant") : role);
+  roleEl.textContent = displayName;
   var body = document.createElement("div");
   body.className = "msg-body";
   wrap.appendChild(roleEl);
@@ -441,7 +518,7 @@ function attachCopyButtons(container) {
 function handleStreamChunk(msg) {
   if (!state.streaming || !state.currentAssistantEl) {
     state.streaming = true;
-    state.currentAssistantEl = createMsgEl("assistant");
+    state.currentAssistantEl = createMsgEl("assistant", msg.agent_name || state.agentName);
   }
   var body = state.currentAssistantEl.querySelector(".msg-body");
   body.dataset.raw = (body.dataset.raw || "") + msg.text;
@@ -464,7 +541,7 @@ function endStream() {
 function handleToolCall(msg) {
   if (!state.currentAssistantEl) {
     state.streaming = true;
-    state.currentAssistantEl = createMsgEl("assistant");
+    state.currentAssistantEl = createMsgEl("assistant", msg.agent_name || state.agentName);
   }
   var body = state.currentAssistantEl.querySelector(".msg-body");
   body.classList.remove("streaming-cursor");
@@ -564,11 +641,17 @@ function updateGauge(pct) {
 
 /* ── Agent status ── */
 function handleAgentStatus(msg) {
-  var s = msg.status || "idle";
+  var data = msg.data || msg;
+  var s = data.status || "idle";
   agentStatus.textContent = s;
   agentStatus.className = "status-pill " + (s === "idle" ? "idle" : "active");
-  if (msg.detail) projectDir.textContent = msg.detail;
-  if (msg.model) modelBadge.textContent = msg.model;
+  if (data.detail) projectDir.textContent = data.detail;
+  if (data.model) modelBadge.textContent = data.model;
+  /* Pick up agent name from status/heartbeat messages too */
+  if (data.agent_name && data.agent_name !== "unknown") {
+    state.agentName = data.agent_name;
+    agentNameDisplay.textContent = data.agent_name;
+  }
   if (s === "idle" && state.streaming) endStream();
 }
 
@@ -582,9 +665,9 @@ function addUserMessage(text) {
   scrollToBottom();
 }
 
-function addAssistantMessage(text) {
+function addAssistantMessage(text, senderName) {
   endStream();
-  var el = createMsgEl("assistant");
+  var el = createMsgEl("assistant", senderName);
   setBodyContent(el.querySelector(".msg-body"), text);
   scrollToBottom();
 }
@@ -602,6 +685,7 @@ function clearMessages() {
   messages.appendChild(w);
   state.turnCount = 0; turnCountEl.textContent = "0";
   state.streaming = false; state.currentAssistantEl = null;
+  /* Keep agentName — clearing messages doesn't reset the agent identity */
 }
 
 function clearWelcome() {

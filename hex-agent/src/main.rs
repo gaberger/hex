@@ -73,6 +73,32 @@ enum Command {
     BuildHash,
 }
 
+/// Generate a unique, human-readable agent name from the agent UUID.
+/// Format: "hex-<adjective>-<noun>" — deterministic from the ID so it's
+/// stable across reconnects but unique per agent instance.
+fn generate_agent_name(agent_id: &str) -> String {
+    const ADJECTIVES: &[&str] = &[
+        "swift", "bright", "keen", "bold", "calm", "sharp", "warm", "pure",
+        "clear", "deep", "fair", "firm", "glad", "kind", "neat", "prime",
+        "quick", "sage", "true", "wise", "agile", "brave", "crisp", "deft",
+        "eager", "fleet", "grand", "hardy", "lucid", "noble", "rapid", "vivid",
+    ];
+    const NOUNS: &[&str] = &[
+        "arc", "bolt", "core", "dart", "edge", "flux", "glyph", "hive",
+        "iris", "jade", "knot", "link", "mesh", "node", "opus", "prism",
+        "quill", "relay", "shard", "trace", "unit", "vault", "wave", "apex",
+        "beam", "cipher", "delta", "ember", "forge", "grain", "helix", "orbit",
+    ];
+
+    // Use first 8 bytes of the UUID to pick adjective and noun
+    let hash: u64 = agent_id.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
+    let adj = ADJECTIVES[(hash as usize) % ADJECTIVES.len()];
+    let noun = NOUNS[((hash >> 16) as usize) % NOUNS.len()];
+    // Append 4 hex chars from the ID for extra uniqueness
+    let suffix = &agent_id[..4.min(agent_id.len())];
+    format!("hex-{}-{}-{}", adj, noun, suffix)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -299,18 +325,17 @@ async fn main() -> anyhow::Result<()> {
         })?;
 
         let agent_id = uuid::Uuid::new_v4().to_string();
+        let agent_display_name = args.agent.clone().unwrap_or_else(|| generate_agent_name(&agent_id));
         hub_client
             .send(HubMessage::Register {
                 agent_id: agent_id.clone(),
-                agent_name: args.agent.clone().unwrap_or_else(|| "default".into()),
+                agent_name: agent_display_name.clone(),
                 project_dir: project_dir.to_string_lossy().into(),
             })
             .await
             .map_err(|e| anyhow::anyhow!("Hub registration failed: {}", e))?;
 
-        tracing::info!(agent_id = %agent_id, hub = %hub_url, "Running in hub-managed mode");
-
-        let agent_display_name = args.agent.clone().unwrap_or_else(|| "default".into());
+        tracing::info!(agent_id = %agent_id, name = %agent_display_name, hub = %hub_url, "Running in hub-managed mode");
 
         // Shared agent status: 0=idle, 1=thinking, 2=executing
         let agent_status_flag = Arc::new(AtomicU8::new(0));

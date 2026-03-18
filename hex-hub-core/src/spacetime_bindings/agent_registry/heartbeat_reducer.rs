@@ -32,29 +32,51 @@ impl __sdk::InModule for HeartbeatArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait heartbeat {
     /// Request that the remote module invoke the reducer `heartbeat` to run as soon as possible.
-    fn heartbeat(&self, agent_id: String, turn_count: u32, token_usage: u64,) -> __sdk::Result<()>;
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and this method provides no way to listen for its completion status.
+    /// /// Use [`heartbeat:heartbeat_then`] to run a callback after the reducer completes.
+    fn heartbeat(&self, agent_id: String, turn_count: u32, token_usage: u64) -> __sdk::Result<()> {
+        self.heartbeat_then(agent_id, turn_count, token_usage, |_, _| {})
+    }
 
-    /// Register a callback to run whenever we are notified of an invocation of the reducer `heartbeat`.
-    fn on_heartbeat(&self, callback: impl FnMut(&super::ReducerEventContext, &HeartbeatArgs) + Send + 'static) -> __sdk::CallbackId;
+    /// Request that the remote module invoke the reducer `heartbeat` to run as soon as possible,
+    /// registering `callback` to run when we are notified that the reducer completed.
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and its status can be observed with the `callback`.
+    fn heartbeat_then(
+        &self,
+        agent_id: String,
+        turn_count: u32,
+        token_usage: u64,
 
-    /// Unregister a previously-registered callback.
-    fn remove_on_heartbeat(&self, callback: __sdk::CallbackId);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()>;
 }
 
 impl heartbeat for super::RemoteReducers {
-    fn heartbeat(&self, agent_id: String, turn_count: u32, token_usage: u64,) -> __sdk::Result<()> {
-        self.imp.call_reducer("heartbeat", HeartbeatArgs { agent_id, turn_count, token_usage })
-    }
+    fn heartbeat_then(
+        &self,
+        agent_id: String,
+        turn_count: u32,
+        token_usage: u64,
 
-    fn on_heartbeat(&self, mut callback: impl FnMut(&super::ReducerEventContext, &HeartbeatArgs) + Send + 'static) -> __sdk::CallbackId {
-        self.imp.on_reducer("heartbeat", Box::new(move |ctx: &super::ReducerEventContext| {
-            let super::Reducer::Heartbeat { agent_id, turn_count, token_usage } = &ctx.event.reducer else { unreachable!() };
-            let args = HeartbeatArgs { agent_id: agent_id.clone(), turn_count: turn_count.clone(), token_usage: token_usage.clone() };
-            callback(ctx, &args);
-        }))
-    }
-
-    fn remove_on_heartbeat(&self, callback: __sdk::CallbackId) {
-        self.imp.remove_on_reducer("heartbeat", callback);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()> {
+        self.imp.invoke_reducer_with_callback(
+            HeartbeatArgs {
+                agent_id,
+                turn_count,
+                token_usage,
+            },
+            callback,
+        )
     }
 }

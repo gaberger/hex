@@ -69,6 +69,7 @@ pub struct ChatMessage {
     pub id: String,
     pub conversation_id: String,
     pub role: String,
+    pub sender_name: String,
     pub content: String,
     pub timestamp: String,
 }

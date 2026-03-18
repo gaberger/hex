@@ -60,6 +60,7 @@ impl SqliteStateAdapter {
                 id TEXT PRIMARY KEY,
                 conversation_id TEXT NOT NULL,
                 role TEXT NOT NULL,
+                sender_name TEXT NOT NULL DEFAULT '',
                 content TEXT NOT NULL,
                 timestamp TEXT NOT NULL
             );
@@ -348,8 +349,8 @@ impl IStatePort for SqliteStateAdapter {
     async fn chat_send(&self, message: ChatMessage) -> Result<(), StateError> {
         let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
         conn.execute(
-            "INSERT INTO state_chat_messages (id, conversation_id, role, content, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![message.id, message.conversation_id, message.role, message.content, message.timestamp],
+            "INSERT INTO state_chat_messages (id, conversation_id, role, sender_name, content, timestamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![message.id, message.conversation_id, message.role, message.sender_name, message.content, message.timestamp],
         ).map_err(|e| StateError::Storage(e.to_string()))?;
 
         let _ = self.event_tx.send(StateEvent::ChatMessage { message });
@@ -363,7 +364,7 @@ impl IStatePort for SqliteStateAdapter {
     ) -> Result<Vec<ChatMessage>, StateError> {
         let conn = self.db.lock().map_err(|e| StateError::Storage(e.to_string()))?;
         let mut stmt = conn
-            .prepare("SELECT id, conversation_id, role, content, timestamp FROM state_chat_messages WHERE conversation_id = ?1 ORDER BY timestamp DESC LIMIT ?2")
+            .prepare("SELECT id, conversation_id, role, sender_name, content, timestamp FROM state_chat_messages WHERE conversation_id = ?1 ORDER BY timestamp DESC LIMIT ?2")
             .map_err(|e| StateError::Storage(e.to_string()))?;
 
         let msgs = stmt
@@ -372,8 +373,9 @@ impl IStatePort for SqliteStateAdapter {
                     id: row.get(0)?,
                     conversation_id: row.get(1)?,
                     role: row.get(2)?,
-                    content: row.get(3)?,
-                    timestamp: row.get(4)?,
+                    sender_name: row.get(3)?,
+                    content: row.get(4)?,
+                    timestamp: row.get(5)?,
                 })
             })
             .map_err(|e| StateError::Storage(e.to_string()))?

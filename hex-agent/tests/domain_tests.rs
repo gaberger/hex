@@ -128,13 +128,14 @@ fn hub_message_serialization() {
 
     let msg = HubMessage::StreamChunk {
         text: "hello".into(),
+        agent_name: None,
     };
     let json = serde_json::to_string(&msg).unwrap();
     assert!(json.contains("\"type\":\"stream_chunk\""));
 
     let parsed: HubMessage = serde_json::from_str(&json).unwrap();
     match parsed {
-        HubMessage::StreamChunk { text } => assert_eq!(text, "hello"),
+        HubMessage::StreamChunk { text, .. } => assert_eq!(text, "hello"),
         _ => panic!("Expected StreamChunk"),
     }
 }

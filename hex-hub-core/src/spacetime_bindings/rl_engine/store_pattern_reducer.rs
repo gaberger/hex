@@ -32,29 +32,56 @@ impl __sdk::InModule for StorePatternArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait store_pattern {
     /// Request that the remote module invoke the reducer `store_pattern` to run as soon as possible.
-    fn store_pattern(&self, category: String, content: String, confidence: f64,) -> __sdk::Result<()>;
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and this method provides no way to listen for its completion status.
+    /// /// Use [`store_pattern:store_pattern_then`] to run a callback after the reducer completes.
+    fn store_pattern(
+        &self,
+        category: String,
+        content: String,
+        confidence: f64,
+    ) -> __sdk::Result<()> {
+        self.store_pattern_then(category, content, confidence, |_, _| {})
+    }
 
-    /// Register a callback to run whenever we are notified of an invocation of the reducer `store_pattern`.
-    fn on_store_pattern(&self, callback: impl FnMut(&super::ReducerEventContext, &StorePatternArgs) + Send + 'static) -> __sdk::CallbackId;
+    /// Request that the remote module invoke the reducer `store_pattern` to run as soon as possible,
+    /// registering `callback` to run when we are notified that the reducer completed.
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and its status can be observed with the `callback`.
+    fn store_pattern_then(
+        &self,
+        category: String,
+        content: String,
+        confidence: f64,
 
-    /// Unregister a previously-registered callback.
-    fn remove_on_store_pattern(&self, callback: __sdk::CallbackId);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()>;
 }
 
 impl store_pattern for super::RemoteReducers {
-    fn store_pattern(&self, category: String, content: String, confidence: f64,) -> __sdk::Result<()> {
-        self.imp.call_reducer("store_pattern", StorePatternArgs { category, content, confidence })
-    }
+    fn store_pattern_then(
+        &self,
+        category: String,
+        content: String,
+        confidence: f64,
 
-    fn on_store_pattern(&self, mut callback: impl FnMut(&super::ReducerEventContext, &StorePatternArgs) + Send + 'static) -> __sdk::CallbackId {
-        self.imp.on_reducer("store_pattern", Box::new(move |ctx: &super::ReducerEventContext| {
-            let super::Reducer::StorePattern { category, content, confidence } = &ctx.event.reducer else { unreachable!() };
-            let args = StorePatternArgs { category: category.clone(), content: content.clone(), confidence: confidence.clone() };
-            callback(ctx, &args);
-        }))
-    }
-
-    fn remove_on_store_pattern(&self, callback: __sdk::CallbackId) {
-        self.imp.remove_on_reducer("store_pattern", callback);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()> {
+        self.imp.invoke_reducer_with_callback(
+            StorePatternArgs {
+                category,
+                content,
+                confidence,
+            },
+            callback,
+        )
     }
 }

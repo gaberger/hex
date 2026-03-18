@@ -10,6 +10,7 @@ pub struct Message {
     pub id: String,
     pub conversation_id: String,
     pub role: String,
+    pub sender_name: String,
     pub content: String,
     pub timestamp: String,
 }
@@ -25,6 +26,7 @@ pub struct MessageCols {
     pub id: __sdk::__query_builder::Col<Message, String>,
     pub conversation_id: __sdk::__query_builder::Col<Message, String>,
     pub role: __sdk::__query_builder::Col<Message, String>,
+    pub sender_name: __sdk::__query_builder::Col<Message, String>,
     pub content: __sdk::__query_builder::Col<Message, String>,
     pub timestamp: __sdk::__query_builder::Col<Message, String>,
 }
@@ -36,6 +38,7 @@ impl __sdk::__query_builder::HasCols for Message {
             id: __sdk::__query_builder::Col::new(table_name, "id"),
             conversation_id: __sdk::__query_builder::Col::new(table_name, "conversation_id"),
             role: __sdk::__query_builder::Col::new(table_name, "role"),
+            sender_name: __sdk::__query_builder::Col::new(table_name, "sender_name"),
             content: __sdk::__query_builder::Col::new(table_name, "content"),
             timestamp: __sdk::__query_builder::Col::new(table_name, "timestamp"),
         }
@@ -58,3 +61,4 @@ impl __sdk::__query_builder::HasIxCols for Message {
     }
 }
 
+impl __sdk::__query_builder::CanBeLookupTable for Message {}

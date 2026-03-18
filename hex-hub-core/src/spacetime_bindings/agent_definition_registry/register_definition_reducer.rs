@@ -46,29 +46,96 @@ impl __sdk::InModule for RegisterDefinitionArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait register_definition {
     /// Request that the remote module invoke the reducer `register_definition` to run as soon as possible.
-    fn register_definition(&self, id: String, name: String, description: String, role_prompt: String, allowed_tools_json: String, constraints_json: String, model: String, max_turns: u32, metadata_json: String, timestamp: String,) -> __sdk::Result<()>;
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and this method provides no way to listen for its completion status.
+    /// /// Use [`register_definition:register_definition_then`] to run a callback after the reducer completes.
+    fn register_definition(
+        &self,
+        id: String,
+        name: String,
+        description: String,
+        role_prompt: String,
+        allowed_tools_json: String,
+        constraints_json: String,
+        model: String,
+        max_turns: u32,
+        metadata_json: String,
+        timestamp: String,
+    ) -> __sdk::Result<()> {
+        self.register_definition_then(
+            id,
+            name,
+            description,
+            role_prompt,
+            allowed_tools_json,
+            constraints_json,
+            model,
+            max_turns,
+            metadata_json,
+            timestamp,
+            |_, _| {},
+        )
+    }
 
-    /// Register a callback to run whenever we are notified of an invocation of the reducer `register_definition`.
-    fn on_register_definition(&self, callback: impl FnMut(&super::ReducerEventContext, &RegisterDefinitionArgs) + Send + 'static) -> __sdk::CallbackId;
+    /// Request that the remote module invoke the reducer `register_definition` to run as soon as possible,
+    /// registering `callback` to run when we are notified that the reducer completed.
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and its status can be observed with the `callback`.
+    fn register_definition_then(
+        &self,
+        id: String,
+        name: String,
+        description: String,
+        role_prompt: String,
+        allowed_tools_json: String,
+        constraints_json: String,
+        model: String,
+        max_turns: u32,
+        metadata_json: String,
+        timestamp: String,
 
-    /// Unregister a previously-registered callback.
-    fn remove_on_register_definition(&self, callback: __sdk::CallbackId);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()>;
 }
 
 impl register_definition for super::RemoteReducers {
-    fn register_definition(&self, id: String, name: String, description: String, role_prompt: String, allowed_tools_json: String, constraints_json: String, model: String, max_turns: u32, metadata_json: String, timestamp: String,) -> __sdk::Result<()> {
-        self.imp.call_reducer("register_definition", RegisterDefinitionArgs { id, name, description, role_prompt, allowed_tools_json, constraints_json, model, max_turns, metadata_json, timestamp })
-    }
+    fn register_definition_then(
+        &self,
+        id: String,
+        name: String,
+        description: String,
+        role_prompt: String,
+        allowed_tools_json: String,
+        constraints_json: String,
+        model: String,
+        max_turns: u32,
+        metadata_json: String,
+        timestamp: String,
 
-    fn on_register_definition(&self, mut callback: impl FnMut(&super::ReducerEventContext, &RegisterDefinitionArgs) + Send + 'static) -> __sdk::CallbackId {
-        self.imp.on_reducer("register_definition", Box::new(move |ctx: &super::ReducerEventContext| {
-            let super::Reducer::RegisterDefinition { id, name, description, role_prompt, allowed_tools_json, constraints_json, model, max_turns, metadata_json, timestamp } = &ctx.event.reducer else { unreachable!() };
-            let args = RegisterDefinitionArgs { id: id.clone(), name: name.clone(), description: description.clone(), role_prompt: role_prompt.clone(), allowed_tools_json: allowed_tools_json.clone(), constraints_json: constraints_json.clone(), model: model.clone(), max_turns: max_turns.clone(), metadata_json: metadata_json.clone(), timestamp: timestamp.clone() };
-            callback(ctx, &args);
-        }))
-    }
-
-    fn remove_on_register_definition(&self, callback: __sdk::CallbackId) {
-        self.imp.remove_on_reducer("register_definition", callback);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()> {
+        self.imp.invoke_reducer_with_callback(
+            RegisterDefinitionArgs {
+                id,
+                name,
+                description,
+                role_prompt,
+                allowed_tools_json,
+                constraints_json,
+                model,
+                max_turns,
+                metadata_json,
+                timestamp,
+            },
+            callback,
+        )
     }
 }

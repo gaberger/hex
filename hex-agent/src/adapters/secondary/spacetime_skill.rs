@@ -41,7 +41,7 @@ impl SpacetimeSkillLoader {
     /// Call this once at startup after constructing the adapter.
     pub async fn connect(&self, _host: &str, _database: &str) -> Result<(), SkillLoadError> {
         // TODO: When spacetimedb-sdk is integrated:
-        // 1. DbConnection::builder().with_uri(host).with_module_name(database).build()
+        // 1. DbConnection::builder().with_uri(host).with_database_name(database).build()
         // 2. Subscribe to "SELECT * FROM skill"
         // 3. Register on_insert / on_update / on_delete callbacks that call self.rebuild_cache()
         //

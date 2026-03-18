@@ -213,6 +213,7 @@ async fn chat_send_and_history() {
         id: "msg-1".to_string(),
         conversation_id: "conv-1".to_string(),
         role: "user".to_string(),
+        sender_name: "user".to_string(),
         content: "Hello world".to_string(),
         timestamp: "2025-01-01T00:00:00Z".to_string(),
     };
@@ -232,6 +233,7 @@ async fn chat_history_respects_conversation_id() {
             id: "m1".to_string(),
             conversation_id: "conv-a".to_string(),
             role: "user".to_string(),
+            sender_name: "user".to_string(),
             content: "A".to_string(),
             timestamp: "2025-01-01T00:00:01Z".to_string(),
         })
@@ -243,6 +245,7 @@ async fn chat_history_respects_conversation_id() {
             id: "m2".to_string(),
             conversation_id: "conv-b".to_string(),
             role: "user".to_string(),
+            sender_name: "user".to_string(),
             content: "B".to_string(),
             timestamp: "2025-01-01T00:00:02Z".to_string(),
         })

@@ -155,6 +155,7 @@ async fn handle_chat_ws(
     let mut recv_task = tokio::spawn(async move {
         // Track connected agent for disconnect notification
         let mut registered_agent_id: Option<String> = None;
+        let mut registered_agent_name: Option<String> = None;
 
         while let Some(Ok(msg)) = receiver.next().await {
             let text = match msg {
@@ -173,7 +174,12 @@ async fn handle_chat_ws(
                         if let Some(msg_type) = raw.get("type").and_then(|t| t.as_str()) {
                             // Handle heartbeat: broadcast as agent_status with last_seen
                             if msg_type == "heartbeat" {
-                                let agent_name = raw.get("agent_name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                let hb_name = raw.get("agent_name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                // Update registered name from heartbeat if we don't have one yet
+                                if registered_agent_name.is_none() && hb_name != "unknown" {
+                                    registered_agent_name = Some(hb_name.to_string());
+                                }
+                                let agent_name = registered_agent_name.as_deref().unwrap_or(hb_name);
                                 let status = raw.get("status").and_then(|v| v.as_str()).unwrap_or("idle");
                                 let uptime = raw.get("uptime_secs").and_then(|v| v.as_u64()).unwrap_or(0);
                                 let _ = state2.ws_tx.send(WsEnvelope {
@@ -227,6 +233,7 @@ async fn handle_chat_ws(
                             data: json!({
                                 "sessionId": session_id,
                                 "content": content,
+                                "senderName": "user",
                             }),
                         });
                     }
@@ -244,8 +251,9 @@ async fn handle_chat_ws(
                     agent_name,
                     project_dir,
                 } => {
-                    // Store the agent_id for this session so we can notify on disconnect
+                    // Store the agent identity for this session
                     registered_agent_id = Some(agent_id.clone());
+                    registered_agent_name = Some(agent_name.clone());
                     tracing::info!(
                         agent_id = %agent_id,
                         agent_name = %agent_name,
@@ -253,7 +261,7 @@ async fn handle_chat_ws(
                         "Agent registered on chat session {}",
                         session_id
                     );
-                    // Broadcast agent_connected so browser clients know
+                    // Broadcast agent_connected so browser clients know the agent's name
                     let _ = state2.ws_tx.send(WsEnvelope {
                         topic: format!("agent:{}:output", session_id),
                         event: "agent_connected".to_string(),

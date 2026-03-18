@@ -28,29 +28,41 @@ impl __sdk::InModule for ClearConversationArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait clear_conversation {
     /// Request that the remote module invoke the reducer `clear_conversation` to run as soon as possible.
-    fn clear_conversation(&self, conversation_id: String,) -> __sdk::Result<()>;
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and this method provides no way to listen for its completion status.
+    /// /// Use [`clear_conversation:clear_conversation_then`] to run a callback after the reducer completes.
+    fn clear_conversation(&self, conversation_id: String) -> __sdk::Result<()> {
+        self.clear_conversation_then(conversation_id, |_, _| {})
+    }
 
-    /// Register a callback to run whenever we are notified of an invocation of the reducer `clear_conversation`.
-    fn on_clear_conversation(&self, callback: impl FnMut(&super::ReducerEventContext, &ClearConversationArgs) + Send + 'static) -> __sdk::CallbackId;
+    /// Request that the remote module invoke the reducer `clear_conversation` to run as soon as possible,
+    /// registering `callback` to run when we are notified that the reducer completed.
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and its status can be observed with the `callback`.
+    fn clear_conversation_then(
+        &self,
+        conversation_id: String,
 
-    /// Unregister a previously-registered callback.
-    fn remove_on_clear_conversation(&self, callback: __sdk::CallbackId);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()>;
 }
 
 impl clear_conversation for super::RemoteReducers {
-    fn clear_conversation(&self, conversation_id: String,) -> __sdk::Result<()> {
-        self.imp.call_reducer("clear_conversation", ClearConversationArgs { conversation_id })
-    }
+    fn clear_conversation_then(
+        &self,
+        conversation_id: String,
 
-    fn on_clear_conversation(&self, mut callback: impl FnMut(&super::ReducerEventContext, &ClearConversationArgs) + Send + 'static) -> __sdk::CallbackId {
-        self.imp.on_reducer("clear_conversation", Box::new(move |ctx: &super::ReducerEventContext| {
-            let super::Reducer::ClearConversation { conversation_id } = &ctx.event.reducer else { unreachable!() };
-            let args = ClearConversationArgs { conversation_id: conversation_id.clone() };
-            callback(ctx, &args);
-        }))
-    }
-
-    fn remove_on_clear_conversation(&self, callback: __sdk::CallbackId) {
-        self.imp.remove_on_reducer("clear_conversation", callback);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()> {
+        self.imp
+            .invoke_reducer_with_callback(ClearConversationArgs { conversation_id }, callback)
     }
 }

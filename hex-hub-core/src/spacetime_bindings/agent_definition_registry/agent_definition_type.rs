@@ -81,3 +81,4 @@ impl __sdk::__query_builder::HasIxCols for AgentDefinition {
     }
 }
 
+impl __sdk::__query_builder::CanBeLookupTable for AgentDefinition {}

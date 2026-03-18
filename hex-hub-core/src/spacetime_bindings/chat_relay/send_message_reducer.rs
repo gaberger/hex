@@ -9,6 +9,7 @@ use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 pub(super) struct SendMessageArgs {
     pub conversation_id: String,
     pub role: String,
+    pub sender_name: String,
     pub content: String,
 }
 
@@ -17,6 +18,7 @@ impl From<SendMessageArgs> for super::Reducer {
         Self::SendMessage {
             conversation_id: args.conversation_id,
             role: args.role,
+            sender_name: args.sender_name,
             content: args.content,
         }
     }
@@ -32,29 +34,60 @@ impl __sdk::InModule for SendMessageArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait send_message {
     /// Request that the remote module invoke the reducer `send_message` to run as soon as possible.
-    fn send_message(&self, conversation_id: String, role: String, content: String,) -> __sdk::Result<()>;
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and this method provides no way to listen for its completion status.
+    /// /// Use [`send_message:send_message_then`] to run a callback after the reducer completes.
+    fn send_message(
+        &self,
+        conversation_id: String,
+        role: String,
+        sender_name: String,
+        content: String,
+    ) -> __sdk::Result<()> {
+        self.send_message_then(conversation_id, role, sender_name, content, |_, _| {})
+    }
 
-    /// Register a callback to run whenever we are notified of an invocation of the reducer `send_message`.
-    fn on_send_message(&self, callback: impl FnMut(&super::ReducerEventContext, &SendMessageArgs) + Send + 'static) -> __sdk::CallbackId;
+    /// Request that the remote module invoke the reducer `send_message` to run as soon as possible,
+    /// registering `callback` to run when we are notified that the reducer completed.
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and its status can be observed with the `callback`.
+    fn send_message_then(
+        &self,
+        conversation_id: String,
+        role: String,
+        sender_name: String,
+        content: String,
 
-    /// Unregister a previously-registered callback.
-    fn remove_on_send_message(&self, callback: __sdk::CallbackId);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()>;
 }
 
 impl send_message for super::RemoteReducers {
-    fn send_message(&self, conversation_id: String, role: String, content: String,) -> __sdk::Result<()> {
-        self.imp.call_reducer("send_message", SendMessageArgs { conversation_id, role, content })
-    }
+    fn send_message_then(
+        &self,
+        conversation_id: String,
+        role: String,
+        sender_name: String,
+        content: String,
 
-    fn on_send_message(&self, mut callback: impl FnMut(&super::ReducerEventContext, &SendMessageArgs) + Send + 'static) -> __sdk::CallbackId {
-        self.imp.on_reducer("send_message", Box::new(move |ctx: &super::ReducerEventContext| {
-            let super::Reducer::SendMessage { conversation_id, role, content } = &ctx.event.reducer else { unreachable!() };
-            let args = SendMessageArgs { conversation_id: conversation_id.clone(), role: role.clone(), content: content.clone() };
-            callback(ctx, &args);
-        }))
-    }
-
-    fn remove_on_send_message(&self, callback: __sdk::CallbackId) {
-        self.imp.remove_on_reducer("send_message", callback);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()> {
+        self.imp.invoke_reducer_with_callback(
+            SendMessageArgs {
+                conversation_id,
+                role,
+                sender_name,
+                content,
+            },
+            callback,
+        )
     }
 }

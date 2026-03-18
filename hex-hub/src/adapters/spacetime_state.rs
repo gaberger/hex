@@ -75,7 +75,7 @@ mod real {
         /// Once generated bindings are available, this will:
         /// 1. DbConnection::builder()
         ///      .with_uri(&self.config.host)
-        ///      .with_module_name(&self.config.database)
+        ///      .with_database_name(&self.config.database)
         ///      .on_connect(|ctx| {
         ///          ctx.subscription_builder()
         ///              .on_applied(|ctx| { /* cache ready */ })

@@ -26,29 +26,41 @@ impl __sdk::InModule for RemoveSkillArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait remove_skill {
     /// Request that the remote module invoke the reducer `remove_skill` to run as soon as possible.
-    fn remove_skill(&self, id: String,) -> __sdk::Result<()>;
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and this method provides no way to listen for its completion status.
+    /// /// Use [`remove_skill:remove_skill_then`] to run a callback after the reducer completes.
+    fn remove_skill(&self, id: String) -> __sdk::Result<()> {
+        self.remove_skill_then(id, |_, _| {})
+    }
 
-    /// Register a callback to run whenever we are notified of an invocation of the reducer `remove_skill`.
-    fn on_remove_skill(&self, callback: impl FnMut(&super::ReducerEventContext, &RemoveSkillArgs) + Send + 'static) -> __sdk::CallbackId;
+    /// Request that the remote module invoke the reducer `remove_skill` to run as soon as possible,
+    /// registering `callback` to run when we are notified that the reducer completed.
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and its status can be observed with the `callback`.
+    fn remove_skill_then(
+        &self,
+        id: String,
 
-    /// Unregister a previously-registered callback.
-    fn remove_on_remove_skill(&self, callback: __sdk::CallbackId);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()>;
 }
 
 impl remove_skill for super::RemoteReducers {
-    fn remove_skill(&self, id: String,) -> __sdk::Result<()> {
-        self.imp.call_reducer("remove_skill", RemoveSkillArgs { id })
-    }
+    fn remove_skill_then(
+        &self,
+        id: String,
 
-    fn on_remove_skill(&self, mut callback: impl FnMut(&super::ReducerEventContext, &RemoveSkillArgs) + Send + 'static) -> __sdk::CallbackId {
-        self.imp.on_reducer("remove_skill", Box::new(move |ctx: &super::ReducerEventContext| {
-            let super::Reducer::RemoveSkill { id } = &ctx.event.reducer else { unreachable!() };
-            let args = RemoveSkillArgs { id: id.clone() };
-            callback(ctx, &args);
-        }))
-    }
-
-    fn remove_on_remove_skill(&self, callback: __sdk::CallbackId) {
-        self.imp.remove_on_reducer("remove_skill", callback);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()> {
+        self.imp
+            .invoke_reducer_with_callback(RemoveSkillArgs { id }, callback)
     }
 }

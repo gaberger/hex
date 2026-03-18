@@ -26,29 +26,41 @@ impl __sdk::InModule for DecrementAgentsArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait decrement_agents {
     /// Request that the remote module invoke the reducer `decrement_agents` to run as soon as possible.
-    fn decrement_agents(&self, id: String,) -> __sdk::Result<()>;
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and this method provides no way to listen for its completion status.
+    /// /// Use [`decrement_agents:decrement_agents_then`] to run a callback after the reducer completes.
+    fn decrement_agents(&self, id: String) -> __sdk::Result<()> {
+        self.decrement_agents_then(id, |_, _| {})
+    }
 
-    /// Register a callback to run whenever we are notified of an invocation of the reducer `decrement_agents`.
-    fn on_decrement_agents(&self, callback: impl FnMut(&super::ReducerEventContext, &DecrementAgentsArgs) + Send + 'static) -> __sdk::CallbackId;
+    /// Request that the remote module invoke the reducer `decrement_agents` to run as soon as possible,
+    /// registering `callback` to run when we are notified that the reducer completed.
+    ///
+    /// This method returns immediately, and errors only if we are unable to send the request.
+    /// The reducer will run asynchronously in the future,
+    ///  and its status can be observed with the `callback`.
+    fn decrement_agents_then(
+        &self,
+        id: String,
 
-    /// Unregister a previously-registered callback.
-    fn remove_on_decrement_agents(&self, callback: __sdk::CallbackId);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()>;
 }
 
 impl decrement_agents for super::RemoteReducers {
-    fn decrement_agents(&self, id: String,) -> __sdk::Result<()> {
-        self.imp.call_reducer("decrement_agents", DecrementAgentsArgs { id })
-    }
+    fn decrement_agents_then(
+        &self,
+        id: String,
 
-    fn on_decrement_agents(&self, mut callback: impl FnMut(&super::ReducerEventContext, &DecrementAgentsArgs) + Send + 'static) -> __sdk::CallbackId {
-        self.imp.on_reducer("decrement_agents", Box::new(move |ctx: &super::ReducerEventContext| {
-            let super::Reducer::DecrementAgents { id } = &ctx.event.reducer else { unreachable!() };
-            let args = DecrementAgentsArgs { id: id.clone() };
-            callback(ctx, &args);
-        }))
-    }
-
-    fn remove_on_decrement_agents(&self, callback: __sdk::CallbackId) {
-        self.imp.remove_on_reducer("decrement_agents", callback);
+        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
+            + Send
+            + 'static,
+    ) -> __sdk::Result<()> {
+        self.imp
+            .invoke_reducer_with_callback(DecrementAgentsArgs { id }, callback)
     }
 }

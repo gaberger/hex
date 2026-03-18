@@ -38,11 +38,11 @@ gray_matter = "0.2"
 
 # SpacetimeDB subscription support (optional)
 dashmap = { version = "6", optional = true }
-spacetimedb-sdk = { version = "1.0", optional = true }
+spacetimedb-sdk = { version = "2.0", optional = true }
 hex-hub-core = { path = "../hex-hub-core", optional = true, features = ["spacetimedb"] }
 
 [features]
-default = []
+default = ["spacetimedb"]
 spacetimedb = ["dep:dashmap", "dep:spacetimedb-sdk", "dep:hex-hub-core"]
 
 [profile.release]

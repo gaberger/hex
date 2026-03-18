@@ -84,6 +84,7 @@ async fn agent_connects_and_registers_with_hub() {
     client
         .send(HubMessage::StreamChunk {
             text: "I received your message".into(),
+            agent_name: None,
         })
         .await
         .unwrap();
@@ -95,6 +96,7 @@ async fn agent_connects_and_registers_with_hub() {
             output_tokens: 50,
             total_input: 100,
             total_output: 50,
+            agent_name: None,
         })
         .await
         .unwrap();
@@ -169,6 +171,7 @@ async fn send_fails_when_not_connected() {
     let result = client
         .send(HubMessage::StreamChunk {
             text: "test".into(),
+            agent_name: None,
         })
         .await;
     assert!(result.is_err());
@@ -182,25 +185,29 @@ async fn hub_message_serde_roundtrip_all_variants() {
             agent_name: "coder".into(),
             project_dir: "/proj".into(),
         },
-        HubMessage::StreamChunk { text: "hello".into() },
+        HubMessage::StreamChunk { text: "hello".into(), agent_name: None },
         HubMessage::ToolCall {
             tool_name: "read_file".into(),
             tool_input: serde_json::json!({"path": "/foo.rs"}),
+            agent_name: None,
         },
         HubMessage::ToolResultMsg {
             tool_name: "read_file".into(),
             content: "fn main() {}".into(),
             is_error: false,
+            agent_name: None,
         },
         HubMessage::TokenUpdate {
             input_tokens: 100,
             output_tokens: 50,
             total_input: 1000,
             total_output: 500,
+            agent_name: None,
         },
         HubMessage::AgentStatus {
             status: "thinking".into(),
             detail: "processing tools".into(),
+            agent_name: None,
         },
         HubMessage::ChatMessage {
             content: "What is Rust?".into(),

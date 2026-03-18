@@ -10,6 +10,8 @@ pub struct Conversation {
     pub id: String,
     pub created_at: String,
     pub agent_id: String,
+    pub agent_name: String,
+    pub archived: bool,
 }
 
 impl __sdk::InModule for Conversation {
@@ -23,6 +25,8 @@ pub struct ConversationCols {
     pub id: __sdk::__query_builder::Col<Conversation, String>,
     pub created_at: __sdk::__query_builder::Col<Conversation, String>,
     pub agent_id: __sdk::__query_builder::Col<Conversation, String>,
+    pub agent_name: __sdk::__query_builder::Col<Conversation, String>,
+    pub archived: __sdk::__query_builder::Col<Conversation, bool>,
 }
 
 impl __sdk::__query_builder::HasCols for Conversation {
@@ -32,6 +36,8 @@ impl __sdk::__query_builder::HasCols for Conversation {
             id: __sdk::__query_builder::Col::new(table_name, "id"),
             created_at: __sdk::__query_builder::Col::new(table_name, "created_at"),
             agent_id: __sdk::__query_builder::Col::new(table_name, "agent_id"),
+            agent_name: __sdk::__query_builder::Col::new(table_name, "agent_name"),
+            archived: __sdk::__query_builder::Col::new(table_name, "archived"),
         }
     }
 }
@@ -52,3 +58,4 @@ impl __sdk::__query_builder::HasIxCols for Conversation {
     }
 }
 
+impl __sdk::__query_builder::CanBeLookupTable for Conversation {}
