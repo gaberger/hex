@@ -154,11 +154,11 @@ impl RateLimitState {
         Self {
             model,
             rpm_used: 0,
-            rpm_limit: 50,       // Conservative default
+            rpm_limit: 1000,           // Anthropic Build tier default
             input_tpm_used: 0,
-            input_tpm_limit: 40_000,  // Conservative default for Sonnet
+            input_tpm_limit: 400_000,  // Anthropic Build tier (Sonnet)
             output_tpm_used: 0,
-            output_tpm_limit: 8_000,   // Conservative default
+            output_tpm_limit: 80_000,  // Anthropic Build tier (Sonnet)
             window_start: Instant::now(),
             window_duration: Duration::from_secs(60),
             consecutive_429s: 0,
@@ -220,6 +220,12 @@ impl RateLimitState {
         // In backoff from a recent 429
         if self.backoff_ms > 0 {
             return Some(Duration::from_millis(self.backoff_ms));
+        }
+
+        // Don't throttle if we haven't recorded any usage yet —
+        // we have no data to base a throttle decision on.
+        if self.rpm_used == 0 && self.input_tpm_used == 0 && self.output_tpm_used == 0 {
+            return None;
         }
 
         // RPM check — leave 10% headroom
