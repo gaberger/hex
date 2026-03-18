@@ -30,7 +30,7 @@ import type {
   IHubCommandReceiverPort,
 } from '../../core/ports/hub-command.js';
 
-/** Fixed dashboard hub port — must match dashboard-hub.ts */
+/** Fixed dashboard hub port — hex-hub default */
 const HUB_PORT = 5555;
 
 /** Read auth token from hub lock file. Returns empty string if unavailable. */

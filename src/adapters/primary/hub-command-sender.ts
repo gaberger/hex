@@ -19,7 +19,7 @@ import type {
   IHubCommandSenderPort,
 } from '../../core/ports/hub-command.js';
 
-/** Default hub port — must match dashboard-hub.ts */
+/** Default hub port — hex-hub default */
 const DEFAULT_HUB_PORT = 5555;
 
 /** Max time to wait for a command result (ms) */
