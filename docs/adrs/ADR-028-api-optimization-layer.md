@@ -67,7 +67,7 @@ Usecase that classifies requests and routes to the optimal endpoint.
 
 - Tracks: cached vs uncached input, output, batch vs real-time, per-model breakdown
 - Exposes `ApiMetricsSnapshot` with estimated savings percentage
-- Feeds into hex-hub dashboard via existing hub WebSocket protocol
+- Feeds into hex-nexus dashboard via existing hub WebSocket protocol
 
 ## Architecture
 

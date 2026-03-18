@@ -19,7 +19,7 @@ Static routing (always use Sonnet) wastes money on simple tasks and hits rate li
 
 ## Decision
 
-Use a reinforcement learning (RL) engine hosted in hex-hub to learn optimal model selection and context strategy per task type. The agent queries the RL engine before each API call, and reports rewards after.
+Use a reinforcement learning (RL) engine hosted in hex-nexus to learn optimal model selection and context strategy per task type. The agent queries the RL engine before each API call, and reports rewards after.
 
 ### 1. State Space
 
@@ -148,7 +148,7 @@ When pinned, the RL engine still receives state queries (for context strategy) b
 
 ```
                     ┌──────────────┐
-                    │  RL Engine   │ (hex-hub, Q-learning)
+                    │  RL Engine   │ (hex-nexus, Q-learning)
                     │  /api/rl/*   │
                     └──────┬───────┘
                            │ HTTP
@@ -194,7 +194,7 @@ pub trait RlPort: Send + Sync {
 ```
 
 Two adapters:
-- `RlClientAdapter` — HTTP client to hex-hub's `/api/rl/action` and `/api/rl/reward`
+- `RlClientAdapter` — HTTP client to hex-nexus's `/api/rl/action` and `/api/rl/reward`
 - `NoopRlAdapter` — returns `context:balanced` with Sonnet, used when hub is unavailable
 
 ## Files
@@ -218,7 +218,7 @@ Two adapters:
 
 ### Negative
 - **Cold start**: First few sessions use defaults until the Q-table has enough data
-- **Hub dependency for RL**: Without hex-hub, the agent always uses Sonnet/Balanced
+- **Hub dependency for RL**: Without hex-nexus, the agent always uses Sonnet/Balanced
 - **Exploration noise**: RL may occasionally try suboptimal models (epsilon-greedy exploration)
 
 ### Risks
