@@ -6,7 +6,7 @@ hex is a **harness** — a framework + CLI tool that gets **installed into targe
 
 **Critical**: Everything in this repo (settings, hooks, statuslines, agents, skills) exists to be instantiated INTO a target project via `hex setup` or `hex scaffold`. The `examples/` directory contains sample target projects that use hex as an installed dependency. When working on examples, you are testing hex as a consumer would use it — the example IS the project, hex is the tool.
 
-hex provides token-efficient code summaries via tree-sitter, swarm coordination via ruflo, and a specs-first development pipeline.
+hex provides token-efficient code summaries via tree-sitter, swarm coordination via HexFlo (native Rust, ADR-027), and a specs-first development pipeline.
 
 ## Behavioral Rules
 
@@ -79,19 +79,22 @@ hex adr search <q>   # Search ADRs by keyword
 hex adr abandoned    # Detect stale/abandoned ADRs
 ```
 
-### hex-hub (Dashboard Hub)
+### hex-nexus (Orchestration Nexus) + hex-hub (Dashboard Binary)
 
-The dashboard hub is a **separate Rust binary** in `hex-hub/`. It uses `rust-embed` to bake `hex-hub/assets/*` (HTML, CSS, JS) into the binary at compile time. This means:
+**hex-nexus** (`hex-nexus/`) is the core Rust library — the nexus of control for all hex operations: agent management, chat relay, RL engine, workplan orchestration, HexFlo coordination, and fleet management.
 
-- **Editing `hex-hub/assets/index.html`** (or any asset) requires rebuilding the Rust binary:
+**hex-hub** (`hex-hub/`) is a thin Rust binary that wraps hex-nexus and uses `rust-embed` to bake `hex-nexus/assets/*` (HTML, CSS, JS) into the binary at compile time. This means:
+
+- **Editing `hex-nexus/assets/index.html`** (or any asset) requires rebuilding the Rust binary:
   ```bash
   cd hex-hub && cargo build --release
   ```
 - Then restart the hub daemon and hard-refresh the browser (Cmd+Shift+R)
 - `bun run build` does NOT update the hub — it only bundles the TypeScript CLI/library
-- Hub state (swarms, agents, tasks) is persisted in **SQLite** (`hex_hub.db`) — see ADR-015
+- Hub state (swarms, agents, tasks) is persisted in **SQLite** (`~/.hex/hub.db`) or **SpacetimeDB** (ADR-025)
 - The hub binary embeds a **compile-time build hash** for version verification against the TypeScript CLI (ADR-016)
 - Multi-instance coordination uses `ICoordinationPort` with filesystem-based locking and heartbeats (ADR-011)
+- HexFlo coordination module provides native swarm orchestration (ADR-027), replacing ruflo
 
 ## Development Pipeline (Specs-First)
 
@@ -184,7 +187,7 @@ Phase 7: FINALIZE    cleanup worktrees, commit, report
 | `planner` | Decomposes requirements into adapter-bounded tasks |
 | `hex-coder` | Codes within one adapter with TDD loop |
 | `integrator` | Merges worktrees, integration tests |
-| `swarm-coordinator` | Orchestrates full lifecycle via ruflo |
+| `swarm-coordinator` | Orchestrates full lifecycle via HexFlo |
 | `dependency-analyst` | Recommends tech stack + runtime requirements |
 | `dead-code-analyzer` | Finds dead exports + hex boundary violations |
 | `scaffold-validator` | Ensures projects are runnable (README, scripts, dev server) |
@@ -199,13 +202,63 @@ Phase 7: FINALIZE    cleanup worktrees, commit, report
 - **"It compiles" ≠ "it works"**: Always include runtime validation — can a user actually start the app?
 - **Browser TypeScript needs a dev server**: Any project with HTML + TypeScript MUST include Vite (or equivalent).
 
-## Swarm Coordination (ruflo)
+## Swarm Coordination (HexFlo — ADR-027)
 
-ruflo (`@claude-flow/cli`) is a required dependency of hex. Used for:
-- Task tracking: `ISwarmPort.createTask/completeTask`
-- Agent lifecycle: `ISwarmPort.spawnAgent/terminateAgent`
-- Swarm topology: `ISwarmPort.init` (hierarchical/mesh)
-- Persistent memory: `ISwarmPort.memoryStore/Retrieve`
+HexFlo is the native Rust coordination layer built into hex-nexus. It replaces ruflo with zero external dependencies.
+
+### Architecture
+
+```
+hex-nexus/src/coordination/
+  mod.rs           # HexFlo struct — unified API for swarm/task/agent ops
+  memory.rs        # Key-value persistent memory (scoped: global, per-swarm, per-agent)
+  cleanup.rs       # Heartbeat timeout + dead agent task reclamation
+```
+
+### API Surface
+
+| Operation | HexFlo API | REST Endpoint |
+|-----------|-----------|---------------|
+| Init swarm | `HexFlo::swarm_init(name, topology)` | `POST /api/swarms` |
+| Swarm status | `HexFlo::swarm_status()` | `GET /api/swarms` |
+| Create task | `HexFlo::task_create(swarm_id, title)` | `POST /api/swarms/:id/tasks` |
+| Complete task | `HexFlo::task_complete(id, result)` | `PATCH /api/swarms/tasks/:id` |
+| Store memory | `HexFlo::memory_store(key, value, scope)` | `POST /api/hexflo/memory` |
+| Retrieve memory | `HexFlo::memory_retrieve(key)` | `GET /api/hexflo/memory/:key` |
+| Search memory | `HexFlo::memory_search(query)` | `GET /api/hexflo/memory/search` |
+| Cleanup stale | `HexFlo::cleanup_stale_agents()` | `POST /api/hexflo/cleanup` |
+
+### MCP Tools (Claude Code integration)
+
+```
+mcp__hex__hex_hexflo_swarm_init       → POST /api/swarms
+mcp__hex__hex_hexflo_swarm_status     → GET  /api/swarms
+mcp__hex__hex_hexflo_task_create      → POST /api/swarms/:id/tasks
+mcp__hex__hex_hexflo_task_list        → GET  /api/swarms
+mcp__hex__hex_hexflo_task_complete    → PATCH /api/swarms/tasks/:id
+mcp__hex__hex_hexflo_memory_store     → POST /api/hexflo/memory
+mcp__hex__hex_hexflo_memory_retrieve  → GET  /api/hexflo/memory/:key
+mcp__hex__hex_hexflo_memory_search    → GET  /api/hexflo/memory/search
+```
+
+### CLI Commands
+
+```bash
+hex swarm init <name> [topology]    # Initialize a swarm
+hex swarm status                    # Show active swarms
+hex task create <swarm-id> <title>  # Create a task
+hex task list                       # List all tasks
+hex task complete <id> [result]     # Mark task done
+hex memory store <key> <value>      # Store key-value
+hex memory get <key>                # Retrieve value
+hex memory search <query>           # Search memory
+```
+
+### Heartbeat Protocol
+
+- Agents send heartbeat every 15 seconds
+- Hub marks agents as `stale` after 45 seconds without heartbeat
+- Hub marks agents as `dead` after 120 seconds and reclaims their tasks
 
 ```bash
 # Always use background agents with bypassPermissions for file writes
@@ -215,7 +268,6 @@ Agent tool: { subagent_type: "coder", mode: "bypassPermissions", run_in_backgrou
 ## Security
 
 - `FileSystemAdapter` has path traversal protection via `safePath()`
-- `RufloAdapter` uses `execFile` (not `exec`) — no shell injection
 - API keys loaded only in `composition-root.ts` from env vars
 - Never commit `.env` files — use `.env.example`
 - Primary adapters MUST NOT use `innerHTML`/`outerHTML`/`insertAdjacentHTML` with any data that originates outside the domain layer. Use `textContent` or DOM APIs (`createElement`) instead.

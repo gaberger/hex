@@ -450,6 +450,103 @@ export const HEX_PARITY_TOOLS: MCPToolDefinition[] = [
   },
 ];
 
+// ─── HexFlo Coordination Tool Definitions (ADR-027) ──────
+
+export const HEX_HEXFLO_TOOLS: MCPToolDefinition[] = [
+  {
+    name: 'hex_hexflo_swarm_init',
+    description: 'Initialize a named swarm with a topology (hierarchical, mesh, or adaptive)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Swarm name' },
+        topology: { type: 'string', description: 'Topology: hierarchical, mesh, or adaptive (default: hierarchical)' },
+        projectId: { type: 'string', description: 'Project ID to associate with the swarm' },
+      },
+      required: ['name', 'projectId'],
+    },
+  },
+  {
+    name: 'hex_hexflo_swarm_status',
+    description: 'Get status of all active swarms with tasks and agents',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'hex_hexflo_task_create',
+    description: 'Create a task in a swarm for tracking',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        swarmId: { type: 'string', description: 'Swarm ID to create the task in' },
+        title: { type: 'string', description: 'Task title/description' },
+      },
+      required: ['swarmId', 'title'],
+    },
+  },
+  {
+    name: 'hex_hexflo_task_list',
+    description: 'List tasks, optionally filtered by swarm ID',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        swarmId: { type: 'string', description: 'Filter by swarm ID (optional)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'hex_hexflo_task_complete',
+    description: 'Mark a task as completed with an optional result and commit hash',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: 'Task ID to complete' },
+        result: { type: 'string', description: 'Result summary (optional)' },
+      },
+      required: ['taskId'],
+    },
+  },
+  {
+    name: 'hex_hexflo_memory_store',
+    description: 'Store a key-value pair in persistent HexFlo memory',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Memory key' },
+        value: { type: 'string', description: 'Memory value' },
+        scope: { type: 'string', description: 'Scope: global, swarm-<id>, or agent-<id> (default: global)' },
+      },
+      required: ['key', 'value'],
+    },
+  },
+  {
+    name: 'hex_hexflo_memory_retrieve',
+    description: 'Retrieve a value from persistent HexFlo memory by key',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Memory key to retrieve' },
+      },
+      required: ['key'],
+    },
+  },
+  {
+    name: 'hex_hexflo_memory_search',
+    description: 'Search HexFlo memory by keyword (fuzzy match on key and value)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query' },
+      },
+      required: ['query'],
+    },
+  },
+];
+
 // ─── MCP Adapter ─────────────────────────────────────────
 
 export interface MCPContext {
@@ -501,7 +598,7 @@ export class MCPAdapter {
   }
 
   getTools(): MCPToolDefinition[] {
-    return [...HEX_TOOLS, ...HEX_DASHBOARD_TOOLS, ...HEX_PARITY_TOOLS];
+    return [...HEX_TOOLS, ...HEX_DASHBOARD_TOOLS, ...HEX_PARITY_TOOLS, ...HEX_HEXFLO_TOOLS];
   }
 
   async handleToolCall(call: MCPToolCall): Promise<MCPToolResult> {
@@ -625,6 +722,37 @@ export class MCPAdapter {
           return await this.adrAbandoned(parseInt(call.arguments.days as string || '14', 10));
         case 'hex_adr_status':
           return await this.adrStatus(call.arguments.id as string);
+        // ── HexFlo coordination tools (ADR-027) ──
+        case 'hex_hexflo_swarm_init':
+          return await this.hexfloSwarmInit(
+            call.arguments.name as string,
+            call.arguments.projectId as string,
+            call.arguments.topology as string | undefined,
+          );
+        case 'hex_hexflo_swarm_status':
+          return await this.hexfloSwarmStatus();
+        case 'hex_hexflo_task_create':
+          return await this.hexfloTaskCreate(
+            call.arguments.swarmId as string,
+            call.arguments.title as string,
+          );
+        case 'hex_hexflo_task_list':
+          return await this.hexfloTaskList(call.arguments.swarmId as string | undefined);
+        case 'hex_hexflo_task_complete':
+          return await this.hexfloTaskComplete(
+            call.arguments.taskId as string,
+            call.arguments.result as string | undefined,
+          );
+        case 'hex_hexflo_memory_store':
+          return await this.hexfloMemoryStore(
+            call.arguments.key as string,
+            call.arguments.value as string,
+            call.arguments.scope as string | undefined,
+          );
+        case 'hex_hexflo_memory_retrieve':
+          return await this.hexfloMemoryRetrieve(call.arguments.key as string);
+        case 'hex_hexflo_memory_search':
+          return await this.hexfloMemorySearch(call.arguments.query as string);
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${call.name}` }], isError: true };
       }
@@ -1706,5 +1834,65 @@ export class MCPAdapter {
     if (entry.linkedFeatures.length > 0) lines.push(`Features: ${entry.linkedFeatures.join(', ')}`);
     if (entry.linkedWorktrees.length > 0) lines.push(`Worktrees: ${entry.linkedWorktrees.join(', ')}`);
     return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
+  // ─── HexFlo Coordination (ADR-027) ──────────────────────
+
+  private async hexfloApiCall(method: string, path: string, body?: unknown): Promise<MCPToolResult> {
+    const hubUrl = 'http://localhost:5555';
+    try {
+      const opts: RequestInit = {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+      };
+      if (body) opts.body = JSON.stringify(body);
+      const resp = await fetch(`${hubUrl}${path}`, opts);
+      const data = await resp.json();
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `HexFlo hub not running. Start with: hex daemon start\nError: ${err}` }], isError: true };
+    }
+  }
+
+  private async hexfloSwarmInit(name: string, projectId: string, topology?: string): Promise<MCPToolResult> {
+    return this.hexfloApiCall('POST', '/api/swarms', {
+      project_id: projectId,
+      name,
+      topology: topology || 'hierarchical',
+    });
+  }
+
+  private async hexfloSwarmStatus(): Promise<MCPToolResult> {
+    return this.hexfloApiCall('GET', '/api/swarms');
+  }
+
+  private async hexfloTaskCreate(swarmId: string, title: string): Promise<MCPToolResult> {
+    return this.hexfloApiCall('POST', `/api/swarms/${encodeURIComponent(swarmId)}/tasks`, { title });
+  }
+
+  private async hexfloTaskList(swarmId?: string): Promise<MCPToolResult> {
+    if (swarmId) {
+      return this.hexfloApiCall('GET', `/api/swarms/${encodeURIComponent(swarmId)}`);
+    }
+    return this.hexfloApiCall('GET', '/api/swarms');
+  }
+
+  private async hexfloTaskComplete(taskId: string, result?: string): Promise<MCPToolResult> {
+    return this.hexfloApiCall('PATCH', `/api/swarms/tasks/${encodeURIComponent(taskId)}`, {
+      status: 'completed',
+      result: result || null,
+    });
+  }
+
+  private async hexfloMemoryStore(key: string, value: string, scope?: string): Promise<MCPToolResult> {
+    return this.hexfloApiCall('POST', '/api/hexflo/memory', { key, value, scope: scope || 'global' });
+  }
+
+  private async hexfloMemoryRetrieve(key: string): Promise<MCPToolResult> {
+    return this.hexfloApiCall('GET', `/api/hexflo/memory/${encodeURIComponent(key)}`);
+  }
+
+  private async hexfloMemorySearch(query: string): Promise<MCPToolResult> {
+    return this.hexfloApiCall('GET', `/api/hexflo/memory/search?q=${encodeURIComponent(query)}`);
   }
 }
