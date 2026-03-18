@@ -156,7 +156,7 @@ export interface CreateAppContextOptions {
 
 export async function createAppContext(
   projectPath: string,
-  options?: CreateAppContextOptions,
+  _options?: CreateAppContextOptions,
 ): Promise<AppContext> {
   // Project-scoped output directory for analysis, caches, logs
   const outputDir = `${projectPath}/.hex`;
@@ -239,6 +239,9 @@ export async function createAppContext(
   // Skip when NODE_ENV=test or BUN_ENV=test (bun test sets this).
   const isTest = process.env['NODE_ENV'] === 'test' || process.env['BUN_ENV'] === 'test'
     || typeof (globalThis as any).Bun?.jest !== 'undefined';
+
+  // Declared before the background IIFE so the closure can reference it safely
+  let appContext!: AppContext;
 
   if (!isTest) {
     const { writeFile } = await import('node:fs/promises');
@@ -430,7 +433,7 @@ export async function createAppContext(
         removeSecret() { throw new Error('No vault open — run `hex secrets init` first'); },
       };
 
-  const appContext: AppContext = {
+  appContext = {
     rootPath: projectPath,
     autoConfirm: false,
     outputDir,
