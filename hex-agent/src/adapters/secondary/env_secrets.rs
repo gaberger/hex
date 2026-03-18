@@ -72,4 +72,84 @@ mod tests {
         assert!(!adapter.has_secret("NOPE_NOT_HERE").await);
         unsafe { std::env::remove_var("TEST_HAS_SECRET_KEY") };
     }
+
+    #[tokio::test]
+    async fn resolve_returns_exact_value() {
+        let key = "TEST_EXACT_VALUE_KEY_428";
+        let value = "s3cr3t-with-special-chars!@#$%";
+        unsafe { std::env::set_var(key, value) };
+        let adapter = EnvSecretsAdapter::new();
+        assert_eq!(adapter.resolve_secret(key).await.unwrap(), value);
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[tokio::test]
+    async fn resolve_empty_value_succeeds() {
+        let key = "TEST_EMPTY_VALUE_KEY_429";
+        unsafe { std::env::set_var(key, "") };
+        let adapter = EnvSecretsAdapter::new();
+        assert_eq!(adapter.resolve_secret(key).await.unwrap(), "");
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[tokio::test]
+    async fn has_secret_with_empty_value_returns_true() {
+        let key = "TEST_EMPTY_HAS_KEY_430";
+        unsafe { std::env::set_var(key, "") };
+        let adapter = EnvSecretsAdapter::new();
+        assert!(adapter.has_secret(key).await);
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[tokio::test]
+    async fn claim_secrets_finds_matching_patterns() {
+        let keys = [
+            "TEST_CLAIM_API_KEY",
+            "TEST_CLAIM_DB_SECRET",
+            "TEST_CLAIM_AUTH_TOKEN",
+            "TEST_CLAIM_DB_PASSWORD",
+        ];
+        for k in &keys {
+            unsafe { std::env::set_var(k, "val") };
+        }
+        // Also set a non-matching key
+        unsafe { std::env::set_var("TEST_CLAIM_HOSTNAME", "localhost") };
+
+        let adapter = EnvSecretsAdapter::new();
+        let secrets = adapter.claim_secrets("any-agent").await.unwrap();
+
+        // All four pattern-matching keys should be present
+        for k in &keys {
+            assert!(secrets.contains_key(*k), "Expected key '{}' in claimed secrets", k);
+        }
+        // Non-matching key should NOT be present
+        assert!(!secrets.contains_key("TEST_CLAIM_HOSTNAME"));
+
+        for k in &keys {
+            unsafe { std::env::remove_var(k) };
+        }
+        unsafe { std::env::remove_var("TEST_CLAIM_HOSTNAME") };
+    }
+
+    #[tokio::test]
+    async fn resolve_after_remove_returns_not_found() {
+        let key = "TEST_REMOVE_KEY_431";
+        unsafe { std::env::set_var(key, "temporary") };
+        let adapter = EnvSecretsAdapter::new();
+        assert!(adapter.resolve_secret(key).await.is_ok());
+        unsafe { std::env::remove_var(key) };
+        let err = adapter.resolve_secret(key).await.unwrap_err();
+        assert!(matches!(err, SecretError::NotFound { .. }));
+    }
+
+    #[tokio::test]
+    async fn not_found_error_contains_key_name() {
+        let adapter = EnvSecretsAdapter::new();
+        let key = "UNIQUE_MISSING_KEY_XQ7";
+        let err = adapter.resolve_secret(key).await.unwrap_err();
+        match err {
+            SecretError::NotFound { key: k } => assert_eq!(k, key),
+            _ => panic!("Expected NotFound error"),
+        }
+    }
 }

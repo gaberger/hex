@@ -342,6 +342,7 @@ impl SwarmDb {
         .expect("spawn_blocking join")
     }
 
+    #[allow(dead_code)] // Used by tests; will be wired via IStatePort in SpacetimeDB integration
     pub async fn complete_task(
         &self,
         task_id: &str,

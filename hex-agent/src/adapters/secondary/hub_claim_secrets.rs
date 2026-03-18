@@ -153,3 +153,125 @@ impl SecretBrokerPort for HubClaimSecretsAdapter {
         std::env::var(key).is_ok()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_adapter() -> HubClaimSecretsAdapter {
+        HubClaimSecretsAdapter::new(HubClaimConfig::default())
+    }
+
+    #[test]
+    fn default_config_uses_localhost() {
+        let config = HubClaimConfig::default();
+        assert_eq!(config.hub_url, "http://127.0.0.1:4280");
+        assert_eq!(config.timeout_secs, 10);
+    }
+
+    #[test]
+    fn custom_config_is_preserved() {
+        let config = HubClaimConfig {
+            hub_url: "http://10.0.0.5:9999".to_string(),
+            timeout_secs: 30,
+        };
+        let adapter = HubClaimSecretsAdapter::new(config.clone());
+        assert_eq!(adapter.config.hub_url, "http://10.0.0.5:9999");
+        assert_eq!(adapter.config.timeout_secs, 30);
+    }
+
+    #[tokio::test]
+    async fn resolve_from_cache_returns_cached_value() {
+        let adapter = make_adapter();
+        // Manually populate the cache
+        {
+            let mut cache = adapter.cache.write().await;
+            cache.insert("CACHED_KEY".to_string(), "cached-value".to_string());
+        }
+        let result = adapter.resolve_secret("CACHED_KEY").await;
+        assert_eq!(result.unwrap(), "cached-value");
+    }
+
+    #[tokio::test]
+    async fn resolve_falls_back_to_env_when_not_cached() {
+        let key = "TEST_HUB_FALLBACK_KEY_501";
+        unsafe { std::env::set_var(key, "env-value") };
+        let adapter = make_adapter();
+        let result = adapter.resolve_secret(key).await;
+        assert_eq!(result.unwrap(), "env-value");
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[tokio::test]
+    async fn resolve_not_found_when_neither_cached_nor_env() {
+        let adapter = make_adapter();
+        let result = adapter.resolve_secret("TOTALLY_MISSING_KEY_502").await;
+        assert!(matches!(result, Err(SecretError::NotFound { .. })));
+    }
+
+    #[tokio::test]
+    async fn has_secret_returns_true_for_cached() {
+        let adapter = make_adapter();
+        {
+            let mut cache = adapter.cache.write().await;
+            cache.insert("HAS_CACHED_KEY".to_string(), "v".to_string());
+        }
+        assert!(adapter.has_secret("HAS_CACHED_KEY").await);
+    }
+
+    #[tokio::test]
+    async fn has_secret_returns_true_for_env_var() {
+        let key = "TEST_HUB_HAS_ENV_KEY_503";
+        unsafe { std::env::set_var(key, "x") };
+        let adapter = make_adapter();
+        assert!(adapter.has_secret(key).await);
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[tokio::test]
+    async fn has_secret_returns_false_when_missing() {
+        let adapter = make_adapter();
+        assert!(!adapter.has_secret("MISSING_KEY_504").await);
+    }
+
+    #[tokio::test]
+    async fn cache_prefers_over_env() {
+        let key = "TEST_HUB_CACHE_PREF_505";
+        unsafe { std::env::set_var(key, "env-value") };
+        let adapter = make_adapter();
+        {
+            let mut cache = adapter.cache.write().await;
+            cache.insert(key.to_string(), "cached-value".to_string());
+        }
+        // Cache should win
+        let result = adapter.resolve_secret(key).await;
+        assert_eq!(result.unwrap(), "cached-value");
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[tokio::test]
+    async fn claim_to_unreachable_hub_returns_hub_unreachable() {
+        // Connect to a port that (almost certainly) has nothing listening
+        let config = HubClaimConfig {
+            hub_url: "http://127.0.0.1:1".to_string(),
+            timeout_secs: 1,
+        };
+        let adapter = HubClaimSecretsAdapter::new(config);
+        let result = adapter.claim_secrets("agent-1").await;
+        assert!(matches!(result, Err(SecretError::HubUnreachable(_))));
+    }
+
+    #[tokio::test]
+    async fn multiple_cache_entries_coexist() {
+        let adapter = make_adapter();
+        {
+            let mut cache = adapter.cache.write().await;
+            cache.insert("KEY_A".to_string(), "value-a".to_string());
+            cache.insert("KEY_B".to_string(), "value-b".to_string());
+            cache.insert("KEY_C".to_string(), "value-c".to_string());
+        }
+        assert_eq!(adapter.resolve_secret("KEY_A").await.unwrap(), "value-a");
+        assert_eq!(adapter.resolve_secret("KEY_B").await.unwrap(), "value-b");
+        assert_eq!(adapter.resolve_secret("KEY_C").await.unwrap(), "value-c");
+    }
+}

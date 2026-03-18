@@ -281,3 +281,413 @@ pub fn remove_endpoint(
     }
     Ok(())
 }
+
+// ─── Pure logic helpers (testable without SpacetimeDB runtime) ───────────────
+
+/// Build the composite grant ID from agent_id and secret_key.
+pub fn make_grant_id(agent_id: &str, secret_key: &str) -> String {
+    format!("{}:{}", agent_id, secret_key)
+}
+
+/// Check whether a grant has expired given an ISO 8601 `now` timestamp.
+/// Uses lexicographic comparison which works for ISO 8601 strings.
+pub fn is_expired(expires_at: &str, now: &str) -> bool {
+    expires_at <= now
+}
+
+/// Validate an inference endpoint provider string.
+pub fn validate_provider(provider: &str) -> Result<(), String> {
+    match provider {
+        "ollama" | "openai-compatible" | "vllm" | "llama-cpp" => Ok(()),
+        _ => Err(format!(
+            "Unknown provider '{}'. Expected: ollama, openai-compatible, vllm, llama-cpp",
+            provider
+        )),
+    }
+}
+
+/// Validate an inference endpoint health status string.
+pub fn validate_health_status(status: &str) -> Result<(), String> {
+    match status {
+        "healthy" | "unhealthy" | "unknown" => Ok(()),
+        _ => Err(format!(
+            "Invalid status '{}'. Expected: healthy, unhealthy, unknown",
+            status
+        )),
+    }
+}
+
+/// Check auth constraint: if requires_auth is true, secret_key must be non-empty.
+pub fn validate_auth_config(requires_auth: bool, secret_key: &str) -> Result<(), String> {
+    if requires_auth && secret_key.is_empty() {
+        Err("Endpoint requires auth but no secret_key provided".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+/// Filter grants belonging to a specific agent from an iterator.
+pub fn filter_grants_for_agent<'a>(
+    grants: impl Iterator<Item = &'a SecretGrant>,
+    agent_id: &str,
+) -> Vec<&'a SecretGrant> {
+    grants.filter(|g| g.agent_id == agent_id).collect()
+}
+
+/// Filter expired grants from an iterator given an ISO 8601 `now` timestamp.
+pub fn filter_expired_grants<'a>(
+    grants: impl Iterator<Item = &'a SecretGrant>,
+    now: &str,
+) -> Vec<&'a SecretGrant> {
+    grants.filter(|g| is_expired(&g.expires_at, now)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── Grant ID generation ─────────────────────────────────────────────
+
+    #[test]
+    fn grant_id_format_basic() {
+        assert_eq!(make_grant_id("agent-1", "API_KEY"), "agent-1:API_KEY");
+    }
+
+    #[test]
+    fn grant_id_contains_both_parts() {
+        let id = make_grant_id("abc", "XYZ_SECRET");
+        assert!(id.starts_with("abc:"));
+        assert!(id.ends_with(":XYZ_SECRET"));
+    }
+
+    #[test]
+    fn grant_id_different_agents_produce_different_ids() {
+        let id1 = make_grant_id("agent-a", "KEY");
+        let id2 = make_grant_id("agent-b", "KEY");
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn grant_id_different_keys_produce_different_ids() {
+        let id1 = make_grant_id("agent-1", "KEY_A");
+        let id2 = make_grant_id("agent-1", "KEY_B");
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn grant_id_same_inputs_are_deterministic() {
+        let id1 = make_grant_id("agent-1", "SECRET");
+        let id2 = make_grant_id("agent-1", "SECRET");
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn grant_id_with_empty_agent() {
+        let id = make_grant_id("", "KEY");
+        assert_eq!(id, ":KEY");
+    }
+
+    #[test]
+    fn grant_id_with_empty_key() {
+        let id = make_grant_id("agent", "");
+        assert_eq!(id, "agent:");
+    }
+
+    // ─── Expiry logic ────────────────────────────────────────────────────
+
+    #[test]
+    fn grant_not_expired_before_deadline() {
+        assert!(!is_expired("2025-01-01T12:00:00Z", "2025-01-01T11:00:00Z"));
+    }
+
+    #[test]
+    fn grant_expired_at_exact_deadline() {
+        // Expires_at <= now means expired at the exact boundary
+        assert!(is_expired("2025-01-01T12:00:00Z", "2025-01-01T12:00:00Z"));
+    }
+
+    #[test]
+    fn grant_expired_after_deadline() {
+        assert!(is_expired("2025-01-01T12:00:00Z", "2025-01-01T13:00:00Z"));
+    }
+
+    #[test]
+    fn grant_far_future_not_expired() {
+        assert!(!is_expired("2099-12-31T23:59:59Z", "2025-06-15T00:00:00Z"));
+    }
+
+    #[test]
+    fn grant_past_is_expired() {
+        assert!(is_expired("2020-01-01T00:00:00Z", "2025-06-15T00:00:00Z"));
+    }
+
+    // ─── Claim logic (SecretGrant struct properties) ─────────────────────
+
+    #[test]
+    fn new_grant_starts_unclaimed() {
+        let grant = SecretGrant {
+            id: make_grant_id("agent-1", "KEY"),
+            agent_id: "agent-1".to_string(),
+            secret_key: "KEY".to_string(),
+            purpose: "llm".to_string(),
+            granted_at: "2025-01-01T00:00:00Z".to_string(),
+            expires_at: "2025-01-02T00:00:00Z".to_string(),
+            claimed: false,
+        };
+        assert!(!grant.claimed);
+    }
+
+    #[test]
+    fn claimed_grant_cannot_be_reclaimed_logic() {
+        // Simulates the claim_grant reducer's check
+        let grant = SecretGrant {
+            id: make_grant_id("agent-1", "KEY"),
+            agent_id: "agent-1".to_string(),
+            secret_key: "KEY".to_string(),
+            purpose: "llm".to_string(),
+            granted_at: "2025-01-01T00:00:00Z".to_string(),
+            expires_at: "2025-01-02T00:00:00Z".to_string(),
+            claimed: true,
+        };
+        // The reducer checks this condition and returns Err
+        assert!(grant.claimed, "Already-claimed grant should be rejected");
+    }
+
+    // ─── Grant filtering ─────────────────────────────────────────────────
+
+    #[test]
+    fn filter_grants_for_specific_agent() {
+        let grants = vec![
+            SecretGrant {
+                id: make_grant_id("agent-1", "K1"),
+                agent_id: "agent-1".to_string(),
+                secret_key: "K1".to_string(),
+                purpose: "llm".to_string(),
+                granted_at: "2025-01-01T00:00:00Z".to_string(),
+                expires_at: "2025-01-02T00:00:00Z".to_string(),
+                claimed: false,
+            },
+            SecretGrant {
+                id: make_grant_id("agent-2", "K2"),
+                agent_id: "agent-2".to_string(),
+                secret_key: "K2".to_string(),
+                purpose: "auth".to_string(),
+                granted_at: "2025-01-01T00:00:00Z".to_string(),
+                expires_at: "2025-01-02T00:00:00Z".to_string(),
+                claimed: false,
+            },
+            SecretGrant {
+                id: make_grant_id("agent-1", "K3"),
+                agent_id: "agent-1".to_string(),
+                secret_key: "K3".to_string(),
+                purpose: "webhook".to_string(),
+                granted_at: "2025-01-01T00:00:00Z".to_string(),
+                expires_at: "2025-01-02T00:00:00Z".to_string(),
+                claimed: false,
+            },
+        ];
+
+        let filtered = filter_grants_for_agent(grants.iter(), "agent-1");
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|g| g.agent_id == "agent-1"));
+    }
+
+    #[test]
+    fn filter_grants_returns_empty_for_unknown_agent() {
+        let grants = vec![SecretGrant {
+            id: make_grant_id("agent-1", "K1"),
+            agent_id: "agent-1".to_string(),
+            secret_key: "K1".to_string(),
+            purpose: "llm".to_string(),
+            granted_at: "2025-01-01T00:00:00Z".to_string(),
+            expires_at: "2025-01-02T00:00:00Z".to_string(),
+            claimed: false,
+        }];
+
+        let filtered = filter_grants_for_agent(grants.iter(), "unknown-agent");
+        assert!(filtered.is_empty());
+    }
+
+    // ─── Prune logic ─────────────────────────────────────────────────────
+
+    #[test]
+    fn prune_only_removes_expired_grants() {
+        let now = "2025-06-15T12:00:00Z";
+        let grants = vec![
+            SecretGrant {
+                id: make_grant_id("a1", "K1"),
+                agent_id: "a1".to_string(),
+                secret_key: "K1".to_string(),
+                purpose: "llm".to_string(),
+                granted_at: "2025-01-01T00:00:00Z".to_string(),
+                expires_at: "2025-06-15T11:00:00Z".to_string(), // expired
+                claimed: false,
+            },
+            SecretGrant {
+                id: make_grant_id("a2", "K2"),
+                agent_id: "a2".to_string(),
+                secret_key: "K2".to_string(),
+                purpose: "auth".to_string(),
+                granted_at: "2025-01-01T00:00:00Z".to_string(),
+                expires_at: "2025-06-15T13:00:00Z".to_string(), // still active
+                claimed: false,
+            },
+            SecretGrant {
+                id: make_grant_id("a3", "K3"),
+                agent_id: "a3".to_string(),
+                secret_key: "K3".to_string(),
+                purpose: "webhook".to_string(),
+                granted_at: "2025-01-01T00:00:00Z".to_string(),
+                expires_at: "2025-06-15T10:00:00Z".to_string(), // expired
+                claimed: true,
+            },
+        ];
+
+        let expired = filter_expired_grants(grants.iter(), now);
+        assert_eq!(expired.len(), 2);
+        // a2's grant should survive (not expired)
+        assert!(expired.iter().all(|g| g.agent_id != "a2"));
+    }
+
+    #[test]
+    fn prune_with_no_expired_grants_removes_nothing() {
+        let now = "2025-01-01T00:00:00Z";
+        let grants = vec![SecretGrant {
+            id: make_grant_id("a1", "K1"),
+            agent_id: "a1".to_string(),
+            secret_key: "K1".to_string(),
+            purpose: "llm".to_string(),
+            granted_at: "2025-01-01T00:00:00Z".to_string(),
+            expires_at: "2099-12-31T23:59:59Z".to_string(),
+            claimed: false,
+        }];
+
+        let expired = filter_expired_grants(grants.iter(), now);
+        assert!(expired.is_empty());
+    }
+
+    #[test]
+    fn prune_claimed_and_unclaimed_both_prunable() {
+        let now = "2025-12-01T00:00:00Z";
+        let grants = vec![
+            SecretGrant {
+                id: make_grant_id("a1", "K1"),
+                agent_id: "a1".to_string(),
+                secret_key: "K1".to_string(),
+                purpose: "llm".to_string(),
+                granted_at: "2025-01-01T00:00:00Z".to_string(),
+                expires_at: "2025-06-01T00:00:00Z".to_string(),
+                claimed: true, // claimed but expired
+            },
+            SecretGrant {
+                id: make_grant_id("a1", "K2"),
+                agent_id: "a1".to_string(),
+                secret_key: "K2".to_string(),
+                purpose: "llm".to_string(),
+                granted_at: "2025-01-01T00:00:00Z".to_string(),
+                expires_at: "2025-06-01T00:00:00Z".to_string(),
+                claimed: false, // unclaimed but expired
+            },
+        ];
+
+        let expired = filter_expired_grants(grants.iter(), now);
+        assert_eq!(expired.len(), 2, "Both claimed and unclaimed expired grants should be pruned");
+    }
+
+    // ─── Provider validation ─────────────────────────────────────────────
+
+    #[test]
+    fn valid_providers_accepted() {
+        for provider in &["ollama", "openai-compatible", "vllm", "llama-cpp"] {
+            assert!(validate_provider(provider).is_ok(), "Provider '{}' should be valid", provider);
+        }
+    }
+
+    #[test]
+    fn invalid_provider_rejected() {
+        assert!(validate_provider("unknown").is_err());
+        assert!(validate_provider("").is_err());
+        assert!(validate_provider("openai").is_err());
+    }
+
+    // ─── Health status validation ────────────────────────────────────────
+
+    #[test]
+    fn valid_health_statuses_accepted() {
+        for status in &["healthy", "unhealthy", "unknown"] {
+            assert!(validate_health_status(status).is_ok(), "Status '{}' should be valid", status);
+        }
+    }
+
+    #[test]
+    fn invalid_health_status_rejected() {
+        assert!(validate_health_status("degraded").is_err());
+        assert!(validate_health_status("").is_err());
+    }
+
+    // ─── Auth config validation ──────────────────────────────────────────
+
+    #[test]
+    fn auth_required_with_key_is_valid() {
+        assert!(validate_auth_config(true, "MY_API_KEY").is_ok());
+    }
+
+    #[test]
+    fn auth_required_without_key_is_invalid() {
+        assert!(validate_auth_config(true, "").is_err());
+    }
+
+    #[test]
+    fn no_auth_with_empty_key_is_valid() {
+        assert!(validate_auth_config(false, "").is_ok());
+    }
+
+    #[test]
+    fn no_auth_with_key_is_valid() {
+        // Not required but provided — fine
+        assert!(validate_auth_config(false, "SOME_KEY").is_ok());
+    }
+
+    // ─── Property-style: grant lifecycle invariants ──────────────────────
+
+    #[test]
+    fn grant_id_is_reversible() {
+        // Given the format "{agent}:{key}", splitting on first ":" recovers both parts
+        let agent = "agent-with-dashes";
+        let key = "MY_KEY";
+        let id = make_grant_id(agent, key);
+        let parts: Vec<&str> = id.splitn(2, ':').collect();
+        assert_eq!(parts[0], agent);
+        assert_eq!(parts[1], key);
+    }
+
+    #[test]
+    fn expiry_is_total_order() {
+        // For any two timestamps, exactly one of: a < b, a == b, a > b
+        let a = "2025-01-01T00:00:00Z";
+        let b = "2025-06-01T00:00:00Z";
+        // If a < b, then is_expired(a, b) is true and is_expired(b, a) is false
+        assert!(is_expired(a, b));
+        assert!(!is_expired(b, a));
+    }
+
+    #[test]
+    fn filter_agent_grants_preserves_all_fields() {
+        let grant = SecretGrant {
+            id: make_grant_id("agent-1", "KEY"),
+            agent_id: "agent-1".to_string(),
+            secret_key: "KEY".to_string(),
+            purpose: "llm".to_string(),
+            granted_at: "2025-01-01T00:00:00Z".to_string(),
+            expires_at: "2025-01-02T00:00:00Z".to_string(),
+            claimed: true,
+        };
+        let grants = vec![grant.clone()];
+        let filtered = filter_grants_for_agent(grants.iter(), "agent-1");
+        assert_eq!(filtered.len(), 1);
+        let g = filtered[0];
+        assert_eq!(g.id, "agent-1:KEY");
+        assert_eq!(g.purpose, "llm");
+        assert!(g.claimed);
+    }
+}

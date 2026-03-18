@@ -234,6 +234,7 @@ pub struct TaskClaim {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // Fields read via Deserialize, not direct access
 pub struct TaskClaimRequest {
     pub instance_id: String,
     pub project_id: String,

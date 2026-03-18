@@ -322,6 +322,7 @@ pub async fn get_unstaged(
 
 /// Called from the main eviction loop (every 60s).
 /// Removes dead instances, their locks, claims, and unstaged state.
+#[allow(dead_code)] // Will be wired into background eviction loop
 pub async fn evict_stale(state: &SharedState) {
     let now = chrono::Utc::now();
     let heartbeat_timeout = chrono::Duration::seconds(60); // 2x the 30s heartbeat

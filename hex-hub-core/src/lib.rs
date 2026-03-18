@@ -10,6 +10,7 @@ pub mod remote;
 pub mod rl;
 pub mod routes;
 pub mod state;
+pub mod state_config;
 pub mod spacetime_bindings;
 pub mod spacetime_launcher;
 
@@ -75,23 +76,20 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
     // Create shared state
     let mut app_state = AppState::new(config.token.clone(), swarm_db);
 
-    // Wire IStatePort → AgentManager + WorkplanExecutor (ADR-025 Phase 2)
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let db_path = format!("{}/.hex/hub.db", home);
-
+    // Wire IStatePort → AgentManager + WorkplanExecutor (ADR-025 Phase 2/4)
+    // Backend selection: env var > .hex/state.json > default (SQLite)
     if app_state.swarm_db.is_some() {
-        match adapters::sqlite_state::SqliteStateAdapter::new(&db_path) {
+        match state_config::create_default_state_backend() {
             Ok(state_port) => {
-                let state_port: Arc<dyn ports::state::IStatePort> = Arc::new(state_port);
                 let agent_mgr = Arc::new(
                     orchestration::agent_manager::AgentManager::new(Arc::clone(&state_port)),
                 );
                 app_state.agent_manager = Some(agent_mgr);
-                tracing::info!("IStatePort wired — agent_manager using SqliteStateAdapter");
+                tracing::info!("IStatePort wired — agent_manager ready");
             }
             Err(e) => {
                 tracing::warn!(
-                    "Failed to create SqliteStateAdapter: {} — orchestration using legacy path",
+                    "Failed to create state backend: {} — orchestration using legacy path",
                     e
                 );
             }
@@ -102,10 +100,9 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
     let state = Arc::new(app_state);
 
     if state.agent_manager.is_some() {
-        if let Ok(state_port) = adapters::sqlite_state::SqliteStateAdapter::new(&db_path) {
-            let sp: Arc<dyn ports::state::IStatePort> = Arc::new(state_port);
+        if let Ok(state_port) = state_config::create_default_state_backend() {
             let wp = Arc::new(orchestration::workplan_executor::WorkplanExecutor::new(
-                sp,
+                state_port,
                 state.clone(),
             ));
             state.workplan_executor.set(wp).ok();
