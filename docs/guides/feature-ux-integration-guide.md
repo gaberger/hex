@@ -116,7 +116,7 @@ workflow:
 
         - id: swarm-init
           action: |
-            mcp__ruflo__swarm_init({
+            mcp__hex__hex_hexflo_swarm_init({
               topology: "hierarchical",
               maxAgents: 8,
               strategy: "specialized"

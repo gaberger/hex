@@ -1027,10 +1027,10 @@ fi
 ```javascript
 [Single Message - Parallel Execution]:
   // Initialize coordination
-  mcp__ruflo__swarm_init { topology: "hierarchical", maxAgents: 5 }
-  mcp__ruflo__agent_spawn { type: "reviewer", name: "Senior Reviewer" }
-  mcp__ruflo__agent_spawn { type: "tester", name: "QA Engineer" }
-  mcp__ruflo__agent_spawn { type: "coordinator", name: "Merge Coordinator" }
+  mcp__hex__hex_hexflo_swarm_init { topology: "hierarchical", maxAgents: 5 }
+  mcp__hex__hex_hexflo_swarm_status { type: "reviewer", name: "Senior Reviewer" }
+  mcp__hex__hex_hexflo_swarm_status { type: "tester", name: "QA Engineer" }
+  mcp__hex__hex_hexflo_swarm_status { type: "coordinator", name: "Merge Coordinator" }
 
   // Create and manage PR using gh CLI
   Bash("gh pr create --title 'Feature: Add authentication' --base main")

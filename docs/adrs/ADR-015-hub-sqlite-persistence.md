@@ -13,7 +13,7 @@ All state was stored in in-memory `HashMap`s — lost on hub restart. This creat
 
 1. **Session recovery**: When a Claude Code session crashes mid-swarm, the next session has no way to discover what was in-flight. We used markdown memory files (`MEMORY.md`) as a workaround, but these go stale between sessions and require manual reconciliation.
 
-2. **Swarm lifecycle tracking**: There was no concept of a "swarm" as a first-class entity. Tasks and agents were tracked ephemerally through ruflo's in-memory registry, which also resets on restart.
+2. **Swarm lifecycle tracking**: There was no concept of a "swarm" as a first-class entity. Tasks and agents were tracked ephemerally through ruflo's in-memory registry (now superseded by HexFlo, see ADR-027), which also resets on restart.
 
 The hub is the natural home for persistent state because:
 - It's already a long-running daemon (started once, serves many sessions)

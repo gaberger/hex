@@ -1,33 +1,33 @@
-# dev-tracker — Persistent development process tracker (ruflo-backed)
+# dev-tracker — Persistent development process tracker (HexFlo-backed)
 #
-# Ruflo does the heavy lifting:
-#   - Task state: mcp__ruflo__task_create/list/complete/status
-#   - Session memory: mcp__ruflo__memory_store/retrieve/search
-#   - Agent tracking: mcp__ruflo__agent_spawn/list/status
-#   - Swarm topology: mcp__ruflo__swarm_init/status
+# HexFlo does the heavy lifting:
+#   - Task state: mcp__hex__hex_hexflo_task_create/list/complete/status
+#   - Session memory: mcp__hex__hex_hexflo_memory_store/retrieve/search
+#   - Agent tracking: managed via hex-hub agent manager (ADR-027)
+#   - Swarm topology: mcp__hex__hex_hexflo_swarm_init/status
 #
-# The dev-tracker is a COORDINATOR, not a database. It reads from ruflo
+# The dev-tracker is a COORDINATOR, not a database. It reads from HexFlo
 # and git, reconciles the two, and decides what to do next. All state
-# lives in ruflo — nothing in local JSON files.
+# lives in HexFlo — nothing in local JSON files.
 
 name: dev-tracker
 type: coordinator
 version: "2.0.0"
 description: >
-  Session-persistent development tracker backed by ruflo. On every session
-  start, reconciles ruflo task state against git history. Identifies completed,
+  Session-persistent development tracker backed by HexFlo. On every session
+  start, reconciles HexFlo task state against git history. Identifies completed,
   in-progress, blocked, and next tasks. Spawns agents for the next work items.
-  Converts validation findings into ruflo tasks automatically.
+  Converts validation findings into HexFlo tasks automatically.
 
 model:
   tier: 3
   preferred: opus
   fallback: sonnet
 
-# ── Ruflo Memory Keys ────────────────────────────────────
+# ── HexFlo Memory Keys ────────────────────────────────────
 #
-# All persistent state lives in ruflo memory. These are the canonical keys.
-# No local JSON files — ruflo IS the database.
+# All persistent state lives in HexFlo memory. These are the canonical keys.
+# No local JSON files — HexFlo IS the database.
 
 memory_schema:
   keys:
@@ -68,10 +68,10 @@ context:
 
 constraints:
   - Never write application code directly (delegate to hex-coder agents)
-  - All task state lives in ruflo — never create local tracking JSON files
-  - Always reconcile ruflo tasks against git log before creating new tasks
-  - Always store session summary in ruflo memory before ending
-  - When validation finds bugs, create ruflo tasks immediately
+  - All task state lives in HexFlo — never create local tracking JSON files
+  - Always reconcile HexFlo tasks against git log before creating new tasks
+  - Always store session summary in HexFlo memory before ending
+  - When validation finds bugs, create HexFlo tasks immediately
 
 # ── Tools ────────────────────────────────────────────────
 
@@ -81,20 +81,20 @@ tools:
     - Glob
     - Grep
     - Bash          # git log, git diff, git branch, git worktree list
-  ruflo_tasks:
-    - mcp__ruflo__task_create
-    - mcp__ruflo__task_list
-    - mcp__ruflo__task_complete
-    - mcp__ruflo__task_status
-  ruflo_memory:
-    - mcp__ruflo__memory_store
-    - mcp__ruflo__memory_retrieve
-    - mcp__ruflo__memory_search
-  ruflo_swarm:
-    - mcp__ruflo__swarm_init
-    - mcp__ruflo__swarm_status
-    - mcp__ruflo__agent_spawn
-    - mcp__ruflo__agent_list
+  hexflo_tasks:
+    - mcp__hex__hex_hexflo_task_create
+    - mcp__hex__hex_hexflo_task_list
+    - mcp__hex__hex_hexflo_task_complete
+    - mcp__hex__hex_hexflo_swarm_status
+  hexflo_memory:
+    - mcp__hex__hex_hexflo_memory_store
+    - mcp__hex__hex_hexflo_memory_retrieve
+    - mcp__hex__hex_hexflo_memory_search
+  hexflo_swarm:
+    - mcp__hex__hex_hexflo_swarm_init
+    - mcp__hex__hex_hexflo_swarm_status
+    - # mcp__hex__hex_hexflo_swarm_status (removed — use hex-hub agent manager)
+    - # mcp__hex__hex_hexflo_swarm_status (removed — use hex-hub agent manager)
   hex_analysis:
     - mcp__hex__hex_analyze
     - mcp__hex__hex_validate_boundaries
@@ -111,9 +111,9 @@ inputs:
       start:     Reconcile state, show progress, recommend next steps
       resume:    Pick up the next unfinished task and spawn agents
       status:    Show progress report (read-only)
-      plan:      Create ruflo tasks for new requirements
-      validate:  Run hex analyze, convert findings to ruflo tasks
-      close:     Write session summary to ruflo memory
+      plan:      Create HexFlo tasks for new requirements
+      validate:  Run hex analyze, convert findings to HexFlo tasks
+      close:     Write session summary to HexFlo memory
   requirements:
     type: string[]
     required: false
@@ -154,14 +154,14 @@ workflow:
     - id: start
       name: "Session Start — Reconcile & Report"
       steps:
-        - id: load-ruflo-state
+        - id: load-hexflo-state
           action: |
-            mcp__ruflo__task_list()           → get all registered tasks
-            mcp__ruflo__memory_retrieve("devtracker/active-feature")
-            mcp__ruflo__memory_retrieve("devtracker/last-session-summary")
-            mcp__ruflo__memory_retrieve("devtracker/blocked-tasks")
-            mcp__ruflo__memory_retrieve("devtracker/completed-commits")
-            mcp__ruflo__swarm_status()        → get agent state
+            mcp__hex__hex_hexflo_task_list()           → get all registered tasks
+            mcp__hex__hex_hexflo_memory_retrieve("devtracker/active-feature")
+            mcp__hex__hex_hexflo_memory_retrieve("devtracker/last-session-summary")
+            mcp__hex__hex_hexflo_memory_retrieve("devtracker/blocked-tasks")
+            mcp__hex__hex_hexflo_memory_retrieve("devtracker/completed-commits")
+            mcp__hex__hex_hexflo_swarm_status()        → get agent state
 
         - id: reconcile-with-git
           action: |
@@ -169,23 +169,23 @@ workflow:
             Run: git branch --list 'feat/*'
             Run: git worktree list
 
-            For each ruflo task that is NOT completed:
+            For each HexFlo task that is NOT completed:
               1. Search git log for commits mentioning the task ID or adapter name
-              2. If commit found → mcp__ruflo__task_complete(taskId, commitHash)
+              2. If commit found → mcp__hex__hex_hexflo_task_complete(taskId, commitHash)
               3. If feat/ branch exists → task is in-progress
               4. If feat/ branch was deleted → check if merged
 
-            For each completed ruflo task:
+            For each completed HexFlo task:
               1. Verify commit hash still exists (not rebased away)
 
-            Update mcp__ruflo__memory_store("devtracker/completed-commits", ...)
+            Update mcp__hex__hex_hexflo_memory_store("devtracker/completed-commits", ...)
 
         - id: run-health-check
           action: |
             mcp__hex__hex_analyze(".")        → get health score + violations
             If new violations found since last session:
-              Convert to ruflo tasks via action-items extractor
-              mcp__ruflo__task_create for each critical/high item
+              Convert to HexFlo tasks via action-items extractor
+              mcp__hex__hex_hexflo_task_create for each critical/high item
 
         - id: present-status
           action: |
@@ -211,17 +211,17 @@ workflow:
     # PLAN — "What needs doing?"
     # ═══════════════════════════════════════════════════════
     - id: plan
-      name: "Plan — Decompose into Ruflo Tasks"
+      name: "Plan — Decompose into HexFlo Tasks"
       steps:
         - id: decompose
           action: |
             Spawn planner agent to decompose requirements
             Planner outputs a workplan with adapter-bounded tasks
 
-        - id: register-in-ruflo
+        - id: register-in-hexflo
           action: |
             For each task in the workplan:
-              mcp__ruflo__task_create({
+              mcp__hex__hex_hexflo_task_create({
                 title: task.description,
                 metadata: {
                   adapter: task.adapter,
@@ -231,7 +231,7 @@ workflow:
                 }
               })
 
-            mcp__ruflo__memory_store("devtracker/active-feature", feature_name)
+            mcp__hex__hex_hexflo_memory_store("devtracker/active-feature", feature_name)
 
     # ═══════════════════════════════════════════════════════
     # RESUME — "Do the next thing"
@@ -241,7 +241,7 @@ workflow:
       steps:
         - id: pick-next-tasks
           action: |
-            mcp__ruflo__task_list()
+            mcp__hex__hex_hexflo_task_list()
             Filter to: status != completed, all dependencies met
             Sort by: dependency tier (lowest first), then priority
 
@@ -259,11 +259,11 @@ workflow:
                      run_in_background: true,
                      prompt: <task context including port interface, related completions>
                    }
-              4. mcp__ruflo__agent_spawn(agentId, taskId)
+              4. # agent_spawn removed — use hex-hub agent manager
 
         - id: update-state
           action: |
-            mcp__ruflo__memory_store("devtracker/session-count", N+1)
+            mcp__hex__hex_hexflo_memory_store("devtracker/session-count", N+1)
 
     # ═══════════════════════════════════════════════════════
     # VALIDATE — "Check quality, create fix tasks"
@@ -279,7 +279,7 @@ workflow:
         - id: create-fix-tasks
           action: |
             For each action item with priority critical or high:
-              mcp__ruflo__task_create({
+              mcp__hex__hex_hexflo_task_create({
                 title: item.title,
                 metadata: {
                   category: item.category,
@@ -292,12 +292,12 @@ workflow:
               })
 
             Store full action item report:
-              mcp__ruflo__memory_store("devtracker/validation-actions", report)
+              mcp__hex__hex_hexflo_memory_store("devtracker/validation-actions", report)
 
         - id: report-results
           action: |
             Display formatted ACTION ITEMS report to user
-            Show which items were auto-created as ruflo tasks
+            Show which items were auto-created as HexFlo tasks
 
     # ═══════════════════════════════════════════════════════
     # STATUS — "Progress report (read-only)"
@@ -307,8 +307,8 @@ workflow:
       steps:
         - id: gather
           action: |
-            mcp__ruflo__task_list()
-            mcp__ruflo__memory_retrieve("devtracker/active-feature")
+            mcp__hex__hex_hexflo_task_list()
+            mcp__hex__hex_hexflo_memory_retrieve("devtracker/active-feature")
             mcp__hex__hex_analyze(".")
 
         - id: format
@@ -341,22 +341,22 @@ workflow:
     # CLOSE — "Save state for next session"
     # ═══════════════════════════════════════════════════════
     - id: close
-      name: "Close Session — Persist to Ruflo"
+      name: "Close Session — Persist to HexFlo"
       steps:
         - id: summarize
           action: |
             Review what happened:
-              - Tasks completed this session (from ruflo task transitions)
+              - Tasks completed this session (from HexFlo task transitions)
               - Tasks started but not finished
               - Decisions made
               - Validation results
 
         - id: persist
           action: |
-            mcp__ruflo__memory_store("devtracker/last-session-summary",
+            mcp__hex__hex_hexflo_memory_store("devtracker/last-session-summary",
               "Session #N: Completed [tasks]. Started [tasks]. Health: X/100.")
-            mcp__ruflo__memory_store("devtracker/session-count", N)
-            mcp__ruflo__memory_store("devtracker/blocked-tasks", [...])
+            mcp__hex__hex_hexflo_memory_store("devtracker/session-count", N)
+            mcp__hex__hex_hexflo_memory_store("devtracker/blocked-tasks", [...])
 
         - id: recommend
           action: |
@@ -370,7 +370,7 @@ workflow:
 agent_routing:
   description: >
     The dev-tracker decides which agent type to spawn based on
-    the task's layer and category. All spawns go through ruflo
+    the task's layer and category. All spawns go through HexFlo
     for tracking.
   rules:
     domain:           { agent: hex-coder, mode: bypassPermissions }

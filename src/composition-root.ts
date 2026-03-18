@@ -26,7 +26,7 @@ import { TerminalNotifier } from './adapters/secondary/terminal-notifier.js';
 import { GitAdapter } from './adapters/secondary/git-adapter.js';
 import { WorktreeAdapter } from './adapters/secondary/worktree-adapter.js';
 import { BuildAdapter } from './adapters/secondary/build-adapter.js';
-import { RufloAdapter } from './adapters/secondary/ruflo-adapter.js';
+import { HexFloAdapter } from './adapters/secondary/hexflo-adapter.js';
 import { RegistryAdapter } from './adapters/secondary/registry-adapter.js';
 import { LLMAdapter } from './adapters/secondary/llm-adapter.js';
 import type { LLMAdapterConfig } from './adapters/secondary/llm-adapter.js';
@@ -170,7 +170,7 @@ export async function createAppContext(
   const worktree = new WorktreeAdapter(projectPath, `${projectPath}/../hex-worktrees`);
   const build = new BuildAdapter(projectPath);
   const notifier = new TerminalNotifier();
-  const swarm = new RufloAdapter(projectPath);
+  const swarm = new HexFloAdapter(projectPath);
   const registry = new RegistryAdapter();
   const checkpoint = new FileCheckpointAdapter(`${outputDir}/checkpoints`, fs);
 

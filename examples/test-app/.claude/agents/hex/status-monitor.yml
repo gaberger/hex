@@ -59,9 +59,9 @@ tools:
     - Glob
     - Grep
   optional:
-    - mcp__ruflo__task_status
-    - mcp__ruflo__swarm_status
-    - mcp__ruflo__memory_retrieve
+    - mcp__hex__hex_hexflo_swarm_status
+    - mcp__hex__hex_hexflo_swarm_status
+    - mcp__hex__hex_hexflo_memory_retrieve
 
 inputs:
   swarm_id:

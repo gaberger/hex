@@ -1,11 +1,13 @@
 use crate::domain::{
-    ContentBlock, ConversationState, Message, Role,
-    TokenBudget, ToolCall, ToolDefinition,
+    ApiRequestOptions, ContentBlock, ConversationState, Message, Role,
+    ThinkingConfig, TokenBudget, ToolCall, ToolDefinition, WorkloadClass,
 };
 use crate::ports::anthropic::{AnthropicError, AnthropicPort};
 use crate::ports::context::ContextManagerPort;
 use crate::ports::conversation::{ConversationEvent, ConversationError, ConversationPort};
+use crate::ports::rate_limiter::RateLimiterPort;
 use crate::ports::rl::{ContextStrategy, ModelSelection, RlPort, RlReward, RlState};
+use crate::ports::token_metrics::TokenMetricsPort;
 use crate::ports::tools::ToolExecutorPort;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -13,18 +15,25 @@ use std::sync::Arc;
 /// The core conversation loop — multi-turn interaction with tool_use support.
 ///
 /// This is the use case that replaces Claude Code's internal agent loop.
-/// It orchestrates: RL query → context packing → API call → tool execution → reward.
+/// It orchestrates: RL query → rate limit check → context packing → API call
+/// (with caching + thinking) → tool execution → metrics recording → reward.
 pub struct ConversationLoop {
     anthropic: Arc<dyn AnthropicPort>,
     context_mgr: Arc<dyn ContextManagerPort>,
     tool_executor: Arc<dyn ToolExecutorPort>,
     rl: Arc<dyn RlPort>,
+    rate_limiter: Arc<dyn RateLimiterPort>,
+    metrics: Arc<dyn TokenMetricsPort>,
     tools: Vec<ToolDefinition>,
     budget: TokenBudget,
     max_response_tokens: u32,
     max_tool_rounds: u32,
     /// When `true`, the user pinned a model via `--model` and RL must not override it.
     model_pinned: bool,
+    /// Enable prompt caching for system + tool blocks.
+    enable_cache: bool,
+    /// Extended thinking budget (0 = disabled).
+    thinking_budget: u32,
 }
 
 impl ConversationLoop {
@@ -33,6 +42,8 @@ impl ConversationLoop {
         context_mgr: Arc<dyn ContextManagerPort>,
         tool_executor: Arc<dyn ToolExecutorPort>,
         rl: Arc<dyn RlPort>,
+        rate_limiter: Arc<dyn RateLimiterPort>,
+        metrics: Arc<dyn TokenMetricsPort>,
         tools: Vec<ToolDefinition>,
         budget: TokenBudget,
         max_response_tokens: u32,
@@ -42,11 +53,15 @@ impl ConversationLoop {
             context_mgr,
             tool_executor,
             rl,
+            rate_limiter,
+            metrics,
             tools,
             budget,
             max_response_tokens,
             max_tool_rounds: 25,
             model_pinned: false,
+            enable_cache: true,   // On by default — free savings
+            thinking_budget: 0,
         }
     }
 
@@ -54,6 +69,18 @@ impl ConversationLoop {
     /// When pinned, RL model selection is ignored — the configured model is always used.
     pub fn with_model_pinned(mut self, pinned: bool) -> Self {
         self.model_pinned = pinned;
+        self
+    }
+
+    /// Set the extended thinking budget.
+    pub fn with_thinking_budget(mut self, budget: u32) -> Self {
+        self.thinking_budget = budget;
+        self
+    }
+
+    /// Enable/disable prompt caching.
+    pub fn with_cache(mut self, enabled: bool) -> Self {
+        self.enable_cache = enabled;
         self
     }
 
@@ -127,6 +154,13 @@ impl ConversationLoop {
         #[allow(unused_assignments)] // always overwritten inside the loop before being read
         let mut actual_model_used = String::new();
 
+        // Build API request options with caching + thinking config
+        let api_options = ApiRequestOptions {
+            enable_cache: self.enable_cache,
+            thinking: ThinkingConfig::with_budget(self.thinking_budget),
+            workload: Some(WorkloadClass::Interactive),
+        };
+
         loop {
             // Pack context to fit within RL-adjusted budget
             let packed = self
@@ -147,6 +181,29 @@ impl ConversationLoop {
                     let override_id = current_model
                         .as_ref()
                         .map(|m| m.model_id().to_string());
+
+                    // Proactive rate limit check — wait if we're near the limit
+                    let model_id = override_id.as_deref().unwrap_or("default");
+                    if let Some(delay) = self
+                        .rate_limiter
+                        .should_throttle(
+                            model_id,
+                            packed.messages.iter().map(|m| m.estimated_tokens()).sum::<u32>(),
+                            self.max_response_tokens,
+                        )
+                        .await
+                    {
+                        tracing::info!(
+                            model = model_id,
+                            delay_ms = delay.as_millis() as u64,
+                            "Proactive throttle — waiting to avoid rate limit"
+                        );
+                        let _ = event_tx.send(ConversationEvent::TextChunk(
+                            format!("\n*Throttling {}ms to stay within rate limits...*\n", delay.as_millis()),
+                        ));
+                        tokio::time::sleep(delay).await;
+                    }
+
                     match self
                         .anthropic
                         .send_message(
@@ -155,15 +212,47 @@ impl ConversationLoop {
                             &self.tools,
                             self.max_response_tokens,
                             override_id.as_deref(),
+                            Some(&api_options),
                         )
                         .await
                     {
                         Ok(resp) => {
                             actual_model_used = resp.model.clone();
+
+                            // Record usage with rate limiter + metrics
+                            self.rate_limiter
+                                .record_usage(
+                                    model_id,
+                                    resp.usage.input_tokens,
+                                    resp.usage.output_tokens,
+                                )
+                                .await;
+                            self.metrics
+                                .record_realtime(
+                                    model_id,
+                                    resp.usage.input_tokens,
+                                    resp.usage.output_tokens,
+                                    resp.usage.cache_read_tokens,
+                                    resp.usage.cache_write_tokens,
+                                )
+                                .await;
+
+                            if resp.usage.cache_read_tokens > 0 {
+                                tracing::debug!(
+                                    cache_read = resp.usage.cache_read_tokens,
+                                    cache_write = resp.usage.cache_write_tokens,
+                                    "Prompt cache hit"
+                                );
+                            }
+
                             break resp;
                         }
                         Err(AnthropicError::RateLimited { retry_after_ms }) => {
                             was_rate_limited = true;
+
+                            // Record rate limit with the rate limiter
+                            self.rate_limiter.record_rate_limit(model_id).await;
+
                             let rate_limited_model = current_model
                                 .as_ref()
                                 .map(|m| m.model_id())

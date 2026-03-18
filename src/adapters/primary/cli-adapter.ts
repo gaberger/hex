@@ -185,7 +185,6 @@ const TEMPLATES = {
         postinstall: 'cd node_modules/agentdb/dist && ln -sf src/controllers controllers 2>/dev/null || true',
       },
       dependencies: {
-        ruflo: 'latest',
         agentdb: 'latest',
       },
       devDependencies: {
@@ -1359,7 +1358,7 @@ export class CLIAdapter {
     }
     await safeWrite('PRD.md', prd);
 
-    // ── Initialize ruflo swarm if not already running ──
+    // ── Initialize HexFlo swarm if not already running ──
 
     if (!minimalMode && !fastMode) {
       try {
@@ -1734,7 +1733,7 @@ export class CLIAdapter {
   // ── initSwarm ──────────────────────────────────
 
   private async initSwarm(): Promise<void> {
-    this.writeLn('Initializing ruflo swarm...');
+    this.writeLn('Initializing HexFlo swarm...');
     try {
       const status = await this.ctx.swarm.init({
         topology: 'hierarchical',
@@ -2831,9 +2830,8 @@ export class CLIAdapter {
     const { promisify } = await import('util');
     const run = promisify(execFileCb);
 
-    // Install core dependencies (ruflo, agentdb, tree-sitter)
+    // Install core dependencies (agentdb, tree-sitter)
     const coreDeps = [
-      { pkg: 'ruflo', check: 'node_modules/ruflo' },
       { pkg: 'agentdb', check: 'node_modules/agentdb' },
       { pkg: 'tree-sitter-wasms', check: 'node_modules/tree-sitter-wasms/out' },
       { pkg: 'web-tree-sitter', check: 'node_modules/web-tree-sitter' },
@@ -2962,8 +2960,10 @@ export class CLIAdapter {
       this.writeLn(`  Failed to install skills/agents: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // Register ruflo MCP server in project-local Claude Code settings
-    await this.registerRufloMCP(claudeDir, join);
+    // HexFlo coordination is built into hex-nexus — no separate MCP server needed.
+    // HexFlo tools are registered as mcp__hex__hex_hexflo_* via the hex MCP server.
+    this.writeLn('');
+    this.writeLn('  HexFlo: built-in (via hex-nexus)');
 
     // Build/install hex-hub Rust binary
     this.writeLn('');
@@ -3063,65 +3063,6 @@ export class CLIAdapter {
     return 0;
   }
 
-  // ── registerRufloMCP ──────────────────────────────
-
-  private async registerRufloMCP(claudeDir: string, join: (...args: string[]) => string): Promise<void> {
-    const { readFile, writeFile } = await import('node:fs/promises');
-    const settingsPath = join(claudeDir, 'settings.local.json');
-
-    // Find ruflo binary path
-    const { execFile: execFileCb } = await import('child_process');
-    const { promisify } = await import('util');
-    const run = promisify(execFileCb);
-
-    let rufloPath = '';
-    try {
-      const { stdout } = await run('which', ['ruflo'], { timeout: 5000 });
-      rufloPath = stdout.trim();
-    } catch {
-      // Try npx resolution
-      try {
-        const { stdout } = await run('npx', ['--yes', 'ruflo', '--version'], { timeout: 15000 });
-        if (stdout.trim()) rufloPath = 'npx';
-      } catch { /* ruflo not available */ }
-    }
-
-    if (!rufloPath) {
-      this.writeLn('');
-      this.writeLn('  Ruflo MCP: skipped (ruflo not found)');
-      this.writeLn('  Install with: npm install -g ruflo');
-      return;
-    }
-
-    // Read existing settings or create new
-    let settings: Record<string, unknown> = {};
-    try {
-      const existing = await readFile(settingsPath, 'utf-8');
-      settings = JSON.parse(existing);
-    } catch { /* file doesn't exist yet */ }
-
-    // Check if ruflo MCP is already registered
-    const mcpServers = (settings.mcpServers ?? {}) as Record<string, unknown>;
-    if (mcpServers.ruflo) {
-      this.writeLn('');
-      this.writeLn('  Ruflo MCP: already registered');
-      return;
-    }
-
-    // Register ruflo as stdio MCP server
-    const rufloConfig = rufloPath === 'npx'
-      ? { command: 'npx', args: ['--yes', 'ruflo', 'mcp', 'start'], type: 'stdio' }
-      : { command: rufloPath, args: ['mcp', 'start'], type: 'stdio' };
-
-    mcpServers.ruflo = rufloConfig;
-    settings.mcpServers = mcpServers;
-
-    await writeFile(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
-    this.writeLn('');
-    this.writeLn(`  Ruflo MCP: registered in .claude/settings.local.json`);
-    this.writeLn(`  Binary: ${rufloPath}`);
-    this.writeLn('  Restart Claude Code to activate swarm tools');
-  }
 
   // ── Inference Endpoint Management (ADR-026) ──────────────
 

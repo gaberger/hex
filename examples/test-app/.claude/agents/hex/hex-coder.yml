@@ -66,9 +66,9 @@ tools:
     - Glob
     - Grep
   optional:
-    - mcp__ruflo__task_update
-    - mcp__ruflo__task_complete
-    - mcp__ruflo__memory_store
+    - mcp__hex__hex_hexflo_task_create
+    - mcp__hex__hex_hexflo_task_complete
+    - mcp__hex__hex_hexflo_memory_store
 
 inputs:
   task:

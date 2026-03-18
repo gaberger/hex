@@ -4,7 +4,7 @@
 # When to Use:
 #   Use feature-developer when implementing a NAMED FEATURE that follows the
 #   7-phase lifecycle (specs → plan → worktrees → code → validate → integrate → finalize).
-#   It tracks per-feature ruflo memory under "feature/<name>/*", creates behavioral
+#   It tracks per-feature HexFlo memory under "feature/<name>/*", creates behavioral
 #   specs, decomposes into adapter-bounded worktrees, and enforces the validation-judge
 #   gate. Choose this agent when the work is a discrete, planned feature with acceptance
 #   criteria — not ad-hoc multi-agent tasks.
@@ -73,15 +73,15 @@ tools:
     - Grep
     - Bash
     - Agent
-  ruflo:
-    - mcp__ruflo__swarm_init
-    - mcp__ruflo__swarm_status
-    - mcp__ruflo__task_create
-    - mcp__ruflo__task_list
-    - mcp__ruflo__task_complete
-    - mcp__ruflo__memory_store
-    - mcp__ruflo__memory_retrieve
-    - mcp__ruflo__memory_search
+  hexflo:
+    - mcp__hex__hex_hexflo_swarm_init
+    - mcp__hex__hex_hexflo_swarm_status
+    - mcp__hex__hex_hexflo_task_create
+    - mcp__hex__hex_hexflo_task_list
+    - mcp__hex__hex_hexflo_task_complete
+    - mcp__hex__hex_hexflo_memory_store
+    - mcp__hex__hex_hexflo_memory_retrieve
+    - mcp__hex__hex_hexflo_memory_search
 
 inputs:
   feature_name:
@@ -120,26 +120,26 @@ outputs:
 workflow:
   phases:
     - id: init
-      name: "Initialize Ruflo Swarm"
+      name: "Initialize HexFlo Swarm"
       description: >
-        Register the feature swarm with ruflo for tracking.
+        Register the feature swarm with HexFlo for tracking.
         Reconcile any prior session state against git log.
       steps:
         - id: swarm-init
           action: |
-            mcp__ruflo__swarm_init({
+            mcp__hex__hex_hexflo_swarm_init({
               topology: "hierarchical",
               maxAgents: 8,
               strategy: "specialized"
             })
         - id: reconcile
           action: |
-            mcp__ruflo__task_list()
+            mcp__hex__hex_hexflo_task_list()
             Cross-reference against: git log --oneline -10
-            For completed tasks: mcp__ruflo__task_complete({ task_id, result: "commit hash" })
+            For completed tasks: mcp__hex__hex_hexflo_task_complete({ task_id, result: "commit hash" })
         - id: store-context
           action: |
-            mcp__ruflo__memory_store({
+            mcp__hex__hex_hexflo_memory_store({
               key: "feature/{{feature_name}}/context",
               value: { name, description, layers, mode, started_at }
             })
@@ -151,15 +151,15 @@ workflow:
         Write Given/When/Then behavioral specs BEFORE any code.
         This prevents the "tests mirror bugs" problem where the same
         LLM writes both code and tests, encoding its misunderstandings.
-      ruflo:
+      hexflo:
         on_start: |
-          mcp__ruflo__task_create({
+          mcp__hex__hex_hexflo_task_create({
             title: "Write behavioral specs for {{feature_name}}",
             assignee: "behavioral-spec-writer",
             metadata: { phase: "specs", feature: "{{feature_name}}" }
           })
         on_complete: |
-          mcp__ruflo__task_complete({
+          mcp__hex__hex_hexflo_task_complete({
             task_id: "{{specs_task_id}}",
             result: "{{N}} specs written to docs/specs/{{feature_name}}.json"
           })
@@ -172,21 +172,21 @@ workflow:
     - id: plan
       name: "Decompose into Adapter-Bounded Tasks"
       depends_on: [specs]
-      ruflo:
+      hexflo:
         on_start: |
-          mcp__ruflo__task_create({
+          mcp__hex__hex_hexflo_task_create({
             title: "Decompose {{feature_name}} into tasks",
             assignee: "planner",
             metadata: { phase: "plan", feature: "{{feature_name}}" }
           })
         on_complete: |
-          mcp__ruflo__task_complete({
+          mcp__hex__hex_hexflo_task_complete({
             task_id: "{{plan_task_id}}",
             result: "Workplan with {{N}} steps"
           })
-          # Register every workplan step as a ruflo task:
+          # Register every workplan step as a HexFlo task:
           for step in workplan.steps:
-            mcp__ruflo__task_create({
+            mcp__hex__hex_hexflo_task_create({
               title: step.description,
               assignee: "hex-coder",
               metadata: {
@@ -196,10 +196,10 @@ workflow:
                 worktree_branch: step.worktree_branch
               }
             })
-          # Store task ID mapping in ruflo memory:
-          mcp__ruflo__memory_store({
+          # Store task ID mapping in HexFlo memory:
+          mcp__hex__hex_hexflo_memory_store({
             key: "feature/{{feature_name}}/workplan",
-            value: { workplan_path, task_ids: { step_id: ruflo_task_id }, total_steps, completed_steps: 0 }
+            value: { workplan_path, task_ids: { step_id: hexflo_task_id }, total_steps, completed_steps: 0 }
           })
       agent: planner
       output: docs/workplans/feat-{{feature_name}}.json
@@ -231,13 +231,13 @@ workflow:
         - type: hex-coder
           scope: port interface changes
           worktree: feat/{{feature_name}}/ports
-      ruflo:
+      hexflo:
         on_agent_complete: |
-          mcp__ruflo__task_complete({
+          mcp__hex__hex_hexflo_task_complete({
             task_id: "{{task_id}}",
             result: "feat({{adapter}}): {{summary}} — commit {{hash}}"
           })
-          mcp__ruflo__memory_store({
+          mcp__hex__hex_hexflo_memory_store({
             key: "feature/{{feature_name}}/progress",
             value: { completed, in_progress, pending, current_tier, last_updated }
           })
@@ -259,16 +259,16 @@ workflow:
           scope: "one per adapter in workplan"
           mode: bypassPermissions
           run_in_background: true
-      ruflo:
+      hexflo:
         on_agent_complete: |
-          mcp__ruflo__task_complete({
+          mcp__hex__hex_hexflo_task_complete({
             task_id: "{{task_id}}",
             result: "feat({{adapter}}): {{summary}} — commit {{hash}}"
           })
           # Check if all tasks in current tier are done:
-          mcp__ruflo__task_list()
+          mcp__hex__hex_hexflo_task_list()
           # Update progress:
-          mcp__ruflo__memory_store({
+          mcp__hex__hex_hexflo_memory_store({
             key: "feature/{{feature_name}}/progress",
             value: { completed, in_progress, pending, current_tier, last_updated }
           })
@@ -286,9 +286,9 @@ workflow:
         - Update use cases if new orchestration logic is needed
         - Wire new adapters in src/composition-root.ts
         - Run full test suite
-      ruflo:
+      hexflo:
         on_complete: |
-          mcp__ruflo__task_complete({
+          mcp__hex__hex_hexflo_task_complete({
             task_id: "{{task_id}}",
             result: "Composition root wired — commit {{hash}}"
           })
@@ -296,15 +296,15 @@ workflow:
     - id: validate
       name: "Validation Judge (BLOCKING)"
       depends_on: [tier-3]
-      ruflo:
+      hexflo:
         on_start: |
-          mcp__ruflo__task_create({
+          mcp__hex__hex_hexflo_task_create({
             title: "Validate {{feature_name}} against specs",
             assignee: "validation-judge",
             metadata: { phase: "validate", feature: "{{feature_name}}", blocking: true }
           })
         on_complete: |
-          mcp__ruflo__task_complete({
+          mcp__hex__hex_hexflo_task_complete({
             task_id: "{{validate_task_id}}",
             result: "Verdict: {{verdict}} — {{specs_passed}}/{{specs_checked}} specs"
           })
@@ -320,20 +320,20 @@ workflow:
     - id: integrate
       name: "Merge and Finalize"
       depends_on: [validate]
-      ruflo:
+      hexflo:
         on_start: |
-          mcp__ruflo__task_create({
+          mcp__hex__hex_hexflo_task_create({
             title: "Integrate {{feature_name}} worktrees",
             assignee: "integrator",
             metadata: { phase: "integrate", feature: "{{feature_name}}" }
           })
         on_complete: |
-          mcp__ruflo__task_complete({
+          mcp__hex__hex_hexflo_task_complete({
             task_id: "{{integrate_task_id}}",
             result: "Feature {{feature_name}} merged — commit {{final_hash}}"
           })
           # Store final report:
-          mcp__ruflo__memory_store({
+          mcp__hex__hex_hexflo_memory_store({
             key: "feature/{{feature_name}}/report",
             value: {
               status: "complete", verdict: "PASS",

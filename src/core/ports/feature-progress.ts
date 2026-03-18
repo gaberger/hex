@@ -12,7 +12,7 @@ import type { Workplan as DomainWorkplan, WorkplanStep as DomainWorkplanStep } f
 // ─── Feature Phases ──────────────────────────────────────────
 
 export type FeaturePhase =
-  | 'init'        // Ruflo swarm initialization
+  | 'init'        // HexFlo swarm initialization
   | 'specs'       // Behavioral spec writing (MANDATORY)
   | 'plan'        // Workplan decomposition
   | 'worktrees'   // Git worktree creation
@@ -99,7 +99,7 @@ export interface FeatureReport {
 export interface IFeatureProgressPort {
   /**
    * Start tracking a feature. Initializes session state.
-   * Call this in the "init" phase AFTER ruflo swarm_init.
+   * Call this in the "init" phase AFTER HexFlo swarm_init.
    */
   startFeature(featureName: string, tokenBudget?: number): Promise<FeatureSession>;
 

@@ -67,10 +67,10 @@ tools:
     - EnterWorktree
     - ExitWorktree
   optional:
-    - mcp__ruflo__task_update
-    - mcp__ruflo__task_complete
-    - mcp__ruflo__memory_store
-    - mcp__ruflo__memory_retrieve
+    - mcp__hex__hex_hexflo_task_create
+    - mcp__hex__hex_hexflo_task_complete
+    - mcp__hex__hex_hexflo_memory_store
+    - mcp__hex__hex_hexflo_memory_retrieve
 
 inputs:
   workplan:
@@ -217,7 +217,7 @@ workflow:
         - Remove merged worktrees
         - Tag the integration commit
         - Generate integration report
-        - Store report in Ruflo memory
+        - Store report in HexFlo memory
 
   commit:
     when: all_integration_tests_pass

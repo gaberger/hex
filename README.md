@@ -8,7 +8,7 @@
   <a href="#"><img src="https://img.shields.io/badge/bun-runtime-f9f1e1?style=flat-square&logo=bun&logoColor=black" alt="Bun"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License"/></a>
   <a href="#multi-language-support"><img src="https://img.shields.io/badge/languages-TS%20%7C%20Go%20%7C%20Rust-informational?style=flat-square" alt="Languages"/></a>
-  <a href="#multi-agent-swarm-coordination"><img src="https://img.shields.io/badge/swarm-ruflo%20powered-blueviolet?style=flat-square" alt="Swarm"/></a>
+  <a href="#multi-agent-swarm-coordination"><img src="https://img.shields.io/badge/swarm-HexFlo%20powered-blueviolet?style=flat-square" alt="Swarm"/></a>
 </p>
 
 <p align="center">
@@ -73,7 +73,7 @@ npx @anthropic-hex/hex summarize src/ --level L1
 | `ports/` | `domain/` only | Typed interfaces — contracts between layers |
 | `usecases/` | `domain/` + `ports/` | Application logic composing ports |
 | `adapters/primary/` | `ports/` only | Driving: CLI, HTTP, MCP, Dashboard |
-| `adapters/secondary/` | `ports/` only | Driven: FS, Git, LLM, TreeSitter, Ruflo, Secrets |
+| `adapters/secondary/` | `ports/` only | Driven: FS, Git, LLM, TreeSitter, HexFlo, Secrets |
 | `composition-root.ts` | Everything | The ONLY file that imports adapters |
 
 **The golden rule:** Adapters NEVER import other adapters. This is the most common mistake AI agents make, and `hex analyze` catches it every time.
@@ -276,7 +276,7 @@ Agent logs are redirected to `.hex/logs/agent-<name>.log` to keep the console cl
 
 <br/>
 
-hex coordinates multiple AI agents working in parallel via [**ruflo**](https://github.com/ruvnet/claude-flow) (`@claude-flow/cli`), with **lock-based coordination** to prevent duplicate work and file conflicts across instances (ADR-022).
+hex coordinates multiple AI agents working in parallel via [**HexFlo**] (formerly ruflo)(https://github.com/ruvnet/claude-flow) (`@claude-flow/cli`), with **lock-based coordination** to prevent duplicate work and file conflicts across instances (ADR-022).
 
 <table>
 <tr>
@@ -821,7 +821,7 @@ src/
     usecases/            # Application logic
   adapters/
     primary/             # CLI, MCP, Dashboard, Notifications
-    secondary/           # FS, Git, TreeSitter, LLM, Ruflo, Build, Registry, Secrets
+    secondary/           # FS, Git, TreeSitter, LLM, HexFlo, Build, Registry, Secrets
   infrastructure/        # Tree-sitter query definitions
   composition-root.ts    # Single DI wiring point
   cli.ts                 # CLI entry point
@@ -861,7 +861,7 @@ Indicators:
 - **MCP** — hex MCP server status
 - **Score** — last architecture health score
 
-Three-tier detection: `.hex/status.json` (written by hooks) → `~/.claude-flow/metrics` (daemon) → ruflo MCP config (fallback). Auto-configured during `hex init`.
+Three-tier detection: `.hex/status.json` (written by hooks) → `~/.claude-flow/metrics` (daemon) → HexFlo MCP config (fallback). Auto-configured during `hex init`.
 
 <br/>
 
@@ -897,7 +897,7 @@ cargo build --release -p hex-hub  # Build dashboard binary manually
 |:---------|:---------|
 | **Tree-sitter over regex** | WASM-based AST extraction works across languages; regex breaks on edge cases |
 | **Hybrid TS+Rust via NAPI** | Tree-sitter hot path in native Rust (5-10x faster than WASM); falls back to WASM if binary unavailable (ADR-010) |
-| **Ruflo as required dep** | Swarm coordination is not optional; even solo workflows benefit from task tracking |
+| **HexFlo as required dep** | Swarm coordination is not optional; even solo workflows benefit from task tracking |
 | **Single composition root** | Only one file imports adapters; adapter swaps are one-line changes |
 | **L0-L3 summary levels** | AI agents need different detail at different phases; L1 is the sweet spot |
 | **Worktree isolation** | Each agent gets a git worktree, not just a branch; prevents merge conflicts |
@@ -938,7 +938,7 @@ The composition root selects the adapter chain based on environment. Secrets nev
 | Protection | Implementation |
 |:-----------|:--------------|
 | Path traversal | `FileSystemAdapter.safePath()` blocks `../` escapes |
-| Shell injection | `RufloAdapter` uses `execFile` (not `exec`) |
+| Shell injection | `HexFloAdapter` uses `execFile` (not `exec`) |
 | Secret management | `ISecretsPort` — Infisical / LocalVault / env-var adapter chain |
 | XSS prevention | Primary adapters must not use `innerHTML` with external data |
 | Credential safety | `.env` files are gitignored; `.env.example` provided |
@@ -967,7 +967,7 @@ hex builds on the **Hexagonal Architecture** pattern (also known as **Ports and 
 ### Key Technologies
 
 - **[tree-sitter](https://tree-sitter.github.io/)** — Max Brunsfeld et al. Language-agnostic parsing framework powering hex's L0-L3 AST summaries
-- **[ruflo / claude-flow](https://github.com/ruvnet/claude-flow)** — Reuven Cohen ([@ruvnet](https://github.com/ruvnet)). Multi-agent swarm coordination framework
+- **[HexFlo / claude-flow](https://github.com/ruvnet/claude-flow)** — Reuven Cohen ([@ruvnet](https://github.com/ruvnet)). Multi-agent swarm coordination framework
 - **[Infisical](https://github.com/Infisical/infisical)** — Open-source secrets management platform integrated via `ISecretsPort`
 
 ### Authors

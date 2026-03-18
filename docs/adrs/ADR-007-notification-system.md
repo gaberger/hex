@@ -41,7 +41,7 @@ The persistent status bar uses a compact, terminal-friendly format:
 [execute] coder-1: generating tests | quality: 85 | 3/6 adapters | ████░░ 50%
 ```
 
-Fields: `[phase]`, active agent and step, quality score from `QualityScore.score`, adapter completion ratio, and a Unicode progress bar. The format is inspired by ruflo's status system but tailored to hex's phase model (plan / execute / integrate / package) and quality-gate feedback loop.
+Fields: `[phase]`, active agent and step, quality score from `QualityScore.score`, adapter completion ratio, and a Unicode progress bar. The format is inspired by the swarm coordination status system (formerly ruflo, now HexFlo per ADR-027) but tailored to hex's phase model (plan / execute / integrate / package) and quality-gate feedback loop.
 
 ### Integration with Domain Events
 

@@ -1,4 +1,4 @@
-use crate::domain::{ContentBlock, Message, StopReason, TokenUsage, ToolDefinition};
+use crate::domain::{ApiRequestOptions, ContentBlock, Message, StopReason, TokenUsage, ToolDefinition};
 use async_trait::async_trait;
 
 /// Streaming chunk from the Anthropic API.
@@ -20,13 +20,16 @@ pub enum StreamChunk {
 /// Port for communicating with the Anthropic Messages API.
 ///
 /// This is the core outbound port — hex-agent's reason for existing.
-/// The adapter implements SSE streaming, tool_use handling, and token tracking.
+/// The adapter implements SSE streaming, tool_use handling, token tracking,
+/// prompt caching (cache_control), and extended thinking (budget_tokens).
 #[async_trait]
 pub trait AnthropicPort: Send + Sync {
     /// Send a conversation to the API and get the full response.
     ///
     /// When `model_override` is `Some`, it replaces the adapter's configured model
     /// for this single request (used by RL-driven model selection).
+    ///
+    /// When `options` is `Some`, it enables caching, thinking budget, etc.
     async fn send_message(
         &self,
         system: &str,
@@ -34,6 +37,7 @@ pub trait AnthropicPort: Send + Sync {
         tools: &[ToolDefinition],
         max_tokens: u32,
         model_override: Option<&str>,
+        options: Option<&ApiRequestOptions>,
     ) -> Result<AnthropicResponse, AnthropicError>;
 
     /// Send a conversation and stream the response chunk by chunk.
@@ -47,6 +51,7 @@ pub trait AnthropicPort: Send + Sync {
         tools: &[ToolDefinition],
         max_tokens: u32,
         model_override: Option<&str>,
+        options: Option<&ApiRequestOptions>,
     ) -> Result<Box<dyn futures::Stream<Item = Result<StreamChunk, AnthropicError>> + Send + Unpin>, AnthropicError>;
 }
 

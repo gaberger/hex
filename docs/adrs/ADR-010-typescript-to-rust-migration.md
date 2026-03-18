@@ -19,7 +19,7 @@
 | IGitPort                    | 6       | git2 crate is mature |
 | IFileSystemPort             | 5       | std::fs, trivial |
 | IArchAnalysisPort           | 5       | Complex -- reimplements graph logic |
-| ISwarmPort                  | 21      | Largest port; wraps ruflo CLI |
+| ISwarmPort                  | 21      | Largest port; wraps HexFlo (formerly ruflo) CLI |
 | ISwarmOrchestrationPort     | 2       | Composes swarm + worktree |
 | IValidationPort             | 5       | LLM-dependent, moderate |
 | IScaffoldPort               | 7       | Template generation, moderate |
@@ -76,7 +76,7 @@ The `hex-hub/` directory already contains a Rust binary (axum + tokio + rust-emb
 | Adapter                  | TS Dependency            | Rust Equivalent           | Verdict |
 |--------------------------|--------------------------|---------------------------|---------|
 | LLMAdapter               | fetch (HTTP + SSE)       | reqwest + eventsource     | **Equivalent** |
-| RufloAdapter             | execFile (npx)           | Command::new              | **Equivalent** -- still shells out |
+| HexFloAdapter            | execFile (npx)           | Command::new              | **Equivalent** -- still shells out |
 | InfisicalAdapter         | fetch (REST API)         | reqwest                   | **Equivalent** |
 | BuildAdapter             | execFile (bun/npm)       | Command::new              | **Equivalent** |
 | DashboardAdapter         | fetch + EventSource      | reqwest + tokio           | **Equivalent** |
@@ -200,7 +200,7 @@ The codebase defines three bridging mechanisms in `src/core/ports/cross-lang.ts`
 | 2 | **LLM SDK gap**: No official Anthropic Rust SDK; streaming SSE parsing is error-prone | High | High | Use raw reqwest + manual SSE parsing (brittle) |
 | 3 | **Development velocity halved**: 18K LOC rewrite estimated at 8-12 weeks for experienced Rust developer | High | High | No mitigation -- this is inherent |
 | 4 | **Ecosystem mismatch**: hex targets JS/TS projects primarily; Rust CLI for JS projects feels foreign | Medium | Medium | Ship as npm postinstall binary (like esbuild) |
-| 5 | **ruflo dependency**: ruflo is a Node CLI tool; Rust must still shell out to it | High | Medium | No change in architecture -- still subprocess |
+| 5 | **ruflo dependency** (now HexFlo): ruflo is a Node CLI tool; Rust must still shell out to it | High | Medium | No change in architecture -- still subprocess |
 
 **Estimated effort**: 8-12 engineer-weeks for a competent Rust developer.
 **Feature parity risk**: High. AsyncGenerator patterns, dynamic imports, and TS SDK integrations do not translate cleanly.

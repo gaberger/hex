@@ -3,7 +3,7 @@
  *
  * Coordinates parallel code generation across worktrees using swarm agents.
  * Takes a workplan's steps, assigns each to an agent in an isolated worktree,
- * and tracks progress through the swarm port (ruflo).
+ * and tracks progress through the swarm port (HexFlo).
  *
  * Respects dependency ordering: steps only start after their dependencies complete.
  */

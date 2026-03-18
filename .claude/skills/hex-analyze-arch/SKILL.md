@@ -5,7 +5,7 @@ description: Check hexagonal architecture health, find dead code, and validate b
 
 # Hex Analyze Arch — Architecture Health Check with Auto-Fix
 
-Runs a full hexagonal architecture analysis. When violations are found, automatically creates ruflo tasks and spawns a fix swarm — no manual triage needed.
+Runs a full hexagonal architecture analysis. When violations are found, automatically creates HexFlo tasks and spawns a fix swarm — no manual triage needed.
 
 ## Parameters
 
@@ -51,12 +51,12 @@ Display the ACTION ITEMS report showing:
 - MUST FIX: Critical and high-priority items with suggested fixes
 - SHOULD FIX: Medium and low-priority items
 
-### 3. Register Tasks in Ruflo
+### 3. Register Tasks in HexFlo
 
-For each action item with priority `critical` or `high`, create a ruflo task:
+For each action item with priority `critical` or `high`, create a HexFlo task:
 
 ```
-mcp__ruflo__task_create({
+mcp__hex__hex_hexflo_task_create({
   title: item.title,
   metadata: {
     category: item.category,        // bug, violation, circular-dep
@@ -70,9 +70,9 @@ mcp__ruflo__task_create({
 })
 ```
 
-Store the full report in ruflo memory:
+Store the full report in HexFlo memory:
 ```
-mcp__ruflo__memory_store("devtracker/validation-actions", JSON.stringify(actionReport))
+mcp__hex__hex_hexflo_memory_store("devtracker/validation-actions", JSON.stringify(actionReport))
 ```
 
 ### 4. Auto-Fix Decision
@@ -151,7 +151,7 @@ After spawning fix agents:
 1. Wait for agent completion notifications
 2. For each completed fix:
    - Run `mcp__hex__hex_validate_boundaries(".")` to verify the fix
-   - If violation resolved: `mcp__ruflo__task_complete(taskId, commitHash)`
+   - If violation resolved: `mcp__hex__hex_hexflo_task_complete(taskId, commitHash)`
    - If still broken: report failure, do NOT retry automatically
 3. Run final `mcp__hex__hex_analyze(".")` to get updated health score
 
@@ -174,7 +174,7 @@ Write the full analysis + action items + fix results to `docs/analysis/arch-repo
 {violations table with severity}
 
 ## Action Items Created
-{list of ruflo tasks created}
+{list of HexFlo tasks created}
 
 ## Fixes Applied
 {list of auto-fixed issues with commit hashes}

@@ -89,7 +89,7 @@ Existing errors in `cli-adapter.ts`, `dashboard-adapter.ts`, etc. are pre-existi
 [planner] Reading 450 lines...
 [hex-coder-1] Tool: Bash { command: "cd ../hex-feat-webhook-git && bun test" }
 [hex-coder-2] Spawned for adapter: cli-adapter
-[ruflo] Task created: implement-git-adapter
+[hexflo] Task created: implement-git-adapter
 ... (hundreds more lines)
 ```
 

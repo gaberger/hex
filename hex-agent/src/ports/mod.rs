@@ -10,6 +10,9 @@ pub mod hub;
 pub mod rl;
 pub mod secret_broker;
 pub mod inference;
+pub mod rate_limiter;
+pub mod batch;
+pub mod token_metrics;
 
 pub use anthropic::AnthropicPort;
 pub use context::ContextManagerPort;
@@ -21,6 +24,9 @@ pub use workplan::WorkplanPort;
 pub use hub::HubClientPort;
 pub use secret_broker::SecretBrokerPort;
 pub use inference::InferenceDiscoveryPort;
+pub use rate_limiter::RateLimiterPort;
+pub use batch::BatchPort;
+pub use token_metrics::TokenMetricsPort;
 
 // Re-export domain types that adapters need (so adapters import from ports, not domain)
 #[allow(unused_imports)]

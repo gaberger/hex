@@ -31,7 +31,7 @@ The current `/hex-feature-dev` workflow is **noisy and unclear**:
    - Hex layer violations not surfaced until `hex analyze` runs
 
 5. **Status Updates Scattered**
-   - Ruflo task updates mixed with agent logs
+   - HexFlo task updates mixed with agent logs
    - No unified status line like dashboard has
 
 ### User Experience Gap
@@ -43,7 +43,7 @@ The current `/hex-feature-dev` workflow is **noisy and unclear**:
 [hex-coder-1] Spawned for adapter: git-adapter
 [hex-coder-1] Tool: Bash { command: "cd ../hex-feat-webhook-git && bun test" }
 [hex-coder-2] Spawned for adapter: cli-adapter
-[ruflo] Task created: implement-git-adapter
+[ruflo] Task created: implement-git-adapter   ← (old ruflo output)
 ... (hundreds of lines of tool calls)
 ```
 
@@ -104,7 +104,7 @@ Implement a **Feature Progress Orchestrator** that:
 ┌─────────────────────────────────────────────────────────────┐
 │  Feature Progress Orchestrator (Use Case)                   │
 │  - Aggregates agent status updates                          │
-│  - Builds ProgressReport from workplan + ruflo tasks        │
+│  - Builds ProgressReport from workplan + HexFlo tasks        │
 │  - Emits StatusLine updates via INotificationEmitPort       │
 │  - Manages phase transitions (specs → plan → code → ...)    │
 └─────────────────────────────────────────────────────────────┘
@@ -127,7 +127,7 @@ export interface IFeatureProgressPort {
   /** Start tracking a feature (loads workplan + creates ProgressReport) */
   startFeature(featureName: string): Promise<FeatureSession>;
 
-  /** Update agent status (called by agents, not ruflo) */
+  /** Update agent status (called by agents, not HexFlo) */
   updateAgent(update: AgentStatusUpdate): Promise<void>;
 
   /** Get current progress report */
@@ -413,7 +413,7 @@ export class WorkplanVisualizer {
    - Fallback to plain text needed for CI/CD
 
 4. **State Management**
-   - Progress orchestrator must reconcile ruflo task state + agent events
+   - Progress orchestrator must reconcile HexFlo task state + agent events
    - Risk of desync if events are missed
 
 ### Mitigation
@@ -461,9 +461,9 @@ export class WorkplanVisualizer {
 - Loses transparency into what agents are doing
 - Verdict: Redirect to log files instead
 
-### 3. **Use Ruflo's Status System**
-- Ruflo shows "idle" because it's a registry, not executor
-- Ruflo doesn't know about hex-specific phases/layers
+### 3. **Use HexFlo's Status System**
+- HexFlo shows "idle" because it's a registry, not executor
+- HexFlo doesn't know about hex-specific phases/layers
 - Verdict: Hex needs its own domain-specific progress view
 
 ## References

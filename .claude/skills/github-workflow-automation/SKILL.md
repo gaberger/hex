@@ -537,19 +537,19 @@ run().catch(error => core.setFailed(error.message));
 #### Initialize GitHub Swarm
 ```javascript
 // Step 1: Initialize swarm coordination
-mcp__ruflo__swarm_init {
+mcp__hex__hex_hexflo_swarm_init {
   topology: "hierarchical",
   maxAgents: 8
 }
 
 // Step 2: Spawn specialized agents
-mcp__ruflo__agent_spawn { type: "coordinator", name: "GitHub Coordinator" }
-mcp__ruflo__agent_spawn { type: "reviewer", name: "Code Reviewer" }
-mcp__ruflo__agent_spawn { type: "tester", name: "QA Agent" }
-mcp__ruflo__agent_spawn { type: "analyst", name: "Security Analyst" }
+mcp__hex__hex_hexflo_swarm_status { type: "coordinator", name: "GitHub Coordinator" }
+mcp__hex__hex_hexflo_swarm_status { type: "reviewer", name: "Code Reviewer" }
+mcp__hex__hex_hexflo_swarm_status { type: "tester", name: "QA Agent" }
+mcp__hex__hex_hexflo_swarm_status { type: "analyst", name: "Security Analyst" }
 
 // Step 3: Orchestrate GitHub workflow
-mcp__ruflo__task_orchestrate {
+mcp__hex__hex_hexflo_task_create {
   task: "Complete PR review and merge workflow",
   strategy: "parallel",
   priority: "high"

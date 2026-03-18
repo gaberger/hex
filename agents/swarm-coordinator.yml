@@ -6,7 +6,7 @@
 #   structured 7-phase feature lifecycle. Examples: bulk refactoring across many
 #   adapters, exploratory code analysis, one-off parallel tasks, or any work where
 #   behavioral specs and the validation-judge gate are not needed. It provides
-#   generic ruflo swarm tracking (init, spawn, monitor, integrate) without the
+#   generic HexFlo swarm tracking (init, spawn, monitor, integrate) without the
 #   per-feature memory structure or mandatory spec/validation phases.
 #
 #   Contrast with feature-developer: feature-developer is for discrete, planned
@@ -17,7 +17,7 @@ name: swarm-coordinator
 type: hierarchical-coordinator
 version: "1.0.0"
 description: >
-  Top-level orchestrator for the hex development workflow. Initializes the Ruflo
+  Top-level orchestrator for the hex development workflow. Initializes the HexFlo
   swarm, assigns tasks from the planner's workplan to hex-coder agents in parallel
   worktrees, monitors progress, handles failures, and triggers integration when all
   adapter tasks complete.
@@ -63,22 +63,16 @@ tools:
     - Bash
     - Read
     - Glob
-  ruflo:
-    - mcp__ruflo__swarm_init
-    - mcp__ruflo__swarm_status
-    - mcp__ruflo__task_create
-    - mcp__ruflo__task_list
-    - mcp__ruflo__task_status
-    - mcp__ruflo__task_complete
-    - mcp__ruflo__task_assign
-    - mcp__ruflo__memory_store
-    - mcp__ruflo__memory_retrieve
-    - mcp__ruflo__memory_search
-  agent_management:
-    - mcp__ruflo__agent_spawn
-    - mcp__ruflo__agent_status
-    - mcp__ruflo__agent_list
-    - mcp__ruflo__agent_terminate
+  hexflo:
+    - mcp__hex__hex_hexflo_swarm_init
+    - mcp__hex__hex_hexflo_swarm_status
+    - mcp__hex__hex_hexflo_task_create
+    - mcp__hex__hex_hexflo_task_list
+    - mcp__hex__hex_hexflo_task_complete
+    - mcp__hex__hex_hexflo_memory_store
+    - mcp__hex__hex_hexflo_memory_retrieve
+    - mcp__hex__hex_hexflo_memory_search
+  # Note: agent_management tools removed — agents are spawned via hex-hub agent manager now (ADR-027)
 
 inputs:
   requirements:
@@ -112,17 +106,17 @@ workflow:
       name: "Initialize Swarm"
       steps:
         - id: swarm-init
-          action: mcp__ruflo__swarm_init
+          action: mcp__hex__hex_hexflo_swarm_init
           params:
             topology: hierarchical
             maxAgents: 8
             strategy: specialized
-          description: Register swarm with Ruflo for tracking
+          description: Register swarm with HexFlo for tracking
 
         - id: reconcile-state
           action: |
             Check git log for any previously completed tasks.
-            Cross-reference with Ruflo task list.
+            Cross-reference with HexFlo task list.
             Mark completed tasks to avoid duplicate work.
 
     - id: plan
@@ -148,7 +142,7 @@ workflow:
           action: |
             Read the workplan from docs/workplans/current.json
             For each step in the workplan:
-              mcp__ruflo__task_create({
+              mcp__hex__hex_hexflo_task_create({
                 title: step.description,
                 assignee: step.assignee,
                 metadata: { adapter: step.adapter, port: step.port }
@@ -197,7 +191,7 @@ workflow:
         when notified of a task completion or failure.
       on_task_complete:
         action: |
-          1. mcp__ruflo__task_complete with commit hash
+          1. mcp__hex__hex_hexflo_task_complete with commit hash
           2. Check if all tasks in current dependency tier are done
           3. If yes, spawn next tier of tasks (if any)
           4. If all tasks done, proceed to integrate phase
@@ -237,7 +231,7 @@ workflow:
       steps:
         - Clean up all worktrees
         - Generate final report with metrics
-        - Store report in Ruflo memory
+        - Store report in HexFlo memory
         - Log summary to docs/workplans/{{workplan_id}}-report.json
 
   error_handling:
@@ -261,7 +255,7 @@ workflow:
         Focus resources on blocking tasks.
 
 progress_tracking:
-  store_in: mcp__ruflo__memory_store
+  store_in: mcp__hex__hex_hexflo_memory_store
   key_pattern: "swarm/{{workplan_id}}/progress"
   update_on:
     - task_complete

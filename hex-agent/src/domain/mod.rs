@@ -6,6 +6,7 @@ pub mod skills;
 pub mod hooks;
 pub mod workplan;
 pub mod secret_grant;
+pub mod api_optimization;
 
 // Re-export core types for convenience
 pub use messages::{Message, Role, ContentBlock, StopReason, ConversationState};
@@ -15,3 +16,8 @@ pub use agents::{AgentDefinition, AgentConstraints, AgentMetrics};
 pub use skills::{Skill, SkillTrigger, SkillManifest};
 pub use hooks::{Hook, HookEvent, HookResult, HookConfig};
 pub use workplan::{Workplan, WorkplanPhase, WorkplanTask, TaskStatus, PhaseGate};
+pub use api_optimization::{
+    WorkloadClass, ThinkingConfig, ApiRequestOptions,
+    CacheMetrics, RateLimitState, RateLimitHeaders,
+    BatchStatus, BatchRequest, ApiMetricsSnapshot,
+};

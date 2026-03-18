@@ -416,7 +416,7 @@ export const HEX_PARITY_TOOLS: MCPToolDefinition[] = [
   // ── Setup tool ──
   {
     name: 'hex_setup',
-    description: 'Install hex dependencies (tree-sitter grammars, ruflo, agentdb) and verify setup',
+    description: 'Install hex dependencies (tree-sitter grammars) and verify setup',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1680,7 +1680,6 @@ export class MCPAdapter {
     const lines: string[] = ['Setting up hex...', ''];
 
     const coreDeps = [
-      { pkg: 'ruflo', check: 'node_modules/ruflo' },
       { pkg: 'agentdb', check: 'node_modules/agentdb' },
       { pkg: 'tree-sitter-wasms', check: 'node_modules/tree-sitter-wasms/out' },
       { pkg: 'web-tree-sitter', check: 'node_modules/web-tree-sitter' },

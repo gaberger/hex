@@ -81,6 +81,10 @@ pub struct TokenUsage {
     pub total_output: u64,
     /// Number of API calls made
     pub api_calls: u32,
+    /// Tokens served from prompt cache (free, bypasses input TPM)
+    pub cache_read_tokens: u32,
+    /// Tokens written to prompt cache (1.25x cost on first request)
+    pub cache_write_tokens: u32,
 }
 
 impl TokenUsage {
@@ -92,7 +96,25 @@ impl TokenUsage {
         self.api_calls += 1;
     }
 
+    /// Record with cache breakdown from API response.
+    pub fn record_with_cache(
+        &mut self,
+        input: u32,
+        output: u32,
+        cache_read: u32,
+        cache_write: u32,
+    ) {
+        self.record(input, output);
+        self.cache_read_tokens = cache_read;
+        self.cache_write_tokens = cache_write;
+    }
+
     pub fn total_tokens(&self) -> u64 {
         self.total_input + self.total_output
+    }
+
+    /// Effective input tokens (excluding cached reads which are free).
+    pub fn billable_input(&self) -> u32 {
+        self.input_tokens.saturating_sub(self.cache_read_tokens)
     }
 }

@@ -20,7 +20,7 @@ prerequisites:
   - Repository access permissions
 tools_required:
   - mcp__github__*
-  - mcp__ruflo__*
+  - mcp__hex__hex_hexflo_*
   - Bash
   - Read
   - Write
@@ -79,10 +79,10 @@ npx ruv-swarm github board-init \
 
 ```javascript
 // Initialize issue management swarm
-mcp__ruflo__swarm_init { topology: "star", maxAgents: 3 }
-mcp__ruflo__agent_spawn { type: "coordinator", name: "Issue Coordinator" }
-mcp__ruflo__agent_spawn { type: "researcher", name: "Requirements Analyst" }
-mcp__ruflo__agent_spawn { type: "coder", name: "Implementation Planner" }
+mcp__hex__hex_hexflo_swarm_init { topology: "star", maxAgents: 3 }
+mcp__hex__hex_hexflo_swarm_status { type: "coordinator", name: "Issue Coordinator" }
+mcp__hex__hex_hexflo_swarm_status { type: "researcher", name: "Requirements Analyst" }
+mcp__hex__hex_hexflo_swarm_status { type: "coder", name: "Implementation Planner" }
 
 // Create comprehensive issue
 mcp__github__create_issue {
@@ -107,7 +107,7 @@ mcp__github__create_issue {
 }
 
 // Set up automated tracking
-mcp__ruflo__task_orchestrate {
+mcp__hex__hex_hexflo_task_create {
   task: "Monitor and coordinate issue progress with automated updates",
   strategy: "adaptive",
   priority: "medium"

@@ -602,12 +602,12 @@ Hooks automatically integrate with MCP tools for coordination:
 npx claude-flow hook pre-task --description "Build REST API"
 
 // Internally calls MCP tools:
-mcp__ruflo__agent_spawn {
+mcp__hex__hex_hexflo_swarm_status {
   type: "backend-dev",
   capabilities: ["api", "database", "testing"]
 }
 
-mcp__ruflo__memory_usage {
+mcp__hex__hex_hexflo_swarm_status {
   action: "store",
   key: "swarm/task/api-build/context",
   namespace: "coordination",
@@ -626,7 +626,7 @@ mcp__ruflo__memory_usage {
 npx claude-flow hook post-edit --file "api/auth.js"
 
 // Internally calls MCP tools:
-mcp__ruflo__memory_usage {
+mcp__hex__hex_hexflo_swarm_status {
   action: "store",
   key: "swarm/edits/api/auth.js",
   namespace: "coordination",
@@ -639,7 +639,7 @@ mcp__ruflo__memory_usage {
   })
 }
 
-mcp__ruflo__neural_train {
+mcp__hex__hex_hexflo_neural_train {
   pattern_type: "coordination",
   training_data: { /* edit patterns */ }
 }
@@ -652,11 +652,11 @@ mcp__ruflo__neural_train {
 npx claude-flow hook session-end --session-id "dev-2024"
 
 // Internally calls MCP tools:
-mcp__ruflo__memory_persist {
+mcp__hex__hex_hexflo_memory_persist {
   sessionId: "dev-2024"
 }
 
-mcp__ruflo__swarm_status {
+mcp__hex__hex_hexflo_swarm_status {
   swarmId: "current"
 }
 
@@ -671,7 +671,7 @@ All hooks follow a standardized memory coordination pattern:
 
 **Phase 1: STATUS** - Hook starts
 ```javascript
-mcp__ruflo__memory_usage {
+mcp__hex__hex_hexflo_swarm_status {
   action: "store",
   key: "swarm/hooks/pre-edit/status",
   namespace: "coordination",
@@ -686,7 +686,7 @@ mcp__ruflo__memory_usage {
 
 **Phase 2: PROGRESS** - Hook processes
 ```javascript
-mcp__ruflo__memory_usage {
+mcp__hex__hex_hexflo_swarm_status {
   action: "store",
   key: "swarm/hooks/pre-edit/progress",
   namespace: "coordination",
@@ -700,7 +700,7 @@ mcp__ruflo__memory_usage {
 
 **Phase 3: COMPLETE** - Hook finishes
 ```javascript
-mcp__ruflo__memory_usage {
+mcp__hex__hex_hexflo_swarm_status {
   action: "store",
   key: "swarm/hooks/pre-edit/complete",
   namespace: "coordination",

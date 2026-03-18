@@ -52,21 +52,21 @@ When a new conversation begins, a SessionStart hook runs `scripts/hex-startup.sh
 
 ## Swarm Coordination (REQUIRED)
 
-This project uses ruflo (claude-flow) for task tracking. You MUST use swarm coordination for ALL work:
+This project uses HexFlo (formerly ruflo) for task tracking. You MUST use swarm coordination for ALL work:
 
 ### Before starting any task:
 ```
-mcp__ruflo__task_create({ title: "descriptive task name", description: "what will be done" })
+mcp__hex__hex_hexflo_task_create({ title: "descriptive task name", description: "what will be done" })
 ```
 
 ### While working:
 ```
-mcp__ruflo__task_update({ task_id: "...", status: "in_progress", progress: 50 })
+mcp__hex__hex_hexflo_task_create({ task_id: "...", status: "in_progress", progress: 50 })
 ```
 
 ### After completing a task:
 ```
-mcp__ruflo__task_complete({ task_id: "...", result: "what was done — include commit hash if committed" })
+mcp__hex__hex_hexflo_task_complete({ task_id: "...", result: "what was done — include commit hash if committed" })
 ```
 
 ### For multi-step features, decompose into tasks first:
@@ -76,18 +76,18 @@ mcp__ruflo__task_complete({ task_id: "...", result: "what was done — include c
 
 ### Pattern learning — store what works:
 ```
-mcp__ruflo__agentdb_pattern-store({ name: "pattern name", content: "what worked", category: "go-adapter" })
+mcp__hex__hex_hexflo_memory_store({ name: "pattern name", content: "what worked", category: "go-adapter" })
 ```
 
 ### Before starting work, search for relevant patterns:
 ```
-mcp__ruflo__agentdb_pattern-search({ query: "what you're about to do" })
+mcp__hex__hex_hexflo_memory_search({ query: "what you're about to do" })
 ```
 
 ### Check swarm status anytime:
 ```
-mcp__ruflo__swarm_status()
-mcp__ruflo__task_list()
+mcp__hex__hex_hexflo_swarm_status()
+mcp__hex__hex_hexflo_task_list()
 ```
 
 ## Development Pipeline (follow this order)

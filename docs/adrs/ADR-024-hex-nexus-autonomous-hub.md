@@ -11,7 +11,7 @@ hex currently depends on Claude Code as the agent execution runtime. Claude Code
 This creates several problems:
 1. **Vendor lock-in**: hex cannot function without Claude Code CLI installed
 2. **No remote execution**: All work happens on the local machine
-3. **No learning**: AgentDB RL patterns live in ruflo (TypeScript/CLI), not in the orchestration layer
+3. **No learning**: AgentDB RL patterns live in ruflo (now superseded by HexFlo, see ADR-027) (TypeScript/CLI), not in the orchestration layer
 4. **No autonomous operation**: hex-hub cannot independently drive a plan/build/test cycle
 5. **Context waste**: Claude Code's context window is shared with hex framework overhead
 
@@ -57,7 +57,7 @@ A standalone Rust binary following hex architecture internally:
 - **Primary Adapters**: stdin/stdout CLI, WebSocket client (connects back to hex-hub)
 - **Use Cases**: ConversationLoop (multi-turn with tool_use), ContextPacker (smart window management)
 
-### AgentDB RL in hex-hub (Moved from ruflo)
+### AgentDB RL in hex-hub (Moved from ruflo, now HexFlo)
 
 SQLite-backed reinforcement learning engine:
 - **State space**: task type, codebase size, available agents, current token usage
@@ -70,7 +70,7 @@ SQLite-backed reinforcement learning engine:
 
 hex-hub can SSH into compute nodes to:
 1. Deploy hex-agent binary (scp)
-2. Install ruflo swarm coordinator
+2. Install HexFlo swarm coordinator
 3. Kick off workplan phases remotely
 4. Stream results back via SSH tunnel or reverse WebSocket
 5. Health-check fleet with periodic heartbeats

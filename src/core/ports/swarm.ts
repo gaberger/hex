@@ -1,10 +1,10 @@
 /**
  * Swarm Coordination Port
  *
- * Abstracts ruflo's swarm orchestration behind a hex port interface.
- * ruflo is a REQUIRED dependency of hex — this port is always
- * backed by the ruflo adapter in production. The port exists so that
- * tests can mock swarm behavior without starting a real daemon.
+ * Abstracts swarm orchestration behind a hex port interface.
+ * Backed by HexFloAdapter in production (ADR-027), which calls
+ * the hex-nexus REST API for native Rust-powered coordination.
+ * The port exists so that tests can mock swarm behavior.
  */
 
 import type { Language, WorkplanStep } from '../domain/value-objects.js';
