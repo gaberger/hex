@@ -120,6 +120,12 @@ export interface WorkplanStep {
   adapter: string;
   dependencies: string[]; // step IDs
   assignee?: string;
+  /** Execution state — populated during/after execution, absent in fresh plans. */
+  status?: StepResult['status'];
+  /** ISO 8601 timestamp when the step completed or failed. */
+  completedAt?: string;
+  /** Error message when status is 'failed'. */
+  error?: string;
 }
 
 export interface StepResult {

@@ -17,6 +17,7 @@ import { SwarmOrchestrator } from './core/usecases/swarm-orchestrator.js';
 import { ADRAdapter } from './adapters/secondary/adr-adapter.js';
 import { ADROrchestrator } from './core/usecases/adr-orchestrator.js';
 import { FeatureProgressOrchestrator } from './core/usecases/feature-progress-orchestrator.js';
+import { CheckpointOrchestrator } from './core/usecases/checkpoint-orchestrator.js';
 
 // ── Secondary Adapters (the ONLY adapter imports in the entire project) ──
 import { FileSystemAdapter } from './adapters/secondary/filesystem-adapter.js';
@@ -224,6 +225,7 @@ export async function createAppContext(
 
   // Event infrastructure — real pub/sub spine replacing the null stub
   const projectName = projectPath.split('/').pop() ?? 'unknown';
+  const checkpointOrchestrator = new CheckpointOrchestrator(checkpoint, swarm, projectName, projectPath);
   const eventBus = new InMemoryEventBus();
   // Use cases
   const archAnalyzer = new ArchAnalyzer(ast, fs, git);
@@ -452,6 +454,7 @@ export async function createAppContext(
     registry,
     secrets,
     checkpoint,
+    checkpointOrchestrator,
     scaffold,
     validator,
     serialization,

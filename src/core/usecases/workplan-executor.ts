@@ -111,19 +111,47 @@ export class WorkplanExecutor implements IWorkplanPort {
       });
     } catch { /* session tracking is best-effort */ }
 
+    // ── Recover prior progress from AgentDB ────────────────
+    // If a previous execution crashed, completed steps are persisted
+    // under workplan/<planId>/progress. Hydrate the completed set so
+    // we skip those steps on resume.
     const completed = new Set<string>();
     const failed = new Set<string>();
+
+    const priorProgress = await this.recoverProgress(plan.id);
+    if (priorProgress) {
+      for (const stepId of priorProgress.completed) completed.add(stepId);
+      for (const stepId of priorProgress.failed) failed.add(stepId);
+      if (completed.size > 0 || failed.size > 0) {
+        process.stderr.write(
+          `[hex] Resuming workplan ${plan.id}: ${completed.size} completed, ${failed.size} failed — skipping those steps\n`,
+        );
+      }
+    }
+
     const sorted = graph.topologicalSort();
 
     for (const step of sorted) {
+      // ── Skip already-completed steps on resume ─────────
+      if (completed.has(step.id)) {
+        yield { stepId: step.id, status: 'passed' };
+        continue;
+      }
+      // Re-attempt previously failed steps (user may have fixed the issue)
+
       const depsReady = step.dependencies.every((d) => completed.has(d));
       if (!depsReady) {
         failed.add(step.id);
+        step.status = 'failed';
+        step.error = 'Unmet dependencies';
+        step.completedAt = new Date().toISOString();
+        await this.persistProgress(plan.id, completed, failed);
         yield { stepId: step.id, status: 'failed', errors: ['Unmet dependencies'] };
         continue;
       }
 
       yield { stepId: step.id, status: 'running' };
+      step.status = 'running';
 
       let task: { id: string } | null = null;
       try {
@@ -198,6 +226,11 @@ export class WorkplanExecutor implements IWorkplanPort {
           }).catch(() => {});
         }
         completed.add(step.id);
+        step.status = 'passed';
+        step.completedAt = new Date().toISOString();
+
+        // ── Persist progress to AgentDB after each step ──
+        await this.persistProgress(plan.id, completed, failed);
 
         // Store successful step as a learned pattern
         await this.storeStepPattern(step, 'success');
@@ -210,6 +243,12 @@ export class WorkplanExecutor implements IWorkplanPort {
         }
         const message = err instanceof Error ? err.message : String(err);
         failed.add(step.id);
+        step.status = 'failed';
+        step.error = message;
+        step.completedAt = new Date().toISOString();
+
+        // ── Persist progress to AgentDB after failure ────
+        await this.persistProgress(plan.id, completed, failed);
 
         // Record failure pattern for future avoidance
         await this.storeStepPattern(step, 'failure', message);
@@ -228,6 +267,61 @@ export class WorkplanExecutor implements IWorkplanPort {
         );
         await this.swarm.sessionEnd(session.sessionId);
       } catch { /* best-effort */ }
+    }
+  }
+
+  // ── Progress Persistence (AgentDB) ──────────────────────
+
+  /** Shape of the persisted progress record in AgentDB. */
+  private static readonly PROGRESS_KEY = 'progress';
+
+  /**
+   * Persist step completion state to AgentDB so a crashed session can resume.
+   * Stored at: workplan/<planId>/progress
+   */
+  private async persistProgress(
+    planId: string,
+    completed: Set<string>,
+    failed: Set<string>,
+  ): Promise<void> {
+    try {
+      const payload = JSON.stringify({
+        completed: [...completed],
+        failed: [...failed],
+        updatedAt: new Date().toISOString(),
+      });
+      await this.swarm.hierarchicalStore(
+        'workplan', planId, WorkplanExecutor.PROGRESS_KEY, payload,
+        ['workplan-progress', 'crash-recovery'],
+      );
+    } catch {
+      // Progress persistence is best-effort — never break the execution loop
+    }
+  }
+
+  /**
+   * Recover prior execution progress from AgentDB.
+   * Returns null if no prior progress exists (fresh plan).
+   */
+  private async recoverProgress(
+    planId: string,
+  ): Promise<{ completed: string[]; failed: string[] } | null> {
+    try {
+      const entries = await this.swarm.hierarchicalRecall(
+        'workplan', planId, WorkplanExecutor.PROGRESS_KEY,
+      );
+      if (entries.length === 0) return null;
+      // Most recent entry (hierarchicalRecall returns newest-first)
+      const parsed = JSON.parse(entries[0].value) as {
+        completed?: string[];
+        failed?: string[];
+      };
+      return {
+        completed: parsed.completed ?? [],
+        failed: parsed.failed ?? [],
+      };
+    } catch {
+      return null;
     }
   }
 

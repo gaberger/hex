@@ -25,3 +25,15 @@ export interface ICheckpointPort {
   /** Remove old checkpoints, keeping only the N most recent. Returns count deleted. */
   prune(projectId: string, keepCount: number): Promise<number>;
 }
+
+/** Port interface for the checkpoint orchestrator (use case layer implements this). */
+export interface ICheckpointOrchestrator {
+  /** Capture a manual checkpoint of current swarm state. */
+  manualCheckpoint(): Promise<CheckpointEntry>;
+  /** Recover the most recent checkpoint. READ-ONLY — does not modify swarm state. */
+  recover(): Promise<CheckpointEntry | null>;
+  /** Auto-checkpoint on task status transitions. */
+  onTaskTransition(taskId: string, newStatus: string): Promise<void>;
+  /** Remove old checkpoints, keeping only the most recent N. */
+  pruneOld(keepCount?: number): Promise<number>;
+}

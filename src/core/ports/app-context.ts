@@ -25,6 +25,7 @@ import type { IVaultManagementPort } from './vault.js';
 import type { ICoordinationPort } from './coordination.js';
 import type { IADRQueryPort } from './adr.js';
 import type { IFeatureProgressPort } from './feature-progress.js';
+import type { ICheckpointOrchestrator } from './checkpoint.js';
 
 /** Minimal interface for a dashboard client (avoids adapter-to-adapter imports). */
 export interface IDashboardClient {
@@ -67,6 +68,9 @@ export interface AppContext {
 
   /** Checkpoint persistence for crash-resilient state recovery */
   checkpoint: ICheckpointPort;
+
+  /** Orchestrator for manual/auto checkpointing and recovery */
+  checkpointOrchestrator: ICheckpointOrchestrator;
 
   /** Scaffold & runtime analysis for generated projects */
   scaffold: IScaffoldPort;

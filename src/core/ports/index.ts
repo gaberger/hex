@@ -206,7 +206,7 @@ export type {
 
 // ─── Checkpoint Ports ───────────────────────────────────
 
-export type { CheckpointEntry, TaskSnapshot, FeatureProgress, ICheckpointPort } from './checkpoint.js';
+export type { CheckpointEntry, TaskSnapshot, FeatureProgress, ICheckpointPort, ICheckpointOrchestrator } from './checkpoint.js';
 
 // ─── Coordination Ports ─────────────────────────────────
 

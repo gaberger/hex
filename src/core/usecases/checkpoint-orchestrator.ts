@@ -8,7 +8,7 @@
  * Imports: domain/ and ports/ only (hex architecture rule).
  */
 
-import type { ICheckpointPort } from '../ports/checkpoint.js';
+import type { ICheckpointPort, ICheckpointOrchestrator } from '../ports/checkpoint.js';
 import type { ISwarmPort, SwarmTask } from '../ports/swarm.js';
 import type {
   CheckpointEntry,
@@ -17,7 +17,7 @@ import type {
   FeaturePhase,
 } from '../domain/checkpoint-types.js';
 
-export class CheckpointOrchestrator {
+export class CheckpointOrchestrator implements ICheckpointOrchestrator {
   constructor(
     private readonly checkpoint: ICheckpointPort,
     private readonly swarm: ISwarmPort,
