@@ -3,6 +3,7 @@ pub mod commands;
 pub mod coordination;
 pub mod decisions;
 pub mod fleet;
+pub mod hexflo;
 pub mod orchestration;
 pub mod projects;
 pub mod push;
@@ -151,6 +152,13 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/inference/endpoints", get(secrets::list_inference))
         .route("/api/inference/endpoints/{id}", delete(secrets::remove_inference))
         .route("/api/inference/health", post(secrets::check_inference_health))
+        // HexFlo coordination (ADR-027)
+        .route("/api/hexflo/memory", post(hexflo::memory_store)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/hexflo/memory/search", get(hexflo::memory_search))
+        .route("/api/hexflo/memory/{key}", get(hexflo::memory_retrieve)
+            .delete(hexflo::memory_delete))
+        .route("/api/hexflo/cleanup", post(hexflo::cleanup))
         // WebSocket
         .route("/ws", get(ws::ws_handler))
         .route("/ws/chat", get(chat::chat_ws_handler))

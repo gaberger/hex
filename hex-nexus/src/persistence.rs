@@ -161,6 +161,15 @@ impl SwarmDb {
             CREATE INDEX IF NOT EXISTS idx_swarm_tasks_swarm ON swarm_tasks(swarm_id);
             CREATE INDEX IF NOT EXISTS idx_swarm_agents_swarm ON swarm_agents(swarm_id);
             CREATE INDEX IF NOT EXISTS idx_swarms_status ON swarms(status);
+
+            -- HexFlo memory store (ADR-027)
+            CREATE TABLE IF NOT EXISTS hexflo_memory (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                scope      TEXT NOT NULL DEFAULT 'global',
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_hexflo_memory_scope ON hexflo_memory(scope);
             ",
         )?;
 

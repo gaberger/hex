@@ -1,5 +1,6 @@
 pub mod adapters;
 pub mod cleanup;
+pub mod coordination;
 pub mod daemon;
 pub mod embed;
 pub mod middleware;
@@ -94,6 +95,21 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 );
             }
         }
+    }
+
+    // Initialize HexFlo coordination layer (ADR-027)
+    {
+        let hexflo = coordination::HexFlo::new(
+            // SwarmDb doesn't implement Clone, so we re-open for HexFlo.
+            // Both share the same SQLite file; HexFlo uses its own connection.
+            match persistence::SwarmDb::open() {
+                Ok(db) => Some(db),
+                Err(_) => None,
+            },
+            app_state.ws_tx.clone(),
+            app_state.agent_manager.clone(),
+        );
+        app_state.hexflo = Some(Arc::new(hexflo));
     }
 
     // Wrap in Arc, then create WorkplanExecutor (needs SharedState = Arc<AppState>)

@@ -3,6 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::{broadcast, RwLock};
 
+use crate::coordination::HexFlo;
 use crate::orchestration::agent_manager::AgentManager;
 use crate::orchestration::workplan_executor::WorkplanExecutor;
 use crate::persistence::SwarmDb;
@@ -36,6 +37,8 @@ pub struct AppState {
     // Secret broker state (ADR-026)
     pub secret_grants: RwLock<HashMap<String, SecretGrantEntry>>,
     pub inference_endpoints: RwLock<HashMap<String, InferenceEndpointEntry>>,
+    // HexFlo coordination (ADR-027)
+    pub hexflo: Option<Arc<HexFlo>>,
 }
 
 impl AppState {
@@ -65,6 +68,7 @@ impl AppState {
             workplan_executor: OnceLock::new(),
             secret_grants: RwLock::new(HashMap::new()),
             inference_endpoints: RwLock::new(HashMap::new()),
+            hexflo: None,
         }
     }
 }
