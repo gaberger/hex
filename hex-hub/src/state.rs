@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
 use crate::persistence::SwarmDb;
+use crate::remote::fleet::FleetManager;
 
 // ── App State ───────────────────────────────────────────
 
@@ -24,11 +25,19 @@ pub struct AppState {
     pub task_claims: RwLock<HashMap<String, TaskClaim>>,
     pub activities: RwLock<VecDeque<ActivityEntry>>,
     pub unstaged: RwLock<HashMap<String, UnstagedState>>,
+    pub fleet: FleetManager,
+    pub anthropic_api_key: Option<String>,
 }
 
 impl AppState {
     pub fn new(auth_token: Option<String>, swarm_db: Option<SwarmDb>) -> Self {
         let (ws_tx, _) = broadcast::channel(512);
+        let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
+        if anthropic_api_key.is_some() {
+            tracing::info!("ANTHROPIC_API_KEY loaded — chat LLM bridge enabled");
+        } else {
+            tracing::warn!("ANTHROPIC_API_KEY not set — chat will relay only (no direct LLM)");
+        }
         Self {
             projects: RwLock::new(HashMap::new()),
             commands: RwLock::new(HashMap::new()),
@@ -41,6 +50,8 @@ impl AppState {
             task_claims: RwLock::new(HashMap::new()),
             activities: RwLock::new(VecDeque::new()),
             unstaged: RwLock::new(HashMap::new()),
+            fleet: FleetManager::new(),
+            anthropic_api_key,
         }
     }
 }

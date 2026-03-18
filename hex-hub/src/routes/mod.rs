@@ -1,9 +1,13 @@
+pub mod chat;
 pub mod commands;
 pub mod coordination;
 pub mod decisions;
+pub mod fleet;
+pub mod orchestration;
 pub mod projects;
 pub mod push;
 pub mod query;
+pub mod rl;
 pub mod swarms;
 pub mod ws;
 
@@ -13,7 +17,7 @@ use http::{HeaderValue, Method};
 use serde_json::json;
 use crate::state::SharedState;
 use crate::middleware::auth::auth_layer;
-use crate::embed::serve_index;
+use crate::embed::{serve_index, serve_chat};
 
 async fn get_version() -> Json<serde_json::Value> {
     Json(json!({
@@ -42,6 +46,7 @@ pub fn build_router(state: SharedState) -> Router {
     Router::new()
         // Static + version
         .route("/", get(serve_index))
+        .route("/chat", get(serve_chat))
         .route("/api/version", get(get_version))
         // Project management
         .route("/api/projects", get(projects::list_projects))
@@ -96,8 +101,44 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/coordination/activities", get(coordination::get_activities))
         .route("/api/coordination/unstaged", get(coordination::get_unstaged))
         .route("/api/coordination/cleanup", post(coordination::cleanup_stale_sessions))
+        // RL (reinforcement learning) engine
+        .route("/api/rl/action", post(rl::select_action)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/rl/reward", post(rl::submit_reward)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/rl/stats", get(rl::get_stats))
+        .route("/api/rl/patterns", get(rl::search_patterns)
+            .post(rl::store_pattern)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/rl/patterns/{id}/reinforce", post(rl::reinforce_pattern)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/rl/decay", post(rl::decay_patterns))
+        // Agent orchestration
+        .route("/api/agents/spawn", post(orchestration::spawn_agent)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/agents/health", post(orchestration::health_check))
+        .route("/api/agents", get(orchestration::list_agents))
+        .route("/api/agents/{id}", get(orchestration::get_agent)
+            .delete(orchestration::terminate_agent))
+        // Workplan execution
+        .route("/api/workplan/execute", post(orchestration::execute_workplan)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/workplan/status", get(orchestration::workplan_status))
+        .route("/api/workplan/pause", post(orchestration::pause_workplan))
+        .route("/api/workplan/resume", post(orchestration::resume_workplan))
+        // Fleet (remote compute)
+        .route("/api/fleet", get(fleet::list_nodes))
+        .route("/api/fleet/register", post(fleet::register_node)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/fleet/health", post(fleet::check_health))
+        .route("/api/fleet/select", get(fleet::select_best_node))
+        .route("/api/fleet/{id}", get(fleet::get_node)
+            .delete(fleet::unregister_node))
+        .route("/api/fleet/{id}/deploy", post(fleet::deploy_to_node)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         // WebSocket
         .route("/ws", get(ws::ws_handler))
+        .route("/ws/chat", get(chat::chat_ws_handler))
         // Middleware
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth_layer))
         .layer(cors)

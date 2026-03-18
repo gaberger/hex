@@ -1,0 +1,8 @@
+{
+  "swarm": true,
+  "agentdb": false,
+  "activeAgents": 0,
+  "idleAgents": 0,
+  "tasks": 1,
+  "completedTasks": 1
+}
