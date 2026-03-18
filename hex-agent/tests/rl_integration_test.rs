@@ -11,6 +11,7 @@ async fn noop_adapter_returns_balanced_strategy() {
         codebase_size: 500,
         agent_count: 1,
         token_usage: 5000,
+        ..Default::default()
     };
 
     let action = rl.select_action(&state).await.unwrap();
@@ -26,6 +27,7 @@ async fn noop_adapter_reward_succeeds() {
         action: "context:balanced".to_string(),
         reward: 0.8,
         next_state_key: "test2".to_string(),
+        ..Default::default()
     };
     assert!(rl.report_reward(&reward).await.is_ok());
 }
@@ -69,6 +71,7 @@ fn rl_state_serializes_correctly() {
         codebase_size: 5000,
         agent_count: 2,
         token_usage: 50000,
+        ..Default::default()
     };
     let json = serde_json::to_value(&state).unwrap();
     assert_eq!(json["taskType"], "build");
@@ -84,6 +87,7 @@ fn rl_reward_serializes_correctly() {
         action: "context:aggressive".to_string(),
         reward: 0.75,
         next_state_key: "build:sz2:ag2:tk3".to_string(),
+        ..Default::default()
     };
     let json = serde_json::to_value(&reward).unwrap();
     assert_eq!(json["stateKey"], "build:sz2:ag2:tk2");

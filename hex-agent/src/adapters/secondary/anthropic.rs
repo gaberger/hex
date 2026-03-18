@@ -38,9 +38,11 @@ impl AnthropicAdapter {
         tools: &[ToolDefinition],
         max_tokens: u32,
         stream: bool,
+        model_override: Option<&str>,
     ) -> serde_json::Value {
+        let model = model_override.unwrap_or(&self.model);
         let mut body = serde_json::json!({
-            "model": self.model,
+            "model": model,
             "max_tokens": max_tokens,
             "system": system,
             "messages": messages,
@@ -63,8 +65,9 @@ impl AnthropicPort for AnthropicAdapter {
         messages: &[Message],
         tools: &[ToolDefinition],
         max_tokens: u32,
+        model_override: Option<&str>,
     ) -> Result<AnthropicResponse, AnthropicError> {
-        let body = self.build_request_body(system, messages, tools, max_tokens, false);
+        let body = self.build_request_body(system, messages, tools, max_tokens, false, model_override);
 
         let response = self
             .client
@@ -145,11 +148,12 @@ impl AnthropicPort for AnthropicAdapter {
         messages: &[Message],
         tools: &[ToolDefinition],
         max_tokens: u32,
+        model_override: Option<&str>,
     ) -> Result<
         Box<dyn Stream<Item = Result<StreamChunk, AnthropicError>> + Send + Unpin>,
         AnthropicError,
     > {
-        let body = self.build_request_body(system, messages, tools, max_tokens, true);
+        let body = self.build_request_body(system, messages, tools, max_tokens, true, model_override);
 
         let response = self
             .client

@@ -24,21 +24,29 @@ pub enum StreamChunk {
 #[async_trait]
 pub trait AnthropicPort: Send + Sync {
     /// Send a conversation to the API and get the full response.
+    ///
+    /// When `model_override` is `Some`, it replaces the adapter's configured model
+    /// for this single request (used by RL-driven model selection).
     async fn send_message(
         &self,
         system: &str,
         messages: &[Message],
         tools: &[ToolDefinition],
         max_tokens: u32,
+        model_override: Option<&str>,
     ) -> Result<AnthropicResponse, AnthropicError>;
 
     /// Send a conversation and stream the response chunk by chunk.
+    ///
+    /// When `model_override` is `Some`, it replaces the adapter's configured model
+    /// for this single request.
     async fn stream_message(
         &self,
         system: &str,
         messages: &[Message],
         tools: &[ToolDefinition],
         max_tokens: u32,
+        model_override: Option<&str>,
     ) -> Result<Box<dyn futures::Stream<Item = Result<StreamChunk, AnthropicError>> + Send + Unpin>, AnthropicError>;
 }
 
@@ -66,4 +74,11 @@ pub enum AnthropicError {
     Deserialize(String),
     #[error("Context window exceeded: used {used} of {max}")]
     ContextOverflow { used: u32, max: u32 },
+}
+
+impl AnthropicError {
+    /// Returns `true` if this error is an HTTP 429 rate limit.
+    pub fn is_rate_limited(&self) -> bool {
+        matches!(self, Self::RateLimited { .. })
+    }
 }

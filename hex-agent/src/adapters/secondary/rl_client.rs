@@ -39,9 +39,15 @@ impl RlPort for RlClientAdapter {
             return Err(RlError::RequestFailed(format!("HTTP {}", resp.status())));
         }
 
-        resp.json::<RlAction>()
+        let mut action: RlAction = resp
+            .json()
             .await
-            .map_err(|e| RlError::RequestFailed(e.to_string()))
+            .map_err(|e| RlError::RequestFailed(e.to_string()))?;
+        // Hydrate parsed fields from the compound action string
+        let parsed = RlAction::parse(action.action.clone(), action.state_key.clone());
+        action.model = parsed.model;
+        action.context_strategy = parsed.context_strategy;
+        Ok(action)
     }
 
     async fn report_reward(&self, reward: &RlReward) -> Result<(), RlError> {
@@ -69,10 +75,10 @@ pub struct NoopRlAdapter;
 #[async_trait]
 impl RlPort for NoopRlAdapter {
     async fn select_action(&self, _state: &RlState) -> Result<RlAction, RlError> {
-        Ok(RlAction {
-            action: "context:balanced".to_string(),
-            state_key: "noop".to_string(),
-        })
+        Ok(RlAction::parse(
+            "context:balanced".to_string(),
+            "noop".to_string(),
+        ))
     }
 
     async fn report_reward(&self, _reward: &RlReward) -> Result<(), RlError> {

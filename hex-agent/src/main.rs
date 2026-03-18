@@ -28,9 +28,13 @@ struct Args {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Anthropic API model to use
+    /// Anthropic API model to use (when set, RL model selection is disabled)
     #[arg(long, default_value = "claude-sonnet-4-20250514")]
     model: String,
+
+    /// Internal: tracks whether --model was explicitly provided
+    #[arg(skip)]
+    model_pinned: bool,
 
     /// Project directory to operate in
     #[arg(long, default_value = ".")]
@@ -102,6 +106,10 @@ fn generate_agent_name(agent_id: &str) -> String {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let mut args = Args::parse();
+
+    // Detect whether --model was explicitly provided by the user.
+    // clap doesn't expose this directly, so check the raw OS args.
+    args.model_pinned = std::env::args().any(|a| a == "--model");
 
     // Initialize tracing
     let filter = if args.verbose { "debug" } else { "info" };
@@ -328,7 +336,8 @@ async fn main() -> anyhow::Result<()> {
         tools,
         budget,
         args.max_response,
-    );
+    )
+    .with_model_pinned(args.model_pinned);
 
     // Decide mode: hub-managed or interactive CLI
     if let (Some(hub_url), Some(hub_token)) = (&args.hub_url, &args.hub_token) {
