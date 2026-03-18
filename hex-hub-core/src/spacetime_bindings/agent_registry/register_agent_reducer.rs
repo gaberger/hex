@@ -34,60 +34,29 @@ impl __sdk::InModule for RegisterAgentArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait register_agent {
     /// Request that the remote module invoke the reducer `register_agent` to run as soon as possible.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`register_agent:register_agent_then`] to run a callback after the reducer completes.
-    fn register_agent(
-        &self,
-        id: String,
-        name: String,
-        project_dir: String,
-        model: String,
-    ) -> __sdk::Result<()> {
-        self.register_agent_then(id, name, project_dir, model, |_, _| {})
-    }
+    fn register_agent(&self, id: String, name: String, project_dir: String, model: String,) -> __sdk::Result<()>;
 
-    /// Request that the remote module invoke the reducer `register_agent` to run as soon as possible,
-    /// registering `callback` to run when we are notified that the reducer completed.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and its status can be observed with the `callback`.
-    fn register_agent_then(
-        &self,
-        id: String,
-        name: String,
-        project_dir: String,
-        model: String,
+    /// Register a callback to run whenever we are notified of an invocation of the reducer `register_agent`.
+    fn on_register_agent(&self, callback: impl FnMut(&super::ReducerEventContext, &RegisterAgentArgs) + Send + 'static) -> __sdk::CallbackId;
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()>;
+    /// Unregister a previously-registered callback.
+    fn remove_on_register_agent(&self, callback: __sdk::CallbackId);
 }
 
 impl register_agent for super::RemoteReducers {
-    fn register_agent_then(
-        &self,
-        id: String,
-        name: String,
-        project_dir: String,
-        model: String,
+    fn register_agent(&self, id: String, name: String, project_dir: String, model: String,) -> __sdk::Result<()> {
+        self.imp.call_reducer("register_agent", RegisterAgentArgs { id, name, project_dir, model })
+    }
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(
-            RegisterAgentArgs {
-                id,
-                name,
-                project_dir,
-                model,
-            },
-            callback,
-        )
+    fn on_register_agent(&self, mut callback: impl FnMut(&super::ReducerEventContext, &RegisterAgentArgs) + Send + 'static) -> __sdk::CallbackId {
+        self.imp.on_reducer("register_agent", Box::new(move |ctx: &super::ReducerEventContext| {
+            let super::Reducer::RegisterAgent { id, name, project_dir, model } = &ctx.event.reducer else { unreachable!() };
+            let args = RegisterAgentArgs { id: id.clone(), name: name.clone(), project_dir: project_dir.clone(), model: model.clone() };
+            callback(ctx, &args);
+        }))
+    }
+
+    fn remove_on_register_agent(&self, callback: __sdk::CallbackId) {
+        self.imp.remove_on_reducer("register_agent", callback);
     }
 }

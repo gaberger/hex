@@ -26,41 +26,29 @@ impl __sdk::InModule for RemoveNodeArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait remove_node {
     /// Request that the remote module invoke the reducer `remove_node` to run as soon as possible.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`remove_node:remove_node_then`] to run a callback after the reducer completes.
-    fn remove_node(&self, id: String) -> __sdk::Result<()> {
-        self.remove_node_then(id, |_, _| {})
-    }
+    fn remove_node(&self, id: String,) -> __sdk::Result<()>;
 
-    /// Request that the remote module invoke the reducer `remove_node` to run as soon as possible,
-    /// registering `callback` to run when we are notified that the reducer completed.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and its status can be observed with the `callback`.
-    fn remove_node_then(
-        &self,
-        id: String,
+    /// Register a callback to run whenever we are notified of an invocation of the reducer `remove_node`.
+    fn on_remove_node(&self, callback: impl FnMut(&super::ReducerEventContext, &RemoveNodeArgs) + Send + 'static) -> __sdk::CallbackId;
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()>;
+    /// Unregister a previously-registered callback.
+    fn remove_on_remove_node(&self, callback: __sdk::CallbackId);
 }
 
 impl remove_node for super::RemoteReducers {
-    fn remove_node_then(
-        &self,
-        id: String,
+    fn remove_node(&self, id: String,) -> __sdk::Result<()> {
+        self.imp.call_reducer("remove_node", RemoveNodeArgs { id })
+    }
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()> {
-        self.imp
-            .invoke_reducer_with_callback(RemoveNodeArgs { id }, callback)
+    fn on_remove_node(&self, mut callback: impl FnMut(&super::ReducerEventContext, &RemoveNodeArgs) + Send + 'static) -> __sdk::CallbackId {
+        self.imp.on_reducer("remove_node", Box::new(move |ctx: &super::ReducerEventContext| {
+            let super::Reducer::RemoveNode { id } = &ctx.event.reducer else { unreachable!() };
+            let args = RemoveNodeArgs { id: id.clone() };
+            callback(ctx, &args);
+        }))
+    }
+
+    fn remove_on_remove_node(&self, callback: __sdk::CallbackId) {
+        self.imp.remove_on_reducer("remove_node", callback);
     }
 }

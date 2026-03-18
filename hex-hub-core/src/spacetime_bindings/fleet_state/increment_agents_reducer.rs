@@ -26,41 +26,29 @@ impl __sdk::InModule for IncrementAgentsArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait increment_agents {
     /// Request that the remote module invoke the reducer `increment_agents` to run as soon as possible.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`increment_agents:increment_agents_then`] to run a callback after the reducer completes.
-    fn increment_agents(&self, id: String) -> __sdk::Result<()> {
-        self.increment_agents_then(id, |_, _| {})
-    }
+    fn increment_agents(&self, id: String,) -> __sdk::Result<()>;
 
-    /// Request that the remote module invoke the reducer `increment_agents` to run as soon as possible,
-    /// registering `callback` to run when we are notified that the reducer completed.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and its status can be observed with the `callback`.
-    fn increment_agents_then(
-        &self,
-        id: String,
+    /// Register a callback to run whenever we are notified of an invocation of the reducer `increment_agents`.
+    fn on_increment_agents(&self, callback: impl FnMut(&super::ReducerEventContext, &IncrementAgentsArgs) + Send + 'static) -> __sdk::CallbackId;
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()>;
+    /// Unregister a previously-registered callback.
+    fn remove_on_increment_agents(&self, callback: __sdk::CallbackId);
 }
 
 impl increment_agents for super::RemoteReducers {
-    fn increment_agents_then(
-        &self,
-        id: String,
+    fn increment_agents(&self, id: String,) -> __sdk::Result<()> {
+        self.imp.call_reducer("increment_agents", IncrementAgentsArgs { id })
+    }
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()> {
-        self.imp
-            .invoke_reducer_with_callback(IncrementAgentsArgs { id }, callback)
+    fn on_increment_agents(&self, mut callback: impl FnMut(&super::ReducerEventContext, &IncrementAgentsArgs) + Send + 'static) -> __sdk::CallbackId {
+        self.imp.on_reducer("increment_agents", Box::new(move |ctx: &super::ReducerEventContext| {
+            let super::Reducer::IncrementAgents { id } = &ctx.event.reducer else { unreachable!() };
+            let args = IncrementAgentsArgs { id: id.clone() };
+            callback(ctx, &args);
+        }))
+    }
+
+    fn remove_on_increment_agents(&self, callback: __sdk::CallbackId) {
+        self.imp.remove_on_reducer("increment_agents", callback);
     }
 }

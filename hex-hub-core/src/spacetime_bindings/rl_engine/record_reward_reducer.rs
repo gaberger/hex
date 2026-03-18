@@ -34,60 +34,29 @@ impl __sdk::InModule for RecordRewardArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait record_reward {
     /// Request that the remote module invoke the reducer `record_reward` to run as soon as possible.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`record_reward:record_reward_then`] to run a callback after the reducer completes.
-    fn record_reward(
-        &self,
-        state_key: String,
-        action: String,
-        reward: f64,
-        next_state_key: String,
-    ) -> __sdk::Result<()> {
-        self.record_reward_then(state_key, action, reward, next_state_key, |_, _| {})
-    }
+    fn record_reward(&self, state_key: String, action: String, reward: f64, next_state_key: String,) -> __sdk::Result<()>;
 
-    /// Request that the remote module invoke the reducer `record_reward` to run as soon as possible,
-    /// registering `callback` to run when we are notified that the reducer completed.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and its status can be observed with the `callback`.
-    fn record_reward_then(
-        &self,
-        state_key: String,
-        action: String,
-        reward: f64,
-        next_state_key: String,
+    /// Register a callback to run whenever we are notified of an invocation of the reducer `record_reward`.
+    fn on_record_reward(&self, callback: impl FnMut(&super::ReducerEventContext, &RecordRewardArgs) + Send + 'static) -> __sdk::CallbackId;
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()>;
+    /// Unregister a previously-registered callback.
+    fn remove_on_record_reward(&self, callback: __sdk::CallbackId);
 }
 
 impl record_reward for super::RemoteReducers {
-    fn record_reward_then(
-        &self,
-        state_key: String,
-        action: String,
-        reward: f64,
-        next_state_key: String,
+    fn record_reward(&self, state_key: String, action: String, reward: f64, next_state_key: String,) -> __sdk::Result<()> {
+        self.imp.call_reducer("record_reward", RecordRewardArgs { state_key, action, reward, next_state_key })
+    }
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(
-            RecordRewardArgs {
-                state_key,
-                action,
-                reward,
-                next_state_key,
-            },
-            callback,
-        )
+    fn on_record_reward(&self, mut callback: impl FnMut(&super::ReducerEventContext, &RecordRewardArgs) + Send + 'static) -> __sdk::CallbackId {
+        self.imp.on_reducer("record_reward", Box::new(move |ctx: &super::ReducerEventContext| {
+            let super::Reducer::RecordReward { state_key, action, reward, next_state_key } = &ctx.event.reducer else { unreachable!() };
+            let args = RecordRewardArgs { state_key: state_key.clone(), action: action.clone(), reward: reward.clone(), next_state_key: next_state_key.clone() };
+            callback(ctx, &args);
+        }))
+    }
+
+    fn remove_on_record_reward(&self, callback: __sdk::CallbackId) {
+        self.imp.remove_on_reducer("record_reward", callback);
     }
 }

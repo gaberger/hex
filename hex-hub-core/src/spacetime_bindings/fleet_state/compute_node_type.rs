@@ -67,4 +67,3 @@ impl __sdk::__query_builder::HasIxCols for ComputeNode {
     }
 }
 
-impl __sdk::__query_builder::CanBeLookupTable for ComputeNode {}

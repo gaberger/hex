@@ -38,76 +38,29 @@ impl __sdk::InModule for UpdateHookArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait update_hook {
     /// Request that the remote module invoke the reducer `update_hook` to run as soon as possible.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`update_hook:update_hook_then`] to run a callback after the reducer completes.
-    fn update_hook(
-        &self,
-        id: String,
-        handler_config_json: String,
-        timeout_secs: u32,
-        blocking: bool,
-        tool_pattern: String,
-        timestamp: String,
-    ) -> __sdk::Result<()> {
-        self.update_hook_then(
-            id,
-            handler_config_json,
-            timeout_secs,
-            blocking,
-            tool_pattern,
-            timestamp,
-            |_, _| {},
-        )
-    }
+    fn update_hook(&self, id: String, handler_config_json: String, timeout_secs: u32, blocking: bool, tool_pattern: String, timestamp: String,) -> __sdk::Result<()>;
 
-    /// Request that the remote module invoke the reducer `update_hook` to run as soon as possible,
-    /// registering `callback` to run when we are notified that the reducer completed.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and its status can be observed with the `callback`.
-    fn update_hook_then(
-        &self,
-        id: String,
-        handler_config_json: String,
-        timeout_secs: u32,
-        blocking: bool,
-        tool_pattern: String,
-        timestamp: String,
+    /// Register a callback to run whenever we are notified of an invocation of the reducer `update_hook`.
+    fn on_update_hook(&self, callback: impl FnMut(&super::ReducerEventContext, &UpdateHookArgs) + Send + 'static) -> __sdk::CallbackId;
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()>;
+    /// Unregister a previously-registered callback.
+    fn remove_on_update_hook(&self, callback: __sdk::CallbackId);
 }
 
 impl update_hook for super::RemoteReducers {
-    fn update_hook_then(
-        &self,
-        id: String,
-        handler_config_json: String,
-        timeout_secs: u32,
-        blocking: bool,
-        tool_pattern: String,
-        timestamp: String,
+    fn update_hook(&self, id: String, handler_config_json: String, timeout_secs: u32, blocking: bool, tool_pattern: String, timestamp: String,) -> __sdk::Result<()> {
+        self.imp.call_reducer("update_hook", UpdateHookArgs { id, handler_config_json, timeout_secs, blocking, tool_pattern, timestamp })
+    }
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(
-            UpdateHookArgs {
-                id,
-                handler_config_json,
-                timeout_secs,
-                blocking,
-                tool_pattern,
-                timestamp,
-            },
-            callback,
-        )
+    fn on_update_hook(&self, mut callback: impl FnMut(&super::ReducerEventContext, &UpdateHookArgs) + Send + 'static) -> __sdk::CallbackId {
+        self.imp.on_reducer("update_hook", Box::new(move |ctx: &super::ReducerEventContext| {
+            let super::Reducer::UpdateHook { id, handler_config_json, timeout_secs, blocking, tool_pattern, timestamp } = &ctx.event.reducer else { unreachable!() };
+            let args = UpdateHookArgs { id: id.clone(), handler_config_json: handler_config_json.clone(), timeout_secs: timeout_secs.clone(), blocking: blocking.clone(), tool_pattern: tool_pattern.clone(), timestamp: timestamp.clone() };
+            callback(ctx, &args);
+        }))
+    }
+
+    fn remove_on_update_hook(&self, callback: __sdk::CallbackId) {
+        self.imp.remove_on_reducer("update_hook", callback);
     }
 }

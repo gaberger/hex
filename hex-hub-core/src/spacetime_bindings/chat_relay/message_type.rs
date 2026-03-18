@@ -58,4 +58,3 @@ impl __sdk::__query_builder::HasIxCols for Message {
     }
 }
 
-impl __sdk::__query_builder::CanBeLookupTable for Message {}

@@ -32,51 +32,29 @@ impl __sdk::InModule for UpdateStatusArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait update_status {
     /// Request that the remote module invoke the reducer `update_status` to run as soon as possible.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`update_status:update_status_then`] to run a callback after the reducer completes.
-    fn update_status(&self, id: String, status: String, metrics_json: String) -> __sdk::Result<()> {
-        self.update_status_then(id, status, metrics_json, |_, _| {})
-    }
+    fn update_status(&self, id: String, status: String, metrics_json: String,) -> __sdk::Result<()>;
 
-    /// Request that the remote module invoke the reducer `update_status` to run as soon as possible,
-    /// registering `callback` to run when we are notified that the reducer completed.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and its status can be observed with the `callback`.
-    fn update_status_then(
-        &self,
-        id: String,
-        status: String,
-        metrics_json: String,
+    /// Register a callback to run whenever we are notified of an invocation of the reducer `update_status`.
+    fn on_update_status(&self, callback: impl FnMut(&super::ReducerEventContext, &UpdateStatusArgs) + Send + 'static) -> __sdk::CallbackId;
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()>;
+    /// Unregister a previously-registered callback.
+    fn remove_on_update_status(&self, callback: __sdk::CallbackId);
 }
 
 impl update_status for super::RemoteReducers {
-    fn update_status_then(
-        &self,
-        id: String,
-        status: String,
-        metrics_json: String,
+    fn update_status(&self, id: String, status: String, metrics_json: String,) -> __sdk::Result<()> {
+        self.imp.call_reducer("update_status", UpdateStatusArgs { id, status, metrics_json })
+    }
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(
-            UpdateStatusArgs {
-                id,
-                status,
-                metrics_json,
-            },
-            callback,
-        )
+    fn on_update_status(&self, mut callback: impl FnMut(&super::ReducerEventContext, &UpdateStatusArgs) + Send + 'static) -> __sdk::CallbackId {
+        self.imp.on_reducer("update_status", Box::new(move |ctx: &super::ReducerEventContext| {
+            let super::Reducer::UpdateStatus { id, status, metrics_json } = &ctx.event.reducer else { unreachable!() };
+            let args = UpdateStatusArgs { id: id.clone(), status: status.clone(), metrics_json: metrics_json.clone() };
+            callback(ctx, &args);
+        }))
+    }
+
+    fn remove_on_update_status(&self, callback: __sdk::CallbackId) {
+        self.imp.remove_on_reducer("update_status", callback);
     }
 }

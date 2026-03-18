@@ -64,4 +64,3 @@ impl __sdk::__query_builder::HasIxCols for WorkplanTask {
     }
 }
 
-impl __sdk::__query_builder::CanBeLookupTable for WorkplanTask {}

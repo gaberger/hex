@@ -24,39 +24,29 @@ impl __sdk::InModule for DecayPatternsArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait decay_patterns {
     /// Request that the remote module invoke the reducer `decay_patterns` to run as soon as possible.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`decay_patterns:decay_patterns_then`] to run a callback after the reducer completes.
-    fn decay_patterns(&self) -> __sdk::Result<()> {
-        self.decay_patterns_then(|_, _| {})
-    }
+    fn decay_patterns(&self) -> __sdk::Result<()>;
 
-    /// Request that the remote module invoke the reducer `decay_patterns` to run as soon as possible,
-    /// registering `callback` to run when we are notified that the reducer completed.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and its status can be observed with the `callback`.
-    fn decay_patterns_then(
-        &self,
+    /// Register a callback to run whenever we are notified of an invocation of the reducer `decay_patterns`.
+    fn on_decay_patterns(&self, callback: impl FnMut(&super::ReducerEventContext, &DecayPatternsArgs) + Send + 'static) -> __sdk::CallbackId;
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()>;
+    /// Unregister a previously-registered callback.
+    fn remove_on_decay_patterns(&self, callback: __sdk::CallbackId);
 }
 
 impl decay_patterns for super::RemoteReducers {
-    fn decay_patterns_then(
-        &self,
+    fn decay_patterns(&self) -> __sdk::Result<()> {
+        self.imp.call_reducer("decay_patterns", DecayPatternsArgs {  })
+    }
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()> {
-        self.imp
-            .invoke_reducer_with_callback(DecayPatternsArgs {}, callback)
+    fn on_decay_patterns(&self, mut callback: impl FnMut(&super::ReducerEventContext, &DecayPatternsArgs) + Send + 'static) -> __sdk::CallbackId {
+        self.imp.on_reducer("decay_patterns", Box::new(move |ctx: &super::ReducerEventContext| {
+            let super::Reducer::DecayPatterns {  } = &ctx.event.reducer else { unreachable!() };
+            let args = DecayPatternsArgs {  };
+            callback(ctx, &args);
+        }))
+    }
+
+    fn remove_on_decay_patterns(&self, callback: __sdk::CallbackId) {
+        self.imp.remove_on_reducer("decay_patterns", callback);
     }
 }

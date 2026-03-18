@@ -34,60 +34,29 @@ impl __sdk::InModule for UpdateTaskArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait update_task {
     /// Request that the remote module invoke the reducer `update_task` to run as soon as possible.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`update_task:update_task_then`] to run a callback after the reducer completes.
-    fn update_task(
-        &self,
-        task_id: String,
-        status: String,
-        agent_id: String,
-        result: String,
-    ) -> __sdk::Result<()> {
-        self.update_task_then(task_id, status, agent_id, result, |_, _| {})
-    }
+    fn update_task(&self, task_id: String, status: String, agent_id: String, result: String,) -> __sdk::Result<()>;
 
-    /// Request that the remote module invoke the reducer `update_task` to run as soon as possible,
-    /// registering `callback` to run when we are notified that the reducer completed.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and its status can be observed with the `callback`.
-    fn update_task_then(
-        &self,
-        task_id: String,
-        status: String,
-        agent_id: String,
-        result: String,
+    /// Register a callback to run whenever we are notified of an invocation of the reducer `update_task`.
+    fn on_update_task(&self, callback: impl FnMut(&super::ReducerEventContext, &UpdateTaskArgs) + Send + 'static) -> __sdk::CallbackId;
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()>;
+    /// Unregister a previously-registered callback.
+    fn remove_on_update_task(&self, callback: __sdk::CallbackId);
 }
 
 impl update_task for super::RemoteReducers {
-    fn update_task_then(
-        &self,
-        task_id: String,
-        status: String,
-        agent_id: String,
-        result: String,
+    fn update_task(&self, task_id: String, status: String, agent_id: String, result: String,) -> __sdk::Result<()> {
+        self.imp.call_reducer("update_task", UpdateTaskArgs { task_id, status, agent_id, result })
+    }
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(
-            UpdateTaskArgs {
-                task_id,
-                status,
-                agent_id,
-                result,
-            },
-            callback,
-        )
+    fn on_update_task(&self, mut callback: impl FnMut(&super::ReducerEventContext, &UpdateTaskArgs) + Send + 'static) -> __sdk::CallbackId {
+        self.imp.on_reducer("update_task", Box::new(move |ctx: &super::ReducerEventContext| {
+            let super::Reducer::UpdateTask { task_id, status, agent_id, result } = &ctx.event.reducer else { unreachable!() };
+            let args = UpdateTaskArgs { task_id: task_id.clone(), status: status.clone(), agent_id: agent_id.clone(), result: result.clone() };
+            callback(ctx, &args);
+        }))
+    }
+
+    fn remove_on_update_task(&self, callback: __sdk::CallbackId) {
+        self.imp.remove_on_reducer("update_task", callback);
     }
 }

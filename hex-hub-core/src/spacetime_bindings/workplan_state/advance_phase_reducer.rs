@@ -30,43 +30,29 @@ impl __sdk::InModule for AdvancePhaseArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait advance_phase {
     /// Request that the remote module invoke the reducer `advance_phase` to run as soon as possible.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`advance_phase:advance_phase_then`] to run a callback after the reducer completes.
-    fn advance_phase(&self, workplan_id: String, phase: String) -> __sdk::Result<()> {
-        self.advance_phase_then(workplan_id, phase, |_, _| {})
-    }
+    fn advance_phase(&self, workplan_id: String, phase: String,) -> __sdk::Result<()>;
 
-    /// Request that the remote module invoke the reducer `advance_phase` to run as soon as possible,
-    /// registering `callback` to run when we are notified that the reducer completed.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and its status can be observed with the `callback`.
-    fn advance_phase_then(
-        &self,
-        workplan_id: String,
-        phase: String,
+    /// Register a callback to run whenever we are notified of an invocation of the reducer `advance_phase`.
+    fn on_advance_phase(&self, callback: impl FnMut(&super::ReducerEventContext, &AdvancePhaseArgs) + Send + 'static) -> __sdk::CallbackId;
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()>;
+    /// Unregister a previously-registered callback.
+    fn remove_on_advance_phase(&self, callback: __sdk::CallbackId);
 }
 
 impl advance_phase for super::RemoteReducers {
-    fn advance_phase_then(
-        &self,
-        workplan_id: String,
-        phase: String,
+    fn advance_phase(&self, workplan_id: String, phase: String,) -> __sdk::Result<()> {
+        self.imp.call_reducer("advance_phase", AdvancePhaseArgs { workplan_id, phase })
+    }
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()> {
-        self.imp
-            .invoke_reducer_with_callback(AdvancePhaseArgs { workplan_id, phase }, callback)
+    fn on_advance_phase(&self, mut callback: impl FnMut(&super::ReducerEventContext, &AdvancePhaseArgs) + Send + 'static) -> __sdk::CallbackId {
+        self.imp.on_reducer("advance_phase", Box::new(move |ctx: &super::ReducerEventContext| {
+            let super::Reducer::AdvancePhase { workplan_id, phase } = &ctx.event.reducer else { unreachable!() };
+            let args = AdvancePhaseArgs { workplan_id: workplan_id.clone(), phase: phase.clone() };
+            callback(ctx, &args);
+        }))
+    }
+
+    fn remove_on_advance_phase(&self, callback: __sdk::CallbackId) {
+        self.imp.remove_on_reducer("advance_phase", callback);
     }
 }

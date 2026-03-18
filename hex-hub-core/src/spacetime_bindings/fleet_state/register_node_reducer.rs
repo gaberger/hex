@@ -36,64 +36,29 @@ impl __sdk::InModule for RegisterNodeArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait register_node {
     /// Request that the remote module invoke the reducer `register_node` to run as soon as possible.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`register_node:register_node_then`] to run a callback after the reducer completes.
-    fn register_node(
-        &self,
-        id: String,
-        host: String,
-        port: u16,
-        username: String,
-        max_agents: u32,
-    ) -> __sdk::Result<()> {
-        self.register_node_then(id, host, port, username, max_agents, |_, _| {})
-    }
+    fn register_node(&self, id: String, host: String, port: u16, username: String, max_agents: u32,) -> __sdk::Result<()>;
 
-    /// Request that the remote module invoke the reducer `register_node` to run as soon as possible,
-    /// registering `callback` to run when we are notified that the reducer completed.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and its status can be observed with the `callback`.
-    fn register_node_then(
-        &self,
-        id: String,
-        host: String,
-        port: u16,
-        username: String,
-        max_agents: u32,
+    /// Register a callback to run whenever we are notified of an invocation of the reducer `register_node`.
+    fn on_register_node(&self, callback: impl FnMut(&super::ReducerEventContext, &RegisterNodeArgs) + Send + 'static) -> __sdk::CallbackId;
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()>;
+    /// Unregister a previously-registered callback.
+    fn remove_on_register_node(&self, callback: __sdk::CallbackId);
 }
 
 impl register_node for super::RemoteReducers {
-    fn register_node_then(
-        &self,
-        id: String,
-        host: String,
-        port: u16,
-        username: String,
-        max_agents: u32,
+    fn register_node(&self, id: String, host: String, port: u16, username: String, max_agents: u32,) -> __sdk::Result<()> {
+        self.imp.call_reducer("register_node", RegisterNodeArgs { id, host, port, username, max_agents })
+    }
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(
-            RegisterNodeArgs {
-                id,
-                host,
-                port,
-                username,
-                max_agents,
-            },
-            callback,
-        )
+    fn on_register_node(&self, mut callback: impl FnMut(&super::ReducerEventContext, &RegisterNodeArgs) + Send + 'static) -> __sdk::CallbackId {
+        self.imp.on_reducer("register_node", Box::new(move |ctx: &super::ReducerEventContext| {
+            let super::Reducer::RegisterNode { id, host, port, username, max_agents } = &ctx.event.reducer else { unreachable!() };
+            let args = RegisterNodeArgs { id: id.clone(), host: host.clone(), port: port.clone(), username: username.clone(), max_agents: max_agents.clone() };
+            callback(ctx, &args);
+        }))
+    }
+
+    fn remove_on_register_node(&self, callback: __sdk::CallbackId) {
+        self.imp.remove_on_reducer("register_node", callback);
     }
 }

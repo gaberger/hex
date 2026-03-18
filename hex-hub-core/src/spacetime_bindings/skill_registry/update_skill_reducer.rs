@@ -36,64 +36,29 @@ impl __sdk::InModule for UpdateSkillArgs {
 /// Implemented for [`super::RemoteReducers`].
 pub trait update_skill {
     /// Request that the remote module invoke the reducer `update_skill` to run as soon as possible.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`update_skill:update_skill_then`] to run a callback after the reducer completes.
-    fn update_skill(
-        &self,
-        id: String,
-        description: String,
-        triggers_json: String,
-        body: String,
-        timestamp: String,
-    ) -> __sdk::Result<()> {
-        self.update_skill_then(id, description, triggers_json, body, timestamp, |_, _| {})
-    }
+    fn update_skill(&self, id: String, description: String, triggers_json: String, body: String, timestamp: String,) -> __sdk::Result<()>;
 
-    /// Request that the remote module invoke the reducer `update_skill` to run as soon as possible,
-    /// registering `callback` to run when we are notified that the reducer completed.
-    ///
-    /// This method returns immediately, and errors only if we are unable to send the request.
-    /// The reducer will run asynchronously in the future,
-    ///  and its status can be observed with the `callback`.
-    fn update_skill_then(
-        &self,
-        id: String,
-        description: String,
-        triggers_json: String,
-        body: String,
-        timestamp: String,
+    /// Register a callback to run whenever we are notified of an invocation of the reducer `update_skill`.
+    fn on_update_skill(&self, callback: impl FnMut(&super::ReducerEventContext, &UpdateSkillArgs) + Send + 'static) -> __sdk::CallbackId;
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()>;
+    /// Unregister a previously-registered callback.
+    fn remove_on_update_skill(&self, callback: __sdk::CallbackId);
 }
 
 impl update_skill for super::RemoteReducers {
-    fn update_skill_then(
-        &self,
-        id: String,
-        description: String,
-        triggers_json: String,
-        body: String,
-        timestamp: String,
+    fn update_skill(&self, id: String, description: String, triggers_json: String, body: String, timestamp: String,) -> __sdk::Result<()> {
+        self.imp.call_reducer("update_skill", UpdateSkillArgs { id, description, triggers_json, body, timestamp })
+    }
 
-        callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
-            + Send
-            + 'static,
-    ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(
-            UpdateSkillArgs {
-                id,
-                description,
-                triggers_json,
-                body,
-                timestamp,
-            },
-            callback,
-        )
+    fn on_update_skill(&self, mut callback: impl FnMut(&super::ReducerEventContext, &UpdateSkillArgs) + Send + 'static) -> __sdk::CallbackId {
+        self.imp.on_reducer("update_skill", Box::new(move |ctx: &super::ReducerEventContext| {
+            let super::Reducer::UpdateSkill { id, description, triggers_json, body, timestamp } = &ctx.event.reducer else { unreachable!() };
+            let args = UpdateSkillArgs { id: id.clone(), description: description.clone(), triggers_json: triggers_json.clone(), body: body.clone(), timestamp: timestamp.clone() };
+            callback(ctx, &args);
+        }))
+    }
+
+    fn remove_on_update_skill(&self, callback: __sdk::CallbackId) {
+        self.imp.remove_on_reducer("update_skill", callback);
     }
 }

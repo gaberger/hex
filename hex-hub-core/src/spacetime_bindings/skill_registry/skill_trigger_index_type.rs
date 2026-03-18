@@ -48,4 +48,3 @@ impl __sdk::__query_builder::HasIxCols for SkillTriggerIndex {
     }
 }
 
-impl __sdk::__query_builder::CanBeLookupTable for SkillTriggerIndex {}

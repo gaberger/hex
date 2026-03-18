@@ -61,4 +61,3 @@ impl __sdk::__query_builder::HasIxCols for RlQEntry {
     }
 }
 
-impl __sdk::__query_builder::CanBeLookupTable for RlQEntry {}

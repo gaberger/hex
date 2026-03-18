@@ -64,4 +64,3 @@ impl __sdk::__query_builder::HasIxCols for RlExperience {
     }
 }
 
-impl __sdk::__query_builder::CanBeLookupTable for RlExperience {}

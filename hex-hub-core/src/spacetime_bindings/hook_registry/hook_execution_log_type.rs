@@ -66,4 +66,3 @@ impl __sdk::__query_builder::HasIxCols for HookExecutionLog {
     }
 }
 
-impl __sdk::__query_builder::CanBeLookupTable for HookExecutionLog {}
