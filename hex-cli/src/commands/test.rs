@@ -334,9 +334,12 @@ async fn run_inference_tests(r: &mut TestResults) {
         }
     }
 
-    // Check Anthropic
-    let has_anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
-    r.check("Anthropic API key configured", has_anthropic);
+    // Check Anthropic — optional, not a failure if missing
+    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+        r.check("Anthropic API key configured", true);
+    } else {
+        r.skip("Anthropic API key not set (optional)");
+    }
 
     // Check nexus-registered providers (from SpacetimeDB)
     let base = nexus_base_url();
