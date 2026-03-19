@@ -19,6 +19,7 @@ import type { IDashboardClient } from '../../core/ports/app-context.js';
 import type { IRegistryPort } from '../../core/ports/registry.js';
 import type { IComparisonPort } from '../../core/ports/agent-executor.js';
 import type { IADRQueryPort } from '../../core/ports/adr.js';
+import type { IHexFloClientPort } from '../../core/ports/hexflo-client.js';
 import { formatArchReport } from '../../core/ports/index.js';
 
 // ─── MCP Tool Definitions ────────────────────────────────
@@ -577,6 +578,8 @@ export interface MCPContext {
   rootPath?: string;
   /** Optional: broadcast events to the dashboard hub (wired by composition root). */
   broadcastEvent?: (event: string, data: unknown) => void;
+  /** HexFlo coordination client — shared with CLI adapter via port. */
+  hexfloClient?: IHexFloClientPort | null;
 }
 
 export class MCPAdapter {
@@ -1837,61 +1840,50 @@ export class MCPAdapter {
 
   // ─── HexFlo Coordination (ADR-027) ──────────────────────
 
-  private async hexfloApiCall(method: string, path: string, body?: unknown): Promise<MCPToolResult> {
-    const hubUrl = 'http://localhost:5555';
-    try {
-      const opts: RequestInit = {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-      };
-      if (body) opts.body = JSON.stringify(body);
-      const resp = await fetch(`${hubUrl}${path}`, opts);
-      const data = await resp.json();
-      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: `HexFlo hub not running. Start with: hex daemon start\nError: ${err}` }], isError: true };
+  /** Convert a HexFloResponse to MCPToolResult */
+  private hexfloResult(resp: import('../../core/ports/hexflo-client.js').HexFloResponse): MCPToolResult {
+    if (resp.ok) {
+      return { content: [{ type: 'text', text: JSON.stringify(resp.data, null, 2) }] };
     }
+    return { content: [{ type: 'text', text: resp.error }], isError: true };
+  }
+
+  private getHexfloClient(): IHexFloClientPort {
+    if (!this.ctx.hexfloClient) {
+      throw new Error('HexFlo client not available — wire hexfloClient in composition root');
+    }
+    return this.ctx.hexfloClient;
   }
 
   private async hexfloSwarmInit(name: string, projectId: string, topology?: string): Promise<MCPToolResult> {
-    return this.hexfloApiCall('POST', '/api/swarms', {
-      project_id: projectId,
-      name,
-      topology: topology || 'hierarchical',
-    });
+    return this.hexfloResult(await this.getHexfloClient().swarmInit(name, projectId, topology));
   }
 
   private async hexfloSwarmStatus(): Promise<MCPToolResult> {
-    return this.hexfloApiCall('GET', '/api/swarms');
+    return this.hexfloResult(await this.getHexfloClient().swarmStatus());
   }
 
   private async hexfloTaskCreate(swarmId: string, title: string): Promise<MCPToolResult> {
-    return this.hexfloApiCall('POST', `/api/swarms/${encodeURIComponent(swarmId)}/tasks`, { title });
+    return this.hexfloResult(await this.getHexfloClient().taskCreate(swarmId, title));
   }
 
   private async hexfloTaskList(swarmId?: string): Promise<MCPToolResult> {
-    if (swarmId) {
-      return this.hexfloApiCall('GET', `/api/swarms/${encodeURIComponent(swarmId)}`);
-    }
-    return this.hexfloApiCall('GET', '/api/swarms');
+    return this.hexfloResult(await this.getHexfloClient().taskList(swarmId));
   }
 
   private async hexfloTaskComplete(taskId: string, result?: string): Promise<MCPToolResult> {
-    return this.hexfloApiCall('PATCH', `/api/swarms/tasks/${encodeURIComponent(taskId)}`, {
-      status: 'completed',
-      result: result || null,
-    });
+    return this.hexfloResult(await this.getHexfloClient().taskComplete(taskId, result));
   }
 
   private async hexfloMemoryStore(key: string, value: string, scope?: string): Promise<MCPToolResult> {
-    return this.hexfloApiCall('POST', '/api/hexflo/memory', { key, value, scope: scope || 'global' });
+    return this.hexfloResult(await this.getHexfloClient().memoryStore(key, value, scope));
   }
 
   private async hexfloMemoryRetrieve(key: string): Promise<MCPToolResult> {
-    return this.hexfloApiCall('GET', `/api/hexflo/memory/${encodeURIComponent(key)}`);
+    return this.hexfloResult(await this.getHexfloClient().memoryRetrieve(key));
   }
 
   private async hexfloMemorySearch(query: string): Promise<MCPToolResult> {
-    return this.hexfloApiCall('GET', `/api/hexflo/memory/search?q=${encodeURIComponent(query)}`);
+    return this.hexfloResult(await this.getHexfloClient().memorySearch(query));
   }
 }

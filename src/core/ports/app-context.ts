@@ -26,6 +26,7 @@ import type { ICoordinationPort } from './coordination.js';
 import type { IADRQueryPort } from './adr.js';
 import type { IFeatureProgressPort } from './feature-progress.js';
 import type { ICheckpointOrchestrator } from './checkpoint.js';
+import type { IHexFloClientPort } from './hexflo-client.js';
 
 /** Minimal interface for a dashboard client (avoids adapter-to-adapter imports). */
 export interface IDashboardClient {
@@ -124,6 +125,9 @@ export interface AppContext {
 
   /** Feature progress tracking for clean UX during multi-agent development */
   featureProgress: IFeatureProgressPort;
+
+  /** HexFlo coordination client — shared by CLI and MCP adapters */
+  hexfloClient: IHexFloClientPort;
 
   /** Local output directory for analysis reports, caches, and logs */
   outputDir: string; // defaults to '.hex/' — gitignored, project-scoped

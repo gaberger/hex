@@ -28,6 +28,7 @@ import { WorktreeAdapter } from './adapters/secondary/worktree-adapter.js';
 import { BuildAdapter } from './adapters/secondary/build-adapter.js';
 import { HexFloAdapter } from './adapters/secondary/hexflo-adapter.js';
 import { RegistryAdapter } from './adapters/secondary/registry-adapter.js';
+import { HexFloHttpClientAdapter } from './adapters/secondary/hexflo-http-client-adapter.js';
 import { LLMAdapter } from './adapters/secondary/llm-adapter.js';
 import type { LLMAdapterConfig } from './adapters/secondary/llm-adapter.js';
 import { AnthropicAgentAdapter } from './adapters/secondary/anthropic-agent-adapter.js';
@@ -172,6 +173,7 @@ export async function createAppContext(
   const notifier = new TerminalNotifier();
   const swarm = new HexFloAdapter(projectPath);
   const registry = new RegistryAdapter();
+  const hexfloClient = new HexFloHttpClientAdapter();
   const checkpoint = new FileCheckpointAdapter(`${outputDir}/checkpoints`, fs);
 
   // Cross-language communication adapters (dynamic imports to avoid circular init)
@@ -469,6 +471,7 @@ export async function createAppContext(
     hubLauncher,
     vaultManager,
     adrQuery,
+    hexfloClient,
     coordination: null, // wired dynamically via CoordinationAdapter when hub is available
     hubCommandSender: null, // wired dynamically when hub is available
     createDashboard: async (rootPath: string) => {

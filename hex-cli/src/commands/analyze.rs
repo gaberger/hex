@@ -147,11 +147,11 @@ pub async fn run(path: &str) -> anyhow::Result<()> {
                         }
                     } else {
                         println!(
-                            "  {} Project not registered in nexus",
+                            "  {} Project not registered in nexus — start nexus for full analysis",
                             "\u{25cb}".dimmed()
                         );
                         println!(
-                            "  {} Use the MCP tool 'hex analyze' for full analysis",
+                            "  {} hex nexus start",
                             "\u{2192}".dimmed()
                         );
                     }
@@ -202,7 +202,7 @@ fn scan_local_violations(root: &Path) -> Vec<boundary::Violation> {
 
         // Read file and extract import-like paths (best-effort, not a full parser)
         if let Ok(contents) = std::fs::read_to_string(path) {
-            let imports = extract_import_paths(&contents);
+            let imports = extract_import_paths(&contents, &rel);
             let violations = boundary::validate_imports(&rel, &imports);
             all_violations.extend(violations);
         }
@@ -235,9 +235,20 @@ fn collect_source_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Extract import/use paths from source text (heuristic, not a full parser).
-fn extract_import_paths(source: &str) -> Vec<String> {
+/// Extract import/use paths from source text, resolving relative paths against
+/// the source file's directory so layer detection works correctly.
+///
+/// `source_rel` is the source file path relative to the project root,
+/// e.g. `src/core/ports/app-context.ts`.
+fn extract_import_paths(source: &str, source_rel: &str) -> Vec<String> {
     let mut paths = Vec::new();
+
+    // Directory of the source file (e.g. "src/core/ports" for "src/core/ports/app-context.ts")
+    let source_dir = Path::new(source_rel)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
     for line in source.lines() {
         let trimmed = line.trim();
         // Rust: use crate::adapters::...
@@ -255,17 +266,33 @@ fn extract_import_paths(source: &str) -> Vec<String> {
                 if let Some(end) = rest.find('\'').or_else(|| rest.find('"')) {
                     let import_path = &rest[..end];
                     if import_path.starts_with('.') {
-                        // Normalize relative path for layer detection
-                        let normalized = import_path
-                            .replace("../", "")
-                            .replace("./", "");
-                        paths.push(format!("src/{}", normalized));
+                        // Resolve relative path against source file's directory
+                        let resolved = resolve_relative_path(&source_dir, import_path);
+                        paths.push(resolved);
                     }
                 }
             }
         }
     }
     paths
+}
+
+/// Resolve a relative import path (e.g. `../../core/ports/swarm.js`)
+/// against a source directory (e.g. `src/core/ports`).
+///
+/// Returns a normalized path like `src/core/ports/swarm.js`.
+fn resolve_relative_path(source_dir: &str, import_path: &str) -> String {
+    let mut parts: Vec<&str> = source_dir.split('/').filter(|s| !s.is_empty()).collect();
+
+    for segment in import_path.split('/') {
+        match segment {
+            "." | "" => {} // current dir — skip
+            ".." => { parts.pop(); } // go up one level
+            other => parts.push(other),
+        }
+    }
+
+    parts.join("/")
 }
 
 fn print_check(label: &str, present: bool) {

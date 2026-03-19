@@ -751,7 +751,9 @@ mod web {
         let app = Router::new().route("/", get(index));
 
         let addr = format!("127.0.0.1:{port}");
-        tracing::info!("hex-chat web dashboard at http://{addr}");
+        let url = format!("http://{addr}");
+        eprintln!("\n  \x1b[1;36mhex-chat\x1b[0m web dashboard running at \x1b[1;4m{url}\x1b[0m\n");
+        tracing::info!("hex-chat web dashboard at {url}");
         let listener = tokio::net::TcpListener::bind(&addr).await?;
         axum::serve(listener, app).await?;
         Ok(())
