@@ -1,4 +1,4 @@
-use crate::domain::{ApiMetricsSnapshot, CacheMetrics};
+use crate::ports::{ApiMetricsSnapshot, CacheMetrics};
 use crate::ports::token_metrics::TokenMetricsPort;
 use async_trait::async_trait;
 use std::collections::HashMap;

@@ -1,6 +1,6 @@
 use crate::ports::anthropic::{AnthropicError, AnthropicPort};
 use crate::ports::preflight::{PreflightError, PreflightPort};
-use crate::domain::{Message, Role, ContentBlock};
+use crate::ports::{Message, Role, ContentBlock};
 use async_trait::async_trait;
 use std::sync::Arc;
 

@@ -42,5 +42,6 @@ pub use crate::domain::{
     ToolCall, ToolResult, ToolDefinition,
     Skill, SkillTrigger, SkillManifest,
     Hook, HookEvent, HookConfig, HookResult,
-    ApiRequestOptions,
+    ApiRequestOptions, RateLimitHeaders,
+    RateLimitState, ApiMetricsSnapshot, CacheMetrics,
 };

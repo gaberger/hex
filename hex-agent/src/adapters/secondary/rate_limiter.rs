@@ -1,4 +1,4 @@
-use crate::domain::{RateLimitHeaders, RateLimitState};
+use crate::ports::{RateLimitHeaders, RateLimitState};
 use crate::ports::rate_limiter::RateLimiterPort;
 use async_trait::async_trait;
 use std::collections::HashMap;
