@@ -300,7 +300,9 @@ async fn discover_ollama() -> anyhow::Result<()> {
 
     let candidates = [
         ("localhost", "http://127.0.0.1:11434"),
+        ("bazzite", "http://bazzite:11434"),
         ("bazzite.local", "http://bazzite.local:11434"),
+        ("LAN .1", "http://192.168.1.1:11434"),
         ("LAN .100", "http://192.168.1.100:11434"),
         ("LAN .101", "http://192.168.1.101:11434"),
         ("LAN .50", "http://192.168.1.50:11434"),

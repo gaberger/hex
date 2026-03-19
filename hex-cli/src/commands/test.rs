@@ -25,7 +25,9 @@ pub enum TestAction {
     Arch,
     /// Test hex-nexus service endpoints (requires running nexus)
     Services,
-    /// Run full integration tests (unit + arch + services + swarm)
+    /// Test self-hosted inference providers (Ollama, vLLM)
+    Inference,
+    /// Run full integration tests (unit + arch + services + inference + swarm)
     All,
 }
 
@@ -95,12 +97,17 @@ pub async fn run(action: TestAction) -> anyhow::Result<()> {
         TestAction::Services => {
             run_service_tests(&mut results).await;
         }
+        TestAction::Inference => {
+            run_inference_tests(&mut results).await;
+        }
         TestAction::All => {
             run_unit_tests(&mut results);
             println!();
             run_arch_checks(&mut results).await;
             println!();
             let services_ok = run_service_tests(&mut results).await;
+            println!();
+            run_inference_tests(&mut results).await;
             println!();
             run_integration_tests(&mut results, services_ok).await;
         }
@@ -269,6 +276,77 @@ async fn run_service_tests(r: &mut TestResults) -> bool {
             r.skip("GET /api/swarms responds");
             false
         }
+    }
+}
+
+// ── Inference Tests ─────────────────────────────────
+
+async fn run_inference_tests(r: &mut TestResults) {
+    println!("{}", "── Inference Providers ──".cyan());
+
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+
+    // Check env-configured providers
+    let ollama_host = std::env::var("HEX_OLLAMA_HOST").ok();
+    let ollama_model = std::env::var("HEX_OLLAMA_MODEL").ok();
+
+    if let Some(ref host) = ollama_host {
+        let tags_url = format!("{}/api/tags", host.trim_end_matches('/'));
+        let reachable = http.get(&tags_url).send().await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        r.check(&format!("Ollama reachable at {}", host), reachable);
+
+        if reachable {
+            if let Some(ref model) = ollama_model {
+                // Quick inference test
+                let chat_url = format!("{}/v1/chat/completions", host.trim_end_matches('/'));
+                let body = serde_json::json!({
+                    "model": model,
+                    "messages": [{"role": "user", "content": "Reply with just 'ok'"}],
+                    "max_tokens": 10,
+                });
+                let start = std::time::Instant::now();
+                let infer_ok = http.post(&chat_url).json(&body).send().await
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false);
+                let latency = start.elapsed().as_millis();
+                r.check(&format!("Inference {} ({}ms)", model, latency), infer_ok);
+            }
+        }
+    } else {
+        // Try auto-discover bazzite
+        let discover_hosts = ["http://bazzite:11434", "http://127.0.0.1:11434"];
+        let mut found = false;
+        for host in &discover_hosts {
+            let tags_url = format!("{}/api/tags", host);
+            if http.get(&tags_url).send().await.map(|r| r.status().is_success()).unwrap_or(false) {
+                r.check(&format!("Ollama discovered at {}", host), true);
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            r.skip("No Ollama found (set HEX_OLLAMA_HOST to test)");
+        }
+    }
+
+    // Check Anthropic
+    let has_anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    r.check("Anthropic API key configured", has_anthropic);
+
+    // Check nexus-registered providers (from SpacetimeDB)
+    let base = nexus_base_url();
+    let providers_ok = http.get(format!("{}/api/inference/providers", base)).send().await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false);
+    if providers_ok {
+        r.check("Nexus inference provider registry", true);
+    } else {
+        r.skip("Nexus inference provider registry (endpoint not available)");
     }
 }
 
