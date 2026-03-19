@@ -86,19 +86,23 @@ async fn add_provider(
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
 
+    let mut discovered_models: Vec<String> = vec![model_name.to_string()];
+
     match http.get(&test_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             println!("  {} Connectivity OK ({})", "✓".green(), resp.status());
 
-            // If Ollama, list available models
+            // If Ollama, list available models and capture them
             if provider_type == "ollama" {
                 if let Ok(body) = resp.json::<serde_json::Value>().await {
                     if let Some(models) = body.get("models").and_then(|m| m.as_array()) {
+                        discovered_models.clear();
                         println!("  {} Available models:", "ℹ".cyan());
-                        for m in models.iter().take(10) {
+                        for m in models.iter().take(20) {
                             let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("?");
                             let size = m.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
                             println!("    - {} ({:.1}GB)", name, size as f64 / 1_073_741_824.0);
+                            discovered_models.push(name.to_string());
                         }
                     }
                 }
@@ -113,6 +117,8 @@ async fn add_provider(
         }
     }
 
+    let models_json = serde_json::to_string(&discovered_models).unwrap_or_else(|_| format!("[\"{}\"]", model_name));
+
     // Register with nexus if running
     let client = NexusClient::from_env();
     if client.ensure_running().await.is_ok() {
@@ -121,6 +127,7 @@ async fn add_provider(
             "provider": provider_type,
             "url": url.trim_end_matches('/'),
             "model": model_name,
+            "models_json": models_json,
             "requires_auth": key.is_some(),
             "secret_key": key.unwrap_or(""),
         });

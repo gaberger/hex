@@ -64,6 +64,7 @@ pub struct InferenceRegisterRequest {
     pub url: String,
     pub provider: String,
     pub model: String,
+    pub models_json: Option<String>,
     pub requires_auth: Option<bool>,
     pub secret_key: Option<String>,
 }
@@ -279,7 +280,8 @@ pub async fn register_inference(
         };
         let base_url = body.url;
         let api_key_ref = body.secret_key.unwrap_or_default();
-        let models_json = serde_json::json!([body.model]).to_string();
+        let models_json = body.models_json
+            .unwrap_or_else(|| serde_json::json!([body.model]).to_string());
         tokio::spawn(async move {
             if let Err(e) = client
                 .register_provider(&id, provider_type, &base_url, &api_key_ref, &models_json, 60, 100_000)
