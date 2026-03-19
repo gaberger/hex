@@ -207,6 +207,27 @@ async fn start(port: u16, token: Option<&str>) -> anyhow::Result<()> {
         tokio::fs::create_dir_all(parent).await?;
     }
 
+    // ── Check if port is already in use (catches orphan processes) ──
+    if is_port_in_use(port) {
+        println!(
+            "{} Port {} is already in use by another process",
+            "\u{2b21}".red(),
+            port
+        );
+        println!(
+            "  {} Find it: lsof -i :{}", "\u{2192}".dimmed(), port
+        );
+        println!(
+            "  {} Kill it: kill $(lsof -t -i :{})", "\u{2192}".dimmed(), port
+        );
+        println!(
+            "  {} Or use a different port: hex nexus start --port {}",
+            "\u{2192}".dimmed(),
+            port + 1
+        );
+        return Ok(());
+    }
+
     // ── Start SpacetimeDB if not running ────────────────
     ensure_spacetimedb().await;
 
@@ -492,6 +513,10 @@ async fn logs(lines: usize, follow: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn is_port_in_use(port: u16) -> bool {
+    std::net::TcpListener::bind(format!("127.0.0.1:{}", port)).is_err()
 }
 
 fn is_process_alive(pid: u32) -> bool {
