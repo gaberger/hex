@@ -239,9 +239,22 @@ pub async fn start_server(config: HubConfig) {
 
     // Bind FIRST, then write lock file — prevents clients from connecting before we're ready (H4)
     let addr = format!("{}:{}", config.bind, config.port);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .expect("Failed to bind");
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            tracing::error!(
+                "Port {} is already in use — another hex-nexus may be running.\n  \
+                 Stop it with: hex nexus stop\n  \
+                 Or use a different port: hex-nexus --port 5556",
+                config.port
+            );
+            std::process::exit(1);
+        }
+        Err(e) => {
+            tracing::error!("Failed to bind to {}: {}", addr, e);
+            std::process::exit(1);
+        }
+    };
 
     // Write lock file AFTER bind succeeds — clients reading this file can now connect
     if let Err(e) = daemon::write_lock(config.port, &lock_token) {
