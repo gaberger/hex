@@ -1,4 +1,4 @@
-pub mod sqlite_state;
+pub mod spacetime_secrets;
 pub mod spacetime_state;
 
 #[cfg(test)]

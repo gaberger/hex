@@ -8,7 +8,7 @@
 
 import type { AppContext } from './core/ports/app-context.js';
 import type { IASTPort, ILLMPort, ICodeGenerationPort, IWorkplanPort } from './core/ports/index.js';
-import { ArchAnalyzer } from './core/usecases/arch-analyzer.js';
+import { NexusAnalyzer } from './adapters/secondary/nexus-analyzer.js';
 import { NotificationOrchestrator } from './core/usecases/notification-orchestrator.js';
 import { CodeGenerator } from './core/usecases/code-generator.js';
 import { WorkplanExecutor } from './core/usecases/workplan-executor.js';
@@ -228,7 +228,7 @@ export async function createAppContext(
   const checkpointOrchestrator = new CheckpointOrchestrator(checkpoint, swarm, projectName, projectPath);
   const eventBus = new InMemoryEventBus();
   // Use cases
-  const archAnalyzer = new ArchAnalyzer(ast, fs, git);
+  const archAnalyzer = new NexusAnalyzer(); // ADR-034: delegates to hex-nexus Rust
   const notificationOrchestrator = new NotificationOrchestrator(notifier);
   const summaryService = new SummaryService(ast, fs);
   const swarmOrchestrator = new SwarmOrchestrator(swarm, worktree, null); // TODO: pass coordination once construction order is refactored
@@ -380,7 +380,7 @@ export async function createAppContext(
     const apiKey = (anthropicKey ?? openaiKey)!;
     const model = anthropicKey ? 'claude-sonnet-4-20250514' : 'gpt-4o';
     llm = new LLMAdapter({ provider, apiKey, model });
-    codeGenerator = new CodeGenerator(llm, ast, build, fs, archAnalyzer);
+    codeGenerator = new CodeGenerator(llm, ast, build, fs, undefined);
     workplanExecutor = new WorkplanExecutor(llm, ast, fs, swarm, codeGenerator, 'typescript', null); // TODO: pass coordination once construction order is refactored
   }
 

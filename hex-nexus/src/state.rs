@@ -6,9 +6,10 @@ use tokio::sync::{broadcast, RwLock};
 use crate::coordination::HexFlo;
 use crate::orchestration::agent_manager::AgentManager;
 use crate::orchestration::workplan_executor::WorkplanExecutor;
-use crate::persistence::SwarmDb;
+use crate::ports::state::IStatePort;
 use crate::remote::fleet::FleetManager;
-use crate::routes::secrets::{SecretGrantEntry, InferenceEndpointEntry};
+use crate::adapters::spacetime_secrets::SpacetimeSecretClient;
+use crate::routes::secrets::InferenceEndpointEntry;
 
 // ── App State ───────────────────────────────────────────
 
@@ -22,7 +23,6 @@ pub struct AppState {
     pub results: RwLock<HashMap<String, HubCommandResult>>,  // commandId → result
     pub ws_tx: broadcast::Sender<WsEnvelope>,
     pub auth_token: Option<String>,
-    pub swarm_db: Option<SwarmDb>,
     // Coordination state
     pub instances: RwLock<HashMap<String, InstanceInfo>>,
     pub worktree_locks: RwLock<HashMap<String, WorktreeLock>>,
@@ -34,15 +34,17 @@ pub struct AppState {
     // Port-backed orchestration services (ADR-025 Phase 2)
     pub agent_manager: Option<Arc<AgentManager>>,
     pub workplan_executor: OnceLock<Arc<WorkplanExecutor>>,
-    // Secret broker state (ADR-026)
-    pub secret_grants: RwLock<HashMap<String, SecretGrantEntry>>,
+    // Secret broker state (ADR-026) — SpacetimeDB only, no in-memory fallback
+    pub spacetime_secrets: Option<Arc<SpacetimeSecretClient>>,
     pub inference_endpoints: RwLock<HashMap<String, InferenceEndpointEntry>>,
     // HexFlo coordination (ADR-027)
     pub hexflo: Option<Arc<HexFlo>>,
+    // Unified state port (ADR-025) — abstracts RL, patterns, agents, etc.
+    pub state_port: Option<Arc<dyn IStatePort>>,
 }
 
 impl AppState {
-    pub fn new(auth_token: Option<String>, swarm_db: Option<SwarmDb>) -> Self {
+    pub fn new(auth_token: Option<String>) -> Self {
         let (ws_tx, _) = broadcast::channel(512);
         let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
         if anthropic_api_key.is_some() {
@@ -56,7 +58,6 @@ impl AppState {
             results: RwLock::new(HashMap::new()),
             ws_tx,
             auth_token,
-            swarm_db,
             instances: RwLock::new(HashMap::new()),
             worktree_locks: RwLock::new(HashMap::new()),
             task_claims: RwLock::new(HashMap::new()),
@@ -66,9 +67,10 @@ impl AppState {
             anthropic_api_key,
             agent_manager: None,
             workplan_executor: OnceLock::new(),
-            secret_grants: RwLock::new(HashMap::new()),
+            spacetime_secrets: None,
             inference_endpoints: RwLock::new(HashMap::new()),
             hexflo: None,
+            state_port: None,
         }
     }
 }

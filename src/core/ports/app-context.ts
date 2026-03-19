@@ -41,6 +41,7 @@ export interface AppContext {
   autoConfirm: boolean;
 
   // Use cases
+  /** Backed by hex-nexus Rust analyzer (ADR-034). Requires hex-nexus daemon running. */
   archAnalyzer: IArchAnalysisPort;
   summaryService: ISummaryPort;
   notificationOrchestrator: INotificationQueryPort | null;

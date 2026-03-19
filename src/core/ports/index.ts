@@ -234,6 +234,7 @@ export type { SecretContext, SecretMetadata, SecretResult, ISecretsPort } from '
 
 // ─── Analysis Ports ──────────────────────────────────────
 
+/** @deprecated Implementation moved to hex-nexus Rust (ADR-034). Use POST /api/analyze. */
 export interface IArchAnalysisPort {
   /** Build the full import/export dependency graph from L1 summaries */
   buildDependencyGraph(rootPath: string): Promise<ImportEdge[]>;

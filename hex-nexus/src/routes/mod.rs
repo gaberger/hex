@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod chat;
 pub mod commands;
 pub mod coordination;
@@ -19,7 +20,7 @@ use http::{HeaderValue, Method};
 use serde_json::json;
 use crate::state::SharedState;
 use crate::middleware::auth::auth_layer;
-use crate::embed::{serve_index, serve_chat};
+use crate::embed::{serve_index, serve_chat, serve_static};
 
 async fn get_version() -> Json<serde_json::Value> {
     Json(json!({
@@ -49,6 +50,7 @@ pub fn build_router(state: SharedState) -> Router {
         // Static + version
         .route("/", get(serve_index))
         .route("/chat", get(serve_chat))
+        .route("/assets/{*path}", get(serve_static))
         .route("/api/version", get(get_version))
         // Project management
         .route("/api/projects", get(projects::list_projects))
@@ -67,6 +69,11 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/{project_id}/swarm", get(query::get_swarm))
         .route("/api/{project_id}/graph", get(query::get_graph))
         .route("/api/{project_id}/project", get(query::get_project))
+        // Architecture analysis (ADR-034) — on-demand, native tree-sitter
+        .route("/api/analyze", post(analysis::analyze_path)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/{project_id}/analyze", get(analysis::analyze_project))
+        .route("/api/{project_id}/analyze/text", get(analysis::analyze_project_text))
         // Commands (browser/MCP → hub → project, bidirectional)
         .route("/api/{project_id}/command", post(commands::send_command)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
@@ -146,6 +153,11 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/secrets/revoke", post(secrets::revoke_secret)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/secrets/grants", get(secrets::list_grants))
+        .route("/api/secrets/health", get(secrets::secrets_health))
+        // Vault (ADR-026) — secret value storage
+        .route("/api/secrets/vault", post(secrets::vault_set)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/secrets/vault/{key}", get(secrets::vault_get))
         // Inference endpoint discovery (ADR-026)
         .route("/api/inference/register", post(secrets::register_inference)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))

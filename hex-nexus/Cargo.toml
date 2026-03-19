@@ -1,13 +1,17 @@
 [package]
 name = "hex-nexus"
-version = "26.3.1"
-edition = "2021"
-description = "Core library for hex-hub — extracted for embedding in Tauri and headless modes"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+description = "Orchestration nexus for hex — library + binary for agent management, swarm coordination, and dashboard"
+license.workspace = true
 
 [lib]
 name = "hex_nexus"
 path = "src/lib.rs"
+
+[[bin]]
+name = "hex-nexus"
+path = "src/bin/hex-nexus.rs"
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
@@ -27,15 +31,22 @@ http = "1"
 url = "2"
 urlencoding = "2"
 uuid = { version = "1", features = ["v4"] }
-rusqlite = { version = "0.31", features = ["bundled"] }
 libc = "0.2.183"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 russh = "0.46"
 russh-keys = "0.46"
 async-trait = "0.1"
 thiserror = "2"
+aes-gcm = "0.10"
+base64 = "0.22"
+gethostname = "0.5"
 sha2 = "0.10"
 hex-literal = "0.4"
+# Tree-sitter native parsers for architecture analysis (ADR-034 Phase 2)
+tree-sitter = "0.24"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-rust = "0.23"
 # SpacetimeDB client SDK — optional, enabled via --features spacetimedb
 spacetimedb-sdk = { version = "2.0", optional = true }
 

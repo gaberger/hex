@@ -1,14 +1,13 @@
 pub mod adapters;
+pub mod analysis;
 pub mod cleanup;
 pub mod coordination;
 pub mod daemon;
 pub mod embed;
 pub mod middleware;
 pub mod orchestration;
-pub mod persistence;
 pub mod ports;
 pub mod remote;
-pub mod rl;
 pub mod routes;
 pub mod state;
 pub mod state_config;
@@ -59,35 +58,19 @@ impl Default for HubConfig {
 ///
 /// Background cleanup tasks are spawned automatically.
 pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
-    // Initialize persistent swarm database
-    let swarm_db = match persistence::SwarmDb::open() {
-        Ok(db) => {
-            tracing::info!("Swarm persistence initialized at ~/.hex/hub.db");
-            Some(db)
-        }
-        Err(e) => {
-            tracing::warn!(
-                "Failed to open swarm database: {} — running without persistence",
-                e
-            );
-            None
-        }
-    };
-
     // Create shared state
-    let mut app_state = AppState::new(config.token.clone(), swarm_db);
+    let mut app_state = AppState::new(config.token.clone());
 
     // Wire IStatePort → AgentManager + HexFlo (ADR-025 Phase 2/4, ADR-032 Phase 3)
-    // Backend selection: env var > .hex/state.json > default (SQLite)
+    // Backend: SpacetimeDB (only backend, ADR-032)
     match state_config::create_default_state_backend() {
         Ok(state_port) => {
-            if app_state.swarm_db.is_some() {
-                let agent_mgr = Arc::new(
-                    orchestration::agent_manager::AgentManager::new(Arc::clone(&state_port)),
-                );
-                app_state.agent_manager = Some(agent_mgr);
-            }
-            tracing::info!("IStatePort wired — agent_manager ready");
+            let agent_mgr = Arc::new(
+                orchestration::agent_manager::AgentManager::new(Arc::clone(&state_port)),
+            );
+            app_state.agent_manager = Some(agent_mgr);
+            app_state.state_port = Some(state_port);
+            tracing::info!("IStatePort wired — agent_manager + state_port ready");
         }
         Err(e) => {
             tracing::warn!(
@@ -123,9 +106,11 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         let stdb_database = std::env::var("HEX_SPACETIMEDB_DATABASE")
             .unwrap_or_else(|_| "hex".to_string());
 
+        let hub_id = std::env::var("HEX_HUB_ID").unwrap_or_else(|_| "hub-local".to_string());
         let client = adapters::spacetime_secrets::SpacetimeSecretClient::new(
             stdb_host,
             stdb_database,
+            hub_id,
         );
         if client.connect().await {
             app_state.spacetime_secrets = Some(Arc::new(client));
@@ -198,23 +183,6 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                     evicted_cmds,
                     evicted_results
                 );
-            }
-        }
-    });
-
-    // Background task: prune expired secret grants (every 60s) — ADR-026
-    let prune_state = state.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            let now = chrono::Utc::now().to_rfc3339();
-            let mut grants = prune_state.secret_grants.write().await;
-            let before = grants.len();
-            grants.retain(|_, g| g.expires_at > now);
-            let pruned = before - grants.len();
-            if pruned > 0 {
-                tracing::debug!("Pruned {} expired secret grants", pruned);
             }
         }
     });
