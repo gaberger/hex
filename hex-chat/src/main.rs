@@ -758,9 +758,35 @@ mod web {
         let app = Router::new().route("/", get(index)).with_state(state);
         let addr = format!("127.0.0.1:{port}");
         let url = format!("http://{addr}");
-        eprintln!("\n  \x1b[1;36mhex-chat\x1b[0m web dashboard running at \x1b[1;4m{url}\x1b[0m\n");
-        let listener = tokio::net::TcpListener::bind(&addr).await?;
-        axum::serve(listener, app).await?;
+
+        // Kill any existing process on this port before binding
+        match tokio::net::TcpListener::bind(&addr).await {
+            Ok(listener) => {
+                eprintln!("\n  \x1b[1;36mhex-chat\x1b[0m web dashboard running at \x1b[1;4m{url}\x1b[0m\n");
+                axum::serve(listener, app).await?;
+            }
+            Err(_) => {
+                eprintln!("  \x1b[33mPort {port} in use — killing existing process...\x1b[0m");
+                // Find and kill the process using this port
+                let output = tokio::process::Command::new("lsof")
+                    .args(["-ti", &format!(":{port}")])
+                    .output()
+                    .await;
+                if let Ok(out) = output {
+                    let pids = String::from_utf8_lossy(&out.stdout);
+                    for pid in pids.trim().lines() {
+                        let _ = tokio::process::Command::new("kill")
+                            .arg(pid.trim())
+                            .output()
+                            .await;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+                let listener = tokio::net::TcpListener::bind(&addr).await?;
+                eprintln!("\n  \x1b[1;36mhex-chat\x1b[0m web dashboard running at \x1b[1;4m{url}\x1b[0m\n");
+                axum::serve(listener, app).await?;
+            }
+        }
         Ok(())
     }
 
