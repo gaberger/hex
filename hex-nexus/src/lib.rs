@@ -125,6 +125,28 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         }
     }
 
+    // Initialize session persistence (ADR-036)
+    #[cfg(feature = "sqlite-session")]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let hex_dir = std::path::PathBuf::from(home).join(".hex");
+        let _ = std::fs::create_dir_all(&hex_dir);
+        let db_path = hex_dir.join("hub.db");
+        match adapters::sqlite_session::SqliteSessionAdapter::from_path(
+            db_path.to_str().unwrap_or("/tmp/.hex/hub.db"),
+        )
+        .await
+        {
+            Ok(adapter) => {
+                app_state.session_port = Some(Arc::new(adapter));
+                tracing::info!("Session persistence active (SQLite: {:?})", db_path);
+            }
+            Err(e) => {
+                tracing::warn!("Session persistence unavailable: {e}");
+            }
+        }
+    }
+
     // Wrap in Arc, then create WorkplanExecutor (needs SharedState = Arc<AppState>)
     let state = Arc::new(app_state);
 
