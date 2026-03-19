@@ -248,25 +248,86 @@ body { font-family:'SF Mono','Fira Code',monospace; background:#0d1117; color:#c
         clearChildren(el);
         var list = Array.isArray(endpoints) ? endpoints : Object.values(endpoints);
         $("inferenceCount").textContent = list.length;
-        if (!list.length) { el.appendChild(mkEmpty("No providers")); return; }
+        if (!list.length) { el.appendChild(mkEmpty("No providers registered. Use: hex inference add <provider> <url>")); return; }
+
+        // Group by provider
+        var byProvider = {};
         list.forEach(function(ep) {
-          var d = document.createElement("div");
-          d.className = "agent";
-          var dot = document.createElement("span");
-          dot.className = "status-dot " + (ep.healthy !== false ? "running" : "idle");
-          d.appendChild(dot);
-          var name = document.createElement("span");
-          name.className = "name";
-          name.textContent = ep.name || ep.id || "unknown";
-          d.appendChild(name);
-          var meta = document.createElement("div");
-          meta.className = "meta";
-          meta.textContent = (ep.provider || "") + " " + (ep.url || ep.base_url || "");
-          d.appendChild(meta);
-          el.appendChild(d);
+          var key = ep.provider || "unknown";
+          if (!byProvider[key]) byProvider[key] = [];
+          byProvider[key].push(ep);
+        });
+
+        Object.keys(byProvider).forEach(function(provider) {
+          var header = document.createElement("div");
+          header.style.cssText = "font-size:11px;color:#58a6ff;font-weight:600;margin:8px 0 4px;text-transform:uppercase;";
+          header.textContent = provider;
+          el.appendChild(header);
+
+          byProvider[provider].forEach(function(ep) {
+            var d = document.createElement("div");
+            d.className = "agent";
+
+            var dot = document.createElement("span");
+            var isHealthy = ep.status === "healthy" || ep.status === "ok";
+            dot.className = "status-dot " + (isHealthy ? "running" : "idle");
+            d.appendChild(dot);
+
+            var name = document.createElement("span");
+            name.className = "name";
+            name.textContent = ep.model || ep.id || "default";
+            d.appendChild(name);
+
+            var urlMeta = document.createElement("div");
+            urlMeta.className = "meta";
+            urlMeta.textContent = ep.url || "";
+            d.appendChild(urlMeta);
+
+            var statusMeta = document.createElement("div");
+            statusMeta.className = "meta";
+            statusMeta.style.color = isHealthy ? "#3fb950" : "#f85149";
+            statusMeta.textContent = ep.status || "unknown";
+            if (ep.health_checked_at) {
+              statusMeta.textContent += " (checked " + timeAgo(ep.health_checked_at) + ")";
+            }
+            d.appendChild(statusMeta);
+
+            // If Ollama, try to fetch models
+            if (provider === "ollama" && ep.url) {
+              fetchOllamaModels(ep.url, d);
+            }
+
+            el.appendChild(d);
+          });
         });
       })
       .catch(function() {});
+  }
+
+  function fetchOllamaModels(baseUrl, parentEl) {
+    fetch(baseUrl + "/api/tags")
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var models = data.models || [];
+        if (!models.length) return;
+        var modelsDiv = document.createElement("div");
+        modelsDiv.className = "meta";
+        modelsDiv.style.cssText = "margin-left:12px;color:#8b949e;";
+        var names = models.map(function(m) { return m.name; }).slice(0, 8);
+        modelsDiv.textContent = "Models: " + names.join(", ");
+        if (models.length > 8) modelsDiv.textContent += " (+" + (models.length - 8) + " more)";
+        parentEl.appendChild(modelsDiv);
+      })
+      .catch(function() {});
+  }
+
+  function timeAgo(isoStr) {
+    if (!isoStr) return "";
+    var secs = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
+    if (secs < 60) return secs + "s ago";
+    if (secs < 3600) return Math.floor(secs/60) + "m ago";
+    if (secs < 86400) return Math.floor(secs/3600) + "h ago";
+    return Math.floor(secs/86400) + "d ago";
   }
 
   function loadRlStats() {
