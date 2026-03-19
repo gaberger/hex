@@ -20,8 +20,16 @@ pub struct HubClaimConfig {
 
 impl Default for HubClaimConfig {
     fn default() -> Self {
+        // Resolve nexus URL: env var → persisted port file → default 5555
+        let hub_url = std::env::var("HEX_NEXUS_URL").unwrap_or_else(|_| {
+            let port = dirs::home_dir()
+                .and_then(|h| std::fs::read_to_string(h.join(".hex/nexus.port")).ok())
+                .and_then(|s| s.trim().parse::<u16>().ok())
+                .unwrap_or(5555);
+            format!("http://127.0.0.1:{}", port)
+        });
         Self {
-            hub_url: "http://127.0.0.1:4280".to_string(),
+            hub_url,
             timeout_secs: 10,
         }
     }
@@ -59,6 +67,7 @@ impl HubClaimSecretsAdapter {
 
 /// Claim request body.
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ClaimRequest {
     agent_id: String,
     nonce: String,
@@ -66,6 +75,7 @@ struct ClaimRequest {
 
 /// Claim response body.
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ClaimResponse {
     secrets: HashMap<String, String>,
     expires_in: u64,
@@ -163,9 +173,10 @@ mod tests {
     }
 
     #[test]
-    fn default_config_uses_localhost() {
+    fn default_config_uses_nexus_port() {
         let config = HubClaimConfig::default();
-        assert_eq!(config.hub_url, "http://127.0.0.1:4280");
+        // Default resolves via HEX_NEXUS_URL env → ~/.hex/nexus.port → 5555
+        assert!(config.hub_url.starts_with("http://127.0.0.1:"));
         assert_eq!(config.timeout_secs, 10);
     }
 

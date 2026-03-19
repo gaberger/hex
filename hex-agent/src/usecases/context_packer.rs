@@ -1,10 +1,12 @@
 use crate::domain::{AgentDefinition, SkillManifest, Workplan, WorkplanTask, TaskStatus};
+use crate::domain::hex_knowledge;
 use std::path::Path;
 
 /// Assembles the system prompt by combining all context sources.
 ///
-/// Injects: CLAUDE.md content, agent role prompt, skill manifest,
-/// dependency graph, workplan state. Respects token budget for system partition.
+/// Injects: CLAUDE.md content, hex architecture awareness (tiered),
+/// agent role prompt, skill manifest, dependency graph, workplan state.
+/// Respects token budget for system partition.
 pub struct ContextPacker;
 
 impl ContextPacker {
@@ -35,7 +37,15 @@ impl ContextPacker {
             }
         }
 
-        // 2. Agent role prompt
+        // 2. Hex architecture awareness (Tier 0 — always injected)
+        // Detects if project has hex structure and injects core rules + tools
+        let has_hex = Path::new(project_dir).join(".hex").exists()
+            || Path::new(project_dir).join("src/core/ports").exists();
+        if has_hex {
+            sections.push(format!("# Hex Architecture\n\n{}", hex_knowledge::HEX_AWARENESS));
+        }
+
+        // 3. Agent role prompt
         if let Some(agent_def) = agent {
             sections.push(format!(
                 "# Agent Role: {}\n\n{}\n\n{}",
@@ -52,13 +62,13 @@ impl ContextPacker {
             }
         }
 
-        // 3. Available skills
+        // 4. Available skills
         let skills_section = skills.system_prompt_section();
         if !skills_section.is_empty() {
             sections.push(skills_section);
         }
 
-        // 4. Workplan state (if active)
+        // 5. Workplan state (if active)
         if let Some(wp) = workplan {
             sections.push(format_workplan_context(wp));
         }

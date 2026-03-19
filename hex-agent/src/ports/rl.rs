@@ -68,8 +68,8 @@ impl ModelSelection {
             Self::Opus => "claude-opus-4-6",
             Self::Sonnet => "claude-sonnet-4-6",
             Self::Haiku => "claude-haiku-4-5-20251001",
-            Self::MiniMax => "MiniMax-M2.5",
-            Self::MiniMaxFast => "MiniMax-M2.5-highspeed",
+            Self::MiniMax => "MiniMax-M2.7",
+            Self::MiniMaxFast => "MiniMax-M1",
             Self::Local => "local",
         }
     }
