@@ -64,6 +64,7 @@ pub struct InferenceRegisterRequest {
     pub url: String,
     pub provider: String,
     pub model: String,
+    #[serde(alias = "models_json")]
     pub models_json: Option<String>,
     pub requires_auth: Option<bool>,
     pub secret_key: Option<String>,
