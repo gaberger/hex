@@ -30,12 +30,30 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Launch terminal UI
-    Tui,
+    Tui {
+        /// Resume a specific session by ID
+        #[arg(long)]
+        session: Option<String>,
+        /// Project ID for session scoping
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Launch web dashboard
     Web {
         /// Port to bind
         #[arg(long, default_value = "5556")]
         port: u16,
+    },
+    /// List recent sessions
+    List {
+        /// Project ID to filter sessions
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Resume a session by ID
+    Resume {
+        /// Session ID to resume
+        session_id: String,
     },
 }
 
@@ -48,18 +66,85 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let nexus_url = cli.nexus_url.clone();
 
-    match cli.command.unwrap_or(Commands::Tui) {
-        Commands::Tui => {
-            tracing::info!("Starting hex-chat TUI...");
-            tui::run(nexus_url).await?;
+    match cli.command.unwrap_or(Commands::Tui { session: None, project: None }) {
+        Commands::Tui { session, project } => {
+            let project_id = project.unwrap_or_else(|| detect_project_id());
+            tracing::info!("Starting hex-chat TUI (project={project_id})...");
+            tui::run(nexus_url, session, project_id).await?;
         }
         Commands::Web { port } => {
             tracing::info!("Starting hex-chat web dashboard on port {port}...");
             web::run(port).await?;
         }
+        Commands::List { project } => {
+            let project_id = project.unwrap_or_else(|| detect_project_id());
+            list::run(nexus_url, project_id).await?;
+        }
+        Commands::Resume { session_id } => {
+            let project_id = detect_project_id();
+            tracing::info!("Resuming session {session_id}...");
+            tui::run(nexus_url, Some(session_id), project_id).await?;
+        }
     }
 
     Ok(())
+}
+
+/// Derive a project ID from the current working directory name.
+fn detect_project_id() -> String {
+    std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "default".into())
+}
+
+mod list {
+    use crate::adapters::nexus_client::NexusClient;
+
+    pub async fn run(nexus_url: String, project_id: String) -> anyhow::Result<()> {
+        let client = NexusClient::new(nexus_url);
+        let sessions = client.fetch_sessions(&project_id).await?;
+
+        if sessions.is_empty() {
+            println!("No sessions found for project '{project_id}'.");
+            return Ok(());
+        }
+
+        println!(
+            "{:<12} {:<28} {:<10} {:>8} {:>10}  {}",
+            "ID", "Title", "Model", "Messages", "Tokens", "Updated"
+        );
+        for s in &sessions {
+            let total_tokens = s.total_input_tokens + s.total_output_tokens;
+            let tokens_str = format_tokens(total_tokens);
+            let short_id = if s.id.len() > 10 {
+                format!("{}...", &s.id[..10])
+            } else {
+                s.id.clone()
+            };
+            let title = if s.title.len() > 26 {
+                format!("{}...", &s.title[..25])
+            } else {
+                s.title.clone()
+            };
+            println!(
+                "{:<12} {:<28} {:<10} {:>8} {:>10}  {}",
+                short_id, title, s.model, s.message_count, tokens_str, s.updated_at,
+            );
+        }
+
+        Ok(())
+    }
+
+    fn format_tokens(n: u64) -> String {
+        if n >= 1_000_000 {
+            format!("{:.1}M", n as f64 / 1_000_000.0)
+        } else if n >= 1_000 {
+            format!("{:.1}K", n as f64 / 1_000.0)
+        } else {
+            format!("{n}")
+        }
+    }
 }
 
 mod tui {
@@ -69,11 +154,13 @@ mod tui {
     use crossterm::terminal::{
         disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
     };
+    use futures_util::StreamExt;
     use ratatui::prelude::*;
     use ratatui::widgets::*;
     use std::io;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+    use tokio_tungstenite::tungstenite::Message as WsMessage;
 
     /// Which panel currently has keyboard focus.
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -101,10 +188,12 @@ mod tui {
         pub chat_input: String,
         pub chat_messages: Vec<(String, String)>, // (sender, message)
         pub focus: FocusPanel,
+        pub session_id: Option<String>,
+        pub project_id: String,
     }
 
     impl AppState {
-        fn new() -> Self {
+        fn new(project_id: String) -> Self {
             Self {
                 agents: Vec::new(),
                 swarms: Vec::new(),
@@ -115,13 +204,139 @@ mod tui {
                     ("system".into(), "Connecting to hex-nexus...".into()),
                 ],
                 focus: FocusPanel::Fleet,
+                session_id: None,
+                project_id,
             }
         }
     }
 
-    pub async fn run(nexus_url: String) -> anyhow::Result<()> {
-        let state = Arc::new(Mutex::new(AppState::new()));
+    pub async fn run(
+        nexus_url: String,
+        session_id: Option<String>,
+        project_id: String,
+    ) -> anyhow::Result<()> {
+        let state = Arc::new(Mutex::new(AppState::new(project_id.clone())));
         let client = NexusClient::new(nexus_url.clone());
+
+        // Session initialisation: resume existing or create new
+        let resolved_session_id = if let Some(sid) = session_id {
+            // Load existing messages
+            match client.fetch_messages(&sid, 200).await {
+                Ok(messages) => {
+                    let mut s = state.lock().unwrap();
+                    for msg in &messages {
+                        let text = msg
+                            .parts
+                            .iter()
+                            .filter_map(|p| p.get("content").and_then(|c| c.as_str()))
+                            .collect::<Vec<_>>()
+                            .join("");
+                        s.chat_messages.push((msg.role.clone(), text));
+                    }
+                    s.chat_messages
+                        .push(("system".into(), format!("Resumed session {}", &sid[..8.min(sid.len())])));
+                }
+                Err(e) => {
+                    let mut s = state.lock().unwrap();
+                    s.chat_messages
+                        .push(("system".into(), format!("Failed to load session: {e}")));
+                }
+            }
+            sid
+        } else {
+            // Create a new session
+            match client.create_session(&project_id, "default", None).await {
+                Ok(session) => {
+                    let mut s = state.lock().unwrap();
+                    s.chat_messages
+                        .push(("system".into(), format!("Session {}", &session.id[..8.min(session.id.len())])));
+                    session.id
+                }
+                Err(e) => {
+                    let mut s = state.lock().unwrap();
+                    s.chat_messages
+                        .push(("system".into(), format!("No session persistence: {e}")));
+                    String::new()
+                }
+            }
+        };
+
+        // Store the session ID in state
+        {
+            let mut s = state.lock().unwrap();
+            if !resolved_session_id.is_empty() {
+                s.session_id = Some(resolved_session_id.clone());
+            }
+        }
+
+        // Spawn WebSocket listener for live chat events
+        if !resolved_session_id.is_empty() {
+            let ws_state = Arc::clone(&state);
+            let ws_url = nexus_url.replace("http://", "ws://").replace("https://", "wss://");
+            let ws_session_id = resolved_session_id.clone();
+            let ws_project_id = project_id.clone();
+            tokio::spawn(async move {
+                let url = format!(
+                    "{}/ws/chat?session_id={}&project_id={}",
+                    ws_url, ws_session_id, ws_project_id,
+                );
+                match tokio_tungstenite::connect_async(&url).await {
+                    Ok((ws_stream, _)) => {
+                        let (_write, mut read) = ws_stream.split();
+                        // Keep the write half alive so the connection stays open
+                        let _write = _write;
+                        while let Some(Ok(msg)) = read.next().await {
+                            if let WsMessage::Text(text) = msg {
+                                if let Ok(envelope) =
+                                    serde_json::from_str::<serde_json::Value>(&text)
+                                {
+                                    let event_type = envelope
+                                        .get("type")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    if let Ok(mut s) = ws_state.lock() {
+                                        match event_type {
+                                            "chat_message" => {
+                                                let role = envelope
+                                                    .get("role")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("agent")
+                                                    .to_string();
+                                                let content = envelope
+                                                    .get("content")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("")
+                                                    .to_string();
+                                                s.chat_messages.push((role, content));
+                                            }
+                                            "agent_status" => {
+                                                let status = envelope
+                                                    .get("status")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("")
+                                                    .to_string();
+                                                s.chat_messages.push((
+                                                    "system".into(),
+                                                    format!("Agent: {status}"),
+                                                ));
+                                            }
+                                            "token_update" => {
+                                                // Token updates are reflected via
+                                                // the polling loop agent data
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("WebSocket connection failed: {e}");
+                    }
+                }
+            });
+        }
 
         // Spawn background poller
         let poll_state = Arc::clone(&state);
@@ -187,6 +402,23 @@ mod tui {
                                 if !s.chat_input.is_empty() {
                                     let msg = s.chat_input.drain(..).collect::<String>();
                                     s.chat_messages.push(("you".into(), msg.clone()));
+
+                                    // Persist message to session (fire and forget)
+                                    if let Some(ref sid) = s.session_id {
+                                        let persist_client =
+                                            NexusClient::new(nexus_url.clone());
+                                        let persist_sid = sid.clone();
+                                        let persist_msg = msg.clone();
+                                        tokio::spawn(async move {
+                                            let _ = persist_client
+                                                .append_message(
+                                                    &persist_sid,
+                                                    "user",
+                                                    &persist_msg,
+                                                )
+                                                .await;
+                                        });
+                                    }
 
                                     // Send to first agent if connected
                                     if s.connected {

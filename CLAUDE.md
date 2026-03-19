@@ -4,7 +4,7 @@
 
 hex is a **harness** — a framework + CLI tool that gets **installed into target projects** for AI-driven development using hexagonal architecture (ports & adapters). This repo is NOT an application. It is the installable framework that scaffolds and manages other projects.
 
-**Critical**: Everything in this repo (settings, hooks, statuslines, agents, skills) exists to be instantiated INTO a target project via `hex setup` or `hex scaffold`. The `examples/` directory contains sample target projects that use hex as an installed dependency. When working on examples, you are testing hex as a consumer would use it — the example IS the project, hex is the tool.
+**Critical**: Everything in this repo (settings, hooks, statuslines, agents, skills) exists to be instantiated INTO a target project. The `examples/` directory contains sample target projects that use hex as an installed dependency. When working on examples, you are testing hex as a consumer would use it — the example IS the project, hex is the tool.
 
 hex provides token-efficient code summaries via tree-sitter, swarm coordination via HexFlo (native Rust, ADR-027), and a specs-first development pipeline.
 
@@ -68,31 +68,47 @@ skills/              # Skill source definitions (.md, shipped in npm package)
 ## Build & Test
 
 ```bash
-bun run build        # Bundle CLI + library to dist/
+# Rust CLI (the primary CLI — what users run)
+cargo build -p hex-cli --release    # Build hex CLI binary
+cargo build -p hex-nexus --release  # Build hex-nexus daemon
+
+# TypeScript library (secondary — ports, adapters, tree-sitter)
+bun run build        # Bundle TS library to dist/
 bun test             # Run all tests (unit + property + smoke)
 bun run check        # TypeScript type check (no emit)
+
+# hex CLI commands (Rust binary)
 hex analyze .        # Architecture health check
-hex setup            # Install grammars + skills + agents
+hex nexus start      # Start the nexus daemon
+hex nexus status     # Check daemon health
 hex adr list         # List all ADRs with status
-hex adr status       # Show ADR lifecycle summary
+hex adr status <id>  # Show ADR detail
 hex adr search <q>   # Search ADRs by keyword
 hex adr abandoned    # Detect stale/abandoned ADRs
+hex swarm init       # Initialize a swarm
+hex task list        # List tasks
+hex memory store     # Store key-value
+hex status           # Project status overview
 ```
+
+### hex-cli (Rust CLI — the canonical CLI)
+
+**hex-cli** (`hex-cli/`) is the CLI binary users run. ALL hex commands go through this binary. The MCP server (`hex mcp`) is also served from this binary, ensuring MCP tools and CLI commands share the same backend.
+
+**IMPORTANT**: Never recommend commands that don't exist in `hex --help`. If a command isn't in the Rust CLI, it doesn't exist.
 
 ### hex-nexus (Orchestration Nexus — Library + Binary)
 
-**hex-nexus** (`hex-nexus/`) is both the core Rust library AND the binary for all hex operations: agent management, chat relay, RL engine, workplan orchestration, HexFlo coordination, and fleet management. It uses `rust-embed` to bake `hex-nexus/assets/*` (HTML, CSS, JS) into the binary at compile time.
+**hex-nexus** (`hex-nexus/`) is the daemon that provides REST API endpoints for architecture analysis, swarm coordination, and fleet management. It uses `rust-embed` to bake `hex-nexus/assets/*` (HTML, CSS, JS) into the binary at compile time.
 
 - **Editing `hex-nexus/assets/index.html`** (or any asset) requires rebuilding the Rust binary:
   ```bash
   cd hex-nexus && cargo build --release
   ```
 - Then restart the nexus daemon and hard-refresh the browser (Cmd+Shift+R)
-- `bun run build` does NOT update the nexus — it only bundles the TypeScript CLI/library
 - State (swarms, agents, tasks) is persisted in **SQLite** (`~/.hex/hub.db`) or **SpacetimeDB** (ADR-025)
-- The binary embeds a **compile-time build hash** for version verification against the TypeScript CLI (ADR-016, ADR-032)
 - Multi-instance coordination uses `ICoordinationPort` with filesystem-based locking and heartbeats (ADR-011)
-- HexFlo coordination module provides native swarm orchestration (ADR-027), replacing ruflo
+- HexFlo coordination module provides native swarm orchestration (ADR-027)
 
 ## Development Pipeline (Specs-First)
 
@@ -228,16 +244,30 @@ hex-nexus/src/coordination/
 
 ### MCP Tools (Claude Code integration)
 
+MCP tools are served by `hex mcp` (Rust binary). Tool names map 1:1 to CLI commands:
+
 ```
-mcp__hex__hex_hexflo_swarm_init       → POST /api/swarms
-mcp__hex__hex_hexflo_swarm_status     → GET  /api/swarms
-mcp__hex__hex_hexflo_task_create      → POST /api/swarms/:id/tasks
-mcp__hex__hex_hexflo_task_list        → GET  /api/swarms
-mcp__hex__hex_hexflo_task_complete    → PATCH /api/swarms/tasks/:id
-mcp__hex__hex_hexflo_memory_store     → POST /api/hexflo/memory
-mcp__hex__hex_hexflo_memory_retrieve  → GET  /api/hexflo/memory/:key
-mcp__hex__hex_hexflo_memory_search    → GET  /api/hexflo/memory/search
+mcp__hex__hex_analyze          → hex analyze [path]
+mcp__hex__hex_status           → hex status
+mcp__hex__hex_swarm_init       → hex swarm init
+mcp__hex__hex_swarm_status     → hex swarm status
+mcp__hex__hex_task_create      → hex task create
+mcp__hex__hex_task_list        → hex task list
+mcp__hex__hex_task_complete    → hex task complete
+mcp__hex__hex_memory_store     → hex memory store
+mcp__hex__hex_memory_retrieve  → hex memory get
+mcp__hex__hex_memory_search    → hex memory search
+mcp__hex__hex_adr_list         → hex adr list
+mcp__hex__hex_adr_search       → hex adr search
+mcp__hex__hex_adr_status       → hex adr status
+mcp__hex__hex_adr_abandoned    → hex adr abandoned
+mcp__hex__hex_nexus_status     → hex nexus status
+mcp__hex__hex_nexus_start      → hex nexus start
+mcp__hex__hex_secrets_status   → hex secrets status
+mcp__hex__hex_secrets_has      → hex secrets has
 ```
+
+All tools delegate to the same hex-nexus REST API as the CLI commands.
 
 ### CLI Commands
 
