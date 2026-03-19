@@ -240,7 +240,7 @@ impl ConversationLoop {
         state.push(Message::user(user_input));
 
         let mut tool_rounds = 0;
-        let mut retry_count: u32 = 0;
+        let retry_count: u32 = 0;
         let turn_start_tokens = state.total_estimated_tokens();
         let turn_start_time = std::time::Instant::now();
         let mut was_rate_limited = false;
