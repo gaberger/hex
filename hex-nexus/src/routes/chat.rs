@@ -277,14 +277,17 @@ async fn handle_chat_ws(
                         }
                     }
 
-                    // If no agent is connected and we have an API key, use the LLM bridge
+                    // If no agent is connected, use the LLM bridge
+                    // (routes through registered inference endpoints or Anthropic fallback)
                     let has_agent = agent_id.is_some()
                         || initial_agent_id.is_some()
                         || registered_agent_id.is_some();
-                    let use_bridge = !has_agent && state2.anthropic_api_key.is_some();
+                    let has_inference = !state2.inference_endpoints.blocking_read().is_empty();
+                    let has_anthropic = state2.anthropic_api_key.is_some();
+                    let use_bridge = !has_agent && (has_inference || has_anthropic);
 
                     if use_bridge {
-                        let api_key = state2.anthropic_api_key.clone().unwrap();
+                        let bridge_state = state2.clone();
                         let ws_tx = state2.ws_tx.clone();
                         let sid = session_id.clone();
                         let conv = conversation.clone();
@@ -297,7 +300,7 @@ async fn handle_chat_ws(
                         };
 
                         tokio::spawn(async move {
-                            llm_bridge(api_key, content, sid, ws_tx, conv, bridge_persist_sid, bridge_session_port).await;
+                            llm_bridge(bridge_state, content, sid, ws_tx, conv, bridge_persist_sid, bridge_session_port).await;
                         });
                     } else {
                         // Forward as a broadcast so the agent (or agent bridge) can pick it up
@@ -410,11 +413,11 @@ async fn handle_chat_ws(
 }
 
 // ── LLM Bridge ─────────────────────────────────────────────────────
-// Lightweight Anthropic API proxy for direct chat (no hex-agent needed).
-// Maintains conversation history per WebSocket session.
+// Routes chat through registered inference endpoints (Ollama, vLLM, OpenAI-compat)
+// with Anthropic as fallback. Maintains conversation history per session.
 
 async fn llm_bridge(
-    api_key: String,
+    state: SharedState,
     user_message: String,
     session_id: String,
     ws_tx: tokio::sync::broadcast::Sender<WsEnvelope>,
@@ -424,7 +427,7 @@ async fn llm_bridge(
 ) {
     let topic = format!("chat:{}:llm", session_id);
 
-    // Signal that we're processing
+    // Signal thinking
     let _ = ws_tx.send(WsEnvelope {
         topic: topic.clone(),
         event: "agent_status".to_string(),
@@ -437,8 +440,166 @@ async fn llm_bridge(
         conv.push(json!({ "role": "user", "content": user_message }));
     }
 
-    // Build request
     let messages = conversation.lock().await.clone();
+
+    // Pick an inference endpoint: prefer registered endpoints, fall back to Anthropic
+    let endpoint = {
+        let eps = state.inference_endpoints.read().await;
+        eps.values().next().cloned()
+    };
+
+    let (content, model_name, input_tokens, output_tokens) = if let Some(ep) = endpoint {
+        // Route through registered inference endpoint (OpenAI-compatible API)
+        match call_inference_endpoint(&ep, &messages).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                tracing::error!(provider = %ep.provider, error = %e, "Inference endpoint failed");
+                // Try Anthropic as fallback
+                if let Some(ref api_key) = state.anthropic_api_key {
+                    match call_anthropic(api_key, &messages).await {
+                        Ok(resp) => resp,
+                        Err(e2) => {
+                            send_error(&ws_tx, &topic, &format!("{} failed, Anthropic fallback also failed: {}", ep.provider, e2));
+                            signal_idle(&ws_tx, &topic);
+                            return;
+                        }
+                    }
+                } else {
+                    send_error(&ws_tx, &topic, &format!("{} error: {}", ep.provider, e));
+                    signal_idle(&ws_tx, &topic);
+                    return;
+                }
+            }
+        }
+    } else if let Some(ref api_key) = state.anthropic_api_key {
+        // No inference endpoints — use Anthropic directly
+        match call_anthropic(api_key, &messages).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                send_error(&ws_tx, &topic, &format!("Anthropic error: {}", e));
+                signal_idle(&ws_tx, &topic);
+                return;
+            }
+        }
+    } else {
+        send_error(&ws_tx, &topic, "No inference endpoints registered and no ANTHROPIC_API_KEY set. Use `hex inference add` to register a provider.");
+        signal_idle(&ws_tx, &topic);
+        return;
+    };
+
+    // Add assistant response to conversation history
+    {
+        let mut conv = conversation.lock().await;
+        conv.push(json!({ "role": "assistant", "content": content }));
+    }
+
+    // Persist assistant message (ADR-036)
+    if let (Some(ref psid), Some(ref port)) = (&persist_session_id, &session_port) {
+        let msg = NewMessage {
+            role: Role::Assistant,
+            parts: vec![MessagePart::Text { content: content.clone() }],
+            model: Some(model_name.clone()),
+            token_usage: Some(TokenUsage { input_tokens, output_tokens }),
+        };
+        if let Err(e) = port.message_append(psid, msg).await {
+            tracing::warn!("failed to persist assistant message: {e}");
+        }
+    }
+
+    // Send response to client
+    let _ = ws_tx.send(WsEnvelope {
+        topic: topic.clone(),
+        event: "chat_message".to_string(),
+        data: json!({ "content": content }),
+    });
+
+    // Send token update
+    let _ = ws_tx.send(WsEnvelope {
+        topic: topic.clone(),
+        event: "token_update".to_string(),
+        data: json!({
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_input": input_tokens,
+            "total_output": output_tokens,
+            "model": model_name,
+        }),
+    });
+
+    tracing::info!(model = %model_name, input_tokens, output_tokens, "LLM bridge response delivered");
+    signal_idle(&ws_tx, &topic);
+}
+
+/// Call a registered inference endpoint (OpenAI-compatible /v1/chat/completions or Ollama /api/chat)
+async fn call_inference_endpoint(
+    ep: &crate::routes::secrets::InferenceEndpointEntry,
+    messages: &[serde_json::Value],
+) -> Result<(String, String, u64, u64), String> {
+    let client = reqwest::Client::new();
+    let model = if ep.model.is_empty() { "default".to_string() } else { ep.model.clone() };
+
+    let (url, body) = match ep.provider.as_str() {
+        "ollama" => {
+            let url = format!("{}/api/chat", ep.url);
+            let body = json!({
+                "model": model,
+                "messages": messages,
+                "stream": false,
+            });
+            (url, body)
+        }
+        _ => {
+            // OpenAI-compatible (vLLM, OpenRouter, etc.)
+            let url = format!("{}/v1/chat/completions", ep.url);
+            let body = json!({
+                "model": model,
+                "messages": messages,
+                "max_tokens": 4096,
+            });
+            (url, body)
+        }
+    };
+
+    let mut req = client.post(&url).json(&body);
+    if !ep.secret_key.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", ep.secret_key));
+    }
+
+    let resp = req.send().await.map_err(|e| format!("connection: {e}"))?;
+    let status = resp.status().as_u16();
+    if status >= 400 {
+        let err = resp.text().await.unwrap_or_default();
+        return Err(format!("HTTP {status}: {}", truncate_str(&err, 200)));
+    }
+
+    let data: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
+
+    match ep.provider.as_str() {
+        "ollama" => {
+            let content = data["message"]["content"].as_str().unwrap_or("(empty)").to_string();
+            let model_used = data["model"].as_str().unwrap_or(&model).to_string();
+            let prompt_tokens = data["prompt_eval_count"].as_u64().unwrap_or(0);
+            let eval_tokens = data["eval_count"].as_u64().unwrap_or(0);
+            Ok((content, model_used, prompt_tokens, eval_tokens))
+        }
+        _ => {
+            // OpenAI-compatible response format
+            let content = data["choices"][0]["message"]["content"]
+                .as_str().unwrap_or("(empty)").to_string();
+            let model_used = data["model"].as_str().unwrap_or(&model).to_string();
+            let input_tokens = data["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
+            let output_tokens = data["usage"]["completion_tokens"].as_u64().unwrap_or(0);
+            Ok((content, model_used, input_tokens, output_tokens))
+        }
+    }
+}
+
+/// Call Anthropic API directly
+async fn call_anthropic(
+    api_key: &str,
+    messages: &[serde_json::Value],
+) -> Result<(String, String, u64, u64), String> {
+    let client = reqwest::Client::new();
     let body = json!({
         "model": "claude-sonnet-4-20250514",
         "max_tokens": 4096,
@@ -446,112 +607,46 @@ async fn llm_bridge(
         "messages": messages,
     });
 
-    let client = reqwest::Client::new();
-    let result = client
+    let resp = client
         .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", &api_key)
+        .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
         .json(&body)
         .send()
-        .await;
+        .await
+        .map_err(|e| format!("connection: {e}"))?;
 
-    match result {
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            if status >= 400 {
-                let err_text = resp.text().await.unwrap_or_else(|_| "unknown error".into());
-                tracing::error!(status, error = %err_text, "Anthropic API error");
-                let _ = ws_tx.send(WsEnvelope {
-                    topic: topic.clone(),
-                    event: "chat_message".to_string(),
-                    data: json!({
-                        "content": format!("**API Error** ({}): {}", status, truncate_str(&err_text, 200)),
-                    }),
-                });
-            } else {
-                match resp.json::<serde_json::Value>().await {
-                    Ok(data) => {
-                        let content = data["content"]
-                            .as_array()
-                            .and_then(|arr| arr.first())
-                            .and_then(|block| block["text"].as_str())
-                            .unwrap_or("(empty response)");
-
-                        let model = data["model"].as_str().unwrap_or("unknown");
-                        let input_tokens = data["usage"]["input_tokens"].as_u64().unwrap_or(0);
-                        let output_tokens = data["usage"]["output_tokens"].as_u64().unwrap_or(0);
-
-                        // Add assistant response to conversation history
-                        {
-                            let mut conv = conversation.lock().await;
-                            conv.push(json!({ "role": "assistant", "content": content }));
-                        }
-
-                        // Persist assistant message (ADR-036)
-                        if let (Some(ref psid), Some(ref port)) = (&persist_session_id, &session_port) {
-                            let msg = NewMessage {
-                                role: Role::Assistant,
-                                parts: vec![MessagePart::Text { content: content.to_string() }],
-                                model: Some(model.to_string()),
-                                token_usage: Some(TokenUsage { input_tokens, output_tokens }),
-                            };
-                            if let Err(e) = port.message_append(psid, msg).await {
-                                tracing::warn!("failed to persist assistant message: {e}");
-                            }
-                        }
-
-                        // Send the response
-                        let _ = ws_tx.send(WsEnvelope {
-                            topic: topic.clone(),
-                            event: "chat_message".to_string(),
-                            data: json!({ "content": content }),
-                        });
-
-                        // Send token update
-                        let _ = ws_tx.send(WsEnvelope {
-                            topic: topic.clone(),
-                            event: "token_update".to_string(),
-                            data: json!({
-                                "input_tokens": input_tokens,
-                                "output_tokens": output_tokens,
-                                "total_input": input_tokens,
-                                "total_output": output_tokens,
-                                "model": model,
-                            }),
-                        });
-
-                        tracing::info!(
-                            model,
-                            input_tokens,
-                            output_tokens,
-                            "LLM bridge response delivered"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to parse Anthropic response");
-                        let _ = ws_tx.send(WsEnvelope {
-                            topic: topic.clone(),
-                            event: "chat_message".to_string(),
-                            data: json!({ "content": format!("**Parse error**: {}", e) }),
-                        });
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to reach Anthropic API");
-            let _ = ws_tx.send(WsEnvelope {
-                topic: topic.clone(),
-                event: "chat_message".to_string(),
-                data: json!({ "content": format!("**Connection error**: {}", e) }),
-            });
-        }
+    let status = resp.status().as_u16();
+    if status >= 400 {
+        let err = resp.text().await.unwrap_or_default();
+        return Err(format!("HTTP {status}: {}", truncate_str(&err, 200)));
     }
 
-    // Signal idle
+    let data: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
+    let content = data["content"]
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|block| block["text"].as_str())
+        .unwrap_or("(empty)")
+        .to_string();
+    let model = data["model"].as_str().unwrap_or("unknown").to_string();
+    let input_tokens = data["usage"]["input_tokens"].as_u64().unwrap_or(0);
+    let output_tokens = data["usage"]["output_tokens"].as_u64().unwrap_or(0);
+    Ok((content, model, input_tokens, output_tokens))
+}
+
+fn send_error(ws_tx: &tokio::sync::broadcast::Sender<WsEnvelope>, topic: &str, msg: &str) {
     let _ = ws_tx.send(WsEnvelope {
-        topic,
+        topic: topic.to_string(),
+        event: "chat_message".to_string(),
+        data: json!({ "content": format!("**Error**: {}", msg) }),
+    });
+}
+
+fn signal_idle(ws_tx: &tokio::sync::broadcast::Sender<WsEnvelope>, topic: &str) {
+    let _ = ws_tx.send(WsEnvelope {
+        topic: topic.to_string(),
         event: "agent_status".to_string(),
         data: json!({ "status": "idle" }),
     });
