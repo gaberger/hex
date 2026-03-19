@@ -43,6 +43,9 @@ enum Commands {
         /// Port to bind
         #[arg(long, default_value = "5556")]
         port: u16,
+        /// hex-nexus URL override
+        #[arg(long)]
+        nexus: Option<String>,
     },
     /// List recent sessions
     List {
@@ -72,9 +75,9 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Starting hex-chat TUI (project={project_id})...");
             tui::run(nexus_url, session, project_id).await?;
         }
-        Commands::Web { port } => {
-            tracing::info!("Starting hex-chat web dashboard on port {port}...");
-            web::run(port).await?;
+        Commands::Web { port, nexus } => {
+            let nexus_addr = nexus.unwrap_or_else(|| nexus_url.clone());
+            web::run(port, nexus_addr).await?;
         }
         Commands::List { project } => {
             let project_id = project.unwrap_or_else(|| detect_project_id());
@@ -745,55 +748,29 @@ mod tui {
 }
 
 mod web {
-    use axum::{response::Html, routing::get, Router};
+    use axum::{extract::State as AxState, response::Html, routing::get, Router};
 
-    pub async fn run(port: u16) -> anyhow::Result<()> {
-        let app = Router::new().route("/", get(index));
+    #[derive(Clone)]
+    struct WebState { nexus_url: String }
 
+    pub async fn run(port: u16, nexus_url: String) -> anyhow::Result<()> {
+        let state = WebState { nexus_url };
+        let app = Router::new().route("/", get(index)).with_state(state);
         let addr = format!("127.0.0.1:{port}");
         let url = format!("http://{addr}");
         eprintln!("\n  \x1b[1;36mhex-chat\x1b[0m web dashboard running at \x1b[1;4m{url}\x1b[0m\n");
-        tracing::info!("hex-chat web dashboard at {url}");
         let listener = tokio::net::TcpListener::bind(&addr).await?;
         axum::serve(listener, app).await?;
         Ok(())
     }
 
-    async fn index() -> Html<&'static str> {
-        Html(r#"<!DOCTYPE html>
-<html>
-<head>
-    <title>hex-chat — Developer Command Center</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'SF Mono', monospace; background: #0d1117; color: #c9d1d9; }
-        .header { padding: 12px 20px; background: #161b22; border-bottom: 1px solid #30363d; }
-        .header h1 { font-size: 14px; color: #58a6ff; }
-        .grid { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 1px; background: #30363d; height: calc(100vh - 45px); }
-        .panel { background: #0d1117; padding: 16px; }
-        .panel h2 { font-size: 12px; color: #8b949e; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
-        .empty { color: #484f58; font-size: 13px; text-align: center; margin-top: 40px; }
-        .status { padding: 8px 20px; background: #161b22; border-top: 1px solid #30363d; font-size: 12px; color: #8b949e; position: fixed; bottom: 0; width: 100%; }
-    </style>
-</head>
-<body>
-    <div class="header"><h1>hex-chat — Developer Command Center</h1></div>
-    <div class="grid">
-        <div class="panel">
-            <h2>Fleet</h2>
-            <div class="empty">No agents connected.<br>Start hex-nexus to see fleet.</div>
-        </div>
-        <div class="panel">
-            <h2>Task Board</h2>
-            <div class="empty">No active workplan.</div>
-        </div>
-        <div class="panel">
-            <h2>Chat</h2>
-            <div class="empty">Connect SpacetimeDB for live messaging.</div>
-        </div>
-    </div>
-    <div class="status">ARCH: -- │ LOCKS: -- │ RL: -- │ SpacetimeDB: disconnected</div>
-</body>
-</html>"#)
+    async fn index(AxState(state): AxState<WebState>) -> Html<String> {
+        let nexus = &state.nexus_url;
+        let ws_url = nexus.replace("http://", "ws://").replace("https://", "wss://");
+        // Inject nexus URLs into the dashboard template
+        let html = include_str!("../assets/dashboard.html")
+            .replace("__NEXUS_URL__", nexus)
+            .replace("__WS_URL__", &ws_url);
+        Html(html)
     }
 }

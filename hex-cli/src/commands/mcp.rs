@@ -212,6 +212,27 @@ fn build_tool_list() -> Value {
                     "required": []
                 }
             },
+            // ── Workplan management ──
+            {
+                "name": "hex_plan_list",
+                "description": "List existing workplans from docs/workplans/",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "name": "hex_plan_status",
+                "description": "Show detailed status of a specific workplan",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "file": { "type": "string", "description": "Workplan filename (e.g. feat-secrets-plan-b.json)" }
+                    },
+                    "required": ["file"]
+                }
+            },
             // ── Nexus daemon ──
             {
                 "name": "hex_nexus_status",
@@ -376,6 +397,42 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             let days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(14);
             nexus.get(&format!("/api/adrs/abandoned?days={}", days))
                 .await.map_err(|e| e.to_string())
+        }
+
+        // ── Workplan management ──
+        "hex_plan_list" => {
+            let dir = std::path::Path::new("docs/workplans");
+            let mut plans = Vec::new();
+            if dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        if path.extension().map(|e| e == "json").unwrap_or(false) {
+                            if let Ok(contents) = std::fs::read_to_string(&path) {
+                                if let Ok(plan) = serde_json::from_str::<Value>(&contents) {
+                                    let steps = plan.get("steps").and_then(|s| s.as_array()).map(|a| a.len()).unwrap_or(0);
+                                    let done = plan.get("steps").and_then(|s| s.as_array()).map(|a| {
+                                        a.iter().filter(|s| s.get("status").and_then(|v| v.as_str()) == Some("completed")).count()
+                                    }).unwrap_or(0);
+                                    let title = plan.get("title").and_then(|t| t.as_str()).unwrap_or(&name).to_string();
+                                    plans.push(serde_json::json!({ "file": name, "title": title, "steps": steps, "completed": done }));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(serde_json::json!({ "plans": plans }))
+        }
+
+        "hex_plan_status" => {
+            let file = args.get("file").and_then(|v| v.as_str()).unwrap_or("");
+            let path = std::path::Path::new("docs/workplans").join(file);
+            match std::fs::read_to_string(&path) {
+                Ok(contents) => serde_json::from_str::<Value>(&contents).map_err(|e| format!("Parse error: {}", e)),
+                Err(e) => Err(format!("Cannot read {}: {}", path.display(), e)),
+            }
         }
 
         // ── Nexus daemon ──
