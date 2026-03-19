@@ -35,4 +35,7 @@ dom.sidebarToggle.addEventListener("click", function() { dom.sidebar.classList.t
 /* Connect WebSocket */
 H.connect();
 
+/* Initialize session manager (ADR-036) */
+if (H.initSessionManager) { H.initSessionManager(H.state); }
+
 })(window.HexChat);

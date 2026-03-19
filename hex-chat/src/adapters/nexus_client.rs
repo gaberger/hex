@@ -35,6 +35,7 @@ pub struct SwarmOverview {
 
 // ── Session persistence types ────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
@@ -48,6 +49,7 @@ pub struct SessionSummary {
     pub updated_at: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
@@ -58,6 +60,7 @@ pub struct Session {
     pub created_at: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
@@ -179,12 +182,14 @@ impl NexusClient {
         Ok(resp.json().await?)
     }
 
+    #[allow(dead_code)]
     pub async fn delete_session(&self, session_id: &str) -> anyhow::Result<()> {
         let url = format!("{}/api/sessions/{}", self.base_url, session_id);
         self.http.delete(&url).send().await?;
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn fork_session(&self, session_id: &str) -> anyhow::Result<Session> {
         let url = format!("{}/api/sessions/{}/fork", self.base_url, session_id);
         let resp = self.http.post(&url).json(&serde_json::json!({})).send().await?;

@@ -189,6 +189,7 @@ mod tui {
         pub chat_messages: Vec<(String, String)>, // (sender, message)
         pub focus: FocusPanel,
         pub session_id: Option<String>,
+        #[allow(dead_code)]
         pub project_id: String,
     }
 
@@ -385,8 +386,22 @@ mod tui {
                     if key.kind == KeyEventKind::Press {
                         let mut s = state.lock().unwrap();
                         match key.code {
+                            KeyCode::Char('c')
+                                if key.modifiers.contains(
+                                    crossterm::event::KeyModifiers::CONTROL,
+                                ) =>
+                            {
+                                break;
+                            }
                             KeyCode::Char('q') if s.focus != FocusPanel::Chat => {
                                 break;
+                            }
+                            KeyCode::Esc => {
+                                if s.focus == FocusPanel::Chat {
+                                    s.focus = FocusPanel::Fleet;
+                                } else {
+                                    break;
+                                }
                             }
                             KeyCode::Tab => {
                                 s.focus = s.focus.next();
