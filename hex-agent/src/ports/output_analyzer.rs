@@ -5,7 +5,8 @@
 
 use async_trait::async_trait;
 
-use crate::domain::output_score::{AnalysisContext, OutputScore};
+// Re-export domain types so adapters import from ports, not domain (hex boundary rule)
+pub use crate::domain::output_score::{AnalysisContext, ChangeType, FileChange, OutputScore};
 
 /// Analyze LLM output quality for RL feedback.
 ///

@@ -11,8 +11,7 @@ use async_trait::async_trait;
 use std::path::Path;
 use tokio::process::Command;
 
-use crate::domain::output_score::{AnalysisContext, OutputScore};
-use crate::ports::output_analyzer::OutputAnalyzerPort;
+use crate::ports::output_analyzer::{AnalysisContext, OutputAnalyzerPort, OutputScore};
 
 const DEFAULT_NEXUS_URL: &str = "http://127.0.0.1:5555";
 const NEXUS_TIMEOUT_SECS: u64 = 15;
@@ -169,7 +168,7 @@ impl OutputAnalyzerPort for NexusOutputAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::output_score::{AnalysisContext, ChangeType, FileChange};
+    use crate::ports::output_analyzer::{AnalysisContext, ChangeType, FileChange};
 
     fn make_context(files: Vec<FileChange>, tokens: u64, response: &str) -> AnalysisContext {
         AnalysisContext {
