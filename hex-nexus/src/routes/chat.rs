@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
+use crate::ports::session::{ISessionPort, MessagePart, NewMessage, Role, TokenUsage};
 use crate::state::{SharedState, WsEnvelope};
 
 #[derive(Debug, Deserialize)]
@@ -82,7 +83,6 @@ async fn handle_chat_ws(
     // Session persistence (ADR-036): resume or create a session
     #[cfg(feature = "sqlite-session")]
     let persistent_session_id = {
-        use crate::ports::session::{MessagePart, NewMessage, Role, TokenUsage};
         if let Some(ref port) = state.session_port {
             if let Some(ref sid) = requested_session_id {
                 // Verify the session exists
@@ -127,6 +127,7 @@ async fn handle_chat_ws(
         event: "connected".to_string(),
         data: json!({
             "sessionId": session_id,
+            "persistentSessionId": persistent_session_id,
             "authenticated": authenticated,
             "agentId": initial_agent_id,
             "llmBridge": has_llm,
@@ -200,6 +201,9 @@ async fn handle_chat_ws(
     let conversation: std::sync::Arc<tokio::sync::Mutex<Vec<serde_json::Value>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
+    // Clone persistent session ID for the receive task
+    let persist_sid = persistent_session_id.clone();
+
     // Task: handle inbound chat messages from the user (or agent)
     let state2 = state.clone();
     let mut recv_task = tokio::spawn(async move {
@@ -257,6 +261,22 @@ async fn handle_chat_ws(
 
             match parsed {
                 ChatInbound::ChatMessage { content, agent_id } => {
+                    // Persist user message (ADR-036)
+                    #[cfg(feature = "sqlite-session")]
+                    if let Some(ref psid) = persist_sid {
+                        if let Some(ref port) = state2.session_port {
+                            let msg = NewMessage {
+                                role: Role::User,
+                                parts: vec![MessagePart::Text { content: content.clone() }],
+                                model: None,
+                                token_usage: None,
+                            };
+                            if let Err(e) = port.message_append(psid, msg).await {
+                                tracing::warn!("failed to persist user message: {e}");
+                            }
+                        }
+                    }
+
                     // If no agent is connected and we have an API key, use the LLM bridge
                     let has_agent = agent_id.is_some()
                         || initial_agent_id.is_some()
@@ -268,9 +288,16 @@ async fn handle_chat_ws(
                         let ws_tx = state2.ws_tx.clone();
                         let sid = session_id.clone();
                         let conv = conversation.clone();
+                        let bridge_persist_sid = persist_sid.clone();
+                        let bridge_session_port: Option<std::sync::Arc<dyn ISessionPort>> = {
+                            #[cfg(feature = "sqlite-session")]
+                            { state2.session_port.clone() }
+                            #[cfg(not(feature = "sqlite-session"))]
+                            { None }
+                        };
 
                         tokio::spawn(async move {
-                            llm_bridge(api_key, content, sid, ws_tx, conv).await;
+                            llm_bridge(api_key, content, sid, ws_tx, conv, bridge_persist_sid, bridge_session_port).await;
                         });
                     } else {
                         // Forward as a broadcast so the agent (or agent bridge) can pick it up
@@ -392,6 +419,8 @@ async fn llm_bridge(
     session_id: String,
     ws_tx: tokio::sync::broadcast::Sender<WsEnvelope>,
     conversation: std::sync::Arc<tokio::sync::Mutex<Vec<serde_json::Value>>>,
+    persist_session_id: Option<String>,
+    session_port: Option<std::sync::Arc<dyn ISessionPort>>,
 ) {
     let topic = format!("chat:{}:llm", session_id);
 
@@ -457,6 +486,19 @@ async fn llm_bridge(
                         {
                             let mut conv = conversation.lock().await;
                             conv.push(json!({ "role": "assistant", "content": content }));
+                        }
+
+                        // Persist assistant message (ADR-036)
+                        if let (Some(ref psid), Some(ref port)) = (&persist_session_id, &session_port) {
+                            let msg = NewMessage {
+                                role: Role::Assistant,
+                                parts: vec![MessagePart::Text { content: content.to_string() }],
+                                model: Some(model.to_string()),
+                                token_usage: Some(TokenUsage { input_tokens, output_tokens }),
+                            };
+                            if let Err(e) = port.message_append(psid, msg).await {
+                                tracing::warn!("failed to persist assistant message: {e}");
+                            }
                         }
 
                         // Send the response
