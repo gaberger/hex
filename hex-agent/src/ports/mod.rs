@@ -15,6 +15,7 @@ pub mod batch;
 pub mod token_metrics;
 pub mod preflight;
 pub mod mcp_client;
+pub mod output_analyzer;
 
 pub use anthropic::AnthropicPort;
 pub use context::ContextManagerPort;
