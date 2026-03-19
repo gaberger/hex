@@ -1,6 +1,6 @@
 # ADR-036: hex-chat Session Architecture
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-03-19
 - **Informed by**: OpenCode (anomalyco/opencode), ADR-035
 - **Authors**: Gary (architect), Claude (analysis)
@@ -80,7 +80,9 @@ pub trait ISessionPort: Send + Sync {
 
 ### 3. Storage Strategy
 
-**SQLite in `~/.hex/hub.db`** — extends the existing database with two new tables:
+**Primary: SpacetimeDB** (planned) — session and message tables as SpacetimeDB modules, providing real-time subscriptions and cross-instance session sharing.
+
+**Fallback: SQLite in `~/.hex/hub.db`** — offline-first adapter when SpacetimeDB is unavailable. Currently the only implemented backend. Extends the existing database with two new tables:
 
 ```sql
 CREATE TABLE IF NOT EXISTS sessions (
@@ -117,17 +119,28 @@ CREATE INDEX idx_sessions_project ON sessions(project_id, updated_at DESC);
 **REST API** (new routes under `/api/sessions`):
 - `POST /api/sessions` — create
 - `GET /api/sessions?project_id=X` — list
-- `GET /api/sessions/:id` — get with recent messages
-- `POST /api/sessions/:id/fork` — fork
-- `POST /api/sessions/:id/compact` — compact
-- `DELETE /api/sessions/:id` — delete
+- `GET /api/sessions/search?project_id=X&q=Y` — full-text search
+- `GET /api/sessions/:id` — get session metadata
+- `PATCH /api/sessions/:id` — update title
+- `DELETE /api/sessions/:id` — delete (cascades messages)
+- `POST /api/sessions/:id/archive` — archive
+- `GET /api/sessions/:id/messages` — list messages (paginated)
+- `POST /api/sessions/:id/messages` — append message
+- `POST /api/sessions/:id/fork` — fork at optional sequence
+- `POST /api/sessions/:id/compact` — compact with summary
+- `POST /api/sessions/:id/revert` — revert to sequence
 
-**CLI** (`hex chat`):
-- `hex chat` — start new session (TUI)
-- `hex chat list` — list sessions
-- `hex chat resume <id>` — resume session (TUI)
-- `hex chat attach <url>` — connect to remote nexus
-- `hex chat export <id>` — export as markdown
+**hex-chat binary** (standalone developer command center):
+- `hex-chat` / `hex-chat tui` — TUI with session management
+- `hex-chat web` — web dashboard at http://127.0.0.1:5556
+- `hex-chat list` — list sessions
+- `hex-chat resume <id>` — resume session in TUI
+
+**WebSocket integration** (`/ws/chat`):
+- Accepts `?session_id=X&project_id=Y` query params
+- Auto-creates session if `project_id` provided without `session_id`
+- Welcome message includes `persistentSessionId` so clients know which session they're on
+- User and assistant messages auto-persisted with token usage
 
 ### 5. Compact Operation
 
@@ -157,7 +170,9 @@ Learned from OpenCode: long sessions degrade LLM performance. Compact replaces a
 - SQLite writes add latency (~1ms per message insert — negligible)
 - Migration needed for existing hub.db (additive, non-breaking)
 - `parts_json` as a JSON column sacrifices relational querying of individual parts
+- SQLite backend doesn't provide cross-instance sync (SpacetimeDB backend needed for that)
 
 ### Risks
 - Session table growth for heavy users → mitigate with `session_archive` + TTL cleanup
 - Fork chains can get deep → limit fork depth to 5
+- Two storage backends (SQLite + SpacetimeDB) increases testing surface — mitigate with shared `ISessionPort` trait tests
