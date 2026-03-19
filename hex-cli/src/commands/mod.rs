@@ -1,5 +1,6 @@
 pub mod adr;
 pub mod analyze;
+pub mod inference;
 pub mod mcp;
 pub mod memory;
 pub mod nexus;

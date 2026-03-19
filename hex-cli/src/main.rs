@@ -74,6 +74,11 @@ enum Commands {
         #[arg(default_value = ".")]
         path: String,
     },
+    /// Manage inference providers (Ollama, vLLM, self-hosted)
+    Inference {
+        #[command(subcommand)]
+        action: commands::inference::InferenceAction,
+    },
     /// Start the hex MCP server (stdio transport)
     Mcp,
     /// Run integration tests (unit, arch, services, swarm)
@@ -109,6 +114,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Memory { action } => commands::memory::run(action).await,
         Commands::Adr { action } => commands::adr::run(action).await,
         Commands::Analyze { path } => analyze::run(&path).await,
+        Commands::Inference { action } => commands::inference::run(action).await,
         Commands::Mcp => commands::mcp::run_mcp_server().await,
         Commands::Test { action } => commands::test::run(action).await,
         Commands::Status => status::run().await,

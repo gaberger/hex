@@ -26,22 +26,93 @@ impl OpenAiCompatAdapter {
         }
     }
 
-    /// Convenience constructor for MiniMax M2.5.
+    /// Convenience constructor for MiniMax M2.7 (Coding Plan Max).
     pub fn minimax(api_key: String) -> Self {
         Self::new(
             api_key,
             "https://api.minimax.io/v1".to_string(),
-            "MiniMax-M2.5".to_string(),
+            "MiniMax-M2.7".to_string(),
         )
     }
 
-    /// Convenience constructor for MiniMax M2.5-Lightning (2x speed).
+    /// Convenience constructor for MiniMax M1 (fallback).
     pub fn minimax_fast(api_key: String) -> Self {
         Self::new(
             api_key,
             "https://api.minimax.io/v1".to_string(),
-            "MiniMax-M2.5-highspeed".to_string(),
+            "MiniMax-M1".to_string(),
         )
+    }
+
+    /// Convenience constructor for Ollama (local or remote).
+    ///
+    /// Ollama doesn't require an API key and serves on port 11434 by default.
+    /// For remote hosts (e.g., Bazzite gaming rig with GPU), pass the host:
+    ///
+    /// ```rust
+    /// // Local Ollama
+    /// OpenAiCompatAdapter::ollama("qwen3:32b", None);
+    ///
+    /// // Remote Ollama on Bazzite
+    /// OpenAiCompatAdapter::ollama("qwen3:32b", Some("http://bazzite.local:11434"));
+    /// ```
+    pub fn ollama(model: &str, host: Option<&str>) -> Self {
+        let base_url = host
+            .unwrap_or("http://127.0.0.1:11434")
+            .trim_end_matches('/')
+            .to_string();
+        Self::new(
+            String::new(), // Ollama doesn't need an API key
+            format!("{}/v1", base_url),
+            model.to_string(),
+        )
+    }
+
+    /// Convenience constructor for vLLM (self-hosted GPU inference).
+    pub fn vllm(model: &str, host: Option<&str>, api_key: Option<&str>) -> Self {
+        let base_url = host
+            .unwrap_or("http://127.0.0.1:8000")
+            .trim_end_matches('/')
+            .to_string();
+        Self::new(
+            api_key.unwrap_or("").to_string(),
+            format!("{}/v1", base_url),
+            model.to_string(),
+        )
+    }
+
+    /// Create from environment variables for self-hosted models.
+    ///
+    /// Reads:
+    /// - `HEX_OLLAMA_HOST` — Ollama URL (default: http://127.0.0.1:11434)
+    /// - `HEX_OLLAMA_MODEL` — Model name (default: qwen3:32b)
+    /// - `HEX_VLLM_HOST` — vLLM URL
+    /// - `HEX_VLLM_MODEL` — vLLM model name
+    /// - `HEX_INFERENCE_URL` — Generic OpenAI-compatible endpoint
+    /// - `HEX_INFERENCE_MODEL` — Generic model name
+    /// - `HEX_INFERENCE_KEY` — API key for generic endpoint
+    pub fn from_env_self_hosted() -> Option<Self> {
+        // Try Ollama first
+        if let Ok(model) = std::env::var("HEX_OLLAMA_MODEL") {
+            let host = std::env::var("HEX_OLLAMA_HOST").ok();
+            return Some(Self::ollama(&model, host.as_deref()));
+        }
+
+        // Try vLLM
+        if let Ok(model) = std::env::var("HEX_VLLM_MODEL") {
+            let host = std::env::var("HEX_VLLM_HOST").ok();
+            let key = std::env::var("HEX_VLLM_KEY").ok();
+            return Some(Self::vllm(&model, host.as_deref(), key.as_deref()));
+        }
+
+        // Try generic OpenAI-compatible
+        if let Ok(url) = std::env::var("HEX_INFERENCE_URL") {
+            let model = std::env::var("HEX_INFERENCE_MODEL").unwrap_or("default".to_string());
+            let key = std::env::var("HEX_INFERENCE_KEY").unwrap_or_default();
+            return Some(Self::new(key, url, model));
+        }
+
+        None
     }
 
     /// Convert hex-agent messages to OpenAI chat format.
