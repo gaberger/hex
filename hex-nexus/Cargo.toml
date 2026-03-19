@@ -49,6 +49,8 @@ tree-sitter-go = "0.23"
 tree-sitter-rust = "0.23"
 # Shared domain types and port traits (hex-core is the gravity center)
 hex-core = { path = "../hex-core" }
+# SQLite for offline-first session persistence (ADR-036)
+rusqlite = { version = "0.34", features = ["bundled"], optional = true }
 # SpacetimeDB client SDK — optional, enabled via --features spacetimedb
 spacetimedb-sdk = { version = "2.0", optional = true }
 
@@ -57,5 +59,6 @@ tokio-tungstenite = "0.24"
 reqwest = { version = "0.12", features = ["json"] }
 
 [features]
-default = ["spacetimedb"]
+default = ["spacetimedb", "sqlite-session"]
+sqlite-session = ["rusqlite"]
 spacetimedb = ["spacetimedb-sdk"]

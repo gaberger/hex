@@ -57,13 +57,21 @@ pub async fn spawn_agent(
     };
 
     match mgr.spawn_agent(config).await {
-        Ok(agent) => (
-            StatusCode::OK,
-            Json(json!({
-                "agent": agent,
-                "status": "spawned",
-            })),
-        ),
+        Ok(agent) => {
+            // Broadcast agent spawn to connected chat clients
+            let _ = state.ws_tx.send(crate::state::WsEnvelope {
+                topic: "hexflo".into(),
+                event: "agent_spawned".into(),
+                data: json!({ "agent": &agent }),
+            });
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "agent": agent,
+                    "status": "spawned",
+                })),
+            )
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e })),
@@ -123,7 +131,15 @@ pub async fn terminate_agent(
     };
 
     match mgr.terminate_agent(&id).await {
-        Ok(true) => (StatusCode::OK, Json(json!({ "ok": true, "terminated": id }))),
+        Ok(true) => {
+            // Broadcast agent termination to connected chat clients
+            let _ = state.ws_tx.send(crate::state::WsEnvelope {
+                topic: "hexflo".into(),
+                event: "agent_terminated".into(),
+                data: json!({ "agent_id": &id }),
+            });
+            (StatusCode::OK, Json(json!({ "ok": true, "terminated": id })))
+        }
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "Agent not found" })),

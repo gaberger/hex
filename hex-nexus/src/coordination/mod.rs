@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 use crate::orchestration::agent_manager::{AgentInstance, AgentManager, SpawnConfig};
-use crate::persistence::SwarmTask;
 use crate::ports::state::{IStatePort, SwarmInfo, SwarmTaskInfo};
 use crate::state::WsEnvelope;
 
@@ -136,7 +135,7 @@ impl HexFlo {
         &self,
         swarm_id: &str,
         title: &str,
-    ) -> Result<SwarmTask, String> {
+    ) -> Result<SwarmTaskInfo, String> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
 
@@ -145,26 +144,25 @@ impl HexFlo {
             .await
             .map_err(|e| e.to_string())?;
 
-        Ok(SwarmTask {
+        Ok(SwarmTaskInfo {
             id,
             swarm_id: swarm_id.to_string(),
             title: title.to_string(),
             status: "pending".to_string(),
-            agent_id: None,
-            result: None,
+            agent_id: String::new(),
+            result: String::new(),
             created_at: now,
-            completed_at: None,
+            completed_at: String::new(),
         })
     }
 
     /// List tasks, optionally filtered by swarm_id.
-    pub async fn task_list(&self, filter: TaskFilter) -> Result<Vec<SwarmTask>, String> {
+    pub async fn task_list(&self, filter: TaskFilter) -> Result<Vec<SwarmTaskInfo>, String> {
         let tasks = self.state
             .swarm_task_list(filter.swarm_id.as_deref())
             .await
             .map_err(|e| e.to_string())?;
 
-        // Convert SwarmTaskInfo → SwarmTask for backwards compat with routes
         Ok(tasks
             .into_iter()
             .filter(|t| {
@@ -173,16 +171,6 @@ impl HexFlo {
                 } else {
                     true
                 }
-            })
-            .map(|t| SwarmTask {
-                id: t.id,
-                swarm_id: t.swarm_id,
-                title: t.title,
-                status: t.status,
-                agent_id: if t.agent_id.is_empty() { None } else { Some(t.agent_id) },
-                result: if t.result.is_empty() { None } else { Some(t.result) },
-                created_at: t.created_at,
-                completed_at: if t.completed_at.is_empty() { None } else { Some(t.completed_at) },
             })
             .collect())
     }

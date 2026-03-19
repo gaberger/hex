@@ -11,6 +11,8 @@ pub mod push;
 pub mod query;
 pub mod rl;
 pub mod secrets;
+#[cfg(feature = "sqlite-session")]
+pub mod sessions;
 pub mod swarms;
 pub mod ws;
 
@@ -46,7 +48,7 @@ pub fn build_router(state: SharedState) -> Router {
             http::header::AUTHORIZATION,
         ]);
 
-    Router::new()
+    let router = Router::new()
         // Static + version
         .route("/", get(serve_index))
         .route("/chat", get(serve_chat))
@@ -170,7 +172,30 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/hexflo/memory/search", get(hexflo::memory_search))
         .route("/api/hexflo/memory/{key}", get(hexflo::memory_retrieve)
             .delete(hexflo::memory_delete))
-        .route("/api/hexflo/cleanup", post(hexflo::cleanup))
+        .route("/api/hexflo/cleanup", post(hexflo::cleanup));
+
+    // Session persistence (ADR-036) — feature-gated
+    #[cfg(feature = "sqlite-session")]
+    let router = router
+        .route("/api/sessions", post(sessions::create_session)
+            .get(sessions::list_sessions)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/sessions/search", get(sessions::search_sessions))
+        .route("/api/sessions/{id}", get(sessions::get_session)
+            .patch(sessions::update_session_title)
+            .delete(sessions::delete_session))
+        .route("/api/sessions/{id}/messages", get(sessions::list_messages)
+            .post(sessions::append_message)
+            .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
+        .route("/api/sessions/{id}/fork", post(sessions::fork_session)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/sessions/{id}/compact", post(sessions::compact_session)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/sessions/{id}/revert", post(sessions::revert_session)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/sessions/{id}/archive", post(sessions::archive_session));
+
+    router
         // WebSocket
         .route("/ws", get(ws::ws_handler))
         .route("/ws/chat", get(chat::chat_ws_handler))

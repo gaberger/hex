@@ -1,7 +1,9 @@
 pub mod secret_grant;
+pub mod session;
 pub mod state;
 
 pub use secret_grant::ISecretGrantPort;
+pub use session::ISessionPort;
 pub use state::IStatePort;
 
 // Re-export hex-core ports for downstream consumers

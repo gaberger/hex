@@ -1,0 +1,17 @@
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0f;--bg2:#0e0e16;--card:#141420;--card2:#1a1a2a;
+  --border:#252535;--border-hi:#353550;
+  --accent:#00d4aa;--accent-dim:rgba(0,212,170,.12);--accent-glow:rgba(0,212,170,.3);
+  --blue:#3b82f6;--blue-dim:rgba(59,130,246,.15);
+  --amber:#ffb347;--amber-dim:rgba(255,179,71,.12);
+  --red:#ff4444;--red-dim:rgba(255,68,68,.12);
+  --green:#3fb950;--yellow:#e3b341;
+  --text:#e0e0e0;--text2:#9e9eb0;--text3:#8b8ba0;
+  --radius:10px;--radius-sm:6px;
+  --user-bg:#1a2744;--user-border:#2a3f6a;
+  --asst-bg:#1a1a28;--asst-border:#2a2a40;
+  --font:-apple-system,'Inter',system-ui,'Segoe UI',sans-serif;
+  --mono:'SF Mono','Fira Code','Cascadia Code',Consolas,monospace;
+}
+html{font-size:17px;-webkit-font-smoothing:antialiased}

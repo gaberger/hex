@@ -6,8 +6,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::rl::patterns::PatternStore;
-use crate::rl::q_learning::QLearningEngine;
+use crate::ports::state::RlState;
 use crate::state::SharedState;
 
 // ── Request / Response types ───────────────────────────
@@ -59,10 +58,17 @@ pub struct ReinforceRequest {
 
 type ApiResult<T = Json<Value>> = Result<T, (StatusCode, Json<Value>)>;
 
-fn db_unavailable() -> (StatusCode, Json<Value>) {
+fn port_unavailable() -> (StatusCode, Json<Value>) {
     (
         StatusCode::SERVICE_UNAVAILABLE,
-        Json(json!({ "error": "Database not available" })),
+        Json(json!({ "error": "State port not available" })),
+    )
+}
+
+fn state_err(e: crate::ports::state::StateError) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": e.to_string() })),
     )
 }
 
@@ -73,27 +79,23 @@ pub async fn select_action(
     State(state): State<SharedState>,
     Json(body): Json<ActionRequest>,
 ) -> ApiResult {
-    let db = state.swarm_db.as_ref().ok_or_else(db_unavailable)?;
-    let conn = db.conn().clone();
+    let port = state.state_port.as_ref().ok_or_else(port_unavailable)?;
 
-    let action = tokio::task::spawn_blocking(move || {
-        let conn = conn.blocking_lock();
-        let engine = QLearningEngine::new();
-        let state_key = QLearningEngine::discretize_state(
-            &body.state.task_type,
-            body.state.codebase_size,
-            body.state.agent_count,
-            body.state.token_usage,
-        );
-        let action = engine.select_action(&conn, &state_key);
-        (action, state_key)
-    })
-    .await
-    .expect("spawn_blocking join");
+    let rl_state = RlState {
+        task_type: body.state.task_type,
+        codebase_size: body.state.codebase_size,
+        agent_count: body.state.agent_count,
+        token_usage: body.state.token_usage,
+    };
+
+    let action = port.rl_select_action(&rl_state).await.map_err(state_err)?;
 
     Ok(Json(json!({
-        "action": action.0,
-        "stateKey": action.1,
+        "action": action,
+        "stateKey": format!(
+            "{}_{}_{}_{}", rl_state.task_type, rl_state.codebase_size,
+            rl_state.agent_count, rl_state.token_usage
+        ),
     })))
 }
 
@@ -102,24 +104,11 @@ pub async fn submit_reward(
     State(state): State<SharedState>,
     Json(body): Json<RewardRequest>,
 ) -> ApiResult {
-    let db = state.swarm_db.as_ref().ok_or_else(db_unavailable)?;
-    let conn = db.conn().clone();
+    let port = state.state_port.as_ref().ok_or_else(port_unavailable)?;
 
-    tokio::task::spawn_blocking(move || {
-        let conn = conn.blocking_lock();
-        let mut engine = QLearningEngine::new();
-        engine.update(&conn, &body.state_key, &body.action, body.reward, &body.next_state_key);
-        QLearningEngine::record_experience(
-            &conn,
-            &body.state_key,
-            &body.action,
-            body.reward,
-            &body.next_state_key,
-            "reward_update",
-        );
-    })
-    .await
-    .expect("spawn_blocking join");
+    port.rl_record_reward(&body.state_key, &body.action, body.reward, &body.next_state_key)
+        .await
+        .map_err(state_err)?;
 
     Ok(Json(json!({ "ok": true })))
 }
@@ -128,16 +117,9 @@ pub async fn submit_reward(
 pub async fn get_stats(
     State(state): State<SharedState>,
 ) -> ApiResult {
-    let db = state.swarm_db.as_ref().ok_or_else(db_unavailable)?;
-    let conn = db.conn().clone();
+    let port = state.state_port.as_ref().ok_or_else(port_unavailable)?;
 
-    let stats = tokio::task::spawn_blocking(move || {
-        let conn = conn.blocking_lock();
-        let engine = QLearningEngine::new();
-        QLearningEngine::get_stats(&conn, engine.epsilon)
-    })
-    .await
-    .expect("spawn_blocking join");
+    let stats = port.rl_get_stats().await.map_err(state_err)?;
 
     Ok(Json(serde_json::to_value(stats).unwrap()))
 }
@@ -147,15 +129,12 @@ pub async fn store_pattern(
     State(state): State<SharedState>,
     Json(body): Json<StorePatternRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
-    let db = state.swarm_db.as_ref().ok_or_else(db_unavailable)?;
-    let conn = db.conn().clone();
+    let port = state.state_port.as_ref().ok_or_else(port_unavailable)?;
 
-    let id = tokio::task::spawn_blocking(move || {
-        let conn = conn.blocking_lock();
-        PatternStore::store(&conn, &body.category, &body.content, body.confidence)
-    })
-    .await
-    .expect("spawn_blocking join");
+    let id = port
+        .pattern_store(&body.category, &body.content, body.confidence)
+        .await
+        .map_err(state_err)?;
 
     Ok((StatusCode::CREATED, Json(json!({ "id": id }))))
 }
@@ -165,19 +144,16 @@ pub async fn search_patterns(
     State(state): State<SharedState>,
     Query(params): Query<PatternQuery>,
 ) -> ApiResult {
-    let db = state.swarm_db.as_ref().ok_or_else(db_unavailable)?;
-    let conn = db.conn().clone();
+    let port = state.state_port.as_ref().ok_or_else(port_unavailable)?;
 
     let category = params.category.unwrap_or_default();
     let query = params.query.unwrap_or_default();
     let limit = params.limit.unwrap_or(10);
 
-    let patterns = tokio::task::spawn_blocking(move || {
-        let conn = conn.blocking_lock();
-        PatternStore::search(&conn, &category, &query, limit)
-    })
-    .await
-    .expect("spawn_blocking join");
+    let patterns = port
+        .pattern_search(&category, &query, limit)
+        .await
+        .map_err(state_err)?;
 
     Ok(Json(serde_json::to_value(patterns).unwrap()))
 }
@@ -188,15 +164,11 @@ pub async fn reinforce_pattern(
     Path(id): Path<String>,
     Json(body): Json<ReinforceRequest>,
 ) -> ApiResult {
-    let db = state.swarm_db.as_ref().ok_or_else(db_unavailable)?;
-    let conn = db.conn().clone();
+    let port = state.state_port.as_ref().ok_or_else(port_unavailable)?;
 
-    tokio::task::spawn_blocking(move || {
-        let conn = conn.blocking_lock();
-        PatternStore::reinforce(&conn, &id, body.delta);
-    })
-    .await
-    .expect("spawn_blocking join");
+    port.pattern_reinforce(&id, body.delta)
+        .await
+        .map_err(state_err)?;
 
     Ok(Json(json!({ "ok": true })))
 }
@@ -205,15 +177,9 @@ pub async fn reinforce_pattern(
 pub async fn decay_patterns(
     State(state): State<SharedState>,
 ) -> ApiResult {
-    let db = state.swarm_db.as_ref().ok_or_else(db_unavailable)?;
-    let conn = db.conn().clone();
+    let port = state.state_port.as_ref().ok_or_else(port_unavailable)?;
 
-    tokio::task::spawn_blocking(move || {
-        let conn = conn.blocking_lock();
-        PatternStore::decay_all(&conn);
-    })
-    .await
-    .expect("spawn_blocking join");
+    let _count = port.pattern_decay_all().await.map_err(state_err)?;
 
     Ok(Json(json!({ "ok": true })))
 }

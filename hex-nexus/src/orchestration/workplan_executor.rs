@@ -1,4 +1,3 @@
-use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -104,6 +103,42 @@ impl WorkplanExecutor {
         }
     }
 
+    /// Storage key for a workplan execution.
+    fn workplan_key(id: &str) -> String {
+        format!("workplan:{}", id)
+    }
+
+    /// Persist an ExecutionState via the state port.
+    async fn store_execution(
+        port: &dyn IStatePort,
+        state: &ExecutionState,
+    ) -> Result<(), String> {
+        let json = serde_json::to_string(state)
+            .map_err(|e| format!("Failed to serialize execution state: {}", e))?;
+        port.hexflo_memory_store(&Self::workplan_key(&state.id), &json, "global")
+            .await
+            .map_err(|e| format!("State port store error: {}", e))
+    }
+
+    /// Load an ExecutionState by id via the state port.
+    async fn load_execution(
+        port: &dyn IStatePort,
+        id: &str,
+    ) -> Result<Option<ExecutionState>, String> {
+        let value = port
+            .hexflo_memory_retrieve(&Self::workplan_key(id))
+            .await
+            .map_err(|e| format!("State port retrieve error: {}", e))?;
+        match value {
+            Some(json) => {
+                let state: ExecutionState = serde_json::from_str(&json)
+                    .map_err(|e| format!("Failed to deserialize execution state: {}", e))?;
+                Ok(Some(state))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Start executing a workplan from the given JSON file path.
     /// Parses the workplan, persists execution state, and begins from tier 0.
     pub async fn start(
@@ -122,9 +157,6 @@ impl WorkplanExecutor {
             return Err("Workplan has no phases".to_string());
         }
 
-        let db = self.shared_state.swarm_db.as_ref().ok_or("No database available")?;
-        let conn = db.conn().clone();
-
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let first_phase = workplan.phases[0].name.clone();
@@ -140,19 +172,8 @@ impl WorkplanExecutor {
             result: None,
         };
 
-        // Persist to SQLite
-        let es = exec_state.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            conn.execute(
-                "INSERT INTO workplan_executions (id, workplan_path, status, current_phase, started_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![es.id, es.workplan_path, "running", es.current_phase, es.started_at, es.updated_at],
-            )
-        })
-        .await
-        .map_err(|e| format!("DB insert failed: {}", e))?
-        .map_err(|e| format!("SQL error: {}", e))?;
+        // Persist via state port
+        Self::store_execution(self.state_port.as_ref(), &exec_state).await?;
 
         tracing::info!(
             execution_id = %id,
@@ -183,7 +204,7 @@ impl WorkplanExecutor {
 
         for phase in &workplan.phases {
             // Check if paused or failed
-            if let Ok(Some(current)) = Self::get_status_by_id(&shared_state, &execution_id).await {
+            if let Ok(Some(current)) = Self::load_execution(state_port.as_ref(), &execution_id).await {
                 if current.status == ExecutionStatus::Paused {
                     tracing::info!(execution_id = %execution_id, "Execution paused, stopping");
                     return;
@@ -194,7 +215,7 @@ impl WorkplanExecutor {
             }
 
             // Update current phase
-            Self::update_phase(&shared_state, &execution_id, &phase.name).await.ok();
+            Self::update_phase(state_port.as_ref(), &execution_id, &phase.name).await.ok();
 
             // Track per-task status via IStatePort: mark tasks as running
             for task in &phase.tasks {
@@ -210,19 +231,19 @@ impl WorkplanExecutor {
                 Ok(result) => {
                     all_agent_ids.extend(result.agent_ids);
                     if result.status == "failed" {
-                        Self::mark_status(&shared_state, &execution_id, "failed", Some(&result.errors)).await.ok();
+                        Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&result.errors)).await.ok();
                         return;
                     }
                 }
                 Err(e) => {
                     tracing::error!(execution_id = %execution_id, phase = %phase.name, error = %e, "Phase failed");
-                    Self::mark_status(&shared_state, &execution_id, "failed", Some(&[e])).await.ok();
+                    Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&[e])).await.ok();
                     return;
                 }
             }
         }
 
-        Self::mark_status(&shared_state, &execution_id, "completed", None).await.ok();
+        Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Completed, None).await.ok();
         tracing::info!(execution_id = %execution_id, "Workplan execution completed");
     }
 
@@ -308,49 +329,52 @@ impl WorkplanExecutor {
     }
 
     /// Get the current execution status.
+    /// Searches for active (running/paused) workplan executions via state port.
     pub async fn get_status(&self) -> Result<Option<ExecutionState>, String> {
-        let db = self.shared_state.swarm_db.as_ref().ok_or("No database available")?;
-        let conn = db.conn().clone();
+        // Search for workplan entries
+        let results = self
+            .state_port
+            .hexflo_memory_search("workplan:")
+            .await
+            .map_err(|e| format!("State port search error: {}", e))?;
 
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            conn.query_row(
-                "SELECT id, workplan_path, status, current_phase, started_at, updated_at, result_json
-                 FROM workplan_executions
-                 WHERE status IN ('running', 'paused')
-                 ORDER BY started_at DESC LIMIT 1",
-                [],
-                |row| {
-                    let status_str: String = row.get(2)?;
-                    let result_json: Option<String> = row.get(6)?;
-                    Ok(ExecutionState {
-                        id: row.get(0)?,
-                        workplan_path: row.get(1)?,
-                        status: ExecutionStatus::from_str(&status_str),
-                        current_phase: row.get(3)?,
-                        started_at: row.get(4)?,
-                        updated_at: row.get(5)?,
-                        agents: Vec::new(),
-                        result: result_json.and_then(|j| serde_json::from_str(&j).ok()),
-                    })
-                },
-            )
-            .optional()
-            .map_err(|e| format!("SQL error: {}", e))
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
+        // Find the most recent running or paused execution
+        let mut best: Option<ExecutionState> = None;
+        for (_key, json) in &results {
+            if let Ok(state) = serde_json::from_str::<ExecutionState>(json) {
+                if state.status == ExecutionStatus::Running || state.status == ExecutionStatus::Paused {
+                    match &best {
+                        Some(prev) if prev.started_at >= state.started_at => {}
+                        _ => best = Some(state),
+                    }
+                }
+            }
+        }
+
+        Ok(best)
     }
 
     /// Pause the currently running execution.
     pub async fn pause(&self) -> Result<bool, String> {
-        Self::set_active_status(&self.shared_state, "running", "paused").await
+        let exec = self.get_status().await?;
+        let Some(mut exec) = exec else {
+            return Ok(false);
+        };
+
+        if exec.status != ExecutionStatus::Running {
+            return Ok(false);
+        }
+
+        exec.status = ExecutionStatus::Paused;
+        exec.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::store_execution(self.state_port.as_ref(), &exec).await?;
+        Ok(true)
     }
 
     /// Resume a paused execution.
     pub async fn resume(&self) -> Result<bool, String> {
         let exec = self.get_status().await?;
-        let Some(exec) = exec else {
+        let Some(mut exec) = exec else {
             return Ok(false);
         };
 
@@ -358,7 +382,9 @@ impl WorkplanExecutor {
             return Ok(false);
         }
 
-        Self::set_active_status(&self.shared_state, "paused", "running").await?;
+        exec.status = ExecutionStatus::Running;
+        exec.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::store_execution(self.state_port.as_ref(), &exec).await?;
 
         // Re-read the workplan and resume from current phase
         let workplan_path = exec.workplan_path.clone();
@@ -385,22 +411,22 @@ impl WorkplanExecutor {
                     continue;
                 }
 
-                if let Ok(Some(current)) = Self::get_status_by_id(&shared_state, &execution_id).await {
+                if let Ok(Some(current)) = Self::load_execution(state_port.as_ref(), &execution_id).await {
                     if current.status != ExecutionStatus::Running {
                         return;
                     }
                 }
 
-                Self::update_phase(&shared_state, &execution_id, &phase.name).await.ok();
+                Self::update_phase(state_port.as_ref(), &execution_id, &phase.name).await.ok();
 
                 if let Err(e) = Self::execute_phase(&state_port, &shared_state, &workplan, phase).await {
                     tracing::error!(error = %e, "Phase failed on resume");
-                    Self::mark_status(&shared_state, &execution_id, "failed", Some(&[e])).await.ok();
+                    Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&[e])).await.ok();
                     return;
                 }
             }
 
-            Self::mark_status(&shared_state, &execution_id, "completed", None).await.ok();
+            Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Completed, None).await.ok();
         });
 
         Ok(true)
@@ -408,114 +434,37 @@ impl WorkplanExecutor {
 
     // ── Private helpers ────────────────────────────────
 
-    async fn get_status_by_id(
-        shared_state: &SharedState,
-        execution_id: &str,
-    ) -> Result<Option<ExecutionState>, String> {
-        let db = shared_state.swarm_db.as_ref().ok_or("No database available")?;
-        let conn = db.conn().clone();
-        let id = execution_id.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            conn.query_row(
-                "SELECT id, workplan_path, status, current_phase, started_at, updated_at, result_json
-                 FROM workplan_executions WHERE id = ?1",
-                params![id],
-                |row| {
-                    let status_str: String = row.get(2)?;
-                    let result_json: Option<String> = row.get(6)?;
-                    Ok(ExecutionState {
-                        id: row.get(0)?,
-                        workplan_path: row.get(1)?,
-                        status: ExecutionStatus::from_str(&status_str),
-                        current_phase: row.get(3)?,
-                        started_at: row.get(4)?,
-                        updated_at: row.get(5)?,
-                        agents: Vec::new(),
-                        result: result_json.and_then(|j| serde_json::from_str(&j).ok()),
-                    })
-                },
-            )
-            .optional()
-            .map_err(|e| format!("SQL error: {}", e))
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
-    }
-
-    async fn set_active_status(
-        shared_state: &SharedState,
-        from_status: &str,
-        to_status: &str,
-    ) -> Result<bool, String> {
-        let db = shared_state.swarm_db.as_ref().ok_or("No database available")?;
-        let conn = db.conn().clone();
-        let from = from_status.to_string();
-        let to = to_status.to_string();
-        let now = chrono::Utc::now().to_rfc3339();
-
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            let changed = conn
-                .execute(
-                    "UPDATE workplan_executions SET status = ?1, updated_at = ?2 WHERE status = ?3",
-                    params![to, now, from],
-                )
-                .map_err(|e| format!("SQL error: {}", e))?;
-            Ok(changed > 0)
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
-    }
-
+    /// Update the current phase of an execution.
     async fn update_phase(
-        shared_state: &SharedState,
+        port: &dyn IStatePort,
         execution_id: &str,
         phase: &str,
     ) -> Result<(), String> {
-        let db = shared_state.swarm_db.as_ref().ok_or("No database available")?;
-        let conn = db.conn().clone();
-        let id = execution_id.to_string();
-        let phase = phase.to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let mut state = Self::load_execution(port, execution_id)
+            .await?
+            .ok_or_else(|| format!("Execution {} not found", execution_id))?;
 
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            conn.execute(
-                "UPDATE workplan_executions SET current_phase = ?1, updated_at = ?2 WHERE id = ?3",
-                params![phase, now, id],
-            )
-            .map_err(|e| format!("SQL error: {}", e))
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
-        .map(|_| ())
+        state.current_phase = phase.to_string();
+        state.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::store_execution(port, &state).await
     }
 
+    /// Mark execution with a new status, optionally recording errors.
     async fn mark_status(
-        shared_state: &SharedState,
+        port: &dyn IStatePort,
         execution_id: &str,
-        status: &str,
+        status: ExecutionStatus,
         errors: Option<&[String]>,
     ) -> Result<(), String> {
-        let db = shared_state.swarm_db.as_ref().ok_or("No database available")?;
-        let conn = db.conn().clone();
-        let id = execution_id.to_string();
-        let status = status.to_string();
-        let now = chrono::Utc::now().to_rfc3339();
-        let result_json = errors.map(|e| serde_json::to_string(&serde_json::json!({ "errors": e })).unwrap());
+        let mut state = Self::load_execution(port, execution_id)
+            .await?
+            .ok_or_else(|| format!("Execution {} not found", execution_id))?;
 
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            conn.execute(
-                "UPDATE workplan_executions SET status = ?1, updated_at = ?2, result_json = ?3 WHERE id = ?4",
-                params![status, now, result_json, id],
-            )
-            .map_err(|e| format!("SQL error: {}", e))
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
-        .map(|_| ())
+        state.status = status;
+        state.updated_at = chrono::Utc::now().to_rfc3339();
+        if let Some(errs) = errors {
+            state.result = Some(serde_json::json!({ "errors": errs }));
+        }
+        Self::store_execution(port, &state).await
     }
 }

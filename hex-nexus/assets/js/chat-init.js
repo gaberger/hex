@@ -1,0 +1,38 @@
+/* Initialization — event listeners + connect */
+(function(H) {
+"use strict";
+var dom = H.dom;
+
+/* Input handling */
+dom.input.addEventListener("input", function() {
+  dom.sendBtn.disabled = !dom.input.value.trim();
+  dom.input.style.height = "auto";
+  dom.input.style.height = Math.min(dom.input.scrollHeight, 160) + "px";
+});
+
+dom.input.addEventListener("keydown", function(e) {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); H.doSend(); }
+});
+
+dom.sendBtn.addEventListener("click", H.doSend);
+
+/* Control buttons */
+var ctrls = document.querySelectorAll(".ctrl-btn");
+for (var i = 0; i < ctrls.length; i++) {
+  ctrls[i].addEventListener("click", (function(btn) {
+    return function() {
+      var cmd = btn.dataset.cmd;
+      if (cmd === "/clear") { H.clearMessages(); return; }
+      H.wsSend(cmd);
+      H.addUserMessage(cmd);
+    };
+  })(ctrls[i]));
+}
+
+/* Sidebar toggle (mobile) */
+dom.sidebarToggle.addEventListener("click", function() { dom.sidebar.classList.toggle("open"); });
+
+/* Connect WebSocket */
+H.connect();
+
+})(window.HexChat);

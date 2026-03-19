@@ -16,6 +16,10 @@ use crate::state::{SharedState, WsEnvelope};
 pub struct ChatWsParams {
     pub token: Option<String>,
     pub agent_id: Option<String>,
+    /// If provided, resumes an existing session. If absent, a new session is created.
+    pub session_id: Option<String>,
+    /// Project ID for session scoping. Required for new sessions.
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,8 +61,12 @@ pub async fn chat_ws_handler(
     };
 
     let agent_id = params.agent_id.clone();
+    let session_id = params.session_id.clone();
+    let project_id = params.project_id.clone().unwrap_or_default();
 
-    ws.on_upgrade(move |socket| handle_chat_ws(socket, state, authenticated, agent_id))
+    ws.on_upgrade(move |socket| {
+        handle_chat_ws(socket, state, authenticated, agent_id, session_id, project_id)
+    })
 }
 
 async fn handle_chat_ws(
@@ -66,9 +74,51 @@ async fn handle_chat_ws(
     state: SharedState,
     authenticated: bool,
     initial_agent_id: Option<String>,
+    requested_session_id: Option<String>,
+    project_id: String,
 ) {
     let (mut sender, mut receiver) = socket.split();
-    let session_id = Uuid::new_v4().to_string();
+
+    // Session persistence (ADR-036): resume or create a session
+    #[cfg(feature = "sqlite-session")]
+    let persistent_session_id = {
+        use crate::ports::session::{MessagePart, NewMessage, Role, TokenUsage};
+        if let Some(ref port) = state.session_port {
+            if let Some(ref sid) = requested_session_id {
+                // Verify the session exists
+                match port.session_get(sid).await {
+                    Ok(Some(_)) => Some(sid.clone()),
+                    _ => {
+                        tracing::warn!(session_id = %sid, "requested session not found, creating new");
+                        match port.session_create(&project_id, "claude-sonnet-4-20250514", None).await {
+                            Ok(s) => Some(s.id),
+                            Err(e) => { tracing::error!("session create failed: {e}"); None }
+                        }
+                    }
+                }
+            } else if !project_id.is_empty() {
+                // Auto-create a new session
+                match port.session_create(&project_id, "claude-sonnet-4-20250514", None).await {
+                    Ok(s) => {
+                        tracing::info!(session_id = %s.id, "auto-created chat session");
+                        Some(s.id)
+                    }
+                    Err(e) => { tracing::error!("session create failed: {e}"); None }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    #[cfg(not(feature = "sqlite-session"))]
+    let persistent_session_id: Option<String> = None;
+
+    // Use persistent session ID if available, otherwise generate ephemeral one
+    let session_id = persistent_session_id
+        .clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
 
     // Send welcome as WsEnvelope so both browser and agent can unwrap it
     let has_llm = state.anthropic_api_key.is_some();

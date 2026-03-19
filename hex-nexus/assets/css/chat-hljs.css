@@ -1,0 +1,11 @@
+/* highlight.js overrides for dark theme */
+.hljs{background:var(--bg2) !important;color:var(--text) !important}
+.hljs-keyword,.hljs-selector-tag{color:#c084fc}
+.hljs-string,.hljs-attr{color:#34d399}
+.hljs-comment{color:var(--text3)}
+.hljs-number,.hljs-literal{color:var(--amber)}
+.hljs-function .hljs-title,.hljs-title.function_{color:var(--blue)}
+.hljs-built_in{color:var(--accent)}
+.hljs-type,.hljs-class .hljs-title{color:#f472b6}
+.hljs-meta{color:var(--text2)}
+.hljs-variable,.hljs-template-variable{color:#fb923c}
