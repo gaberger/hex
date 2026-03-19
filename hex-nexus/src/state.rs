@@ -9,6 +9,8 @@ use crate::orchestration::workplan_executor::WorkplanExecutor;
 use crate::ports::session::ISessionPort;
 use crate::ports::state::IStatePort;
 use crate::remote::fleet::FleetManager;
+use crate::adapters::spacetime_chat::SpacetimeChatClient;
+use crate::adapters::spacetime_inference::SpacetimeInferenceClient;
 use crate::adapters::spacetime_secrets::SpacetimeSecretClient;
 use crate::routes::secrets::InferenceEndpointEntry;
 
@@ -42,6 +44,10 @@ pub struct AppState {
     pub hexflo: Option<Arc<HexFlo>>,
     // Unified state port (ADR-025) — abstracts RL, patterns, agents, etc.
     pub state_port: Option<Arc<dyn IStatePort>>,
+    // SpacetimeDB inference-gateway client (ADR-035)
+    pub inference_stdb: Option<Arc<SpacetimeInferenceClient>>,
+    // SpacetimeDB chat-relay client
+    pub chat_stdb: Option<Arc<SpacetimeChatClient>>,
     // Session persistence (ADR-036) — chat conversation history
     #[cfg(feature = "sqlite-session")]
     pub session_port: Option<Arc<dyn ISessionPort>>,
@@ -75,6 +81,8 @@ impl AppState {
             inference_endpoints: RwLock::new(HashMap::new()),
             hexflo: None,
             state_port: None,
+            inference_stdb: None,
+            chat_stdb: None,
             #[cfg(feature = "sqlite-session")]
             session_port: None,
         }

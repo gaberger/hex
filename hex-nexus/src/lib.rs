@@ -125,6 +125,29 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         }
     }
 
+    // Initialize SpacetimeDB inference-gateway + chat-relay clients
+    {
+        let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+
+        let inference_db = std::env::var("HEX_INFERENCE_STDB_DATABASE")
+            .unwrap_or_else(|_| "inference-gateway".to_string());
+        let chat_db = std::env::var("HEX_CHAT_STDB_DATABASE")
+            .unwrap_or_else(|_| "chat-relay".to_string());
+
+        let inference_client =
+            adapters::spacetime_inference::SpacetimeInferenceClient::new(
+                stdb_host.clone(),
+                inference_db,
+            );
+        let chat_client =
+            adapters::spacetime_chat::SpacetimeChatClient::new(stdb_host, chat_db);
+
+        app_state.inference_stdb = Some(Arc::new(inference_client));
+        app_state.chat_stdb = Some(Arc::new(chat_client));
+        tracing::info!("SpacetimeDB inference-gateway + chat-relay clients initialized");
+    }
+
     // Initialize session persistence (ADR-036)
     #[cfg(feature = "sqlite-session")]
     {

@@ -434,6 +434,9 @@ async fn llm_bridge(
         data: json!({ "status": "thinking" }),
     });
 
+    // Keep a copy for SpacetimeDB persistence (user_message is moved into json below)
+    let user_message_copy = user_message.clone();
+
     // Add user message to conversation history
     {
         let mut conv = conversation.lock().await;
@@ -525,6 +528,78 @@ async fn llm_bridge(
             "model": model_name,
         }),
     });
+
+    // Persist to SpacetimeDB (fire-and-forget — never block chat)
+    {
+        let inference_stdb = state.inference_stdb.clone();
+        let chat_stdb = state.chat_stdb.clone();
+        let sid = session_id.clone();
+        let user_msg = user_message_copy;
+        let resp_content = content.clone();
+        let model = model_name.clone();
+        let in_tok = input_tokens;
+        let out_tok = output_tokens;
+
+        tokio::spawn(async move {
+            let now = chrono::Utc::now().to_rfc3339();
+
+            // 1. Ensure conversation exists in chat-relay, then persist messages
+            if let Some(ref chat) = chat_stdb {
+                // Create conversation (idempotent — reducer will fail silently if exists)
+                let _ = chat.create_conversation(&sid, "llm-bridge", "LLM Bridge").await;
+                if let Err(e) = chat.send_message(&sid, "user", "user", &user_msg).await {
+                    tracing::debug!(error = %e, "chat-relay: failed to persist user message");
+                }
+                if let Err(e) = chat.send_message(&sid, "assistant", &model, &resp_content).await {
+                    tracing::debug!(error = %e, "chat-relay: failed to persist assistant message");
+                }
+            }
+
+            // 2. Persist inference request + response to inference-gateway
+            if let Some(ref inference) = inference_stdb {
+                let messages_json = serde_json::json!([{"role": "user", "content": user_msg}]).to_string();
+                if let Err(e) = inference
+                    .request_inference(
+                        "llm-bridge",
+                        &model,
+                        &model,
+                        &messages_json,
+                        "[]",   // no tools
+                        4096,
+                        "0.7",
+                        0,  // no thinking budget
+                        0,  // no cache control
+                        1,  // normal priority
+                        &now,
+                    )
+                    .await
+                {
+                    tracing::debug!(error = %e, "inference-gateway: failed to persist request");
+                }
+
+                // We don't have the auto-incremented request_id, so we record
+                // the response with request_id=0. The audit trail still captures
+                // the model, tokens, and timing.
+                let content_json = serde_json::json!({"content": resp_content}).to_string();
+                if let Err(e) = inference
+                    .complete_inference(
+                        0, // request_id unknown (auto_inc)
+                        &content_json,
+                        &model,
+                        in_tok,
+                        out_tok,
+                        0, 0, // cache tokens
+                        0,    // latency_ms — not measured at this layer
+                        "0",  // cost_usd
+                        &now,
+                    )
+                    .await
+                {
+                    tracing::debug!(error = %e, "inference-gateway: failed to persist response");
+                }
+            }
+        });
+    }
 
     tracing::info!(model = %model_name, input_tokens, output_tokens, "LLM bridge response delivered");
     signal_idle(&ws_tx, &topic);

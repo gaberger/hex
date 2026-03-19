@@ -1,3 +1,5 @@
+pub mod spacetime_chat;
+pub mod spacetime_inference;
 pub mod spacetime_secrets;
 pub mod spacetime_state;
 
