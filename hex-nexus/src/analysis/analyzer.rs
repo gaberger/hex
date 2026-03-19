@@ -5,7 +5,7 @@
 //!
 //! ADR-034 Phase 3.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -240,22 +240,45 @@ impl ArchAnalysisPort for ArchAnalyzer {
 }
 
 /// Detect port interfaces that have no adapter importing them.
+///
+/// Strategy:
+/// 1. Collect interface/trait exports from ports/ files ending with "Port"
+/// 2. Check if any adapter/usecase imports that name explicitly
+/// 3. (Go/Rust) Structural matching: if adapter methods overlap with port methods
 fn detect_unused_ports(file_data: &[FileData]) -> Vec<String> {
-    // Collect port interface names (names ending with "Port" from ports/ files)
-    let mut port_interfaces = HashSet::new();
+    // Step 1: Collect port interface names
+    let mut port_interfaces: HashSet<String> = HashSet::new();
+    let mut port_methods: HashMap<String, HashSet<String>> = HashMap::new(); // port_name → method names
+
     for file in file_data {
         if !file.path.contains("/ports/") {
             continue;
         }
         for exp in &file.exports {
             if exp.name.ends_with("Port") {
-                port_interfaces.insert(exp.name.as_str());
+                port_interfaces.insert(exp.name.clone());
+            }
+        }
+        // Collect method-like exports from port files (for Go structural matching)
+        // In Go, interface methods are exported as functions from the port package
+        for exp in &file.exports {
+            if exp.name.ends_with("Port") {
+                // The port interface itself — methods would be in the same file
+                // as separate function exports (Go) or inside the trait (Rust)
+                continue;
+            }
+            // Associate methods with their likely port (heuristic: same file)
+            for port in &port_interfaces {
+                port_methods
+                    .entry(port.clone())
+                    .or_default()
+                    .insert(exp.name.clone());
             }
         }
     }
 
-    // Collect interface names imported by adapter and use-case files
-    let mut implemented_ports = HashSet::new();
+    // Step 2: Check explicit imports of port names by adapters/usecases
+    let mut implemented_ports: HashSet<String> = HashSet::new();
     for file in file_data {
         let is_adapter = file.path.contains("/adapters/");
         let is_usecase = file.path.contains("/usecases/");
@@ -263,14 +286,47 @@ fn detect_unused_ports(file_data: &[FileData]) -> Vec<String> {
             continue;
         }
         for imp in &file.imports {
-            // Check if the import path points to a ports file
-            if imp.resolved_path.contains("/ports/") {
-                // The raw_path or resolved_path contains the port — mark all port
-                // names from that file as implemented (conservative: importing
-                // the file means using its ports)
-                for port_name in &port_interfaces {
-                    implemented_ports.insert(*port_name);
+            for name in &imp.names {
+                if port_interfaces.contains(name) {
+                    implemented_ports.insert(name.clone());
                 }
+                // Wildcard import from ports/ means all ports are used
+                if name == "*" && imp.resolved_path.contains("/ports/") {
+                    for p in &port_interfaces {
+                        implemented_ports.insert(p.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // Step 3: Go/Rust structural interface matching
+    // If an adapter exports methods that overlap with a port's methods,
+    // it likely implements that port (Go implicit interface satisfaction)
+    for file in file_data {
+        if !file.path.contains("/adapters/") {
+            continue;
+        }
+        if !file.path.ends_with(".go") && !file.path.ends_with(".rs") {
+            continue;
+        }
+        let adapter_methods: HashSet<&str> = file
+            .exports
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+
+        for (port_name, methods) in &port_methods {
+            if implemented_ports.contains(port_name) {
+                continue;
+            }
+            if methods.is_empty() {
+                continue;
+            }
+            // If all port methods are found in the adapter, it likely implements the port
+            let all_match = methods.iter().all(|m| adapter_methods.contains(m.as_str()));
+            if all_match {
+                implemented_ports.insert(port_name.clone());
             }
         }
     }

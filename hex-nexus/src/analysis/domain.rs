@@ -78,6 +78,8 @@ pub struct ImportStatement {
     pub raw_path: String,
     /// Resolved project-relative path of the imported module.
     pub resolved_path: String,
+    /// Individual names imported (e.g. `["Foo", "Bar"]`). Empty for `import *` or namespace imports.
+    pub names: Vec<String>,
     /// Source line number (1-based).
     pub line: usize,
 }

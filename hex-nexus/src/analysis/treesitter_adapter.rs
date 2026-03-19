@@ -93,33 +93,147 @@ fn extract_ts_imports(
     let mut cursor = root.walk();
 
     for child in root.children(&mut cursor) {
-        // import ... from '...'
-        if child.kind() == "import_statement" {
-            if let Some(src) = child.child_by_field_name("source") {
-                let raw_path = unquote(node_text(src, source));
-                imports.push(ImportStatement {
-                    from_file: from_file.to_string(),
-                    raw_path: raw_path.clone(),
-                    resolved_path: raw_path,
-                    line: child.start_position().row + 1,
-                });
+        match child.kind() {
+            // import { Foo, Bar } from './foo.js'
+            // import type { Baz } from '../bar.js'
+            // import * as ns from 'pkg'
+            "import_statement" => {
+                if let Some(src) = child.child_by_field_name("source") {
+                    let raw_path = unquote(node_text(src, source));
+                    let names = extract_ts_import_names(&child, source);
+                    imports.push(ImportStatement {
+                        from_file: from_file.to_string(),
+                        raw_path: raw_path.clone(),
+                        resolved_path: raw_path,
+                        names,
+                        line: child.start_position().row + 1,
+                    });
+                }
             }
-        }
-        // export { ... } from '...' (re-exports count as imports for graph building)
-        if child.kind() == "export_statement" {
-            if let Some(src) = child.child_by_field_name("source") {
-                let raw_path = unquote(node_text(src, source));
-                imports.push(ImportStatement {
-                    from_file: from_file.to_string(),
-                    raw_path: raw_path.clone(),
-                    resolved_path: raw_path,
-                    line: child.start_position().row + 1,
-                });
+            // export { Foo } from './foo.js' (re-exports count as imports for graph building)
+            "export_statement" => {
+                if let Some(src) = child.child_by_field_name("source") {
+                    let raw_path = unquote(node_text(src, source));
+                    let names = extract_ts_export_clause_names(&child, source);
+                    imports.push(ImportStatement {
+                        from_file: from_file.to_string(),
+                        raw_path: raw_path.clone(),
+                        resolved_path: raw_path,
+                        names,
+                        line: child.start_position().row + 1,
+                    });
+                }
             }
+            // Dynamic import: const { X } = await import('./foo.js')
+            // or: import('./foo.js').then(...)
+            "expression_statement" | "lexical_declaration" | "variable_declaration" => {
+                collect_dynamic_imports(&child, source, from_file, &mut imports);
+            }
+            _ => {}
         }
     }
 
     Ok(imports)
+}
+
+/// Extract imported names from an import statement clause.
+/// `import { Foo, Bar } from '...'` → ["Foo", "Bar"]
+/// `import * as ns from '...'` → ["*"]
+/// `import Foo from '...'` → ["default"]
+fn extract_ts_import_names(node: &tree_sitter::Node, source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "import_clause" => {
+                let mut ic = child.walk();
+                for part in child.children(&mut ic) {
+                    match part.kind() {
+                        "identifier" => {
+                            // default import: import Foo from '...'
+                            names.push("default".to_string());
+                        }
+                        "named_imports" => {
+                            let mut nc = part.walk();
+                            for spec in part.children(&mut nc) {
+                                if spec.kind() == "import_specifier" {
+                                    if let Some(name) = spec.child_by_field_name("name") {
+                                        names.push(node_text(name, source));
+                                    }
+                                }
+                            }
+                        }
+                        "namespace_import" => {
+                            names.push("*".to_string());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+/// Extract names from an export clause: `export { Foo, Bar } from '...'`
+fn extract_ts_export_clause_names(node: &tree_sitter::Node, source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "export_clause" {
+            let mut ec = child.walk();
+            for spec in child.children(&mut ec) {
+                if spec.kind() == "export_specifier" {
+                    if let Some(name) = spec.child_by_field_name("name") {
+                        names.push(node_text(name, source));
+                    }
+                }
+            }
+        }
+        // export * from '...'
+        if child.kind() == "*" {
+            names.push("*".to_string());
+        }
+    }
+    names
+}
+
+/// Recursively search for dynamic `import('...')` calls.
+fn collect_dynamic_imports(
+    node: &tree_sitter::Node,
+    source: &str,
+    from_file: &str,
+    imports: &mut Vec<ImportStatement>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "call_expression" {
+            // Check if this is import('...')
+            if let Some(func) = child.child_by_field_name("function") {
+                if func.kind() == "import" {
+                    // Get the argument
+                    if let Some(args) = child.child_by_field_name("arguments") {
+                        let mut ac = args.walk();
+                        for arg in args.children(&mut ac) {
+                            if arg.kind() == "string" || arg.kind() == "template_string" {
+                                let raw_path = unquote(node_text(arg, source));
+                                imports.push(ImportStatement {
+                                    from_file: from_file.to_string(),
+                                    raw_path: raw_path.clone(),
+                                    resolved_path: raw_path,
+                                    names: vec!["*".to_string()],
+                                    line: child.start_position().row + 1,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Recurse into child nodes
+        collect_dynamic_imports(&child, source, from_file, imports);
+    }
 }
 
 // ── Go Import Extraction ─────────────────────────────────
@@ -155,10 +269,12 @@ fn collect_go_import_specs(
             "import_spec" => {
                 if let Some(path_node) = child.child_by_field_name("path") {
                     let raw_path = unquote(node_text(path_node, source));
+                    // Go imports are whole-package; names are resolved at usage
                     imports.push(ImportStatement {
                         from_file: from_file.to_string(),
                         raw_path: raw_path.clone(),
                         resolved_path: raw_path,
+                        names: vec!["*".to_string()],
                         line: child.start_position().row + 1,
                     });
                 }
@@ -185,29 +301,47 @@ fn extract_rust_imports(
     for child in root.children(&mut cursor) {
         match child.kind() {
             "use_declaration" => {
-                // use crate::core::ports::IFoo;
-                // use std::collections::HashMap;
                 let text = node_text(child, source).trim().to_string();
-                // Strip "use " prefix and trailing ";"
                 let path = text
                     .strip_prefix("use ")
                     .unwrap_or(&text)
                     .trim_end_matches(';')
                     .trim();
-                // Handle grouped uses: use crate::{foo, bar};
-                // For now, take the base path before any {
-                let base = if let Some(brace_idx) = path.find('{') {
-                    path[..brace_idx].trim_end_matches("::").trim()
+
+                if let Some(brace_idx) = path.find('{') {
+                    // Grouped use: `use crate::core::{ports, domain};`
+                    // Expand into one import per item in the group
+                    let base = path[..brace_idx].trim_end_matches("::").trim();
+                    let group = path[brace_idx + 1..]
+                        .trim_end_matches('}')
+                        .trim();
+                    for item in group.split(',') {
+                        let item = item.trim();
+                        if item.is_empty() {
+                            continue;
+                        }
+                        // Each item might be `Name` or `submod::Name`
+                        let full_path = format!("{}::{}", base, item);
+                        let name = item.rsplit("::").next().unwrap_or(item).to_string();
+                        imports.push(ImportStatement {
+                            from_file: from_file.to_string(),
+                            raw_path: full_path.clone(),
+                            resolved_path: full_path,
+                            names: vec![name],
+                            line: child.start_position().row + 1,
+                        });
+                    }
                 } else {
-                    // Strip the final item segment for simple paths
-                    path
-                };
-                imports.push(ImportStatement {
-                    from_file: from_file.to_string(),
-                    raw_path: base.to_string(),
-                    resolved_path: base.to_string(),
-                    line: child.start_position().row + 1,
-                });
+                    // Simple use: `use crate::core::ports::IStatePort;`
+                    let name = path.rsplit("::").next().unwrap_or(path).to_string();
+                    imports.push(ImportStatement {
+                        from_file: from_file.to_string(),
+                        raw_path: path.to_string(),
+                        resolved_path: path.to_string(),
+                        names: vec![name],
+                        line: child.start_position().row + 1,
+                    });
+                }
             }
             "mod_item" if !has_body(&child) => {
                 // mod foo; (external module declaration, not inline mod foo { ... })
@@ -217,6 +351,7 @@ fn extract_rust_imports(
                         from_file: from_file.to_string(),
                         raw_path: format!("self::{}", mod_name),
                         resolved_path: format!("self::{}", mod_name),
+                        names: vec![mod_name.clone()],
                         line: child.start_position().row + 1,
                     });
                 }
@@ -258,38 +393,54 @@ fn extract_ts_exports(
         let hex_public = has_hex_public_annotation(&child, source);
         let line = child.start_position().row + 1;
 
+        // Check for `export default`
+        let text = node_text(child, source);
+        if text.starts_with("export default") {
+            exports.push(ExportDeclaration {
+                file: file.to_string(),
+                name: "default".to_string(),
+                line,
+                hex_public,
+            });
+            continue;
+        }
+
         // Find the declaration inside the export
         let mut inner_cursor = child.walk();
         for inner in child.children(&mut inner_cursor) {
-            let name = match inner.kind() {
+            match inner.kind() {
                 "function_declaration" | "function_signature" => {
-                    inner.child_by_field_name("name").map(|n| node_text(n, source))
+                    if let Some(n) = inner.child_by_field_name("name").map(|n| node_text(n, source)) {
+                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public });
+                    }
                 }
                 "class_declaration" | "abstract_class_declaration" => {
-                    inner.child_by_field_name("name").map(|n| node_text(n, source))
+                    if let Some(n) = inner.child_by_field_name("name").map(|n| node_text(n, source)) {
+                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public });
+                    }
                 }
                 "interface_declaration" => {
-                    inner.child_by_field_name("name").map(|n| node_text(n, source))
+                    if let Some(n) = inner.child_by_field_name("name").map(|n| node_text(n, source)) {
+                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public });
+                    }
                 }
                 "type_alias_declaration" => {
-                    inner.child_by_field_name("name").map(|n| node_text(n, source))
+                    if let Some(n) = inner.child_by_field_name("name").map(|n| node_text(n, source)) {
+                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public });
+                    }
                 }
                 "enum_declaration" => {
-                    inner.child_by_field_name("name").map(|n| node_text(n, source))
+                    if let Some(n) = inner.child_by_field_name("name").map(|n| node_text(n, source)) {
+                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public });
+                    }
                 }
                 "lexical_declaration" => {
-                    // export const foo = ...
-                    extract_lexical_names(&inner, source).first().cloned()
+                    // export const foo = ..., bar = ... → ALL names
+                    for n in extract_lexical_names(&inner, source) {
+                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public });
+                    }
                 }
-                _ => None,
-            };
-            if let Some(n) = name {
-                exports.push(ExportDeclaration {
-                    file: file.to_string(),
-                    name: n,
-                    line,
-                    hex_public,
-                });
+                _ => {}
             }
         }
     }
@@ -650,5 +801,116 @@ export const NORMAL = false;
         let normal = exports.iter().find(|e| e.name == "NORMAL");
         assert!(normal.is_some());
         assert!(!normal.unwrap().hex_public);
+    }
+
+    // ── Parity tests (gap-closing) ───────────────────
+
+    #[test]
+    fn ts_import_names_extracted() {
+        let source = r#"
+import { Foo, Bar } from './types.js';
+import * as ns from './utils.js';
+import Default from './default.js';
+"#;
+        let imports = adapter()
+            .extract_imports(Path::new("src/main.ts"), source, Language::TypeScript)
+            .unwrap();
+        assert_eq!(imports.len(), 3);
+        // Named imports
+        assert!(imports[0].names.contains(&"Foo".to_string()));
+        assert!(imports[0].names.contains(&"Bar".to_string()));
+        // Namespace import
+        assert_eq!(imports[1].names, vec!["*"]);
+        // Default import
+        assert_eq!(imports[2].names, vec!["default"]);
+    }
+
+    #[test]
+    fn ts_reexport_names_extracted() {
+        let source = r#"export { Foo, Bar } from './types.js';"#;
+        let imports = adapter()
+            .extract_imports(Path::new("src/index.ts"), source, Language::TypeScript)
+            .unwrap();
+        assert_eq!(imports.len(), 1);
+        assert!(imports[0].names.contains(&"Foo".to_string()));
+        assert!(imports[0].names.contains(&"Bar".to_string()));
+    }
+
+    #[test]
+    fn ts_export_default() {
+        let source = r#"
+export default class MyApp {}
+"#;
+        let exports = adapter()
+            .extract_exports(Path::new("src/app.ts"), source, Language::TypeScript)
+            .unwrap();
+        assert!(exports.iter().any(|e| e.name == "default"));
+    }
+
+    #[test]
+    fn ts_export_multiple_const() {
+        let source = r#"export const FOO = 1, BAR = 2, BAZ = 3;"#;
+        let exports = adapter()
+            .extract_exports(Path::new("src/config.ts"), source, Language::TypeScript)
+            .unwrap();
+        let names: Vec<&str> = exports.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"FOO"));
+        assert!(names.contains(&"BAR"));
+        assert!(names.contains(&"BAZ"));
+    }
+
+    #[test]
+    fn ts_dynamic_import() {
+        let source = r#"
+const mod = await import('./dynamic.js');
+"#;
+        let imports = adapter()
+            .extract_imports(Path::new("src/loader.ts"), source, Language::TypeScript)
+            .unwrap();
+        assert!(imports.iter().any(|i| i.raw_path == "./dynamic.js"));
+        // Dynamic imports are namespace-like
+        let dynamic = imports.iter().find(|i| i.raw_path == "./dynamic.js").unwrap();
+        assert!(dynamic.names.contains(&"*".to_string()));
+    }
+
+    #[test]
+    fn rust_grouped_use_expanded() {
+        let source = r#"
+use crate::core::{ports, domain};
+use std::collections::{HashMap, HashSet};
+"#;
+        let imports = adapter()
+            .extract_imports(Path::new("src/lib.rs"), source, Language::Rust)
+            .unwrap();
+        // Should expand into individual imports
+        assert!(imports.iter().any(|i| i.names.contains(&"ports".to_string())));
+        assert!(imports.iter().any(|i| i.names.contains(&"domain".to_string())));
+        assert!(imports.iter().any(|i| i.names.contains(&"HashMap".to_string())));
+        assert!(imports.iter().any(|i| i.names.contains(&"HashSet".to_string())));
+        assert!(imports.len() >= 4);
+    }
+
+    #[test]
+    fn rust_simple_use_names() {
+        let source = r#"use crate::core::ports::IStatePort;"#;
+        let imports = adapter()
+            .extract_imports(Path::new("src/adapters/cli.rs"), source, Language::Rust)
+            .unwrap();
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].names, vec!["IStatePort"]);
+    }
+
+    #[test]
+    fn go_import_names_are_wildcard() {
+        let source = r#"
+package main
+import "fmt"
+"#;
+        let imports = adapter()
+            .extract_imports(Path::new("main.go"), source, Language::Go)
+            .unwrap();
+        assert_eq!(imports.len(), 1);
+        // Go imports are whole-package, so names are wildcard
+        assert_eq!(imports[0].names, vec!["*"]);
     }
 }
