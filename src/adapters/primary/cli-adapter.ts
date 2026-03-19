@@ -346,6 +346,26 @@ export class CLIAdapter {
     }
 
     try {
+      // ── Phase 1 deprecation: commands now in hex-cli (Rust) ──
+      const rustDeprecated: Record<string, string> = {
+        'adr':       'hex adr',
+        'swarm':     'hex swarm',
+        'task':      'hex task',
+        'memory':    'hex memory',
+        'secrets':   'hex secrets',
+        'inference': 'hex inference',
+        'daemon':    'hex nexus',
+      };
+      if (args.command && args.command in rustDeprecated && !args.flags.has('json')) {
+        const replacement = rustDeprecated[args.command];
+        this.writeLn(`\x1b[33m⚠ DEPRECATED:\x1b[0m "hex ${args.command}" has moved to hex-cli (Rust).`);
+        this.writeLn(`  Use: \x1b[1m${replacement} ${args.positional.join(' ')}\x1b[0m`);
+        this.writeLn(`  Install: cargo install --path hex-cli`);
+        this.writeLn('');
+        this.writeLn('  Falling back to TypeScript implementation...');
+        this.writeLn('');
+      }
+
       switch (args.command) {
         case 'analyze':
           return await this.analyze(args);
@@ -2795,16 +2815,20 @@ export class CLIAdapter {
     this.writeLn(`  ${bold('projects')}                              List registered projects`);
 
     this.writeLn(section('Architecture Decisions'));
-    this.writeLn(`  ${bold('adr')} ${muted('list [--status S]')}                 List ADRs with optional filter`);
+    this.writeLn(`  ${bold('adr')} ${muted('list [--status S]')}                 List ADRs ${dim('→ hex adr (Rust)')}`);
     this.writeLn(`  ${bold('adr')} ${muted('status <id>')}                      Show ADR detail`);
-    this.writeLn(`  ${bold('adr')} ${muted('search <query>')}                   Search ADRs via AgentDB`);
+    this.writeLn(`  ${bold('adr')} ${muted('search <query>')}                   Search ADRs`);
     this.writeLn(`  ${bold('adr')} ${muted('abandoned [--days N]')}             Find stale proposed ADRs`);
-    this.writeLn(`  ${bold('adr')} ${muted('reindex')}                          Re-index ADRs into AgentDB`);
 
     this.writeLn(section('Configuration'));
     this.writeLn(`  ${bold('setup')}                                 Install grammars + skills + agents`);
-    this.writeLn(`  ${bold('secrets')} ${muted('<cmd> [args]')}                 Local vault management`);
+    this.writeLn(`  ${bold('secrets')} ${muted('<cmd> [args]')}                 Local vault ${dim('→ hex secrets (Rust)')}`);
     this.writeLn(`  ${bold('mcp')}                                   Start as MCP server (stdio)`);
+
+    this.writeLn(section('Deprecated (use hex-cli)'));
+    this.writeLn(`  ${dim('adr, swarm, task, memory, secrets, inference, daemon')}`);
+    this.writeLn(`  ${muted('These commands have moved to hex-cli (Rust). Install:')}`);
+    this.writeLn(`  ${dim('$')} cargo install --path hex-cli`);
 
     this.writeLn('');
     this.writeLn(`${muted('MCP integration (add to any project):')}`);

@@ -23,12 +23,18 @@ pub struct SecretGrant {
     pub secret_key: String,
     /// Purpose tag: "llm", "webhook", "auth", etc.
     pub purpose: String,
+    /// Hub instance that created this grant
+    pub hub_id: String,
     /// ISO 8601 timestamp when the grant was created
     pub granted_at: String,
     /// ISO 8601 timestamp when the grant expires
     pub expires_at: String,
     /// Whether the agent has claimed (consumed) this grant
     pub claimed: bool,
+    /// ISO 8601 timestamp when the grant was claimed
+    pub claimed_at: String,
+    /// Hub instance that served the claim
+    pub claim_hub_id: String,
 }
 
 /// Create a secret grant for an agent. Called by hex-hub before spawning.
@@ -38,6 +44,7 @@ pub fn grant_secret(
     agent_id: String,
     secret_key: String,
     purpose: String,
+    hub_id: String,
     granted_at: String,
     expires_at: String,
 ) -> Result<(), String> {
@@ -49,7 +56,10 @@ pub fn grant_secret(
             granted_at: granted_at.clone(),
             expires_at,
             claimed: false,
+            claimed_at: String::new(),
+            claim_hub_id: String::new(),
             purpose,
+            hub_id,
             ..existing
         });
     } else {
@@ -58,9 +68,12 @@ pub fn grant_secret(
             agent_id,
             secret_key,
             purpose,
+            hub_id,
             granted_at,
             expires_at,
             claimed: false,
+            claimed_at: String::new(),
+            claim_hub_id: String::new(),
         });
     }
 
@@ -74,6 +87,8 @@ pub fn claim_grant(
     ctx: &ReducerContext,
     agent_id: String,
     secret_key: String,
+    claim_hub_id: String,
+    claimed_at: String,
 ) -> Result<(), String> {
     let id = format!("{}:{}", agent_id, secret_key);
 
@@ -87,6 +102,8 @@ pub fn claim_grant(
             }
             ctx.db.secret_grant().id().update(SecretGrant {
                 claimed: true,
+                claimed_at,
+                claim_hub_id,
                 ..existing
             });
             Ok(())
@@ -282,6 +299,113 @@ pub fn remove_endpoint(
     Ok(())
 }
 
+// ─── Secret Vault (PRIVATE — stores actual secret values) ────────────────────
+//
+// WARNING: This breaks ADR-026's threat model. Secret values are stored in
+// SpacetimeDB. If the database is compromised, all secrets are exposed.
+// Acceptable for development; production should use a proper vault backend.
+
+#[table(name = secret_vault, public)]
+#[derive(Clone, Debug)]
+pub struct SecretVault {
+    /// Secret key name (e.g. "MINIMAX_API_KEY")
+    #[unique]
+    pub key: String,
+    /// AES-256-GCM encrypted value (base64-encoded ciphertext)
+    /// Safe to expose — only hubs with HEX_VAULT_KEY can decrypt.
+    pub encrypted_value: String,
+    /// Encryption key version for rotation support
+    pub key_version: u32,
+    /// ISO 8601 timestamp when stored
+    pub stored_at: String,
+    /// Hub instance that stored this secret
+    pub stored_by_hub: String,
+}
+
+/// Store an encrypted secret value. Upserts — overwrites if key already exists.
+#[reducer]
+pub fn store_secret(
+    ctx: &ReducerContext,
+    key: String,
+    encrypted_value: String,
+    key_version: u32,
+    stored_at: String,
+    stored_by_hub: String,
+) -> Result<(), String> {
+    if key.is_empty() {
+        return Err("Secret key cannot be empty".to_string());
+    }
+
+    if let Some(existing) = ctx.db.secret_vault().key().find(&key) {
+        ctx.db.secret_vault().key().update(SecretVault {
+            encrypted_value,
+            key_version,
+            stored_at,
+            stored_by_hub,
+            ..existing
+        });
+    } else {
+        ctx.db.secret_vault().insert(SecretVault {
+            key,
+            encrypted_value,
+            key_version,
+            stored_at,
+            stored_by_hub,
+        });
+    }
+
+    Ok(())
+}
+
+/// Delete a secret from the vault.
+#[reducer]
+pub fn delete_secret(
+    ctx: &ReducerContext,
+    key: String,
+) -> Result<(), String> {
+    let deleted = ctx.db.secret_vault().key().delete(&key);
+    if !deleted {
+        return Err(format!("Secret '{}' not found", key));
+    }
+    Ok(())
+}
+
+// ─── Audit Log (PRIVATE) ─────────────────────────────────────────────────────
+
+#[table(name = secret_audit_log, private)]
+#[derive(Clone, Debug)]
+pub struct SecretAuditLog {
+    #[unique]
+    pub id: String,
+    pub action: String,
+    pub agent_id: String,
+    pub secret_key: String,
+    pub hub_id: String,
+    pub timestamp: String,
+}
+
+/// Record an audit log entry for secret operations.
+#[reducer]
+pub fn audit_log(
+    ctx: &ReducerContext,
+    id: String,
+    action: String,
+    agent_id: String,
+    secret_key: String,
+    hub_id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    ctx.db.secret_audit_log().insert(SecretAuditLog {
+        id,
+        action,
+        agent_id,
+        secret_key,
+        hub_id,
+        timestamp,
+    });
+    Ok(())
+}
+
 // ─── Pure logic helpers (testable without SpacetimeDB runtime) ───────────────
 
 /// Build the composite grant ID from agent_id and secret_key.
@@ -430,9 +554,12 @@ mod tests {
             agent_id: "agent-1".to_string(),
             secret_key: "KEY".to_string(),
             purpose: "llm".to_string(),
+            hub_id: "hub-1".to_string(),
             granted_at: "2025-01-01T00:00:00Z".to_string(),
             expires_at: "2025-01-02T00:00:00Z".to_string(),
             claimed: false,
+            claimed_at: String::new(),
+            claim_hub_id: String::new(),
         };
         assert!(!grant.claimed);
     }
@@ -445,9 +572,12 @@ mod tests {
             agent_id: "agent-1".to_string(),
             secret_key: "KEY".to_string(),
             purpose: "llm".to_string(),
+            hub_id: "hub-1".to_string(),
             granted_at: "2025-01-01T00:00:00Z".to_string(),
             expires_at: "2025-01-02T00:00:00Z".to_string(),
             claimed: true,
+            claimed_at: String::new(),
+            claim_hub_id: String::new(),
         };
         // The reducer checks this condition and returns Err
         assert!(grant.claimed, "Already-claimed grant should be rejected");
@@ -463,27 +593,36 @@ mod tests {
                 agent_id: "agent-1".to_string(),
                 secret_key: "K1".to_string(),
                 purpose: "llm".to_string(),
+                hub_id: "hub-1".to_string(),
                 granted_at: "2025-01-01T00:00:00Z".to_string(),
                 expires_at: "2025-01-02T00:00:00Z".to_string(),
                 claimed: false,
+                claimed_at: String::new(),
+                claim_hub_id: String::new(),
             },
             SecretGrant {
                 id: make_grant_id("agent-2", "K2"),
                 agent_id: "agent-2".to_string(),
                 secret_key: "K2".to_string(),
                 purpose: "auth".to_string(),
+                hub_id: "hub-1".to_string(),
                 granted_at: "2025-01-01T00:00:00Z".to_string(),
                 expires_at: "2025-01-02T00:00:00Z".to_string(),
                 claimed: false,
+                claimed_at: String::new(),
+                claim_hub_id: String::new(),
             },
             SecretGrant {
                 id: make_grant_id("agent-1", "K3"),
                 agent_id: "agent-1".to_string(),
                 secret_key: "K3".to_string(),
                 purpose: "webhook".to_string(),
+                hub_id: "hub-1".to_string(),
                 granted_at: "2025-01-01T00:00:00Z".to_string(),
                 expires_at: "2025-01-02T00:00:00Z".to_string(),
                 claimed: false,
+                claimed_at: String::new(),
+                claim_hub_id: String::new(),
             },
         ];
 
@@ -499,9 +638,12 @@ mod tests {
             agent_id: "agent-1".to_string(),
             secret_key: "K1".to_string(),
             purpose: "llm".to_string(),
+            hub_id: "hub-1".to_string(),
             granted_at: "2025-01-01T00:00:00Z".to_string(),
             expires_at: "2025-01-02T00:00:00Z".to_string(),
             claimed: false,
+            claimed_at: String::new(),
+            claim_hub_id: String::new(),
         }];
 
         let filtered = filter_grants_for_agent(grants.iter(), "unknown-agent");
@@ -519,27 +661,36 @@ mod tests {
                 agent_id: "a1".to_string(),
                 secret_key: "K1".to_string(),
                 purpose: "llm".to_string(),
+                hub_id: "hub-1".to_string(),
                 granted_at: "2025-01-01T00:00:00Z".to_string(),
                 expires_at: "2025-06-15T11:00:00Z".to_string(), // expired
                 claimed: false,
+                claimed_at: String::new(),
+                claim_hub_id: String::new(),
             },
             SecretGrant {
                 id: make_grant_id("a2", "K2"),
                 agent_id: "a2".to_string(),
                 secret_key: "K2".to_string(),
                 purpose: "auth".to_string(),
+                hub_id: "hub-1".to_string(),
                 granted_at: "2025-01-01T00:00:00Z".to_string(),
                 expires_at: "2025-06-15T13:00:00Z".to_string(), // still active
                 claimed: false,
+                claimed_at: String::new(),
+                claim_hub_id: String::new(),
             },
             SecretGrant {
                 id: make_grant_id("a3", "K3"),
                 agent_id: "a3".to_string(),
                 secret_key: "K3".to_string(),
                 purpose: "webhook".to_string(),
+                hub_id: "hub-1".to_string(),
                 granted_at: "2025-01-01T00:00:00Z".to_string(),
                 expires_at: "2025-06-15T10:00:00Z".to_string(), // expired
                 claimed: true,
+                claimed_at: String::new(),
+                claim_hub_id: String::new(),
             },
         ];
 
@@ -557,9 +708,12 @@ mod tests {
             agent_id: "a1".to_string(),
             secret_key: "K1".to_string(),
             purpose: "llm".to_string(),
+            hub_id: "hub-1".to_string(),
             granted_at: "2025-01-01T00:00:00Z".to_string(),
             expires_at: "2099-12-31T23:59:59Z".to_string(),
             claimed: false,
+            claimed_at: String::new(),
+            claim_hub_id: String::new(),
         }];
 
         let expired = filter_expired_grants(grants.iter(), now);
@@ -575,18 +729,24 @@ mod tests {
                 agent_id: "a1".to_string(),
                 secret_key: "K1".to_string(),
                 purpose: "llm".to_string(),
+                hub_id: "hub-1".to_string(),
                 granted_at: "2025-01-01T00:00:00Z".to_string(),
                 expires_at: "2025-06-01T00:00:00Z".to_string(),
                 claimed: true, // claimed but expired
+                claimed_at: String::new(),
+                claim_hub_id: String::new(),
             },
             SecretGrant {
                 id: make_grant_id("a1", "K2"),
                 agent_id: "a1".to_string(),
                 secret_key: "K2".to_string(),
                 purpose: "llm".to_string(),
+                hub_id: "hub-1".to_string(),
                 granted_at: "2025-01-01T00:00:00Z".to_string(),
                 expires_at: "2025-06-01T00:00:00Z".to_string(),
                 claimed: false, // unclaimed but expired
+                claimed_at: String::new(),
+                claim_hub_id: String::new(),
             },
         ];
 
@@ -678,9 +838,12 @@ mod tests {
             agent_id: "agent-1".to_string(),
             secret_key: "KEY".to_string(),
             purpose: "llm".to_string(),
+            hub_id: "hub-1".to_string(),
             granted_at: "2025-01-01T00:00:00Z".to_string(),
             expires_at: "2025-01-02T00:00:00Z".to_string(),
             claimed: true,
+            claimed_at: String::new(),
+            claim_hub_id: String::new(),
         };
         let grants = vec![grant.clone()];
         let filtered = filter_grants_for_agent(grants.iter(), "agent-1");

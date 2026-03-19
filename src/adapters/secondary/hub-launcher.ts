@@ -1,8 +1,7 @@
 /**
- * Hub Launcher — Secondary adapter for managing the hex-hub Rust binary lifecycle
+ * Hub Launcher — Secondary adapter for managing the hex-nexus Rust binary lifecycle
  *
- * Finds, starts, stops, and checks the status of the hex-hub daemon process.
- * This replaces the Node.js DashboardHub with the Rust hex-hub binary.
+ * Finds, starts, stops, and checks the status of the hex-nexus daemon process.
  */
 
 import { execFileSync, spawn } from 'node:child_process';
@@ -44,14 +43,14 @@ export class HubLauncher {
   constructor(deps?: HubLauncherDeps) {
     this.deps = deps ?? defaultDeps;
   }
-  /** Find the hex-hub binary on disk */
+  /** Find the hex-nexus binary on disk */
   findBinary(): string | null {
     const binaryPaths = [
       this.deps.join(this.deps.homedir(), '.hex', 'bin', 'hex-nexus'),
       this.deps.join(process.cwd(), 'target', 'release', 'hex-nexus'),       // workspace root target
-      this.deps.join(process.cwd(), 'hex-hub', 'target', 'release', 'hex-nexus'),
+      this.deps.join(process.cwd(), 'hex-nexus', 'target', 'release', 'hex-nexus'),
       this.deps.join(process.cwd(), 'target', 'debug', 'hex-nexus'),
-      this.deps.join(process.cwd(), 'hex-hub', 'target', 'debug', 'hex-nexus'),
+      this.deps.join(process.cwd(), 'hex-nexus', 'target', 'debug', 'hex-nexus'),
     ];
     for (const p of binaryPaths) {
       if (this.deps.existsSync(p)) return p;
@@ -125,7 +124,7 @@ export class HubLauncher {
     const binary = this.findBinary();
     if (!binary) {
       throw new Error(
-        'hex-nexus binary not found. Run "hex setup" to install it, or build from hex-hub/ with "cargo build --release".',
+        'hex-nexus binary not found. Run "hex setup" to install it, or build from hex-nexus/ with "cargo build --release".',
       );
     }
 

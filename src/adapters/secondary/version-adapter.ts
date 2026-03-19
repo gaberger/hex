@@ -1,7 +1,7 @@
 /**
  * Version Adapter — Secondary adapter implementing IVersionPort
  *
- * Resolves CLI version from package.json and hub version from the hex-hub binary.
+ * Resolves CLI version from package.json and hub version from the hex-nexus binary.
  */
 
 import { createRequire } from 'node:module';
@@ -20,9 +20,9 @@ const execFileAsync = promisify(execFile);
 const HUB_BINARY_PATHS = [
   join(homedir(), '.hex', 'bin', 'hex-nexus'),
   join(process.cwd(), 'target', 'release', 'hex-nexus'),       // workspace target
-  join(process.cwd(), 'hex-hub', 'target', 'release', 'hex-nexus'),
+  join(process.cwd(), 'hex-nexus', 'target', 'release', 'hex-nexus'),
   join(process.cwd(), 'target', 'debug', 'hex-nexus'),
-  join(process.cwd(), 'hex-hub', 'target', 'debug', 'hex-nexus'),
+  join(process.cwd(), 'hex-nexus', 'target', 'debug', 'hex-nexus'),
 ];
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -84,7 +84,7 @@ export class VersionAdapter implements IVersionPort {
 
     // Fall back to reading Cargo.toml next to the binary's source
     try {
-      const cargoPath = join(process.cwd(), 'hex-hub', 'Cargo.toml');
+      const cargoPath = join(process.cwd(), 'hex-nexus', 'Cargo.toml');
       const cargo = readFileSync(cargoPath, 'utf-8');
       const vMatch = cargo.match(/^version\s*=\s*"([^"]+)"/m);
       if (vMatch) return Version.parse(vMatch[1]);

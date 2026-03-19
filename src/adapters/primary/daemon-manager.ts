@@ -13,6 +13,7 @@ import {
   mkdirSync,
   renameSync,
   openSync,
+  existsSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -169,16 +170,39 @@ export class DaemonManager {
     return true;
   }
 
+  // ─── Binary Resolution ────────────────────────────────
+
+  /** Find the Rust hex-nexus binary. Checks known locations — no shell calls. */
+  private findNexusBinary(): string {
+    const candidates = [
+      '/usr/local/bin/hex-nexus',
+      join(homedir(), '.hex', 'bin', 'hex-nexus'),
+      join(process.cwd(), 'target', 'release', 'hex-nexus'),
+      join(process.cwd(), 'bin', 'hex-nexus'),
+    ];
+    for (const c of candidates) {
+      if (existsSync(c)) return c;
+    }
+
+    throw new Error(
+      'hex-nexus binary not found. Build with: cargo build --release\n' +
+      'Searched: ' + candidates.join(', ')
+    );
+  }
+
   // ─── Spawn ────────────────────────────────────────────
 
-  private async spawnDaemon(entryPath: string): Promise<{ port: number; token: string }> {
+  private async spawnDaemon(_entryPath: string): Promise<{ port: number; token: string }> {
     this.ensureDir();
     const logFd = openSync(LOG_PATH, 'a');
     const token = randomBytes(16).toString('hex');
 
+    // Use the Rust hex-nexus binary — resolve from PATH or known locations
+    const nexusBin = this.findNexusBinary();
+
     let child: ChildProcess;
     try {
-      child = spawn(runtimeExecPath(), [entryPath, 'hub', '--daemon'], {
+      child = spawn(nexusBin, ['--daemon', '--token', token], {
         detached: true,
         stdio: ['ignore', logFd, logFd],
         env: { ...process.env, HEX_DAEMON: '1', HEX_DAEMON_TOKEN: token },

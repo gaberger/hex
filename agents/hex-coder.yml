@@ -65,7 +65,12 @@ tools:
     - Bash
     - Glob
     - Grep
+    - hex_analyze
+    - hex_summarize
   optional:
+    - hex_plan
+    - hex_adr_list
+    - hex_adr_search
     - mcp__hex__hex_hexflo_task_create
     - mcp__hex__hex_hexflo_task_complete
     - mcp__hex__hex_hexflo_memory_store

@@ -79,20 +79,18 @@ hex adr search <q>   # Search ADRs by keyword
 hex adr abandoned    # Detect stale/abandoned ADRs
 ```
 
-### hex-nexus (Orchestration Nexus) + hex-hub (Dashboard Binary)
+### hex-nexus (Orchestration Nexus — Library + Binary)
 
-**hex-nexus** (`hex-nexus/`) is the core Rust library — the nexus of control for all hex operations: agent management, chat relay, RL engine, workplan orchestration, HexFlo coordination, and fleet management.
-
-**hex-hub** (`hex-hub/`) is a thin Rust binary that wraps hex-nexus and uses `rust-embed` to bake `hex-nexus/assets/*` (HTML, CSS, JS) into the binary at compile time. This means:
+**hex-nexus** (`hex-nexus/`) is both the core Rust library AND the binary for all hex operations: agent management, chat relay, RL engine, workplan orchestration, HexFlo coordination, and fleet management. It uses `rust-embed` to bake `hex-nexus/assets/*` (HTML, CSS, JS) into the binary at compile time.
 
 - **Editing `hex-nexus/assets/index.html`** (or any asset) requires rebuilding the Rust binary:
   ```bash
-  cd hex-hub && cargo build --release
+  cd hex-nexus && cargo build --release
   ```
-- Then restart the hub daemon and hard-refresh the browser (Cmd+Shift+R)
-- `bun run build` does NOT update the hub — it only bundles the TypeScript CLI/library
-- Hub state (swarms, agents, tasks) is persisted in **SQLite** (`~/.hex/hub.db`) or **SpacetimeDB** (ADR-025)
-- The hub binary embeds a **compile-time build hash** for version verification against the TypeScript CLI (ADR-016)
+- Then restart the nexus daemon and hard-refresh the browser (Cmd+Shift+R)
+- `bun run build` does NOT update the nexus — it only bundles the TypeScript CLI/library
+- State (swarms, agents, tasks) is persisted in **SQLite** (`~/.hex/hub.db`) or **SpacetimeDB** (ADR-025)
+- The binary embeds a **compile-time build hash** for version verification against the TypeScript CLI (ADR-016, ADR-032)
 - Multi-instance coordination uses `ICoordinationPort` with filesystem-based locking and heartbeats (ADR-011)
 - HexFlo coordination module provides native swarm orchestration (ADR-027), replacing ruflo
 

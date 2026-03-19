@@ -34,6 +34,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "architecture-enforcer"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "spacetimedb",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -123,6 +131,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "conflict-resolver"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "spacetimedb",
 ]
 
 [[package]]
@@ -220,6 +236,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca81e6b4777c89fd810c25a4be2b1bd93ea034fbe58e6a75216a34c6b82c539b"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "file-lock-manager"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "spacetimedb",
 ]
 
 [[package]]
@@ -321,6 +345,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hexflo-coordination"
+version = "0.1.0"
+dependencies = [
+ "spacetimedb",
+]
+
+[[package]]
 name = "hook-registry"
 version = "0.1.0"
 dependencies = [
@@ -359,6 +390,14 @@ dependencies = [
  "hashbrown 0.16.1",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "inference-gateway"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "spacetimedb",
 ]
 
 [[package]]

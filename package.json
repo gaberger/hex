@@ -70,8 +70,10 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@claude-flow/cli": "3.5.36",
+    "agentdb": "^3.0.0-alpha.10",
     "tree-sitter-wasms": "^0.1.13",
-    "web-tree-sitter": "0.25.10",
+    "web-tree-sitter": "^0.26.7",
     "ws": "^8.19.0"
   }
 }
