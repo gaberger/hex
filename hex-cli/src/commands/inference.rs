@@ -236,6 +236,7 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
     match http.get(&ollama_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             println!("  {} Ollama responding at {}", "✓".green(), url);
+            let mut first_local_model: Option<String> = None;
             if let Ok(body) = resp.json::<serde_json::Value>().await {
                 if let Some(models) = body.get("models").and_then(|m| m.as_array()) {
                     println!("  {} {} model(s) available:", "ℹ".cyan(), models.len());
@@ -243,34 +244,49 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
                         let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("?");
                         let size = m.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
                         let gb = size as f64 / 1_073_741_824.0;
-                        println!("    - {} ({:.1}GB)", name, gb);
+                        // Skip cloud/remote models for inference test
+                        let is_local = m.get("remote_model").is_none() && size > 0;
+                        if is_local && first_local_model.is_none() {
+                            first_local_model = Some(name.to_string());
+                        }
+                        println!("    - {} ({:.1}GB){}", name, gb,
+                            if !is_local { " [cloud]" } else { "" });
                     }
                 }
             }
 
-            // Quick inference test
-            println!();
-            println!("  {} Running inference test...", "→".cyan());
-            let chat_url = format!("{}/v1/chat/completions", url.trim_end_matches('/'));
-            let test_body = serde_json::json!({
-                "model": "qwen3:32b",
-                "messages": [{"role": "user", "content": "Reply with just 'ok'"}],
-                "max_tokens": 10,
-            });
+            // Quick inference test using first available local model
+            if let Some(ref test_model) = first_local_model {
+                println!();
+                println!("  {} Running inference test with {}...", "→".cyan(), test_model);
+                let chat_url = format!("{}/v1/chat/completions", url.trim_end_matches('/'));
+                let test_body = serde_json::json!({
+                    "model": test_model,
+                    "messages": [{"role": "user", "content": "Reply with just the word 'ok'"}],
+                    "max_tokens": 10,
+                });
 
-            let start = std::time::Instant::now();
-            match http.post(&chat_url).json(&test_body).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    let latency = start.elapsed().as_millis();
-                    println!("  {} Inference OK ({}ms)", "✓".green(), latency);
+                let start = std::time::Instant::now();
+                match http.post(&chat_url).json(&test_body).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        let latency = start.elapsed().as_millis();
+                        println!("  {} Inference OK — {} responded in {}ms", "✓".green(), test_model, latency);
+                        println!();
+                        println!("  Use with hex-agent:");
+                        println!("    HEX_OLLAMA_HOST={} HEX_OLLAMA_MODEL={} hex-agent --project-dir .", url, test_model);
+                    }
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let body = resp.text().await.unwrap_or_default();
+                        println!("  {} Inference returned {} — {}", "!".yellow(), status, body.chars().take(200).collect::<String>());
+                    }
+                    Err(e) => {
+                        println!("  {} Inference failed: {}", "✗".red(), e);
+                    }
                 }
-                Ok(resp) => {
-                    println!("  {} Inference returned {}", "!".yellow(), resp.status());
-                    println!("  Try a different model with --model");
-                }
-                Err(e) => {
-                    println!("  {} Inference failed: {}", "✗".red(), e);
-                }
+            } else {
+                println!();
+                println!("  {} No local models found — pull one with: ollama pull qwen3.5:27b", "!".yellow());
             }
         }
         Ok(resp) => {
