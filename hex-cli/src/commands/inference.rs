@@ -118,19 +118,15 @@ async fn add_provider(
     let client = NexusClient::from_env();
     if client.ensure_running().await.is_ok() {
         let body = serde_json::json!({
-            "provider_id": provider_id,
-            "provider_type": provider_type,
-            "base_url": url,
-            "api_key_ref": key.unwrap_or(""),
-            "models_json": serde_json::json!([{
-                "id": model_name,
-                "provider": provider_type,
-            }]).to_string(),
-            "rate_limit_rpm": 1000,
-            "rate_limit_tpm": 1_000_000,
+            "id": provider_id,
+            "provider": provider_type,
+            "url": url.trim_end_matches('/'),
+            "model": model_name,
+            "requires_auth": key.is_some(),
+            "secret_key": key.unwrap_or(""),
         });
 
-        match client.post("/api/inference/providers", &body).await {
+        match client.post("/api/inference/register", &body).await {
             Ok(_) => println!("  {} Registered with hex-nexus", "✓".green()),
             Err(e) => println!("  {} Nexus registration failed: {}", "!".yellow(), e),
         }
@@ -190,20 +186,24 @@ async fn list_providers() -> anyhow::Result<()> {
     if client.ensure_running().await.is_ok() {
         println!();
         println!("{}", "── Nexus-Registered Providers ──".cyan());
-        match client.get("/api/inference/providers").await {
-            Ok(providers) => {
-                if let Some(arr) = providers.as_array() {
+        match client.get("/api/inference/endpoints").await {
+            Ok(data) => {
+                let endpoints = data.get("endpoints").and_then(|v| v.as_array());
+                if let Some(arr) = endpoints {
                     if arr.is_empty() {
                         println!("  No providers registered in nexus.");
                     }
                     for p in arr {
-                        let id = p.get("provider_id").and_then(|v| v.as_str()).unwrap_or("?");
-                        let ptype = p.get("provider_type").and_then(|v| v.as_str()).unwrap_or("?");
-                        let url = p.get("base_url").and_then(|v| v.as_str()).unwrap_or("?");
-                        let healthy = p.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false);
-                        let icon = if healthy { "●".green() } else { "○".red() };
-                        println!("  {} {} ({}) — {}", icon, id, ptype, url);
+                        let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                        let provider = p.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
+                        let url = p.get("url").and_then(|v| v.as_str()).unwrap_or("?");
+                        let model = p.get("model").and_then(|v| v.as_str()).unwrap_or("default");
+                        let status = p.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let icon = if status == "healthy" || status == "ok" { "●".green() } else { "○".yellow() };
+                        println!("  {} {} ({}) — {} [model: {}]", icon, id, provider, url, model);
                     }
+                } else {
+                    println!("  No providers registered in nexus.");
                 }
             }
             Err(_) => println!("  Could not fetch providers from nexus."),
