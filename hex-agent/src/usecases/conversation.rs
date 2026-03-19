@@ -10,6 +10,8 @@ use crate::ports::rate_limiter::RateLimiterPort;
 use crate::ports::rl::{ContextStrategy, ModelSelection, RlPort, RlReward, RlState};
 use crate::ports::token_metrics::TokenMetricsPort;
 use crate::ports::tools::ToolExecutorPort;
+use crate::ports::output_analyzer::OutputAnalyzerPort;
+use crate::domain::output_score::{AnalysisContext, FileChange, ChangeType};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -26,6 +28,7 @@ pub struct ConversationLoop {
     rate_limiter: Arc<dyn RateLimiterPort>,
     metrics: Arc<dyn TokenMetricsPort>,
     preflight: Arc<dyn PreflightPort>,
+    output_analyzer: Arc<dyn OutputAnalyzerPort>,
     tools: Vec<ToolDefinition>,
     budget: TokenBudget,
     max_response_tokens: u32,
@@ -38,6 +41,9 @@ pub struct ConversationLoop {
     thinking_budget: u32,
     /// Context utilization threshold (0.0-1.0) that triggers auto-compaction.
     compact_threshold: f32,
+    /// Models that are usable (have API keys). RL selection is filtered to these.
+    /// Empty = all models allowed (legacy behavior).
+    available_models: Vec<ModelSelection>,
 }
 
 impl ConversationLoop {
@@ -49,6 +55,7 @@ impl ConversationLoop {
         rate_limiter: Arc<dyn RateLimiterPort>,
         metrics: Arc<dyn TokenMetricsPort>,
         preflight: Arc<dyn PreflightPort>,
+        output_analyzer: Arc<dyn OutputAnalyzerPort>,
         tools: Vec<ToolDefinition>,
         budget: TokenBudget,
         max_response_tokens: u32,
@@ -61,6 +68,7 @@ impl ConversationLoop {
             rate_limiter,
             metrics,
             preflight,
+            output_analyzer,
             tools,
             budget,
             max_response_tokens,
@@ -69,6 +77,7 @@ impl ConversationLoop {
             enable_cache: true,
             thinking_budget: 0,
             compact_threshold: 0.85,
+            available_models: Vec::new(),
         }
     }
 
@@ -94,6 +103,14 @@ impl ConversationLoop {
     /// Set the context utilization threshold for auto-compaction (0.0-1.0).
     pub fn with_compact_threshold(mut self, threshold: f32) -> Self {
         self.compact_threshold = threshold.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set the models that are available (have API keys resolved).
+    /// RL model selection will be filtered to only these models.
+    /// Empty = all models allowed (legacy behavior).
+    pub fn with_available_models(mut self, models: Vec<ModelSelection>) -> Self {
+        self.available_models = models;
         self
     }
 
@@ -185,8 +202,20 @@ impl ConversationLoop {
             .unwrap_or(ContextStrategy::Balanced);
 
         // RL model selection — only when the user hasn't pinned a model via --model
+        // and only if the selected model has an available API key.
         let rl_model: Option<ModelSelection> = if !self.model_pinned {
-            rl_action.as_ref().map(|a| a.model.clone())
+            rl_action.as_ref().and_then(|a| {
+                let model = &a.model;
+                if self.available_models.is_empty() || self.available_models.contains(model) {
+                    Some(model.clone())
+                } else {
+                    tracing::info!(
+                        rl_suggested = %model.model_id(),
+                        "RL model not available (no API key) — using configured provider"
+                    );
+                    None
+                }
+            })
         } else {
             None
         };
@@ -246,17 +275,31 @@ impl ConversationLoop {
                         .as_ref()
                         .map(|m| m.model_id().to_string());
 
-                    // Proactive rate limit check — wait if we're near the limit
+                    // Proactive rate limit check — wait if we're near the limit.
+                    // Skip for OpenAI-compat providers (MiniMax etc.) — they have
+                    // different rate limit semantics and the Anthropic-tuned
+                    // proactive throttle causes false positives.
                     let model_id = override_id.as_deref().unwrap_or("default");
-                    if let Some(delay) = self
-                        .rate_limiter
-                        .should_throttle(
-                            model_id,
-                            packed.messages.iter().map(|m| m.estimated_tokens()).sum::<u32>(),
-                            self.max_response_tokens,
-                        )
-                        .await
-                    {
+                    let is_openai_compat = current_model
+                        .as_ref()
+                        .map(|m| m.is_openai_compat())
+                        .unwrap_or_else(|| {
+                            // No RL model — check if ALL available models are non-Anthropic
+                            !self.available_models.is_empty()
+                                && self.available_models.iter().all(|m| m.is_openai_compat() || matches!(m, ModelSelection::Local))
+                        });
+                    let throttle_delay = if is_openai_compat {
+                        None
+                    } else {
+                        self.rate_limiter
+                            .should_throttle(
+                                model_id,
+                                packed.messages.iter().map(|m| m.estimated_tokens()).sum::<u32>(),
+                                self.max_response_tokens,
+                            )
+                            .await
+                    };
+                    if let Some(delay) = throttle_delay {
                         tracing::info!(
                             model = model_id,
                             delay_ms = delay.as_millis() as u64,
@@ -469,15 +512,83 @@ impl ConversationLoop {
             break;
         }
 
-        // Report reward to RL engine with model selection + latency signals
-        if let Some(ref action) = rl_action {
-            let turn_end_tokens = state.total_estimated_tokens();
-            let latency_ms = turn_start_time.elapsed().as_millis() as u64;
-            let tokens_used = turn_end_tokens.saturating_sub(turn_start_tokens) as f64;
+        // Run output quality analysis for RL feedback
+        let turn_end_tokens = state.total_estimated_tokens();
+        let latency_ms = turn_start_time.elapsed().as_millis() as u64;
+        let tokens_used = turn_end_tokens.saturating_sub(turn_start_tokens) as f64;
 
-            // Reward formula:
-            //   success(+1.0) + fast_bonus(if <2s: +0.2) - rate_limit_penalty(if 429: -0.5) - token_cost(tokens/10000)
-            let success_score = 1.0;
+        // Collect text from the last assistant response for analysis
+        let response_text: String = state.messages.last()
+            .filter(|m| m.role == Role::Assistant)
+            .map(|m| m.content.iter().filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            }).collect::<Vec<_>>().join("\n"))
+            .unwrap_or_default();
+
+        // Detect file changes from tool calls (write_file, edit_file tools)
+        let file_changes: Vec<FileChange> = state.messages.iter().rev()
+            .take(tool_rounds as usize * 2 + 1) // scan recent tool results
+            .flat_map(|m| m.content.iter())
+            .filter_map(|b| match b {
+                ContentBlock::ToolUse { name, input, .. } if name == "write_file" || name == "edit_file" => {
+                    let path = input.get("path")
+                        .or_else(|| input.get("file_path"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    Some(FileChange {
+                        path,
+                        change_type: if name == "write_file" { ChangeType::Created } else { ChangeType::Modified },
+                        lines_added: input.get("content").and_then(|v| v.as_str()).map_or(0, |c| c.lines().count()),
+                        lines_removed: 0,
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+
+        // Run output analyzer (boundary check + compile check + token efficiency)
+        let output_score = if !file_changes.is_empty() {
+            let analysis_ctx = AnalysisContext {
+                task_description: state.messages.first()
+                    .filter(|m| m.role == Role::User)
+                    .map(|m| m.content.iter().filter_map(|b| match b {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    }).collect::<Vec<_>>().join(" "))
+                    .unwrap_or_default(),
+                llm_response: response_text,
+                files_changed: file_changes,
+                project_root: std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| ".".to_string()),
+                model_used: actual_model_used.clone(),
+                latency_ms,
+                total_tokens: turn_end_tokens as u64,
+            };
+            self.output_analyzer.analyze(&analysis_ctx).await
+        } else {
+            // No file changes — use neutral score
+            crate::domain::output_score::OutputScore::compute(1.0, None, None, 0.7, !response_text.is_empty())
+        };
+
+        tracing::debug!(
+            overall = output_score.overall,
+            boundary = output_score.boundary_compliance,
+            compiles = ?output_score.compiles,
+            token_eff = output_score.token_efficiency,
+            feedback_count = output_score.feedback.len(),
+            "Output quality analyzed"
+        );
+
+        // Report reward to RL engine with model selection + latency + quality signals
+        if let Some(ref action) = rl_action {
+            // Reward formula (enhanced with output quality):
+            //   quality_reward (from analyzer, -1 to +1) * 0.5
+            //   + fast_bonus(if <2s: +0.2) - rate_limit_penalty(if 429: -0.5)
+            //   - token_cost(tokens/10000) - tool_penalty(if max rounds: -0.5)
+            let quality_reward = output_score.to_reward() * 0.5;
             let fast_bonus = if latency_ms < 2000 { 0.2 } else { 0.0 };
             let rate_limit_penalty = if was_rate_limited { -0.5 } else { 0.0 };
             let token_cost = -(tokens_used / 10000.0);
@@ -486,7 +597,7 @@ impl ConversationLoop {
             } else {
                 0.0
             };
-            let reward = success_score + fast_bonus + rate_limit_penalty + token_cost + tool_penalty;
+            let reward = quality_reward + fast_bonus + rate_limit_penalty + token_cost + tool_penalty;
 
             // Best-effort — don't fail the turn if reward reporting fails
             let next_key = format!(

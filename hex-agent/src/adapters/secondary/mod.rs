@@ -16,3 +16,4 @@ pub mod haiku_preflight;
 pub mod openai_compat;
 pub mod mcp_stdio_client;
 pub mod mcp_config;
+pub mod output_analyzer;

@@ -501,6 +501,11 @@ async fn main() -> anyhow::Result<()> {
     // Build conversation loop (use case)
     let mut tools = builtin_tools();
     tools.extend(mcp_tools);
+    let output_analyzer: Arc<dyn ports::output_analyzer::OutputAnalyzerPort> = {
+        let nexus_url = std::env::var("HEX_NEXUS_URL").ok();
+        Arc::new(crate::adapters::secondary::output_analyzer::NexusOutputAnalyzer::new(nexus_url))
+    };
+
     let conversation = ConversationLoop::new(
         anthropic,
         context_mgr,
@@ -509,6 +514,7 @@ async fn main() -> anyhow::Result<()> {
         rate_limiter,
         metrics,
         preflight,
+        output_analyzer,
         tools,
         budget,
         args.max_response,
