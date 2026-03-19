@@ -98,6 +98,43 @@ async fn collect_source_files(root: &Path) -> Result<Vec<String>, AnalysisError>
     Ok(files)
 }
 
+/// Test file patterns — files matching these are collected as additional consumers.
+const TEST_PATTERNS: &[&str] = &[".test.ts", ".spec.ts", "_test.go", ".test.rs"];
+
+fn is_test_file(path: &str) -> bool {
+    TEST_PATTERNS.iter().any(|p| path.ends_with(p)) || path.contains("tests/")
+}
+
+/// Collect test files that may import from main source files.
+async fn collect_test_files(root: &Path) -> Result<Vec<String>, AnalysisError> {
+    let mut files = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    let skip_dirs = ["node_modules", "dist", "examples", "target"];
+
+    while let Some(dir) = stack.pop() {
+        let mut entries = tokio::fs::read_dir(&dir).await?;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            if path.is_dir() {
+                if !skip_dirs.iter().any(|d| rel.contains(d)) {
+                    stack.push(path);
+                }
+            } else if is_source_file(&rel) && is_test_file(&rel) {
+                files.push(rel);
+            }
+        }
+    }
+
+    files.sort();
+    Ok(files)
+}
+
 // ── Analyzer ─────────────────────────────────────────────
 
 /// Orchestrates all architecture analysis checks.
@@ -164,6 +201,46 @@ impl ArchAnalyzer {
 
         Ok((all_edges, all_file_data))
     }
+
+    /// Collect test files as import consumers (their imports count, exports don't).
+    async fn collect_test_file_data(
+        &self,
+        root: &Path,
+        go_module_prefix: Option<&str>,
+    ) -> Result<Vec<FileData>, AnalysisError> {
+        let test_files = collect_test_files(root).await?;
+        let mut test_data = Vec::new();
+
+        for rel_path in &test_files {
+            let abs_path = root.join(rel_path);
+            let source = match tokio::fs::read_to_string(&abs_path).await {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let lang = Language::from_path(rel_path);
+            let imports = match self.ast.extract_imports(Path::new(rel_path), &source, lang) {
+                Ok(i) => i,
+                Err(_) => continue,
+            };
+
+            let from_file = normalize_path(rel_path);
+            test_data.push(FileData {
+                path: from_file,
+                imports: imports
+                    .into_iter()
+                    .map(|mut imp| {
+                        imp.resolved_path = normalize_path(
+                            &resolve_import_path(rel_path, &imp.raw_path, go_module_prefix),
+                        );
+                        imp
+                    })
+                    .collect(),
+                exports: vec![],
+            });
+        }
+
+        Ok(test_data)
+    }
 }
 
 #[async_trait]
@@ -175,17 +252,62 @@ impl ArchAnalysisPort for ArchAnalyzer {
 
         let violations = boundary_checker::find_violations(&edges);
         let circular_deps = cycle_detector::detect_cycles(&edges);
-        let dead_exports = dead_export_finder::find_dead_exports(&file_data, &[]);
+
+        // Collect test files as additional import consumers for dead export analysis.
+        // This prevents false "dead export" reports for symbols only used in tests.
+        let test_file_data = self
+            .collect_test_file_data(root_path, go_mod.as_deref())
+            .await?;
+        let dead_exports = dead_export_finder::find_dead_exports(&file_data, &test_file_data);
 
         // Orphan files: no incoming or outgoing edges
         let connected: HashSet<&str> = edges
             .iter()
             .flat_map(|e| [e.from_file.as_str(), e.to_file.as_str()])
             .collect();
+
+        // Resolve Rust `mod foo;` declarations → actual files they reference.
+        // `self::mod_name` edges may not match normalized file paths directly,
+        // so we do a second pass to connect parent mod.rs → child modules.
+        let mut mod_targets: HashSet<String> = HashSet::new();
+        for edge in &edges {
+            if !edge.import_path.starts_with("self::") {
+                continue;
+            }
+            let mod_name = &edge.import_path["self::".len()..];
+            let from_dir = edge.from_file
+                .rsplit_once('/')
+                .map(|(d, _)| d)
+                .unwrap_or("");
+            for fd in &file_data {
+                let basename = fd.path.rsplit('/').next().unwrap_or(&fd.path);
+                let in_same_dir = fd.path.starts_with(from_dir) && fd.path != edge.from_file;
+                if in_same_dir
+                    && (basename == format!("{}.rs", mod_name)
+                        || (basename == "mod.rs"
+                            && fd.path.contains(&format!("/{}/", mod_name))))
+                {
+                    mod_targets.insert(fd.path.clone());
+                }
+            }
+        }
+
         let orphan_files: Vec<String> = file_data
             .iter()
             .map(|f| f.path.as_str())
-            .filter(|f| !connected.contains(f))
+            .filter(|f| !connected.contains(f) && !mod_targets.contains(*f))
+            .filter(|f| {
+                let basename = f.rsplit('/').next().unwrap_or(f);
+                // Cargo build scripts are implicitly invoked — never orphans
+                if basename == "build.rs" {
+                    return false;
+                }
+                // Standalone scripts are not part of the import graph
+                if f.starts_with("scripts/") || f.contains("/scripts/") {
+                    return false;
+                }
+                true
+            })
             .map(|f| f.to_string())
             .collect();
 
