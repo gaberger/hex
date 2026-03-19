@@ -1012,6 +1012,7 @@ export class CLIAdapter {
       scaffold: this.ctx.scaffold,
       createDashboard: this.ctx.createDashboard,
       adrQuery: this.ctx.adrQuery,
+      hexfloClient: this.ctx.hexfloClient,
       broadcastEvent: hubBroadcast,
     });
 
@@ -3275,94 +3276,60 @@ export class CLIAdapter {
 
   // ─── HexFlo CLI subcommands (ADR-027) ─────────────────
 
+  /** Format and print a HexFlo response, returning 0 on success, 1 on error. */
+  private printHexfloResult(resp: import('../../core/ports/hexflo-client.js').HexFloResponse): number {
+    if (resp.ok) {
+      this.writeLn(JSON.stringify(resp.data, null, 2));
+      return 0;
+    }
+    this.writeLn(`${red('Error')}: ${resp.error}`);
+    return 1;
+  }
+
   private async swarmCommand(args: ParsedArgs): Promise<number> {
     const sub = args.positional[0];
-    const hubUrl = 'http://localhost:5555';
-    try {
-      if (sub === 'init') {
-        const name = args.positional[1] || 'default';
-        const topology = args.positional[2] || 'hierarchical';
-        const resp = await fetch(`${hubUrl}/api/swarms`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project_id: process.cwd(), name, topology }),
-        });
-        const data = await resp.json();
-        this.writeLn(JSON.stringify(data, null, 2));
-      } else if (sub === 'status') {
-        const resp = await fetch(`${hubUrl}/api/swarms`);
-        const data = await resp.json();
-        this.writeLn(JSON.stringify(data, null, 2));
-      } else {
-        this.writeLn('Usage: hex swarm <init|status> [name] [topology]');
-      }
-      return 0;
-    } catch {
-      this.writeLn(`${red('Error')}: hex-nexus not running. Start with: hex daemon start`);
+    const client = this.ctx.hexfloClient;
+
+    if (sub === 'init') {
+      const name = args.positional[1] || 'default';
+      const topology = args.positional[2] || 'hierarchical';
+      return this.printHexfloResult(await client.swarmInit(name, process.cwd(), topology));
+    } else if (sub === 'status') {
+      return this.printHexfloResult(await client.swarmStatus());
+    } else {
+      this.writeLn('Usage: hex swarm <init|status> [name] [topology]');
       return 1;
     }
   }
 
   private async taskCommand(args: ParsedArgs): Promise<number> {
     const sub = args.positional[0];
-    const hubUrl = 'http://localhost:5555';
-    try {
-      if (sub === 'create' && args.positional[1] && args.positional[2]) {
-        const resp = await fetch(`${hubUrl}/api/swarms/${encodeURIComponent(args.positional[1])}/tasks`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: args.positional.slice(2).join(' ') }),
-        });
-        const data = await resp.json();
-        this.writeLn(JSON.stringify(data, null, 2));
-      } else if (sub === 'list') {
-        const resp = await fetch(`${hubUrl}/api/swarms`);
-        const data = await resp.json();
-        this.writeLn(JSON.stringify(data, null, 2));
-      } else if (sub === 'complete' && args.positional[1]) {
-        const resp = await fetch(`${hubUrl}/api/swarms/tasks/${encodeURIComponent(args.positional[1])}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'completed', result: args.positional.slice(2).join(' ') || null }),
-        });
-        const data = await resp.json();
-        this.writeLn(JSON.stringify(data, null, 2));
-      } else {
-        this.writeLn('Usage: hex task <create|list|complete> [swarmId] [title/result]');
-      }
-      return 0;
-    } catch {
-      this.writeLn(`${red('Error')}: hex-nexus not running. Start with: hex daemon start`);
+    const client = this.ctx.hexfloClient;
+
+    if (sub === 'create' && args.positional[1] && args.positional[2]) {
+      return this.printHexfloResult(await client.taskCreate(args.positional[1], args.positional.slice(2).join(' ')));
+    } else if (sub === 'list') {
+      return this.printHexfloResult(await client.taskList());
+    } else if (sub === 'complete' && args.positional[1]) {
+      return this.printHexfloResult(await client.taskComplete(args.positional[1], args.positional.slice(2).join(' ') || undefined));
+    } else {
+      this.writeLn('Usage: hex task <create|list|complete> [swarmId] [title/result]');
       return 1;
     }
   }
 
   private async memoryCommand(args: ParsedArgs): Promise<number> {
     const sub = args.positional[0];
-    const hubUrl = 'http://localhost:5555';
-    try {
-      if (sub === 'store' && args.positional[1] && args.positional[2]) {
-        const resp = await fetch(`${hubUrl}/api/hexflo/memory`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key: args.positional[1], value: args.positional.slice(2).join(' '), scope: 'global' }),
-        });
-        const data = await resp.json();
-        this.writeLn(JSON.stringify(data, null, 2));
-      } else if (sub === 'get' && args.positional[1]) {
-        const resp = await fetch(`${hubUrl}/api/hexflo/memory/${encodeURIComponent(args.positional[1])}`);
-        const data = await resp.json();
-        this.writeLn(JSON.stringify(data, null, 2));
-      } else if (sub === 'search' && args.positional[1]) {
-        const resp = await fetch(`${hubUrl}/api/hexflo/memory/search?q=${encodeURIComponent(args.positional[1])}`);
-        const data = await resp.json();
-        this.writeLn(JSON.stringify(data, null, 2));
-      } else {
-        this.writeLn('Usage: hex memory <store|get|search> [key] [value]');
-      }
-      return 0;
-    } catch {
-      this.writeLn(`${red('Error')}: hex-nexus not running. Start with: hex daemon start`);
+    const client = this.ctx.hexfloClient;
+
+    if (sub === 'store' && args.positional[1] && args.positional[2]) {
+      return this.printHexfloResult(await client.memoryStore(args.positional[1], args.positional.slice(2).join(' ')));
+    } else if (sub === 'get' && args.positional[1]) {
+      return this.printHexfloResult(await client.memoryRetrieve(args.positional[1]));
+    } else if (sub === 'search' && args.positional[1]) {
+      return this.printHexfloResult(await client.memorySearch(args.positional[1]));
+    } else {
+      this.writeLn('Usage: hex memory <store|get|search> [key] [value]');
       return 1;
     }
   }
