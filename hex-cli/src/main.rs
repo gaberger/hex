@@ -76,6 +76,11 @@ enum Commands {
     },
     /// Start the hex MCP server (stdio transport)
     Mcp,
+    /// Run integration tests (unit, arch, services, swarm)
+    Test {
+        #[command(subcommand)]
+        action: commands::test::TestAction,
+    },
     /// Project status
     Status,
 }
@@ -105,6 +110,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Adr { action } => commands::adr::run(action).await,
         Commands::Analyze { path } => analyze::run(&path).await,
         Commands::Mcp => commands::mcp::run_mcp_server().await,
+        Commands::Test { action } => commands::test::run(action).await,
         Commands::Status => status::run().await,
     }
 }

@@ -1,0 +1,330 @@
+//! `hex test` — Full-stack integration testing from the CLI.
+//!
+//! Runs unit tests, architecture checks, service health, API integration,
+//! and swarm coordination tests — all from a single command.
+//!
+//! Usage:
+//!   hex test              # Full stack (requires running nexus)
+//!   hex test --unit       # Unit tests only
+//!   hex test --arch       # Architecture checks only
+//!   hex test --services   # Service health checks only
+//!   hex test --all        # Everything including service startup
+
+use std::process::Command;
+
+use clap::Subcommand;
+use colored::Colorize;
+
+use crate::nexus_client::NexusClient;
+
+#[derive(Subcommand)]
+pub enum TestAction {
+    /// Run all unit tests across Rust crates
+    Unit,
+    /// Check architecture health (boundaries, deps, dead code)
+    Arch,
+    /// Test hex-nexus service endpoints (requires running nexus)
+    Services,
+    /// Run full integration tests (unit + arch + services + swarm)
+    All,
+}
+
+struct TestResults {
+    pass: u32,
+    fail: u32,
+    skip: u32,
+}
+
+impl TestResults {
+    fn new() -> Self {
+        Self { pass: 0, fail: 0, skip: 0 }
+    }
+
+    fn check(&mut self, label: &str, ok: bool) {
+        if ok {
+            println!("  {} {}", "✓".green(), label);
+            self.pass += 1;
+        } else {
+            println!("  {} {}", "✗".red(), label);
+            self.fail += 1;
+        }
+    }
+
+    fn skip(&mut self, label: &str) {
+        println!("  {} {} (skipped)", "○".yellow(), label);
+        self.skip += 1;
+    }
+
+    fn summary(&self) -> bool {
+        let total = self.pass + self.fail + self.skip;
+        println!();
+        if self.fail == 0 {
+            println!(
+                "  {}: {} passed, {} skipped, {} failed (of {})",
+                "ALL PASS".green().bold(),
+                self.pass,
+                self.skip,
+                self.fail,
+                total
+            );
+            true
+        } else {
+            println!(
+                "  {}: {} passed, {} skipped, {} failed (of {})",
+                "FAILURES".red().bold(),
+                self.pass,
+                self.skip,
+                self.fail,
+                total
+            );
+            false
+        }
+    }
+}
+
+pub async fn run(action: TestAction) -> anyhow::Result<()> {
+    let mut results = TestResults::new();
+
+    match action {
+        TestAction::Unit => {
+            run_unit_tests(&mut results);
+        }
+        TestAction::Arch => {
+            run_arch_checks(&mut results).await;
+        }
+        TestAction::Services => {
+            run_service_tests(&mut results).await;
+        }
+        TestAction::All => {
+            run_unit_tests(&mut results);
+            println!();
+            run_arch_checks(&mut results).await;
+            println!();
+            run_service_tests(&mut results).await;
+            println!();
+            run_integration_tests(&mut results).await;
+        }
+    }
+
+    println!("\n{}", "══════════════════════════════════════════".cyan());
+    let ok = results.summary();
+    println!("{}", "══════════════════════════════════════════".cyan());
+
+    if ok {
+        Ok(())
+    } else {
+        anyhow::bail!("{} test(s) failed", results.fail)
+    }
+}
+
+// ── Unit Tests ──────────────────────────────────────
+
+fn run_unit_tests(r: &mut TestResults) {
+    println!("{}", "── Unit Tests ──".cyan());
+
+    // Main workspace crates
+    for crate_name in &["hex-core", "hex-agent"] {
+        let ok = cargo_test(crate_name, None);
+        r.check(&format!("{} tests pass", crate_name), ok);
+    }
+
+    r.check("hex-nexus lib tests pass", cargo_test("hex-nexus", Some("--lib")));
+
+    for crate_name in &["hex-chat", "hex-cli"] {
+        let ok = cargo_check(crate_name);
+        r.check(&format!("{} compiles", crate_name), ok);
+    }
+
+    // SpacetimeDB modules (different workspace)
+    println!();
+    println!("{}", "── SpacetimeDB Module Tests ──".cyan());
+
+    for module in &[
+        "file-lock-manager",
+        "architecture-enforcer",
+        "conflict-resolver",
+        "inference-gateway",
+        "hexflo-coordination",
+        "secret-grant",
+    ] {
+        let ok = cargo_test_spacetime(module);
+        r.check(&format!("{} tests pass", module), ok);
+    }
+}
+
+// ── Architecture Checks ─────────────────────────────
+
+async fn run_arch_checks(r: &mut TestResults) {
+    println!("{}", "── Architecture Health ──".cyan());
+
+    let output = Command::new("hex")
+        .args(["analyze", "."])
+        .output();
+
+    match output {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+
+            r.check(
+                "Architecture grade A",
+                stdout.contains("Grade:    A"),
+            );
+            r.check(
+                "Zero boundary violations",
+                stdout.contains("Boundary violations    | 0"),
+            );
+            r.check(
+                "Zero circular dependencies",
+                stdout.contains("Circular dependencies  | 0"),
+            );
+            r.check(
+                "Zero dead exports",
+                stdout.contains("Dead exports           | 0"),
+            );
+        }
+        Err(_) => {
+            // Fallback: use hex-core boundary rules directly
+            println!("  {} hex analyze not available, using hex-core rules", "!".yellow());
+            r.check(
+                "hex-core boundary rules compile",
+                cargo_test("hex-core", None),
+            );
+        }
+    }
+}
+
+// ── Service Tests ───────────────────────────────────
+
+async fn run_service_tests(r: &mut TestResults) {
+    println!("{}", "── Service Health ──".cyan());
+
+    let client = NexusClient::from_env();
+
+    // Check if nexus is running
+    let version = client.get("/api/version").await;
+    match version {
+        Ok(v) => {
+            r.check(
+                "hex-nexus responding",
+                v.get("version").is_some(),
+            );
+
+            // Endpoint checks
+            let agents = client.get("/api/agents").await;
+            r.check("GET /api/agents responds", agents.is_ok());
+
+            let swarms = client.get("/api/swarms").await;
+            r.check("GET /api/swarms responds", swarms.is_ok());
+        }
+        Err(_) => {
+            r.skip("hex-nexus not running — start with: hex daemon start");
+            r.skip("API endpoint tests");
+            return;
+        }
+    }
+}
+
+// ── Integration Tests ───────────────────────────────
+
+async fn run_integration_tests(r: &mut TestResults) {
+    println!("{}", "── Integration Tests ──".cyan());
+
+    let client = NexusClient::from_env();
+
+    // Check nexus is available
+    if client.get("/api/version").await.is_err() {
+        r.skip("Swarm lifecycle (nexus not running)");
+        r.skip("HexFlo memory (nexus not running)");
+        r.skip("Task lifecycle (nexus not running)");
+        return;
+    }
+
+    // Swarm lifecycle: create → status → complete
+    let swarm_body = serde_json::json!({
+        "name": "hex-test-swarm",
+        "topology": "mesh"
+    });
+
+    match client.post("/api/swarms", &swarm_body).await {
+        Ok(resp) => {
+            let has_id = resp.get("id").and_then(|v| v.as_str()).is_some();
+            r.check("Create swarm via API", has_id);
+
+            if let Some(swarm_id) = resp.get("id").and_then(|v| v.as_str()) {
+                // Create a task
+                let task_body = serde_json::json!({ "title": "integration-test-task" });
+                let task_resp = client
+                    .post(&format!("/api/swarms/{}/tasks", swarm_id), &task_body)
+                    .await;
+                r.check("Create task in swarm", task_resp.is_ok());
+
+                // Verify swarm appears in status
+                let status = client.get("/api/swarms").await;
+                let found = status
+                    .as_ref()
+                    .ok()
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().any(|s| {
+                        s.get("name").and_then(|n| n.as_str()) == Some("hex-test-swarm")
+                    }))
+                    .unwrap_or(false);
+                r.check("Swarm visible in status", found);
+            }
+        }
+        Err(_) => {
+            r.check("Create swarm via API", false);
+        }
+    }
+
+    // HexFlo memory: store → retrieve → search
+    let mem_body = serde_json::json!({
+        "key": "hex-test-key",
+        "value": "hex-test-value"
+    });
+
+    let store_ok = client.post("/api/hexflo/memory", &mem_body).await.is_ok();
+    r.check("HexFlo memory store", store_ok);
+
+    if store_ok {
+        let retrieve = client.get("/api/hexflo/memory/hex-test-key").await;
+        let has_value = retrieve
+            .as_ref()
+            .ok()
+            .and_then(|v| v.get("value"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.contains("hex-test-value"))
+            .unwrap_or(false);
+        r.check("HexFlo memory retrieve", has_value);
+
+        let search = client.get("/api/hexflo/memory/search?q=hex-test").await;
+        r.check("HexFlo memory search", search.is_ok());
+    }
+}
+
+// ── Helpers ─────────────────────────────────────────
+
+fn cargo_test(crate_name: &str, extra: Option<&str>) -> bool {
+    let mut cmd = Command::new("cargo");
+    cmd.args(["test", "-p", crate_name, "--quiet"]);
+    if let Some(flag) = extra {
+        cmd.arg(flag);
+    }
+    cmd.status().map(|s| s.success()).unwrap_or(false)
+}
+
+fn cargo_check(crate_name: &str) -> bool {
+    Command::new("cargo")
+        .args(["check", "-p", crate_name])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn cargo_test_spacetime(module: &str) -> bool {
+    Command::new("cargo")
+        .args(["test", "-p", module, "--quiet"])
+        .current_dir("spacetime-modules")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}

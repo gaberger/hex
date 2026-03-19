@@ -8,3 +8,4 @@ pub mod stdb;
 pub mod status;
 pub mod swarm;
 pub mod task;
+pub mod test;
