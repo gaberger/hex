@@ -1,0 +1,25 @@
+[package]
+name = "hex-cli"
+version.workspace = true
+edition.workspace = true
+description = "Hexagonal architecture CLI for LLM-driven development"
+license.workspace = true
+
+[[bin]]
+name = "hex"
+path = "src/main.rs"
+
+[dependencies]
+hex-core = { path = "../hex-core" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+colored = "2"
+anyhow = "1"
+dirs = "5"
+libc = "0.2"
+reqwest = { version = "0.12", features = ["json"] }
+chrono = "0.4"

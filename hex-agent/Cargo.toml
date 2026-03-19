@@ -1,9 +1,9 @@
 [package]
 name = "hex-agent"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Autonomous AI agent for hex — interfaces directly with Anthropic Messages API"
-license = "MIT"
+license.workspace = true
 
 [dependencies]
 # HTTP + streaming
@@ -22,7 +22,11 @@ clap = { version = "4", features = ["derive"] }
 # WebSocket (connect back to hub)
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 
+# Shared domain types + ports
+hex-core = { path = "../hex-core" }
+
 # Utilities
+dirs = "5"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"

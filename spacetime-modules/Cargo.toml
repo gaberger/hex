@@ -10,6 +10,10 @@ members = [
     "agent-definition-registry",
     "secret-grant",
     "hexflo-coordination",
+    "file-lock-manager",
+    "architecture-enforcer",
+    "conflict-resolver",
+    "inference-gateway",
 ]
 resolver = "2"
 

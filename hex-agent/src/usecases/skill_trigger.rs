@@ -4,7 +4,7 @@
 //! This use case operates entirely on in-memory data populated by the
 //! SpacetimeDB subscription (or filesystem fallback). Zero network latency.
 
-use crate::domain::skills::SkillManifest;
+use crate::domain::skills::{SkillManifest, SkillManifestExt};
 use crate::ports::skills::{SkillLoaderPort, SkillLoadError};
 use std::sync::Arc;
 

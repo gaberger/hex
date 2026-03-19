@@ -1,37 +1,25 @@
-//! hex-core: Native tree-sitter parsing for hex via NAPI-RS.
+//! hex-core — Shared domain types and port traits for the hex framework.
 //!
-//! Exposes two functions to Node.js:
-//! - `initGrammars()` — load tree-sitter grammars (call once at startup)
-//! - `parseFile(filePath, source, level)` — parse a source file into an ASTSummary
+//! This crate is the single source of truth for types used across hex-nexus,
+//! hex-agent, hex-chat, and hex-cli. It has zero runtime dependencies beyond
+//! serde, thiserror, and async-trait.
+//!
+//! # Architecture
+//!
+//! ```text
+//! hex-core (this crate)
+//!   ├── domain/     — Value objects and entities (pure data, no I/O)
+//!   ├── ports/      — Trait definitions (contracts between layers)
+//!   └── rules/      — Hex architecture enforcement logic
+//! ```
 
-mod extractors;
-mod parser;
-mod types;
+pub mod domain;
+pub mod ports;
+pub mod rules;
 
-use napi_derive::napi;
-
-use types::{ASTSummary, Level};
-
-/// Initialize tree-sitter grammars for TypeScript, Go, and Rust.
-///
-/// Returns true if at least one grammar loaded successfully.
-/// Safe to call multiple times; subsequent calls are no-ops.
-#[napi]
-pub fn init_grammars() -> bool {
-    parser::init_grammars()
-}
-
-/// Parse a source file and return an ASTSummary.
-///
-/// Arguments:
-/// - `file_path`: path used to detect language (.ts/.tsx, .go, .rs)
-/// - `source`: file contents as a string
-/// - `level`: extraction depth — "L0", "L1", "L2", or "L3"
-///
-/// Returns an ASTSummary object matching the TypeScript interface exactly.
-/// Never throws; returns a stubbed summary on invalid input.
-#[napi]
-pub fn parse_file(file_path: String, source: String, level: String) -> ASTSummary {
-    let level = Level::from_str(&level).unwrap_or(Level::L0);
-    parser::parse_file(&file_path, &source, level)
-}
+/// Re-export commonly used types at the crate root.
+pub use domain::agents::{AgentConstraints, AgentDefinition, AgentMetrics};
+pub use domain::messages::{ContentBlock, ConversationState, Message, Role, StopReason};
+pub use domain::tokens::{TokenBudget, TokenPartition, TokenUsage};
+pub use domain::tools::{ToolCall, ToolDefinition, ToolInputSchema, ToolResult};
+pub use domain::workplan::{PhaseGate, TaskStatus, Workplan, WorkplanPhase, WorkplanTask};

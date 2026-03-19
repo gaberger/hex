@@ -17,3 +17,6 @@ pub mod openai_compat;
 pub mod mcp_stdio_client;
 pub mod mcp_config;
 pub mod output_analyzer;
+pub mod spacetime_inference;
+pub mod sandboxed_fs;
+pub mod spacetime_coordination;

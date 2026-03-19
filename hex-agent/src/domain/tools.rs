@@ -1,39 +1,5 @@
-use serde::{Deserialize, Serialize};
-
-/// Definition of a tool available to the agent — sent to Anthropic API.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub input_schema: ToolInputSchema,
-}
-
-/// JSON Schema for tool input parameters.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolInputSchema {
-    #[serde(rename = "type")]
-    pub schema_type: String,
-    #[serde(default)]
-    pub properties: serde_json::Value,
-    #[serde(default)]
-    pub required: Vec<String>,
-}
-
-/// A tool call from the assistant — extracted from tool_use content blocks.
-#[derive(Debug, Clone)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub input: serde_json::Value,
-}
-
-/// Result of executing a tool — fed back as tool_result content block.
-#[derive(Debug, Clone)]
-pub struct ToolResult {
-    pub tool_use_id: String,
-    pub content: String,
-    pub is_error: bool,
-}
+// Re-export shared tool types from hex-core
+pub use hex_core::domain::tools::{ToolCall, ToolDefinition, ToolInputSchema, ToolResult};
 
 /// The built-in tools that hex-agent provides to the LLM.
 /// These mirror Claude Code's tool set for compatibility.
@@ -169,6 +135,61 @@ pub fn builtin_tools() -> Vec<ToolDefinition> {
                     "delete_branch": { "type": "boolean", "description": "Also delete the branch (default: false)" }
                 }),
                 required: vec!["branch".into()],
+            },
+        },
+        // ── Hex architecture tools ───────────────────────────
+        ToolDefinition {
+            name: "hex_analyze".into(),
+            description: "Run hexagonal architecture health check. Reports boundary violations, dead exports, circular dependencies. Run before committing code changes.".into(),
+            input_schema: ToolInputSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({
+                    "path": { "type": "string", "description": "Project root path to analyze (default: .)" }
+                }),
+                required: vec![],
+            },
+        },
+        ToolDefinition {
+            name: "hex_plan".into(),
+            description: "Decompose requirements into adapter-bounded tasks following hexagonal architecture. Returns a workplan with dependency tiers.".into(),
+            input_schema: ToolInputSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({
+                    "requirements": { "type": "string", "description": "Requirements to decompose (comma or newline separated)" },
+                    "language": { "type": "string", "description": "Target language: typescript, rust, or go" }
+                }),
+                required: vec!["requirements".into()],
+            },
+        },
+        ToolDefinition {
+            name: "hex_summarize".into(),
+            description: "Get a token-efficient AST summary of source files. Use this instead of reading full files when you need to understand structure without implementation details.".into(),
+            input_schema: ToolInputSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({
+                    "path": { "type": "string", "description": "File or directory path to summarize" }
+                }),
+                required: vec!["path".into()],
+            },
+        },
+        ToolDefinition {
+            name: "hex_adr_search".into(),
+            description: "Search Architecture Decision Records by keyword. Returns matching ADRs with context.".into(),
+            input_schema: ToolInputSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({
+                    "query": { "type": "string", "description": "Search keyword" }
+                }),
+                required: vec!["query".into()],
+            },
+        },
+        ToolDefinition {
+            name: "hex_adr_list".into(),
+            description: "List all Architecture Decision Records with their status.".into(),
+            input_schema: ToolInputSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({}),
+                required: vec![],
             },
         },
     ]

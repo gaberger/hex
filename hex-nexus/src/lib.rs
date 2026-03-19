@@ -1,3 +1,6 @@
+// Re-export hex-core so downstream crates can access shared types and port traits
+pub use hex_core;
+
 pub mod adapters;
 pub mod analysis;
 pub mod cleanup;
@@ -104,7 +107,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
             .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
         let stdb_database = std::env::var("HEX_SPACETIMEDB_DATABASE")
-            .unwrap_or_else(|_| "hex".to_string());
+            .unwrap_or_else(|_| "hex-nexus".to_string());
 
         let hub_id = std::env::var("HEX_HUB_ID").unwrap_or_else(|_| "hub-local".to_string());
         let client = adapters::spacetime_secrets::SpacetimeSecretClient::new(
