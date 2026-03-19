@@ -503,7 +503,7 @@ async fn status() -> anyhow::Result<()> {
                 .timeout(std::time::Duration::from_secs(2))
                 .build()
                 .ok();
-            if let Some(client) = client {
+            if let Some(ref client) = client {
                 let stdb_ok = client
                     .get(format!("{}/v1/ping", stdb_host))
                     .send()
@@ -514,6 +514,96 @@ async fn status() -> anyhow::Result<()> {
                     println!("  SpacetimeDB: {} ({})", "connected".green(), stdb_host);
                 } else {
                     println!("  SpacetimeDB: {} ({})", "unavailable".yellow(), stdb_host);
+                }
+            }
+
+            // Inference providers
+            match nexus.get("/api/inference/endpoints").await {
+                Ok(data) => {
+                    let endpoints = data.get("endpoints").and_then(|v| v.as_array());
+                    if let Some(eps) = endpoints {
+                        if eps.is_empty() {
+                            println!("  Inference: {} (hex inference add to register)", "none".dimmed());
+                        } else {
+                            println!("  Inference: {} provider(s)", eps.len().to_string().green());
+                            for ep in eps {
+                                let provider = ep.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
+                                let model = ep.get("model").and_then(|v| v.as_str()).unwrap_or("default");
+                                let url = ep.get("url").and_then(|v| v.as_str()).unwrap_or("?");
+                                let status = ep.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                let icon = if status == "healthy" || status == "ok" { "\u{25cf}".green() } else { "\u{25cb}".yellow() };
+                                println!("    {} {} {} ({})", icon, provider, model, url);
+                            }
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+
+            // Agents
+            match nexus.get("/api/agents").await {
+                Ok(agents) => {
+                    if let Some(arr) = agents.as_array() {
+                        if arr.is_empty() {
+                            println!("  Agents: {}", "none".dimmed());
+                        } else {
+                            println!("  Agents: {}", arr.len().to_string().green());
+                            for a in arr {
+                                let name = a.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                                let status = a.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+                                let icon = if status == "running" { "\u{25cf}".green() } else { "\u{25cb}".dimmed() };
+                                println!("    {} {} ({})", icon, name, status);
+                            }
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+
+            // Swarms
+            match nexus.get("/api/swarms/active").await {
+                Ok(swarms) => {
+                    if let Some(arr) = swarms.as_array() {
+                        if arr.is_empty() {
+                            println!("  Swarms: {}", "none".dimmed());
+                        } else {
+                            println!("  Swarms: {} active", arr.len().to_string().green());
+                            for s in arr {
+                                let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                                println!("    \u{2b21} {}", name);
+                            }
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+
+            // Sessions
+            match nexus.get("/api/sessions?project_id=&limit=5").await {
+                Ok(sessions) => {
+                    if let Some(arr) = sessions.as_array() {
+                        if arr.is_empty() {
+                            println!("  Sessions: {}", "none".dimmed());
+                        } else {
+                            println!("  Sessions: {}", arr.len().to_string().green());
+                        }
+                    }
+                }
+                Err(_) => println!("  Sessions: {} (SQLite not enabled)", "unavailable".dimmed()),
+            }
+
+            // hex-chat web dashboard
+            if let Some(ref client) = client {
+                let chat_ok = client
+                    .get("http://127.0.0.1:5556")
+                    .send()
+                    .await
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false);
+                if chat_ok {
+                    println!("  Dashboard: {} ({})", "running".green(), "http://127.0.0.1:5556".blue());
+                } else {
+                    println!("  Dashboard: {}", "not running".dimmed());
                 }
             }
         } else {
