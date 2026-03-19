@@ -108,9 +108,8 @@ async fn add_provider(
             println!("  {} Provider responded with {}", "!".yellow(), resp.status());
         }
         Err(e) => {
-            println!("  {} Cannot reach {}: {}", "✗".red(), url, e);
-            println!("  Check that the service is running and the URL is correct.");
-            return Ok(());
+            println!("  {} Cannot reach {}: {}", "!".yellow(), url, e);
+            println!("  Provider will be registered anyway (may come online later).");
         }
     }
 

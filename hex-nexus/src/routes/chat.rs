@@ -282,7 +282,7 @@ async fn handle_chat_ws(
                     let has_agent = agent_id.is_some()
                         || initial_agent_id.is_some()
                         || registered_agent_id.is_some();
-                    let has_inference = !state2.inference_endpoints.blocking_read().is_empty();
+                    let has_inference = !state2.inference_endpoints.read().await.is_empty();
                     let has_anthropic = state2.anthropic_api_key.is_some();
                     let use_bridge = !has_agent && (has_inference || has_anthropic);
 
