@@ -232,6 +232,7 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
 
     // Test Ollama /api/tags
     let ollama_url = format!("{}/api/tags", url.trim_end_matches('/'));
+    println!("  {} GET {}", "→".cyan(), ollama_url);
     match http.get(&ollama_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             println!("  {} Ollama responding at {}", "✓".green(), url);
@@ -272,18 +273,37 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
                 }
             }
         }
-        _ => {
-            // Try OpenAI-compatible /v1/models
+        Ok(resp) => {
+            println!("  {} Ollama returned HTTP {} at {}", "!".yellow(), resp.status(), ollama_url);
+            // Try OpenAI-compatible /v1/models as fallback
             let oai_url = format!("{}/v1/models", url.trim_end_matches('/'));
+            println!("  {} GET {}", "→".cyan(), oai_url);
             match http.get(&oai_url).send().await {
-                Ok(resp) if resp.status().is_success() => {
+                Ok(r) if r.status().is_success() => {
                     println!("  {} OpenAI-compatible API at {}", "✓".green(), url);
                 }
-                _ => {
-                    println!("  {} Cannot reach {}", "✗".red(), url);
-                    println!("  Check: is the service running? Is the port correct?");
+                Ok(r) => {
+                    println!("  {} OpenAI endpoint returned HTTP {}", "!".yellow(), r.status());
+                }
+                Err(e) => {
+                    println!("  {} OpenAI endpoint failed: {}", "✗".red(), e);
                 }
             }
+        }
+        Err(e) => {
+            println!("  {} Cannot reach {}: {}", "✗".red(), url, e);
+            println!();
+            println!("  Troubleshooting:");
+            if e.is_timeout() {
+                println!("    - Connection timed out (10s) — host may be unreachable");
+            } else if e.is_connect() {
+                println!("    - Connection refused — is Ollama running?");
+                println!("    - Ollama may be bound to localhost only. Fix with:");
+                println!("      OLLAMA_HOST=0.0.0.0 ollama serve");
+            } else {
+                println!("    - {}", e);
+            }
+            println!("    - Verify: curl {}/api/tags", url);
         }
     }
 
