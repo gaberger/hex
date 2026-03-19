@@ -291,49 +291,116 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
 }
 
 async fn discover_ollama() -> anyhow::Result<()> {
-    println!("{}", "── Discovering Ollama instances ──".cyan());
+    println!("{}", "── Discovering Inference Providers ──".cyan());
     println!();
 
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()?;
 
+    let mut found = 0;
+
+    // ── 1. Query SpacetimeDB via nexus (source of truth) ──────────
+    let client = NexusClient::from_env();
+    let mut registered_urls: Vec<String> = Vec::new();
+
+    if client.ensure_running().await.is_ok() {
+        println!("{}", "── Registered Providers (SpacetimeDB) ──".cyan());
+        match client.get("/api/inference/providers").await {
+            Ok(providers) => {
+                if let Some(arr) = providers.as_array() {
+                    for p in arr {
+                        let id = p.get("provider_id").and_then(|v| v.as_str()).unwrap_or("?");
+                        let ptype = p.get("provider_type").and_then(|v| v.as_str()).unwrap_or("?");
+                        let url = p.get("base_url").and_then(|v| v.as_str()).unwrap_or("?");
+
+                        // Verify registered providers are still reachable (live check, not cached healthy flag)
+                        let reachable = if ptype == "ollama" {
+                            http.get(format!("{}/api/tags", url.trim_end_matches('/')))
+                                .send().await
+                                .map(|r| r.status().is_success())
+                                .unwrap_or(false)
+                        } else {
+                            http.get(format!("{}/v1/models", url.trim_end_matches('/')))
+                                .send().await
+                                .map(|r| r.status().is_success())
+                                .unwrap_or(false)
+                        };
+
+                        let icon = if reachable { "●".green() } else { "○".red() };
+                        let status = if reachable { "online" } else { "offline" };
+                        println!("  {} {} ({}) — {} [{}]", icon, id, ptype, url, status);
+                        registered_urls.push(url.to_string());
+                        if reachable { found += 1; }
+                    }
+                    if arr.is_empty() {
+                        println!("  No providers registered yet.");
+                    }
+                }
+            }
+            Err(_) => {
+                println!("  Provider registry endpoint not available.");
+            }
+        }
+        println!();
+    }
+
+    // ── 2. LAN scan for unregistered Ollama instances ─────────────
+    println!("{}", "── LAN Scan (unregistered) ──".cyan());
+
     let candidates = [
         ("localhost", "http://127.0.0.1:11434"),
         ("bazzite", "http://bazzite:11434"),
         ("bazzite.local", "http://bazzite.local:11434"),
-        ("LAN .1", "http://192.168.1.1:11434"),
-        ("LAN .100", "http://192.168.1.100:11434"),
-        ("LAN .101", "http://192.168.1.101:11434"),
-        ("LAN .50", "http://192.168.1.50:11434"),
         ("Docker host", "http://host.docker.internal:11434"),
     ];
 
-    let mut found = 0;
+    let mut new_found = 0;
     for (label, url) in &candidates {
+        // Skip if already registered in SpacetimeDB
+        if registered_urls.iter().any(|r| r.contains(url.trim_start_matches("http://"))) {
+            continue;
+        }
+
         let test_url = format!("{}/api/tags", url);
         match http.get(&test_url).send().await {
             Ok(resp) if resp.status().is_success() => {
-                let models = resp
+                let model_info = resp
                     .json::<serde_json::Value>()
                     .await
                     .ok()
-                    .and_then(|v| v.get("models")?.as_array().map(|a| a.len()))
-                    .unwrap_or(0);
-                println!("  {} {} — {} ({} models)", "●".green(), label, url, models);
+                    .and_then(|v| {
+                        let models = v.get("models")?.as_array()?;
+                        let names: Vec<&str> = models.iter()
+                            .filter_map(|m| m.get("name")?.as_str())
+                            .collect();
+                        Some((models.len(), names.join(", ")))
+                    });
+
+                if let Some((count, names)) = model_info {
+                    println!("  {} {} — {} ({} models: {})", "●".green(), label, url, count, names);
+                    println!("    → Register with: hex inference add ollama {} --model <model>", url);
+                } else {
+                    println!("  {} {} — {} (reachable)", "●".green(), label, url);
+                }
+                new_found += 1;
                 found += 1;
             }
-            _ => {
-                println!("  {} {} — {}", "○".red(), label, url);
-            }
+            _ => {} // Don't show unreachable candidates — too noisy
         }
     }
 
+    if new_found == 0 {
+        println!("  No unregistered Ollama instances found on LAN.");
+    }
+
     println!();
-    if found > 0 {
-        println!("Register with: hex inference add ollama <url> --model <model>");
+    if found == 0 {
+        println!("No inference providers found.");
+        println!("  Start Ollama: ollama serve");
+        println!("  Or register:  hex inference add ollama http://<host>:11434 --model <model>");
     } else {
-        println!("No Ollama instances found. Start one with: ollama serve");
+        println!("{} {} provider(s) available.", "✓".green(), found);
     }
 
     Ok(())
