@@ -34,6 +34,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Start/stop/manage the hex-nexus daemon
+    #[command(alias = "daemon")]
     Nexus {
         #[command(subcommand)]
         action: NexusAction,
