@@ -241,6 +241,7 @@ impl ConversationLoop {
         state.push(Message::user(user_input));
 
         let mut tool_rounds = 0;
+        let mut retry_count: u32 = 0;
         let turn_start_tokens = state.total_estimated_tokens();
         let turn_start_time = std::time::Instant::now();
         let mut was_rate_limited = false;
@@ -581,6 +582,40 @@ impl ConversationLoop {
             feedback_count = output_score.feedback.len(),
             "Output quality analyzed"
         );
+
+        // Phase D: Self-correction — if score is below threshold, inject feedback and retry
+        if output_score.needs_retry() && retry_count < 2 {
+            let feedback_text = format!(
+                "[Auto-correction] Quality score {:.0}% is below threshold. Issues found:\n{}\n\nPlease fix the issues above and try again.",
+                output_score.overall * 100.0,
+                output_score.feedback.iter()
+                    .map(|f| format!("- {}", f))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+
+            tracing::info!(
+                score = output_score.overall,
+                retry = retry_count + 1,
+                "Self-correction triggered — injecting feedback"
+            );
+
+            let _ = event_tx.send(ConversationEvent::TextChunk(format!(
+                "\n[quality: {:.0}% — retrying with feedback]\n",
+                output_score.overall * 100.0,
+            )));
+
+            // Inject feedback as a user message and recurse
+            state.push(Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text { text: feedback_text }],
+            });
+
+            retry_count += 1;
+            // Re-enter the tool loop (the outer run_turn handles this via the main loop)
+            // We report a negative reward for this failed attempt, then the next
+            // turn will try again with the feedback context.
+        }
 
         // Report reward to RL engine with model selection + latency + quality signals
         if let Some(ref action) = rl_action {
