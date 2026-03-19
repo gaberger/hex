@@ -1,7 +1,7 @@
 /**
- * End-to-end tests for the hex-hub Rust binary.
+ * End-to-end tests for the hex-nexus Rust binary.
  *
- * Starts the actual hex-hub binary on a random port, then verifies:
+ * Starts the actual hex-nexus binary on a random port, then verifies:
  *   1. Project registration + deregistration lifecycle
  *   2. State push and query endpoints (health, tokens, swarm, graph)
  *   3. WebSocket connection, subscribe, and broadcast
@@ -11,7 +11,7 @@
  *   7. Version endpoint
  *   8. TTL cleanup (commands expire)
  *
- * These tests require the hex-hub binary at hex-hub/target/release/hex-hub.
+ * These tests require the hex-nexus binary at target/release/hex-nexus.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';

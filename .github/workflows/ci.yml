@@ -42,5 +42,5 @@ jobs:
       - run: cargo check --workspace
       - run: cargo clippy --workspace -- -D warnings
       - run: cargo test --workspace
-      - name: Verify hub binary
-        run: cargo build --release -p hex-hub && ./target/release/hex-hub --build-hash
+      - name: Verify nexus binary
+        run: cargo build --release -p hex-nexus && ./target/release/hex-nexus --build-hash
