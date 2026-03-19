@@ -8,6 +8,11 @@ use rust_embed::Embed;
 struct DashboardAssets;
 
 pub async fn serve_index() -> Response {
+    // Unified view: chat is the primary interface with collapsible dashboard panel
+    serve_asset("chat.html").await
+}
+
+pub async fn serve_legacy_dashboard() -> Response {
     serve_asset("index.html").await
 }
 

@@ -1,0 +1,86 @@
+/* ── Dashboard Panel (collapsible left side) ── */
+.dash-panel{position:fixed;left:0;top:48px;bottom:0;width:380px;background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;transform:translateX(-100%);transition:transform .25s ease;z-index:85;overflow:hidden}
+.dash-panel.open{transform:translateX(0)}
+body.has-dash-panel .chat-area{margin-left:380px;transition:margin-left .25s ease}
+/* File panel embedded inside dashboard — override fixed positioning */
+.dash-panel .file-panel{position:static;transform:none;width:100%;top:auto;bottom:auto;border-right:none;z-index:auto;display:none}
+.dash-panel .file-panel.open{display:flex;transform:none}
+.dash-files-section .fp-header{padding:6px 10px;border-bottom:1px solid var(--border);background:transparent}
+.dash-files-section .fp-body{max-height:300px}
+@media(max-width:900px){
+  .dash-panel{width:100%}
+  body.has-dash-panel .chat-area{margin-left:0}
+  body.has-dash-panel .file-panel{left:0}
+}
+
+/* Panel Header */
+.dash-header{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--card);flex-shrink:0}
+.dash-header-title{font-size:.82rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);font-weight:700;flex:1;display:flex;align-items:center;gap:8px}
+.dash-header-title::before{content:'';display:inline-block;width:3px;height:14px;border-radius:2px;background:var(--accent)}
+.dash-close-btn{width:28px;height:28px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:border-color .15s,color .15s}
+.dash-close-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* Toggle Button (in topbar) */
+.dash-toggle-btn{width:32px;height:32px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:border-color .15s,color .15s;margin-right:4px}
+.dash-toggle-btn:hover{border-color:var(--accent);color:var(--accent)}
+.dash-toggle-btn.active{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
+
+/* Panel Body */
+.dash-body{flex:1;overflow-y:auto;display:flex;flex-direction:column}
+.dash-body::-webkit-scrollbar{width:5px}
+.dash-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* Section */
+.dash-section{padding:14px 16px;border-bottom:1px solid var(--border)}
+.dash-section-title{font-size:.72rem;text-transform:uppercase;letter-spacing:1.2px;color:var(--text3);margin-bottom:10px;font-weight:700;display:flex;align-items:center;gap:6px}
+.dash-section-title svg{width:13px;height:13px;opacity:.6}
+
+/* Quick Stats Grid */
+.dash-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.dash-stat{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;text-align:center}
+.dash-stat-value{font-size:1.3rem;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.dash-stat-value.excellent{color:var(--green)}
+.dash-stat-value.good{color:var(--accent)}
+.dash-stat-value.warning{color:var(--yellow)}
+.dash-stat-value.critical{color:var(--red)}
+.dash-stat-label{font-size:.68rem;color:var(--text3);margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
+
+/* Event Log */
+.dash-events{display:flex;flex-direction:column;gap:0;max-height:280px;overflow-y:auto;font-family:var(--mono);font-size:.78rem}
+.dash-events::-webkit-scrollbar{width:4px}
+.dash-events::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.dash-event{display:flex;gap:8px;padding:5px 4px;border-bottom:1px solid rgba(255,255,255,.03);align-items:flex-start;transition:background .1s}
+.dash-event:hover{background:rgba(255,255,255,.02)}
+.dash-event-time{color:var(--text3);flex-shrink:0;min-width:52px;font-variant-numeric:tabular-nums;font-size:.72rem}
+.dash-event-icon{flex-shrink:0;width:14px;text-align:center}
+.dash-event-icon svg{width:12px;height:12px}
+.dash-event-icon.info{color:var(--accent)}
+.dash-event-icon.success{color:var(--green)}
+.dash-event-icon.warn{color:var(--yellow)}
+.dash-event-icon.error{color:var(--red)}
+.dash-event-msg{word-break:break-word;color:var(--text);font-size:.78rem;line-height:1.4}
+.dash-events-empty{color:var(--text3);font-size:.78rem;font-style:italic;padding:8px 0}
+
+/* Instance Table */
+.dash-instances{width:100%;font-size:.78rem}
+.dash-instances th{text-align:left;padding:6px 8px;font-size:.68rem;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);border-bottom:1px solid var(--border);font-weight:700}
+.dash-instances td{padding:5px 8px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}
+.dash-instances tr:hover td{background:rgba(255,255,255,.02)}
+.dash-inst-id{font-family:var(--mono);font-size:.72rem;color:var(--accent);font-weight:600}
+.dash-inst-badge{display:inline-block;padding:2px 8px;border-radius:8px;font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+.dash-inst-badge.running{background:rgba(0,212,170,.12);color:var(--accent)}
+.dash-inst-badge.idle{background:rgba(158,158,176,.08);color:var(--text3)}
+.dash-inst-badge.completed{background:rgba(63,185,80,.12);color:var(--green)}
+.dash-inst-time{font-variant-numeric:tabular-nums;color:var(--text3);font-size:.72rem}
+.dash-empty{color:var(--text3);font-size:.78rem;font-style:italic}
+
+/* Token Breakdown (per-file bars) */
+.dash-token-bars{display:flex;flex-direction:column;gap:6px}
+.dash-token-row{display:flex;align-items:center;gap:8px;font-size:.78rem}
+.dash-token-label{width:70px;font-weight:600;color:var(--text2);flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:.72rem}
+.dash-token-track{flex:1;height:14px;background:var(--bg2);border-radius:3px;overflow:hidden;border:1px solid rgba(255,255,255,.03)}
+.dash-token-fill{height:100%;border-radius:2px;transition:width .4s ease;min-width:2px}
+.dash-token-fill.input{background:var(--accent)}
+.dash-token-fill.output{background:var(--blue)}
+.dash-token-fill.cache{background:var(--green)}
+.dash-token-count{width:50px;text-align:right;color:var(--text3);font-variant-numeric:tabular-nums;font-size:.72rem}

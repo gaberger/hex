@@ -22,7 +22,7 @@ use http::{HeaderValue, Method};
 use serde_json::json;
 use crate::state::SharedState;
 use crate::middleware::auth::auth_layer;
-use crate::embed::{serve_index, serve_chat, serve_static};
+use crate::embed::{serve_index, serve_chat, serve_legacy_dashboard, serve_static};
 
 async fn get_version() -> Json<serde_json::Value> {
     Json(json!({
@@ -52,6 +52,7 @@ pub fn build_router(state: SharedState) -> Router {
         // Static + version
         .route("/", get(serve_index))
         .route("/chat", get(serve_chat))
+        .route("/dashboard", get(serve_legacy_dashboard))
         .route("/assets/{*path}", get(serve_static))
         .route("/api/version", get(get_version))
         // Project management
