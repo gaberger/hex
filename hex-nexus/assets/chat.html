@@ -14,6 +14,7 @@
 <link rel="stylesheet" href="/assets/css/chat-file-panel.css">
 <link rel="stylesheet" href="/assets/css/chat-hljs.css">
 <link rel="stylesheet" href="/assets/css/chat-health.css">
+<link rel="stylesheet" href="/assets/css/chat-dashboard.css">
 <!-- Markdown + syntax highlighting -->
 <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
@@ -23,8 +24,8 @@
 <!-- Top Bar -->
 <div class="topbar">
   <div class="topbar-left">
-    <button class="fp-toggle-btn" id="filePanelToggle" aria-label="Browse files" title="Browse project files">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+    <button class="dash-toggle-btn" id="dashToggle" aria-label="Toggle dashboard" title="Dashboard panel">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
     </button>
     <svg class="hex-logo" viewBox="0 0 64 64" fill="none">
       <defs><linearGradient id="lg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#00d4aa"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>
@@ -33,7 +34,7 @@
       <polygon points="32,27 37,30 37,34 32,37 27,34 27,30" fill="url(#lg)" opacity=".8"/>
     </svg>
     <h1><span>hex</span> chat</h1>
-    <span class="model-badge" id="modelBadge">claude-sonnet-4-20250514</span>
+    <span class="model-badge" id="modelBadge">detecting...</span>
   </div>
   <div style="display:flex;align-items:center;gap:14px">
     <div class="conn-status">
@@ -46,19 +47,82 @@
   </div>
 </div>
 
-<!-- File Browser Panel -->
-<div class="file-panel" id="filePanel">
-  <div class="fp-header">
-    <button class="fp-back-btn" id="fpBack" disabled aria-label="Back">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
-    </button>
-    <div class="fp-breadcrumb" id="fpBreadcrumb">/</div>
-    <button class="fp-close-btn" id="fpClose" aria-label="Close panel">
+<!-- Dashboard Panel (collapsible left) -->
+<div class="dash-panel" id="dashPanel">
+  <div class="dash-header">
+    <span class="dash-header-title">Dashboard</span>
+    <button class="dash-close-btn" id="dashClose" aria-label="Close dashboard">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
   </div>
-  <div class="fp-body" id="fpBody">
-    <div class="fp-loading">Select a project to browse files</div>
+  <div class="dash-body">
+    <div class="dash-section">
+      <div class="dash-section-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Codebase
+      </div>
+      <div class="dash-stats" id="dashStats">
+        <div class="dash-stat"><div class="dash-stat-value good" id="dashFiles">--</div><div class="dash-stat-label">Files</div></div>
+        <div class="dash-stat"><div class="dash-stat-value good" id="dashEdges">--</div><div class="dash-stat-label">Imports</div></div>
+        <div class="dash-stat"><div class="dash-stat-value good" id="dashExports">--</div><div class="dash-stat-label">Exports</div></div>
+      </div>
+    </div>
+
+    <div class="dash-section">
+      <div class="dash-section-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Event Log
+      </div>
+      <div class="dash-events" id="dashEvents">
+        <div class="dash-events-empty">Connecting...</div>
+      </div>
+    </div>
+
+    <div class="dash-section">
+      <div class="dash-section-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Instances
+      </div>
+      <div id="dashInstances"><div class="dash-empty">No active instances</div></div>
+    </div>
+
+    <div class="dash-section">
+      <div class="dash-section-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        Swarms
+      </div>
+      <div id="hexfloSwarms"><span class="hexflo-empty">No active swarms</span></div>
+    </div>
+
+    <div class="dash-section">
+      <div class="dash-section-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Agents
+      </div>
+      <div id="hexfloAgents" class="agent-list"><span class="hexflo-empty">No agents</span></div>
+    </div>
+
+    <!-- File Browser (embedded) -->
+    <div class="dash-section dash-files-section">
+      <div class="dash-section-title" id="filePanelToggle" style="cursor:pointer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        Files
+      </div>
+      <div class="file-panel" id="filePanel">
+        <div class="fp-header">
+          <button class="fp-back-btn" id="fpBack" disabled aria-label="Back">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+          </button>
+          <div class="fp-breadcrumb" id="fpBreadcrumb">/</div>
+          <button class="fp-close-btn" id="fpClose" aria-label="Close panel">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="fp-body" id="fpBody">
+          <div class="fp-loading">Click to browse project files</div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -134,15 +198,6 @@
     <div id="healthPanel"><span class="hexflo-empty">Loading...</span></div>
   </div>
 
-  <div class="sb-section">
-    <div class="sb-title">Swarms</div>
-    <div id="hexfloSwarms"><span class="hexflo-empty">No active swarms</span></div>
-  </div>
-
-  <div class="sb-section">
-    <div class="sb-title">Agents</div>
-    <div id="hexfloAgents" class="agent-list"><span class="hexflo-empty">No agents</span></div>
-  </div>
 </div>
 
 <!-- Component scripts (defer = execute in order after DOM parse) -->
@@ -159,6 +214,7 @@
 <script defer src="/assets/js/chat-hexflo.js"></script>
 <script defer src="/assets/js/chat-file-panel.js"></script>
 <script defer src="/assets/js/chat-health.js"></script>
+<script defer src="/assets/js/chat-dashboard.js"></script>
 <script defer src="/assets/js/chat-init.js"></script>
 </body>
 </html>

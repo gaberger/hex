@@ -61,6 +61,7 @@ function handleTokenUpdate(msg) {
   dom.tokOut.textContent = H.fmt(msg.output_tokens || 0);
   dom.tokTotalIn.textContent = H.fmt(state.totalInput);
   dom.tokTotalOut.textContent = H.fmt(state.totalOutput);
+  if (msg.model && H.onModelUpdate) { H.onModelUpdate(msg.model); }
 }
 
 function updateGauge(pct) {
