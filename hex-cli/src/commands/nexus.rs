@@ -341,6 +341,29 @@ async fn start(port: u16, token: Option<&str>) -> anyhow::Result<()> {
             pid,
             port
         );
+
+        // Auto-start hex-chat web dashboard
+        if let Some(chat_bin) = find_chat_binary() {
+            let nexus_url = format!("http://127.0.0.1:{}", port);
+            match std::process::Command::new(&chat_bin)
+                .args(["web", "--nexus", &nexus_url])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                Ok(child) => {
+                    println!(
+                        "{} hex-chat web started (PID {}) at {}",
+                        "\u{2b21}".green(),
+                        child.id(),
+                        "http://127.0.0.1:5556".blue().underline()
+                    );
+                }
+                Err(e) => {
+                    tracing::debug!("hex-chat web failed to start: {e}");
+                }
+            }
+        }
     } else {
         println!(
             "{} hex-nexus spawned (PID {}) — not yet responsive",
@@ -355,6 +378,26 @@ async fn start(port: u16, token: Option<&str>) -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+/// Find the hex-chat binary (same search strategy as nexus).
+fn find_chat_binary() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("HEX_CHAT_BIN") {
+        let path = PathBuf::from(p);
+        if path.is_file() { return Some(path); }
+    }
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    for dir in path_var.split(':') {
+        let candidate = PathBuf::from(dir).join("hex-chat");
+        if candidate.is_file() { return Some(candidate); }
+    }
+    for profile in &["release", "debug"] {
+        let candidate = PathBuf::from(format!("target/{}/hex-chat", profile));
+        if candidate.is_file() { return Some(candidate); }
+    }
+    let bin = PathBuf::from("./bin/hex-chat");
+    if bin.is_file() { return Some(bin); }
+    None
 }
 
 async fn stop() -> anyhow::Result<()> {
