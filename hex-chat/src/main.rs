@@ -58,6 +58,14 @@ enum Commands {
         /// Session ID to resume
         session_id: String,
     },
+    /// Export a session as markdown
+    Export {
+        /// Session ID to export
+        session_id: String,
+        /// Output format
+        #[arg(long, default_value = "markdown")]
+        format: String,
+    },
 }
 
 #[tokio::main]
@@ -88,6 +96,9 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Resuming session {session_id}...");
             tui::run(nexus_url, Some(session_id), project_id).await?;
         }
+        Commands::Export { session_id, format } => {
+            export::run(nexus_url, session_id, format).await?;
+        }
     }
 
     Ok(())
@@ -99,6 +110,66 @@ fn detect_project_id() -> String {
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
         .unwrap_or_else(|| "default".into())
+}
+
+mod export {
+    use crate::adapters::nexus_client::NexusClient;
+
+    pub async fn run(nexus_url: String, session_id: String, format: String) -> anyhow::Result<()> {
+        if format != "markdown" {
+            anyhow::bail!("Unsupported format '{format}'. Supported: markdown");
+        }
+
+        let client = NexusClient::new(nexus_url);
+
+        // Fetch session metadata for the title
+        let title = match client.fetch_session(&session_id).await {
+            Ok(session) => session.title,
+            Err(_) => session_id.clone(),
+        };
+
+        let messages = client.fetch_messages(&session_id, 1000).await?;
+
+        if messages.is_empty() {
+            eprintln!("No messages found for session '{session_id}'.");
+            return Ok(());
+        }
+
+        println!("# Session: {title}\n");
+
+        for msg in &messages {
+            let content: String = msg
+                .parts
+                .iter()
+                .filter_map(|p| p.get("content").and_then(|c| c.as_str()))
+                .collect::<Vec<_>>()
+                .join("");
+
+            if content.is_empty() {
+                continue;
+            }
+
+            match msg.role.as_str() {
+                "user" => {
+                    println!("**User:**\n{content}\n");
+                }
+                "assistant" => {
+                    let model_label = msg
+                        .model
+                        .as_deref()
+                        .unwrap_or("unknown");
+                    println!("**Assistant** ({model_label}):\n{content}\n");
+                }
+                other => {
+                    println!("**{other}:**\n{content}\n");
+                }
+            }
+
+            println!("---\n");
+        }
+
+        Ok(())
+    }
 }
 
 mod list {

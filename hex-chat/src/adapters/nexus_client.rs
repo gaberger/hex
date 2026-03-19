@@ -182,6 +182,16 @@ impl NexusClient {
         Ok(resp.json().await?)
     }
 
+    pub async fn fetch_session(&self, session_id: &str) -> anyhow::Result<Session> {
+        let url = format!("{}/api/sessions/{}", self.base_url, session_id);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            anyhow::bail!("Failed to fetch session {}: {}", session_id, resp.status())
+        }
+    }
+
     #[allow(dead_code)]
     pub async fn delete_session(&self, session_id: &str) -> anyhow::Result<()> {
         let url = format!("{}/api/sessions/{}", self.base_url, session_id);

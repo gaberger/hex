@@ -197,6 +197,18 @@ body { font-family:'SF Mono','Fira Code',monospace; background:#0d1117; color:#c
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
 
+  function forkSession(sid) {
+    fetch(NEXUS + "/api/sessions/" + sid + "/fork", { method: "POST", headers: {"Content-Type": "application/json"}, body: "{}" })
+      .then(function() { loadSessions(); })
+      .catch(function() {});
+  }
+
+  function compactSession(sid) {
+    fetch(NEXUS + "/api/sessions/" + sid + "/compact", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({summary: "Compacted session"}) })
+      .then(function() { loadSessions(); })
+      .catch(function() {});
+  }
+
   function loadSessions() {
     fetch(NEXUS + "/api/sessions?project_id=&limit=20")
       .then(function(r) { return r.json(); })
@@ -207,7 +219,31 @@ body { font-family:'SF Mono','Fira Code',monospace; background:#0d1117; color:#c
         sessions.forEach(function(s) {
           var d = document.createElement("div");
           d.className = "session" + (s.id === sessionId ? " active" : "");
-          d.textContent = (s.title || "Untitled").slice(0, 30) + " (" + s.messageCount + " msgs)";
+
+          var label = document.createElement("span");
+          label.textContent = (s.title || "Untitled").slice(0, 30) + " (" + s.messageCount + " msgs)";
+          d.appendChild(label);
+
+          var actions = document.createElement("span");
+          actions.style.cssText = "float:right;opacity:0;transition:opacity 0.15s;";
+
+          var forkBtn = document.createElement("button");
+          forkBtn.textContent = "fork";
+          forkBtn.style.cssText = "background:none;border:none;color:#58a6ff;cursor:pointer;font-size:10px;margin-left:4px;";
+          forkBtn.addEventListener("click", function(e) { e.stopPropagation(); forkSession(s.id); });
+
+          var compactBtn = document.createElement("button");
+          compactBtn.textContent = "compact";
+          compactBtn.style.cssText = "background:none;border:none;color:#f0883e;cursor:pointer;font-size:10px;margin-left:4px;";
+          compactBtn.addEventListener("click", function(e) { e.stopPropagation(); compactSession(s.id); });
+
+          actions.appendChild(forkBtn);
+          actions.appendChild(compactBtn);
+          d.appendChild(actions);
+
+          d.addEventListener("mouseenter", function() { actions.style.opacity = "1"; });
+          d.addEventListener("mouseleave", function() { actions.style.opacity = "0"; });
+
           d.addEventListener("click", function() {
             connect(s.id);
             clearChildren($("messages"));
