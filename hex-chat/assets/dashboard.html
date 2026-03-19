@@ -64,7 +64,9 @@ body { font-family:'SF Mono','Fira Code',monospace; background:#0d1117; color:#c
     </div>
   </div>
   <div class="panel">
-    <h2>Swarms</h2>
+    <h2>Inference</h2>
+    <div id="inferenceList"><div class="empty">No providers</div></div>
+    <h2 style="margin-top:16px">Swarms</h2>
     <div id="swarmList"><div class="empty">No active swarms</div></div>
     <h2 style="margin-top:16px">Tokens</h2>
     <div id="tokenInfo" style="font-size:12px;color:#8b949e">--</div>
@@ -73,6 +75,7 @@ body { font-family:'SF Mono','Fira Code',monospace; background:#0d1117; color:#c
 <div class="statusbar">
   <span>NEXUS: <span class="val" id="nexusStatus">--</span></span>
   <span>AGENTS: <span class="val" id="agentCount">0</span></span>
+  <span>INFERENCE: <span class="val" id="inferenceCount">0</span></span>
   <span>SESSION: <span class="val" id="sessionLabel">--</span></span>
   <span>TOKENS: <span class="val" id="tokenCount">0</span></span>
 </div>
@@ -237,12 +240,59 @@ body { font-family:'SF Mono','Fira Code',monospace; background:#0d1117; color:#c
       .catch(function() {});
   }
 
+  function loadInference() {
+    fetch(NEXUS + "/api/inference/endpoints")
+      .then(function(r) { return r.json(); })
+      .then(function(endpoints) {
+        var el = $("inferenceList");
+        clearChildren(el);
+        var list = Array.isArray(endpoints) ? endpoints : Object.values(endpoints);
+        $("inferenceCount").textContent = list.length;
+        if (!list.length) { el.appendChild(mkEmpty("No providers")); return; }
+        list.forEach(function(ep) {
+          var d = document.createElement("div");
+          d.className = "agent";
+          var dot = document.createElement("span");
+          dot.className = "status-dot " + (ep.healthy !== false ? "running" : "idle");
+          d.appendChild(dot);
+          var name = document.createElement("span");
+          name.className = "name";
+          name.textContent = ep.name || ep.id || "unknown";
+          d.appendChild(name);
+          var meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = (ep.provider || "") + " " + (ep.url || ep.base_url || "");
+          d.appendChild(meta);
+          el.appendChild(d);
+        });
+      })
+      .catch(function() {});
+  }
+
+  function loadRlStats() {
+    fetch(NEXUS + "/api/rl/stats")
+      .then(function(r) { return r.json(); })
+      .then(function(stats) {
+        if (stats && stats.total_experiences !== undefined) {
+          var info = $("tokenInfo");
+          var existing = info.textContent;
+          if (existing === "--") existing = "";
+          var rl = "RL: " + stats.total_experiences + " exp, e=" + (stats.epsilon || 0).toFixed(2);
+          info.textContent = existing ? existing + " | " + rl : rl;
+        }
+      })
+      .catch(function() {});
+  }
+
   // Boot
   connect();
   loadAgents();
   loadSwarms();
+  loadInference();
+  loadRlStats();
   setInterval(loadAgents, 5000);
   setInterval(loadSwarms, 10000);
+  setInterval(loadInference, 10000);
 })();
 </script>
 </body>
