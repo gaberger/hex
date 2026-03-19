@@ -100,9 +100,9 @@ pub async fn run(action: TestAction) -> anyhow::Result<()> {
             println!();
             run_arch_checks(&mut results).await;
             println!();
-            run_service_tests(&mut results).await;
+            let services_ok = run_service_tests(&mut results).await;
             println!();
-            run_integration_tests(&mut results).await;
+            run_integration_tests(&mut results, services_ok).await;
         }
     }
 
@@ -232,49 +232,50 @@ fn find_and_run_hex_analyze() -> Option<String> {
 
 // ── Service Tests ───────────────────────────────────
 
-async fn run_service_tests(r: &mut TestResults) {
+async fn run_service_tests(r: &mut TestResults) -> bool {
     println!("{}", "── Service Health ──".cyan());
 
     let client = NexusClient::from_env();
 
     // Check if nexus is running
-    let version = client.get("/api/version").await;
-    match version {
-        Ok(v) => {
-            r.check(
-                "hex-nexus responding",
-                v.get("version").is_some(),
-            );
+    match client.ensure_running().await {
+        Ok(_) => {
+            r.check("hex-nexus responding", true);
 
-            // Endpoint checks
-            let agents = client.get("/api/agents").await;
-            r.check("GET /api/agents responds", agents.is_ok());
+            // These endpoints may return empty arrays — that's fine
+            let agents_ok = client.get("/api/agents").await.is_ok();
+            r.check("GET /api/agents responds", agents_ok);
 
-            let swarms = client.get("/api/swarms").await;
-            r.check("GET /api/swarms responds", swarms.is_ok());
+            let swarms_ok = client.get("/api/swarms").await.is_ok();
+            r.check("GET /api/swarms responds", swarms_ok);
+
+            agents_ok && swarms_ok
         }
         Err(_) => {
             r.skip("hex-nexus not running — start with: hex daemon start");
-            r.skip("API endpoint tests");
-            return;
+            r.skip("GET /api/agents responds");
+            r.skip("GET /api/swarms responds");
+            false
         }
     }
 }
 
 // ── Integration Tests ───────────────────────────────
 
-async fn run_integration_tests(r: &mut TestResults) {
+async fn run_integration_tests(r: &mut TestResults, services_ok: bool) {
     println!("{}", "── Integration Tests ──".cyan());
 
-    let client = NexusClient::from_env();
-
-    // Check nexus is available
-    if client.get("/api/version").await.is_err() {
-        r.skip("Swarm lifecycle (nexus not running)");
-        r.skip("HexFlo memory (nexus not running)");
-        r.skip("Task lifecycle (nexus not running)");
+    if !services_ok {
+        r.skip("Swarm lifecycle (services not healthy)");
+        r.skip("Task creation (services not healthy)");
+        r.skip("Swarm status (services not healthy)");
+        r.skip("HexFlo memory store (services not healthy)");
+        r.skip("HexFlo memory retrieve (services not healthy)");
+        r.skip("HexFlo memory search (services not healthy)");
         return;
     }
+
+    let client = NexusClient::from_env();
 
     // Swarm lifecycle: create → status → complete
     let swarm_body = serde_json::json!({
