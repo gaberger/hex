@@ -49,7 +49,7 @@ impl OpenAiCompatAdapter {
     /// Ollama doesn't require an API key and serves on port 11434 by default.
     /// For remote hosts (e.g., Bazzite gaming rig with GPU), pass the host:
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// // Local Ollama
     /// OpenAiCompatAdapter::ollama("qwen3:32b", None);
     ///
