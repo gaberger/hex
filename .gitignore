@@ -52,3 +52,14 @@ examples/hex-worktrees/
 target/
 examples/rust-api/target/
 hex-hub/target/
+
+# Built binaries (use target/ or ~/.hex/bin/ instead)
+bin/hex-agent
+bin/hex-cli
+bin/hex-nexus
+
+# SpacetimeDB module lock files
+spacetime-modules/*/Cargo.lock
+
+# SpacetimeDB claude config
+spacetime-modules/.claude/
