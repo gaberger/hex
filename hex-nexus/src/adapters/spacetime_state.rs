@@ -42,7 +42,6 @@ impl Default for SpacetimeConfig {
 #[cfg(feature = "spacetimedb")]
 mod real {
     use super::*;
-    use std::sync::Arc;
     use tokio::sync::RwLock;
 
     /// SpacetimeDB-backed state adapter using the real SDK.
@@ -55,7 +54,7 @@ mod real {
     pub struct SpacetimeStateAdapter {
         config: SpacetimeConfig,
         event_tx: broadcast::Sender<StateEvent>,
-        connected: RwLock<bool>,
+        _connected: RwLock<bool>,
         /// HTTP client for calling hexflo-coordination reducers via SpacetimeDB HTTP API.
         http: reqwest::Client,
     }
@@ -66,7 +65,7 @@ mod real {
             Self {
                 config,
                 event_tx,
-                connected: RwLock::new(false),
+                _connected: RwLock::new(false),
                 http: reqwest::Client::new(),
             }
         }
@@ -75,7 +74,7 @@ mod real {
         /// POST {host}/database/call/{database}/{reducer}
         async fn call_reducer(&self, reducer: &str, args: serde_json::Value) -> Result<serde_json::Value, StateError> {
             let url = format!(
-                "{}/database/call/{}/{}",
+                "{}/v1/database/{}/call/{}",
                 self.config.host, self.config.database, reducer
             );
             let mut req = self.http.post(&url).json(&args);
@@ -90,14 +89,67 @@ mod real {
                 let body = resp.text().await.unwrap_or_default();
                 return Err(StateError::Storage(format!("Reducer {} failed ({}): {}", reducer, status, body)));
             }
-            resp.json().await.map_err(|e| StateError::Storage(e.to_string()))
+            // SpacetimeDB v1 returns empty body on success for most reducers
+            let text = resp.text().await.unwrap_or_default();
+            if text.is_empty() {
+                Ok(serde_json::Value::Null)
+            } else {
+                serde_json::from_str(&text).map_err(|e| StateError::Storage(e.to_string()))
+            }
+        }
+
+        /// Call a reducer on a specific SpacetimeDB database (for cross-module calls).
+        async fn call_reducer_on(&self, database: &str, reducer: &str, args: serde_json::Value) -> Result<serde_json::Value, StateError> {
+            let url = format!(
+                "{}/v1/database/{}/call/{}",
+                self.config.host, database, reducer
+            );
+            let mut req = self.http.post(&url).json(&args);
+            if let Some(ref token) = self.config.auth_token {
+                if !token.is_empty() {
+                    req = req.header("Authorization", format!("Bearer {}", token));
+                }
+            }
+            let resp = req.send().await.map_err(|e| StateError::Connection(e.to_string()))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(StateError::Storage(format!("Reducer {} failed ({}): {}", reducer, status, body)));
+            }
+            let text = resp.text().await.unwrap_or_default();
+            if text.is_empty() {
+                Ok(serde_json::Value::Null)
+            } else {
+                serde_json::from_str(&text).map_err(|e| StateError::Storage(e.to_string()))
+            }
+        }
+
+        /// Query a specific SpacetimeDB database via SQL (for cross-module queries).
+        async fn query_table_on(&self, database: &str, sql: &str) -> Result<Vec<serde_json::Value>, StateError> {
+            let url = format!(
+                "{}/v1/database/{}/sql",
+                self.config.host, database
+            );
+            let mut req = self.http.post(&url).body(sql.to_string());
+            if let Some(ref token) = self.config.auth_token {
+                if !token.is_empty() {
+                    req = req.header("Authorization", format!("Bearer {}", token));
+                }
+            }
+            let resp = req.send().await.map_err(|e| StateError::Connection(e.to_string()))?;
+            if !resp.status().is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(StateError::Storage(format!("SQL query failed: {}", body)));
+            }
+            let body: serde_json::Value = resp.json().await.map_err(|e| StateError::Storage(e.to_string()))?;
+            Ok(body.as_array().cloned().unwrap_or_default())
         }
 
         /// Query a SpacetimeDB table via the HTTP API.
         /// POST {host}/database/sql/{database} with SQL query
         async fn query_table(&self, sql: &str) -> Result<Vec<serde_json::Value>, StateError> {
             let url = format!(
-                "{}/database/sql/{}",
+                "{}/v1/database/{}/sql",
                 self.config.host, self.config.database
             );
             let mut req = self.http.post(&url).body(sql.to_string());
@@ -168,30 +220,79 @@ mod real {
         }
     }
 
+    /// Discretize an RlState into a compact string key for Q-table lookup.
+    /// Format: "{task_type}:sz{n}:ag{n}:tk{n}"
+    fn discretize_state(state: &RlState) -> String {
+        let sz = match state.codebase_size {
+            0 => 0,
+            1..=9_999 => 1,
+            10_000..=99_999 => 2,
+            _ => 3,
+        };
+        let ag = std::cmp::min(state.agent_count, 3);
+        let tk = match state.token_usage {
+            0 => 0,
+            1..=49_999 => 1,
+            50_000..=149_999 => 2,
+            _ => 3,
+        };
+        format!("{}:sz{}:ag{}:tk{}", state.task_type, sz, ag, tk)
+    }
+
     #[async_trait]
     impl IStatePort for SpacetimeStateAdapter {
         // ── RL ───────────────────────────────────────────
         // Maps to: rl-engine module reducers
 
-        async fn rl_select_action(&self, _state: &RlState) -> Result<String, StateError> {
-            // conn.reducers().select_action(state_key, epsilon)
-            Err(Self::not_connected())
+        async fn rl_select_action(&self, state: &RlState) -> Result<String, StateError> {
+            let state_key = discretize_state(state);
+            let resp = self.call_reducer("select_action", serde_json::json!([state_key])).await?;
+            // Reducer returns the selected action as a string
+            let action = resp.as_str()
+                .map(String::from)
+                .or_else(|| resp.get("action").and_then(|a| a.as_str()).map(String::from))
+                .unwrap_or_else(|| "explore".to_string());
+            Ok(action)
         }
 
         async fn rl_record_reward(
             &self,
-            _state_key: &str,
-            _action: &str,
-            _reward: f64,
-            _next_state_key: &str,
+            state_key: &str,
+            action: &str,
+            reward: f64,
+            next_state_key: &str,
         ) -> Result<(), StateError> {
-            // conn.reducers().record_reward(state_key, action, reward, next_state_key, outcome)
-            Err(Self::not_connected())
+            self.call_reducer("record_reward", serde_json::json!([
+                state_key, action, reward, next_state_key, false
+            ])).await?;
+            Ok(())
         }
 
         async fn rl_get_stats(&self) -> Result<RlStats, StateError> {
-            // Read from subscription cache: conn.db().rl_q_entry().iter().count() etc.
-            Err(Self::not_connected())
+            let q_rows = self.query_table(
+                "SELECT COUNT(*) AS cnt, COALESCE(AVG(q_value), 0.0) AS avg_q FROM rl_q_entry"
+            ).await?;
+            let exp_rows = self.query_table(
+                "SELECT COUNT(*) AS cnt FROM rl_experience"
+            ).await?;
+
+            let (q_table_size, avg_q_value) = q_rows.first().map(|r| {
+                let cnt = r.get("cnt").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let avg = r.get("avg_q").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                (cnt, avg)
+            }).unwrap_or((0, 0.0));
+
+            let total_experiences = exp_rows.first()
+                .and_then(|r| r.get("cnt"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize;
+
+            Ok(RlStats {
+                q_table_size,
+                avg_q_value,
+                epsilon: 0.1, // Default exploration rate; SpacetimeDB module manages this internally
+                total_experiences,
+            })
         }
 
         // ── Patterns ────────────────────────────────────
@@ -199,32 +300,69 @@ mod real {
 
         async fn pattern_store(
             &self,
-            _category: &str,
-            _content: &str,
-            _confidence: f64,
+            category: &str,
+            content: &str,
+            confidence: f64,
         ) -> Result<String, StateError> {
-            // conn.reducers().store_pattern(id, category, content, confidence, timestamp)
-            Err(Self::not_connected())
+            let resp = self.call_reducer("store_pattern", serde_json::json!([
+                category, content, confidence
+            ])).await?;
+            // Return the pattern ID from the response, or generate one
+            let id = resp.as_str()
+                .map(String::from)
+                .or_else(|| resp.get("id").and_then(|v| v.as_str()).map(String::from))
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            Ok(id)
         }
 
         async fn pattern_search(
             &self,
-            _category: &str,
-            _query: &str,
-            _limit: u32,
+            category: &str,
+            query: &str,
+            limit: u32,
         ) -> Result<Vec<PatternEntry>, StateError> {
-            // Read from cache: conn.db().rl_pattern().iter().filter(|p| p.category == category && p.content.contains(query))
-            Err(Self::not_connected())
+            // Escape single quotes to prevent SQL injection
+            let safe_category = category.replace('\'', "''");
+            let safe_query = query.replace('\'', "''");
+            let sql = format!(
+                "SELECT * FROM rl_pattern WHERE category = '{}' AND content LIKE '%{}%' \
+                 ORDER BY confidence DESC LIMIT {}",
+                safe_category, safe_query, limit
+            );
+            let rows = self.query_table(&sql).await?;
+            Ok(rows.into_iter().filter_map(|r| {
+                Some(PatternEntry {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    category: r.get("category")?.as_str()?.to_string(),
+                    content: r.get("content")?.as_str()?.to_string(),
+                    confidence: r.get("confidence")?.as_f64()?,
+                    access_count: r.get("access_count")?.as_u64()? as u32,
+                })
+            }).collect())
         }
 
-        async fn pattern_reinforce(&self, _id: &str, _delta: f64) -> Result<(), StateError> {
-            // conn.reducers().reinforce_pattern(id, delta) — needs a reducer added to rl-engine
-            Err(Self::not_connected())
+        async fn pattern_reinforce(&self, id: &str, delta: f64) -> Result<(), StateError> {
+            // SQL UPDATE since there is no dedicated reinforce reducer yet.
+            // Increment confidence by delta and bump access_count.
+            let safe_id = id.replace('\'', "''");
+            let sql = format!(
+                "UPDATE rl_pattern SET confidence = confidence + {}, \
+                 access_count = access_count + 1 WHERE id = '{}'",
+                delta, safe_id
+            );
+            self.query_table(&sql).await?;
+            Ok(())
         }
 
         async fn pattern_decay_all(&self) -> Result<u32, StateError> {
-            // conn.reducers().decay_patterns(factor, timestamp)
-            Err(Self::not_connected())
+            self.call_reducer("decay_patterns", serde_json::json!([])).await?;
+            // The reducer doesn't return a count; query how many patterns remain
+            let rows = self.query_table("SELECT COUNT(*) AS cnt FROM rl_pattern").await?;
+            let count = rows.first()
+                .and_then(|r| r.get("cnt"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            Ok(count)
         }
 
         // ── Agent Registry ──────────────────────────────
@@ -279,25 +417,48 @@ mod real {
         // ── Chat ────────────────────────────────────────
         // Maps to: chat-relay module
 
-        async fn chat_send(&self, _message: ChatMessage) -> Result<(), StateError> {
-            // conn.reducers().send_message(conversation_id, role, sender_name, content)
-            Err(Self::not_connected())
+        async fn chat_send(&self, message: ChatMessage) -> Result<(), StateError> {
+            const CHAT_DB: &str = "hex-chat-relay";
+            // Ensure conversation exists (ignore error if already exists)
+            let _ = self.call_reducer_on(CHAT_DB, "create_conversation", serde_json::json!({
+                "id": message.conversation_id,
+                "agent_id": message.sender_name,
+                "agent_name": message.sender_name
+            })).await;
+            // Send the message
+            self.call_reducer_on(CHAT_DB, "send_message", serde_json::json!({
+                "conversation_id": message.conversation_id,
+                "role": message.role,
+                "sender_name": message.sender_name,
+                "content": message.content
+            })).await?;
+            Ok(())
         }
 
         async fn chat_history(
             &self,
-            _conversation_id: &str,
-            _limit: u32,
+            conversation_id: &str,
+            limit: u32,
         ) -> Result<Vec<ChatMessage>, StateError> {
-            // conn.db().message().iter()
-            //     .filter(|m| m.conversation_id == conversation_id)
-            //     .map(|m| ChatMessage {
-            //         id: m.id, conversation_id: m.conversation_id,
-            //         role: m.role, sender_name: m.sender_name,
-            //         content: m.content, timestamp: m.timestamp,
-            //     })
-            //     .take(limit)
-            Err(Self::not_connected())
+            const CHAT_DB: &str = "hex-chat-relay";
+            let escaped = conversation_id.replace('\'', "''");
+            let sql = format!(
+                "SELECT * FROM message WHERE conversation_id = '{}' ORDER BY timestamp DESC LIMIT {}",
+                escaped, limit
+            );
+            let rows = self.query_table_on(CHAT_DB, &sql).await?;
+            let mut messages: Vec<ChatMessage> = rows.iter().filter_map(|row| {
+                Some(ChatMessage {
+                    id: row.get("id")?.as_str()?.to_string(),
+                    conversation_id: row.get("conversation_id")?.as_str()?.to_string(),
+                    role: row.get("role")?.as_str()?.to_string(),
+                    sender_name: row.get("sender_name")?.as_str()?.to_string(),
+                    content: row.get("content")?.as_str()?.to_string(),
+                    timestamp: row.get("timestamp")?.as_str().unwrap_or("").to_string(),
+                })
+            }).collect();
+            messages.reverse(); // chronological order
+            Ok(messages)
         }
 
         // ── Fleet ───────────────────────────────────────

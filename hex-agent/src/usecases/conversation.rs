@@ -610,7 +610,6 @@ impl ConversationLoop {
                 content: vec![ContentBlock::Text { text: feedback_text }],
             });
 
-            retry_count += 1;
             // Re-enter the tool loop (the outer run_turn handles this via the main loop)
             // We report a negative reward for this failed attempt, then the next
             // turn will try again with the feedback context.

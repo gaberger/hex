@@ -189,7 +189,7 @@ impl SpacetimeSecretClient {
         }
 
         let url = format!(
-            "{}/database/call/{}/{}",
+            "{}/v1/database/{}/call/{}",
             self.host, self.database, reducer_name
         );
 
@@ -262,7 +262,6 @@ impl SpacetimeSecretClient {
                 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
                 use aes_gcm::aead::Aead;
                 use base64::Engine;
-                use rand::RngCore;
 
                 let cipher = Aes256Gcm::new_from_slice(key).expect("invalid key length");
                 let mut nonce_bytes = [0u8; 12];
@@ -334,15 +333,8 @@ impl SpacetimeSecretClient {
         let http = self.http.clone();
 
         tokio::spawn(async move {
-            let url = format!("{}/database/call/{}/audit_log", host, database);
-            let args = serde_json::json!({
-                "id": id,
-                "action": action,
-                "agent_id": agent_id,
-                "secret_key": secret_key,
-                "hub_id": hub_id,
-                "timestamp": timestamp,
-            });
+            let url = format!("{}/v1/database/{}/call/audit_log", host, database);
+            let args = serde_json::json!([id, action, agent_id, secret_key, hub_id, timestamp]);
             let _ = http.post(&url).json(&args).send().await;
         });
     }
@@ -365,14 +357,10 @@ impl ISecretGrantPort for SpacetimeSecretClient {
         let now_str = now.to_rfc3339();
         let expires_str = expires.to_rfc3339();
 
-        self.call_reducer("grant_secret", serde_json::json!({
-            "agent_id": agent_id,
-            "secret_key": secret_key,
-            "purpose": purpose,
-            "hub_id": hub_id,
-            "granted_at": now_str,
-            "expires_at": expires_str,
-        }))
+        // Positional args: agent_id, secret_key, purpose, hub_id, granted_at, expires_at
+        self.call_reducer("grant_secret", serde_json::json!([
+            agent_id, secret_key, purpose, hub_id, now_str, expires_str
+        ]))
         .await?;
 
         let grant = SecretGrant {
@@ -422,12 +410,10 @@ impl ISecretGrantPort for SpacetimeSecretClient {
                 continue;
             }
 
-            match self.call_reducer("claim_grant", serde_json::json!({
-                "agent_id": agent_id,
-                "secret_key": &grant.secret_key,
-                "claim_hub_id": hub_id,
-                "claimed_at": &now_str,
-            })).await {
+            // Positional args: agent_id, secret_key, claim_hub_id, claimed_at
+            match self.call_reducer("claim_grant", serde_json::json!([
+                agent_id, &grant.secret_key, hub_id, &now_str
+            ])).await {
                 Ok(()) => {
                     let mut updated = grant.clone();
                     updated.claimed = true;
@@ -459,10 +445,7 @@ impl ISecretGrantPort for SpacetimeSecretClient {
     }
 
     async fn revoke(&self, agent_id: &str, secret_key: &str) -> Result<(), String> {
-        self.call_reducer("revoke_secret", serde_json::json!({
-            "agent_id": agent_id,
-            "secret_key": secret_key,
-        }))
+        self.call_reducer("revoke_secret", serde_json::json!([agent_id, secret_key]))
         .await?;
 
         let id = format!("{}:{}", agent_id, secret_key);
@@ -472,9 +455,7 @@ impl ISecretGrantPort for SpacetimeSecretClient {
     }
 
     async fn revoke_all(&self, agent_id: &str) -> Result<usize, String> {
-        self.call_reducer("revoke_all_for_agent", serde_json::json!({
-            "agent_id": agent_id,
-        }))
+        self.call_reducer("revoke_all_for_agent", serde_json::json!([agent_id]))
         .await?;
 
         let mut cache = self.cache.write().await;
@@ -500,7 +481,7 @@ impl ISecretGrantPort for SpacetimeSecretClient {
 
     async fn prune_expired(&self) -> Result<usize, String> {
         let now = chrono::Utc::now().to_rfc3339();
-        self.call_reducer("prune_expired", serde_json::json!({ "now": now })).await?;
+        self.call_reducer("prune_expired", serde_json::json!([now])).await?;
 
         let mut cache = self.cache.write().await;
         let before = cache.len();
@@ -517,13 +498,10 @@ impl ISecretGrantPort for SpacetimeSecretClient {
         let (encrypted, key_version) = self.encrypt_value(value);
         let now = chrono::Utc::now().to_rfc3339();
 
-        self.call_reducer("store_secret", serde_json::json!({
-            "key": key,
-            "encrypted_value": encrypted,
-            "key_version": key_version,
-            "stored_at": now,
-            "stored_by_hub": self.hub_id,
-        }))
+        // Positional args: key, encrypted_value, key_version, stored_at, stored_by_hub
+        self.call_reducer("store_secret", serde_json::json!([
+            key, encrypted, key_version, now, self.hub_id
+        ]))
         .await?;
 
         tracing::info!(key = %key, encrypted = key_version > 0, "Vault entry stored");
@@ -531,17 +509,99 @@ impl ISecretGrantPort for SpacetimeSecretClient {
     }
 
     async fn vault_get(&self, key: &str) -> Result<Option<String>, String> {
-        // For now, vault_get resolves from env vars and the caller's grant
-        // cache. A future version can query SpacetimeDB SQL endpoint.
-        // The grant system + vault_store ensures values are persisted.
-        match std::env::var(key) {
-            Ok(val) => Ok(Some(val)),
-            Err(_) => Ok(None),
+        // Query SpacetimeDB SQL endpoint for the secret value
+        let url = format!(
+            "{}/v1/database/{}/sql",
+            self.host, self.database
+        );
+        let query = format!("SELECT * FROM secret_vault WHERE key = '{}'", key.replace('\'', "''"));
+
+        let response = self.http
+            .post(&url)
+            .body(query)
+            .header("Content-Type", "text/plain")
+            .send()
+            .await
+            .map_err(|e| format!("SpacetimeDB SQL query failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("SQL query failed ({}): {}", status, body));
         }
+
+        let body = response.text().await.unwrap_or_default();
+
+        // Parse the response — SpacetimeDB returns JSON rows
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) {
+            // Look for encrypted_value in the first row
+            let rows = parsed.as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|table| table.get("rows"))
+                .and_then(|r| r.as_array());
+
+            if let Some(rows) = rows {
+                if let Some(row) = rows.first() {
+                    // Row is an array: [key, encrypted_value, key_version, stored_at, stored_by_hub]
+                    if let Some(encrypted) = row.as_array().and_then(|r| r.get(1)).and_then(|v| v.as_str()) {
+                        return self.decrypt_value(encrypted).map(Some);
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     async fn vault_delete(&self, key: &str) -> Result<(), String> {
-        self.call_reducer("delete_secret", serde_json::json!({ "key": key })).await
+        self.call_reducer("delete_secret", serde_json::json!([key])).await
+    }
+
+    async fn vault_list(&self) -> Result<HashMap<String, String>, String> {
+        let url = format!("{}/v1/database/{}/sql", self.host, self.database);
+        let query = "SELECT * FROM secret_vault";
+
+        let response = self.http
+            .post(&url)
+            .body(query)
+            .header("Content-Type", "text/plain")
+            .send()
+            .await
+            .map_err(|e| format!("SpacetimeDB SQL query failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("SQL query failed ({}): {}", status, body));
+        }
+
+        let body = response.text().await.unwrap_or_default();
+        let mut secrets = HashMap::new();
+
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) {
+            let rows = parsed.as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|table| table.get("rows"))
+                .and_then(|r| r.as_array());
+
+            if let Some(rows) = rows {
+                for row in rows {
+                    if let Some(cols) = row.as_array() {
+                        // [key, encrypted_value, key_version, stored_at, stored_by_hub]
+                        let key = cols.first().and_then(|v| v.as_str());
+                        let encrypted = cols.get(1).and_then(|v| v.as_str());
+                        if let (Some(key), Some(encrypted)) = (key, encrypted) {
+                            match self.decrypt_value(encrypted) {
+                                Ok(plaintext) => { secrets.insert(key.to_string(), plaintext); }
+                                Err(e) => { tracing::warn!(key = %key, error = %e, "Failed to decrypt vault entry"); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(secrets)
     }
 
     async fn health(&self) -> SecretBackendHealth {
