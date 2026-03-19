@@ -52,6 +52,9 @@ pub enum NexusAction {
         /// Auth token for dashboard/chat access
         #[arg(short, long)]
         token: Option<String>,
+        /// Don't auto-spawn default agent
+        #[arg(long)]
+        no_agent: bool,
     },
     /// Stop the hex-nexus daemon
     Stop,
@@ -176,14 +179,14 @@ fn try_start_spacetimedb(bin: &str, args: &[&str], stdout: &std::fs::File, stder
 
 pub async fn run(action: NexusAction) -> anyhow::Result<()> {
     match action {
-        NexusAction::Start { port, token } => start(port, token.as_deref()).await,
+        NexusAction::Start { port, token, no_agent } => start(port, token.as_deref(), no_agent).await,
         NexusAction::Stop => stop().await,
         NexusAction::Status => status().await,
         NexusAction::Logs { lines, follow } => logs(lines, follow).await,
     }
 }
 
-async fn start(port: u16, token: Option<&str>) -> anyhow::Result<()> {
+async fn start(port: u16, token: Option<&str>, no_agent: bool) -> anyhow::Result<()> {
     let pid_path = pid_file();
 
     // Check if already running
@@ -364,6 +367,34 @@ async fn start(port: u16, token: Option<&str>) -> anyhow::Result<()> {
                 }
             }
         }
+
+        // Auto-start default hex-agent (ADR-037)
+        if !no_agent {
+            if let Some(agent_bin) = find_agent_binary() {
+                let project_dir = std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| ".".to_string());
+                let nexus_url = format!("http://127.0.0.1:{}", port);
+                match std::process::Command::new(&agent_bin)
+                    .args(["--hub-url", &nexus_url, "--project-dir", &project_dir])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    Ok(child) => {
+                        println!(
+                            "{} hex-agent started (PID {}) \u{2014} project: {}",
+                            "\u{2b21}".green(),
+                            child.id(),
+                            project_dir
+                        );
+                    }
+                    Err(e) => {
+                        tracing::debug!("hex-agent failed to start: {e}");
+                    }
+                }
+            }
+        }
     } else {
         println!(
             "{} hex-nexus spawned (PID {}) — not yet responsive",
@@ -378,6 +409,26 @@ async fn start(port: u16, token: Option<&str>) -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+/// Find the hex-agent binary (same search strategy as nexus).
+fn find_agent_binary() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("HEX_AGENT_BIN") {
+        let path = PathBuf::from(p);
+        if path.is_file() { return Some(path); }
+    }
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    for dir in path_var.split(':') {
+        let candidate = PathBuf::from(dir).join("hex-agent");
+        if candidate.is_file() { return Some(candidate); }
+    }
+    for profile in &["release", "debug"] {
+        let candidate = PathBuf::from(format!("target/{}/hex-agent", profile));
+        if candidate.is_file() { return Some(candidate); }
+    }
+    let bin = PathBuf::from("./bin/hex-agent");
+    if bin.is_file() { return Some(bin); }
+    None
 }
 
 /// Find the hex-chat binary (same search strategy as nexus).
