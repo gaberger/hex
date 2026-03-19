@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="/assets/css/chat-sidebar.css">
 <link rel="stylesheet" href="/assets/css/chat-file-panel.css">
 <link rel="stylesheet" href="/assets/css/chat-hljs.css">
+<link rel="stylesheet" href="/assets/css/chat-health.css">
 <!-- Markdown + syntax highlighting -->
 <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
@@ -22,7 +23,9 @@
 <!-- Top Bar -->
 <div class="topbar">
   <div class="topbar-left">
-    <button class="fp-toggle-btn" id="filePanelToggle" aria-label="Browse files" title="Browse project files">&#128193;</button>
+    <button class="fp-toggle-btn" id="filePanelToggle" aria-label="Browse files" title="Browse project files">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+    </button>
     <svg class="hex-logo" viewBox="0 0 64 64" fill="none">
       <defs><linearGradient id="lg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#00d4aa"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>
       <polygon points="32,4 58,19 58,45 32,60 6,45 6,19" fill="url(#lg)" opacity=".12" stroke="url(#lg)" stroke-width="2.5" stroke-linejoin="round"/>
@@ -37,16 +40,22 @@
       <span class="conn-dot disconnected" id="connDot"></span>
       <span id="connLabel">disconnected</span>
     </div>
-    <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">&#9776;</button>
+    <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
   </div>
 </div>
 
 <!-- File Browser Panel -->
 <div class="file-panel" id="filePanel">
   <div class="fp-header">
-    <button class="fp-back-btn" id="fpBack" disabled aria-label="Back">&#8592;</button>
+    <button class="fp-back-btn" id="fpBack" disabled aria-label="Back">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+    </button>
     <div class="fp-breadcrumb" id="fpBreadcrumb">/</div>
-    <button class="fp-close-btn" id="fpClose" aria-label="Close panel">&#10005;</button>
+    <button class="fp-close-btn" id="fpClose" aria-label="Close panel">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
   </div>
   <div class="fp-body" id="fpBody">
     <div class="fp-loading">Select a project to browse files</div>
@@ -121,6 +130,11 @@
   </div>
 
   <div class="sb-section">
+    <div class="sb-title">Architecture Health</div>
+    <div id="healthPanel"><span class="hexflo-empty">Loading...</span></div>
+  </div>
+
+  <div class="sb-section">
     <div class="sb-title">Swarms</div>
     <div id="hexfloSwarms"><span class="hexflo-empty">No active swarms</span></div>
   </div>
@@ -144,6 +158,7 @@
 <script defer src="/assets/js/chat-sidebar.js"></script>
 <script defer src="/assets/js/chat-hexflo.js"></script>
 <script defer src="/assets/js/chat-file-panel.js"></script>
+<script defer src="/assets/js/chat-health.js"></script>
 <script defer src="/assets/js/chat-init.js"></script>
 </body>
 </html>
