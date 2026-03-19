@@ -47,8 +47,14 @@ if (H.initSessionManager) { H.initSessionManager(H.state); }
     .then(function(data) {
       var eps = data.endpoints || [];
       if (eps.length > 0) {
-        var model = eps[0].model || "unknown";
+        var rawModel = eps[0].model || "unknown";
         var provider = eps[0].provider || "";
+        // model field may be a JSON array string like '["qwen3.5:27b","qwen3.5:9b"]'
+        var model = rawModel;
+        try {
+          var parsed = JSON.parse(rawModel);
+          if (Array.isArray(parsed)) { model = parsed[0] || "unknown"; }
+        } catch(e) {}
         badge.textContent = model + (provider ? " (" + provider + ")" : "");
       } else if (H.state && H.state.anthropicKey) {
         badge.textContent = "claude-sonnet-4-20250514";
