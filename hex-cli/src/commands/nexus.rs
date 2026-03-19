@@ -375,8 +375,43 @@ async fn start(port: u16, token: Option<&str>, no_agent: bool) -> anyhow::Result
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|_| ".".to_string());
                 let nexus_url = format!("http://127.0.0.1:{}", port);
-                match std::process::Command::new(&agent_bin)
-                    .args(["--hub-url", &nexus_url, "--project-dir", &project_dir])
+
+                // Query nexus for registered inference endpoints to pass to agent
+                let mut cmd = std::process::Command::new(&agent_bin);
+                cmd.args(["--hub-url", &nexus_url, "--project-dir", &project_dir]);
+
+                // Forward inference provider config as env vars
+                let agent_nexus = crate::nexus_client::NexusClient::new(nexus_url.clone());
+                if let Ok(resp) = agent_nexus.get("/api/inference/endpoints").await {
+                    let resp: serde_json::Value = resp;
+                    if let Some(eps) = resp.get("endpoints").and_then(|v| v.as_array()) {
+                        for ep in eps {
+                            let provider = ep["provider"].as_str().unwrap_or("");
+                            let url = ep["url"].as_str().unwrap_or("");
+                            let model = ep["model"].as_str().unwrap_or("");
+                            match provider {
+                                "ollama" => {
+                                    cmd.env("HEX_OLLAMA_HOST", url);
+                                    cmd.env("HEX_OLLAMA_MODEL", model);
+                                    cmd.args(["--model", model]);
+                                }
+                                "vllm" | "openai_compat" | "openai-compatible" => {
+                                    cmd.env("HEX_INFERENCE_URL", format!("{}/v1", url));
+                                    cmd.env("HEX_INFERENCE_MODEL", model);
+                                    cmd.args(["--model", model]);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                // Also forward ANTHROPIC_API_KEY if available
+                if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+                    cmd.env("ANTHROPIC_API_KEY", key);
+                }
+
+                match cmd
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .spawn()
