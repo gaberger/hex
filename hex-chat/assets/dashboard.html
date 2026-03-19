@@ -114,14 +114,24 @@ body { font-family:'SF Mono','Fira Code',monospace; background:#0d1117; color:#c
           sessionId = env.data.persistentSessionId || env.data.sessionId;
           $("sessionLabel").textContent = sessionId ? sessionId.slice(0,8) + "..." : "--";
           loadSessions();
+        } else if (env.event === "agent_status") {
+          var status = env.data.status || "idle";
+          if (status === "thinking") {
+            showThinking(true);
+          } else {
+            showThinking(false);
+          }
+          loadAgents();
         } else if (env.event === "chat_message") {
+          showThinking(false);
           addMsg("assistant", env.data.content);
+          loadSessions();
         } else if (env.event === "token_update") {
           totalIn += env.data.input_tokens || 0;
           totalOut += env.data.output_tokens || 0;
           $("tokenCount").textContent = fmtTokens(totalIn + totalOut);
           $("tokenInfo").textContent = "In: " + fmtTokens(totalIn) + "  Out: " + fmtTokens(totalOut);
-        } else if (env.event === "agent_connected" || env.event === "agent_status") {
+        } else if (env.event === "agent_connected") {
           loadAgents();
         }
       } catch(err) {}
@@ -147,6 +157,39 @@ body { font-family:'SF Mono','Fira Code',monospace; background:#0d1117; color:#c
     ws.send(JSON.stringify({ type: "chat_message", content: text }));
     addMsg("user", text);
     input.value = "";
+    showThinking(true);
+  }
+
+  var thinkingEl = null;
+  function showThinking(on) {
+    $("sendBtn").disabled = on;
+    $("chatInput").disabled = on;
+    if (on) {
+      if (!thinkingEl) {
+        thinkingEl = document.createElement("div");
+        thinkingEl.className = "msg";
+        thinkingEl.style.color = "#8b949e";
+        thinkingEl.style.fontStyle = "italic";
+        thinkingEl.textContent = "Thinking...";
+        // Add animated dots
+        var dots = 0;
+        thinkingEl._interval = setInterval(function() {
+          dots = (dots + 1) % 4;
+          thinkingEl.textContent = "Thinking" + ".".repeat(dots);
+        }, 400);
+        $("messages").appendChild(thinkingEl);
+        $("messages").scrollTop = $("messages").scrollHeight;
+      }
+    } else {
+      if (thinkingEl) {
+        clearInterval(thinkingEl._interval);
+        thinkingEl.remove();
+        thinkingEl = null;
+      }
+      $("sendBtn").disabled = false;
+      $("chatInput").disabled = false;
+      $("chatInput").focus();
+    }
   }
 
   $("sendBtn").addEventListener("click", send);
