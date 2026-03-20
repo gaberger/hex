@@ -227,9 +227,14 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         );
     }
 
-    // Background task: cleanup stale coordination sessions
-    let cleanup_state = state.clone();
-    cleanup::CleanupService::spawn(cleanup_state);
+    // ADR-039 Phase 10: Stale session cleanup is now handled by SpacetimeDB
+    // scheduled reducer (hexflo-cleanup module, 30s interval). The CleanupService
+    // background task is no longer needed when SpacetimeDB is the state backend.
+    // Kept as fallback for SQLite-only deployments.
+    if state.state_port.is_none() {
+        let cleanup_state = state.clone();
+        cleanup::CleanupService::spawn(cleanup_state);
+    }
 
     // Background task: evict completed commands older than 1 hour (every 60s)
     let evict_state = state.clone();

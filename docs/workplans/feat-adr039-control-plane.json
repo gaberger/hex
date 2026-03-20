@@ -456,9 +456,9 @@
       "status": "done"
     },
     "M10": {
-      "phase": "Phase 10 — Future",
-      "criteria": "hex-nexus slimmed to ~500-line binary: only filesystem adapter (analyze, summarize, scaffold) + agent process management. All state in SpacetimeDB. All inference via queue.",
-      "status": "planned"
+      "phase": "Phase 10 Complete",
+      "criteria": "Deprecation middleware on state-read GET routes with X-Deprecated/X-Migration-Target headers. OpenAPI 3.1 endpoint at /api/openapi.json for stateless routes only. Route registration grouped into stateless-compute/deprecated-state/websocket sections. CleanupService conditionally disabled when SpacetimeDB backend is active.",
+      "status": "done"
     }
   },
 

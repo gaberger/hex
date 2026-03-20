@@ -14,6 +14,7 @@ pub mod secrets;
 #[cfg(feature = "sqlite-session")]
 pub mod sessions;
 pub mod swarms;
+pub mod openapi;
 pub mod ws;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
@@ -24,6 +25,7 @@ use serde_json::json;
 use utoipa::OpenApi;
 use crate::state::SharedState;
 use crate::middleware::auth::auth_layer;
+use crate::middleware::deprecation::deprecation_layer;
 use crate::embed::{serve_index, serve_chat, serve_legacy_dashboard, serve_static};
 
 // ── OpenAPI Spec (ADR-039) ─────────────────────────────
@@ -118,6 +120,15 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/{project_id}/swarm", get(query::get_swarm))
         .route("/api/{project_id}/graph", get(query::get_graph))
         .route("/api/{project_id}/project", get(query::get_project))
+        // ═══════════════════════════════════════════════════════════
+        // META — API metadata
+        // ═══════════════════════════════════════════════════════════
+        .route("/api/openapi.json", get(openapi::openapi_spec))
+
+        // ═══════════════════════════════════════════════════════════
+        // STATELESS COMPUTE — these routes stay (filesystem + process mgmt)
+        // ═══════════════════════════════════════════════════════════
+
         // Architecture analysis (ADR-034) — on-demand, native tree-sitter
         .route("/api/analyze", post(analysis::analyze_path)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
@@ -132,7 +143,13 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/{project_id}/commands", get(commands::list_commands))
         // Decisions (browser → hub → WS)
         .route("/api/{project_id}/decisions/{decision_id}", post(decisions::handle_decision))
-        // Swarm persistence
+        // ═══════════════════════════════════════════════════════════
+        // DEPRECATED STATE ROUTES — migrate to SpacetimeDB subscriptions
+        // These routes add X-Deprecated headers via deprecation_layer.
+        // Will be gated behind `--legacy` flag in a future release.
+        // ═══════════════════════════════════════════════════════════
+
+        // Swarm persistence (WRITE routes kept — they call SpacetimeDB reducers)
         .route("/api/swarms", post(swarms::create_swarm)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/swarms/active", get(swarms::list_active_swarms))
@@ -219,6 +236,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/inference/endpoints", get(secrets::list_inference))
         .route("/api/inference/endpoints/{id}", delete(secrets::remove_inference))
         .route("/api/inference/health", post(secrets::check_inference_health))
+        // ═══════════════════════════════════════════════════════════
+        // HEXFLO COORDINATION — write routes stay, reads via SpacetimeDB
+        // ═══════════════════════════════════════════════════════════
+
         // HexFlo coordination (ADR-027)
         .route("/api/hexflo/memory", post(hexflo::memory_store)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
@@ -253,6 +274,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/ws", get(ws::ws_handler))
         .route("/ws/chat", get(chat::chat_ws_handler))
         // Middleware
+        .layer(axum::middleware::from_fn(deprecation_layer))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth_layer))
         .layer(cors)
         .with_state(state)
