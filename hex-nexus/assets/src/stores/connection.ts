@@ -73,29 +73,31 @@ function connectModule(opts: ConnectOpts) {
 
   function attempt() {
     try {
+      // SpacetimeDB SDK v2.0: DbConnection.builder() returns DbConnectionBuilder
+      // Chain: .withUri() → .withDatabaseName() → .withToken() → .onConnect() → .build()
       const b = opts.builder.builder()
         .withUri(SPACETIMEDB_URI)
-        .withModuleName(opts.module)
-        .onConnect((connection: any, token: string) => {
+        .withDatabaseName(opts.module)
+        .onConnect((ctx: any, _identity: any, token: string) => {
           localStorage.setItem(tokenKey, token);
-          opts.setConn(connection);
+          opts.setConn(ctx);
           opts.setConnected(true);
           retryCount = 0;
 
           // Subscribe to all tables for this module
           if (opts.subscribeQueries.length > 0) {
-            connection
+            ctx
               .subscriptionBuilder()
               .onApplied(() => {
-                // Initial data loaded
+                console.log(`[stdb:${opts.module}] subscription applied`);
               })
-              .onError((_ctx: any, err: Error) => {
+              .onError((_errCtx: any, err: Error) => {
                 console.error(`[stdb:${opts.module}] subscription error:`, err);
               })
               .subscribe(opts.subscribeQueries);
           }
         })
-        .onDisconnect(() => {
+        .onDisconnect((_ctx: any, _error?: Error) => {
           opts.setConnected(false);
           opts.setConn(null);
           scheduleRetry();
