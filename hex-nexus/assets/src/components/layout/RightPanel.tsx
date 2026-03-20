@@ -82,14 +82,22 @@ const RightPanel: Component = () => {
       {/* SPACETIMEDB CONNECTIONS */}
       <div class="border-b border-gray-800 px-3 py-3">
         <h3 class="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-300">
-          SpacetimeDB
+          SpacetimeDB <span class="font-normal text-gray-300">ws://localhost:3000</span>
         </h3>
         <div class="space-y-1 text-xs">
-          <ConnStatus label="hexflo" connected={hexfloConnected()} />
-          <ConnStatus label="agents" connected={agentRegistryConnected()} />
-          <ConnStatus label="inference" connected={inferenceConnected()} />
-          <ConnStatus label="fleet" connected={fleetConnected()} />
+          <ConnStatus label="hexflo" connected={hexfloConnected()} module="hexflo-coordination" />
+          <ConnStatus label="agents" connected={agentRegistryConnected()} module="agent-registry" />
+          <ConnStatus label="inference" connected={inferenceConnected()} module="inference-gateway" />
+          <ConnStatus label="fleet" connected={fleetConnected()} module="fleet-state" />
         </div>
+        <Show when={!hexfloConnected() && !agentRegistryConnected()}>
+          <p class="mt-2 text-[10px] text-gray-300 leading-relaxed">
+            Modules not deployed. Publish with:
+            <code class="block mt-1 rounded bg-gray-800 px-2 py-1 font-mono text-cyan-300">
+              spacetime publish hexflo-coordination
+            </code>
+          </p>
+        </Show>
       </div>
 
       {/* INFERENCE */}
@@ -173,12 +181,23 @@ const RightPanel: Component = () => {
 };
 
 /** Per-module SpacetimeDB connection indicator. */
-const ConnStatus: Component<{ label: string; connected: boolean }> = (props) => (
-  <div class="flex items-center gap-2">
-    <span class={`h-1.5 w-1.5 rounded-full ${props.connected ? 'bg-green-500' : 'bg-red-500'}`} />
-    <span class="font-mono text-gray-300">{props.label}</span>
-    <span class="ml-auto text-[10px] text-gray-300">
-      {props.connected ? 'connected' : 'offline'}
+const ConnStatus: Component<{ label: string; connected: boolean; module?: string }> = (props) => (
+  <div class="flex items-center gap-2" title={props.module ? `Module: ${props.module}` : undefined}>
+    <span
+      class="h-1.5 w-1.5 rounded-full"
+      classList={{
+        "bg-green-500": props.connected,
+        "bg-yellow-500 animate-pulse": !props.connected,
+      }}
+    />
+    <span class="font-mono text-gray-100">{props.label}</span>
+    <span class="ml-auto text-[10px]"
+      classList={{
+        "text-green-400": props.connected,
+        "text-yellow-400": !props.connected,
+      }}
+    >
+      {props.connected ? 'connected' : 'not deployed'}
     </span>
   </div>
 );

@@ -239,33 +239,38 @@ const EmptyState: Component<{
   setPath: (v: string) => void;
   registering: () => boolean;
 }> = (props) => (
-  <div class="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+  <div class="flex flex-1 flex-col items-center justify-center gap-6 text-center">
     <div class="rounded-full border border-gray-800 bg-gray-900 p-4">
       <svg class="h-8 w-8 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
       </svg>
     </div>
     <div>
-      <p class="text-sm font-medium text-gray-100">No projects registered</p>
-      <p class="mt-1 text-xs text-gray-300">
-        Register a project directory to start managing agents
+      <p class="text-lg font-semibold text-gray-100">Register a project to get started</p>
+      <p class="mt-2 text-sm text-gray-300 max-w-md mx-auto">
+        Enter the absolute path to your project directory below. hex-nexus will analyze its architecture, track agents, and coordinate swarms for it.
       </p>
     </div>
-    <form class="flex w-full max-w-md gap-2" onSubmit={props.onRegister}>
-      <input
-        type="text"
-        placeholder="/path/to/project"
-        value={props.path()}
-        onInput={(e) => props.setPath(e.currentTarget.value)}
-        class="flex-1 rounded border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-300 placeholder-gray-600 focus:border-cyan-600 focus:outline-none focus:ring-1 focus:ring-cyan-600"
-      />
-      <button
-        type="submit"
-        disabled={props.registering()}
-        class="rounded bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50"
-      >
-        Register
-      </button>
+    <form class="w-full max-w-lg" onSubmit={props.onRegister}>
+      <div class="flex gap-2">
+        <input
+          type="text"
+          placeholder="e.g. /Users/gary/projects/my-app"
+          value={props.path()}
+          onInput={(e) => props.setPath(e.currentTarget.value)}
+          class="flex-1 rounded border border-gray-700 bg-gray-800 px-3 py-2.5 text-sm text-gray-100 placeholder-gray-300 focus:border-cyan-600 focus:outline-none focus:ring-1 focus:ring-cyan-600"
+        />
+        <button
+          type="submit"
+          disabled={props.registering() || !props.path().trim()}
+          class="rounded bg-cyan-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50"
+        >
+          {props.registering() ? "Registering..." : "Register"}
+        </button>
+      </div>
+      <p class="mt-2 text-[11px] text-gray-300">
+        Or from CLI: <code class="rounded bg-gray-800 px-1.5 py-0.5 font-mono text-cyan-300">hex project register /path/to/project</code>
+      </p>
     </form>
   </div>
 );
