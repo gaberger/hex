@@ -80,12 +80,60 @@ export function activeTab(leaf: PaneLeaf): PaneTab {
 // Signals
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Persistence (localStorage — survives page refresh)
+// ---------------------------------------------------------------------------
+
+const STORAGE_KEY = "hex_pane_layout";
+
+function saveLayout(tree: PaneNode, activeId: string) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ tree, activeId, savedAt: Date.now() }));
+  } catch { /* quota exceeded — ignore */ }
+}
+
+function loadLayout(): { tree: PaneNode; activeId: string } | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    // Validate basic structure
+    if (data?.tree?.kind && data?.activeId) {
+      // Bump ID counter past any existing IDs to avoid collisions
+      const maxId = findMaxId(data.tree);
+      if (maxId >= _nextId) _nextId = maxId + 1;
+      return { tree: data.tree, activeId: data.activeId };
+    }
+  } catch { /* corrupted — ignore */ }
+  return null;
+}
+
+function findMaxId(node: PaneNode): number {
+  const num = parseInt(node.id.replace("pane-", ""), 10) || 0;
+  if (node.kind === "leaf") {
+    const tabMax = Math.max(0, ...node.tabs.map(t => parseInt(t.id.replace("pane-", ""), 10) || 0));
+    return Math.max(num, tabMax);
+  }
+  return Math.max(num, findMaxId(node.children[0]), findMaxId(node.children[1]));
+}
+
+// ---------------------------------------------------------------------------
+// Signals (restored from localStorage if available)
+// ---------------------------------------------------------------------------
+
+const saved = loadLayout();
 const defaultTab = makeTab("project-overview", "Projects");
 const defaultRoot = makeLeaf(defaultTab);
 
-const [paneTree, setPaneTree] = createSignal<PaneNode>(defaultRoot);
-const [activePaneId, setActivePaneId] = createSignal<string>(defaultRoot.id);
+const [paneTree, _setPaneTree] = createSignal<PaneNode>(saved?.tree ?? defaultRoot);
+const [activePaneId, setActivePaneId] = createSignal<string>(saved?.activeId ?? defaultRoot.id);
 const [maximizedPaneId, setMaximizedPaneId] = createSignal<string | null>(null);
+
+/** Wrapped setter that auto-persists. */
+function setPaneTree(tree: PaneNode) {
+  _setPaneTree(tree);
+  saveLayout(tree, activePaneId());
+}
 
 export { paneTree, activePaneId, maximizedPaneId };
 
@@ -384,5 +432,14 @@ export function focusPrevPane() {
   const idx = leaves.indexOf(activePaneId());
   if (idx >= 0 && leaves.length > 1) {
     setActivePaneId(leaves[(idx - 1 + leaves.length) % leaves.length]);
+  }
+}
+
+/** Focus pane by 1-based index (Ctrl+1 through Ctrl+9). */
+export function focusPaneByIndex(index: number) {
+  const leaves = allLeafIds(paneTree());
+  const i = index - 1; // 1-based to 0-based
+  if (i >= 0 && i < leaves.length) {
+    setActivePaneId(leaves[i]);
   }
 }

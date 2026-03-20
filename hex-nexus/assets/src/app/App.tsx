@@ -6,6 +6,7 @@ import {
   toggleMaximize,
   focusNextPane,
   focusPrevPane,
+  focusPaneByIndex,
   replaceActivePane,
 } from '../stores/panes';
 import Sidebar from '../components/layout/Sidebar';
@@ -73,6 +74,11 @@ const App: Component = () => {
     if (ctrl && e.key === '[') {
       e.preventDefault();
       focusPrevPane();
+    }
+    // Ctrl+[1-9] — focus pane by number
+    if (ctrl && e.key >= '1' && e.key <= '9') {
+      e.preventDefault();
+      focusPaneByIndex(parseInt(e.key, 10));
     }
     // Ctrl+N — spawn agent dialog
     if (ctrl && e.key === 'n') {
