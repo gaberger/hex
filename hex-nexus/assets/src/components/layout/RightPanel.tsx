@@ -81,9 +81,25 @@ const RightPanel: Component = () => {
 
       {/* SPACETIMEDB CONNECTIONS */}
       <div class="border-b border-gray-800 px-3 py-3">
-        <h3 class="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-300">
-          SpacetimeDB <span class="font-normal text-gray-300">ws://localhost:3000</span>
-        </h3>
+        <div class="mb-2 flex items-center justify-between">
+          <h3 class="text-[11px] font-semibold uppercase tracking-wider text-gray-300">
+            SpacetimeDB
+          </h3>
+          <button
+            class="rounded border border-gray-700 px-2 py-0.5 text-[9px] text-gray-300 hover:border-cyan-600 hover:text-cyan-300 transition-colors"
+            onClick={() => {
+              // Clear all stale SpacetimeDB tokens and force reconnect
+              Object.keys(localStorage)
+                .filter(k => k.startsWith('stdb_token_'))
+                .forEach(k => localStorage.removeItem(k));
+              location.reload();
+            }}
+            title="Clear cached tokens and reconnect"
+          >
+            Reconnect
+          </button>
+        </div>
+        <p class="mb-2 font-mono text-[10px] text-gray-300">ws://localhost:3000</p>
         <div class="space-y-1 text-xs">
           <ConnStatus label="hexflo" connected={hexfloConnected()} module="hexflo-coordination" />
           <ConnStatus label="agents" connected={agentRegistryConnected()} module="agent-registry" />
@@ -92,7 +108,7 @@ const RightPanel: Component = () => {
         </div>
         <Show when={!hexfloConnected() && !agentRegistryConnected()}>
           <p class="mt-2 text-[10px] text-gray-300 leading-relaxed">
-            Modules not deployed. Publish with:
+            Not connected. Click <strong>Reconnect</strong> to clear cached tokens, or publish modules:
             <code class="block mt-1 rounded bg-gray-800 px-2 py-1 font-mono text-cyan-300">
               spacetime publish hexflo-coordination
             </code>
