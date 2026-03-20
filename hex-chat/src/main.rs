@@ -819,18 +819,42 @@ mod tui {
 }
 
 mod web {
-    use axum::{extract::State as AxState, response::Html, routing::get, Router};
+    use axum::{
+        body::Body,
+        extract::State as AxState,
+        response::{Html, IntoResponse, Response},
+        routing::get,
+        Router,
+    };
+    use axum::http::{header, StatusCode};
 
     #[derive(Clone)]
     struct WebState { nexus_url: String }
 
+    const EMBEDDED_FALLBACK: &str = r#"<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>hex-chat</title><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'SF Mono','Fira Code',monospace;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;height:100vh}
+.container{text-align:center}
+h1{font-size:24px;color:#58a6ff;margin-bottom:16px}
+h1 span{color:#00d4aa}
+p{color:#8b949e;font-size:14px}
+a{color:#58a6ff;text-decoration:none}
+a:hover{text-decoration:underline}
+</style></head>
+<body><div class="container"><h1><span>hex</span> chat</h1><p>UI not built. Run:</p><pre style="margin-top:12px;background:#161b22;padding:12px;border-radius:6px;text-align:left">cd hex-chat/ui && npm install && npm run build</pre><p style="margin-top:16px">Or for dev: <code>cd hex-chat/ui && npm run dev</code></p></div></body></html>"#;
+
     pub async fn run(port: u16, nexus_url: String) -> anyhow::Result<()> {
         let state = WebState { nexus_url };
-        let app = Router::new().route("/", get(index)).with_state(state);
+        let app = Router::new()
+            .route("/", get(index))
+            .route("/assets/{*path}", get(serve_assets))
+            .with_state(state);
         let addr = format!("127.0.0.1:{port}");
         let url = format!("http://{addr}");
 
-        // Kill any existing process on this port before binding
         match tokio::net::TcpListener::bind(&addr).await {
             Ok(listener) => {
                 eprintln!("\n  \x1b[1;36mhex-chat\x1b[0m web dashboard running at \x1b[1;4m{url}\x1b[0m\n");
@@ -838,7 +862,6 @@ mod web {
             }
             Err(_) => {
                 eprintln!("  \x1b[33mPort {port} in use — killing existing process...\x1b[0m");
-                // Find and kill the process using this port
                 let output = tokio::process::Command::new("lsof")
                     .args(["-ti", &format!(":{port}")])
                     .output()
@@ -861,13 +884,42 @@ mod web {
         Ok(())
     }
 
-    async fn index(AxState(state): AxState<WebState>) -> Html<String> {
-        let nexus = &state.nexus_url;
-        let ws_url = nexus.replace("http://", "ws://").replace("https://", "wss://");
-        // Inject nexus URLs into the dashboard template
-        let html = include_str!("../assets/dashboard.html")
-            .replace("__NEXUS_URL__", nexus)
-            .replace("__WS_URL__", &ws_url);
-        Html(html)
+    async fn index(AxState(state): AxState<WebState>) -> impl IntoResponse {
+        let dist_path = "hex-chat/ui/dist/index.html";
+        match tokio::fs::read_to_string(dist_path).await {
+            Ok(html) => {
+                let nexus = &state.nexus_url;
+                let ws_url = nexus.replace("http://", "ws://").replace("https://", "wss://");
+                let html = html.replace("__NEXUS_URL__", nexus).replace("__WS_URL__", &ws_url);
+                Html(html).into_response()
+            }
+            Err(_) => {
+                Html(EMBEDDED_FALLBACK).into_response()
+            }
+        }
+    }
+
+    async fn serve_assets(
+        AxState(_state): AxState<WebState>,
+        axum::extract::Path(path): axum::extract::Path<String>,
+    ) -> Response<Body> {
+        let file_path = format!("hex-chat/ui/dist/assets/{}", path);
+        match tokio::fs::read(&file_path).await {
+            Ok(content) => {
+                let mime = match file_path.rsplit('.').next() {
+                    Some("js") => "application/javascript",
+                    Some("css") => "text/css",
+                    Some("html") => "text/html",
+                    Some("map") => "application/json",
+                    _ => "application/octet-stream",
+                };
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, mime)
+                    .body(Body::from(content))
+                    .unwrap_or_else(|_| (StatusCode::NOT_FOUND, Body::empty()).into_response())
+            }
+            Err(_) => (StatusCode::NOT_FOUND, Body::empty()).into_response(),
+        }
     }
 }

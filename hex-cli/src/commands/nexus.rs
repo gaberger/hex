@@ -85,6 +85,10 @@ fn port_file() -> PathBuf {
     hex_dir().join("nexus.port")
 }
 
+fn token_file() -> PathBuf {
+    hex_dir().join("nexus.token")
+}
+
 fn log_file() -> PathBuf {
     hex_dir().join("nexus.log")
 }
@@ -271,6 +275,12 @@ async fn start(port: u16, token: Option<&str>, no_agent: bool) -> anyhow::Result
     let pid = child.id();
     tokio::fs::write(&pid_path, pid.to_string()).await?;
     tokio::fs::write(port_file(), port.to_string()).await?;
+    if let Some(t) = token {
+        tokio::fs::write(token_file(), t).await?;
+    } else {
+        // Remove stale token file if no token is set
+        let _ = tokio::fs::remove_file(token_file()).await;
+    }
 
     // Wait for the daemon to become responsive
     let url = format!("http://127.0.0.1:{}/api/version", port);

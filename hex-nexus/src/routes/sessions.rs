@@ -104,6 +104,7 @@ pub async fn create_session(
     }
 }
 
+// DEPRECATED(ADR-039): Browser will use SpacetimeDB direct subscription
 /// GET /api/sessions
 pub async fn list_sessions(
     State(state): State<SharedState>,

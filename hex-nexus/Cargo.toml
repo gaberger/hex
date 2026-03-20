@@ -44,6 +44,10 @@ tree-sitter = "0.24"
 tree-sitter-typescript = "0.23"
 tree-sitter-go = "0.23"
 tree-sitter-rust = "0.23"
+# OpenAPI spec generation (ADR-039)
+utoipa = { version = "5", features = ["axum_extras"] }
+# NOTE: utoipa-swagger-ui v8 requires axum 0.7 — incompatible with our axum 0.8.
+# Swagger UI is served as a static redirect to the hosted version instead.
 # Shared domain types and port traits (hex-core is the gravity center)
 hex-core = { path = "../hex-core" }
 # SQLite for offline-first session persistence (ADR-036)

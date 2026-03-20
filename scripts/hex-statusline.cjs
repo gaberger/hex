@@ -89,9 +89,38 @@ const cfAlive = safe(() =>
 
 const settingsLocal = safe(() =>
   JSON.parse(fs.readFileSync(path.join(cwd, '.claude', 'settings.local.json'), 'utf8')), null);
-const rufloConfigured = !!(settingsLocal && settingsLocal.mcpServers && settingsLocal.mcpServers.ruflo);
+const hexMcpConfigured = !!(settingsLocal && settingsLocal.mcpServers && settingsLocal.mcpServers.hex);
 
-const swarmShow = swarmUp || cfAlive || rufloConfigured;
+// HexFlo live status — fetch from hex-nexus REST API if daemon is running
+let hexfloSwarms = 0, hexfloTasks = 0, hexfloTasksDone = 0, hexfloAgents = 0;
+if (hubRunning) {
+  const http = require('http');
+  const fetchSync = (urlPath) => safe(() => {
+    const result = execFileSync('node', ['-e', `
+      const http = require('http');
+      const req = http.get('http://127.0.0.1:5555${urlPath}', {timeout: 1500}, (res) => {
+        let d = '';
+        res.on('data', c => d += c);
+        res.on('end', () => process.stdout.write(d));
+      });
+      req.on('error', () => process.stdout.write('{}'));
+      req.on('timeout', () => { req.destroy(); process.stdout.write('{}'); });
+    `], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 2000 });
+    return JSON.parse(result || '{}');
+  }, {});
+
+  const swarmsData = fetchSync('/api/swarms/active');
+  if (Array.isArray(swarmsData)) {
+    hexfloSwarms = swarmsData.length;
+    for (const s of swarmsData) {
+      const tasks = Array.isArray(s.tasks) ? s.tasks : [];
+      hexfloTasks += tasks.length;
+      hexfloTasksDone += tasks.filter(t => t.status === 'completed').length;
+    }
+  }
+}
+
+const swarmShow = swarmUp || cfAlive || hexMcpConfigured || hexfloSwarms > 0;
 const dbShow = agentdbUp || cfAlive;
 
 const score = safe(() =>
@@ -119,17 +148,22 @@ parts.push(`${P.project}${projectName}`);
 const mark = isDirty ? `${P.dirty}✱` : `${P.clean}✓`;
 parts.push(`${P.branch}⎇ ${branch} ${mark}`);
 
-// Swarm — README format: ●swarm 2⚡ [3/5]
-if (activeAgents > 0) {
-  const agentCounts = `${activeAgents}⚡` + (idleAgents > 0 ? ` ${idleAgents}💤` : '');
-  const tasks = totalTasks ? ` [${completedTasks}/${totalTasks}]` : '';
-  parts.push(`${P.active}●swarm ${agentCounts}${P.branch}${tasks}`);
+// HexFlo swarm — ●hexflo 2⚡ [3/5]
+const agt = activeAgents || hexfloAgents;
+const tTotal = totalTasks || hexfloTasks;
+const tDone = completedTasks || hexfloTasksDone;
+const nSwarms = hexfloSwarms;
+
+if (agt > 0 || nSwarms > 0) {
+  const agentCounts = agt > 0 ? ` ${agt}⚡` : '';
+  const swarmCount = nSwarms > 1 ? ` ${nSwarms}▣` : '';
+  const tasks = tTotal ? ` [${tDone}/${tTotal}]` : '';
+  parts.push(`${P.active}●hexflo${swarmCount}${agentCounts}${P.branch}${tasks}`);
 } else if (swarmShow) {
   const idleTag = idleAgents > 0 ? ` ${idleAgents}💤` : '';
-  const tasks = totalTasks ? ` [${completedTasks}/${totalTasks}]` : '';
-  parts.push(`${P.idle}●swarm${idleTag}${P.dim}${tasks}`);
+  parts.push(`${P.idle}●hexflo${idleTag}`);
 } else {
-  parts.push(`${P.dim}○swarm`);
+  parts.push(`${P.dim}○hexflo`);
 }
 
 // Services — README format: ●db │ ◉localhost:3456 │ ◉mcp

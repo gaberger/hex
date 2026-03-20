@@ -142,7 +142,7 @@ mod real {
                 return Err(StateError::Storage(format!("SQL query failed: {}", body)));
             }
             let body: serde_json::Value = resp.json().await.map_err(|e| StateError::Storage(e.to_string()))?;
-            Ok(body.as_array().cloned().unwrap_or_default())
+            Ok(Self::parse_stdb_response(body))
         }
 
         /// Query a SpacetimeDB table via the HTTP API.
@@ -164,8 +164,52 @@ mod real {
                 return Err(StateError::Storage(format!("SQL query failed: {}", body)));
             }
             let body: serde_json::Value = resp.json().await.map_err(|e| StateError::Storage(e.to_string()))?;
-            // SpacetimeDB returns rows in a nested structure
-            Ok(body.as_array().cloned().unwrap_or_default())
+            Ok(Self::parse_stdb_response(body))
+        }
+
+        /// Parse a SpacetimeDB SQL HTTP response into a Vec of named JSON objects.
+        ///
+        /// SpacetimeDB returns: `[{"schema": {"elements": [{"name": {"some": "col"}, ...}]}, "rows": [["v1", "v2"], ...]}]`
+        /// We convert each row array into a `{"col1": "v1", "col2": "v2"}` object using the schema.
+        fn parse_stdb_response(body: serde_json::Value) -> Vec<serde_json::Value> {
+            let tables = match body.as_array() {
+                Some(arr) => arr,
+                None => return Vec::new(),
+            };
+
+            let mut results = Vec::new();
+            for table in tables {
+                // Extract column names from schema.elements[].name.some
+                let col_names: Vec<String> = table
+                    .get("schema")
+                    .and_then(|s| s.get("elements"))
+                    .and_then(|e| e.as_array())
+                    .map(|elements| {
+                        elements.iter().filter_map(|el| {
+                            el.get("name")
+                                .and_then(|n| n.get("some"))
+                                .and_then(|s| s.as_str())
+                                .map(String::from)
+                        }).collect()
+                    })
+                    .unwrap_or_default();
+
+                // Convert each row array into a named JSON object
+                if let Some(rows) = table.get("rows").and_then(|r| r.as_array()) {
+                    for row in rows {
+                        if let Some(vals) = row.as_array() {
+                            let mut obj = serde_json::Map::new();
+                            for (i, val) in vals.iter().enumerate() {
+                                if let Some(name) = col_names.get(i) {
+                                    obj.insert(name.clone(), val.clone());
+                                }
+                            }
+                            results.push(serde_json::Value::Object(obj));
+                        }
+                    }
+                }
+            }
+            results
         }
 
         /// Connect to SpacetimeDB and subscribe to all tables.
@@ -196,23 +240,36 @@ mod real {
             tracing::info!(
                 host = %self.config.host,
                 db = %self.config.database,
-                "Connecting to SpacetimeDB"
+                "Connecting to SpacetimeDB via HTTP API"
             );
 
-            // TODO: Replace with real DbConnection::builder() once generated bindings exist.
-            // The generated code from `spacetime generate --lang rust` will provide:
-            // - DbConnection type with .db() and .reducers()
-            // - Table accessor types (agent, rl_q_entry, etc.)
-            // - Reducer call methods (register_agent, select_action, etc.)
-            //
-            // For now, we verify the feature compiles and return a connection error
-            // indicating that codegen hasn't been run yet.
-            Err(StateError::Connection(
-                "SpacetimeDB SDK linked but codegen bindings not yet generated. \
-                 Run: spacetime generate --lang rust --out-dir hex-hub/src/spacetime_bindings/ \
-                 --project-path spacetime-modules/<module>"
-                    .into(),
-            ))
+            // Verify connectivity by running a lightweight SQL query.
+            // We use the HTTP API approach (call_reducer + query_table) rather than
+            // the WebSocket SDK, so no DbConnection::builder() is needed.
+            match self.query_table("SELECT COUNT(*) AS cnt FROM swarm").await {
+                Ok(_) => {
+                    let mut connected = self._connected.write().await;
+                    *connected = true;
+                    tracing::info!(
+                        host = %self.config.host,
+                        db = %self.config.database,
+                        "SpacetimeDB HTTP API connection verified"
+                    );
+                    Ok(())
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        host = %self.config.host,
+                        db = %self.config.database,
+                        error = %e,
+                        "SpacetimeDB HTTP API connection check failed — \
+                         HexFlo methods will still attempt HTTP calls on demand"
+                    );
+                    // Don't fail hard — the HTTP methods will retry on each call.
+                    // Return Ok so the adapter is still usable.
+                    Ok(())
+                }
+            }
         }
 
         fn not_connected() -> StateError {
@@ -321,24 +378,31 @@ mod real {
             query: &str,
             limit: u32,
         ) -> Result<Vec<PatternEntry>, StateError> {
-            // Escape single quotes to prevent SQL injection
+            // SpacetimeDB does not support LIKE — fetch by category and filter client-side.
             let safe_category = category.replace('\'', "''");
-            let safe_query = query.replace('\'', "''");
             let sql = format!(
-                "SELECT * FROM rl_pattern WHERE category = '{}' AND content LIKE '%{}%' \
-                 ORDER BY confidence DESC LIMIT {}",
-                safe_category, safe_query, limit
+                "SELECT * FROM rl_pattern WHERE category = '{}'",
+                safe_category
             );
             let rows = self.query_table(&sql).await?;
-            Ok(rows.into_iter().filter_map(|r| {
+            let q_lower = query.to_lowercase();
+            let mut results: Vec<PatternEntry> = rows.into_iter().filter_map(|r| {
+                let content = r.get("content")?.as_str()?.to_string();
+                if !content.to_lowercase().contains(&q_lower) {
+                    return None;
+                }
                 Some(PatternEntry {
                     id: r.get("id")?.as_str()?.to_string(),
                     category: r.get("category")?.as_str()?.to_string(),
-                    content: r.get("content")?.as_str()?.to_string(),
+                    content,
                     confidence: r.get("confidence")?.as_f64()?,
                     access_count: r.get("access_count")?.as_u64()? as u32,
                 })
-            }).collect())
+            }).collect();
+            // Sort by confidence descending, then truncate to limit
+            results.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+            results.truncate(limit as usize);
+            Ok(results)
         }
 
         async fn pattern_reinforce(&self, id: &str, delta: f64) -> Result<(), StateError> {
@@ -709,21 +773,23 @@ mod real {
         }
 
         async fn hexflo_memory_search(&self, query: &str) -> Result<Vec<(String, String)>, StateError> {
-            let sql = format!(
-                "SELECT key, value FROM hexflo_memory WHERE key LIKE '%{}%' OR value LIKE '%{}%'",
-                query, query
-            );
-            let rows = self.query_table(&sql).await?;
+            // SpacetimeDB does not support LIKE — fetch all rows and filter client-side.
+            let rows = self.query_table("SELECT key, value FROM hexflo_memory").await?;
+            let q_lower = query.to_lowercase();
             Ok(rows.into_iter().filter_map(|r| {
                 let k = r.get("key")?.as_str()?.to_string();
                 let v = r.get("value")?.as_str()?.to_string();
-                Some((k, v))
+                if k.to_lowercase().contains(&q_lower) || v.to_lowercase().contains(&q_lower) {
+                    Some((k, v))
+                } else {
+                    None
+                }
             }).collect())
         }
 
-        async fn hexflo_memory_delete(&self, _key: &str) -> Result<(), StateError> {
-            // DELETE /api/hexflo/memory/:key
-            Err(Self::not_connected())
+        async fn hexflo_memory_delete(&self, key: &str) -> Result<(), StateError> {
+            self.call_reducer("memory_delete", serde_json::json!([key])).await?;
+            Ok(())
         }
 
         // ── Subscriptions ───────────────────────────────

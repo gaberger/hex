@@ -22,6 +22,12 @@ pub struct CreateSwarmRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CreateTaskRequest {
+    pub title: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateTaskRequest {
     pub status: Option<String>,
     pub result: Option<String>,
@@ -88,6 +94,7 @@ pub async fn create_swarm(
     Ok((StatusCode::CREATED, Json(val)))
 }
 
+// DEPRECATED(ADR-039): Browser will use SpacetimeDB direct subscription
 /// GET /api/swarms/active — list all non-completed swarms
 pub async fn list_active_swarms(
     State(state): State<SharedState>,
@@ -98,6 +105,7 @@ pub async fn list_active_swarms(
     Ok(Json(serde_json::to_value(swarms).unwrap()))
 }
 
+// DEPRECATED(ADR-039): Browser will use SpacetimeDB direct subscription
 /// GET /api/swarms/:id — get swarm with tasks and agents
 pub async fn get_swarm(
     State(state): State<SharedState>,
@@ -126,6 +134,40 @@ pub async fn get_swarm(
     });
 
     Ok(Json(val))
+}
+
+/// POST /api/swarms/:id/tasks — create a new task in a swarm
+pub async fn create_task(
+    State(state): State<SharedState>,
+    Path(swarm_id): Path<String>,
+    Json(body): Json<CreateTaskRequest>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+    let id = uuid::Uuid::new_v4().to_string();
+
+    port.swarm_task_create(&id, &swarm_id, &body.title)
+        .await
+        .map_err(|e| state_err(e))?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let val = json!({
+        "id": id,
+        "swarmId": swarm_id,
+        "title": body.title,
+        "status": "pending",
+        "agentId": "",
+        "result": "",
+        "createdAt": now,
+        "completedAt": "",
+    });
+
+    let _ = state.ws_tx.send(crate::state::WsEnvelope {
+        topic: "hexflo".into(),
+        event: "task_created".into(),
+        data: val.clone(),
+    });
+
+    Ok((StatusCode::CREATED, Json(val)))
 }
 
 /// PATCH /api/swarms/:id/tasks/:taskId — update task status/result
@@ -178,6 +220,17 @@ pub async fn update_task(
     });
 
     Ok(Json(json!({ "ok": true })))
+}
+
+/// PATCH /api/swarms/tasks/:taskId — convenience route (no swarm ID needed)
+/// Used by MCP tools where task ID is globally unique.
+pub async fn update_task_by_id(
+    state: State<SharedState>,
+    Path(task_id): Path<String>,
+    body: Json<UpdateTaskRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // Delegate to update_task with a dummy swarm ID (handler ignores it)
+    update_task(state, Path(("_".to_string(), task_id)), body).await
 }
 
 /// GET /api/work-items/incomplete — all in-flight work across all swarms

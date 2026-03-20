@@ -5,6 +5,7 @@ use axum::{
 use http::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
+use utoipa::ToSchema;
 
 use crate::orchestration::agent_manager::SpawnConfig;
 use crate::state::SharedState;
@@ -25,19 +26,35 @@ fn no_executor() -> (StatusCode, Json<serde_json::Value>) {
 
 // ── Agent Routes ───────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SpawnRequest {
+    /// Absolute path to the project directory.
     pub project_dir: String,
+    /// LLM model override (e.g. "claude-sonnet-4-20250514").
     pub model: Option<String>,
+    /// Agent name / type (e.g. "hex-coder", "planner", "tester").
     pub agent_name: Option<String>,
+    /// Override hub URL for the spawned agent.
     pub hub_url: Option<String>,
+    /// Override hub auth token for the spawned agent.
     pub hub_token: Option<String>,
     /// Secret key names to inject into the agent process (ADR-026).
     pub secret_keys: Option<Vec<String>>,
 }
 
 /// POST /api/agents/spawn — spawn a new hex-agent process
+#[utoipa::path(
+    post,
+    path = "/api/agents/spawn",
+    request_body = SpawnRequest,
+    responses(
+        (status = 200, description = "Agent spawned successfully"),
+        (status = 500, description = "Spawn failed"),
+        (status = 503, description = "Agent manager not initialized"),
+    ),
+    tag = "agents"
+)]
 pub async fn spawn_agent(
     State(state): State<SharedState>,
     Json(body): Json<SpawnRequest>,
@@ -79,7 +96,19 @@ pub async fn spawn_agent(
     }
 }
 
+// DEPRECATED(ADR-039): Browser will use SpacetimeDB direct subscription
 /// GET /api/agents — list all tracked agents
+///
+/// **Deprecated**: This route will be replaced by SpacetimeDB direct subscription (ADR-039).
+#[utoipa::path(
+    get,
+    path = "/api/agents",
+    responses(
+        (status = 200, description = "List of all tracked agents"),
+        (status = 503, description = "Agent manager not initialized"),
+    ),
+    tag = "agents"
+)]
 pub async fn list_agents(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
@@ -178,13 +207,25 @@ pub async fn health_check(
 
 // ── Workplan Routes ────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecuteWorkplanRequest {
+    /// Path to the workplan JSON file.
     pub workplan_path: String,
 }
 
 /// POST /api/workplan/execute — start workplan execution
+#[utoipa::path(
+    post,
+    path = "/api/workplan/execute",
+    request_body = ExecuteWorkplanRequest,
+    responses(
+        (status = 200, description = "Workplan execution started"),
+        (status = 500, description = "Execution failed"),
+        (status = 503, description = "Workplan executor not initialized"),
+    ),
+    tag = "workplan"
+)]
 pub async fn execute_workplan(
     State(state): State<SharedState>,
     Json(body): Json<ExecuteWorkplanRequest>,

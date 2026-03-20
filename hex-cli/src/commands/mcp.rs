@@ -73,7 +73,7 @@ fn build_tool_list() -> Value {
             },
             // ── Swarm coordination ──
             {
-                "name": "hex_swarm_init",
+                "name": "hex_hexflo_swarm_init",
                 "description": "Initialize a new swarm for coordinated multi-agent work",
                 "inputSchema": {
                     "type": "object",
@@ -86,7 +86,7 @@ fn build_tool_list() -> Value {
                 }
             },
             {
-                "name": "hex_swarm_status",
+                "name": "hex_hexflo_swarm_status",
                 "description": "Show active swarms and their status",
                 "inputSchema": {
                     "type": "object",
@@ -96,7 +96,7 @@ fn build_tool_list() -> Value {
             },
             // ── Task management ──
             {
-                "name": "hex_task_create",
+                "name": "hex_hexflo_task_create",
                 "description": "Create a task in a swarm",
                 "inputSchema": {
                     "type": "object",
@@ -108,7 +108,7 @@ fn build_tool_list() -> Value {
                 }
             },
             {
-                "name": "hex_task_list",
+                "name": "hex_hexflo_task_list",
                 "description": "List tasks in a swarm",
                 "inputSchema": {
                     "type": "object",
@@ -119,7 +119,7 @@ fn build_tool_list() -> Value {
                 }
             },
             {
-                "name": "hex_task_complete",
+                "name": "hex_hexflo_task_complete",
                 "description": "Mark a task as completed",
                 "inputSchema": {
                     "type": "object",
@@ -132,7 +132,7 @@ fn build_tool_list() -> Value {
             },
             // ── Memory ──
             {
-                "name": "hex_memory_store",
+                "name": "hex_hexflo_memory_store",
                 "description": "Store a key-value pair in persistent memory",
                 "inputSchema": {
                     "type": "object",
@@ -145,7 +145,7 @@ fn build_tool_list() -> Value {
                 }
             },
             {
-                "name": "hex_memory_retrieve",
+                "name": "hex_hexflo_memory_retrieve",
                 "description": "Retrieve a value by key from persistent memory",
                 "inputSchema": {
                     "type": "object",
@@ -156,7 +156,7 @@ fn build_tool_list() -> Value {
                 }
             },
             {
-                "name": "hex_memory_search",
+                "name": "hex_hexflo_memory_search",
                 "description": "Search persistent memory by query",
                 "inputSchema": {
                     "type": "object",
@@ -306,7 +306,7 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
         }
 
         // ── Swarm ──
-        "hex_swarm_init" => {
+        "hex_hexflo_swarm_init" => {
             let body = serde_json::json!({
                 "project_id": args.get("project_id").and_then(|v| v.as_str()).unwrap_or("."),
                 "name": args.get("name").and_then(|v| v.as_str()).unwrap_or("default"),
@@ -315,12 +315,12 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             nexus.post("/api/swarms", &body).await.map_err(|e| e.to_string())
         }
 
-        "hex_swarm_status" => {
-            nexus.get("/api/swarms").await.map_err(|e| e.to_string())
+        "hex_hexflo_swarm_status" => {
+            nexus.get("/api/swarms/active").await.map_err(|e| e.to_string())
         }
 
         // ── Tasks ──
-        "hex_task_create" => {
+        "hex_hexflo_task_create" => {
             let swarm_id = args.get("swarm_id").and_then(|v| v.as_str()).unwrap_or("");
             let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("");
             let path = format!("/api/swarms/{}/tasks", swarm_id);
@@ -328,17 +328,17 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 .await.map_err(|e| e.to_string())
         }
 
-        "hex_task_list" => {
+        "hex_hexflo_task_list" => {
             match args.get("swarm_id").and_then(|v| v.as_str()) {
                 Some(id) => nexus.get(&format!("/api/swarms/{}", id)).await.map_err(|e| e.to_string()),
                 None => nexus.get("/api/swarms").await.map_err(|e| e.to_string()),
             }
         }
 
-        "hex_task_complete" => {
+        "hex_hexflo_task_complete" => {
             let task_id = args.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
             let result_text = args.get("result").and_then(|v| v.as_str());
-            let path = format!("/api/swarms/tasks/{}", task_id);
+            let path = format!("/api/hexflo/tasks/{}", task_id);
             nexus.patch(&path, &serde_json::json!({
                 "status": "completed",
                 "result": result_text,
@@ -346,7 +346,7 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
         }
 
         // ── Memory ──
-        "hex_memory_store" => {
+        "hex_hexflo_memory_store" => {
             let body = serde_json::json!({
                 "key": args.get("key").and_then(|v| v.as_str()).unwrap_or(""),
                 "value": args.get("value").and_then(|v| v.as_str()).unwrap_or(""),
@@ -355,13 +355,13 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             nexus.post("/api/hexflo/memory", &body).await.map_err(|e| e.to_string())
         }
 
-        "hex_memory_retrieve" => {
+        "hex_hexflo_memory_retrieve" => {
             let key = args.get("key").and_then(|v| v.as_str()).unwrap_or("");
             nexus.get(&format!("/api/hexflo/memory/{}", key))
                 .await.map_err(|e| e.to_string())
         }
 
-        "hex_memory_search" => {
+        "hex_hexflo_memory_search" => {
             let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
             nexus.get(&format!("/api/hexflo/memory/search?q={}", query))
                 .await.map_err(|e| e.to_string())

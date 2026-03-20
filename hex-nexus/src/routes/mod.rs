@@ -17,12 +17,55 @@ pub mod swarms;
 pub mod ws;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
+use axum::response::{IntoResponse, Redirect};
 use tower_http::cors::{CorsLayer, AllowOrigin};
 use http::{HeaderValue, Method};
 use serde_json::json;
+use utoipa::OpenApi;
 use crate::state::SharedState;
 use crate::middleware::auth::auth_layer;
 use crate::embed::{serve_index, serve_chat, serve_legacy_dashboard, serve_static};
+
+// ── OpenAPI Spec (ADR-039) ─────────────────────────────
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "hex-nexus API",
+        version = "0.1.0",
+        description = "Orchestration nexus for hex — agent management, architecture analysis, and swarm coordination.\n\nStateless compute routes are documented here. State-read routes (agents list, swarms, sessions, inference) are deprecated and will migrate to SpacetimeDB direct subscriptions (ADR-039).",
+    ),
+    paths(
+        analysis::analyze_path,
+        analysis::analyze_project,
+        orchestration::spawn_agent,
+        orchestration::list_agents,
+        orchestration::execute_workplan,
+    ),
+    components(schemas(
+        analysis::AnalyzeRequest,
+        analysis::AnalyzeResponse,
+        orchestration::SpawnRequest,
+        orchestration::ExecuteWorkplanRequest,
+    )),
+    tags(
+        (name = "analysis", description = "Architecture analysis (stateless compute)"),
+        (name = "agents", description = "Agent lifecycle management"),
+        (name = "workplan", description = "Workplan execution"),
+    )
+)]
+struct ApiDoc;
+
+/// GET /api/openapi.json — serve the OpenAPI 3.1 spec as JSON.
+async fn openapi_json() -> impl IntoResponse {
+    Json(ApiDoc::openapi())
+}
+
+/// GET /api/docs — redirect to Swagger UI (hosted) pointed at our spec.
+async fn openapi_docs_redirect() -> Redirect {
+    // Use the public Swagger UI petstore-style redirect with our local spec URL.
+    // In production the SolidJS frontend consumes /api/openapi.json directly.
+    Redirect::temporary("https://petstore.swagger.io/?url=http://localhost:5555/api/openapi.json")
+}
 
 async fn get_version() -> Json<serde_json::Value> {
     Json(json!({
@@ -49,6 +92,9 @@ pub fn build_router(state: SharedState) -> Router {
         ]);
 
     let router = Router::new()
+        // OpenAPI spec (ADR-039) — JSON spec + docs redirect
+        .route("/api/openapi.json", get(openapi_json))
+        .route("/api/docs", get(openapi_docs_redirect))
         // Static + version
         .route("/", get(serve_index))
         .route("/chat", get(serve_chat))
@@ -91,7 +137,12 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/swarms/active", get(swarms::list_active_swarms))
         .route("/api/swarms/{id}", get(swarms::get_swarm))
+        .route("/api/swarms/{id}/tasks", post(swarms::create_task)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/swarms/{id}/tasks/{task_id}", patch(swarms::update_task)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        // Convenience route for MCP tools (no swarm ID needed — task ID is globally unique)
+        .route("/api/hexflo/tasks/{task_id}", patch(swarms::update_task_by_id)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/work-items/incomplete", get(swarms::get_incomplete_work))
         // Coordination (multi-instance lock/claim/activity)
@@ -129,6 +180,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/agents/spawn", post(orchestration::spawn_agent)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/agents/health", post(orchestration::health_check))
+        // DEPRECATED(ADR-039): Browser will use SpacetimeDB direct subscription
         .route("/api/agents", get(orchestration::list_agents))
         .route("/api/agents/{id}", get(orchestration::get_agent)
             .delete(orchestration::terminate_agent))

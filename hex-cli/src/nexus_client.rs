@@ -18,6 +18,7 @@ const DEFAULT_PORT: u16 = 5555;
 pub struct NexusClient {
     base_url: String,
     http: reqwest::Client,
+    auth_token: Option<String>,
 }
 
 impl NexusClient {
@@ -31,16 +32,24 @@ impl NexusClient {
             let port = read_persisted_port().unwrap_or(DEFAULT_PORT);
             format!("http://127.0.0.1:{}", port)
         };
-        Self::new(base_url)
+        let auth_token = std::env::var("HEX_DASHBOARD_TOKEN")
+            .ok()
+            .or_else(read_persisted_token);
+        Self::with_token(base_url, auth_token)
     }
 
-    /// Create a client with an explicit base URL.
+    /// Create a client with an explicit base URL (no auth).
     pub fn new(base_url: String) -> Self {
+        Self::with_token(base_url, None)
+    }
+
+    /// Create a client with explicit base URL and optional auth token.
+    pub fn with_token(base_url: String, auth_token: Option<String>) -> Self {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
             .expect("failed to build HTTP client");
-        Self { base_url, http }
+        Self { base_url, http, auth_token }
     }
 
     /// Check if nexus is reachable. Returns Ok(()) or a user-friendly error.
@@ -83,10 +92,11 @@ impl NexusClient {
     /// POST JSON to nexus and return the response.
     pub async fn post(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
         let url = format!("{}{}", self.base_url, path);
-        let resp = self
-            .http
-            .post(&url)
-            .json(body)
+        let mut req = self.http.post(&url).json(body);
+        if let Some(ref token) = self.auth_token {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+        let resp = req
             .send()
             .await
             .with_context(|| format!("POST {} failed", url))?;
@@ -103,10 +113,11 @@ impl NexusClient {
     /// PATCH JSON to nexus and return the response.
     pub async fn patch(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
         let url = format!("{}{}", self.base_url, path);
-        let resp = self
-            .http
-            .patch(&url)
-            .json(body)
+        let mut req = self.http.patch(&url).json(body);
+        if let Some(ref token) = self.auth_token {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+        let resp = req
             .send()
             .await
             .with_context(|| format!("PATCH {} failed", url))?;
@@ -132,4 +143,13 @@ fn read_persisted_port() -> Option<u16> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|s| s.trim().parse().ok())
+}
+
+/// Read the persisted auth token from `~/.hex/nexus.token`.
+fn read_persisted_token() -> Option<String> {
+    let path = dirs::home_dir()?.join(".hex").join("nexus.token");
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }

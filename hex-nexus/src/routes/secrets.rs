@@ -296,6 +296,7 @@ pub async fn register_inference(
     (StatusCode::CREATED, Json(json!({ "id": body.id })))
 }
 
+// DEPRECATED(ADR-039): Browser will use SpacetimeDB direct subscription
 pub async fn list_inference(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {

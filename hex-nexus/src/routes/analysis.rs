@@ -16,6 +16,7 @@ use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use crate::analysis::analyzer::ArchAnalyzer;
 use crate::analysis::ports::ArchAnalysisPort;
@@ -24,13 +25,13 @@ use crate::state::SharedState;
 
 // ── Request / Response Types ─────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AnalyzeRequest {
     /// Absolute path to the project root to analyze.
     pub root_path: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AnalyzeResponse {
     pub health_score: u8,
     pub file_count: usize,
@@ -50,6 +51,17 @@ pub struct AnalyzeResponse {
 // ── Handlers ─────────────────────────────────────────────
 
 /// POST /api/analyze — analyze any directory by path.
+#[utoipa::path(
+    post,
+    path = "/api/analyze",
+    request_body = AnalyzeRequest,
+    responses(
+        (status = 200, description = "Architecture analysis result"),
+        (status = 400, description = "Invalid directory path"),
+        (status = 500, description = "Analysis failed"),
+    ),
+    tag = "analysis"
+)]
 pub async fn analyze_path(
     Json(body): Json<AnalyzeRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
@@ -72,6 +84,17 @@ pub async fn analyze_path(
 }
 
 /// GET /api/{project_id}/analyze — analyze a registered project (structured JSON).
+#[utoipa::path(
+    get,
+    path = "/api/{project_id}/analyze",
+    params(("project_id" = String, Path, description = "Registered project ID")),
+    responses(
+        (status = 200, description = "Structured analysis result", body = AnalyzeResponse),
+        (status = 404, description = "Project not found"),
+        (status = 500, description = "Analysis failed"),
+    ),
+    tag = "analysis"
+)]
 pub async fn analyze_project(
     State(state): State<SharedState>,
     Path(project_id): Path<String>,
