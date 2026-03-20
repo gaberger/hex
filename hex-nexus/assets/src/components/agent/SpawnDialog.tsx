@@ -131,10 +131,10 @@ const SpawnDialog: Component<SpawnDialogProps> = (props) => {
                 fallback={
                   <input
                     type="text"
-                    placeholder="/path/to/project"
+                    placeholder="e.g. /Users/gary/projects/my-app"
                     value={projectDir()}
                     onInput={(e) => setProjectDir(e.currentTarget.value)}
-                    class="w-full rounded border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-300 placeholder-gray-600 focus:border-cyan-600 focus:outline-none"
+                    class="w-full rounded border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-300 focus:border-cyan-600 focus:outline-none"
                     autofocus
                   />
                 }
@@ -142,14 +142,24 @@ const SpawnDialog: Component<SpawnDialogProps> = (props) => {
                 <select
                   value={projectDir()}
                   onChange={(e) => setProjectDir(e.currentTarget.value)}
-                  class="w-full rounded border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-300 focus:border-cyan-600 focus:outline-none"
+                  class="w-full rounded border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:border-cyan-600 focus:outline-none"
                 >
                   <option value="">Select project...</option>
                   <For each={projects()}>
-                    {(p) => <option value={p.path}>{p.name} — {p.path}</option>}
+                    {(p) => {
+                      const val = p.path || p.id || p.name;
+                      return <option value={val}>{p.name}{p.path ? ` — ${p.path}` : ''}</option>;
+                    }}
                   </For>
                 </select>
               </Show>
+              <input
+                type="text"
+                placeholder="Or type a path manually..."
+                value={projectDir()}
+                onInput={(e) => setProjectDir(e.currentTarget.value)}
+                class="mt-2 w-full rounded border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-300 focus:border-cyan-600 focus:outline-none"
+              />
             </div>
 
             {/* Agent type */}

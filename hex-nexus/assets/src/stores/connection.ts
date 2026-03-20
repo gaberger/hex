@@ -68,7 +68,7 @@ interface ConnectOpts {
 
 function connectModule(opts: ConnectOpts) {
   const tokenKey = TOKEN_KEY_PREFIX + opts.module;
-  const savedToken = localStorage.getItem(tokenKey) ?? undefined;
+  let savedToken: string | undefined = localStorage.getItem(tokenKey) ?? undefined;
   let retryCount = 0;
 
   function attempt() {
@@ -104,6 +104,12 @@ function connectModule(opts: ConnectOpts) {
         })
         .onConnectError((_ctx: any, err: Error) => {
           console.error(`[stdb:${opts.module}] connect error:`, err);
+          // Clear stale token on auth failure and retry without it
+          if (savedToken && retryCount === 0) {
+            console.warn(`[stdb:${opts.module}] clearing stale token and retrying...`);
+            localStorage.removeItem(tokenKey);
+            savedToken = undefined;
+          }
           scheduleRetry();
         });
 
@@ -114,12 +120,17 @@ function connectModule(opts: ConnectOpts) {
       b.build();
     } catch (err) {
       console.error(`[stdb:${opts.module}] build error:`, err);
+      // Clear token on build error too (may be corrupted)
+      if (savedToken) {
+        localStorage.removeItem(tokenKey);
+        savedToken = undefined;
+      }
       scheduleRetry();
     }
   }
 
   function scheduleRetry() {
-    const delay = Math.min(1000 * Math.pow(2, retryCount), 30_000);
+    const delay = Math.min(1000 * Math.pow(2, retryCount), 5_000); // max 5s backoff
     retryCount++;
     setTimeout(attempt, delay);
   }
