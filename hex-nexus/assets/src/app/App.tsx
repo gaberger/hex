@@ -15,6 +15,7 @@ import PaneManager from '../components/panes/PaneManager';
 import SpawnDialog from '../components/agent/SpawnDialog';
 import CommandPalette from '../components/command/CommandPalette';
 import { spawnDialogOpen, setSpawnDialogOpen, commandPaletteOpen, setCommandPaletteOpen } from '../stores/ui';
+import { startNexusHealthPoll, stopNexusHealthPoll } from '../stores/nexus-health';
 
 const App: Component = () => {
   const [theme, setTheme] = createSignal(
@@ -24,8 +25,12 @@ const App: Component = () => {
 
   onMount(() => {
     initConnections();
-    // Apply saved theme on load
+    startNexusHealthPoll();
     document.documentElement.setAttribute('data-theme', theme());
+  });
+
+  onCleanup(() => {
+    stopNexusHealthPoll();
   });
 
   const toggleTheme = () => {
