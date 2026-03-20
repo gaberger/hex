@@ -38,37 +38,74 @@ H.connect();
 /* Initialize session manager (ADR-036) */
 if (H.initSessionManager) { H.initSessionManager(H.state); }
 
-/* Detect active model from inference endpoints */
+/* Populate model selector from inference endpoints */
 (function() {
-  var badge = document.getElementById("modelBadge");
-  if (!badge) return;
+  var sel = document.getElementById("modelSelect");
+  if (!sel) return;
+
+  H.selectedModel = "";
+
   fetch("/api/inference/endpoints")
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var eps = data.endpoints || [];
-      if (eps.length > 0) {
-        var rawModel = eps[0].model || "unknown";
-        var provider = eps[0].provider || "";
-        // model field may be a JSON array string like '["qwen3.5:27b","qwen3.5:9b"]'
-        var model = rawModel;
+      // Clear placeholder
+      while (sel.firstChild) sel.removeChild(sel.firstChild);
+
+      // Collect all models from all providers
+      var models = [];
+      eps.forEach(function(ep) {
+        var provider = ep.provider || "unknown";
+        var rawModel = ep.model || "";
         try {
           var parsed = JSON.parse(rawModel);
-          if (Array.isArray(parsed)) { model = parsed[0] || "unknown"; }
-        } catch(e) {}
-        badge.textContent = model + (provider ? " (" + provider + ")" : "");
-      } else if (H.state && H.state.anthropicKey) {
-        badge.textContent = "claude-sonnet-4-20250514";
-      } else {
-        badge.textContent = "no provider";
+          if (Array.isArray(parsed)) {
+            parsed.forEach(function(m) { models.push({ name: m, provider: provider, url: ep.url || "" }); });
+          } else {
+            models.push({ name: rawModel, provider: provider, url: ep.url || "" });
+          }
+        } catch(e) {
+          if (rawModel) models.push({ name: rawModel, provider: provider, url: ep.url || "" });
+        }
+      });
+
+      if (models.length === 0) {
+        var opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "no models";
+        sel.appendChild(opt);
+        return;
       }
+
+      models.forEach(function(m, i) {
+        var opt = document.createElement("option");
+        opt.value = m.name;
+        opt.textContent = m.name + " (" + m.provider + ")";
+        if (i === 0) opt.selected = true;
+        sel.appendChild(opt);
+      });
+
+      H.selectedModel = models[0].name;
+      sel.addEventListener("change", function() {
+        H.selectedModel = sel.value;
+      });
     })
-    .catch(function() { badge.textContent = "offline"; });
+    .catch(function() {
+      while (sel.firstChild) sel.removeChild(sel.firstChild);
+      var opt = document.createElement("option");
+      opt.textContent = "offline";
+      sel.appendChild(opt);
+    });
 })();
 
-/* Update model badge on token_update events */
+/* Update model selector on token_update events */
 H.onModelUpdate = function(model) {
-  var badge = document.getElementById("modelBadge");
-  if (badge && model) badge.textContent = model;
+  var sel = document.getElementById("modelSelect");
+  if (!sel || !model) return;
+  // Select matching option if it exists
+  for (var i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === model) { sel.selectedIndex = i; return; }
+  }
 };
 
 })(window.HexChat);

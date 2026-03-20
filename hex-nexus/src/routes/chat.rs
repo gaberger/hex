@@ -29,6 +29,7 @@ enum ChatInbound {
     ChatMessage {
         content: String,
         agent_id: Option<String>,
+        model: Option<String>,
     },
     ConnectAgent {
         agent_id: String,
@@ -260,7 +261,7 @@ async fn handle_chat_ws(
             };
 
             match parsed {
-                ChatInbound::ChatMessage { content, agent_id } => {
+                ChatInbound::ChatMessage { content, agent_id, model: requested_model } => {
                     // Persist user message (ADR-036)
                     #[cfg(feature = "sqlite-session")]
                     if let Some(ref psid) = persist_sid {
@@ -299,8 +300,9 @@ async fn handle_chat_ws(
                             { None }
                         };
 
+                        let req_model = requested_model;
                         tokio::spawn(async move {
-                            llm_bridge(bridge_state, content, sid, ws_tx, conv, bridge_persist_sid, bridge_session_port).await;
+                            llm_bridge(bridge_state, content, sid, ws_tx, conv, bridge_persist_sid, bridge_session_port, req_model).await;
                         });
                     } else {
                         // Forward as a broadcast so the agent (or agent bridge) can pick it up
@@ -424,6 +426,7 @@ async fn llm_bridge(
     conversation: std::sync::Arc<tokio::sync::Mutex<Vec<serde_json::Value>>>,
     persist_session_id: Option<String>,
     session_port: Option<std::sync::Arc<dyn ISessionPort>>,
+    requested_model: Option<String>,
 ) {
     let topic = format!("chat:{}:llm", session_id);
 
@@ -446,12 +449,17 @@ async fn llm_bridge(
     let messages = conversation.lock().await.clone();
 
     // Pick an inference endpoint: prefer registered endpoints, fall back to Anthropic
+    // If a model was requested, override the endpoint's default model
     let endpoint = {
         let eps = state.inference_endpoints.read().await;
         eps.values().next().cloned()
     };
 
-    let (content, model_name, input_tokens, output_tokens) = if let Some(ep) = endpoint {
+    let (content, model_name, input_tokens, output_tokens) = if let Some(mut ep) = endpoint {
+        // Apply requested model override if specified
+        if let Some(ref model) = requested_model {
+            ep.model = model.clone();
+        }
         // Route through registered inference endpoint (OpenAI-compatible API)
         match call_inference_endpoint(&ep, &messages).await {
             Ok(resp) => resp,

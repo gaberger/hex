@@ -61,6 +61,8 @@ function scheduleReconnect() {
 function wsSend(content) {
   if (!state.ws || state.ws.readyState !== 1) return;
   var payload = { type: "chat_message", content: content };
+  // Attach selected model if available
+  if (H.selectedModel) { payload.model = H.selectedModel; }
   var atMatch = content.match(/^@(\S+)\s+([\s\S]*)$/);
   if (atMatch) {
     var targetName = atMatch[1];
