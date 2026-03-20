@@ -1,0 +1,192 @@
+/**
+ * commands.ts — Command registry for the CommandPalette.
+ *
+ * Each command has an id, label, category, optional shortcut, and action.
+ * Commands are registered at app init. The palette fuzzy-searches this list.
+ */
+import {
+  splitPane,
+  closePane,
+  toggleMaximize,
+  focusNextPane,
+  focusPrevPane,
+  replaceActivePane,
+  openPane,
+} from "./panes";
+import { setSpawnDialogOpen } from "./ui";
+
+export type CommandCategory =
+  | "project"
+  | "agent"
+  | "swarm"
+  | "inference"
+  | "session"
+  | "view"
+  | "settings";
+
+export interface Command {
+  id: string;
+  label: string;
+  category: CommandCategory;
+  shortcut?: string;
+  action: () => void | Promise<void>;
+}
+
+/** All registered commands. */
+const commands: Command[] = [
+  // ── View ──
+  {
+    id: "view.split-h",
+    label: "Split Pane Horizontal",
+    category: "view",
+    shortcut: "Ctrl+\\",
+    action: () => splitPane("horizontal"),
+  },
+  {
+    id: "view.split-v",
+    label: "Split Pane Vertical",
+    category: "view",
+    shortcut: "Ctrl+-",
+    action: () => splitPane("vertical"),
+  },
+  {
+    id: "view.close",
+    label: "Close Pane",
+    category: "view",
+    shortcut: "Ctrl+W",
+    action: () => closePane(),
+  },
+  {
+    id: "view.maximize",
+    label: "Toggle Maximize",
+    category: "view",
+    shortcut: "Ctrl+Shift+Enter",
+    action: () => toggleMaximize(),
+  },
+  {
+    id: "view.next-pane",
+    label: "Focus Next Pane",
+    category: "view",
+    shortcut: "Ctrl+]",
+    action: () => focusNextPane(),
+  },
+  {
+    id: "view.prev-pane",
+    label: "Focus Previous Pane",
+    category: "view",
+    shortcut: "Ctrl+[",
+    action: () => focusPrevPane(),
+  },
+  {
+    id: "view.projects",
+    label: "Show Project Overview",
+    category: "project",
+    action: () => replaceActivePane("project-overview", "Projects"),
+  },
+  {
+    id: "view.chat",
+    label: "Open Chat",
+    category: "session",
+    action: () => openPane("chat", "Chat"),
+  },
+
+  // ── Agent ──
+  {
+    id: "agent.spawn",
+    label: "Spawn Agent",
+    category: "agent",
+    shortcut: "Ctrl+N",
+    action: () => setSpawnDialogOpen(true),
+  },
+
+  // ── Project ──
+  {
+    id: "project.analyze",
+    label: "Run Architecture Analysis",
+    category: "project",
+    action: async () => {
+      await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "." }),
+      });
+    },
+  },
+
+  // ── Inference ──
+  {
+    id: "inference.panel",
+    label: "Open Inference Panel",
+    category: "inference",
+    action: () => openPane("inference", "Inference"),
+  },
+
+  // ── Fleet ──
+  {
+    id: "fleet.view",
+    label: "Open Fleet View",
+    category: "view",
+    action: () => openPane("fleet-view", "Fleet"),
+  },
+
+  // ── Swarm ──
+  {
+    id: "swarm.init",
+    label: "Initialize New Swarm",
+    category: "swarm",
+    action: async () => {
+      const name = prompt("Swarm name:");
+      if (!name) return;
+      await fetch("/api/swarms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, topology: "hierarchical" }),
+      });
+    },
+  },
+];
+
+/** Simple fuzzy match: all query chars must appear in order in the target. */
+function fuzzyMatch(query: string, target: string): { match: boolean; score: number } {
+  const q = query.toLowerCase();
+  const t = target.toLowerCase();
+  if (q.length === 0) return { match: true, score: 1 };
+
+  let qi = 0;
+  let score = 0;
+  let prevMatch = false;
+
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) {
+      score += prevMatch ? 2 : 1; // consecutive chars score higher
+      if (ti === 0 || t[ti - 1] === " " || t[ti - 1] === ".") score += 3; // word boundary
+      prevMatch = true;
+      qi++;
+    } else {
+      prevMatch = false;
+    }
+  }
+
+  return { match: qi === q.length, score };
+}
+
+/** Search commands by fuzzy query. Returns sorted by relevance. */
+export function searchCommands(query: string): Command[] {
+  if (!query.trim()) return commands;
+
+  return commands
+    .map((cmd) => {
+      const labelMatch = fuzzyMatch(query, cmd.label);
+      const catMatch = fuzzyMatch(query, cmd.category);
+      const best = labelMatch.score >= catMatch.score ? labelMatch : catMatch;
+      return { cmd, ...best };
+    })
+    .filter((r) => r.match)
+    .sort((a, b) => b.score - a.score)
+    .map((r) => r.cmd);
+}
+
+/** Get all commands (unfiltered). */
+export function getAllCommands(): Command[] {
+  return commands;
+}

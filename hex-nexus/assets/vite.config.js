@@ -1,6 +1,13 @@
+import { resolve } from 'path';
 import { defineConfig } from 'vite';
+import solid from 'vite-plugin-solid';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
+  plugins: [
+    solid(),
+    tailwindcss(),
+  ],
   server: {
     port: 5174,
     proxy: {
@@ -17,5 +24,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        chat: resolve(__dirname, 'chat.html'),
+        dashboard: resolve(__dirname, 'dashboard.html'),
+      },
+    },
   },
 });
