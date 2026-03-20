@@ -44,19 +44,29 @@ const InferencePanel: Component = () => {
     const d = formData();
     if (!d.url) return;
     try {
-      await fetch("/api/inference/register", {
+      // API expects: { id, url, provider, model, modelsJson?, requiresAuth?, secretKey? }
+      const id = d.name || `${d.type}-${Date.now()}`;
+      const res = await fetch("/api/inference/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: d.name || d.type,
-          provider_type: d.type,
-          base_url: d.url,
-          models: d.model ? [d.model] : [],
+          id,
+          url: d.url,
+          provider: d.type,
+          model: d.model || "",
+          modelsJson: d.model ? JSON.stringify([d.model]) : "[]",
         }),
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        console.error("[InferencePanel] register failed:", err);
+        return;
+      }
       setFormData({ name: "", type: "ollama", url: "", model: "" });
       setRegisterOpen(false);
-    } catch { /* will appear via SpacetimeDB */ }
+    } catch (err) {
+      console.error("[InferencePanel] register error:", err);
+    }
   }
 
   return (
@@ -94,8 +104,7 @@ const InferencePanel: Component = () => {
           >
             <option value="ollama">Ollama</option>
             <option value="vllm">vLLM</option>
-            <option value="openai">OpenAI-compatible</option>
-            <option value="anthropic">Anthropic</option>
+            <option value="openai-compatible">OpenAI-compatible</option>
             <option value="llama-cpp">llama.cpp</option>
           </select>
           <input
