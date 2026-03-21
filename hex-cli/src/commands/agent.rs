@@ -17,6 +17,11 @@ pub enum AgentAction {
         /// Agent ID
         agent_id: String,
     },
+    /// Show detailed status for a remote agent
+    Status {
+        /// Agent ID
+        agent_id: String,
+    },
     /// Register this machine as a remote agent to a nexus instance
     Connect {
         /// Nexus URL to connect to (e.g. http://192.168.1.10:5555)
@@ -46,6 +51,7 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
     match action {
         AgentAction::List => list().await,
         AgentAction::Info { agent_id } => info(&agent_id).await,
+        AgentAction::Status { agent_id } => agent_status(&agent_id).await,
         AgentAction::Connect { nexus_url } => connect(&nexus_url).await,
         AgentAction::SpawnRemote {
             target,
@@ -169,6 +175,66 @@ async fn info(agent_id: &str) -> anyhow::Result<()> {
     if let Some(last_seen) = agent["lastHeartbeat"].as_str() {
         println!();
         println!("  {:<16} {}", "Last heartbeat:".bold(), last_seen);
+    }
+
+    Ok(())
+}
+
+async fn agent_status(agent_id: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    let path = format!("/api/remote-agents/{}", agent_id);
+    let agent = nexus.get(&path).await?;
+
+    let status = agent["status"].as_str().unwrap_or("unknown");
+    let status_colored = match status {
+        "online" | "active" | "connected" => status.green().to_string(),
+        "stale" | "idle" => status.yellow().to_string(),
+        "dead" | "offline" | "disconnected" => status.red().to_string(),
+        _ => status.to_string(),
+    };
+
+    println!("{} Agent Status", "\u{2b21}".cyan());
+    println!();
+    println!("  {:<22} {}", "Name:".bold(), agent["name"].as_str().unwrap_or("-"));
+    println!("  {:<22} {}", "Host:".bold(), agent["host"].as_str().unwrap_or("-"));
+    println!("  {:<22} {}", "Status:".bold(), status_colored);
+    println!("  {:<22} {}", "Project Dir:".bold(), agent["project_dir"].as_str().unwrap_or("-"));
+    println!("  {:<22} {}", "Tunnel ID:".bold(), agent["tunnel_id"].as_str().unwrap_or("-"));
+    println!("  {:<22} {}", "Last Heartbeat:".bold(), agent["last_heartbeat"].as_str().unwrap_or("-"));
+    println!("  {:<22} {}", "Connected At:".bold(), agent["connected_at"].as_str().unwrap_or("-"));
+
+    // Models
+    let models = agent["models"]
+        .as_array()
+        .map(|m| {
+            m.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_else(|| "-".to_string());
+    println!("  {:<22} {}", "Models:".bold(), models);
+
+    // Tools
+    let tools = agent["tools"]
+        .as_array()
+        .map(|t| {
+            t.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_else(|| "-".to_string());
+    println!("  {:<22} {}", "Tools:".bold(), tools);
+
+    if let Some(max) = agent["max_concurrent_tasks"].as_u64() {
+        println!("  {:<22} {}", "Max Concurrent Tasks:".bold(), max);
+    }
+
+    if let Some(vram) = agent["gpu_vram_mb"].as_u64() {
+        println!("  {:<22} {} MB", "GPU VRAM:".bold(), vram);
     }
 
     Ok(())

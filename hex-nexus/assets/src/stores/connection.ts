@@ -174,6 +174,12 @@ export const inferenceProviders: Accessor<any[]> = useTable(
 export const inferenceRequests: Accessor<any[]> = useTable(
   () => inferenceConn()?.db.inference_request as SpacetimeDBTableHandle<any> | undefined,
 );
+export const inferenceResponses: Accessor<any[]> = useTable(
+  () => inferenceConn()?.db.inference_response as SpacetimeDBTableHandle<any> | undefined,
+);
+export const agentBudgets: Accessor<any[]> = useTable(
+  () => inferenceConn()?.db.agent_budget as SpacetimeDBTableHandle<any> | undefined,
+);
 
 // fleet-state tables
 export const fleetNodes: Accessor<any[]> = useTable(
@@ -241,6 +247,8 @@ export function initConnections() {
     subscribeQueries: [
       "SELECT * FROM inference_provider",
       "SELECT * FROM inference_request",
+      "SELECT * FROM inference_response",
+      "SELECT * FROM agent_budget",
     ],
   });
 

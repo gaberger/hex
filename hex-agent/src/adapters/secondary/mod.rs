@@ -20,3 +20,4 @@ pub mod output_analyzer;
 pub mod spacetime_inference;
 pub mod sandboxed_fs;
 pub mod spacetime_coordination;
+pub mod nexus_inference;

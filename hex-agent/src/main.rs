@@ -20,6 +20,7 @@ use adapters::secondary::rate_limiter::RateLimiterAdapter;
 use adapters::secondary::token_metrics::TokenMetricsAdapter;
 use adapters::secondary::haiku_preflight::{HaikuPreflightAdapter, NoopPreflight};
 use adapters::secondary::openai_compat::OpenAiCompatAdapter;
+use adapters::secondary::nexus_inference::NexusInferenceAdapter;
 use adapters::secondary::env_secrets::EnvSecretsAdapter;
 use adapters::secondary::hub_claim_secrets::{HubClaimSecretsAdapter, HubClaimConfig};
 use domain::{TokenBudget, tools::builtin_tools};
@@ -285,8 +286,24 @@ async fn main() -> anyhow::Result<()> {
             Arc::new(AnthropicAdapter::new(key, args.model.clone()))
         }
         _ => {
-            // "auto" — prefer Anthropic, fall back to MiniMax
-            if let Some(key) = anthropic_key.clone() {
+            // "auto" — when hub-connected, try nexus inference bridge first;
+            // then Anthropic → MiniMax → Ollama fallback chain.
+            if hub_connected {
+                let nexus_url = args.hub_url.as_deref().unwrap();
+                if NexusInferenceAdapter::probe(nexus_url).await {
+                    tracing::info!("Using nexus inference bridge at {}", nexus_url);
+                    Arc::new(NexusInferenceAdapter::new(nexus_url, &args.model))
+                } else if let Some(key) = anthropic_key.clone() {
+                    tracing::info!("Nexus inference bridge unavailable — using Anthropic directly");
+                    Arc::new(AnthropicAdapter::new(key, args.model.clone()))
+                } else if let Some(key) = minimax_key.clone() {
+                    tracing::info!("Nexus + Anthropic unavailable — using MiniMax");
+                    Arc::new(OpenAiCompatAdapter::minimax(key))
+                } else {
+                    tracing::info!("No inference providers — falling back to Ollama at {}", args.ollama_host);
+                    Arc::new(OpenAiCompatAdapter::ollama(&args.model, Some(&args.ollama_host)))
+                }
+            } else if let Some(key) = anthropic_key.clone() {
                 Arc::new(AnthropicAdapter::new(key, args.model.clone()))
             } else if let Some(key) = minimax_key.clone() {
                 tracing::info!("No ANTHROPIC_API_KEY — using MiniMax as primary provider");
