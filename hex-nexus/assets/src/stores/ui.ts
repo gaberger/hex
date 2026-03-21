@@ -14,3 +14,7 @@ export { commandPaletteOpen, setCommandPaletteOpen };
 // Swarm init dialog
 const [swarmInitDialogOpen, setSwarmInitDialogOpen] = createSignal(false);
 export { swarmInitDialogOpen, setSwarmInitDialogOpen };
+
+// Shortcuts overlay
+const [shortcutsOpen, setShortcutsOpen] = createSignal(false);
+export { shortcutsOpen, setShortcutsOpen };

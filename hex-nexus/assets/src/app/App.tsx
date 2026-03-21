@@ -15,7 +15,8 @@ import SpawnDialog from '../components/agent/SpawnDialog';
 import SwarmInitDialog from '../components/swarm/SwarmInitDialog';
 import CommandPalette from '../components/command/CommandPalette';
 import ToastContainer from '../components/layout/ToastContainer';
-import { spawnDialogOpen, setSpawnDialogOpen, commandPaletteOpen, setCommandPaletteOpen, swarmInitDialogOpen, setSwarmInitDialogOpen } from '../stores/ui';
+import ShortcutsOverlay from '../components/layout/ShortcutsOverlay';
+import { spawnDialogOpen, setSpawnDialogOpen, commandPaletteOpen, setCommandPaletteOpen, swarmInitDialogOpen, setSwarmInitDialogOpen, shortcutsOpen, setShortcutsOpen } from '../stores/ui';
 import { startNexusHealthPoll, stopNexusHealthPoll } from '../stores/nexus-health';
 import { mode, toggleMode } from '../stores/mode';
 import { toggleViewMode } from '../stores/view';
@@ -120,6 +121,11 @@ const App: Component = () => {
     if (ctrl && e.key === 'p') {
       e.preventDefault();
       setCommandPaletteOpen(!commandPaletteOpen());
+    }
+    // Ctrl+? (Ctrl+Shift+/) — shortcuts help
+    if (ctrl && e.shiftKey && e.key === '?') {
+      e.preventDefault();
+      setShortcutsOpen(!shortcutsOpen());
     }
   }
 
@@ -366,6 +372,7 @@ const App: Component = () => {
       <SpawnDialog open={spawnDialogOpen()} onClose={() => setSpawnDialogOpen(false)} />
       <SwarmInitDialog open={swarmInitDialogOpen()} onClose={() => setSwarmInitDialogOpen(false)} />
       <CommandPalette open={commandPaletteOpen()} onClose={() => setCommandPaletteOpen(false)} />
+      <ShortcutsOverlay open={shortcutsOpen()} onClose={() => setShortcutsOpen(false)} />
       <ToastContainer />
     </div>
   );

@@ -13,11 +13,14 @@ import {
   replaceActivePane,
   openPane,
 } from "./panes";
-import { setSpawnDialogOpen, setSwarmInitDialogOpen } from "./ui";
+import { setSpawnDialogOpen, setSwarmInitDialogOpen, setShortcutsOpen } from "./ui";
 import { toggleViewMode } from "./view";
 import { addToast } from "./toast";
 import { fetchHealth } from "./health";
 import { setPanelContent } from "./context-panel";
+import { projects } from "./projects";
+import { swarms } from "./connection";
+import { navigate } from "./router";
 
 export type CommandCategory =
   | "project"
@@ -176,7 +179,45 @@ const commands: Command[] = [
     category: "swarm",
     action: () => setSwarmInitDialogOpen(true),
   },
+
+  // ── Settings / Help ──
+  {
+    id: "help.shortcuts",
+    label: "Show Keyboard Shortcuts",
+    category: "settings",
+    shortcut: "Ctrl+?",
+    action: () => setShortcutsOpen(true),
+  },
 ];
+
+/** Returns all commands including dynamic entity-based commands. */
+export function getAllCommandsWithEntities(): Command[] {
+  const cmds: Command[] = [...commands];
+
+  // Add project navigation
+  for (const p of projects()) {
+    cmds.push({
+      id: `goto.project.${p.id}`,
+      label: `Go to ${p.name}`,
+      category: "project",
+      action: () => navigate({ page: "project", projectId: p.id }),
+    });
+  }
+
+  // Add swarm navigation
+  for (const s of swarms()) {
+    const name = s.name ?? s.swarm_name ?? "";
+    if (!name) continue;
+    cmds.push({
+      id: `goto.swarm.${name}`,
+      label: `Swarm: ${name}`,
+      category: "swarm",
+      action: () => navigate({ page: "control-plane" }),
+    });
+  }
+
+  return cmds;
+}
 
 /** Simple fuzzy match: all query chars must appear in order in the target. */
 function fuzzyMatch(query: string, target: string): { match: boolean; score: number } {
@@ -204,9 +245,10 @@ function fuzzyMatch(query: string, target: string): { match: boolean; score: num
 
 /** Search commands by fuzzy query. Returns sorted by relevance. */
 export function searchCommands(query: string): Command[] {
-  if (!query.trim()) return commands;
+  const all = getAllCommandsWithEntities();
+  if (!query.trim()) return all;
 
-  return commands
+  return all
     .map((cmd) => {
       const labelMatch = fuzzyMatch(query, cmd.label);
       const catMatch = fuzzyMatch(query, cmd.category);
@@ -218,7 +260,7 @@ export function searchCommands(query: string): Command[] {
     .map((r) => r.cmd);
 }
 
-/** Get all commands (unfiltered). */
+/** Get all commands (unfiltered), including dynamic entity commands. */
 export function getAllCommands(): Command[] {
-  return commands;
+  return getAllCommandsWithEntities();
 }
