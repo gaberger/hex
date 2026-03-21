@@ -47,7 +47,7 @@ const Breadcrumbs: Component = () => {
 
   return (
     <Show when={crumbs().length > 1}>
-    <div class="flex items-center gap-2 border-b border-gray-800 bg-[#0d1117] px-6 py-2.5">
+    <div class="flex items-center gap-2 border-b border-gray-800 px-6 py-2.5" style={{ background: "var(--bg-surface)" }}>
       <For each={crumbs()}>
         {(crumb, i) => (
           <>

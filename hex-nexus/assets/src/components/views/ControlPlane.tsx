@@ -63,7 +63,7 @@ const FolderIcon: Component<{ active?: boolean }> = (props) => (
     height="20"
     viewBox="0 0 24 24"
     fill="none"
-    stroke={props.active ? "#22d3ee" : "#6b7280"}
+    stroke={props.active ? "var(--accent-hover)" : "var(--text-faint)"}
     stroke-width="1.5"
   >
     <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
@@ -215,7 +215,7 @@ const ControlPlane: Component = () => {
                 style={{
                   "font-size": "22px",
                   "font-weight": "700",
-                  color: "#e5e7eb",
+                  color: "var(--text-body)",
                   "line-height": "1.3",
                 }}
               >
@@ -251,7 +251,7 @@ const ControlPlane: Component = () => {
               <button
                 style={{
                   background: "transparent",
-                  color: "#e5e7eb",
+                  color: "var(--text-body)",
                   border: "1px solid #374151",
                   "border-radius": "8px",
                   padding: "6px 14px",
@@ -286,14 +286,14 @@ const ControlPlane: Component = () => {
                 "border-radius": "8px",
                 padding: "8px 12px",
                 "font-size": "13px",
-                color: "#e5e7eb",
+                color: "var(--text-body)",
                 outline: "none",
               }}
               onFocus={(e) =>
                 (e.currentTarget.style.borderColor = "#22d3ee80")
               }
               onBlur={(e) =>
-                (e.currentTarget.style.borderColor = "#374151")
+                (e.currentTarget.style.borderColor = "var(--border)")
               }
             />
             <button
@@ -369,8 +369,8 @@ const ControlPlane: Component = () => {
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.borderColor = hasSwarms()
-                        ? "#22d3ee40"
-                        : "#1f2937";
+                        ? "color-mix(in srgb, var(--accent) 25%, transparent)"
+                        : "var(--border-subtle)";
                     }}
                     onClick={() =>
                       navigate({ page: "project", projectId: project.id })
@@ -384,7 +384,7 @@ const ControlPlane: Component = () => {
                           style={{
                             "font-size": "16px",
                             "font-weight": "700",
-                            color: "#e5e7eb",
+                            color: "var(--text-body)",
                             "white-space": "nowrap",
                             overflow: "hidden",
                             "text-overflow": "ellipsis",
@@ -475,7 +475,7 @@ const ControlPlane: Component = () => {
                 style={{
                   "font-size": "14px",
                   "font-weight": "700",
-                  color: "#e5e7eb",
+                  color: "var(--text-body)",
                   "margin-bottom": "12px",
                   "text-transform": "uppercase",
                   "letter-spacing": "0.05em",
@@ -508,10 +508,10 @@ const ControlPlane: Component = () => {
                           cursor: "pointer",
                         }}
                         onMouseEnter={(e) => {
-                          e.currentTarget.style.borderColor = "#22d3ee40";
+                          e.currentTarget.style.borderColor = "var(--accent)";
                         }}
                         onMouseLeave={(e) => {
-                          e.currentTarget.style.borderColor = "#1f2937";
+                          e.currentTarget.style.borderColor = "var(--border-subtle)";
                         }}
                         onClick={() => {
                           const pid = swarmProjectId(swarm);
@@ -527,7 +527,7 @@ const ControlPlane: Component = () => {
                               "font-family": "'JetBrains Mono', monospace",
                               "font-size": "14px",
                               "font-weight": "700",
-                              color: "#e5e7eb",
+                              color: "var(--text-body)",
                               "white-space": "nowrap",
                               overflow: "hidden",
                               "text-overflow": "ellipsis",
@@ -623,7 +623,7 @@ const EmptyState: Component<{
         height="32"
         viewBox="0 0 24 24"
         fill="none"
-        stroke="#6b7280"
+        stroke="var(--text-faint)"
         stroke-width="1.5"
       >
         <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
@@ -634,7 +634,7 @@ const EmptyState: Component<{
         style={{
           "font-size": "18px",
           "font-weight": "700",
-          color: "#e5e7eb",
+          color: "var(--text-body)",
         }}
       >
         No projects registered
@@ -669,14 +669,14 @@ const EmptyState: Component<{
           "border-radius": "8px",
           padding: "10px 14px",
           "font-size": "13px",
-          color: "#e5e7eb",
+          color: "var(--text-body)",
           outline: "none",
         }}
         onFocus={(e) =>
           (e.currentTarget.style.borderColor = "#22d3ee80")
         }
         onBlur={(e) =>
-          (e.currentTarget.style.borderColor = "#374151")
+          (e.currentTarget.style.borderColor = "var(--border)")
         }
       />
       <button
