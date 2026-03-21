@@ -100,7 +100,7 @@ const AgentFleet: Component = () => {
       {/* Header */}
       <div class="mb-6 flex items-center justify-between">
         <div>
-          <h2 class="text-[22px] font-semibold text-gray-100">Agent Fleet</h2>
+          <h2 class="text-[22px] font-bold text-gray-100">Agent Fleet</h2>
           <p class="mt-0.5 text-xs text-gray-400">
             {totalCount()} agent{totalCount() !== 1 ? "s" : ""} registered
           </p>

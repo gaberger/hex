@@ -1,6 +1,6 @@
 import { Component, Switch, Match, For, createMemo } from 'solid-js';
 import { route, navigate } from '../../stores/router';
-import { BlueprintView, MCPToolsView, ContextView } from '../config';
+import { BlueprintView, MCPToolsView, ContextView, HooksView, SkillsView, AgentDefsView, SpacetimeDBView } from '../config';
 
 interface NavItem {
   id: string;
@@ -135,8 +135,20 @@ const ConfigPage: Component = () => {
           <Match when={currentSection() === 'tools'}>
             <MCPToolsView />
           </Match>
+          <Match when={currentSection() === 'hooks'}>
+            <HooksView />
+          </Match>
+          <Match when={currentSection() === 'skills'}>
+            <SkillsView />
+          </Match>
           <Match when={currentSection() === 'context'}>
             <ContextView />
+          </Match>
+          <Match when={currentSection() === 'agents'}>
+            <AgentDefsView />
+          </Match>
+          <Match when={currentSection() === 'spacetimedb'}>
+            <SpacetimeDBView />
           </Match>
         </Switch>
       </div>

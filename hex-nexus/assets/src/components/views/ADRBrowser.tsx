@@ -38,9 +38,11 @@ async function fetchADRList(): Promise<ADRListItem[]> {
     // API not available, fall through to fallback
   }
 
-  // TODO: Replace with real API data when /api/adrs is available
+  // Fallback data for known ADRs when API is unavailable
   return [
-    { id: '041', title: 'SpacetimeDB Single State', status: 'Proposed', date: '2026-03-21' },
+    { id: '043', title: 'AIIDE - Hex Nexus as AI IDE', status: 'Accepted', date: '2026-03-21' },
+    { id: '042', title: 'SpacetimeDB Single Source of State', status: 'Proposed', date: '2026-03-21' },
+    { id: '041', title: 'ADR Review Agent', status: 'Proposed', date: '2026-03-21' },
     { id: '040', title: 'Dashboard Redesign', status: 'Accepted', date: '2026-03-19' },
     { id: '039', title: 'Control Plane Architecture', status: 'Accepted', date: '2026-03-18' },
     { id: '035', title: 'Inference Gateway', status: 'Accepted', date: '2026-03-10' },
@@ -51,25 +53,189 @@ async function fetchADRList(): Promise<ADRListItem[]> {
   ];
 }
 
+// Fallback markdown content for key ADRs (embedded from docs/adrs/)
+const ADR_FALLBACK_CONTENT: Record<string, { title: string; status: string; date: string; drivers?: string; content: string }> = {
+  '043': {
+    title: 'AIIDE - Hex Nexus as AI IDE',
+    status: 'Accepted',
+    date: '2026-03-21',
+    drivers: 'Dashboard redesign, OpenCode UX research, agent fleet management needs',
+    content: `# ADR-043: AIIDE — Hex Nexus as AI Integrated Development Environment
+
+**Status:** Accepted
+**Date:** 2026-03-21
+**Drivers:** Dashboard redesign, OpenCode UX research, agent fleet management needs
+
+## Context
+
+Hex Nexus evolved from a monitoring dashboard into something that doesn't fit existing categories. It is not an IDE with AI features (Cursor, Copilot). It is not a chat app with code execution (ChatGPT). It is not a DevOps dashboard (Grafana). It is a purpose-built environment where AI agents are the primary developers and humans provide guidance.
+
+We coin the term **AIIDE** (AI Integrated Development Environment, pronounced "aide") to describe this new category.
+
+## Decision
+
+Hex Nexus is an AIIDE. Its design principles are:
+
+### 1. Five Pillars
+- **Projects** — isolated worktrees, hex architecture analysis, dependency graphs
+- **Agents** — local (Claude Code, hex-coder) and remote (hex-agent over SSH), with lifecycle management
+- **Swarms** — HexFlo multi-agent coordination with task tracking and progress visualization
+- **Inference** — multi-provider management (Ollama, OpenAI, Anthropic) with health, cost, token budget
+- **Configuration** — architecture blueprints, MCP tools, hooks, skills, CLAUDE.md context, agent definitions
+
+### 2. Navigation Model
+Breadcrumb-based hierarchical navigation with Control Plane as root.
+
+### 3. State Architecture
+- SpacetimeDB is the single source of truth for ALL coordination state (ADR-042)
+- hex-nexus binary is stateless compute (filesystem, processes, outbound HTTP)
+- Dashboard connects directly to SpacetimeDB via WebSocket subscriptions
+
+### 4. Chat Scoping
+- Control Plane chat = manage infrastructure
+- Project chat = develop code scoped to that project
+- Plan mode (blue) = discuss, no side effects
+- Build mode (green) = execute changes`,
+  },
+  '042': {
+    title: 'SpacetimeDB Single Source of State',
+    status: 'Proposed',
+    date: '2026-03-21',
+    drivers: 'UX dashboard redesign revealed state fragmentation across 4+ backends',
+    content: `# ADR-042: SpacetimeDB as Single Source of State
+
+**Status:** Proposed
+**Date:** 2026-03-21
+**Drivers:** UX dashboard redesign revealed state fragmentation across 4+ backends
+
+## Context
+
+The hex-nexus system currently stores coordination state in **multiple disconnected backends**:
+
+| Backend | What it stores |
+|---------|---------------|
+| \`hex-nexus\` SpacetimeDB database | Swarms, tasks, agents, memory |
+| \`hexflo-coordination\` SpacetimeDB database | Swarms, tasks, agents, memory |
+| \`inference-gateway\` SpacetimeDB database | Inference providers, requests |
+| \`agent-registry\` SpacetimeDB database | Agent heartbeats, status |
+| In-memory \`HashMap\` (Rust) | Inference endpoints, instances |
+| SQLite \`hub.db\` | Chat sessions, project registry |
+
+**Problem:** The dashboard subscribes to \`hexflo-coordination\` but CLI/MCP writes to \`hex-nexus\`. These are different databases with the same schema but different data.
+
+## Decision
+
+**Consolidate ALL coordination state into the 4 canonical SpacetimeDB modules:**
+
+1. \`hexflo-coordination\` — swarms, tasks, agents, memory
+2. \`inference-gateway\` — providers, requests, budgets, streaming
+3. \`agent-registry\` — agent lifecycle, heartbeats
+4. \`fleet-state\` — compute nodes
+
+**hex-nexus binary becomes stateless compute:** filesystem operations, process management, outbound HTTP, static asset serving, and WebSocket proxy for chat.`,
+  },
+  '041': {
+    title: 'ADR Review Agent',
+    status: 'Proposed',
+    date: '2026-03-21',
+    content: `# ADR-041: ADR Review Agent
+
+**Status:** Proposed
+**Date:** 2026-03-21
+
+## Context
+
+Architectural consistency is hard to maintain when multiple AI agents contribute code changes. ADRs define decisions, but nothing enforces that code changes respect them.
+
+## Decision
+
+Introduce an ADR Review Agent — an architectural consistency guardian that reviews code changes against ADR decisions. It runs as a validation gate before merges and flags violations.`,
+  },
+  '027': {
+    title: 'HexFlo Coordination',
+    status: 'Accepted',
+    date: '2026-02-15',
+    content: `# ADR-027: HexFlo — Native Rust Coordination Layer
+
+**Status:** Accepted
+**Date:** 2026-02-15
+
+## Context
+
+Swarm coordination previously relied on external tools. Native Rust coordination eliminates external dependencies and provides tighter integration with hex-nexus.
+
+## Decision
+
+HexFlo is the native Rust coordination layer built into hex-nexus. It provides swarm init, task create/complete, memory store/retrieve, and heartbeat-based agent lifecycle management. All state persists in SpacetimeDB.`,
+  },
+  '025': {
+    title: 'SpacetimeDB Integration',
+    status: 'Accepted',
+    date: '2026-02-10',
+    content: `# ADR-025: SpacetimeDB Integration
+
+**Status:** Accepted
+**Date:** 2026-02-10
+
+## Context
+
+hex-nexus needs real-time state synchronization between CLI, dashboard, and agents. Traditional REST polling creates lag and complexity.
+
+## Decision
+
+Adopt SpacetimeDB as the real-time state backend. Its WebSocket subscriptions provide instant propagation of state changes to all connected clients.`,
+  },
+};
+
+async function fetchADRContent(adrId: string): Promise<string> {
+  // Try dedicated ADR content endpoint
+  try {
+    const res = await fetch(`/api/adrs/${adrId}/content`);
+    if (res.ok) {
+      const data = await res.json();
+      return data.content || data.body || '';
+    }
+  } catch { /* fall through */ }
+
+  // Try file read via projects API
+  try {
+    const res = await fetch(`/api/projects/hex-intf/files?path=docs/adrs/adr-${adrId}*.md`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.content) return data.content;
+    }
+  } catch { /* fall through */ }
+
+  // Use embedded fallback content
+  return ADR_FALLBACK_CONTENT[adrId]?.content
+    || `# ADR-${adrId}\n\n*Content will be loaded from the API once available.*\n\nRun \`hex adr status ${adrId}\` from the CLI to view this ADR.`;
+}
+
 async function fetchADRDetail(id: string): Promise<ADRDetail | null> {
   if (!id) return null;
+
+  // Try the full detail API first
   try {
     const res = await fetch(`/api/adrs/${id}`);
     if (res.ok) {
       return await res.json();
     }
   } catch {
-    // API not available, fall through to fallback
+    // API not available, fall through
   }
 
-  // TODO: Replace with real API data when /api/adrs/:id is available
+  // Try to get content from filesystem via nexus
+  const content = await fetchADRContent(id);
+
+  // Use fallback metadata if available, otherwise generic
+  const fallback = ADR_FALLBACK_CONTENT[id];
   return {
     id,
-    title: `ADR-${id}`,
-    status: 'Proposed',
-    date: '2026-03-21',
-    drivers: 'Pending API integration',
-    content: `# ADR-${id}\n\n*Content will be loaded from the API once \`/api/adrs/${id}\` is available.*\n\nRun \`hex adr status ${id}\` from the CLI to view this ADR.`,
+    title: fallback?.title || `ADR-${id}`,
+    status: fallback?.status || 'Proposed',
+    date: fallback?.date || '2026-03-21',
+    drivers: fallback?.drivers || undefined,
+    content,
   };
 }
 
