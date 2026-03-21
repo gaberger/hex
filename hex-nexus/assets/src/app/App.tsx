@@ -190,7 +190,10 @@ const App: Component = () => {
                 "bg-gray-800 text-gray-100": route().page === "config",
                 "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "config",
               }}
-              onClick={() => navigate({ page: "config", section: "blueprint" })}
+              onClick={() => {
+                const pid = (route() as any).projectId;
+                navigate({ page: "config", section: "blueprint", projectId: pid });
+              }}
             >
               Config
             </button>

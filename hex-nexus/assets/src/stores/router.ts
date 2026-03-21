@@ -8,7 +8,7 @@ export type Route =
   | { page: "project-health"; projectId: string }
   | { page: "project-graph"; projectId: string }
   | { page: "agent-fleet" }
-  | { page: "config"; section: string }
+  | { page: "config"; section: string; projectId?: string }
   | { page: "adrs"; projectId?: string }
   | { page: "inference" }
   | { page: "fleet-nodes" }
@@ -59,10 +59,14 @@ export const breadcrumbs = createMemo<Breadcrumb[]>(() => {
   } else if (r.page === "agent-fleet") {
     crumbs.push({ label: "Agent Fleet", icon: "bot" });
   } else if (r.page === "config") {
+    const configPid = (r as any).projectId;
+    if (configPid) {
+      crumbs.push({ label: configPid, icon: "folder", route: { page: "project", projectId: configPid } });
+    }
     crumbs.push({
       label: "Configuration",
       icon: "settings",
-      route: { page: "config", section: "blueprint" },
+      route: { page: "config", section: "blueprint", projectId: configPid },
     });
     const section = (r as Extract<Route, { page: "config" }>).section;
     if (section && section !== "blueprint") {
