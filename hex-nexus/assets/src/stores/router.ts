@@ -1,4 +1,4 @@
-import { createSignal, createMemo } from "solid-js";
+import { createSignal, createMemo, createEffect } from "solid-js";
 
 export type Route =
   | { page: "control-plane" }
@@ -17,6 +17,10 @@ export type Route =
 
 const [route, setRoute] = createSignal<Route>({ page: "control-plane" });
 export { route };
+
+/** Active project — persists across route changes. Set when navigating to any project-scoped page. */
+const [activeProjectId, setActiveProjectId] = createSignal<string>("");
+export { activeProjectId, setActiveProjectId };
 
 export interface Breadcrumb {
   label: string;
@@ -100,6 +104,9 @@ export const breadcrumbs = createMemo<Breadcrumb[]>(() => {
 
 export function navigate(newRoute: Route) {
   setRoute(newRoute);
+  // Track active project across route changes
+  const pid = (newRoute as any).projectId;
+  if (pid) setActiveProjectId(pid);
   const hash = routeToHash(newRoute);
   window.location.hash = hash;
 }

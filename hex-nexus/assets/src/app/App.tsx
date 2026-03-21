@@ -21,7 +21,7 @@ import { mode, toggleMode } from '../stores/mode';
 import { toggleViewMode } from '../stores/view';
 import { initChatConnection, disconnectChat } from '../stores/chat';
 import { startHexFloMonitor } from '../stores/hexflo-monitor';
-import { route, initRouter, navigate } from '../stores/router';
+import { route, initRouter, navigate, activeProjectId } from '../stores/router';
 import { projects } from '../stores/projects';
 import ChatView from '../components/chat/ChatView';
 import HealthPane from '../components/health/HealthPane';
@@ -190,10 +190,7 @@ const App: Component = () => {
                 "bg-gray-800 text-gray-100": route().page === "config",
                 "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "config",
               }}
-              onClick={() => {
-                const pid = (route() as any).projectId;
-                navigate({ page: "config", section: "blueprint", projectId: pid });
-              }}
+              onClick={() => navigate({ page: "config", section: "blueprint", projectId: activeProjectId() || undefined })}
             >
               Config
             </button>
