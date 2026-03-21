@@ -238,11 +238,8 @@ const App: Component = () => {
             <Match when={route().page === "control-plane"}>
               <ControlPlane />
             </Match>
-            <Match when={route().page === "project-chat" || (route().page === "project" && viewMode() === "chat")}>
+            <Match when={route().page === "project-chat"}>
               <ChatView />
-            </Match>
-            <Match when={route().page === "project" && viewMode() === "panes"}>
-              <PaneManager />
             </Match>
             <Match when={route().page === "project"}>
               <ProjectDetail />
