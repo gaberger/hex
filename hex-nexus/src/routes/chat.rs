@@ -251,6 +251,12 @@ async fn handle_chat_ws(
                                 let _ = state2.ws_tx.send(WsEnvelope {
                                     topic: format!("agent:{}:output", session_id),
                                     event: msg_type.to_string(),
+                                    data: raw.clone(),
+                                });
+                                // Also relay to global agent output topic for cross-session subscribers
+                                let _ = state2.ws_tx.send(WsEnvelope {
+                                    topic: "agent:all:output".to_string(),
+                                    event: msg_type.to_string(),
                                     data: raw,
                                 });
                             }
@@ -323,6 +329,7 @@ async fn handle_chat_ws(
                             event: "chat_message".to_string(),
                             data: json!({
                                 "sessionId": session_id,
+                                "sourceSessionId": session_id,
                                 "content": content,
                                 "senderName": "user",
                             }),
@@ -647,7 +654,7 @@ async fn llm_bridge(
 }
 
 /// Call a registered inference endpoint (OpenAI-compatible /v1/chat/completions or Ollama /api/chat)
-async fn call_inference_endpoint(
+pub(crate) async fn call_inference_endpoint(
     ep: &crate::routes::secrets::InferenceEndpointEntry,
     messages: &[serde_json::Value],
 ) -> Result<(String, String, u64, u64), String> {
@@ -711,7 +718,7 @@ async fn call_inference_endpoint(
 }
 
 /// Call Anthropic API directly
-async fn call_anthropic(
+pub(crate) async fn call_anthropic(
     api_key: &str,
     messages: &[serde_json::Value],
 ) -> Result<(String, String, u64, u64), String> {
@@ -768,7 +775,7 @@ fn signal_idle(ws_tx: &tokio::sync::broadcast::Sender<WsEnvelope>, topic: &str) 
     });
 }
 
-fn truncate_str(s: &str, max: usize) -> &str {
+pub(crate) fn truncate_str(s: &str, max: usize) -> &str {
     if s.len() <= max {
         s
     } else {

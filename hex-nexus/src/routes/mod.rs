@@ -6,6 +6,7 @@ pub mod coordination;
 pub mod decisions;
 pub mod fleet;
 pub mod hexflo;
+pub mod inference;
 pub mod orchestration;
 pub mod projects;
 pub mod push;
@@ -237,6 +238,9 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/inference/endpoints", get(secrets::list_inference))
         .route("/api/inference/endpoints/{id}", delete(secrets::remove_inference))
         .route("/api/inference/health", post(secrets::check_inference_health))
+        // Synchronous inference completion (hex-agent HTTP bridge)
+        .route("/api/inference/complete", post(inference::inference_complete)
+            .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         // ═══════════════════════════════════════════════════════════
         // HEXFLO COORDINATION — write routes stay, reads via SpacetimeDB
         // ═══════════════════════════════════════════════════════════

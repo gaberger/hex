@@ -575,6 +575,47 @@ async fn main() -> anyhow::Result<()> {
 
         tracing::info!(agent_id = %agent_id, name = %agent_display_name, hub = %hub_url, "Running in hub-managed mode");
 
+        // Register inference provider with nexus (ADR-040)
+        // Best-effort: failure is non-fatal — log and continue.
+        if provider == "ollama" {
+            let register_url = format!("{}/api/inference/register", hub_url);
+            let provider_id = format!("ollama-{}", &agent_id[..8]);
+            let register_body = serde_json::json!({
+                "id": provider_id,
+                "url": args.ollama_host,
+                "provider": "ollama",
+                "model": args.model,
+            });
+            match reqwest::Client::new()
+                .post(&register_url)
+                .json(&register_body)
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    tracing::info!(
+                        provider_id = %provider_id,
+                        model = %args.model,
+                        host = %args.ollama_host,
+                        "Registered Ollama inference provider with nexus"
+                    );
+                }
+                Ok(resp) => {
+                    tracing::warn!(
+                        status = %resp.status(),
+                        "Failed to register inference provider with nexus"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Could not register inference provider (nexus may not support it yet)"
+                    );
+                }
+            }
+        }
+
         // Shared agent status: 0=idle, 1=thinking, 2=executing
         let agent_status_flag = Arc::new(AtomicU8::new(0));
 
