@@ -1,6 +1,6 @@
 import { type Component, Show, createMemo, createEffect, createSignal, onMount, onCleanup } from "solid-js";
 import ProjectHierarchy from "./ProjectHierarchy";
-import ProjectChatWidget from "../chat/ProjectChatWidget";
+// TODO: ProjectChatWidget for inline project chat
 import BranchPicker from "../project/BranchPicker";
 import DiffViewer from "../code/DiffViewer";
 import { route } from "../../stores/router";
@@ -28,7 +28,7 @@ const healthGrade = (score: number | undefined): { letter: string; color: string
 type DetailTab = "overview" | "changes";
 
 const ProjectDetail: Component = () => {
-  const [chatOpen, setChatOpen] = createSignal(false);
+  // const [chatOpen, setChatOpen] = createSignal(false); // TODO: inline chat
   const [activeTab, setActiveTab] = createSignal<DetailTab>("overview");
 
   const projectId = createMemo(() => {
@@ -94,8 +94,7 @@ const ProjectDetail: Component = () => {
   const grade = createMemo(() => healthGrade(health()?.health_score));
 
   return (
-    <div class="flex flex-1 overflow-hidden">
-      <div class="flex-1 overflow-auto" style={{ padding: "24px 32px" }}>
+    <div class="flex-1 overflow-auto p-6">
         {/* Header — project name + path + BranchPicker + grade badge */}
         <div class="mb-5 flex items-center gap-3">
           <h1
@@ -178,34 +177,6 @@ const ProjectDetail: Component = () => {
         </Show>
       </div>
 
-      {/* Chat panel (right side) */}
-      <Show when={chatOpen()}>
-        <ProjectChatWidget
-          projectId={projectId()}
-          onClose={() => setChatOpen(false)}
-        />
-      </Show>
-
-      {/* Floating chat toggle button */}
-      <Show when={!chatOpen()}>
-        <button
-          class="fixed bottom-20 right-6 z-50 rounded-full p-3 shadow-lg transition-transform hover:scale-105"
-          style={{ background: "#0E7490" }}
-          onClick={() => setChatOpen(true)}
-          title="Open project chat"
-        >
-          <svg
-            class="h-5 w-5"
-            style={{ color: "#FFFFFF" }}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-          </svg>
-        </button>
-      </Show>
     </div>
   );
 };

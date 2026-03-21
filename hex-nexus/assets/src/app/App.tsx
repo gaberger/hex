@@ -1,4 +1,4 @@
-import { type Component, onMount, onCleanup, createSignal, Show, Switch, Match, lazy } from 'solid-js';
+import { type Component, onMount, onCleanup, createSignal, For, Show, Switch, Match, lazy } from 'solid-js';
 import { initConnections } from '../stores/connection';
 import {
   splitPane,
@@ -8,7 +8,6 @@ import {
   focusPrevPane,
   focusPaneByIndex,
 } from '../stores/panes';
-import ContextPanel from '../components/layout/ContextPanel';
 import BottomBar from '../components/layout/BottomBar';
 import Breadcrumbs from '../components/layout/Breadcrumbs';
 import SpawnDialog from '../components/agent/SpawnDialog';
@@ -36,7 +35,7 @@ const AgentFleet = lazy(() => import('../components/views/AgentFleet'));
 const ADRBrowser = lazy(() => import('../components/views/ADRBrowser'));
 const ConfigPage = lazy(() => import('../components/views/ConfigPage'));
 const FileTreeView = lazy(() => import('../components/views/FileTreeView'));
-import ProjectSidebar from '../components/project/ProjectSidebar';
+import ProjectLayout from '../components/project/ProjectLayout';
 
 const App: Component = () => {
   const [theme, setTheme] = createSignal(
@@ -159,58 +158,11 @@ const App: Component = () => {
             <polygon points="32,16 46,24 46,40 32,48 18,40 18,24" fill="url(#hex-lg)" opacity=".25" stroke="url(#hex-lg)" stroke-width="1.5" />
             <polygon points="32,27 37,30 37,34 32,37 27,34 27,30" fill="url(#hex-lg)" opacity=".8" />
           </svg>
-          <span class="text-sm font-semibold tracking-wide text-gray-100">
+          <button class="text-sm font-semibold tracking-wide text-gray-100 hover:text-cyan-300 transition-colors" onClick={() => navigate({ page: "control-plane" })}>
             HEX NEXUS
-          </span>
-          {/* Section navigation tabs */}
+          </button>
+          {/* Section navigation tabs — Projects handled by left nav bar */}
           <nav class="hidden md:flex items-center gap-1 ml-4">
-            {/* Projects dropdown — always visible */}
-            <div class="relative group">
-              <button
-                class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors flex items-center gap-1.5"
-                classList={{
-                  "bg-gray-800 text-gray-100": route().page === "control-plane" || route().page.startsWith("project"),
-                  "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "control-plane" && !route().page.startsWith("project"),
-                }}
-                onClick={() => navigate({ page: "control-plane" })}
-              >
-                Projects
-                <svg class="h-3 w-3 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </button>
-              {/* Dropdown */}
-              <div class="absolute left-0 top-full mt-1 hidden group-hover:block z-50 min-w-[200px] rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-xl">
-                <button
-                  class="flex w-full items-center gap-2 px-4 py-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition-colors"
-                  onClick={() => navigate({ page: "control-plane" })}
-                >
-                  <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
-                    <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
-                  </svg>
-                  All Projects
-                </button>
-                <div class="border-t border-gray-800 my-1" />
-                <For each={projects()}>
-                  {(p) => (
-                    <button
-                      class="flex w-full items-center gap-2 px-4 py-2 text-xs hover:bg-gray-800 transition-colors"
-                      classList={{
-                        "text-cyan-400": (route() as any).projectId === p.id,
-                        "text-gray-300": (route() as any).projectId !== p.id,
-                      }}
-                      onClick={() => navigate({ page: "project", projectId: p.id })}
-                    >
-                      <svg class="h-3.5 w-3.5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                      </svg>
-                      {p.name}
-                    </button>
-                  )}
-                </For>
-              </div>
-            </div>
             <button
               class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
               classList={{
@@ -314,9 +266,6 @@ const App: Component = () => {
         </div>
       </header>
 
-      {/* Breadcrumbs */}
-      <Breadcrumbs />
-
       {/* Main area */}
       <div class="flex flex-1 overflow-hidden">
         {/* Permanent project nav bar */}
@@ -365,32 +314,39 @@ const App: Component = () => {
 
         {/* Center content — route-based view switching */}
         <div class="flex flex-1 flex-col overflow-hidden">
+          <Breadcrumbs />
           <Switch fallback={<ControlPlane />}>
             <Match when={route().page === "control-plane"}>
               <ControlPlane />
             </Match>
-            <Match when={route().page === "project-chat"}>
-              <ChatView />
+            <Match when={(route().page.startsWith("project") && (route() as any).projectId) || (route().page === "adrs" && (route() as any).projectId)}>
+              <ProjectLayout>
+                <Switch>
+                  <Match when={route().page === "project"}>
+                    <ProjectDetail />
+                  </Match>
+                  <Match when={route().page === "project-chat"}>
+                    <ChatView />
+                  </Match>
+                  <Match when={route().page === "adrs" || route().page === "project-adr"}>
+                    <ADRBrowser />
+                  </Match>
+                  <Match when={route().page === "project-health"}>
+                    <div class="flex-1 overflow-auto p-6">
+                      <HealthPane />
+                    </div>
+                  </Match>
+                  <Match when={route().page === "project-graph"}>
+                    <DependencyGraphPane />
+                  </Match>
+                </Switch>
+              </ProjectLayout>
             </Match>
-            <Match when={route().page === "project"}>
-              <div class="flex flex-1 overflow-hidden">
-                <ProjectSidebar />
-                <ProjectDetail />
-              </div>
-            </Match>
-            <Match when={route().page === "adrs" || route().page === "project-adr"}>
+            <Match when={route().page === "adrs" && !(route() as any).projectId}>
               <ADRBrowser />
             </Match>
             <Match when={route().page === "agent-fleet"}>
               <AgentFleet />
-            </Match>
-            <Match when={route().page === "project-health"}>
-              <div class="flex-1 overflow-auto p-6">
-                <HealthPane />
-              </div>
-            </Match>
-            <Match when={route().page === "project-graph"}>
-              <DependencyGraphPane />
             </Match>
             <Match when={route().page === "config"}>
               <ConfigPage />
@@ -411,12 +367,6 @@ const App: Component = () => {
           </Switch>
         </div>
 
-        {/* Right panel: only on project-scoped pages */}
-        <Show when={route().page.startsWith("project")}>
-          <div class="hidden lg:block">
-            <ContextPanel />
-          </div>
-        </Show>
       </div>
 
       {/* BottomBar */}
