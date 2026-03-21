@@ -1,4 +1,6 @@
 import { Component, For } from 'solid-js';
+import { addToast } from '../../stores/toast';
+import { setSpawnDialogOpen } from '../../stores/ui';
 
 interface AgentDef {
   name: string;
@@ -34,7 +36,8 @@ const AgentDefsView: Component = () => {
             Role definitions from <code class="text-xs font-mono text-gray-500">.claude/agents/</code> that configure agent capabilities.
           </p>
         </div>
-        <button class="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors border border-gray-700">
+        <button class="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors border border-gray-700"
+          onClick={() => setSpawnDialogOpen(true)}>
           Add Agent
         </button>
       </div>
@@ -93,7 +96,8 @@ const AgentDefsView: Component = () => {
               </div>
 
               {/* Edit button */}
-              <button class="rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors border border-gray-700">
+              <button class="rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors border border-gray-700"
+                onClick={() => addToast("info", `Edit agent definition: .claude/agents/${agent.name}.yml`)}>
                 Edit
               </button>
             </div>

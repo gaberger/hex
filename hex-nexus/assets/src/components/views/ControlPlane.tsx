@@ -81,7 +81,16 @@ const ControlPlane: Component = () => {
 
   // Fetch worktree counts for all registered projects
   onMount(() => {
-    projects().forEach((p) => {
+    projects().forEach(async (p) => {
+      // Ensure project is in REST registry (SpacetimeDB projects may not be)
+      if (p.path) {
+        await fetch("/api/projects/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rootPath: p.path, name: p.name }),
+        }).catch(() => {});
+      }
+
       fetch(`/api/${p.id}/git/worktrees`)
         .then((r) => r.ok ? r.json() : null)
         .then((json) => {

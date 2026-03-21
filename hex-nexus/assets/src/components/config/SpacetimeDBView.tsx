@@ -1,4 +1,5 @@
 import { Component, For } from 'solid-js';
+import { addToast } from '../../stores/toast';
 import { hexfloConnected, agentRegistryConnected, inferenceConnected, fleetConnected } from '../../stores/connection';
 
 interface ModuleDef {
@@ -42,10 +43,12 @@ const SpacetimeDBView: Component = () => {
           </p>
         </div>
         <div class="flex items-center gap-3">
-          <button class="rounded-lg bg-cyan-900/40 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-900/60 transition-colors border border-cyan-700/40">
+          <button class="rounded-lg bg-cyan-900/40 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-900/60 transition-colors border border-cyan-700/40"
+            onClick={() => addToast("info", "Run: spacetime publish <module-name> from the module directory")}>
             Publish Module
           </button>
-          <button class="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors border border-gray-700">
+          <button class="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors border border-gray-700"
+            onClick={() => addToast("info", "Run: spacetime generate --lang typescript --out-dir src/spacetimedb/<module> --module-path ../../spacetime-modules/<module>")}>
             Generate Bindings
           </button>
         </div>
@@ -108,7 +111,8 @@ const SpacetimeDBView: Component = () => {
 
                 {/* Reconnect button (always shown, but styled differently) */}
                 {!isConnected() && (
-                  <button class="rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors border border-gray-700">
+                  <button class="rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors border border-gray-700"
+                    onClick={() => { Object.keys(localStorage).filter(k => k.startsWith('stdb_token_')).forEach(k => localStorage.removeItem(k)); location.reload(); }}>
                     Reconnect
                   </button>
                 )}

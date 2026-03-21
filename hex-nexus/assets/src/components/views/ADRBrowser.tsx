@@ -1,6 +1,7 @@
 import { Component, createSignal, createResource, For, Show, createMemo } from 'solid-js';
 import { navigate, route } from '../../stores/router';
 import { MarkdownEditor } from '../editor';
+import { addToast } from '../../stores/toast';
 
 interface ADRListItem {
   id: string;
@@ -401,9 +402,8 @@ const ADRBrowser: Component = () => {
                   { label: "Date", value: detail().date || "\u2014" },
                   { label: "Drivers", value: detail().drivers || "Pending API integration" },
                 ]}
-                onSave={(content) => {
-                  // TODO: Save back to filesystem via API
-                  console.log("Save ADR:", content);
+                onSave={(_content) => {
+                  addToast("info", "ADR save requires file write API — edit docs/adrs/ directly for now");
                 }}
               />
             );

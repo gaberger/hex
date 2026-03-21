@@ -1,4 +1,5 @@
 import { Component, For } from 'solid-js';
+import { addToast } from '../../stores/toast';
 
 interface Skill {
   name: string;
@@ -70,7 +71,8 @@ const SkillsView: Component = () => {
             {totalSkills()} slash commands across {SKILL_CATEGORIES.length} categories
           </p>
         </div>
-        <button class="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-400 hover:border-cyan-600 hover:text-cyan-300 transition-colors">
+        <button class="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-400 hover:border-cyan-600 hover:text-cyan-300 transition-colors"
+          onClick={() => addToast("info", "Create skills in .claude/skills/ — see /skill-creator for templates")}>
           + New Skill
         </button>
       </div>

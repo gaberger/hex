@@ -96,16 +96,18 @@ const ProjectDetail: Component = () => {
     if (p?.path) fetchHealth(p.path);
   };
 
-  onMount(() => {
+  onMount(async () => {
     const pid = projectId();
+    const p = project();
+
     if (pid) {
-      // Fetch git data on mount + subscribe to real-time updates
-      fetchAllGitData(pid);
+      // Pass project path (from SpacetimeDB) so nexus can do filesystem I/O.
+      // ensureRegistered inside fetchAllGitData handles the REST registration.
+      fetchAllGitData(pid, p?.path);
       subscribeGitEvents(pid);
     }
 
     // Auto-fetch health on mount if we have a project path and no data yet
-    const p = project();
     if (p?.path && !health()) {
       fetchHealth(p.path);
     }

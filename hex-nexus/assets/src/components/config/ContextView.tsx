@@ -1,5 +1,6 @@
 import { Component, createSignal, createEffect } from 'solid-js';
 import { MarkdownEditor } from '../editor';
+import { addToast } from '../../stores/toast';
 
 const SAMPLE_CLAUDE_MD = `# hex -- Hexagonal Architecture for LLM-Driven Development
 
@@ -44,8 +45,7 @@ const ContextView: Component = () => {
         editable={true}
         onSave={(newContent) => {
           setContent(newContent);
-          // TODO: Save via API
-          console.log("Save CLAUDE.md:", newContent);
+          addToast("info", "CLAUDE.md save requires file write API — edit CLAUDE.md directly for now");
         }}
       />
     </div>

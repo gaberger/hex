@@ -9,6 +9,7 @@ import { registryAgents, swarmAgents, agentHeartbeats, swarmTasks } from "../../
 import { projects } from "../../stores/projects";
 import { setSpawnDialogOpen } from "../../stores/ui";
 import { openPane } from "../../stores/panes";
+import { addToast } from "../../stores/toast";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -109,9 +110,7 @@ const AgentFleet: Component = () => {
         <div class="flex items-center gap-3">
           <button
             class="rounded-lg border border-gray-700 bg-gray-900 px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-600 hover:text-gray-100"
-            onClick={() => {
-              /* Remote connection placeholder */
-            }}
+            onClick={() => addToast("info", "Run: hex agent connect <host:port> to connect a remote agent")}
           >
             Connect Remote
           </button>

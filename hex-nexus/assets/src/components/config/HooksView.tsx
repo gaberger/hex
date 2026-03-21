@@ -1,4 +1,5 @@
 import { Component, For } from 'solid-js';
+import { addToast } from '../../stores/toast';
 
 interface Hook {
   name: string;
@@ -56,7 +57,8 @@ const HooksView: Component = () => {
                   </h3>
                   <p class="text-xs text-gray-500 mt-0.5">{hookType.desc}</p>
                 </div>
-                <button class="rounded-md bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors border border-gray-700">
+                <button class="rounded-md bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors border border-gray-700"
+                  onClick={() => addToast("info", "Add hooks in .claude/settings.json under hooks." + hookType.event.toLowerCase().replace(/\s/g, ""))}>
                   + Add Hook
                 </button>
               </div>
@@ -76,7 +78,7 @@ const HooksView: Component = () => {
                       class="flex items-center gap-3 rounded-lg px-4 py-3 border"
                       style={{ "background-color": "#111827", "border-color": "#1f2937" }}
                     >
-                      {/* Enable/disable dot */}
+                      {/* Enable/disable dot — TODO: toggle won't persist until hooks use reactive state */}
                       <span
                         class="h-2.5 w-2.5 shrink-0 rounded-full cursor-pointer"
                         classList={{
@@ -84,6 +86,10 @@ const HooksView: Component = () => {
                           "bg-gray-600": !hook.enabled,
                         }}
                         title={hook.enabled ? "Enabled" : "Disabled"}
+                        onClick={() => {
+                          hook.enabled = !hook.enabled;
+                          addToast("info", `Hook ${hook.name} ${hook.enabled ? 'enabled' : 'disabled'}`);
+                        }}
                       />
                       {/* Hook name */}
                       <span class="text-sm font-bold text-gray-200 min-w-[160px]">

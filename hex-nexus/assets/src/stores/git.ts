@@ -2,7 +2,10 @@
  * git.ts — Git state store for project-scoped git operations (ADR-044).
  *
  * Provides reactive signals for git status, worktrees, branches, and commit log.
- * Data is fetched from the hex-nexus REST API.
+ * Data is fetched from the hex-nexus REST API (stateless filesystem I/O).
+ *
+ * Architecture (ADR-039): SpacetimeDB owns project state. The frontend reads
+ * project paths from SpacetimeDB and passes them to nexus REST for git operations.
  */
 import { createSignal } from "solid-js";
 
@@ -70,10 +73,25 @@ const [gitLoading, setGitLoading] = createSignal(false);
 
 export { gitStatus, gitWorktrees, gitLog, gitBranches, gitLoading };
 
+// ── Helpers ───────────────────────────────────────────
+
+/** Build git API URL. Ensures project is registered for filesystem access. */
+async function ensureRegistered(projectId: string, projectPath?: string): Promise<void> {
+  if (!projectPath) return;
+  // Lightweight: POST /api/projects/register is idempotent.
+  // This tells nexus "I need filesystem access to this path" — not business logic.
+  await fetch("/api/projects/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rootPath: projectPath, name: projectId }),
+  }).catch(() => {});
+}
+
 // ── Fetchers ──────────────────────────────────────────
 
-export async function fetchGitStatus(projectId: string): Promise<GitStatus | null> {
+export async function fetchGitStatus(projectId: string, projectPath?: string): Promise<GitStatus | null> {
   try {
+    await ensureRegistered(projectId, projectPath);
     const res = await fetch(`/api/${projectId}/git/status`);
     if (res.ok) {
       const json = await res.json();
@@ -88,8 +106,9 @@ export async function fetchGitStatus(projectId: string): Promise<GitStatus | nul
   return null;
 }
 
-export async function fetchGitWorktrees(projectId: string): Promise<WorktreeInfo[]> {
+export async function fetchGitWorktrees(projectId: string, projectPath?: string): Promise<WorktreeInfo[]> {
   try {
+    await ensureRegistered(projectId, projectPath);
     const res = await fetch(`/api/${projectId}/git/worktrees`);
     if (res.ok) {
       const json = await res.json();
@@ -107,11 +126,13 @@ export async function fetchGitWorktrees(projectId: string): Promise<WorktreeInfo
 
 export async function fetchGitLog(
   projectId: string,
+  projectPath?: string,
   branch?: string,
   cursor?: string,
   limit?: number
 ): Promise<LogResult | null> {
   try {
+    await ensureRegistered(projectId, projectPath);
     const params = new URLSearchParams();
     if (branch) params.set("branch", branch);
     if (cursor) params.set("cursor", cursor);
@@ -132,8 +153,9 @@ export async function fetchGitLog(
   return null;
 }
 
-export async function fetchGitBranches(projectId: string): Promise<BranchInfo[]> {
+export async function fetchGitBranches(projectId: string, projectPath?: string): Promise<BranchInfo[]> {
   try {
+    await ensureRegistered(projectId, projectPath);
     const res = await fetch(`/api/${projectId}/git/branches`);
     if (res.ok) {
       const json = await res.json();
@@ -150,13 +172,15 @@ export async function fetchGitBranches(projectId: string): Promise<BranchInfo[]>
 }
 
 /** Fetch all git data for a project in parallel. */
-export async function fetchAllGitData(projectId: string): Promise<void> {
+export async function fetchAllGitData(projectId: string, projectPath?: string): Promise<void> {
   setGitLoading(true);
   try {
+    // Ensure registered once before parallel fetches
+    await ensureRegistered(projectId, projectPath);
     await Promise.all([
       fetchGitStatus(projectId),
       fetchGitWorktrees(projectId),
-      fetchGitLog(projectId, undefined, undefined, 10),
+      fetchGitLog(projectId, undefined, undefined, undefined, 10),
     ]);
   } finally {
     setGitLoading(false);
@@ -171,17 +195,13 @@ let subscribedProjectId: string | null = null;
 /**
  * Subscribe to real-time git events for a project via the /ws endpoint.
  * The backend poller broadcasts changes on topic `project:{id}:git`.
- * Events: status-changed, commit-pushed, branch-switched, worktree-created, worktree-removed
  */
 export function subscribeGitEvents(projectId: string): void {
-  // Already subscribed to this project
   if (subscribedProjectId === projectId && gitWs?.readyState === WebSocket.OPEN) {
     return;
   }
 
-  // Close previous connection
   unsubscribeGitEvents();
-
   subscribedProjectId = projectId;
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const url = `${proto}//${location.host}/ws`;
@@ -193,34 +213,26 @@ export function subscribeGitEvents(projectId: string): void {
       try {
         const msg = JSON.parse(e.data);
         const expectedTopic = `project:${projectId}:git`;
-
         if (msg.topic !== expectedTopic) return;
 
         switch (msg.event) {
           case "status-changed":
           case "branch-switched":
-            // Refresh full status from REST (WS payload is a summary)
             fetchGitStatus(projectId);
             break;
-
           case "commit-pushed":
-            // Refresh status + log
             fetchGitStatus(projectId);
-            fetchGitLog(projectId, undefined, undefined, 10);
+            fetchGitLog(projectId);
             break;
-
           case "worktree-created":
           case "worktree-removed":
             fetchGitWorktrees(projectId);
             break;
         }
-      } catch {
-        // Ignore non-JSON or malformed messages
-      }
+      } catch { /* ignore */ }
     };
 
     gitWs.onclose = () => {
-      // Auto-reconnect after 5s if still subscribed
       if (subscribedProjectId === projectId) {
         setTimeout(() => {
           if (subscribedProjectId === projectId) {
@@ -229,16 +241,13 @@ export function subscribeGitEvents(projectId: string): void {
         }, 5000);
       }
     };
-  } catch {
-    // WebSocket creation failed — git data still works via polling REST
-  }
+  } catch { /* WebSocket unavailable */ }
 }
 
-/** Disconnect from git WebSocket events. */
 export function unsubscribeGitEvents(): void {
   subscribedProjectId = null;
   if (gitWs) {
-    gitWs.onclose = null; // Prevent auto-reconnect
+    gitWs.onclose = null;
     gitWs.close();
     gitWs = null;
   }

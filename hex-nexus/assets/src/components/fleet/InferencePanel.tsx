@@ -257,7 +257,7 @@ const InferencePanel: Component = () => {
                       </button>
                       <button
                         class="rounded border border-gray-700 px-2.5 py-1 text-[10px] text-gray-300 hover:border-green-600 hover:text-green-300 transition-colors"
-                        onClick={(e) => { e.stopPropagation(); addToast("info", `${id()} is the active provider`); }}
+                        onClick={(e) => { e.stopPropagation(); addToast("info", `Set ${id()} as default inference provider (coming soon — currently uses first available)`); }}
                       >
                         Set Active
                       </button>

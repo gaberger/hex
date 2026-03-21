@@ -1,4 +1,5 @@
 import { Component, For } from 'solid-js';
+import { addToast } from '../../stores/toast';
 
 interface LayerDef {
   name: string;
@@ -54,7 +55,8 @@ const BlueprintView: Component = () => {
             Hexagonal architecture layers and boundary enforcement rules.
           </p>
         </div>
-        <button class="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors border border-gray-700">
+        <button class="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors border border-gray-700"
+          onClick={() => addToast("info", "Blueprint editing coming soon. Edit .hex/blueprint.json directly.")}>
           Edit Blueprint
         </button>
       </div>
