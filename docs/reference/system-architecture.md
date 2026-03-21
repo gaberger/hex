@@ -166,7 +166,7 @@ Client → ws://localhost:3000 → SpacetimeDB
 
 **Role:** The component that **must always be present** (locally or remotely) on any system running hex development agents. It is the software that makes AI agents produce architecture-compliant code.
 
-> **Note:** Currently named `hex-agent` in the codebase. Being renamed to `hex-agent` to align with hexagonal architecture terminology — it adapts the hex enforcement system to the development environment, it is not an autonomous agent.
+> Not to be confused with the hexagonal architecture concept of "adapter." hex-agent is the *agent runtime* — the software that makes AI development agents produce architecture-compliant code.
 
 **Key Facts:**
 - Runs locally or on remote compute nodes

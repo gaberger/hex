@@ -70,7 +70,7 @@ hex is composed of five deployment units that work together:
 │           │                                                                  │
 │           ▼                                                                  │
 │  ┌─────────────────┐                    ┌─────────────────────────────────┐  │
-│  │  Local OS        │                    │  hex-adapter                    │  │
+│  │  Local OS        │                    │  hex-agent                      │  │
 │  │  • File system   │                    │  (Architecture Enforcement)     │  │
 │  │  • Git repos     │                    │                                 │  │
 │  │  • Processes     │                    │  Runs locally or remotely.      │  │
@@ -147,11 +147,9 @@ hex nexus status     # Check health
 - `.claude/skills/*.md` → `skill_registry` table
 - `.claude/agents/*.yml` → `agent_definition` table
 
-#### hex-adapter — Architecture Enforcement Runtime
+#### hex-agent — Architecture Enforcement Runtime
 
-> **Note:** This component is currently named `hex-agent` in the codebase. It is being renamed to `hex-adapter` to better reflect its role as an adapter that enforces hex architecture, not an autonomous agent.
-
-hex-adapter is the component that **must always be present** — locally or remotely — on any system running hex development agents. It is the software that enforces hexagonal architecture through:
+hex-agent is the component that **must always be present** — locally or remotely — on any system running hex development agents. It is the runtime environment for hex's AI agents, enforcing hexagonal architecture through:
 
 | Mechanism | What It Enforces |
 |:----------|:----------------|
@@ -162,7 +160,7 @@ hex-adapter is the component that **must always be present** — locally or remo
 | **HexFlo dispatchers** | Native Rust coordination for multi-agent swarm execution |
 | **Agent definitions** | YAML-defined agent roles (planner, coder, reviewer, etc.) with specific boundaries |
 
-hex-adapter uses hex's own agent system and HexFlo dispatchers for building software. It connects to SpacetimeDB for coordination and to hex-nexus for filesystem operations.
+hex-agent uses hex's own agent system and HexFlo dispatchers for building software. It connects to SpacetimeDB for coordination and to hex-nexus for filesystem operations.
 
 #### hex-dashboard — The Developer Control Plane
 
@@ -1020,7 +1018,7 @@ hex-nexus/               # Filesystem bridge daemon (axum REST API, port 5555)
   assets/                #   Dashboard frontend (Solid.js + TailwindCSS, rust-embed'd)
     src/spacetimedb/     #     Auto-generated SpacetimeDB client bindings
 hex-core/                # Shared domain types & port traits (zero external deps)
-hex-agent/               # Architecture enforcement runtime (→ being renamed hex-adapter)
+hex-agent/               # Architecture enforcement runtime (agent runtime for AI dev agents)
 hex-chat/                # Conversational chat UI (Tauri + TypeScript)
 hex-desktop/             # Desktop app (Tauri wrapper for dashboard)
 hex-parser/              # Code parsing utilities

@@ -17,7 +17,7 @@ hex has grown to 5 deployment units, 18 SpacetimeDB WASM modules, 7 Rust crates,
 
 ### Problems
 
-1. **No canonical glossary** — "hex-nexus" has been called "hex-hub", "daemon", "orchestration nexus", and "filesystem bridge" in different files. "hex-agent" is being renamed to "hex-agent" but old terminology persists across docs.
+1. **No canonical glossary** — "hex-nexus" has been called "hex-hub", "daemon", "orchestration nexus", and "filesystem bridge" in different files. "hex-agent" has been confused with the hexagonal "adapter" concept, and old names like "hex-hub" persist across docs.
 
 2. **No component documentation** — Each of the 5 deployment units (SpacetimeDB, hex-nexus, hex-agent, hex-dashboard, hex clients) lacks a self-contained document explaining its purpose, API surface, configuration, and relationship to other components.
 
@@ -107,7 +107,7 @@ The glossary (`docs/reference/glossary.md`) is the canonical terminology source.
 |------|-----------|-----|
 | **hex** | AI-Assisted Integrated Development Environment (AAIDE) | "harness", "framework" alone |
 | **hex-nexus** | Filesystem bridge daemon — bridges SpacetimeDB WASM sandbox ↔ local OS | "hub", "orchestration nexus", "daemon" alone |
-| **hex-agent** | Architecture enforcement runtime (local/remote) | "hex-agent" (legacy name) |
+| **hex-agent** | Architecture enforcement runtime — agent runtime for AI dev agents (local/remote) | Do not confuse with hexagonal "adapter" concept |
 | **hex-dashboard** | Developer control plane for multi-project management | "dashboard" alone (ambiguous) |
 | **SpacetimeDB** | Coordination & state core — required backbone service | "database" alone (undersells its role) |
 | **WASM module** | SpacetimeDB server-side logic (tables + reducers) | "plugin", "extension" |

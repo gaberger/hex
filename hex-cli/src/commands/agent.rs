@@ -184,7 +184,7 @@ async fn agent_status(agent_id: &str) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    let path = format!("/api/remote-agents/{}", agent_id);
+    let path = format!("/api/agents/{}", agent_id);
     let agent = nexus.get(&path).await?;
 
     let status = agent["status"].as_str().unwrap_or("unknown");
@@ -257,7 +257,7 @@ async fn connect(nexus_url: &str) -> anyhow::Result<()> {
         },
     });
 
-    let resp = nexus.post("/api/remote-agents/connect", &body).await?;
+    let resp = nexus.post("/api/agents/connect", &body).await?;
 
     let agent_id = resp["agentId"].as_str().unwrap_or("-");
 

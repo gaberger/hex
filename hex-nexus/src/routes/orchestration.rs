@@ -180,6 +180,86 @@ pub async fn terminate_agent(
     }
 }
 
+/// POST /api/agents/connect — register an incoming agent (remote or Claude Code session)
+///
+/// Accepts optional fields to populate agent metadata:
+///   - `host`        — hostname (default: "unknown")
+///   - `name`        — agent display name (default: "remote-{host}")
+///   - `project_dir` — project root path
+///   - `model`       — LLM model identifier
+///   - `session_id`  — Claude Code session ID (stored in metadata)
+pub async fn connect_agent(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let host = body["host"].as_str().unwrap_or("unknown").to_string();
+    let agent_id = uuid::Uuid::new_v4().to_string();
+    let agent_name = body["name"].as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("remote-{}", host));
+    let project_dir = body["project_dir"].as_str().unwrap_or("").to_string();
+    let model = body["model"].as_str().unwrap_or("").to_string();
+
+    // Register via state_port (SpacetimeDB primary, SQLite fallback)
+    if let Some(sp) = state.state_port.as_ref() {
+        let info = crate::ports::state::AgentInfo {
+            id: agent_id.clone(),
+            name: agent_name.clone(),
+            project_dir: project_dir.clone(),
+            model: model.clone(),
+            status: crate::ports::state::AgentStatus::Running,
+            started_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let _ = sp.agent_register(info).await;
+    }
+
+    // Broadcast connection event
+    let _ = state.ws_tx.send(crate::state::WsEnvelope {
+        topic: "hexflo".into(),
+        event: "agent_connected".into(),
+        data: json!({ "agentId": &agent_id, "host": &host, "name": &agent_name }),
+    });
+
+    (StatusCode::OK, Json(json!({
+        "agentId": agent_id,
+        "status": "connected",
+        "host": host,
+        "name": agent_name,
+    })))
+}
+
+/// POST /api/agents/disconnect — deregister an agent by ID (no PID management)
+///
+/// Used by Claude Code sessions and remote agents that registered via /connect.
+/// Unlike DELETE /api/agents/:id (which goes through AgentManager for PID cleanup),
+/// this route calls state_port.agent_remove() directly.
+pub async fn disconnect_agent(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let agent_id = match body["agentId"].as_str() {
+        Some(id) => id.to_string(),
+        None => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "missing agentId" }))),
+    };
+
+    if let Some(sp) = state.state_port.as_ref() {
+        let _ = sp.agent_remove(&agent_id).await;
+    }
+
+    // Broadcast disconnection event
+    let _ = state.ws_tx.send(crate::state::WsEnvelope {
+        topic: "hexflo".into(),
+        event: "agent_disconnected".into(),
+        data: json!({ "agent_id": &agent_id }),
+    });
+
+    (StatusCode::OK, Json(json!({
+        "ok": true,
+        "agentId": agent_id,
+        "status": "disconnected",
+    })))
+}
+
 /// POST /api/agents/health — trigger health check for all agents
 pub async fn health_check(
     State(state): State<SharedState>,

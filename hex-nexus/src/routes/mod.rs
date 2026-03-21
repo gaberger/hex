@@ -211,6 +211,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/agents", get(orchestration::list_agents))
         .route("/api/agents/{id}", get(orchestration::get_agent)
             .delete(orchestration::terminate_agent))
+        // Remote agent connect/disconnect (ADR-040)
+        .route("/api/agents/connect", post(orchestration::connect_agent))
+        .route("/api/agents/disconnect", post(orchestration::disconnect_agent)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         // Workplan execution
         .route("/api/workplan/execute", post(orchestration::execute_workplan)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))

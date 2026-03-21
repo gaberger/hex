@@ -33,11 +33,9 @@ hex-nexus bridges the gap between SpacetimeDB (sandboxed WASM) and the local ope
 - Editing `hex-nexus/assets/` requires rebuilding: `cd hex-nexus && cargo build --release`
 - State fallback: SQLite (`~/.hex/hub.db`) when SpacetimeDB unavailable (ADR-025)
 
-### hex-adapter — Architecture Enforcement Runtime (`hex-agent/`, being renamed)
+### hex-agent — Architecture Enforcement Runtime (`hex-agent/`)
 
-> **Note**: Currently named `hex-agent` in the codebase. Being renamed to `hex-adapter` to reflect its role.
-
-hex-adapter **must always be present** (locally or remotely) on any system running hex development agents. It enforces hexagonal architecture through:
+hex-agent **must always be present** (locally or remotely) on any system running hex development agents. It is the runtime environment for hex's AI agents, enforcing hexagonal architecture through:
 
 - **Skills**: Slash commands that guide AI agents to produce compliant code
 - **Hooks**: Pre/post operation hooks for boundary validation, formatting, pattern training
@@ -106,7 +104,7 @@ hex-nexus/               # Filesystem bridge daemon + dashboard (axum, port 5555
   assets/                #   Dashboard frontend (Solid.js, baked in via rust-embed)
     src/spacetimedb/     #     Auto-generated SpacetimeDB client bindings
 hex-core/                # Shared domain types & port traits (zero external deps)
-hex-agent/               # Architecture enforcement runtime (→ being renamed hex-adapter)
+hex-agent/               # Architecture enforcement runtime (agent runtime for AI dev agents)
 hex-chat/                # Conversational chat UI (Tauri + TypeScript)
 hex-desktop/             # Desktop app (Tauri wrapper for dashboard)
 hex-parser/              # Code parsing utilities
