@@ -19,7 +19,7 @@ const LAYER_DIRS: &[(&str, &str, Layer)] = &[
     ("adapters/secondary", "Secondary Adapters", Layer::AdapterSecondary),
 ];
 
-pub async fn run(path: &str) -> anyhow::Result<()> {
+pub async fn run(path: &str, strict: bool, adr_compliance_only: bool) -> anyhow::Result<()> {
     let root = Path::new(path)
         .canonicalize()
         .unwrap_or_else(|_| Path::new(path).to_path_buf());
@@ -31,168 +31,172 @@ pub async fn run(path: &str) -> anyhow::Result<()> {
     );
     println!();
 
-    // Check for hex project markers
-    let has_src = root.join("src").is_dir();
-    let has_package_json = root.join("package.json").is_file();
-    let has_cargo_toml = root.join("Cargo.toml").is_file();
-    let has_hex_config = root.join(".hex").is_dir();
-    let has_docs_adrs = root.join("docs").join("adrs").is_dir();
+    // If --adr-compliance flag is set, skip boundary analysis entirely
+    if !adr_compliance_only {
+        // Check for hex project markers
+        let has_src = root.join("src").is_dir();
+        let has_package_json = root.join("package.json").is_file();
+        let has_cargo_toml = root.join("Cargo.toml").is_file();
+        let has_hex_config = root.join(".hex").is_dir();
+        let has_docs_adrs = root.join("docs").join("adrs").is_dir();
 
-    println!("  {}", "Project structure:".bold());
-    print_check("src/ directory", has_src);
-    print_check("package.json", has_package_json);
-    print_check("Cargo.toml", has_cargo_toml);
-    print_check(".hex/ config", has_hex_config);
-    print_check("docs/adrs/", has_docs_adrs);
+        println!("  {}", "Project structure:".bold());
+        print_check("src/ directory", has_src);
+        print_check("package.json", has_package_json);
+        print_check("Cargo.toml", has_cargo_toml);
+        print_check(".hex/ config", has_hex_config);
+        print_check("docs/adrs/", has_docs_adrs);
 
-    // Check hex architecture layers using hex_core boundary types
-    if has_src {
-        println!();
-        println!("  {}", "Hex layers:".bold());
+        // Check hex architecture layers using hex_core boundary types
+        if has_src {
+            println!();
+            println!("  {}", "Hex layers:".bold());
 
-        for (dir, label, expected_layer) in LAYER_DIRS {
-            let layer_path = root.join("src").join(dir);
-            let exists = layer_path.is_dir();
-            print_check(label, exists);
+            for (dir, label, expected_layer) in LAYER_DIRS {
+                let layer_path = root.join("src").join(dir);
+                let exists = layer_path.is_dir();
+                print_check(label, exists);
 
-            // Verify boundary::detect_layer agrees with our expectation
-            if exists {
-                let detected = boundary::detect_layer(&format!("src/{}/mod.rs", dir));
-                if detected != *expected_layer {
+                // Verify boundary::detect_layer agrees with our expectation
+                if exists {
+                    let detected = boundary::detect_layer(&format!("src/{}/mod.rs", dir));
+                    if detected != *expected_layer {
+                        println!(
+                            "      {} Layer mismatch: expected {}, detected {}",
+                            "!".yellow(),
+                            expected_layer,
+                            detected,
+                        );
+                    }
+                }
+            }
+
+            let has_composition_root = root.join("src").join("composition-root.ts").is_file()
+                || root.join("src").join("composition_root.rs").is_file();
+            print_check("Composition Root", has_composition_root);
+        }
+
+        // Offline boundary check: scan for obvious violations without nexus
+        if has_src {
+            let violations = scan_local_violations(&root);
+            if !violations.is_empty() {
+                println!();
+                println!(
+                    "  {} Local boundary violations ({})",
+                    "\u{26a0}".yellow(),
+                    violations.len()
+                );
+                for v in &violations {
                     println!(
-                        "      {} Layer mismatch: expected {}, detected {}",
-                        "!".yellow(),
-                        expected_layer,
-                        detected,
+                        "    {} {} -> {} ({})",
+                        "\u{2717}".red(),
+                        v.source_file,
+                        v.imported_path,
+                        v.rule,
                     );
                 }
             }
         }
 
-        let has_composition_root = root.join("src").join("composition-root.ts").is_file()
-            || root.join("src").join("composition_root.rs").is_file();
-        print_check("Composition Root", has_composition_root);
-    }
+        // Try nexus for full boundary analysis
+        println!();
+        let nexus = NexusClient::from_env();
+        if nexus.ensure_running().await.is_ok() {
+            // Register/push project to get analysis
+            let _project_name = root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
 
-    // Offline boundary check: scan for obvious violations without nexus
-    if has_src {
-        let violations = scan_local_violations(&root);
-        if !violations.is_empty() {
-            println!();
-            println!(
-                "  {} Local boundary violations ({})",
-                "\u{26a0}".yellow(),
-                violations.len()
-            );
-            for v in &violations {
-                println!(
-                    "    {} {} -> {} ({})",
-                    "\u{2717}".red(),
-                    v.source_file,
-                    v.imported_path,
-                    v.rule,
-                );
-            }
-        }
-    }
+            // Query project health if registered
+            match nexus.get("/api/projects").await {
+                Ok(resp) => {
+                    if let Some(projects) = resp.get("projects").and_then(|p| p.as_array()) {
+                        let matching = projects.iter().find(|p| {
+                            p["rootPath"]
+                                .as_str()
+                                .map(|rp| root.to_string_lossy().contains(rp) || rp.contains(&*root.to_string_lossy()))
+                                .unwrap_or(false)
+                        });
 
-    // Try nexus for full boundary analysis
-    println!();
-    let nexus = NexusClient::from_env();
-    if nexus.ensure_running().await.is_ok() {
-        // Register/push project to get analysis
-        let _project_name = root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
+                        if let Some(project) = matching {
+                            let pid = project["id"].as_str().unwrap_or("-");
+                            println!(
+                                "  {} Project registered in nexus: {}",
+                                "\u{2713}".green(),
+                                pid
+                            );
 
-        // Query project health if registered
-        match nexus.get("/api/projects").await {
-            Ok(resp) => {
-                if let Some(projects) = resp.get("projects").and_then(|p| p.as_array()) {
-                    let matching = projects.iter().find(|p| {
-                        p["rootPath"]
-                            .as_str()
-                            .map(|rp| root.to_string_lossy().contains(rp) || rp.contains(&*root.to_string_lossy()))
-                            .unwrap_or(false)
-                    });
-
-                    if let Some(project) = matching {
-                        let pid = project["id"].as_str().unwrap_or("-");
-                        println!(
-                            "  {} Project registered in nexus: {}",
-                            "\u{2713}".green(),
-                            pid
-                        );
-
-                        // Get health data
-                        let health_path = format!("/api/{}/health", pid);
-                        if let Ok(health) = nexus.get(&health_path).await {
-                            if let Some(score) = health["score"].as_u64() {
-                                let grade = match score {
-                                    90..=100 => format!("A ({})", score).green().to_string(),
-                                    80..=89 => format!("B ({})", score).yellow().to_string(),
-                                    _ => format!("C ({})", score).red().to_string(),
-                                };
-                                println!("  Grade: {}", grade);
+                            // Get health data
+                            let health_path = format!("/api/{}/health", pid);
+                            if let Ok(health) = nexus.get(&health_path).await {
+                                if let Some(score) = health["score"].as_u64() {
+                                    let grade = match score {
+                                        90..=100 => format!("A ({})", score).green().to_string(),
+                                        80..=89 => format!("B ({})", score).yellow().to_string(),
+                                        _ => format!("C ({})", score).red().to_string(),
+                                    };
+                                    println!("  Grade: {}", grade);
+                                }
+                                if let Some(violations) = health["violations"].as_u64() {
+                                    let v = if violations == 0 {
+                                        "0".green().to_string()
+                                    } else {
+                                        violations.to_string().red().to_string()
+                                    };
+                                    println!("  Boundary violations: {}", v);
+                                }
                             }
-                            if let Some(violations) = health["violations"].as_u64() {
-                                let v = if violations == 0 {
-                                    "0".green().to_string()
-                                } else {
-                                    violations.to_string().red().to_string()
-                                };
-                                println!("  Boundary violations: {}", v);
-                            }
+                        } else {
+                            println!(
+                                "  {} Project not registered in nexus — start nexus for full analysis",
+                                "\u{25cb}".dimmed()
+                            );
+                            println!(
+                                "  {} hex nexus start",
+                                "\u{2192}".dimmed()
+                            );
                         }
-                    } else {
-                        println!(
-                            "  {} Project not registered in nexus — start nexus for full analysis",
-                            "\u{25cb}".dimmed()
-                        );
-                        println!(
-                            "  {} hex nexus start",
-                            "\u{2192}".dimmed()
-                        );
                     }
                 }
+                Err(_) => {
+                    println!(
+                        "  {} Could not query nexus for full analysis",
+                        "\u{25cb}".dimmed()
+                    );
+                }
             }
-            Err(_) => {
-                println!(
-                    "  {} Could not query nexus for full analysis",
-                    "\u{25cb}".dimmed()
-                );
-            }
+        } else {
+            println!(
+                "  {} Full boundary analysis requires hex-nexus",
+                "\u{2192}".dimmed()
+            );
+            println!(
+                "  {} Start with: hex nexus start",
+                "\u{2192}".dimmed()
+            );
         }
-    } else {
-        println!(
-            "  {} Full boundary analysis requires hex-nexus",
-            "\u{2192}".dimmed()
-        );
-        println!(
-            "  {} Start with: hex nexus start",
-            "\u{2192}".dimmed()
-        );
     }
 
     // ADR compliance check (ADR-045) — runs locally, no nexus needed
     println!();
     println!("  {}", "ADR compliance:".bold());
     let adr_violations = check_adr_compliance(&root);
+    let error_count = adr_violations.iter().filter(|v| v.severity == "error").count();
+    let warning_count = adr_violations.iter().filter(|v| v.severity == "warning").count();
+
     if adr_violations.is_empty() {
         println!(
             "    {} All ADR rules satisfied",
             "\u{2713}".green()
         );
     } else {
-        let errors = adr_violations.iter().filter(|v| v.severity == "error").count();
-        let warnings = adr_violations.iter().filter(|v| v.severity == "warning").count();
         println!(
             "    {} {} ADR violation(s): {} error(s), {} warning(s)",
             "\u{26a0}".yellow(),
             adr_violations.len(),
-            errors,
-            warnings,
+            error_count,
+            warning_count,
         );
         for v in &adr_violations {
             let icon = if v.severity == "error" {
@@ -205,6 +209,20 @@ pub async fn run(path: &str) -> anyhow::Result<()> {
                 icon, v.adr, v.file, v.line, v.message,
             );
         }
+    }
+
+    // Store compliance results in HexFlo memory (best-effort)
+    store_compliance_in_hexflo(&adr_violations, error_count, warning_count).await;
+
+    // --strict: exit with code 1 if any violations exist (warnings promoted to errors)
+    if strict && !adr_violations.is_empty() {
+        println!();
+        println!(
+            "  {} --strict mode: {} violation(s) found — exiting with code 1",
+            "\u{2717}".red(),
+            adr_violations.len(),
+        );
+        std::process::exit(1);
     }
 
     Ok(())
@@ -457,6 +475,46 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
     }
 
     violations
+}
+
+/// Store ADR compliance results in HexFlo memory via nexus REST API.
+/// Best-effort: silently skips if nexus is not running.
+async fn store_compliance_in_hexflo(
+    violations: &[AdrViolationLocal],
+    error_count: usize,
+    warning_count: usize,
+) {
+    let nexus = NexusClient::from_env();
+    if nexus.ensure_running().await.is_err() {
+        return; // nexus not running — skip silently
+    }
+
+    let violation_details: Vec<serde_json::Value> = violations
+        .iter()
+        .map(|v| {
+            serde_json::json!({
+                "adr": v.adr,
+                "file": v.file,
+                "line": v.line,
+                "message": v.message,
+                "severity": v.severity,
+            })
+        })
+        .collect();
+
+    let payload = serde_json::json!({
+        "key": "adr-compliance:default",
+        "value": serde_json::json!({
+            "violationCount": violations.len(),
+            "errorCount": error_count,
+            "warningCount": warning_count,
+            "violations": violation_details,
+            "checkedAt": chrono::Utc::now().to_rfc3339(),
+        }).to_string(),
+    });
+
+    // Best-effort POST — ignore errors
+    let _ = nexus.post("/api/hexflo/memory", &payload).await;
 }
 
 fn print_check(label: &str, present: bool) {

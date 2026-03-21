@@ -87,6 +87,12 @@ enum Commands {
         /// Project root path
         #[arg(default_value = ".")]
         path: String,
+        /// Promote warnings to errors (exit code 1 on any violation)
+        #[arg(long)]
+        strict: bool,
+        /// Run only ADR compliance checks (skip boundary analysis)
+        #[arg(long)]
+        adr_compliance: bool,
     },
     /// Workplan management (create, list, status)
     Plan {
@@ -134,7 +140,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Memory { action } => commands::memory::run(action).await,
         Commands::Adr { action } => commands::adr::run(action).await,
         Commands::Project { action } => commands::project::run(action).await,
-        Commands::Analyze { path } => analyze::run(&path).await,
+        Commands::Analyze { path, strict, adr_compliance } => {
+            analyze::run(&path, strict, adr_compliance).await
+        }
         Commands::Plan { action } => commands::plan::run(action).await,
         Commands::Inference { action } => commands::inference::run(action).await,
         Commands::Mcp => commands::mcp::run_mcp_server().await,
