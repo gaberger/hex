@@ -331,10 +331,110 @@ pub async fn start_server(config: HubConfig) {
         );
     }
 
+    // ADR-037: Spawn default local agent (opt-out with --no-agent)
+    let no_agent = std::env::args().any(|a| a == "--no-agent");
+    let agent_child = if !no_agent {
+        spawn_default_agent(config.port, &lock_token)
+    } else {
+        None
+    };
+
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown)
         .await
         .expect("Server error");
+
+    // Cleanup: kill the default agent on shutdown
+    if let Some(mut child) = agent_child {
+        tracing::info!("Stopping default agent (PID {})", child.id());
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// Spawn a default local hex-agent connected to this nexus (ADR-037).
+///
+/// Searches for the hex-agent binary in:
+/// 1. Same directory as hex-nexus binary
+/// 2. PATH
+/// 3. cargo target directory (dev mode)
+///
+/// Returns the child process handle, or None if agent not found.
+fn spawn_default_agent(port: u16, token: &str) -> Option<std::process::Child> {
+    let agent_bin = find_agent_binary()?;
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    tracing::info!(
+        agent = %agent_bin.display(),
+        project = %cwd.display(),
+        "Spawning default local agent"
+    );
+
+    match std::process::Command::new(&agent_bin)
+        .args([
+            "--hub-url", &format!("http://127.0.0.1:{}", port),
+            "--hub-token", token,
+            "--project-dir", &cwd.to_string_lossy(),
+            "--no-preflight",
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => {
+            tracing::info!(
+                pid = child.id(),
+                "Default agent started (PID {})",
+                child.id()
+            );
+            Some(child)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Could not spawn default agent — run with --no-agent to suppress"
+            );
+            None
+        }
+    }
+}
+
+/// Find the hex-agent binary.
+fn find_agent_binary() -> Option<std::path::PathBuf> {
+    // 1. Sibling of current executable
+    if let Ok(exe) = std::env::current_exe() {
+        let sibling = exe.parent()?.join("hex-agent");
+        if sibling.exists() {
+            return Some(sibling);
+        }
+    }
+
+    // 2. In PATH
+    if let Ok(output) = std::process::Command::new("which")
+        .arg("hex-agent")
+        .output()
+    {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(std::path::PathBuf::from(path));
+            }
+        }
+    }
+
+    // 3. Cargo target directory (dev mode)
+    if let Ok(exe) = std::env::current_exe() {
+        // exe is in target/release/hex-nexus or target/debug/hex-nexus
+        if let Some(target_dir) = exe.parent() {
+            let agent = target_dir.join("hex-agent");
+            if agent.exists() {
+                return Some(agent);
+            }
+        }
+    }
+
+    tracing::debug!("hex-agent binary not found — no default agent will be spawned");
+    None
 }
 
 /// Return the compile-time build hash.
