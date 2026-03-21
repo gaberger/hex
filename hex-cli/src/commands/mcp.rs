@@ -233,6 +233,56 @@ fn build_tool_list() -> Value {
                     "required": ["file"]
                 }
             },
+            // ── Workplan execution & reporting (ADR-046) ──
+            {
+                "name": "hex_plan_execute",
+                "description": "Start executing a workplan from a JSON file path. Spawns agents per task, tracks progress in SpacetimeDB.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "file": { "type": "string", "description": "Path to workplan JSON file (e.g. docs/workplans/feat-auth.json)" }
+                    },
+                    "required": ["file"]
+                }
+            },
+            {
+                "name": "hex_plan_pause",
+                "description": "Pause the currently running workplan execution",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "name": "hex_plan_resume",
+                "description": "Resume a paused workplan execution",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "name": "hex_plan_report",
+                "description": "Get aggregate report for a workplan execution — phases, tasks, agents, gates, duration",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "description": "Workplan execution ID (UUID)" }
+                    },
+                    "required": ["id"]
+                }
+            },
+            {
+                "name": "hex_plan_history",
+                "description": "List all workplan executions (active + completed + failed) from SpacetimeDB",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
             // ── Nexus daemon ──
             {
                 "name": "hex_nexus_status",
@@ -433,6 +483,30 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 Ok(contents) => serde_json::from_str::<Value>(&contents).map_err(|e| format!("Parse error: {}", e)),
                 Err(e) => Err(format!("Cannot read {}: {}", path.display(), e)),
             }
+        }
+
+        // ── Workplan execution & reporting (ADR-046) ──
+        "hex_plan_execute" => {
+            let file = args.get("file").and_then(|v| v.as_str()).unwrap_or("");
+            let body = serde_json::json!({ "workplanPath": file });
+            nexus.post("/api/workplan/execute", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_plan_pause" => {
+            nexus.post("/api/workplan/pause", &serde_json::json!({})).await.map_err(|e| e.to_string())
+        }
+
+        "hex_plan_resume" => {
+            nexus.post("/api/workplan/resume", &serde_json::json!({})).await.map_err(|e| e.to_string())
+        }
+
+        "hex_plan_report" => {
+            let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.get(&format!("/api/workplan/{}/report", id)).await.map_err(|e| e.to_string())
+        }
+
+        "hex_plan_history" => {
+            nexus.get("/api/workplan/list").await.map_err(|e| e.to_string())
         }
 
         // ── Nexus daemon ──
