@@ -264,6 +264,8 @@ pub async fn analyze_adr_compliance(
 }
 
 /// GET /api/{project_id}/analyze/adr-compliance — check ADR compliance for a registered project.
+/// Results are persisted to SpacetimeDB via HexFlo memory so remote agents
+/// and the dashboard can read compliance state.
 pub async fn analyze_project_adr_compliance(
     State(state): State<SharedState>,
     Path(project_id): Path<String>,
@@ -284,7 +286,55 @@ pub async fn analyze_project_adr_compliance(
         }
     };
 
-    analyze_adr_compliance(Json(AnalyzeRequest { root_path })).await
+    let root = std::path::Path::new(&root_path);
+    if !root.is_dir() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("'{}' is not a directory", root_path) })),
+        );
+    }
+
+    let result = adr_compliance::check_compliance(root).await;
+
+    let violation_count = result.violations.len();
+    let error_count = result.violations.iter()
+        .filter(|v| matches!(v.severity, adr_compliance::AdrSeverity::Error))
+        .count();
+    let warning_count = result.violations.iter()
+        .filter(|v| matches!(v.severity, adr_compliance::AdrSeverity::Warning))
+        .count();
+
+    let response_data = json!({
+        "violationCount": violation_count,
+        "errorCount": error_count,
+        "warningCount": warning_count,
+        "rulesChecked": result.rules_checked,
+        "filesScanned": result.files_scanned,
+        "violations": result.violations,
+        "compliant": error_count == 0,
+        "checkedAt": chrono::Utc::now().to_rfc3339(),
+    });
+
+    // Persist to SpacetimeDB via HexFlo memory so remote agents can read it
+    if let Some(ref hexflo) = state.hexflo {
+        let key = format!("adr-compliance:{}", project_id);
+        let value = serde_json::to_string(&response_data).unwrap_or_default();
+        if let Err(e) = hexflo.memory_store(&key, &value, Some("compliance")).await {
+            tracing::warn!("Failed to persist ADR compliance to SpacetimeDB: {}", e);
+        }
+    }
+
+    // Broadcast via WebSocket so dashboard updates in real-time
+    let _ = state.ws_tx.send(crate::state::WsEnvelope {
+        topic: format!("project:{}:compliance", project_id),
+        event: "adr-compliance-checked".to_string(),
+        data: response_data.clone(),
+    });
+
+    (StatusCode::OK, Json(json!({
+        "ok": true,
+        "data": response_data,
+    })))
 }
 
 // ── Helpers ──────────────────────────────────────────────
