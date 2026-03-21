@@ -50,6 +50,8 @@ utoipa = { version = "5", features = ["axum_extras"] }
 # Swagger UI is served as a static redirect to the hosted version instead.
 # WebSocket transport for remote agent communication (ADR-040)
 tokio-tungstenite = "0.24"
+# Git repository introspection (ADR-044)
+git2 = { version = "0.19", features = ["vendored-libgit2"] }
 # Shared domain types and port traits (hex-core is the gravity center)
 hex-core = { path = "../hex-core" }
 # SQLite for offline-first session persistence (ADR-036)

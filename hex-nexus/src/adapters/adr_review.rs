@@ -16,6 +16,7 @@ use crate::ports::adr_review::*;
 
 /// Parsed metadata from an ADR markdown file.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct AdrMetadata {
     /// e.g. "041"
     number: String,

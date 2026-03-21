@@ -6,6 +6,7 @@ pub mod analysis;
 pub mod cleanup;
 pub mod coordination;
 pub mod daemon;
+pub mod git;
 pub mod embed;
 pub mod middleware;
 pub mod orchestration;
@@ -148,41 +149,6 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         app_state.chat_stdb = Some(Arc::new(chat_client));
         tracing::info!("SpacetimeDB inference-gateway + chat-relay clients initialized");
 
-        // Hydrate in-memory inference endpoints from SpacetimeDB so they persist across restarts
-        if let Some(ref stdb) = app_state.inference_stdb {
-            match stdb.list_providers().await {
-                Ok(providers) if !providers.is_empty() => {
-                    let mut eps = app_state.inference_endpoints.write().await;
-                    for p in &providers {
-                        let first_model = p.models_json.trim_start_matches('[')
-                            .trim_end_matches(']')
-                            .split(',')
-                            .next()
-                            .unwrap_or(&p.models_json)
-                            .trim()
-                            .trim_matches('"')
-                            .to_string();
-                        eps.insert(p.provider_id.clone(), routes::secrets::InferenceEndpointEntry {
-                            id: p.provider_id.clone(),
-                            url: p.base_url.clone(),
-                            provider: p.provider_type.clone(),
-                            model: first_model,
-                            status: if p.healthy == 1 { "healthy".into() } else { "unknown".into() },
-                            requires_auth: !p.api_key_ref.is_empty(),
-                            secret_key: p.api_key_ref.clone(),
-                            health_checked_at: p.last_health_check.clone(),
-                        });
-                    }
-                    tracing::info!("Loaded {} inference providers from SpacetimeDB", providers.len());
-                }
-                Ok(_) => {
-                    tracing::debug!("No inference providers found in SpacetimeDB");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load inference providers from SpacetimeDB: {e}");
-                }
-            }
-        }
     }
 
     // Initialize session persistence (ADR-036)

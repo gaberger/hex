@@ -4,7 +4,7 @@
  *
  * Data sources: SpacetimeDB subscriptions via connection + projects stores.
  */
-import { Component, For, Show, createMemo, createSignal } from "solid-js";
+import { Component, For, Show, createMemo, createSignal, onMount } from "solid-js";
 import {
   swarms,
   swarmTasks,
@@ -14,6 +14,9 @@ import {
 import { projects, registerProject } from "../../stores/projects";
 import { navigate } from "../../stores/router";
 import { setSpawnDialogOpen, setSwarmInitDialogOpen } from "../../stores/ui";
+
+// Git worktree counts per project (fetched from /api/{id}/git/worktrees)
+const [worktreeCounts, setWorktreeCounts] = createSignal<Record<string, number>>({});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -76,6 +79,21 @@ const ControlPlane: Component = () => {
   const [registering, setRegistering] = createSignal(false);
   const [newPath, setNewPath] = createSignal("");
 
+  // Fetch worktree counts for all registered projects
+  onMount(() => {
+    projects().forEach((p) => {
+      fetch(`/api/${p.id}/git/worktrees`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((json) => {
+          if (json?.ok) {
+            const count = (json.data.worktrees ?? []).filter((w: any) => !w.isBare).length;
+            setWorktreeCounts((prev) => ({ ...prev, [p.id]: count }));
+          }
+        })
+        .catch(() => {});
+    });
+  });
+
   const projectList = createMemo(() =>
     projects().map((p) => {
       const score = healthScore(p.id);
@@ -85,7 +103,7 @@ const ControlPlane: Component = () => {
       const swarmCount = swarms().filter(
         (s: any) => (s.project ?? s.project_id ?? "") === p.id,
       ).length;
-      const worktreeCount = 0; // Not yet tracked in SpacetimeDB
+      const worktreeCount = worktreeCounts()[p.id] ?? 0;
       const taskCount = swarmTasks().filter(
         (t: any) => (t.project ?? t.project_id ?? "") === p.id,
       ).length;
