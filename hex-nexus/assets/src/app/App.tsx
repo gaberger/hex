@@ -28,7 +28,7 @@ import HealthPane from '../components/health/HealthPane';
 import DependencyGraphPane from '../components/graph/DependencyGraphPane';
 import InferencePanel from '../components/fleet/InferencePanel';
 import FleetView from '../components/fleet/FleetView';
-import { ControlPlane, AgentFleet, ProjectDetail, ADRBrowser, ConfigPage } from '../components/views';
+import { ControlPlane, AgentFleet, ProjectDetail, ADRBrowser, ConfigPage, FileTreeView } from '../components/views';
 import ProjectSidebar from '../components/project/ProjectSidebar';
 
 const App: Component = () => {
@@ -207,6 +207,16 @@ const App: Component = () => {
             >
               Inference
             </button>
+            <button
+              class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+              classList={{
+                "bg-gray-800 text-gray-100": route().page === "file-tree",
+                "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "file-tree",
+              }}
+              onClick={() => navigate({ page: "file-tree" })}
+            >
+              Files
+            </button>
           </nav>
           {/* Plan/Build mode */}
           <button
@@ -306,6 +316,9 @@ const App: Component = () => {
               <div class="flex-1 overflow-auto">
                 <FleetView />
               </div>
+            </Match>
+            <Match when={route().page === "file-tree"}>
+              <FileTreeView />
             </Match>
           </Switch>
         </div>
