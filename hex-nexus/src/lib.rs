@@ -13,6 +13,7 @@ pub mod ports;
 pub mod remote;
 pub mod routes;
 pub mod state;
+pub mod usecases;
 pub mod state_config;
 pub mod spacetime_bindings;
 pub mod spacetime_launcher;

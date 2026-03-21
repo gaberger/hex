@@ -1,10 +1,12 @@
 pub mod adr;
+pub mod agent;
 pub mod analyze;
 pub mod inference;
 pub mod mcp;
 pub mod memory;
 pub mod nexus;
 pub mod plan;
+pub mod project;
 pub mod secrets;
 pub mod stdb;
 pub mod status;

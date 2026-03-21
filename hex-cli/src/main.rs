@@ -6,10 +6,12 @@ mod nexus_client;
 
 use commands::{
     adr::AdrAction,
+    agent::AgentAction,
     analyze,
     memory::MemoryAction,
     nexus::NexusAction,
     plan::PlanAction,
+    project::ProjectAction,
     secrets::SecretsAction,
     stdb::StdbAction,
     status,
@@ -40,6 +42,11 @@ enum Commands {
         #[command(subcommand)]
         action: NexusAction,
     },
+    /// Manage remote agents (list, connect, spawn, disconnect)
+    Agent {
+        #[command(subcommand)]
+        action: AgentAction,
+    },
     /// Manage secrets and secret grants
     Secrets {
         #[command(subcommand)]
@@ -69,6 +76,11 @@ enum Commands {
     Adr {
         #[command(subcommand)]
         action: AdrAction,
+    },
+    /// Project registration and management
+    Project {
+        #[command(subcommand)]
+        action: ProjectAction,
     },
     /// Architecture health check
     Analyze {
@@ -114,12 +126,14 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Nexus { action } => commands::nexus::run(action).await,
+        Commands::Agent { action } => commands::agent::run(action).await,
         Commands::Secrets { action } => commands::secrets::run(action).await,
         Commands::Stdb { action } => commands::stdb::run(action).await,
         Commands::Swarm { action } => commands::swarm::run(action).await,
         Commands::Task { action } => commands::task::run(action).await,
         Commands::Memory { action } => commands::memory::run(action).await,
         Commands::Adr { action } => commands::adr::run(action).await,
+        Commands::Project { action } => commands::project::run(action).await,
         Commands::Analyze { path } => analyze::run(&path).await,
         Commands::Plan { action } => commands::plan::run(action).await,
         Commands::Inference { action } => commands::inference::run(action).await,

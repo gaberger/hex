@@ -131,10 +131,21 @@ impl HexFlo {
     // ── Task operations ────────────────────────────────
 
     /// Create a task in a swarm via IStatePort.
+    /// If `agent_id` is provided, the task is immediately assigned to that agent.
     pub async fn task_create(
         &self,
         swarm_id: &str,
         title: &str,
+    ) -> Result<SwarmTaskInfo, String> {
+        self.task_create_with_agent(swarm_id, title, None).await
+    }
+
+    /// Create a task and optionally assign it to an agent in one operation.
+    pub async fn task_create_with_agent(
+        &self,
+        swarm_id: &str,
+        title: &str,
+        agent_id: Option<&str>,
     ) -> Result<SwarmTaskInfo, String> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
@@ -144,16 +155,49 @@ impl HexFlo {
             .await
             .map_err(|e| e.to_string())?;
 
+        let (status, assigned_agent) = if let Some(aid) = agent_id {
+            self.state
+                .swarm_task_assign(&id, aid)
+                .await
+                .map_err(|e| e.to_string())?;
+            ("assigned".to_string(), aid.to_string())
+        } else {
+            ("pending".to_string(), String::new())
+        };
+
         Ok(SwarmTaskInfo {
             id,
             swarm_id: swarm_id.to_string(),
             title: title.to_string(),
-            status: "pending".to_string(),
-            agent_id: String::new(),
+            status,
+            agent_id: assigned_agent,
             result: String::new(),
             created_at: now,
             completed_at: String::new(),
         })
+    }
+
+    /// Assign an existing task to an agent.
+    pub async fn task_assign(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+    ) -> Result<(), String> {
+        self.state
+            .swarm_task_assign(task_id, agent_id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let _ = self.ws_tx.send(WsEnvelope {
+            topic: "hexflo".to_string(),
+            event: "task:assigned".to_string(),
+            data: serde_json::json!({
+                "taskId": task_id,
+                "agentId": agent_id,
+            }),
+        });
+
+        Ok(())
     }
 
     /// List tasks, optionally filtered by swarm_id.

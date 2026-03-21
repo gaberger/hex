@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod analysis;
 pub mod chat;
 pub mod commands;
@@ -123,7 +124,7 @@ pub fn build_router(state: SharedState) -> Router {
         // ═══════════════════════════════════════════════════════════
         // META — API metadata
         // ═══════════════════════════════════════════════════════════
-        .route("/api/openapi.json", get(openapi::openapi_spec))
+        // NOTE: /api/openapi.json already registered above (line 98)
 
         // ═══════════════════════════════════════════════════════════
         // STATELESS COMPUTE — these routes stay (filesystem + process mgmt)

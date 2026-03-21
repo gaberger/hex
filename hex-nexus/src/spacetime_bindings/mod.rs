@@ -22,3 +22,5 @@ pub mod skill_registry;
 pub mod hook_registry;
 #[cfg(feature = "spacetimedb")]
 pub mod agent_definition_registry;
+#[cfg(feature = "spacetimedb")]
+pub mod remote_agent_registry;
