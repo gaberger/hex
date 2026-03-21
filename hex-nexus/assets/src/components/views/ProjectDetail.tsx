@@ -1,4 +1,4 @@
-import { type Component, Show, createMemo, createEffect, createSignal, onMount, onCleanup } from "solid-js";
+import { type Component, Show, createMemo, createEffect, createSignal, onCleanup } from "solid-js";
 import ProjectHierarchy from "./ProjectHierarchy";
 // TODO: ProjectChatWidget for inline project chat
 import BranchPicker from "../project/BranchPicker";
@@ -6,7 +6,7 @@ import DiffViewer from "../code/DiffViewer";
 import { route } from "../../stores/router";
 import { projects } from "../../stores/projects";
 import { registryAgents } from "../../stores/connection";
-import { healthData, fetchHealth } from "../../stores/health";
+import { healthData } from "../../stores/health";
 import {
   gitWorktrees,
   gitLog,
@@ -57,8 +57,9 @@ const ProjectDetail: Component = () => {
     const pid = projectId();
     if (!pid) return [];
     return registryAgents().filter((a: any) => {
-      const agentProj = a.project ?? a.projectId ?? a.project_id ?? "";
-      return agentProj === pid;
+      const agentProj = a.project_dir ?? a.project ?? a.projectId ?? a.project_id ?? "";
+      // Match by projectId suffix (e.g., "hex-intf" matches "/path/to/hex-intf")
+      return agentProj === pid || agentProj.endsWith("/" + pid);
     });
   });
 
@@ -69,7 +70,11 @@ const ProjectDetail: Component = () => {
     }
   }
 
-  onMount(async () => {
+  // Re-fetch git data whenever the active project changes.
+  // Must be a createEffect (not onMount) because Solid's Switch/Match
+  // does NOT remount ProjectDetail when navigating between projects —
+  // the Match condition (route().page === "project") stays true.
+  createEffect(() => {
     const pid = projectId();
     const p = project();
 
@@ -79,13 +84,7 @@ const ProjectDetail: Component = () => {
     }
   });
 
-  // Auto-fetch health whenever the active project changes
-  createEffect(() => {
-    const proj = project();
-    if (proj?.path) {
-      fetchHealth(proj.path);
-    }
-  });
+  // Health is fetched on-demand (e.g. from Health page), not on every project nav
 
   onCleanup(() => {
     unsubscribeGitEvents();
