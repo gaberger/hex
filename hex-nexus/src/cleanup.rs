@@ -2,7 +2,6 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time;
 use tracing::{error, info, debug};
-use chrono::{DateTime, Utc};
 
 use crate::state::SharedState;
 
@@ -47,80 +46,45 @@ impl CleanupService {
     }
 }
 
-/// Clean up stale coordination sessions
+/// Clean up stale coordination sessions via IStatePort.
 ///
-/// Process:
-/// 1. Check each instance's last_seen timestamp
-/// 2. Mark/remove instances with no heartbeat for 60s
-/// 3. Validate PIDs - remove dead processes immediately
-/// 4. Remove instances that have been stale for 5+ minutes
+/// Delegates to the state port's coordination_cleanup_stale method,
+/// which handles instance eviction, lock release, claim release,
+/// and unstaged state removal.
 ///
-/// Returns the number of sessions removed
+/// Returns the number of sessions removed.
 pub async fn cleanup_stale_sessions(state: &SharedState) -> Result<usize, Box<dyn std::error::Error>> {
-    let now = Utc::now();
-    let stale_threshold = now - chrono::Duration::seconds(60);
-    let remove_threshold = now - chrono::Duration::seconds(360); // 6 minutes total
+    let sp = state.state_port.as_ref()
+        .ok_or("State port not configured")?;
 
-    let mut instances = state.instances.write().await;
-    let mut to_remove = Vec::new();
+    let report = sp.coordination_cleanup_stale(360).await
+        .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
 
-    for (instance_id, inst) in instances.iter() {
-        let last_seen = DateTime::parse_from_rfc3339(&inst.last_seen)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now());
+    Ok(report.instances_removed)
+}
 
-        // Check if PID is still alive
-        if !is_pid_alive(inst.pid) {
-            debug!("Marking instance {} for removal (dead PID: {})", instance_id, inst.pid);
-            to_remove.push(instance_id.clone());
-            continue;
-        }
-
-        // Check if instance is stale (no heartbeat for 60s)
-        if last_seen < stale_threshold {
-            // Check if it's been stale long enough to remove (5+ minutes)
-            let registered_at = DateTime::parse_from_rfc3339(&inst.registered_at)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
-
-            // If registered more than 6 minutes ago and no recent heartbeat, remove
-            if registered_at < remove_threshold && last_seen < stale_threshold {
-                debug!("Marking instance {} for removal (stale since {})", instance_id, last_seen);
-                to_remove.push(instance_id.clone());
-            }
-        }
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_is_pid_alive_current_process() {
+        // Current process should always be alive
+        let pid = std::process::id();
+        assert!(is_pid_alive(pid));
     }
 
-    // Remove stale instances
-    let removed_count = to_remove.len();
-    for instance_id in to_remove {
-        instances.remove(&instance_id);
-
-        // Also remove associated locks
-        let mut locks = state.worktree_locks.write().await;
-        locks.retain(|_, lock| lock.instance_id != instance_id);
-        drop(locks);
-
-        // Also remove associated task claims
-        let mut claims = state.task_claims.write().await;
-        claims.retain(|_, claim| claim.instance_id != instance_id);
-        drop(claims);
-
-        // Also remove unstaged files
-        let mut unstaged = state.unstaged.write().await;
-        unstaged.remove(&instance_id);
-        drop(unstaged);
+    #[test]
+    #[cfg(unix)]
+    fn test_is_pid_alive_invalid_pid() {
+        // PID 99999 should not exist (unless system has 100k+ processes)
+        assert!(!is_pid_alive(99999));
     }
-
-    drop(instances);
-
-    Ok(removed_count)
 }
 
 /// Check if a process with the given PID is alive
 ///
 /// On Unix: Uses kill(pid, 0) via libc which returns success if process exists
 /// On Windows: Always returns true (requires sysinfo crate for proper check)
+#[allow(dead_code)]
 fn is_pid_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
@@ -135,24 +99,5 @@ fn is_pid_alive(pid: u32) -> bool {
         // Windows: Would need sysinfo crate or WinAPI
         // For now, assume alive (heartbeat timeout will catch it)
         true
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_pid_alive_current_process() {
-        // Current process should always be alive
-        let pid = std::process::id();
-        assert!(is_pid_alive(pid));
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn test_is_pid_alive_invalid_pid() {
-        // PID 99999 should not exist (unless system has 100k+ processes)
-        assert!(!is_pid_alive(99999));
     }
 }

@@ -792,6 +792,148 @@ mod real {
             Ok(())
         }
 
+        // ── Project Registry (ADR-042) ──────────────────
+        async fn project_register(&self, project: ProjectRegistration) -> Result<(), StateError> {
+            let now = chrono::Utc::now().timestamp_millis();
+            self.call_reducer("project_register", serde_json::json!([
+                project.id, project.name, project.root_path, project.ast_is_stub, now
+            ])).await?;
+            Ok(())
+        }
+        async fn project_unregister(&self, id: &str) -> Result<bool, StateError> {
+            self.call_reducer("project_unregister", serde_json::json!([id])).await?;
+            Ok(true)
+        }
+        async fn project_get(&self, id: &str) -> Result<Option<ProjectRecord>, StateError> {
+            let rows = self.query_table(&format!("SELECT * FROM project WHERE id = '{}'", id)).await?;
+            Ok(rows.first().and_then(|r| serde_json::from_value(r.clone()).ok()))
+        }
+        async fn project_list(&self) -> Result<Vec<ProjectRecord>, StateError> {
+            let rows = self.query_table("SELECT * FROM project").await?;
+            Ok(rows.into_iter().filter_map(|r| serde_json::from_value(r).ok()).collect())
+        }
+        async fn project_update_state(&self, id: &str, push_type: &str, data: serde_json::Value, file_path: Option<&str>) -> Result<(), StateError> {
+            self.call_reducer("project_update_state", serde_json::json!([
+                id, push_type, data, file_path
+            ])).await?;
+            Ok(())
+        }
+        async fn project_find(&self, query: &str) -> Result<Option<ProjectRecord>, StateError> {
+            // Try by ID first, then name, then basename
+            if let Some(p) = self.project_get(query).await? {
+                return Ok(Some(p));
+            }
+            let all = self.project_list().await?;
+            Ok(all.into_iter().find(|p| p.name == query || p.root_path.rsplit('/').next().unwrap_or("") == query))
+        }
+        // ── Instance Coordination (ADR-042) ─────────────
+        async fn instance_register(&self, info: InstanceRecord) -> Result<String, StateError> {
+            let id = info.instance_id.clone();
+            self.call_reducer("instance_register", serde_json::json!([
+                info.instance_id, info.project_id, info.pid, info.session_label, info.registered_at, info.last_seen
+            ])).await?;
+            Ok(id)
+        }
+        async fn instance_heartbeat(&self, id: &str, update: InstanceHeartbeat) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("instance_heartbeat", serde_json::json!([
+                id, now, update.agent_count, update.active_task_count, update.completed_task_count, update.topology
+            ])).await?;
+            Ok(())
+        }
+        async fn instance_list(&self, project_id: Option<&str>) -> Result<Vec<InstanceRecord>, StateError> {
+            let query = if let Some(pid) = project_id {
+                format!("SELECT * FROM instance WHERE project_id = '{}'", pid)
+            } else {
+                "SELECT * FROM instance".to_string()
+            };
+            let rows = self.query_table(&query).await?;
+            Ok(rows.into_iter().filter_map(|r| serde_json::from_value(r).ok()).collect())
+        }
+        async fn instance_remove(&self, id: &str) -> Result<(), StateError> {
+            self.call_reducer("instance_remove", serde_json::json!([id])).await?;
+            Ok(())
+        }
+        // ── Worktree Locks (ADR-042) ────────────────────
+        async fn worktree_lock_acquire(&self, lock: WorktreeLockRecord) -> Result<bool, StateError> {
+            let resp = self.call_reducer("worktree_lock_acquire", serde_json::json!([
+                lock.key, lock.instance_id, lock.project_id, lock.feature, lock.layer, lock.acquired_at, lock.heartbeat_at, lock.ttl_secs
+            ])).await?;
+            Ok(resp.as_bool().unwrap_or(true))
+        }
+        async fn worktree_lock_release(&self, key: &str) -> Result<bool, StateError> {
+            self.call_reducer("worktree_lock_release", serde_json::json!([key])).await?;
+            Ok(true)
+        }
+        async fn worktree_lock_list(&self, project_id: Option<&str>) -> Result<Vec<WorktreeLockRecord>, StateError> {
+            let query = if let Some(pid) = project_id {
+                format!("SELECT * FROM worktree_lock WHERE project_id = '{}'", pid)
+            } else {
+                "SELECT * FROM worktree_lock".to_string()
+            };
+            let rows = self.query_table(&query).await?;
+            Ok(rows.into_iter().filter_map(|r| serde_json::from_value(r).ok()).collect())
+        }
+        async fn worktree_lock_refresh(&self, instance_id: &str, heartbeat_at: &str) -> Result<(), StateError> {
+            self.call_reducer("worktree_lock_refresh", serde_json::json!([instance_id, heartbeat_at])).await?;
+            Ok(())
+        }
+        async fn worktree_lock_evict_expired(&self) -> Result<u32, StateError> {
+            let resp = self.call_reducer("worktree_lock_evict_expired", serde_json::json!([])).await?;
+            Ok(resp.as_u64().unwrap_or(0) as u32)
+        }
+        // ── Task Claims (ADR-042) ───────────────────────
+        async fn task_claim_acquire(&self, claim: TaskClaimRecord) -> Result<bool, StateError> {
+            let resp = self.call_reducer("task_claim_acquire", serde_json::json!([
+                claim.task_id, claim.instance_id, claim.claimed_at, claim.heartbeat_at
+            ])).await?;
+            Ok(resp.as_bool().unwrap_or(true))
+        }
+        async fn task_claim_release(&self, task_id: &str) -> Result<bool, StateError> {
+            self.call_reducer("task_claim_release", serde_json::json!([task_id])).await?;
+            Ok(true)
+        }
+        async fn task_claim_list(&self, project_id: Option<&str>) -> Result<Vec<TaskClaimRecord>, StateError> {
+            let query = if let Some(_pid) = project_id {
+                // Join with instances to filter by project_id
+                format!("SELECT tc.* FROM task_claim tc JOIN instance i ON tc.instance_id = i.instance_id WHERE i.project_id = '{}'", _pid)
+            } else {
+                "SELECT * FROM task_claim".to_string()
+            };
+            let rows = self.query_table(&query).await?;
+            Ok(rows.into_iter().filter_map(|r| serde_json::from_value(r).ok()).collect())
+        }
+        async fn task_claim_refresh(&self, instance_id: &str, heartbeat_at: &str) -> Result<(), StateError> {
+            self.call_reducer("task_claim_refresh", serde_json::json!([instance_id, heartbeat_at])).await?;
+            Ok(())
+        }
+        // ── Unstaged Files (ADR-042) ────────────────────
+        async fn unstaged_update(&self, instance_id: &str, state: UnstagedRecord) -> Result<(), StateError> {
+            self.call_reducer("unstaged_update", serde_json::json!([
+                instance_id, state.project_id, state.files, state.captured_at
+            ])).await?;
+            Ok(())
+        }
+        async fn unstaged_list(&self, project_id: Option<&str>) -> Result<Vec<UnstagedRecord>, StateError> {
+            let query = if let Some(pid) = project_id {
+                format!("SELECT * FROM unstaged WHERE project_id = '{}'", pid)
+            } else {
+                "SELECT * FROM unstaged".to_string()
+            };
+            let rows = self.query_table(&query).await?;
+            Ok(rows.into_iter().filter_map(|r| serde_json::from_value(r).ok()).collect())
+        }
+        async fn unstaged_remove(&self, instance_id: &str) -> Result<(), StateError> {
+            self.call_reducer("unstaged_remove", serde_json::json!([instance_id])).await?;
+            Ok(())
+        }
+        // ── Coordination Cleanup (ADR-042) ──────────────
+        async fn coordination_cleanup_stale(&self, stale_threshold_secs: u64) -> Result<CoordinationCleanupReport, StateError> {
+            let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(stale_threshold_secs as i64)).to_rfc3339();
+            self.call_reducer("coordination_cleanup", serde_json::json!([cutoff])).await?;
+            Ok(CoordinationCleanupReport { instances_removed: 0, locks_released: 0, claims_released: 0, unstaged_removed: 0 })
+        }
+
         // ── Subscriptions ───────────────────────────────
         // SpacetimeDB forwards table change callbacks through this channel
 
@@ -886,6 +1028,35 @@ mod stub {
         async fn hexflo_memory_retrieve(&self, _: &str) -> Result<Option<String>, StateError> { Err(Self::err()) }
         async fn hexflo_memory_search(&self, _: &str) -> Result<Vec<(String, String)>, StateError> { Err(Self::err()) }
         async fn hexflo_memory_delete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        // ── Project Registry (ADR-042) ──────────────────
+        async fn project_register(&self, _: ProjectRegistration) -> Result<(), StateError> { Err(Self::err()) }
+        async fn project_unregister(&self, _: &str) -> Result<bool, StateError> { Err(Self::err()) }
+        async fn project_get(&self, _: &str) -> Result<Option<ProjectRecord>, StateError> { Err(Self::err()) }
+        async fn project_list(&self) -> Result<Vec<ProjectRecord>, StateError> { Err(Self::err()) }
+        async fn project_update_state(&self, _: &str, _: &str, _: serde_json::Value, _: Option<&str>) -> Result<(), StateError> { Err(Self::err()) }
+        async fn project_find(&self, _: &str) -> Result<Option<ProjectRecord>, StateError> { Err(Self::err()) }
+        // ── Instance Coordination (ADR-042) ─────────────
+        async fn instance_register(&self, _: InstanceRecord) -> Result<String, StateError> { Err(Self::err()) }
+        async fn instance_heartbeat(&self, _: &str, _: InstanceHeartbeat) -> Result<(), StateError> { Err(Self::err()) }
+        async fn instance_list(&self, _: Option<&str>) -> Result<Vec<InstanceRecord>, StateError> { Err(Self::err()) }
+        async fn instance_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        // ── Worktree Locks (ADR-042) ────────────────────
+        async fn worktree_lock_acquire(&self, _: WorktreeLockRecord) -> Result<bool, StateError> { Err(Self::err()) }
+        async fn worktree_lock_release(&self, _: &str) -> Result<bool, StateError> { Err(Self::err()) }
+        async fn worktree_lock_list(&self, _: Option<&str>) -> Result<Vec<WorktreeLockRecord>, StateError> { Err(Self::err()) }
+        async fn worktree_lock_refresh(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn worktree_lock_evict_expired(&self) -> Result<u32, StateError> { Err(Self::err()) }
+        // ── Task Claims (ADR-042) ───────────────────────
+        async fn task_claim_acquire(&self, _: TaskClaimRecord) -> Result<bool, StateError> { Err(Self::err()) }
+        async fn task_claim_release(&self, _: &str) -> Result<bool, StateError> { Err(Self::err()) }
+        async fn task_claim_list(&self, _: Option<&str>) -> Result<Vec<TaskClaimRecord>, StateError> { Err(Self::err()) }
+        async fn task_claim_refresh(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        // ── Unstaged Files (ADR-042) ────────────────────
+        async fn unstaged_update(&self, _: &str, _: UnstagedRecord) -> Result<(), StateError> { Err(Self::err()) }
+        async fn unstaged_list(&self, _: Option<&str>) -> Result<Vec<UnstagedRecord>, StateError> { Err(Self::err()) }
+        async fn unstaged_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        // ── Coordination Cleanup (ADR-042) ──────────────
+        async fn coordination_cleanup_stale(&self, _: u64) -> Result<CoordinationCleanupReport, StateError> { Err(Self::err()) }
         fn subscribe(&self) -> broadcast::Receiver<StateEvent> { self.event_tx.subscribe() }
     }
 }

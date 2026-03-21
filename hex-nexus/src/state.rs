@@ -19,17 +19,14 @@ pub type SharedState = Arc<AppState>;
 pub const MAX_ACTIVITIES: usize = 500;
 
 pub struct AppState {
-    pub projects: RwLock<HashMap<String, ProjectEntry>>,
+    // Ephemeral command dispatch (NOT persistent state — keep per ADR-042)
     pub commands: RwLock<HashMap<String, HubCommand>>,       // commandId → command
     pub results: RwLock<HashMap<String, HubCommandResult>>,  // commandId → result
+    // Ephemeral activity stream (bounded ring buffer, not persistent)
+    pub activities: RwLock<VecDeque<ActivityEntry>>,
+    // WebSocket broadcast channel (ephemeral)
     pub ws_tx: broadcast::Sender<WsEnvelope>,
     pub auth_token: Option<String>,
-    // Coordination state
-    pub instances: RwLock<HashMap<String, InstanceInfo>>,
-    pub worktree_locks: RwLock<HashMap<String, WorktreeLock>>,
-    pub task_claims: RwLock<HashMap<String, TaskClaim>>,
-    pub activities: RwLock<VecDeque<ActivityEntry>>,
-    pub unstaged: RwLock<HashMap<String, UnstagedState>>,
     pub fleet: FleetManager,
     pub anthropic_api_key: Option<String>,
     // Port-backed orchestration services (ADR-025 Phase 2)
@@ -39,7 +36,7 @@ pub struct AppState {
     pub spacetime_secrets: Option<Arc<SpacetimeSecretClient>>,
     // HexFlo coordination (ADR-027)
     pub hexflo: Option<Arc<HexFlo>>,
-    // Unified state port (ADR-025) — abstracts RL, patterns, agents, etc.
+    // Unified state port (ADR-025 + ADR-042) — single source of truth for all persistent state
     pub state_port: Option<Arc<dyn IStatePort>>,
     // SpacetimeDB inference-gateway client (ADR-035)
     pub inference_stdb: Option<Arc<SpacetimeInferenceClient>>,
@@ -60,16 +57,11 @@ impl AppState {
             tracing::warn!("ANTHROPIC_API_KEY not set — chat will relay only (no direct LLM)");
         }
         Self {
-            projects: RwLock::new(HashMap::new()),
             commands: RwLock::new(HashMap::new()),
             results: RwLock::new(HashMap::new()),
+            activities: RwLock::new(VecDeque::new()),
             ws_tx,
             auth_token,
-            instances: RwLock::new(HashMap::new()),
-            worktree_locks: RwLock::new(HashMap::new()),
-            task_claims: RwLock::new(HashMap::new()),
-            activities: RwLock::new(VecDeque::new()),
-            unstaged: RwLock::new(HashMap::new()),
             fleet: FleetManager::new(),
             anthropic_api_key,
             agent_manager: None,
@@ -82,6 +74,16 @@ impl AppState {
             #[cfg(feature = "sqlite-session")]
             session_port: None,
         }
+    }
+
+    /// Helper: get a reference to the state port or return an error response.
+    pub fn require_state_port(&self) -> Result<&Arc<dyn IStatePort>, (http::StatusCode, axum::Json<serde_json::Value>)> {
+        self.state_port.as_ref().ok_or_else(|| {
+            (
+                http::StatusCode::SERVICE_UNAVAILABLE,
+                axum::Json(serde_json::json!({ "error": "State port not configured" })),
+            )
+        })
     }
 }
 

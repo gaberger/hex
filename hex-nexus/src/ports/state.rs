@@ -214,6 +214,116 @@ pub struct CleanupReport {
     pub reclaimed_tasks: u32,
 }
 
+// ── Project Registry Types (ADR-042) ─────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRegistration {
+    pub id: String,
+    pub name: String,
+    pub root_path: String,
+    pub ast_is_stub: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRecord {
+    pub id: String,
+    pub name: String,
+    pub root_path: String,
+    pub registered_at: i64,
+    pub last_push_at: i64,
+    pub health: Option<serde_json::Value>,
+    pub tokens: Option<serde_json::Value>,
+    #[serde(default)]
+    pub token_files: std::collections::HashMap<String, serde_json::Value>,
+    pub swarm: Option<serde_json::Value>,
+    pub graph: Option<serde_json::Value>,
+    pub ast_is_stub: bool,
+}
+
+// ── Instance Coordination Types (ADR-042) ────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceRecord {
+    pub instance_id: String,
+    pub project_id: String,
+    pub pid: u32,
+    pub session_label: String,
+    pub registered_at: String,
+    pub last_seen: String,
+    pub agent_count: Option<u32>,
+    pub active_task_count: Option<u32>,
+    pub completed_task_count: Option<u32>,
+    pub topology: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceHeartbeat {
+    pub agent_count: Option<u32>,
+    pub active_task_count: Option<u32>,
+    pub completed_task_count: Option<u32>,
+    pub topology: Option<String>,
+}
+
+// ── Worktree Lock Types (ADR-042) ────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeLockRecord {
+    pub key: String,
+    pub instance_id: String,
+    pub project_id: String,
+    pub feature: String,
+    pub layer: String,
+    pub acquired_at: String,
+    pub heartbeat_at: String,
+    pub ttl_secs: u32,
+}
+
+// ── Task Claim Types (ADR-042) ───────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskClaimRecord {
+    pub task_id: String,
+    pub instance_id: String,
+    pub claimed_at: String,
+    pub heartbeat_at: String,
+}
+
+// ── Unstaged Files Types (ADR-042) ───────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnstagedFileRecord {
+    pub path: String,
+    pub status: String,
+    pub layer: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnstagedRecord {
+    pub instance_id: String,
+    pub project_id: String,
+    pub files: Vec<UnstagedFileRecord>,
+    pub captured_at: String,
+}
+
+// ── Coordination Cleanup (ADR-042) ───────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoordinationCleanupReport {
+    pub instances_removed: usize,
+    pub locks_released: usize,
+    pub claims_released: usize,
+    pub unstaged_removed: usize,
+}
+
 // ── State Change Events (for subscriptions) ─────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -413,6 +523,48 @@ pub trait IStatePort: Send + Sync {
     async fn hexflo_memory_retrieve(&self, key: &str) -> Result<Option<String>, StateError>;
     async fn hexflo_memory_search(&self, query: &str) -> Result<Vec<(String, String)>, StateError>;
     async fn hexflo_memory_delete(&self, key: &str) -> Result<(), StateError>;
+
+    // ── Project Registry (ADR-042) ─────────────────
+    async fn project_register(&self, project: ProjectRegistration) -> Result<(), StateError>;
+    async fn project_unregister(&self, id: &str) -> Result<bool, StateError>;
+    async fn project_get(&self, id: &str) -> Result<Option<ProjectRecord>, StateError>;
+    async fn project_list(&self) -> Result<Vec<ProjectRecord>, StateError>;
+    async fn project_update_state(
+        &self,
+        id: &str,
+        push_type: &str,
+        data: serde_json::Value,
+        file_path: Option<&str>,
+    ) -> Result<(), StateError>;
+    /// Find project by ID, name, or root_path basename.
+    async fn project_find(&self, query: &str) -> Result<Option<ProjectRecord>, StateError>;
+
+    // ── Instance Coordination (ADR-042) ──────────────
+    async fn instance_register(&self, info: InstanceRecord) -> Result<String, StateError>;
+    async fn instance_heartbeat(&self, id: &str, update: InstanceHeartbeat) -> Result<(), StateError>;
+    async fn instance_list(&self, project_id: Option<&str>) -> Result<Vec<InstanceRecord>, StateError>;
+    async fn instance_remove(&self, id: &str) -> Result<(), StateError>;
+
+    // ── Worktree Locks (ADR-042) ─────────────────────
+    async fn worktree_lock_acquire(&self, lock: WorktreeLockRecord) -> Result<bool, StateError>;
+    async fn worktree_lock_release(&self, key: &str) -> Result<bool, StateError>;
+    async fn worktree_lock_list(&self, project_id: Option<&str>) -> Result<Vec<WorktreeLockRecord>, StateError>;
+    async fn worktree_lock_refresh(&self, instance_id: &str, heartbeat_at: &str) -> Result<(), StateError>;
+    async fn worktree_lock_evict_expired(&self) -> Result<u32, StateError>;
+
+    // ── Task Claims (ADR-042) ────────────────────────
+    async fn task_claim_acquire(&self, claim: TaskClaimRecord) -> Result<bool, StateError>;
+    async fn task_claim_release(&self, task_id: &str) -> Result<bool, StateError>;
+    async fn task_claim_list(&self, project_id: Option<&str>) -> Result<Vec<TaskClaimRecord>, StateError>;
+    async fn task_claim_refresh(&self, instance_id: &str, heartbeat_at: &str) -> Result<(), StateError>;
+
+    // ── Unstaged Files (ADR-042) ─────────────────────
+    async fn unstaged_update(&self, instance_id: &str, state: UnstagedRecord) -> Result<(), StateError>;
+    async fn unstaged_list(&self, project_id: Option<&str>) -> Result<Vec<UnstagedRecord>, StateError>;
+    async fn unstaged_remove(&self, instance_id: &str) -> Result<(), StateError>;
+
+    // ── Coordination Cleanup (ADR-042) ───────────────
+    async fn coordination_cleanup_stale(&self, stale_threshold_secs: u64) -> Result<CoordinationCleanupReport, StateError>;
 
     // ── Subscriptions (real-time sync) ──────────────
     fn subscribe(&self) -> broadcast::Receiver<StateEvent>;

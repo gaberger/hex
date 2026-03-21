@@ -31,16 +31,17 @@ pub fn spawn_git_poller(state: SharedState, interval_secs: u64) {
         loop {
             ticker.tick().await;
 
-            // Snapshot current project list
-            let project_list: Vec<(String, String)> = {
-                let projects = state.projects.read().await;
-                projects
-                    .values()
-                    .map(|p| (p.id.clone(), p.root_path.clone()))
+            // Snapshot current project list via state_port
+            let project_list: Vec<(String, String)> = if let Some(sp) = state.state_port.as_ref() {
+                sp.project_list().await.unwrap_or_default()
+                    .into_iter()
+                    .map(|p| (p.id, p.root_path))
                     .collect()
+            } else {
+                Vec::new()
             };
 
-            for (project_id, root_path) in project_list {
+            for (project_id, root_path) in project_list.iter() {
                 let rp = root_path.clone();
                 let status_result = tokio::task::spawn_blocking(move || {
                     super::status::get_status(std::path::Path::new(&rp))
@@ -61,7 +62,7 @@ pub fn spawn_git_poller(state: SharedState, interval_secs: u64) {
                 };
 
                 let changed = snapshots
-                    .get(&project_id)
+                    .get(project_id)
                     .map_or(true, |old| *old != new_snapshot);
 
                 if changed {
@@ -92,10 +93,8 @@ pub fn spawn_git_poller(state: SharedState, interval_secs: u64) {
             }
 
             // Remove snapshots for unregistered projects
-            let current_ids: std::collections::HashSet<String> = {
-                let projects = state.projects.read().await;
-                projects.keys().cloned().collect()
-            };
+            let current_ids: std::collections::HashSet<String> =
+                project_list.iter().map(|(id, _)| id.clone()).collect();
             snapshots.retain(|id, _| current_ids.contains(id));
         }
     });
