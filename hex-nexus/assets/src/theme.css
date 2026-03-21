@@ -19,6 +19,27 @@
   --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.12);
 }
 
+/* ── Light-mode Tailwind class overrides ──
+   The app uses Tailwind utility classes (bg-gray-950, text-gray-100, etc.)
+   rather than CSS custom properties for most colors. These overrides remap
+   the most common dark-mode grays to light-mode equivalents so the toggle
+   in App.tsx produces a usable light theme without touching every component. */
+
+[data-theme="light"] body {
+  background: #f8fafc !important;
+  color: #0f172a !important;
+}
+[data-theme="light"] .bg-gray-950 { background-color: #ffffff !important; }
+[data-theme="light"] .bg-gray-900 { background-color: #f8fafc !important; }
+[data-theme="light"] .bg-gray-800 { background-color: #f1f5f9 !important; }
+[data-theme="light"] .text-gray-100 { color: #0f172a !important; }
+[data-theme="light"] .text-gray-200 { color: #1e293b !important; }
+[data-theme="light"] .text-gray-300 { color: #334155 !important; }
+[data-theme="light"] .text-gray-400 { color: #64748b !important; }
+[data-theme="light"] .text-gray-500 { color: #94a3b8 !important; }
+[data-theme="light"] .border-gray-800 { border-color: #e2e8f0 !important; }
+[data-theme="light"] .border-gray-700 { border-color: #cbd5e1 !important; }
+
 /* Toast slide-in animation */
 @keyframes toast-in {
   from { opacity: 0; transform: translateX(1rem); }

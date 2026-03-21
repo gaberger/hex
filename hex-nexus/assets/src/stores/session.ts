@@ -1,3 +1,7 @@
+// TODO(ADR-044): Migrate session persistence to SpacetimeDB chat-relay module.
+// Currently sessions are in-memory SolidJS signals and lost on page refresh.
+// Target: store sessions in SpacetimeDB, subscribe for cross-session visibility.
+
 import { createSignal } from "solid-js";
 
 export interface Session {

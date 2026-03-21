@@ -1,4 +1,4 @@
-import { type Component, onMount, onCleanup, createSignal, Show, Switch, Match } from 'solid-js';
+import { type Component, onMount, onCleanup, createSignal, Show, Switch, Match, lazy } from 'solid-js';
 import { initConnections } from '../stores/connection';
 import {
   splitPane,
@@ -28,7 +28,13 @@ import HealthPane from '../components/health/HealthPane';
 import DependencyGraphPane from '../components/graph/DependencyGraphPane';
 import InferencePanel from '../components/fleet/InferencePanel';
 import FleetView from '../components/fleet/FleetView';
-import { ControlPlane, AgentFleet, ProjectDetail, ADRBrowser, ConfigPage, FileTreeView } from '../components/views';
+import { ControlPlane, ProjectDetail } from '../components/views';
+
+// Lazy-load views that are not on the initial render path (T25 perf audit)
+const AgentFleet = lazy(() => import('../components/views/AgentFleet'));
+const ADRBrowser = lazy(() => import('../components/views/ADRBrowser'));
+const ConfigPage = lazy(() => import('../components/views/ConfigPage'));
+const FileTreeView = lazy(() => import('../components/views/FileTreeView'));
 import ProjectSidebar from '../components/project/ProjectSidebar';
 
 const App: Component = () => {
