@@ -130,7 +130,7 @@ function routeToHash(r: Route): string {
     case "agent-fleet":
       return "#/agents";
     case "config":
-      return `#/config/${r.section}`;
+      return r.projectId ? `#/project/${r.projectId}/config/${r.section}` : `#/config/${r.section}`;
     case "inference":
       return "#/inference";
     case "fleet-nodes":
@@ -160,6 +160,8 @@ function hashToRoute(hash: string): Route {
       return { page: "project-health", projectId };
     if (parts[2] === "graph")
       return { page: "project-graph", projectId };
+    if (parts[2] === "config")
+      return { page: "config", section: parts[3] || "blueprint", projectId };
     return { page: "project", projectId };
   }
   if (parts[0] === "adrs") return { page: "adrs" };

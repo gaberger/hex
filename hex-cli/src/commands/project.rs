@@ -51,7 +51,7 @@ async fn register(client: &NexusClient, path: &str, name: Option<String>) -> any
         body["name"] = json!(n);
     }
 
-    let resp = client.post("/api/projects", &body).await?;
+    let resp = client.post("/api/projects/register", &body).await?;
 
     let id = resp["id"].as_str().unwrap_or("?");
     let proj_name = resp["name"].as_str().unwrap_or("?");

@@ -794,18 +794,18 @@ mod real {
 
         // ── Project Registry (ADR-042) ──────────────────
         async fn project_register(&self, project: ProjectRegistration) -> Result<(), StateError> {
-            let now = chrono::Utc::now().timestamp_millis();
-            self.call_reducer("project_register", serde_json::json!([
-                project.id, project.name, project.root_path, project.ast_is_stub, now
+            let registered_at = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("register_project", serde_json::json!([
+                project.id, project.name, project.root_path, registered_at
             ])).await?;
             Ok(())
         }
         async fn project_unregister(&self, id: &str) -> Result<bool, StateError> {
-            self.call_reducer("project_unregister", serde_json::json!([id])).await?;
+            self.call_reducer("remove_project", serde_json::json!([id])).await?;
             Ok(true)
         }
         async fn project_get(&self, id: &str) -> Result<Option<ProjectRecord>, StateError> {
-            let rows = self.query_table(&format!("SELECT * FROM project WHERE id = '{}'", id)).await?;
+            let rows = self.query_table(&format!("SELECT * FROM project WHERE project_id = '{}'", id)).await?;
             Ok(rows.first().and_then(|r| serde_json::from_value(r.clone()).ok()))
         }
         async fn project_list(&self) -> Result<Vec<ProjectRecord>, StateError> {

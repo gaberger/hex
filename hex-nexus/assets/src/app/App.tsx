@@ -162,59 +162,6 @@ const App: Component = () => {
           <button class="text-sm font-semibold tracking-wide text-gray-100 hover:text-cyan-300 transition-colors" onClick={() => navigate({ page: "control-plane" })}>
             HEX NEXUS
           </button>
-          {/* Section navigation tabs — Projects handled by left nav bar */}
-          <nav class="hidden md:flex items-center gap-1 ml-4">
-            <button
-              class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-              classList={{
-                "bg-gray-800 text-gray-100": route().page === "agent-fleet",
-                "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "agent-fleet",
-              }}
-              onClick={() => navigate({ page: "agent-fleet" })}
-            >
-              Agents
-            </button>
-            <button
-              class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-              classList={{
-                "bg-gray-800 text-gray-100": route().page === "adrs" || route().page === "project-adr",
-                "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "adrs" && route().page !== "project-adr",
-              }}
-              onClick={() => navigate({ page: "adrs" })}
-            >
-              ADRs
-            </button>
-            <button
-              class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-              classList={{
-                "bg-gray-800 text-gray-100": route().page === "config",
-                "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "config",
-              }}
-              onClick={() => navigate({ page: "config", section: "blueprint", projectId: activeProjectId() || undefined })}
-            >
-              Config
-            </button>
-            <button
-              class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-              classList={{
-                "bg-gray-800 text-gray-100": route().page === "inference",
-                "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "inference",
-              }}
-              onClick={() => navigate({ page: "inference" })}
-            >
-              Inference
-            </button>
-            <button
-              class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-              classList={{
-                "bg-gray-800 text-gray-100": route().page === "file-tree",
-                "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "file-tree",
-              }}
-              onClick={() => navigate({ page: "file-tree" })}
-            >
-              Files
-            </button>
-          </nav>
           {/* Plan/Build mode */}
           <button
             class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ml-3"
@@ -269,9 +216,10 @@ const App: Component = () => {
 
       {/* Main area */}
       <div class="flex flex-1 overflow-hidden">
-        {/* Permanent project nav bar */}
-        <nav class="hidden md:flex w-48 shrink-0 flex-col border-r border-gray-800 bg-gray-900 overflow-y-auto">
-          <div class="px-3 py-3">
+        {/* Permanent left nav bar — all navigation lives here */}
+        <nav class="hidden md:flex w-52 shrink-0 flex-col border-r border-gray-800 bg-gray-900 overflow-y-auto">
+          {/* Control Plane / All Projects */}
+          <div class="px-3 pt-3 pb-1">
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors"
               classList={{
@@ -287,6 +235,8 @@ const App: Component = () => {
               All Projects
             </button>
           </div>
+
+          {/* Project list */}
           <div class="px-3 pb-2">
             <div class="text-[10px] font-bold uppercase tracking-wider text-gray-600 px-3 mb-2">Projects</div>
             <For each={projects()}>
@@ -294,13 +244,13 @@ const App: Component = () => {
                 <button
                   class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
                   classList={{
-                    "bg-cyan-900/20 text-cyan-300 font-medium": (route() as any).projectId === p.id,
-                    "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": (route() as any).projectId !== p.id,
+                    "bg-cyan-900/20 text-cyan-300 font-medium": activeProjectId() === p.id,
+                    "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": activeProjectId() !== p.id,
                   }}
                   onClick={() => navigate({ page: "project", projectId: p.id })}
                 >
                   <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    classList={{ "text-cyan-400": (route() as any).projectId === p.id, "text-gray-600": (route() as any).projectId !== p.id }}>
+                    classList={{ "text-cyan-400": activeProjectId() === p.id, "text-gray-600": activeProjectId() !== p.id }}>
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                   </svg>
                   <span class="truncate">{p.name}</span>
@@ -310,6 +260,165 @@ const App: Component = () => {
             <Show when={projects().length === 0}>
               <p class="px-3 py-2 text-xs text-gray-600">No projects</p>
             </Show>
+          </div>
+
+          {/* Project-scoped nav — only visible when a project is active */}
+          <Show when={activeProjectId()}>
+            <div class="px-3 pb-2 border-t border-gray-800 pt-2">
+              <div class="text-[10px] font-bold uppercase tracking-wider text-gray-600 px-3 mb-2">Project</div>
+              {/* Config (project-scoped) */}
+              <button
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                classList={{
+                  "bg-gray-800 text-gray-100": route().page === "config" && !!(route() as any).projectId,
+                  "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "config" || !(route() as any).projectId,
+                }}
+                onClick={() => navigate({ page: "config", section: "blueprint", projectId: activeProjectId() })}
+              >
+                <svg class="h-4 w-4 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+                Config
+              </button>
+              {/* ADRs */}
+              <button
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                classList={{
+                  "bg-gray-800 text-gray-100": route().page === "adrs" || route().page === "project-adr",
+                  "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "adrs" && route().page !== "project-adr",
+                }}
+                onClick={() => navigate({ page: "adrs", projectId: activeProjectId() })}
+              >
+                <svg class="h-4 w-4 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                ADRs
+              </button>
+              {/* Files */}
+              <button
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                classList={{
+                  "bg-gray-800 text-gray-100": route().page === "file-tree",
+                  "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "file-tree",
+                }}
+                onClick={() => navigate({ page: "file-tree", projectId: activeProjectId() })}
+              >
+                <svg class="h-4 w-4 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+                Files
+              </button>
+              {/* Chat */}
+              <button
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                classList={{
+                  "bg-gray-800 text-gray-100": route().page === "project-chat",
+                  "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "project-chat",
+                }}
+                onClick={() => navigate({ page: "project-chat", projectId: activeProjectId() })}
+              >
+                <svg class="h-4 w-4 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                Chat
+              </button>
+              {/* Health */}
+              <button
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                classList={{
+                  "bg-gray-800 text-gray-100": route().page === "project-health",
+                  "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "project-health",
+                }}
+                onClick={() => navigate({ page: "project-health", projectId: activeProjectId() })}
+              >
+                <svg class="h-4 w-4 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                </svg>
+                Health
+              </button>
+              {/* Dependencies */}
+              <button
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                classList={{
+                  "bg-gray-800 text-gray-100": route().page === "project-graph",
+                  "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "project-graph",
+                }}
+                onClick={() => navigate({ page: "project-graph", projectId: activeProjectId() })}
+              >
+                <svg class="h-4 w-4 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><circle cx="18" cy="6" r="3" />
+                  <line x1="6" y1="9" x2="6" y2="21" /><path d="M6 12h6a3 3 0 0 1 3 3v3" />
+                </svg>
+                Dependencies
+              </button>
+            </div>
+          </Show>
+
+          {/* Global nav — always visible */}
+          <div class="px-3 pb-3 border-t border-gray-800 pt-2 mt-auto">
+            <div class="text-[10px] font-bold uppercase tracking-wider text-gray-600 px-3 mb-2">System</div>
+            {/* Agents */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+              classList={{
+                "bg-gray-800 text-gray-100": route().page === "agent-fleet",
+                "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "agent-fleet",
+              }}
+              onClick={() => navigate({ page: "agent-fleet" })}
+            >
+              <svg class="h-4 w-4 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              Agents
+            </button>
+            {/* Inference */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+              classList={{
+                "bg-gray-800 text-gray-100": route().page === "inference",
+                "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "inference",
+              }}
+              onClick={() => navigate({ page: "inference" })}
+            >
+              <svg class="h-4 w-4 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" />
+                <line x1="6" y1="6" x2="6.01" y2="6" /><line x1="6" y1="18" x2="6.01" y2="18" />
+              </svg>
+              Inference
+            </button>
+            {/* Fleet */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+              classList={{
+                "bg-gray-800 text-gray-100": route().page === "fleet-nodes",
+                "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "fleet-nodes",
+              }}
+              onClick={() => navigate({ page: "fleet-nodes" })}
+            >
+              <svg class="h-4 w-4 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" />
+                <line x1="12" y1="17" x2="12" y2="21" />
+              </svg>
+              Fleet Nodes
+            </button>
+            {/* Global Config */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+              classList={{
+                "bg-gray-800 text-gray-100": route().page === "config" && !(route() as any).projectId,
+                "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "config" || !!(route() as any).projectId,
+              }}
+              onClick={() => navigate({ page: "config", section: "blueprint" })}
+            >
+              <svg class="h-4 w-4 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+              Global Config
+            </button>
           </div>
         </nav>
 
@@ -378,48 +487,33 @@ const App: Component = () => {
 
       {/* Mobile bottom tabs — only shown on small screens */}
       <div class="flex md:hidden items-center justify-around border-t border-gray-800 bg-gray-900 py-2">
-        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1"
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1"
           classList={{ "text-cyan-400": route().page === "control-plane" }}
           onClick={() => navigate({ page: "control-plane" })}
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="3" width="7" height="7" />
-            <rect x="14" y="3" width="7" height="7" />
-            <rect x="3" y="14" width="7" height="7" />
-            <rect x="14" y="14" width="7" height="7" />
+            <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+            <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
           </svg>
           <span class="text-[10px]">Projects</span>
         </button>
-        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1"
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1"
           classList={{ "text-cyan-400": route().page === "agent-fleet" }}
           onClick={() => navigate({ page: "agent-fleet" })}
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-            <circle cx="9" cy="7" r="4" />
-            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
           </svg>
           <span class="text-[10px]">Agents</span>
         </button>
-        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1"
-          classList={{ "text-cyan-400": route().page === "project-health" }}
-          onClick={() => navigate({ page: "project-health", projectId: "current" })}
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1"
+          classList={{ "text-cyan-400": route().page === "inference" }}
+          onClick={() => navigate({ page: "inference" })}
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+            <rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" />
           </svg>
-          <span class="text-[10px]">Health</span>
-        </button>
-        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1"
-          classList={{ "text-cyan-400": route().page === "config" }}
-          onClick={() => navigate({ page: "config", section: "blueprint" })}
-        >
-          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-          <span class="text-[10px]">Config</span>
+          <span class="text-[10px]">Inference</span>
         </button>
       </div>
 

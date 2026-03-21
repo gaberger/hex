@@ -1,6 +1,29 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use tokio::sync::broadcast;
+
+/// Deserialize a timestamp that may be an integer (millis) or an RFC3339 string.
+fn deserialize_flexible_timestamp<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+    struct TimestampVisitor;
+    impl<'de> de::Visitor<'de> for TimestampVisitor {
+        type Value = i64;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("an integer or RFC3339 timestamp string")
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<i64, E> { Ok(v) }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<i64, E> { Ok(v as i64) }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<i64, E> {
+            chrono::DateTime::parse_from_rfc3339(v)
+                .map(|dt| dt.timestamp_millis())
+                .map_err(|_| de::Error::custom(format!("invalid timestamp: {v}")))
+        }
+    }
+    deserializer.deserialize_any(TimestampVisitor)
+}
 
 // ── Domain Types ────────────────────────────────────────
 
@@ -228,17 +251,26 @@ pub struct ProjectRegistration {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRecord {
+    #[serde(alias = "project_id", alias = "projectId")]
     pub id: String,
     pub name: String,
+    #[serde(alias = "path")]
     pub root_path: String,
+    #[serde(default, deserialize_with = "deserialize_flexible_timestamp")]
     pub registered_at: i64,
+    #[serde(default)]
     pub last_push_at: i64,
+    #[serde(default)]
     pub health: Option<serde_json::Value>,
+    #[serde(default)]
     pub tokens: Option<serde_json::Value>,
     #[serde(default)]
     pub token_files: std::collections::HashMap<String, serde_json::Value>,
+    #[serde(default)]
     pub swarm: Option<serde_json::Value>,
+    #[serde(default)]
     pub graph: Option<serde_json::Value>,
+    #[serde(default)]
     pub ast_is_stub: bool,
 }
 
