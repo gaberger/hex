@@ -42,8 +42,8 @@ pub struct AppState {
     pub inference_stdb: Option<Arc<SpacetimeInferenceClient>>,
     // SpacetimeDB chat-relay client
     pub chat_stdb: Option<Arc<SpacetimeChatClient>>,
-    // Session persistence (ADR-036) — chat conversation history
-    #[cfg(feature = "sqlite-session")]
+    // Session persistence (ADR-036 / ADR-042 P2.5) — chat conversation history
+    // SpacetimeDB primary, SQLite fallback
     pub session_port: Option<Arc<dyn ISessionPort>>,
 }
 
@@ -71,7 +71,6 @@ impl AppState {
             state_port: None,
             inference_stdb: None,
             chat_stdb: None,
-            #[cfg(feature = "sqlite-session")]
             session_port: None,
         }
     }

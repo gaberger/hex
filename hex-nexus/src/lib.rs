@@ -19,6 +19,7 @@ pub mod state_config;
 pub mod spacetime_bindings;
 pub mod config_sync;
 pub mod spacetime_launcher;
+pub mod templates;
 
 use std::sync::Arc;
 
@@ -163,24 +164,52 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         });
     }
 
-    // Initialize session persistence (ADR-036)
-    #[cfg(feature = "sqlite-session")]
+    // Initialize session persistence (ADR-036 / ADR-042 P2.5)
+    // Try SpacetimeDB first (chat-relay module), fall back to SQLite
     {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let hex_dir = std::path::PathBuf::from(home).join(".hex");
-        let _ = std::fs::create_dir_all(&hex_dir);
-        let db_path = hex_dir.join("hub.db");
-        match adapters::sqlite_session::SqliteSessionAdapter::from_path(
-            db_path.to_str().unwrap_or("/tmp/.hex/hub.db"),
-        )
-        .await
-        {
-            Ok(adapter) => {
-                app_state.session_port = Some(Arc::new(adapter));
-                tracing::info!("Session persistence active (SQLite: {:?})", db_path);
-            }
-            Err(e) => {
-                tracing::warn!("Session persistence unavailable: {e}");
+        let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+        let chat_db = std::env::var("HEX_CHAT_STDB_DATABASE")
+            .unwrap_or_else(|_| "chat-relay".to_string());
+
+        let stdb_adapter = adapters::spacetime_session::SpacetimeSessionAdapter::new(
+            stdb_host.clone(),
+            chat_db.clone(),
+        );
+
+        if stdb_adapter.probe().await {
+            app_state.session_port = Some(Arc::new(stdb_adapter));
+            tracing::info!(
+                "Session persistence active (SpacetimeDB: {}/{})",
+                stdb_host,
+                chat_db
+            );
+        } else {
+            tracing::info!(
+                "SpacetimeDB chat-relay not reachable — falling back to SQLite sessions"
+            );
+            #[cfg(feature = "sqlite-session")]
+            {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                let hex_dir = std::path::PathBuf::from(home).join(".hex");
+                let _ = std::fs::create_dir_all(&hex_dir);
+                let db_path = hex_dir.join("hub.db");
+                match adapters::sqlite_session::SqliteSessionAdapter::from_path(
+                    db_path.to_str().unwrap_or("/tmp/.hex/hub.db"),
+                )
+                .await
+                {
+                    Ok(adapter) => {
+                        app_state.session_port = Some(Arc::new(adapter));
+                        tracing::info!(
+                            "Session persistence active (SQLite fallback: {:?})",
+                            db_path
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Session persistence unavailable: {e}");
+                    }
+                }
             }
         }
     }

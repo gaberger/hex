@@ -81,8 +81,7 @@ async fn handle_chat_ws(
 ) {
     let (mut sender, mut receiver) = socket.split();
 
-    // Session persistence (ADR-036): resume or create a session
-    #[cfg(feature = "sqlite-session")]
+    // Session persistence (ADR-036 / ADR-042 P2.5): resume or create a session
     let persistent_session_id = {
         if let Some(ref port) = state.session_port {
             if let Some(ref sid) = requested_session_id {
@@ -113,8 +112,6 @@ async fn handle_chat_ws(
             None
         }
     };
-    #[cfg(not(feature = "sqlite-session"))]
-    let persistent_session_id: Option<String> = None;
 
     // Use persistent session ID if available, otherwise generate ephemeral one
     let session_id = persistent_session_id
@@ -268,8 +265,7 @@ async fn handle_chat_ws(
 
             match parsed {
                 ChatInbound::ChatMessage { content, agent_id, model: requested_model } => {
-                    // Persist user message (ADR-036)
-                    #[cfg(feature = "sqlite-session")]
+                    // Persist user message (ADR-036 / ADR-042 P2.5)
                     if let Some(ref psid) = persist_sid {
                         if let Some(ref port) = state2.session_port {
                             let msg = NewMessage {
@@ -308,12 +304,8 @@ async fn handle_chat_ws(
                         let sid = session_id.clone();
                         let conv = conversation.clone();
                         let bridge_persist_sid = persist_sid.clone();
-                        let bridge_session_port: Option<std::sync::Arc<dyn ISessionPort>> = {
-                            #[cfg(feature = "sqlite-session")]
-                            { state2.session_port.clone() }
-                            #[cfg(not(feature = "sqlite-session"))]
-                            { None }
-                        };
+                        let bridge_session_port: Option<std::sync::Arc<dyn ISessionPort>> =
+                            state2.session_port.clone();
 
                         let req_model = requested_model;
                         tokio::spawn(async move {

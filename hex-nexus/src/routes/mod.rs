@@ -16,7 +16,6 @@ pub mod push;
 pub mod query;
 pub mod rl;
 pub mod secrets;
-#[cfg(feature = "sqlite-session")]
 pub mod sessions;
 pub mod swarms;
 pub mod openapi;
@@ -282,6 +281,11 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/adrs/{id}", get(adrs::get_adr)
             .put(adrs::save_adr)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
+        // Project-scoped ADRs (ADR-045 Phase 1)
+        .route("/api/projects/{id}/adrs", get(adrs::list_project_adrs))
+        .route("/api/projects/{id}/adrs/{adr_id}", get(adrs::get_project_adr)
+            .put(adrs::save_project_adr)
+            .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
 
         // Generic file read/write (path-traversal protected)
         .route("/api/files", get(files::read_file)
@@ -298,8 +302,7 @@ pub fn build_router(state: SharedState) -> Router {
             .delete(hexflo::memory_delete))
         .route("/api/hexflo/cleanup", post(hexflo::cleanup));
 
-    // Session persistence (ADR-036) — feature-gated
-    #[cfg(feature = "sqlite-session")]
+    // Session persistence (ADR-036 / ADR-042 P2.5) — SpacetimeDB primary, SQLite fallback
     let router = router
         .route("/api/sessions", post(sessions::create_session)
             .get(sessions::list_sessions)

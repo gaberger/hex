@@ -317,8 +317,52 @@ const App: Component = () => {
       {/* Breadcrumbs */}
       <Breadcrumbs />
 
-      {/* Main area — full width, no sidebar */}
+      {/* Main area */}
       <div class="flex flex-1 overflow-hidden">
+        {/* Permanent project nav bar */}
+        <nav class="hidden md:flex w-48 shrink-0 flex-col border-r border-gray-800 bg-gray-900 overflow-y-auto">
+          <div class="px-3 py-3">
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors"
+              classList={{
+                "bg-gray-800 text-gray-100": route().page === "control-plane",
+                "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "control-plane",
+              }}
+              onClick={() => navigate({ page: "control-plane" })}
+            >
+              <svg class="h-4 w-4 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+              </svg>
+              All Projects
+            </button>
+          </div>
+          <div class="px-3 pb-2">
+            <div class="text-[10px] font-bold uppercase tracking-wider text-gray-600 px-3 mb-2">Projects</div>
+            <For each={projects()}>
+              {(p) => (
+                <button
+                  class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                  classList={{
+                    "bg-cyan-900/20 text-cyan-300 font-medium": (route() as any).projectId === p.id,
+                    "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": (route() as any).projectId !== p.id,
+                  }}
+                  onClick={() => navigate({ page: "project", projectId: p.id })}
+                >
+                  <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    classList={{ "text-cyan-400": (route() as any).projectId === p.id, "text-gray-600": (route() as any).projectId !== p.id }}>
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                  </svg>
+                  <span class="truncate">{p.name}</span>
+                </button>
+              )}
+            </For>
+            <Show when={projects().length === 0}>
+              <p class="px-3 py-2 text-xs text-gray-600">No projects</p>
+            </Show>
+          </div>
+        </nav>
+
         {/* Center content — route-based view switching */}
         <div class="flex flex-1 flex-col overflow-hidden">
           <Switch fallback={<ControlPlane />}>
