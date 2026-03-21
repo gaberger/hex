@@ -87,9 +87,13 @@ struct Args {
     #[arg(long, default_value = "85")]
     compact_threshold: u32,
 
-    /// LLM provider: anthropic, minimax, or auto (default: auto)
+    /// LLM provider: anthropic, minimax, ollama, or auto (default: auto)
     #[arg(long, default_value = "auto")]
     provider: String,
+
+    /// Ollama host URL (default: http://127.0.0.1:11434)
+    #[arg(long, default_value = "http://127.0.0.1:11434")]
+    ollama_host: String,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -259,6 +263,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Build the primary LLM adapter based on --provider + resolved keys
     let anthropic: Arc<dyn ports::AnthropicPort> = match provider.as_str() {
+        "ollama" => {
+            let model = args.model.clone();
+            let host = args.ollama_host.clone();
+            tracing::info!(model = %model, host = %host, "Using Ollama provider");
+            Arc::new(OpenAiCompatAdapter::ollama(&model, Some(&host)))
+        }
         "minimax" => {
             let key = minimax_key.clone().unwrap_or_else(|| {
                 eprintln!("\x1b[31mError: MINIMAX_API_KEY not found in secrets or environment\x1b[0m");
@@ -282,8 +292,9 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("No ANTHROPIC_API_KEY — using MiniMax as primary provider");
                 Arc::new(OpenAiCompatAdapter::minimax(key))
             } else {
-                eprintln!("\x1b[31mError: No API key found. Register keys in hex-hub or set ANTHROPIC_API_KEY / MINIMAX_API_KEY\x1b[0m");
-                std::process::exit(1);
+                // No API keys — try local Ollama as last resort
+                tracing::info!("No API keys found — falling back to Ollama at {}", args.ollama_host);
+                Arc::new(OpenAiCompatAdapter::ollama(&args.model, Some(&args.ollama_host)))
             }
         }
     };

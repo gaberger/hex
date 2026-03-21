@@ -278,12 +278,21 @@ async fn handle_chat_ws(
                         }
                     }
 
-                    // If no agent is connected, use the LLM bridge
-                    // (routes through registered inference endpoints or Anthropic fallback)
-                    let has_agent = agent_id.is_some()
+                    // Route decision: agent (local or remote) vs LLM bridge.
+                    //
+                    // If an explicit agent_id is provided, ALWAYS route to that agent
+                    // even if it's on a different session (cross-session routing for
+                    // remote agents, ADR-040). Otherwise check session-local agents,
+                    // then fall back to the LLM bridge.
+                    let explicit_agent = agent_id.is_some();
+                    let has_agent = explicit_agent
                         || initial_agent_id.is_some()
                         || registered_agent_id.is_some();
-                    let has_inference = !state2.inference_endpoints.read().await.is_empty();
+                    let has_inference = if let Some(ref stdb) = state2.inference_stdb {
+                        stdb.list_providers().await.map(|p| !p.is_empty()).unwrap_or(false)
+                    } else {
+                        false
+                    };
                     let has_anthropic = state2.anthropic_api_key.is_some();
                     let use_bridge = !has_agent && (has_inference || has_anthropic);
 
@@ -448,11 +457,35 @@ async fn llm_bridge(
 
     let messages = conversation.lock().await.clone();
 
-    // Pick an inference endpoint: prefer registered endpoints, fall back to Anthropic
+    // Pick an inference endpoint from SpacetimeDB (ADR-041): prefer registered endpoints, fall back to Anthropic
     // If a model was requested, override the endpoint's default model
-    let endpoint = {
-        let eps = state.inference_endpoints.read().await;
-        eps.values().next().cloned()
+    let endpoint: Option<crate::routes::secrets::InferenceEndpointEntry> = if let Some(ref stdb) = state.inference_stdb {
+        match stdb.list_providers().await {
+            Ok(providers) if !providers.is_empty() => {
+                let p = &providers[0];
+                let first_model = p.models_json.trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .split(',')
+                    .next()
+                    .unwrap_or(&p.models_json)
+                    .trim()
+                    .trim_matches('"')
+                    .to_string();
+                Some(crate::routes::secrets::InferenceEndpointEntry {
+                    id: p.provider_id.clone(),
+                    url: p.base_url.clone(),
+                    provider: p.provider_type.clone(),
+                    model: first_model,
+                    status: if p.healthy == 1 { "healthy".into() } else { "unknown".into() },
+                    requires_auth: !p.api_key_ref.is_empty(),
+                    secret_key: p.api_key_ref.clone(),
+                    health_checked_at: p.last_health_check.clone(),
+                })
+            }
+            _ => None,
+        }
+    } else {
+        None
     };
 
     let (content, model_name, input_tokens, output_tokens) = if let Some(mut ep) = endpoint {

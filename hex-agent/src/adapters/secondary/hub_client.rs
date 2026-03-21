@@ -118,9 +118,9 @@ impl HubClientPort for HubClientAdapter {
                             .map_err(|e| HubError::ReceiveFailed(e.to_string()))?
                     };
 
-                    // Skip unknown messages silently
+                    // Skip unknown messages but log them for debugging
                     if matches!(msg, HubMessage::Unknown) {
-                        tracing::debug!("Skipping unknown hub message: {}", &text[..text.len().min(100)]);
+                        tracing::warn!("Skipping unknown hub message: {}", &text[..text.len().min(200)]);
                         continue;
                     }
 
