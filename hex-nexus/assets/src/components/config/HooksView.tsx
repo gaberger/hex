@@ -1,4 +1,4 @@
-import { Component, For } from 'solid-js';
+import { Component, For, createResource } from 'solid-js';
 import { addToast } from '../../stores/toast';
 
 interface Hook {
@@ -13,7 +13,16 @@ interface HookType {
   hooks: Hook[];
 }
 
-const HOOK_TYPES: HookType[] = [
+const EVENT_DESCRIPTIONS: Record<string, string> = {
+  PreToolUse: "Runs before a tool is called",
+  PostToolUse: "Runs after a tool completes",
+  UserPromptSubmit: "Runs when user sends a message",
+  SessionStart: "Runs at session initialization",
+  Notification: "Runs when a notification is sent",
+  Stop: "Runs when the agent stops",
+};
+
+const HARDCODED_HOOKS: HookType[] = [
   { event: "PreToolUse", desc: "Runs before a tool is called", hooks: [
     { name: "context-mode router", cmd: "node ~/.context-mode/hook.js", enabled: true },
     { name: "intelligence patterns", cmd: "node ~/.hex/hooks/intelligence.js", enabled: true },
@@ -28,7 +37,47 @@ const HOOK_TYPES: HookType[] = [
   ]},
 ];
 
+async function discoverHooks(): Promise<HookType[]> {
+  const allHooks: Record<string, any[]> = {};
+
+  for (const file of ['.claude/settings.json', '.claude/settings.local.json']) {
+    try {
+      const res = await fetch(`/api/files?path=${encodeURIComponent(file)}`);
+      if (res.ok) {
+        const data = await res.json();
+        const parsed = JSON.parse(data.content || '{}');
+        const hooks = parsed.hooks || {};
+        // Merge — local overrides/extends global
+        for (const [event, items] of Object.entries(hooks)) {
+          if (Array.isArray(items)) {
+            allHooks[event] = [...(allHooks[event] || []), ...items];
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const entries = Object.entries(allHooks);
+  if (entries.length === 0) return HARDCODED_HOOKS;
+
+  return entries.map(([event, items]: [string, any[]]) => ({
+    event,
+    desc: EVENT_DESCRIPTIONS[event] || event,
+    hooks: items.map((h: any, i: number) => ({
+      name: h.matcher || (typeof h.command === 'string' ? h.command.split('/').pop() : null) || `hook-${i}`,
+      cmd: typeof h.command === 'string' ? h.command : (Array.isArray(h.command) ? h.command.join(' ') : ''),
+      enabled: true,
+    })),
+  }));
+}
+
 const HooksView: Component = () => {
+  const [hookData] = createResource(discoverHooks);
+
+  const hookTypes = () => hookData() ?? HARDCODED_HOOKS;
+
   return (
     <div class="flex-1 overflow-auto p-6" style={{ "background-color": "#0a0e14" }}>
       {/* Header */}
@@ -36,14 +85,14 @@ const HooksView: Component = () => {
         <div>
           <h2 class="text-xl font-bold text-gray-100">Hooks</h2>
           <p class="mt-1 text-sm text-gray-400">
-            Claude Code hooks that run at specific lifecycle events.
+            {hookData.loading ? 'Discovering hooks...' : 'Claude Code hooks that run at specific lifecycle events.'}
           </p>
         </div>
       </div>
 
       {/* Hook type sections */}
       <div class="space-y-6">
-        <For each={HOOK_TYPES}>
+        <For each={hookTypes()}>
           {(hookType) => (
             <div>
               {/* Section header */}

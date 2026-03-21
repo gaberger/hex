@@ -1,4 +1,5 @@
 use axum::Json;
+use axum::extract::Query;
 use http::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
@@ -62,6 +63,94 @@ fn is_safe_path(relative: &str) -> bool {
     }
 
     true
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReadFileParams {
+    pub path: String,
+    /// When "true", list directory contents instead of reading file content.
+    pub list: Option<String>,
+}
+
+/// GET /api/files?path=X — read a file or list a directory (path-traversal protected).
+///
+/// Query params:
+///   - `path` (required): relative path within the project root
+///   - `list=true` (optional): if the path is a directory, return a JSON array of filenames
+///
+/// Returns:
+///   - For files: `{ "content": "..." }`
+///   - For directories (list=true): `{ "files": ["a.md", "b.md"] }`
+pub async fn read_file(
+    Query(params): Query<ReadFileParams>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if !is_safe_path(&params.path) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Invalid path: must be relative and must not contain '..'" })),
+        );
+    }
+
+    let root = match find_project_root() {
+        Some(r) => r,
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "Could not determine project root" })),
+            );
+        }
+    };
+
+    let target = root.join(&params.path);
+
+    // Canonicalize to prevent traversal via symlinks
+    if target.exists() {
+        let canonical_root = root.canonicalize().unwrap_or(root.clone());
+        let canonical_target = target.canonicalize().unwrap_or(target.clone());
+        if !canonical_target.starts_with(&canonical_root) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "Path escapes project root" })),
+            );
+        }
+    }
+
+    let is_list = params.list.as_deref() == Some("true");
+
+    if target.is_dir() {
+        if !is_list {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "Path is a directory. Use list=true to list contents." })),
+            );
+        }
+        match std::fs::read_dir(&target) {
+            Ok(entries) => {
+                let files: Vec<String> = entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect();
+                (StatusCode::OK, Json(json!({ "files": files })))
+            }
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Failed to read directory: {}", e) })),
+            ),
+        }
+    } else if target.is_file() {
+        match std::fs::read_to_string(&target) {
+            Ok(content) => (StatusCode::OK, Json(json!({ "content": content }))),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Failed to read file: {}", e) })),
+            ),
+        }
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Path not found: {}", params.path) })),
+        )
+    }
 }
 
 /// PUT /api/files — write content to a project file (path-traversal protected).

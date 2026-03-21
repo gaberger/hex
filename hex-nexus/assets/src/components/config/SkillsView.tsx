@@ -1,4 +1,4 @@
-import { Component, For } from 'solid-js';
+import { Component, For, createResource, createMemo } from 'solid-js';
 import { addToast } from '../../stores/toast';
 
 interface Skill {
@@ -13,7 +13,7 @@ interface SkillCategory {
   skills: Skill[];
 }
 
-const SKILL_CATEGORIES: SkillCategory[] = [
+const HARDCODED_CATEGORIES: SkillCategory[] = [
   {
     name: "Architecture & Analysis",
     skills: [
@@ -58,8 +58,93 @@ const SKILL_CATEGORIES: SkillCategory[] = [
   },
 ];
 
+/** Category assignment by name prefix. */
+function categorizeSkill(name: string): string {
+  if (name.startsWith('hex-adr')) return 'ADR Management';
+  if (name.startsWith('hex-analyze') || name.startsWith('hex-scaffold') || name.startsWith('hex-generate') || name.startsWith('hex-validate')) return 'Architecture & Analysis';
+  if (name.startsWith('hex-feature') || name.startsWith('hex-summarize') || name.startsWith('hex-dashboard')) return 'Development Workflow';
+  if (name.startsWith('sparc') || name.startsWith('pair-')) return 'Swarm & Orchestration';
+  return 'Discovered';
+}
+
+async function discoverSkills(): Promise<Skill[] | null> {
+  try {
+    const res = await fetch('/api/files?path=.claude/skills&list=true');
+    if (!res.ok) return null;
+    const data = await res.json();
+    const files: string[] = data.files || [];
+
+    const mdFiles = files.filter((f: string) => f.endsWith('.md'));
+    if (mdFiles.length === 0) return null;
+
+    const skills: Skill[] = [];
+    for (const file of mdFiles) {
+      try {
+        const fRes = await fetch(`/api/files?path=${encodeURIComponent('.claude/skills/' + file)}`);
+        if (!fRes.ok) continue;
+        const fData = await fRes.json();
+        const content: string = fData.content || '';
+
+        // Parse YAML frontmatter
+        const match = content.match(/^---\n([\s\S]*?)\n---/);
+        if (match) {
+          const fm = match[1];
+          const name = fm.match(/name:\s*(.+)/)?.[1]?.trim() || file.replace('.md', '');
+          const trigger = fm.match(/trigger:\s*(.+)/)?.[1]?.trim() || `/${name}`;
+          const desc = fm.match(/description:\s*(.+)/)?.[1]?.trim() || '';
+          skills.push({ name, trigger, desc, source: '.claude/skills/' });
+        } else {
+          // No frontmatter — use filename
+          const name = file.replace('.md', '');
+          skills.push({ name, trigger: `/${name}`, desc: '', source: '.claude/skills/' });
+        }
+      } catch {
+        // skip individual file errors
+      }
+    }
+
+    return skills.length > 0 ? skills : null;
+  } catch {
+    return null;
+  }
+}
+
 const SkillsView: Component = () => {
-  const totalSkills = () => SKILL_CATEGORIES.reduce((sum, cat) => sum + cat.skills.length, 0);
+  const [discoveredSkills] = createResource(discoverSkills);
+
+  const categories = createMemo((): SkillCategory[] => {
+    const discovered = discoveredSkills();
+    if (!discovered) return HARDCODED_CATEGORIES;
+
+    // Build category map from hardcoded as base
+    const catMap = new Map<string, Skill[]>();
+    for (const cat of HARDCODED_CATEGORIES) {
+      catMap.set(cat.name, [...cat.skills]);
+    }
+
+    // Merge discovered skills — replace matching names, add new ones
+    const existingNames = new Set(HARDCODED_CATEGORIES.flatMap(c => c.skills.map(s => s.name)));
+    for (const skill of discovered) {
+      if (existingNames.has(skill.name)) {
+        // Update existing skill's description if discovered has one
+        for (const [, skills] of catMap) {
+          const idx = skills.findIndex(s => s.name === skill.name);
+          if (idx >= 0 && skill.desc) {
+            skills[idx] = { ...skills[idx], desc: skill.desc };
+          }
+        }
+      } else {
+        // New skill — categorize and add
+        const catName = categorizeSkill(skill.name);
+        if (!catMap.has(catName)) catMap.set(catName, []);
+        catMap.get(catName)!.push(skill);
+      }
+    }
+
+    return Array.from(catMap.entries()).map(([name, skills]) => ({ name, skills }));
+  });
+
+  const totalSkills = () => categories().reduce((sum, cat) => sum + cat.skills.length, 0);
 
   return (
     <div class="flex-1 overflow-auto p-6">
@@ -68,7 +153,7 @@ const SkillsView: Component = () => {
         <div>
           <h2 class="text-xl font-bold text-gray-100">Skills</h2>
           <p class="mt-1 text-sm text-gray-400">
-            {totalSkills()} slash commands across {SKILL_CATEGORIES.length} categories
+            {discoveredSkills.loading ? 'Discovering skills...' : `${totalSkills()} slash commands across ${categories().length} categories`}
           </p>
         </div>
         <button class="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-400 hover:border-cyan-600 hover:text-cyan-300 transition-colors"
@@ -79,7 +164,7 @@ const SkillsView: Component = () => {
 
       {/* Categorized skills */}
       <div class="space-y-6">
-        <For each={SKILL_CATEGORIES}>
+        <For each={categories()}>
           {(category) => (
             <div>
               <h3 class="mb-3 text-xs font-bold uppercase tracking-wider text-gray-500">{category.name}</h3>

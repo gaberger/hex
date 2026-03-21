@@ -281,8 +281,9 @@ pub fn build_router(state: SharedState) -> Router {
             .put(adrs::save_adr)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
 
-        // Generic file write (path-traversal protected)
-        .route("/api/files", put(files::save_file)
+        // Generic file read/write (path-traversal protected)
+        .route("/api/files", get(files::read_file)
+            .put(files::save_file)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
 
         // HexFlo coordination (ADR-027)
