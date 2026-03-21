@@ -176,8 +176,6 @@ const ProjectDetail: Component = () => {
           />
         </Show>
       </div>
-
-    </div>
   );
 };
 
