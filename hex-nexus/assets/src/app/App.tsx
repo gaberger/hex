@@ -23,6 +23,7 @@ import { toggleViewMode } from '../stores/view';
 import { initChatConnection, disconnectChat } from '../stores/chat';
 import { startHexFloMonitor } from '../stores/hexflo-monitor';
 import { route, initRouter, navigate } from '../stores/router';
+import { projects } from '../stores/projects';
 import ChatView from '../components/chat/ChatView';
 import HealthPane from '../components/health/HealthPane';
 import DependencyGraphPane from '../components/graph/DependencyGraphPane';
@@ -163,16 +164,53 @@ const App: Component = () => {
           </span>
           {/* Section navigation tabs */}
           <nav class="hidden md:flex items-center gap-1 ml-4">
-            <button
-              class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-              classList={{
-                "bg-gray-800 text-gray-100": route().page === "control-plane",
-                "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "control-plane",
-              }}
-              onClick={() => navigate({ page: "control-plane" })}
-            >
-              Projects
-            </button>
+            {/* Projects dropdown — always visible */}
+            <div class="relative group">
+              <button
+                class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors flex items-center gap-1.5"
+                classList={{
+                  "bg-gray-800 text-gray-100": route().page === "control-plane" || route().page.startsWith("project"),
+                  "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "control-plane" && !route().page.startsWith("project"),
+                }}
+                onClick={() => navigate({ page: "control-plane" })}
+              >
+                Projects
+                <svg class="h-3 w-3 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              {/* Dropdown */}
+              <div class="absolute left-0 top-full mt-1 hidden group-hover:block z-50 min-w-[200px] rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-xl">
+                <button
+                  class="flex w-full items-center gap-2 px-4 py-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition-colors"
+                  onClick={() => navigate({ page: "control-plane" })}
+                >
+                  <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+                    <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+                  </svg>
+                  All Projects
+                </button>
+                <div class="border-t border-gray-800 my-1" />
+                <For each={projects()}>
+                  {(p) => (
+                    <button
+                      class="flex w-full items-center gap-2 px-4 py-2 text-xs hover:bg-gray-800 transition-colors"
+                      classList={{
+                        "text-cyan-400": (route() as any).projectId === p.id,
+                        "text-gray-300": (route() as any).projectId !== p.id,
+                      }}
+                      onClick={() => navigate({ page: "project", projectId: p.id })}
+                    >
+                      <svg class="h-3.5 w-3.5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                      </svg>
+                      {p.name}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </div>
             <button
               class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
               classList={{
