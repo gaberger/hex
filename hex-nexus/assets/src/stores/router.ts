@@ -9,6 +9,7 @@ export type Route =
   | { page: "project-graph"; projectId: string }
   | { page: "agent-fleet" }
   | { page: "config"; section: string }
+  | { page: "adrs"; projectId?: string }
   | { page: "inference" }
   | { page: "fleet-nodes" };
 
@@ -74,6 +75,8 @@ export const breadcrumbs = createMemo<Breadcrumb[]>(() => {
       };
       crumbs.push({ label: labels[section] || section, icon: "settings" });
     }
+  } else if (r.page === "adrs") {
+    crumbs.push({ label: "ADRs", icon: "file-text" });
   } else if (r.page === "inference") {
     crumbs.push({ label: "Inference", icon: "server" });
   } else if (r.page === "fleet-nodes") {
@@ -103,6 +106,8 @@ function routeToHash(r: Route): string {
       return `#/project/${r.projectId}/health`;
     case "project-graph":
       return `#/project/${r.projectId}/graph`;
+    case "adrs":
+      return r.projectId ? `#/project/${r.projectId}/adrs` : "#/adrs";
     case "agent-fleet":
       return "#/agents";
     case "config":
@@ -124,6 +129,8 @@ function hashToRoute(hash: string): Route {
     const projectId = decodeURIComponent(parts[1]);
     if (parts[2] === "chat")
       return { page: "project-chat", projectId };
+    if (parts[2] === "adrs")
+      return { page: "adrs", projectId };
     if (parts[2] === "adr" && parts[3])
       return { page: "project-adr", projectId, adrId: decodeURIComponent(parts[3]) };
     if (parts[2] === "health")
@@ -132,6 +139,7 @@ function hashToRoute(hash: string): Route {
       return { page: "project-graph", projectId };
     return { page: "project", projectId };
   }
+  if (parts[0] === "adrs") return { page: "adrs" };
   if (parts[0] === "agents") return { page: "agent-fleet" };
   if (parts[0] === "config")
     return { page: "config", section: parts[1] || "blueprint" };

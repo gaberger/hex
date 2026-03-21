@@ -26,8 +26,7 @@ import { initChatConnection, disconnectChat } from '../stores/chat';
 import { startHexFloMonitor } from '../stores/hexflo-monitor';
 import { route, initRouter, navigate } from '../stores/router';
 import ChatView from '../components/chat/ChatView';
-import { ControlPlane } from '../components/views';
-import { AgentFleet } from '../components/views';
+import { ControlPlane, AgentFleet, ProjectDetail, ADRBrowser } from '../components/views';
 
 const App: Component = () => {
   const [theme, setTheme] = createSignal(
@@ -244,6 +243,12 @@ const App: Component = () => {
             </Match>
             <Match when={route().page === "project" && viewMode() === "panes"}>
               <PaneManager />
+            </Match>
+            <Match when={route().page === "project"}>
+              <ProjectDetail />
+            </Match>
+            <Match when={route().page === "adrs" || route().page === "project-adr"}>
+              <ADRBrowser />
             </Match>
             <Match when={route().page === "agent-fleet"}>
               <AgentFleet />
