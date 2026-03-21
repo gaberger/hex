@@ -212,7 +212,7 @@ const FileTreeView: Component = () => {
   }
 
   return (
-    <div class="flex flex-1 overflow-hidden" style={{ background: '#0a0e14' }}>
+    <div class="flex flex-1 overflow-hidden" style={{ background: 'var(--bg-base)' }}>
       {/* Left panel: directory tree */}
       <div
         class="flex flex-col border-r overflow-hidden"
@@ -220,14 +220,14 @@ const FileTreeView: Component = () => {
           width: '280px',
           "min-width": '220px',
           "max-width": '400px',
-          "border-color": '#1F2937',
-          background: '#0d1117',
+          "border-color": 'var(--border-subtle)',
+          background: 'var(--bg-base)',
         }}
       >
         {/* Tree header */}
         <div
           class="flex items-center gap-2 border-b px-3 py-2"
-          style={{ "border-color": '#1F2937' }}
+          style={{ "border-color": 'var(--border-subtle)' }}
         >
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="2">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -289,7 +289,7 @@ const FileTreeView: Component = () => {
       </div>
 
       {/* Right panel: file preview */}
-      <div class="flex flex-1 flex-col overflow-hidden" style={{ background: '#0a0e14' }}>
+      <div class="flex flex-1 flex-col overflow-hidden" style={{ background: 'var(--bg-base)' }}>
         <Show
           when={selectedFile()}
           fallback={
@@ -309,7 +309,7 @@ const FileTreeView: Component = () => {
           {/* File header bar */}
           <div
             class="flex items-center gap-2 border-b px-4 py-2"
-            style={{ "border-color": '#1F2937', background: '#0d1117' }}
+            style={{ "border-color": 'var(--border-subtle)', background: 'var(--bg-base)' }}
           >
             <span
               class="text-[11px] font-medium truncate"
@@ -321,7 +321,7 @@ const FileTreeView: Component = () => {
             <button
               class="rounded px-2 py-0.5 text-[10px] font-medium transition-colors"
               style={{ color: '#9CA3AF', border: '1px solid #374151' }}
-              onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = '#1F2937')}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'var(--bg-elevated)')}
               onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
               onClick={() => {
                 const fp = selectedFile();

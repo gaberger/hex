@@ -1,49 +1,88 @@
 @import "tailwindcss";
 
-/* ── Theme variables ────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   Hex Nexus — Unified Theme System
+   Dark mode default. Light mode via [data-theme="light"].
+   All colors flow through CSS custom properties so both Tailwind
+   utility overrides and legacy styles.css adapt automatically.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Dark theme (default) ─────────────────────────────────── */
 :root {
-  --bg-base: #030712;       /* gray-950 */
-  --bg-surface: #111827;    /* gray-900 */
-  --bg-elevated: #1f2937;   /* gray-800 */
-  --bg-input: #1f2937;      /* gray-800 */
-  --text-primary: #f3f4f6;  /* gray-100 */
-  --text-body: #e5e7eb;     /* gray-200 */
-  --text-secondary: #d1d5db;/* gray-300 */
-  --text-muted: #9ca3af;    /* gray-400 */
-  --border: #374151;        /* gray-700 */
-  --border-subtle: #1f2937; /* gray-800 */
-  --ring-active: rgba(6, 182, 212, 0.4); /* cyan-500/40 */
-  --accent: #06b6d4;        /* cyan-500 */
-  --accent-hover: #22d3ee;  /* cyan-400 */
-  --scrollbar: #374151;
-  --scrollbar-hover: #4b5563;
+  --bg-base:        #030712;       /* gray-950 */
+  --bg-surface:     #111827;       /* gray-900 */
+  --bg-elevated:    #1f2937;       /* gray-800 */
+  --bg-input:       #1f2937;       /* gray-800 */
+  --text-primary:   #f3f4f6;       /* gray-100 */
+  --text-body:      #e5e7eb;       /* gray-200 */
+  --text-secondary: #d1d5db;       /* gray-300 */
+  --text-muted:     #9ca3af;       /* gray-400 */
+  --text-faint:     #6b7280;       /* gray-500 */
+  --text-dim:       #4b5563;       /* gray-600 */
+  --border:         #374151;       /* gray-700 */
+  --border-subtle:  #1f2937;       /* gray-800 */
+  --ring-active:    rgba(6, 182, 212, 0.4);
+  --accent:         #06b6d4;       /* cyan-500 */
+  --accent-hover:   #22d3ee;       /* cyan-400 */
+  --accent-dim:     rgba(6, 182, 212, 0.1);
+  --scrollbar:      #374151;
+  --scrollbar-hover:#4b5563;
+
+  /* Legacy variables used by styles.css */
+  --bg:             var(--bg-base);
+  --bg2:            var(--bg-surface);
+  --card:           var(--bg-surface);
+  --card-elevated:  var(--bg-elevated);
+  --green:          #34d399;
+  --yellow:         #fbbf24;
+  --red:            #f87171;
+  --purple:         #a78bfa;
+  --text:           var(--text-primary);
+  --text2:          var(--text-muted);
+  --text3:          var(--text-faint);
+  --shadow-card:    0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-elevated:0 4px 12px rgba(0, 0, 0, 0.4);
+  --gap:            16px;
+  --radius:         8px;
+  --radius-sm:      6px;
+  --font-mono:      'JetBrains Mono', 'Fira Code', monospace;
 }
 
+/* ── Light theme ──────────────────────────────────────────── */
 [data-theme="light"] {
-  --bg-base: #f9fafb;       /* gray-50 */
-  --bg-surface: #ffffff;    /* white */
-  --bg-elevated: #f3f4f6;   /* gray-100 */
-  --bg-input: #ffffff;      /* white */
-  --text-primary: #111827;  /* gray-900 */
-  --text-body: #1f2937;     /* gray-800 */
-  --text-secondary: #374151;/* gray-700 */
-  --text-muted: #6b7280;    /* gray-500 */
-  --border: #d1d5db;        /* gray-300 */
-  --border-subtle: #e5e7eb; /* gray-200 */
-  --ring-active: rgba(6, 182, 212, 0.3);
-  --accent: #0891b2;        /* cyan-600 */
-  --accent-hover: #06b6d4;  /* cyan-500 */
-  --scrollbar: #d1d5db;
-  --scrollbar-hover: #9ca3af;
+  --bg-base:        #f9fafb;       /* gray-50 */
+  --bg-surface:     #ffffff;
+  --bg-elevated:    #f1f5f9;       /* slate-100 */
+  --bg-input:       #ffffff;
+  --text-primary:   #0f172a;       /* slate-900 */
+  --text-body:      #1e293b;       /* slate-800 */
+  --text-secondary: #334155;       /* slate-700 */
+  --text-muted:     #64748b;       /* slate-500 */
+  --text-faint:     #94a3b8;       /* slate-400 */
+  --text-dim:       #cbd5e1;       /* slate-300 */
+  --border:         #d1d5db;       /* gray-300 */
+  --border-subtle:  #e2e8f0;       /* slate-200 */
+  --ring-active:    rgba(6, 182, 212, 0.3);
+  --accent:         #0891b2;       /* cyan-600 */
+  --accent-hover:   #06b6d4;       /* cyan-500 */
+  --accent-dim:     rgba(8, 145, 178, 0.08);
+  --scrollbar:      #d1d5db;
+  --scrollbar-hover:#9ca3af;
+
+  /* Legacy overrides */
+  --green:          #059669;
+  --yellow:         #d97706;
+  --red:            #dc2626;
+  --purple:         #7c3aed;
 }
 
-/* ── Apply theme to base elements ─────────────────────── */
+/* ── Apply theme to base elements ─────────────────────────── */
 body {
   background-color: var(--bg-base);
   color: var(--text-body);
 }
 
-/* ── Override Tailwind gray utilities with theme vars ──── */
+/* ── Override Tailwind gray utilities with theme vars ──────── */
 /* Backgrounds */
 .bg-gray-950 { background-color: var(--bg-base) !important; }
 .bg-gray-900 { background-color: var(--bg-surface) !important; }
@@ -57,14 +96,26 @@ body {
 .bg-gray-800\/50 { background-color: color-mix(in srgb, var(--bg-elevated) 50%, transparent) !important; }
 .bg-gray-800\/40 { background-color: color-mix(in srgb, var(--bg-elevated) 40%, transparent) !important; }
 
-/* Text */
+/* Text — all grays from 100 to 600 */
 .text-gray-100 { color: var(--text-primary) !important; }
+.text-gray-200 { color: var(--text-primary) !important; }
 .text-gray-300 { color: var(--text-secondary) !important; }
-.text-gray-200, .text-gray-100 { color: var(--text-primary) !important; }
+.text-gray-400 { color: var(--text-muted) !important; }
+.text-gray-500 { color: var(--text-faint) !important; }
+.text-gray-600 { color: var(--text-dim) !important; }
 
 /* Borders */
 .border-gray-800 { border-color: var(--border-subtle) !important; }
 .border-gray-700 { border-color: var(--border) !important; }
+
+/* Cyan accent — theme-aware */
+[data-theme="light"] .text-cyan-400 { color: var(--accent) !important; }
+[data-theme="light"] .text-cyan-300 { color: var(--accent) !important; }
+[data-theme="light"] .bg-cyan-900\/20 { background-color: var(--accent-dim) !important; }
+
+/* Mode badges */
+[data-theme="light"] .bg-blue-900\/30  { background-color: rgba(37, 99, 235, 0.08) !important; }
+[data-theme="light"] .bg-green-900\/30 { background-color: rgba(5, 150, 105, 0.08) !important; }
 
 /* Inputs */
 input, select, textarea {
@@ -79,7 +130,7 @@ input::placeholder, textarea::placeholder {
 /* Focus ring */
 .ring-cyan-500\/40 { --tw-ring-color: var(--ring-active) !important; }
 
-/* Hover states in light mode */
+/* ── Hover states ─────────────────────────────────────────── */
 [data-theme="light"] .hover\:bg-gray-800:hover {
   background-color: var(--bg-elevated) !important;
 }
@@ -90,12 +141,42 @@ input::placeholder, textarea::placeholder {
 [data-theme="light"] .hover\:text-gray-300:hover {
   color: var(--text-primary) !important;
 }
+[data-theme="light"] .hover\:text-cyan-300:hover {
+  color: var(--accent-hover) !important;
+}
 [data-theme="light"] .hover\:border-gray-700:hover,
-[data-theme="light"] .hover\:border-gray-600:hover {
-  border-color: var(--border) !important;
+[data-theme="light"] .hover\:border-gray-600:hover,
+[data-theme="light"] .hover\:border-cyan-600:hover {
+  border-color: var(--accent) !important;
 }
 
-/* ── Custom scrollbar ─────────────────────────────────── */
+/* ── Inline style overrides for hardcoded dark colors ─────── */
+[data-theme="light"] [style*="background-color: #111827"],
+[data-theme="light"] [style*="background: #111827"] {
+  background-color: var(--bg-surface) !important;
+  background: var(--bg-surface) !important;
+}
+[data-theme="light"] [style*="background-color: #0D1526"],
+[data-theme="light"] [style*="background: #0D1526"],
+[data-theme="light"] [style*="background: #0B1120"],
+[data-theme="light"] [style*="background-color: #0B1120"] {
+  background-color: var(--bg-surface) !important;
+  background: var(--bg-surface) !important;
+}
+[data-theme="light"] [style*="border-color: #1E293B"],
+[data-theme="light"] [style*="border-bottom: 1px solid #1E293B"],
+[data-theme="light"] [style*="border-bottom: 2px solid #0E7490"] {
+  border-color: var(--border-subtle) !important;
+}
+[data-theme="light"] [style*="color: #6B7280"] { color: var(--text-faint) !important; }
+[data-theme="light"] [style*="color: #9CA3AF"] { color: var(--text-muted) !important; }
+[data-theme="light"] [style*="color: #E5E7EB"] { color: var(--text-body) !important; }
+[data-theme="light"] [style*="color: #F3F4F6"] { color: var(--text-primary) !important; }
+[data-theme="light"] [style*="color: #D1D5DB"] { color: var(--text-secondary) !important; }
+[data-theme="light"] [style*="color: #67E8F9"] { color: var(--accent) !important; }
+[data-theme="light"] [style*="color: #1E293B"] { color: var(--text-body) !important; }
+
+/* ── Custom scrollbar ─────────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -109,4 +190,13 @@ input::placeholder, textarea::placeholder {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-hover);
+}
+
+/* ── Toast animation ──────────────────────────────────────── */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(1rem); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.animate-toast-in {
+  animation: toast-in 0.2s ease-out;
 }

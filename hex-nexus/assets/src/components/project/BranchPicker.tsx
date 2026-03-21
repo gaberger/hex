@@ -73,7 +73,7 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
       <button
         class="flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-mono transition-colors"
         style={{
-          background: "#111827",
+          background: "var(--bg-surface)",
           "border-color": open() ? "#0E7490" : "#374151",
           color: "#D1D5DB",
         }}
@@ -97,10 +97,10 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
       <Show when={open()}>
         <div
           class="absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border shadow-xl overflow-hidden"
-          style={{ background: "#111827", "border-color": "#1F2937" }}
+          style={{ background: "var(--bg-surface)", "border-color": "var(--border-subtle)" }}
         >
           {/* Search input */}
-          <div class="border-b" style={{ "border-color": "#1F2937" }}>
+          <div class="border-b" style={{ "border-color": "var(--border-subtle)" }}>
             <input
               type="text"
               placeholder="Filter branches..."
@@ -135,7 +135,7 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
             <Show when={remoteBranches().length > 0}>
               <div
                 class="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-wider"
-                style={{ color: "#6B7280", "border-top": "1px solid #1F2937" }}
+                style={{ color: "#6B7280", "border-top": "1px solid var(--border-subtle)" }}
               >
                 Remote branches
               </div>

@@ -102,7 +102,7 @@ const HooksView: Component = () => {
   const hookTypes = () => stdbHooks() ?? hookData() ?? HARDCODED_HOOKS;
 
   return (
-    <div class="flex-1 overflow-auto p-6" style={{ "background-color": "#0a0e14" }}>
+    <div class="flex-1 overflow-auto p-6" style={{ "background-color": "var(--bg-base)" }}>
       {/* Header */}
       <div class="flex items-center justify-between mb-6">
         <div>
@@ -143,7 +143,7 @@ const HooksView: Component = () => {
                 <For each={hookType.hooks} fallback={
                   <div
                     class="rounded-lg px-4 py-3 text-xs text-gray-600 border"
-                    style={{ "background-color": "#111827", "border-color": "#1f2937" }}
+                    style={{ "background-color": "var(--bg-surface)", "border-color": "var(--border-subtle)" }}
                   >
                     No hooks configured.
                   </div>
@@ -151,7 +151,7 @@ const HooksView: Component = () => {
                   {(hook) => (
                     <div
                       class="flex items-center gap-3 rounded-lg px-4 py-3 border"
-                      style={{ "background-color": "#111827", "border-color": "#1f2937" }}
+                      style={{ "background-color": "var(--bg-surface)", "border-color": "var(--border-subtle)" }}
                     >
                       {/* Enable/disable dot — TODO: toggle won't persist until hooks use reactive state */}
                       <span

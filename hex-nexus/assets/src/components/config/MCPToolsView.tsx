@@ -104,7 +104,7 @@ const MCPToolsView: Component = () => {
             const remaining = server.totalTools - visibleTools.length;
 
             return (
-              <div class="rounded-lg border border-gray-700/50 p-4" style={{ "background-color": "#111827" }}>
+              <div class="rounded-lg border border-gray-700/50 p-4" style={{ "background-color": "var(--bg-surface)" }}>
                 {/* Server header */}
                 <div class="flex items-center gap-3 mb-3">
                   <span

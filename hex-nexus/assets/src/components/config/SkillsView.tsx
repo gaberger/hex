@@ -191,7 +191,7 @@ const SkillsView: Component = () => {
                   {(skill) => (
                     <div
                       class="flex items-center gap-4 rounded-lg border border-gray-800/50 px-4 py-3 hover:border-gray-700 transition-colors cursor-pointer"
-                      style={{ "background-color": "#111827" }}
+                      style={{ "background-color": "var(--bg-surface)" }}
                     >
                       <span class="text-sm font-bold text-gray-200 min-w-[150px]">{skill.name}</span>
                       <span class="text-xs min-w-[160px]" style={{ "font-family": "'JetBrains Mono', monospace", color: "#22d3ee" }}>

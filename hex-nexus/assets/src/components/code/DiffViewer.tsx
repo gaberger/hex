@@ -240,7 +240,7 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
 
       {/* Empty state */}
       <Show when={!loading() && files().length === 0}>
-        <div class="rounded-lg border p-8 text-center" style={{ "border-color": "#1F2937", background: "#0D1117" }}>
+        <div class="rounded-lg border p-8 text-center" style={{ "border-color": "var(--border-subtle)", background: "var(--bg-base)" }}>
           <svg class="mx-auto mb-3 h-8 w-8" style={{ color: "#374151" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
@@ -255,7 +255,7 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
 
       {/* File list with expandable diffs */}
       <Show when={!loading() && files().length > 0}>
-        <div class="flex flex-col rounded-lg border overflow-hidden" style={{ "border-color": "#1F2937", background: "#0D1117" }}>
+        <div class="flex flex-col rounded-lg border overflow-hidden" style={{ "border-color": "var(--border-subtle)", background: "var(--bg-base)" }}>
           <For each={files()}>
             {(file, idx) => {
               const isExpanded = () => expandedFiles().has(file.path);
@@ -267,10 +267,10 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
                   <button
                     class="flex items-center gap-2 px-3 py-2 text-left transition-colors"
                     style={{
-                      background: isExpanded() ? "#111827" : "transparent",
-                      "border-top": idx() > 0 ? "1px solid #1F2937" : "none",
+                      background: isExpanded() ? "var(--bg-surface)" : "transparent",
+                      "border-top": idx() > 0 ? "1px solid var(--border-subtle)" : "none",
                     }}
-                    classList={{ "hover:bg-[#111827]/50": !isExpanded() }}
+                    classList={{ "hover:bg-gray-900/50": !isExpanded() }}
                     onClick={() => toggleFile(file.path)}
                   >
                     {/* Expand chevron */}
@@ -321,7 +321,7 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
                   <Show when={isExpanded() && file.patch}>
                     <div
                       class="border-t overflow-auto"
-                      style={{ "border-color": "#1F2937" }}
+                      style={{ "border-color": "var(--border-subtle)" }}
                     >
                       <pre class="text-xs leading-5 font-mono">
                         <For each={parseDiff(file.patch)}>

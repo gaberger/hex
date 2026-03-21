@@ -84,7 +84,7 @@ const ConfigPage: Component = () => {
       {/* Left nav */}
       <nav
         class="flex w-60 shrink-0 flex-col border-r border-gray-800 overflow-y-auto"
-        style={{ "background-color": "#111827" }}
+        style={{ "background-color": "var(--bg-surface)" }}
       >
         <div class="px-4 py-3">
           <div class="flex items-center gap-2 mb-1">

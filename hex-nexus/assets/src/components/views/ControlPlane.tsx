@@ -203,7 +203,7 @@ const ControlPlane: Component = () => {
   return (
     <div
       class="flex h-full flex-col overflow-auto"
-      style={{ background: "#0a0e14" }}
+      style={{ background: "var(--bg-base)" }}
     >
       {/* Padding container */}
       <div class="flex flex-col gap-6 p-6">
@@ -224,7 +224,7 @@ const ControlPlane: Component = () => {
               <p
                 style={{
                   "font-size": "13px",
-                  color: "#6b7280",
+                  color: "var(--text-faint)",
                   "margin-top": "4px",
                 }}
               >
@@ -236,7 +236,7 @@ const ControlPlane: Component = () => {
               <button
                 style={{
                   background: "#164e6380",
-                  color: "#22d3ee",
+                  color: "var(--accent-hover)",
                   border: "none",
                   "border-radius": "8px",
                   padding: "6px 14px",
@@ -281,7 +281,7 @@ const ControlPlane: Component = () => {
               autofocus
               style={{
                 flex: "1",
-                background: "#111827",
+                background: "var(--bg-surface)",
                 border: "1px solid #374151",
                 "border-radius": "8px",
                 padding: "8px 12px",
@@ -301,7 +301,7 @@ const ControlPlane: Component = () => {
               disabled={registering() || !newPath().trim()}
               style={{
                 background: "#164e6380",
-                color: "#22d3ee",
+                color: "var(--accent-hover)",
                 border: "none",
                 "border-radius": "8px",
                 padding: "8px 16px",
@@ -317,7 +317,7 @@ const ControlPlane: Component = () => {
               type="button"
               style={{
                 background: "transparent",
-                color: "#6b7280",
+                color: "var(--text-faint)",
                 border: "1px solid #374151",
                 "border-radius": "8px",
                 padding: "8px 12px",
@@ -356,16 +356,16 @@ const ControlPlane: Component = () => {
                   <button
                     class="group flex flex-col text-left transition-all"
                     style={{
-                      background: "#111827",
+                      background: "var(--bg-surface)",
                       border: hasSwarms()
                         ? "1px solid #22d3ee40"
-                        : "1px solid #1f2937",
+                        : "1px solid var(--border-subtle)",
                       "border-radius": "12px",
                       padding: "16px",
                       cursor: "pointer",
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = "#22d3ee60";
+                      e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent-hover) 40%, transparent)";
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.borderColor = hasSwarms()
@@ -414,11 +414,11 @@ const ControlPlane: Component = () => {
                       class="mt-2 flex items-center gap-3"
                       style={{ "font-size": "12px" }}
                     >
-                      <span style={{ color: "#6b7280" }}>
+                      <span style={{ color: "var(--text-faint)" }}>
                         {project.worktreeCount} worktree
                         {project.worktreeCount !== 1 ? "s" : ""}
                       </span>
-                      <span style={{ color: "#22d3ee" }}>
+                      <span style={{ color: "var(--accent-hover)" }}>
                         {project.swarmCount} swarm
                         {project.swarmCount !== 1 ? "s" : ""}
                       </span>
@@ -428,7 +428,7 @@ const ControlPlane: Component = () => {
                     <Show when={project.agentCount > 0}>
                       <div
                         class="mt-1"
-                        style={{ "font-size": "12px", color: "#9ca3af" }}
+                        style={{ "font-size": "12px", color: "var(--text-muted)" }}
                       >
                         {project.agentCount} agent
                         {project.agentCount !== 1 ? "s" : ""}
@@ -441,7 +441,7 @@ const ControlPlane: Component = () => {
                       style={{
                         height: "6px",
                         "border-radius": "6px",
-                        background: "#1f2937",
+                        background: "var(--bg-elevated)",
                       }}
                     >
                       <div
@@ -458,7 +458,7 @@ const ControlPlane: Component = () => {
                     {/* Last activity */}
                     <div
                       class="mt-2"
-                      style={{ "font-size": "11px", color: "#4b5563" }}
+                      style={{ "font-size": "11px", color: "var(--text-dim)" }}
                     >
                       Last: {timeAgo((project as any).lastActivity)}
                     </div>
@@ -501,8 +501,8 @@ const ControlPlane: Component = () => {
                       <button
                         class="flex flex-col text-left transition-all"
                         style={{
-                          background: "#111827",
-                          border: "1px solid #1f2937",
+                          background: "var(--bg-surface)",
+                          border: "1px solid var(--border-subtle)",
                           "border-radius": "12px",
                           padding: "16px",
                           cursor: "pointer",
@@ -540,7 +540,7 @@ const ControlPlane: Component = () => {
                               style={{
                                 "font-size": "12px",
                                 "font-weight": "600",
-                                color: "#22d3ee",
+                                color: "var(--accent-hover)",
                               }}
                             >
                               {prog().percent}%
@@ -548,7 +548,7 @@ const ControlPlane: Component = () => {
                             <span
                               style={{
                                 "font-size": "11px",
-                                color: "#6b7280",
+                                color: "var(--text-faint)",
                                 "font-family":
                                   "'JetBrains Mono', monospace",
                               }}
@@ -561,7 +561,7 @@ const ControlPlane: Component = () => {
                         {/* Project name + task count */}
                         <div
                           class="mt-1"
-                          style={{ "font-size": "12px", color: "#6b7280" }}
+                          style={{ "font-size": "12px", color: "var(--text-faint)" }}
                         >
                           {swarmProjectName(swarm)} &middot;{" "}
                           {prog().done}/{prog().total} tasks
@@ -573,7 +573,7 @@ const ControlPlane: Component = () => {
                           style={{
                             height: "6px",
                             "border-radius": "6px",
-                            background: "#1f2937",
+                            background: "var(--bg-elevated)",
                           }}
                         >
                           <div
@@ -613,8 +613,8 @@ const EmptyState: Component<{
     <div
       style={{
         "border-radius": "9999px",
-        border: "1px solid #1f2937",
-        background: "#111827",
+        border: "1px solid var(--border-subtle)",
+        background: "var(--bg-surface)",
         padding: "16px",
       }}
     >
@@ -642,7 +642,7 @@ const EmptyState: Component<{
       <p
         style={{
           "font-size": "13px",
-          color: "#6b7280",
+          color: "var(--text-faint)",
           "margin-top": "8px",
           "max-width": "28rem",
           "margin-left": "auto",
@@ -664,7 +664,7 @@ const EmptyState: Component<{
         onInput={(e) => props.setPath(e.currentTarget.value)}
         style={{
           flex: "1",
-          background: "#111827",
+          background: "var(--bg-surface)",
           border: "1px solid #374151",
           "border-radius": "8px",
           padding: "10px 14px",
@@ -684,7 +684,7 @@ const EmptyState: Component<{
         disabled={props.registering() || !props.path().trim()}
         style={{
           background: "#164e6380",
-          color: "#22d3ee",
+          color: "var(--accent-hover)",
           border: "none",
           "border-radius": "8px",
           padding: "10px 20px",

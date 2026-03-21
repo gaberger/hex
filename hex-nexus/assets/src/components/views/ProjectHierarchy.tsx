@@ -98,12 +98,12 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
           const key = () => name();
           const isOpen = () => expanded().has(key());
           const wts = () => agentWorktrees(agent, idx());
-          const badge = () => badgeStyle[status()] ?? { color: "#9CA3AF", bg: "#1F2937" };
+          const badge = () => badgeStyle[status()] ?? { color: "var(--text-muted)", bg: "var(--bg-elevated)" };
 
           return (
             <div
               class="overflow-hidden rounded-[10px]"
-              style={{ background: "#111827", border: "1px solid #1E293B" }}
+              style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)" }}
             >
               {/* Agent header row */}
               <button
@@ -113,7 +113,7 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
               >
                 <span
                   class="shrink-0 text-[10px]"
-                  style={{ color: "#6B7280" }}
+                  style={{ color: "var(--text-faint)" }}
                 >
                   {isOpen() ? "\u25BC" : "\u25B6"}
                 </span>
@@ -140,7 +140,7 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                 {/* Spacer */}
                 <div class="flex-1" />
 
-                <span class="text-[11px]" style={{ color: "#9CA3AF" }}>
+                <span class="text-[11px]" style={{ color: "var(--text-muted)" }}>
                   {host()}
                 </span>
                 <span
@@ -167,7 +167,7 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                         {(wt) => (
                           <div
                             class="rounded-md"
-                            style={{ background: "#0D1526", padding: "8px 12px" }}
+                            style={{ background: "var(--bg-base)", padding: "8px 12px" }}
                           >
                             {/* Worktree header */}
                             <div class="flex items-center gap-2">
@@ -198,7 +198,7 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                               <Show when={wt.commitCount != null && wt.commitCount > 0}>
                                 <span
                                   class="rounded-full px-2 py-0.5 text-[9px] font-medium"
-                                  style={{ color: "#9CA3AF", background: "#1E293B" }}
+                                  style={{ color: "var(--text-muted)", background: "var(--bg-elevated)" }}
                                 >
                                   {wt.commitCount} ahead
                                 </span>
@@ -224,7 +224,7 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                                     </span>
                                     <span
                                       class="shrink-0 text-[10px]"
-                                      style={{ color: "#6B7280" }}
+                                      style={{ color: "var(--text-faint)" }}
                                     >
                                       {relativeTime(c.timestamp)}
                                     </span>
@@ -253,12 +253,12 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
       <Show when={props.agents.length === 0}>
         <div
           class="rounded-[10px] px-4 py-8 text-center text-sm"
-          style={{ background: "#111827", border: "1px solid #1E293B", color: "#6B7280" }}
+          style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-faint)" }}
         >
           No agents connected — start one with{" "}
           <code
             class="mx-1 rounded px-1.5 py-0.5 text-[11px]"
-            style={{ background: "#1E293B", color: "#9CA3AF", "font-family": "'JetBrains Mono', monospace" }}
+            style={{ background: "var(--bg-elevated)", color: "var(--text-muted)", "font-family": "'JetBrains Mono', monospace" }}
           >
             hex nexus start
           </code>

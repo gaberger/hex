@@ -133,7 +133,7 @@ const BlueprintView: Component = () => {
               <div
                 class="rounded-lg p-3"
                 style={{
-                  "background-color": "#111827",
+                  "background-color": "var(--bg-surface)",
                   "border": `1px solid ${layer.color}40`,
                 }}
               >
@@ -158,7 +158,7 @@ const BlueprintView: Component = () => {
         <div class="space-y-2">
           <For each={rules()}>
             {(rule) => (
-              <div class="flex items-center gap-3 rounded-lg px-4 py-2.5" style={{ "background-color": "#111827" }}>
+              <div class="flex items-center gap-3 rounded-lg px-4 py-2.5" style={{ "background-color": "var(--bg-surface)" }}>
                 {rule.passing ? <ShieldCheck /> : <ShieldAlert />}
                 <span
                   class="text-sm"

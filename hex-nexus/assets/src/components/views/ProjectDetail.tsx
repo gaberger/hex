@@ -18,7 +18,7 @@ import {
 
 /** Health grade from numeric score */
 const healthGrade = (score: number | undefined): { letter: string; color: string; bg: string } => {
-  if (score == null) return { letter: "--", color: "#9CA3AF", bg: "#1F2937" };
+  if (score == null) return { letter: "--", color: "var(--text-muted)", bg: "var(--bg-elevated)" };
   if (score >= 90) return { letter: "Grade A", color: "#34D399", bg: "#065F46" };
   if (score >= 75) return { letter: "Grade B", color: "#34D399", bg: "#065F46" };
   if (score >= 60) return { letter: "Grade C", color: "#FBBF24", bg: "#422006" };
@@ -57,9 +57,12 @@ const ProjectDetail: Component = () => {
     const pid = projectId();
     if (!pid) return [];
     return registryAgents().filter((a: any) => {
-      const agentProj = a.project_dir ?? a.project ?? a.projectId ?? a.project_id ?? "";
-      // Match by projectId suffix (e.g., "hex-intf" matches "/path/to/hex-intf")
-      return agentProj === pid || agentProj.endsWith("/" + pid);
+      // Primary: match by project_id (SpacetimeDB project ID like "hex-intf-1xq8wun")
+      const agentProjId = a.projectId ?? a.project_id ?? "";
+      if (agentProjId && agentProjId === pid) return true;
+      // Fallback: match by project_dir path suffix
+      const agentDir = a.projectDir ?? a.project_dir ?? "";
+      return agentDir && (agentDir === pid || agentDir.endsWith("/" + pid));
     });
   });
 
@@ -123,7 +126,7 @@ const ProjectDetail: Component = () => {
         </div>
 
         {/* Tab bar: Overview | Changes */}
-        <div class="mb-4 flex items-center gap-0 border-b" style={{ "border-color": "#1F2937" }}>
+        <div class="mb-4 flex items-center gap-0 border-b" style={{ "border-color": "var(--border-subtle)" }}>
           <button
             class="px-4 py-2 text-[11px] font-semibold uppercase transition-colors"
             style={{
