@@ -10,6 +10,19 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const AgentDef = __t.object("AgentDef", {
+  agentDefId: __t.string(),
+  projectId: __t.string(),
+  name: __t.string(),
+  role: __t.string(),
+  model: __t.string(),
+  capabilitiesJson: __t.string(),
+  toolsJson: __t.string(),
+  sourcePath: __t.string(),
+  syncedAt: __t.string(),
+});
+export type AgentDef = __Infer<typeof AgentDef>;
+
 export const HexFloMemory = __t.object("HexFloMemory", {
   key: __t.string(),
   value: __t.string(),
@@ -25,6 +38,26 @@ export const Project = __t.object("Project", {
   registeredAt: __t.string(),
 });
 export type Project = __Infer<typeof Project>;
+
+export const ProjectConfig = __t.object("ProjectConfig", {
+  key: __t.string(),
+  projectId: __t.string(),
+  valueJson: __t.string(),
+  sourceFile: __t.string(),
+  syncedAt: __t.string(),
+});
+export type ProjectConfig = __Infer<typeof ProjectConfig>;
+
+export const SkillEntry = __t.object("SkillEntry", {
+  skillId: __t.string(),
+  projectId: __t.string(),
+  name: __t.string(),
+  triggerCmd: __t.string(),
+  description: __t.string(),
+  sourcePath: __t.string(),
+  syncedAt: __t.string(),
+});
+export type SkillEntry = __Infer<typeof SkillEntry>;
 
 export const Swarm = __t.object("Swarm", {
   id: __t.string(),

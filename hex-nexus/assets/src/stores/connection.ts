@@ -158,6 +158,15 @@ export const hexfloMemory: Accessor<any[]> = useTable(
 export const registeredProjects: Accessor<any[]> = useTable(
   () => hexfloConn()?.db.project as SpacetimeDBTableHandle<any> | undefined,
 );
+export const projectConfigs: Accessor<any[]> = useTable(
+  () => hexfloConn()?.db.project_config as SpacetimeDBTableHandle<any> | undefined,
+);
+export const skillRegistry: Accessor<any[]> = useTable(
+  () => hexfloConn()?.db.skill_registry as SpacetimeDBTableHandle<any> | undefined,
+);
+export const agentDefinitions: Accessor<any[]> = useTable(
+  () => hexfloConn()?.db.agent_definition as SpacetimeDBTableHandle<any> | undefined,
+);
 
 // agent-registry tables
 export const registryAgents: Accessor<any[]> = useTable(
@@ -223,6 +232,9 @@ export function initConnections() {
       "SELECT * FROM swarm_agent",
       "SELECT * FROM hexflo_memory",
       "SELECT * FROM project",
+      "SELECT * FROM project_config",
+      "SELECT * FROM skill_registry",
+      "SELECT * FROM agent_definition",
     ],
   });
 

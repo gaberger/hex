@@ -47,6 +47,9 @@ import RemoveProjectReducer from "./remove_project_reducer";
 import SwarmCompleteReducer from "./swarm_complete_reducer";
 import SwarmFailReducer from "./swarm_fail_reducer";
 import SwarmInitReducer from "./swarm_init_reducer";
+import SyncAgentDefReducer from "./sync_agent_def_reducer";
+import SyncConfigReducer from "./sync_config_reducer";
+import SyncSkillReducer from "./sync_skill_reducer";
 import TaskAssignReducer from "./task_assign_reducer";
 import TaskCompleteReducer from "./task_complete_reducer";
 import TaskCreateReducer from "./task_create_reducer";
@@ -56,8 +59,11 @@ import TaskReclaimReducer from "./task_reclaim_reducer";
 // Import all procedure arg schemas
 
 // Import all table schema definitions
+import AgentDefinitionRow from "./agent_definition_table";
 import HexfloMemoryRow from "./hexflo_memory_table";
 import ProjectRow from "./project_table";
+import ProjectConfigRow from "./project_config_table";
+import SkillRegistryRow from "./skill_registry_table";
 import SwarmRow from "./swarm_table";
 import SwarmAgentRow from "./swarm_agent_table";
 import SwarmTaskRow from "./swarm_task_table";
@@ -66,6 +72,17 @@ import SwarmTaskRow from "./swarm_task_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  agent_definition: __table({
+    name: 'agent_definition',
+    indexes: [
+      { accessor: 'agent_def_id', name: 'agent_definition_agent_def_id_idx_btree', algorithm: 'btree', columns: [
+        'agentDefId',
+      ] },
+    ],
+    constraints: [
+      { name: 'agent_definition_agent_def_id_key', constraint: 'unique', columns: ['agentDefId'] },
+    ],
+  }, AgentDefinitionRow),
   hexflo_memory: __table({
     name: 'hexflo_memory',
     indexes: [
@@ -88,6 +105,28 @@ const tablesSchema = __schema({
       { name: 'project_project_id_key', constraint: 'unique', columns: ['projectId'] },
     ],
   }, ProjectRow),
+  project_config: __table({
+    name: 'project_config',
+    indexes: [
+      { accessor: 'key', name: 'project_config_key_idx_btree', algorithm: 'btree', columns: [
+        'key',
+      ] },
+    ],
+    constraints: [
+      { name: 'project_config_key_key', constraint: 'unique', columns: ['key'] },
+    ],
+  }, ProjectConfigRow),
+  skill_registry: __table({
+    name: 'skill_registry',
+    indexes: [
+      { accessor: 'skill_id', name: 'skill_registry_skill_id_idx_btree', algorithm: 'btree', columns: [
+        'skillId',
+      ] },
+    ],
+    constraints: [
+      { name: 'skill_registry_skill_id_key', constraint: 'unique', columns: ['skillId'] },
+    ],
+  }, SkillRegistryRow),
   swarm: __table({
     name: 'swarm',
     indexes: [
@@ -138,6 +177,9 @@ const reducersSchema = __reducers(
   __reducerSchema("swarm_complete", SwarmCompleteReducer),
   __reducerSchema("swarm_fail", SwarmFailReducer),
   __reducerSchema("swarm_init", SwarmInitReducer),
+  __reducerSchema("sync_agent_def", SyncAgentDefReducer),
+  __reducerSchema("sync_config", SyncConfigReducer),
+  __reducerSchema("sync_skill", SyncSkillReducer),
   __reducerSchema("task_assign", TaskAssignReducer),
   __reducerSchema("task_complete", TaskCompleteReducer),
   __reducerSchema("task_create", TaskCreateReducer),

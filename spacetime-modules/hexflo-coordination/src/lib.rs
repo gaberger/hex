@@ -121,6 +121,120 @@ pub fn remove_project(
     }
 }
 
+// ─── Project Configuration ──────────────────────────────────────────────────
+
+#[table(name = project_config, public)]
+#[derive(Clone, Debug)]
+pub struct ProjectConfig {
+    #[primary_key]
+    pub key: String,
+    pub project_id: String,
+    pub value_json: String,
+    pub source_file: String,
+    pub synced_at: String,
+}
+
+#[reducer]
+pub fn sync_config(
+    ctx: &ReducerContext,
+    key: String,
+    project_id: String,
+    value_json: String,
+    source_file: String,
+    synced_at: String,
+) -> Result<(), String> {
+    if let Some(existing) = ctx.db.project_config().key().find(&key) {
+        ctx.db.project_config().key().update(ProjectConfig {
+            value_json, source_file, synced_at, ..existing
+        });
+    } else {
+        ctx.db.project_config().insert(ProjectConfig {
+            key, project_id, value_json, source_file, synced_at,
+        });
+    }
+    Ok(())
+}
+
+// ─── Skill Registry ──────────────────────────────────────────────────────
+
+#[table(name = skill_registry, public)]
+#[derive(Clone, Debug)]
+pub struct SkillEntry {
+    #[primary_key]
+    pub skill_id: String,
+    pub project_id: String,
+    pub name: String,
+    pub trigger_cmd: String,
+    pub description: String,
+    pub source_path: String,
+    pub synced_at: String,
+}
+
+#[reducer]
+pub fn sync_skill(
+    ctx: &ReducerContext,
+    skill_id: String,
+    project_id: String,
+    name: String,
+    trigger_cmd: String,
+    description: String,
+    source_path: String,
+    synced_at: String,
+) -> Result<(), String> {
+    if let Some(existing) = ctx.db.skill_registry().skill_id().find(&skill_id) {
+        ctx.db.skill_registry().skill_id().update(SkillEntry {
+            name, trigger_cmd, description, source_path, synced_at, ..existing
+        });
+    } else {
+        ctx.db.skill_registry().insert(SkillEntry {
+            skill_id, project_id, name, trigger_cmd, description, source_path, synced_at,
+        });
+    }
+    Ok(())
+}
+
+// ─── Agent Definition ──────────────────────────────────────────────────────
+
+#[table(name = agent_definition, public)]
+#[derive(Clone, Debug)]
+pub struct AgentDef {
+    #[primary_key]
+    pub agent_def_id: String,
+    pub project_id: String,
+    pub name: String,
+    pub role: String,
+    pub model: String,
+    pub capabilities_json: String,
+    pub tools_json: String,
+    pub source_path: String,
+    pub synced_at: String,
+}
+
+#[reducer]
+pub fn sync_agent_def(
+    ctx: &ReducerContext,
+    agent_def_id: String,
+    project_id: String,
+    name: String,
+    role: String,
+    model: String,
+    capabilities_json: String,
+    tools_json: String,
+    source_path: String,
+    synced_at: String,
+) -> Result<(), String> {
+    if let Some(existing) = ctx.db.agent_definition().agent_def_id().find(&agent_def_id) {
+        ctx.db.agent_definition().agent_def_id().update(AgentDef {
+            name, role, model, capabilities_json, tools_json, source_path, synced_at, ..existing
+        });
+    } else {
+        ctx.db.agent_definition().insert(AgentDef {
+            agent_def_id, project_id, name, role, model, capabilities_json, tools_json, source_path, synced_at,
+        });
+    }
+    Ok(())
+}
+
 // ============================================================
 //  Swarm Lifecycle Reducers
 // ============================================================
