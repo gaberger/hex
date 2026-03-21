@@ -12,9 +12,209 @@
 </p>
 
 <p align="center">
-  <b>Give AI coding agents mechanical architecture enforcement — not just prompt templates.</b><br/>
+  <b>An AI-Assisted Integrated Development Environment (AAIDE) with opinionated hexagonal architecture enforcement.</b><br/>
   <sub>Typed port contracts &nbsp;|&nbsp; Static boundary analysis &nbsp;|&nbsp; Multi-agent swarm coordination &nbsp;|&nbsp; Token-efficient AST summaries</sub>
 </p>
+
+---
+
+<br/>
+
+## What is hex?
+
+**hex** is an **AAIDE** — an AI-Assisted Integrated Development Environment. It is not an application you deploy; it is a **framework and toolchain** that gets installed into target projects to enforce hexagonal architecture (Ports & Adapters) during AI-driven development.
+
+hex provides:
+- **Mechanical architecture enforcement** via static analysis (`hex analyze`)
+- **Multi-agent swarm coordination** for parallel feature development across adapter boundaries
+- **Token-efficient code context** via tree-sitter AST summaries (L0–L3)
+- **A control plane dashboard** for managing development across projects and systems
+- **Inference integration** for local models, free models, and frontier models via SpacetimeDB procedures
+
+### System Components
+
+hex is composed of five deployment units that work together:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           hex System Architecture                           │
+│                                                                              │
+│  ┌─────────────────┐     WebSocket      ┌─────────────────────────────────┐  │
+│  │  hex-dashboard   │◄──────────────────►│         SpacetimeDB            │  │
+│  │  (Control Plane) │    real-time sub    │  (Coordination & State Core)   │  │
+│  │                  │                    │                                 │  │
+│  │  Multi-project   │                    │  18 WASM modules:              │  │
+│  │  monitoring,     │                    │  • hexflo-coordination         │  │
+│  │  agent fleet     │                    │  • agent-registry              │  │
+│  │  management,     │                    │  • inference-gateway           │  │
+│  │  architecture    │                    │  • workplan-state              │  │
+│  │  health views    │                    │  • chat-relay                  │  │
+│  │                  │                    │  • fleet-state                 │  │
+│  └─────────────────┘                    │  • architecture-enforcer       │  │
+│                                          │  • + 11 more                   │  │
+│  ┌─────────────────┐     WebSocket      │                                 │  │
+│  │  hex Clients     │◄──────────────────►│  Provides:                     │  │
+│  │  (Web, CLI,      │    real-time sub    │  • WebSocket pub/sub           │  │
+│  │   Desktop)       │                    │  • Transactional reducers      │  │
+│  └─────────────────┘                    │  • SQL query interface          │  │
+│                                          │  • Automatic state replication  │  │
+│  ┌─────────────────┐     REST API       │                                 │  │
+│  │  hex-nexus       │◄──────────────────►│  ⚠ WASM modules CANNOT:        │  │
+│  │  (Filesystem     │   reducer calls     │  • Access filesystems          │  │
+│  │   Bridge)        │                    │  • Spawn processes             │  │
+│  │                  │                    │  • Make network calls           │  │
+│  │  Bridges the gap │                    │  • Execute shell commands       │  │
+│  │  between STDB    │                    │                                 │  │
+│  │  and local OS    │                    └─────────────────────────────────┘  │
+│  └────────┬────────┘                                                         │
+│           │                                                                  │
+│           ▼                                                                  │
+│  ┌─────────────────┐                    ┌─────────────────────────────────┐  │
+│  │  Local OS        │                    │  hex-adapter                    │  │
+│  │  • File system   │                    │  (Architecture Enforcement)     │  │
+│  │  • Git repos     │                    │                                 │  │
+│  │  • Processes     │                    │  Runs locally or remotely.      │  │
+│  │  • Shell         │                    │  Enforces hex architecture via: │  │
+│  └─────────────────┘                    │  • Skills & hooks               │  │
+│                                          │  • ADRs & workplans             │  │
+│                                          │  • HexFlo dispatchers           │  │
+│                                          │  • Agent system                 │  │
+│                                          └─────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### SpacetimeDB — The Coordination & State Core
+
+**SpacetimeDB must always be running to use hex.** It is the backbone of the system — every client (web, CLI, desktop) connects to it via WebSocket for real-time state synchronization.
+
+SpacetimeDB is a Rust-native relational database that embeds application logic as WASM modules. hex uses it for:
+
+| Capability | How It Works |
+|:-----------|:-------------|
+| **Real-time state sync** | All clients subscribe via WebSocket — no polling, instant updates |
+| **Transactional coordination** | Reducers (stored procedures in WASM) provide atomic state transitions |
+| **Swarm orchestration** | `hexflo-coordination` module tracks swarms, tasks, agents, and memory |
+| **Inference routing** | `inference-gateway` module routes LLM requests to local, free, or frontier models |
+| **Agent lifecycle** | `agent-registry` module tracks agent heartbeats, metrics, and status |
+| **Architecture enforcement** | `architecture-enforcer` module validates boundary rules server-side |
+| **Chat relay** | `chat-relay` module routes messages between agents and humans |
+
+**Why SpacetimeDB instead of a REST API?** Traditional architectures require polling + hand-rolled coordination. SpacetimeDB gives hex automatic real-time replication — when one agent completes a task, every connected client sees the update instantly through their WebSocket subscription.
+
+**18 WASM modules** live in `spacetime-modules/`, each compiled to `wasm32-unknown-unknown`:
+```
+spacetime-modules/
+├── hexflo-coordination/     # Core: swarms, tasks, agents, memory, projects
+├── agent-registry/          # Agent lifecycle + heartbeats
+├── inference-gateway/       # LLM request routing
+├── inference-bridge/        # Model integration
+├── workplan-state/          # Task status + phase tracking
+├── chat-relay/              # Message routing
+├── fleet-state/             # Compute node registry
+├── rl-engine/               # Q-learning tables
+├── architecture-enforcer/   # Boundary rule validation
+├── skill-registry/          # Skill metadata
+├── agent-definition-registry/ # Agent definitions
+├── hook-registry/           # Git hook management
+├── file-lock-manager/       # Distributed file locks
+├── conflict-resolver/       # State conflict resolution
+├── secret-grant/            # Secret distribution
+├── hexflo-cleanup/          # Stale agent detection
+└── hexflo-lifecycle/        # Agent lifecycle events
+```
+
+#### hex-nexus — The Filesystem Bridge
+
+hex-nexus exists because **SpacetimeDB WASM modules cannot access the filesystem, spawn processes, or make network calls** — this is by design (sandboxed execution). hex-nexus bridges this gap.
+
+hex-nexus is a Rust daemon that:
+- **Reads/writes files** on the local OS on behalf of SpacetimeDB operations
+- **Runs architecture analysis** (tree-sitter parsing, boundary checking, cycle detection)
+- **Manages git operations** (blame, diff, log, worktree management)
+- **Syncs configuration** between repo files and SpacetimeDB tables on startup
+- **Serves the dashboard** (assets baked into binary via `rust-embed`)
+- **Exposes a REST API** that both the CLI and MCP tools delegate to
+
+```bash
+hex nexus start      # Start the daemon
+hex nexus status     # Check health
+# REST API at http://localhost:5555
+```
+
+**Config sync on startup** (ADR-044): When hex-nexus starts, it reads local config files and pushes them to SpacetimeDB:
+- `.hex/blueprint.json` → `project_config` table
+- `.claude/settings.json` → `project_config` (MCP servers, hooks)
+- `.claude/skills/*.md` → `skill_registry` table
+- `.claude/agents/*.yml` → `agent_definition` table
+
+#### hex-adapter — Architecture Enforcement Runtime
+
+> **Note:** This component is currently named `hex-agent` in the codebase. It is being renamed to `hex-adapter` to better reflect its role as an adapter that enforces hex architecture, not an autonomous agent.
+
+hex-adapter is the component that **must always be present** — locally or remotely — on any system running hex development agents. It is the software that enforces hexagonal architecture through:
+
+| Mechanism | What It Enforces |
+|:----------|:----------------|
+| **Skills** | Claude Code slash commands (`/hex-scaffold`, `/hex-generate`, etc.) that guide AI agents to produce architecture-compliant code |
+| **Hooks** | Pre/post operation hooks that validate boundaries, auto-format, and train patterns |
+| **ADRs** | Architecture Decision Records that document and track design choices |
+| **Workplans** | Structured task decomposition into adapter-bounded steps |
+| **HexFlo dispatchers** | Native Rust coordination for multi-agent swarm execution |
+| **Agent definitions** | YAML-defined agent roles (planner, coder, reviewer, etc.) with specific boundaries |
+
+hex-adapter uses hex's own agent system and HexFlo dispatchers for building software. It connects to SpacetimeDB for coordination and to hex-nexus for filesystem operations.
+
+#### hex-dashboard — The Developer Control Plane
+
+hex-dashboard is the **nexus of data and control** for developers using hex across many projects and systems. It is a control plane architecture that provides:
+
+| Capability | Description |
+|:-----------|:-------------|
+| **Multi-project management** | Monitor and control multiple hex projects from a single view with live freshness indicators |
+| **Agent fleet control** | View all active agents, their status, heartbeats, and assigned tasks across systems |
+| **Architecture health** | Real-time architecture score ring with violation/dead-export breakdown per project |
+| **Swarm visualization** | Task progress, agent topology, dependency graphs with violation highlighting |
+| **Command execution** | Send commands (`hex analyze`, `spawn-agent`, `run-build`) to any connected project from the browser |
+| **Inference monitoring** | Track LLM requests, model usage, and token consumption across agents |
+| **Configuration management** | View and manage secrets, environment variables, and project settings |
+| **Event stream** | Filterable real-time log of errors, decisions, milestones across all projects |
+
+**Tech stack:** Solid.js + TailwindCSS frontend, baked into the hex-nexus binary at compile time. Real-time updates via SpacetimeDB WebSocket subscriptions.
+
+```bash
+hex nexus start           # Dashboard available at http://localhost:5555
+open http://localhost:5555
+```
+
+The dashboard connects directly to SpacetimeDB for real-time data — it does not poll hex-nexus. This means agent status, task progress, and architecture health update instantly across all open browser tabs.
+
+#### hex Clients — Web, CLI, Desktop
+
+All hex clients connect to SpacetimeDB via WebSocket for real-time state:
+
+| Client | Technology | Purpose |
+|:-------|:-----------|:--------|
+| **hex CLI** (`hex-cli/`) | Rust binary | Primary user interface — all hex commands |
+| **hex Web** (dashboard) | Solid.js SPA | Browser-based control plane |
+| **hex Desktop** (`hex-desktop/`) | Tauri wrapper | Native desktop app wrapping the web dashboard |
+| **hex Chat** (`hex-chat/`) | Tauri + TypeScript | Conversational interface for agent interaction |
+
+The CLI delegates to hex-nexus REST API for filesystem operations and queries SpacetimeDB directly for state. MCP tools (`hex mcp`) are served from the same binary, ensuring CLI and MCP share the same backend.
+
+#### Inference — Model Integration
+
+hex can leverage **local models, free models, or frontier models** for AI-driven development. Inference is routed through SpacetimeDB:
+
+```
+Agent → SpacetimeDB (inference-gateway reducer) → hex-nexus (HTTP bridge) → Model Provider
+                                                                              ├── Local (Ollama, llama.cpp)
+                                                                              ├── Free (Anthropic free tier, etc.)
+                                                                              └── Frontier (Claude, GPT-4, etc.)
+```
+
+The `inference-gateway` and `inference-bridge` WASM modules handle request routing, load balancing, and response caching. hex-nexus performs the actual HTTP calls since WASM modules cannot make network requests.
+
+<br/>
 
 ---
 
@@ -347,46 +547,38 @@ interface ISwarmPort {
 
 </details>
 
-### Dashboard (hex-hub)
+### Dashboard — Control Plane
 
 <p align="center">
   <img src="docs/hex-dashboard.png" alt="hex Dashboard — architecture health, token efficiency, dependency graph, swarm status" width="900"/>
 </p>
 
-hex-hub is a Rust-native dashboard service that runs as a system-wide daemon on port 5555. It provides real-time visibility into architecture health, token efficiency across summary levels, interactive dependency graphs with violation detection, and swarm agent/task status — all streamed via WebSocket.
+The hex dashboard is the **developer control plane** — a single interface for managing AI-driven development across multiple projects and systems. It is served by hex-nexus (baked into the binary at compile time) and connects directly to SpacetimeDB for real-time state.
 
 ```bash
-# Auto-starts on any hex command (if binary installed)
-hex analyze .
-
-# Manual control
-hex daemon start        # Start daemon
-hex daemon stop         # Stop daemon
-hex hub status          # Show status + connected projects
+# Start hex-nexus (serves the dashboard)
+hex nexus start
 
 # Open in browser
 open http://localhost:5555
 ```
 
-**Dashboard features:**
+**Control plane capabilities:**
 - **Multi-project tabs** — switch between projects with live freshness indicators
 - **Architecture health ring** — real-time score with violation/dead-export breakdown
 - **Token efficiency panel** — L0–L3 compression bars per file
-- **Swarm status** — agent list, task progress, status badges with pulse animations
+- **Agent fleet management** — agent list, heartbeat status, task assignments with pulse animations
 - **Dependency graph** — interactive canvas with hexagonal ring layout, zoom/pan, click-to-trace transitive deps, violation highlighting
-- **Command chat** — send commands (`hex analyze`, `hex claude <prompt>`, `spawn-agent`) directly from the browser
+- **Command dispatch** — send commands (`hex analyze`, `spawn-agent`, `run-build`) to any connected project from the browser
+- **Inference monitoring** — track model requests and token consumption across agents
 - **Event log** — filterable real-time stream (errors, decisions, milestones)
 - **Decision modal** — interactive prompts for agent decisions requiring human input
 
-1.5MB binary, zero runtime dependencies. Modern dark theme optimized for extended developer use.
-
-**Persistence & coordination:**
-- Swarm state (agents, tasks, events) is persisted in **SQLite** (`hex_hub.db`) — survives daemon restarts (ADR-015)
-- Hub binary embeds a **compile-time build hash** for version verification against the TypeScript CLI (ADR-016)
+**State management:**
+- **Primary**: SpacetimeDB — real-time sync across all clients via WebSocket subscriptions
+- **Fallback**: SQLite (`~/.hex/hub.db`) — offline/single-node operation (ADR-025)
 - Multi-instance coordination uses `ICoordinationPort` with worktree locks, task claiming, and activity broadcasting to prevent duplicate work and file conflicts (ADR-011, ADR-022)
 - `SwarmOrchestrator` acquires locks before worktree creation; `WorkplanExecutor` claims tasks before agent spawn — conflicts throw typed `WorktreeConflictError` / `TaskConflictError`
-
-See [hex-hub/README.md](hex-hub/README.md) for full API reference.
 
 <br/>
 
@@ -814,28 +1006,68 @@ Same hexagonal rules, different language. The architecture transfers.
 ## Project Structure
 
 ```
+# ── Rust Workspace (7 crates) ──────────────────────────────────────────────
+
+hex-cli/                 # CLI binary — canonical user entry point (all hex commands)
+hex-nexus/               # Filesystem bridge daemon (axum REST API, port 5555)
+  src/
+    analysis/            #   Architecture analysis (tree-sitter, boundary checking)
+    coordination/        #   HexFlo swarm coordination (ADR-027)
+    adapters/            #   SpacetimeDB + SQLite state adapters
+    config_sync.rs       #   Repo → SpacetimeDB config sync on startup (ADR-044)
+    git/                 #   Git introspection (blame, diff, worktree mgmt)
+    orchestration/       #   Agent manager, constraint enforcer, workplan executor
+  assets/                #   Dashboard frontend (Solid.js + TailwindCSS, rust-embed'd)
+    src/spacetimedb/     #     Auto-generated SpacetimeDB client bindings
+hex-core/                # Shared domain types & port traits (zero external deps)
+hex-agent/               # Architecture enforcement runtime (→ being renamed hex-adapter)
+hex-chat/                # Conversational chat UI (Tauri + TypeScript)
+hex-desktop/             # Desktop app (Tauri wrapper for dashboard)
+hex-parser/              # Code parsing utilities
+
+# ── SpacetimeDB WASM Modules ──────────────────────────────────────────────
+
+spacetime-modules/       # 18 WASM modules compiled to wasm32-unknown-unknown
+  hexflo-coordination/   #   Core: swarms, tasks, agents, memory, projects, config
+  agent-registry/        #   Agent lifecycle + heartbeats
+  inference-gateway/     #   LLM request routing
+  workplan-state/        #   Task status + phase tracking
+  chat-relay/            #   Message routing between agents and humans
+  fleet-state/           #   Compute node registry
+  architecture-enforcer/ #   Server-side boundary rule validation
+  # ... + 11 more modules
+
+# ── TypeScript Library ─────────────────────────────────────────────────────
+
 src/
   core/
     domain/              # Value objects, entities, domain events
-    ports/               # Typed interfaces (input + output)
-    usecases/            # Application logic
+    ports/               # Typed interfaces (31 port files)
+    usecases/            # Application logic (swarm, checkpoint, code-gen)
   adapters/
-    primary/             # CLI, MCP, Dashboard, Notifications
-    secondary/           # FS, Git, TreeSitter, LLM, HexFlo, Build, Registry, Secrets
+    primary/             # CLI, MCP, Dashboard, Notifications (9 files)
+    secondary/           # FS, Git, TreeSitter, LLM, HexFlo, Build, Secrets (42 files)
   infrastructure/        # Tree-sitter query definitions
-  composition-root.ts    # Single DI wiring point
+  composition-root.ts    # Single DI wiring point — ONLY file importing adapters
   cli.ts                 # CLI entry point
   index.ts               # Library public API
+
+# ── Supporting ─────────────────────────────────────────────────────────────
+
 tests/
   unit/                  # London-school mock-first tests
   integration/           # Real adapter tests
-examples/                # Reference apps (weather, rust-api, flappy-bird, todo-app, test-app, summaries)
-hex-hub/                 # Rust dashboard daemon (axum, system-wide on port 5555)
-agents/                  # Agent definitions (YAML)
-skills/                  # Skill definitions (Markdown)
+examples/                # Reference apps (flappy-bird, weather, rust-api, todo-app, etc.)
+agents/                  # Agent definitions (14 YAML files, shipped in npm package)
+skills/                  # Skill definitions (6 Markdown files, shipped in npm package)
+.claude/
+  skills/                # Claude Code skills (slash commands for IDE integration)
+  agents/                # Claude Code agent definitions
 config/                  # Language configs, tree-sitter settings
 docs/
-  adrs/                  # Architecture Decision Records
+  adrs/                  # 37 Architecture Decision Records
+  specs/                 # Behavioral specifications
+  workplans/             # Feature workplans
   analysis/              # Adversarial review reports
 ```
 
@@ -872,12 +1104,23 @@ Three-tier detection: `.hex/status.json` (written by hooks) → `~/.claude-flow/
 ## Build & Test
 
 ```bash
-bun run build        # Bundle CLI + library to dist/
+# Rust (primary — what users run)
+cargo build -p hex-cli --release     # Build hex CLI binary
+cargo build -p hex-nexus --release   # Build hex-nexus daemon (includes dashboard)
+
+# TypeScript library (secondary — ports, adapters, tree-sitter)
+bun run build        # Bundle TS library to dist/
 bun test             # Run all tests (unit + property + smoke)
 bun run check        # TypeScript type check (no emit)
-hex analyze .   # Architecture validation
-hex setup       # Install grammars + skills + agents + hex-hub binary
-cargo build --release -p hex-hub  # Build dashboard binary manually
+
+# hex commands
+hex analyze .        # Architecture validation
+hex nexus start      # Start nexus daemon (dashboard at :5555)
+hex setup            # Install grammars + skills + agents
+
+# SpacetimeDB modules
+cd spacetime-modules && spacetime build   # Compile WASM modules
+spacetime publish hex-nexus               # Deploy to SpacetimeDB instance
 ```
 
 <br/>

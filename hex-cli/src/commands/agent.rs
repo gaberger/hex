@@ -257,7 +257,7 @@ async fn connect(nexus_url: &str) -> anyhow::Result<()> {
         },
     });
 
-    let resp = nexus.post("/api/agents/connect", &body).await?;
+    let resp = nexus.post("/api/remote-agents/connect", &body).await?;
 
     let agent_id = resp["agentId"].as_str().unwrap_or("-");
 

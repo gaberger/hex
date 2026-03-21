@@ -184,13 +184,13 @@ pub async fn init_project(
             .to_string()
     });
 
-    let mut created: Vec<&str> = Vec::new();
+    let mut created: Vec<String> = Vec::new();
 
     // Create .hex/ directory with default config files
     let hex_dir = root.join(".hex");
     if !hex_dir.exists() {
         let _ = std::fs::create_dir_all(&hex_dir);
-        created.push(".hex/");
+        created.push(".hex/".to_string());
 
         // Write default blueprint.json
         let blueprint = json!({
@@ -210,7 +210,7 @@ pub async fn init_project(
             hex_dir.join("blueprint.json"),
             serde_json::to_string_pretty(&blueprint).unwrap_or_default(),
         );
-        created.push(".hex/blueprint.json");
+        created.push(".hex/blueprint.json".to_string());
 
         // Write state.json pointing to SpacetimeDB
         let state = json!({
@@ -221,7 +221,19 @@ pub async fn init_project(
             hex_dir.join("state.json"),
             serde_json::to_string_pretty(&state).unwrap_or_default(),
         );
-        created.push(".hex/state.json");
+        created.push(".hex/state.json".to_string());
+    }
+
+    // Write default .hex/project.yaml manifest if not present
+    let manifest_path = hex_dir.join("project.yaml");
+    if !manifest_path.exists() {
+        let _ = std::fs::create_dir_all(&hex_dir);
+        let manifest = format!(
+            "name: {}\ndescription: \"\"\nversion: \"1.0.0\"\nauto_register: true\nagent:\n  provider: auto\n  model: claude-sonnet-4-20250514\n",
+            name
+        );
+        let _ = std::fs::write(&manifest_path, manifest);
+        created.push(".hex/project.yaml".to_string());
     }
 
     // Create .claude/ directories
@@ -229,15 +241,55 @@ pub async fn init_project(
     if !claude_dir.exists() {
         let _ = std::fs::create_dir_all(claude_dir.join("skills"));
         let _ = std::fs::create_dir_all(claude_dir.join("agents"));
-        created.push(".claude/skills/");
-        created.push(".claude/agents/");
+        created.push(".claude/skills/".to_string());
+        created.push(".claude/agents/".to_string());
+    }
+
+    // Copy embedded agent templates into .claude/agents/ (idempotent)
+    {
+        use crate::templates::{AgentTemplates, SkillTemplates};
+
+        let agents_dir = root.join(".claude/agents");
+        let _ = std::fs::create_dir_all(&agents_dir);
+        for file_name in AgentTemplates::iter() {
+            let file_name_str = file_name.as_ref();
+            if let Some(content) = AgentTemplates::get(file_name_str) {
+                let dest_name = file_name_str.strip_prefix("agents/").unwrap_or(file_name_str);
+                let dest = agents_dir.join(dest_name);
+                if !dest.exists() {
+                    if let Some(parent) = dest.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&dest, content.data.as_ref());
+                    created.push(format!(".claude/agents/{}", dest_name));
+                }
+            }
+        }
+
+        // Copy embedded skill templates into .claude/skills/ (idempotent)
+        let skills_dir = root.join(".claude/skills");
+        let _ = std::fs::create_dir_all(&skills_dir);
+        for file_name in SkillTemplates::iter() {
+            let file_name_str = file_name.as_ref();
+            if let Some(content) = SkillTemplates::get(file_name_str) {
+                let dest_name = file_name_str.strip_prefix("skills/").unwrap_or(file_name_str);
+                let dest = skills_dir.join(dest_name);
+                if !dest.exists() {
+                    if let Some(parent) = dest.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&dest, content.data.as_ref());
+                    created.push(format!(".claude/skills/{}", dest_name));
+                }
+            }
+        }
     }
 
     // Create docs/adrs/ with template
     let adrs_dir = root.join("docs").join("adrs");
     if !adrs_dir.exists() {
         let _ = std::fs::create_dir_all(&adrs_dir);
-        created.push("docs/adrs/");
+        created.push("docs/adrs/".to_string());
 
         let readme = format!(
             "# Architecture Decision Records\n\n\
@@ -259,7 +311,7 @@ pub async fn init_project(
             **Negative:**\n\
             - \n";
         let _ = std::fs::write(adrs_dir.join("TEMPLATE.md"), template);
-        created.push("docs/adrs/TEMPLATE.md");
+        created.push("docs/adrs/TEMPLATE.md".to_string());
     }
 
     // Create CLAUDE.md if missing
@@ -278,7 +330,7 @@ pub async fn init_project(
             name, name
         );
         let _ = std::fs::write(&claude_md, content);
-        created.push("CLAUDE.md");
+        created.push("CLAUDE.md".to_string());
     }
 
     (

@@ -1,8 +1,10 @@
-use axum::{extract::Path, Json};
+use axum::{extract::{Path, State}, Json};
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path as StdPath, PathBuf};
+
+use crate::state::SharedState;
 
 #[derive(Debug, Serialize)]
 pub struct ADRSummary {
@@ -116,24 +118,13 @@ fn extract_id(filename: &str) -> String {
         .to_string()
 }
 
-/// GET /api/adrs — list all ADRs with metadata.
-pub async fn list_adrs() -> (StatusCode, Json<serde_json::Value>) {
-    let dir = match find_adr_dir() {
-        Some(d) => d,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({
-                    "error": "ADR directory not found",
-                    "searched": ["docs/adrs", "../docs/adrs", "../../docs/adrs"]
-                })),
-            )
-        }
-    };
+// ── Shared helpers for directory-based ADR resolution ─────
 
+/// List all ADRs from a given directory.
+fn list_adrs_from_dir(dir: &StdPath) -> Vec<ADRSummary> {
     let mut adrs: Vec<ADRSummary> = Vec::new();
 
-    if let Ok(entries) = std::fs::read_dir(&dir) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let filename = entry.file_name().to_string_lossy().to_string();
             if !filename.ends_with(".md") {
@@ -156,7 +147,91 @@ pub async fn list_adrs() -> (StatusCode, Json<serde_json::Value>) {
 
     // Sort by ID descending (newest first)
     adrs.sort_by(|a, b| b.id.cmp(&a.id));
+    adrs
+}
 
+/// Get a single ADR's full content from a given directory.
+fn get_adr_from_dir(dir: &StdPath, id: &str) -> Option<ADRDetail> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let filename = entry.file_name().to_string_lossy().to_string();
+        if !filename.ends_with(".md") {
+            continue;
+        }
+
+        let file_id = extract_id(&filename);
+        if file_id == id {
+            let content = std::fs::read_to_string(entry.path()).unwrap_or_default();
+            let (title, status, date) = parse_adr_frontmatter(&content, &filename);
+            return Some(ADRDetail {
+                id: id.to_string(),
+                title,
+                status,
+                date,
+                content,
+            });
+        }
+    }
+    None
+}
+
+/// Save ADR content to a file in the given directory, matching by ID.
+fn save_adr_in_dir(dir: &StdPath, id: &str, content: &str) -> Result<String, String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("Cannot read dir: {}", e))?;
+    for entry in entries.flatten() {
+        let filename = entry.file_name().to_string_lossy().to_string();
+        if !filename.ends_with(".md") {
+            continue;
+        }
+
+        let file_id = extract_id(&filename);
+        if file_id == id {
+            std::fs::write(entry.path(), content)
+                .map_err(|e| format!("Failed to write ADR: {}", e))?;
+            return Ok(filename);
+        }
+    }
+    Err(format!("ADR-{} not found", id))
+}
+
+/// Resolve a project to its filesystem root_path via the state port.
+async fn resolve_project_path(state: &SharedState, project_id: &str) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
+    let sp = state.state_port.as_ref().ok_or_else(|| (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({ "ok": false, "error": "State port not configured" })),
+    ))?;
+
+    match sp.project_find(project_id).await {
+        Ok(Some(p)) => Ok(p.root_path),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "ok": false, "error": format!("Project '{}' not found", project_id) })),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "ok": false, "error": e.to_string() })),
+        )),
+    }
+}
+
+// ── Global ADR handlers (existing, now delegate to shared fns) ───
+
+/// GET /api/adrs — list all ADRs with metadata.
+pub async fn list_adrs() -> (StatusCode, Json<serde_json::Value>) {
+    let dir = match find_adr_dir() {
+        Some(d) => d,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": "ADR directory not found",
+                    "searched": ["docs/adrs", "../docs/adrs", "../../docs/adrs"]
+                })),
+            )
+        }
+    };
+
+    let adrs = list_adrs_from_dir(&dir);
     (
         StatusCode::OK,
         Json(serde_json::to_value(&adrs).unwrap_or_default()),
@@ -175,38 +250,16 @@ pub async fn get_adr(Path(id): Path<String>) -> (StatusCode, Json<serde_json::Va
         }
     };
 
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let filename = entry.file_name().to_string_lossy().to_string();
-            if !filename.ends_with(".md") {
-                continue;
-            }
-
-            let file_id = extract_id(&filename);
-
-            if file_id == id {
-                let content = std::fs::read_to_string(entry.path()).unwrap_or_default();
-                let (title, status, date) = parse_adr_frontmatter(&content, &filename);
-
-                let detail = ADRDetail {
-                    id: id.clone(),
-                    title,
-                    status,
-                    date,
-                    content,
-                };
-                return (
-                    StatusCode::OK,
-                    Json(serde_json::to_value(&detail).unwrap_or_default()),
-                );
-            }
-        }
+    match get_adr_from_dir(&dir, &id) {
+        Some(detail) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&detail).unwrap_or_default()),
+        ),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("ADR-{} not found", id) })),
+        ),
     }
-
-    (
-        StatusCode::NOT_FOUND,
-        Json(json!({ "error": format!("ADR-{} not found", id) })),
-    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -229,32 +282,105 @@ pub async fn save_adr(
         }
     };
 
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let filename = entry.file_name().to_string_lossy().to_string();
-            if !filename.ends_with(".md") {
-                continue;
-            }
+    match save_adr_in_dir(&dir, &id, &body.content) {
+        Ok(filename) => (
+            StatusCode::OK,
+            Json(json!({ "ok": true, "file": filename })),
+        ),
+        Err(msg) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": msg })),
+        ),
+    }
+}
 
-            let file_id = extract_id(&filename);
+// ── Project-scoped ADR handlers (ADR-045 Phase 1) ────────
 
-            if file_id == id {
-                return match std::fs::write(entry.path(), &body.content) {
-                    Ok(()) => (
-                        StatusCode::OK,
-                        Json(json!({ "ok": true, "file": filename })),
-                    ),
-                    Err(e) => (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "error": format!("Failed to write ADR: {}", e) })),
-                    ),
-                };
-            }
-        }
+/// GET /api/projects/{id}/adrs — list ADRs from a project's docs/adrs/ directory.
+pub async fn list_project_adrs(
+    Path(project_id): Path<String>,
+    State(state): State<SharedState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let root_path = match resolve_project_path(&state, &project_id).await {
+        Ok(p) => p,
+        Err((status, body)) => return (status, body),
+    };
+
+    let adr_dir = PathBuf::from(&root_path).join("docs/adrs");
+    if !adr_dir.is_dir() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "ADR directory not found",
+                "searched": [adr_dir.display().to_string()]
+            })),
+        );
     }
 
+    let adrs = list_adrs_from_dir(&adr_dir);
     (
-        StatusCode::NOT_FOUND,
-        Json(json!({ "error": format!("ADR-{} not found", id) })),
+        StatusCode::OK,
+        Json(serde_json::to_value(&adrs).unwrap_or_default()),
     )
+}
+
+/// GET /api/projects/{id}/adrs/{adr_id} — get a single ADR from a project.
+pub async fn get_project_adr(
+    Path((project_id, adr_id)): Path<(String, String)>,
+    State(state): State<SharedState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let root_path = match resolve_project_path(&state, &project_id).await {
+        Ok(p) => p,
+        Err((status, body)) => return (status, body),
+    };
+
+    let adr_dir = PathBuf::from(&root_path).join("docs/adrs");
+    if !adr_dir.is_dir() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "ADR directory not found" })),
+        );
+    }
+
+    match get_adr_from_dir(&adr_dir, &adr_id) {
+        Some(detail) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&detail).unwrap_or_default()),
+        ),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("ADR-{} not found in project '{}'", adr_id, project_id) })),
+        ),
+    }
+}
+
+/// PUT /api/projects/{id}/adrs/{adr_id} — save ADR content in a project.
+pub async fn save_project_adr(
+    Path((project_id, adr_id)): Path<(String, String)>,
+    State(state): State<SharedState>,
+    Json(body): Json<SaveADRRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let root_path = match resolve_project_path(&state, &project_id).await {
+        Ok(p) => p,
+        Err((status, body)) => return (status, body),
+    };
+
+    let adr_dir = PathBuf::from(&root_path).join("docs/adrs");
+    if !adr_dir.is_dir() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "ADR directory not found" })),
+        );
+    }
+
+    match save_adr_in_dir(&adr_dir, &adr_id, &body.content) {
+        Ok(filename) => (
+            StatusCode::OK,
+            Json(json!({ "ok": true, "file": filename })),
+        ),
+        Err(msg) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": msg })),
+        ),
+    }
 }

@@ -38,9 +38,12 @@ function statusColor(status: string): string {
   return '#6b7280';
 }
 
-async function fetchADRList(): Promise<ADRListItem[]> {
+async function fetchADRList(projectId?: string): Promise<ADRListItem[]> {
   try {
-    const res = await fetch('/api/adrs');
+    const url = projectId
+      ? `/api/projects/${encodeURIComponent(projectId)}/adrs`
+      : '/api/adrs';
+    const res = await fetch(url);
     if (res.ok) {
       return await res.json();
     }
@@ -221,12 +224,15 @@ async function fetchADRContent(adrId: string): Promise<string> {
     || `# ADR-${adrId}\n\n*Content will be loaded from the API once available.*\n\nRun \`hex adr status ${adrId}\` from the CLI to view this ADR.`;
 }
 
-async function fetchADRDetail(id: string): Promise<ADRDetail | null> {
+async function fetchADRDetail(id: string, projectId?: string): Promise<ADRDetail | null> {
   if (!id) return null;
 
-  // Try the full detail API first
+  // Try the full detail API first (project-scoped if available)
   try {
-    const res = await fetch(`/api/adrs/${id}`);
+    const url = projectId
+      ? `/api/projects/${encodeURIComponent(projectId)}/adrs/${id}`
+      : `/api/adrs/${id}`;
+    const res = await fetch(url);
     if (res.ok) {
       return await res.json();
     }
@@ -253,7 +259,13 @@ const ADRBrowser: Component = () => {
   const [searchQuery, setSearchQuery] = createSignal('');
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
 
-  const [adrList] = createResource(fetchADRList);
+  // Extract projectId from route when available
+  const projectId = createMemo(() => {
+    const r = route();
+    return (r as { projectId?: string }).projectId;
+  });
+
+  const [adrList] = createResource(projectId, (pid) => fetchADRList(pid));
 
   const filteredList = createMemo(() => {
     const list = adrList() ?? [];
@@ -275,7 +287,15 @@ const ADRBrowser: Component = () => {
     return list.length > 0 ? list[0].id : null;
   });
 
-  const [adrDetail] = createResource(effectiveSelectedId, fetchADRDetail);
+  const adrFetchKey = createMemo(() => {
+    const id = effectiveSelectedId();
+    const pid = projectId();
+    return id ? { id, projectId: pid } : null;
+  });
+
+  const [adrDetail] = createResource(adrFetchKey, (key) =>
+    key ? fetchADRDetail(key.id, key.projectId) : Promise.resolve(null)
+  );
 
   const selectedADR = createMemo(() => {
     const list = adrList() ?? [];
@@ -411,9 +431,13 @@ const ADRBrowser: Component = () => {
                       conn.reducers.syncConfig(`adr_${detail().id}`, 'hex-intf', content, `docs/adrs/ADR-${detail().id}.md`, new Date().toISOString());
                     } catch { /* best-effort */ }
                   }
-                  // 2. Write to file (persistent)
+                  // 2. Write to file (persistent) — use project-scoped route if available
                   try {
-                    const res = await fetch(`/api/adrs/${detail().id}`, {
+                    const pid = projectId();
+                    const saveUrl = pid
+                      ? `/api/projects/${encodeURIComponent(pid)}/adrs/${detail().id}`
+                      : `/api/adrs/${detail().id}`;
+                    const res = await fetch(saveUrl, {
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ content }),
