@@ -87,6 +87,7 @@ pub struct SpawnRemoteRequest {
     pub project_dir: String,
     pub agent_name: Option<String>,
     pub key_path: Option<String>,
+    pub remote_source_dir: Option<String>,
 }
 
 pub async fn spawn_remote_agent(
@@ -107,13 +108,14 @@ pub async fn spawn_remote_agent(
         ..Default::default()
     };
 
-    let name = req
-        .agent_name
-        .unwrap_or_else(|| format!("{}@{}", req.user, req.host));
-
     match state
         .lifecycle
-        .spawn_remote_agent(config, name, req.project_dir)
+        .spawn_remote_full(
+            config,
+            req.project_dir,
+            req.agent_name,
+            req.remote_source_dir,
+        )
         .await
     {
         Ok(agent) => Json(json!(agent)),

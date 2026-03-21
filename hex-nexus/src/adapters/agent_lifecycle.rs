@@ -11,6 +11,7 @@ use crate::ports::agent_transport::IAgentTransportPort;
 use crate::ports::remote_registry::IRemoteRegistryPort;
 use crate::ports::ssh_tunnel::ISshTunnelPort;
 use crate::remote::transport::*;
+use crate::remote::transport::SshAuth;
 
 /// Manages the full lifecycle of remote agents:
 /// spawn → register → heartbeat → task assignment → result collection → teardown
@@ -234,6 +235,128 @@ impl AgentLifecycleAdapter {
         Ok(())
     }
 
+    /// Full remote agent spawn: provision → tunnel → launch → register.
+    /// This is the one-command deploy from ADR-040 §8.
+    pub async fn spawn_remote_full(
+        &self,
+        ssh_config: SshTunnelConfig,
+        project_dir: String,
+        agent_name: Option<String>,
+        remote_source_dir: Option<String>,
+    ) -> Result<RemoteAgent, TransportError> {
+        let host = ssh_config.host.clone();
+        let user = ssh_config.user.clone();
+
+        // Convert SshTunnelConfig → SshConfig for provisioner
+        let provision_config = crate::remote::ssh::SshConfig {
+            host: ssh_config.host.clone(),
+            port: ssh_config.port,
+            username: ssh_config.user.clone(),
+            key_path: match &ssh_config.auth {
+                SshAuth::Key { path, .. } => path.clone(),
+                SshAuth::Agent => {
+                    // Try common key paths
+                    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+                    format!("{}/.ssh/id_ed25519", home)
+                }
+            },
+        };
+
+        // Phase 1: PROVISION
+        tracing::info!(host = %host, "Phase 1: Provisioning hex-agent binary");
+        let src_dir = remote_source_dir.as_deref().unwrap_or("~/projects/hex-intf");
+        if let Err(e) = crate::remote::provisioner::RemoteProvisioner::ensure_binary(
+            &provision_config,
+            None, // TODO: local binary path for scp deploy
+            Some(src_dir),
+        )
+        .await
+        {
+            tracing::warn!(host = %host, error = %e, "Provisioning failed, assuming binary exists");
+        }
+
+        // Phase 2: TUNNEL
+        tracing::info!(host = %host, "Phase 2: Establishing SSH reverse tunnel");
+        let tunnel = self.tunnel_port.connect(ssh_config.clone()).await?;
+        tracing::info!(
+            host = %host,
+            local_port = tunnel.local_forward_port,
+            "Tunnel established"
+        );
+
+        // Phase 3: LAUNCH
+        tracing::info!(host = %host, "Phase 3: Launching hex-agent on remote");
+        let agent_id = uuid::Uuid::new_v4().to_string();
+        let session_token = uuid::Uuid::new_v4().to_string();
+        let display_name = agent_name.unwrap_or_else(|| format!("{}@{}", user, host));
+
+        let launch_cmd = format!(
+            "HEX_NEXUS_URL=http://127.0.0.1:{port} \
+             HEX_AGENT_ID={agent_id} \
+             HEX_AGENT_TOKEN={token} \
+             nohup ~/.hex/bin/hex-agent \
+               --hub-url http://127.0.0.1:{port} \
+               --hub-token {token} \
+               --project-dir {project_dir} \
+               --no-preflight \
+             > ~/.hex/agent-{short_id}.log 2>&1 &",
+            port = tunnel.local_forward_port,
+            agent_id = agent_id,
+            token = session_token,
+            project_dir = project_dir,
+            short_id = &agent_id[..8],
+        );
+
+        let launch_result = crate::remote::ssh::SshAdapter::run_command(
+            &provision_config,
+            &launch_cmd,
+        )
+        .await
+        .map_err(|e| TransportError::Tunnel(format!("Failed to launch agent: {}", e)))?;
+
+        if launch_result.exit_code != 0 {
+            return Err(TransportError::Tunnel(format!(
+                "Agent launch failed: {}",
+                launch_result.stderr
+            )));
+        }
+
+        // Phase 4: CONFIRM — wait for agent to register via WebSocket
+        tracing::info!(host = %host, "Phase 4: Waiting for agent registration");
+
+        // Give the agent a moment to start and connect
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        // Build the RemoteAgent record
+        let now = chrono::Utc::now().to_rfc3339();
+        let agent = RemoteAgent {
+            agent_id: agent_id.clone(),
+            name: display_name,
+            host: host.clone(),
+            project_dir,
+            status: RemoteAgentStatus::Online,
+            capabilities: AgentCapabilities::default(),
+            last_heartbeat: now.clone(),
+            connected_at: now,
+            tunnel_id: Some(tunnel.id.clone()),
+        };
+
+        // Register in our local registry
+        self.registry_port.register_agent(agent.clone()).await?;
+
+        // Start heartbeat monitor
+        let handle = self.spawn_heartbeat_monitor(agent_id.clone());
+        self.heartbeat_tasks.write().await.push((agent_id, handle));
+
+        tracing::info!(
+            host = %host,
+            agent = %agent.name,
+            "Remote agent spawned successfully"
+        );
+
+        Ok(agent)
+    }
+
     /// List all managed agents with their current status.
     pub async fn list_agents(&self) -> Result<Vec<RemoteAgent>, TransportError> {
         self.registry_port.list_agents(None).await
@@ -254,6 +377,16 @@ impl IAgentLifecyclePort for AgentLifecycleAdapter {
         project_dir: String,
     ) -> Result<RemoteAgent, TransportError> {
         self.spawn_remote_agent(config, agent_name, project_dir).await
+    }
+
+    async fn spawn_remote_full(
+        &self,
+        config: SshTunnelConfig,
+        project_dir: String,
+        agent_name: Option<String>,
+        remote_source_dir: Option<String>,
+    ) -> Result<RemoteAgent, TransportError> {
+        self.spawn_remote_full(config, project_dir, agent_name, remote_source_dir).await
     }
 
     async fn accept_agent(

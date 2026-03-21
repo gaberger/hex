@@ -17,6 +17,17 @@ pub trait IAgentLifecyclePort: Send + Sync {
         project_dir: String,
     ) -> Result<RemoteAgent, TransportError>;
 
+    /// Full one-command remote deploy: SSH tunnel + optional source sync + agent spawn.
+    /// If `agent_name` is None, defaults to `user@host`.
+    /// If `remote_source_dir` is Some, syncs project sources to that remote path before spawning.
+    async fn spawn_remote_full(
+        &self,
+        config: SshTunnelConfig,
+        project_dir: String,
+        agent_name: Option<String>,
+        remote_source_dir: Option<String>,
+    ) -> Result<RemoteAgent, TransportError>;
+
     /// Accept an incoming agent connection (agent initiated).
     async fn accept_agent(
         &self,

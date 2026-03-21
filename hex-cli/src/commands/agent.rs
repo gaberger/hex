@@ -26,6 +26,12 @@ pub enum AgentAction {
     SpawnRemote {
         /// Remote host in user@host format
         target: String,
+        /// Remote project directory (where hex-agent runs)
+        #[arg(long)]
+        project_dir: Option<String>,
+        /// Remote source directory to sync project files to before spawning
+        #[arg(long)]
+        source_dir: Option<String>,
     },
     /// Disconnect a remote agent
     Disconnect {
@@ -41,7 +47,11 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
         AgentAction::List => list().await,
         AgentAction::Info { agent_id } => info(&agent_id).await,
         AgentAction::Connect { nexus_url } => connect(&nexus_url).await,
-        AgentAction::SpawnRemote { target } => spawn_remote(&target).await,
+        AgentAction::SpawnRemote {
+            target,
+            project_dir,
+            source_dir,
+        } => spawn_remote(&target, project_dir, source_dir).await,
         AgentAction::Disconnect { agent_id } => disconnect(&agent_id).await,
         AgentAction::Fleet => fleet().await,
     }
@@ -193,28 +203,73 @@ async fn connect(nexus_url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn spawn_remote(target: &str) -> anyhow::Result<()> {
+async fn spawn_remote(
+    target: &str,
+    project_dir: Option<String>,
+    source_dir: Option<String>,
+) -> anyhow::Result<()> {
+    // Parse user@host format
+    let (user, host) = match target.split_once('@') {
+        Some((u, h)) => (u.to_string(), h.to_string()),
+        None => {
+            anyhow::bail!(
+                "Invalid target format: expected user@host (e.g. deploy@192.168.1.10), got '{}'",
+                target
+            );
+        }
+    };
+
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    let body = json!({
-        "target": target,
-    });
+    let effective_project_dir = project_dir.unwrap_or_else(|| "~/project".to_string());
 
     println!(
-        "{} Requesting nexus to spawn agent on {}...",
+        "{} Deploying hex-agent to {}...",
         "\u{2b21}".cyan(),
         target.bold()
     );
+    println!("  Host:        {}", host);
+    println!("  User:        {}", user);
+    println!("  Project dir: {}", effective_project_dir);
+    if let Some(ref sd) = source_dir {
+        println!("  Source sync:  {}", sd);
+    }
+    println!();
+
+    let mut body = json!({
+        "host": host,
+        "user": user,
+        "projectDir": effective_project_dir,
+    });
+
+    if let Some(sd) = source_dir {
+        body["remoteSourceDir"] = serde_json::Value::String(sd);
+    }
+
+    println!("{} Provisioning and launching agent...", "\u{2b21}".cyan());
 
     let resp = nexus.post("/api/agents/spawn-remote", &body).await?;
 
-    let agent_id = resp["agentId"].as_str().unwrap_or("-");
-    let status = resp["status"].as_str().unwrap_or("pending");
+    if let Some(err) = resp.get("error") {
+        let msg = err.as_str().unwrap_or("unknown error");
+        eprintln!("{} Spawn failed: {}", "\u{2b21}".red(), msg);
+        if msg.contains("tunnel") || msg.contains("SSH") || msg.contains("ssh") {
+            eprintln!("  Hint: check that you can `ssh {}` without a password prompt", target);
+        }
+        if msg.contains("provision") || msg.contains("binary") {
+            eprintln!("  Hint: ensure hex-agent is built on the remote or use --source-dir to sync sources");
+        }
+        anyhow::bail!("Remote agent spawn failed: {}", msg);
+    }
 
-    println!("{} Remote agent spawn initiated", "\u{2b21}".green());
-    println!("  Target:   {}", target);
+    let agent_id = resp["agentId"].as_str().unwrap_or("-");
+    let status = resp["status"].as_str().unwrap_or("online");
+    let name = resp["name"].as_str().unwrap_or(target);
+
+    println!("{} Remote agent deployed successfully", "\u{2b21}".green());
     println!("  Agent ID: {}", agent_id);
+    println!("  Name:     {}", name);
     println!("  Status:   {}", status);
 
     Ok(())
