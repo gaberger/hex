@@ -86,12 +86,14 @@ pub async fn browse_dir(
     Path(project_id): Path<String>,
     Query(query): Query<BrowseQuery>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let projects = state.projects.read().await;
-    let root_path = match projects.get(&project_id) {
-        Some(entry) => entry.root_path.clone(),
-        None => return (StatusCode::NOT_FOUND, Json(json!({ "error": "Project not found" }))),
+    let root_path = match state.state_port.as_ref() {
+        Some(sp) => match sp.project_get(&project_id).await {
+            Ok(Some(entry)) => entry.root_path,
+            Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({ "error": "Project not found" }))),
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        },
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "State port not configured" }))),
     };
-    drop(projects);
 
     let dir_path = match safe_resolve(&root_path, &query.path) {
         Ok(p) => p,
@@ -155,12 +157,14 @@ pub async fn read_file(
     State(state): State<SharedState>,
     Path((project_id, file_path)): Path<(String, String)>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let projects = state.projects.read().await;
-    let root_path = match projects.get(&project_id) {
-        Some(entry) => entry.root_path.clone(),
-        None => return (StatusCode::NOT_FOUND, Json(json!({ "error": "Project not found" }))),
+    let root_path = match state.state_port.as_ref() {
+        Some(sp) => match sp.project_get(&project_id).await {
+            Ok(Some(entry)) => entry.root_path,
+            Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({ "error": "Project not found" }))),
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        },
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "State port not configured" }))),
     };
-    drop(projects);
 
     let resolved = match safe_resolve(&root_path, &file_path) {
         Ok(p) => p,

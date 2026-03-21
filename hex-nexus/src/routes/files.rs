@@ -292,6 +292,23 @@ pub async fn init_project(
     )
 }
 
+/// POST /api/config/sync — trigger manual config re-sync from repo files to SpacetimeDB.
+pub async fn resync_config() -> (StatusCode, Json<serde_json::Value>) {
+    if let Ok(cwd) = std::env::current_dir() {
+        let host = std::env::var("HEX_SPACETIMEDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+        let db = std::env::var("HEX_SPACETIMEDB_DATABASE")
+            .unwrap_or_else(|_| "hexflo-coordination".to_string());
+        crate::config_sync::sync_project_config(&cwd, &host, &db).await;
+        (StatusCode::OK, Json(json!({ "synced": true })))
+    } else {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "Cannot determine working directory" })),
+        )
+    }
+}
+
 /// PUT /api/files — write content to a project file (path-traversal protected).
 pub async fn save_file(
     Json(body): Json<SaveFileRequest>,

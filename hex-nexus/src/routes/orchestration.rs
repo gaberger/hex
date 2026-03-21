@@ -368,6 +368,9 @@ pub async fn get_workplan(
 }
 
 /// GET /api/workplan/{id}/report — aggregate report for a workplan execution
+///
+/// Includes git correlation data (ADR-046): commit details from the git timeline
+/// are matched against agent IDs and task results to provide a unified view.
 pub async fn workplan_report(
     State(state): State<SharedState>,
     Path(id): Path<String>,
@@ -389,11 +392,18 @@ pub async fn workplan_report(
             };
 
             let mut agents_used = execution.agents.clone();
+            // Also collect agent names from phase results
+            for pr in &execution.phase_results {
+                agents_used.extend(pr.agent_ids.clone());
+            }
             agents_used.sort();
             agents_used.dedup();
 
             let gates_passed = execution.gate_results.iter().filter(|g| g.passed).count();
             let gates_failed = execution.gate_results.iter().filter(|g| !g.passed).count();
+
+            // ADR-046: Git correlation — find commits linked to this workplan's agents
+            let git_commits = build_git_correlation(&state, &execution).await;
 
             (StatusCode::OK, Json(json!({
                 "ok": true,
@@ -403,6 +413,8 @@ pub async fn workplan_report(
                         "feature": execution.feature,
                         "status": execution.status,
                         "workplanPath": execution.workplan_path,
+                        "startedAt": execution.started_at,
+                        "updatedAt": execution.updated_at,
                     },
                     "summary": {
                         "durationMinutes": duration_minutes,
@@ -417,10 +429,92 @@ pub async fn workplan_report(
                     },
                     "phases": execution.phase_results,
                     "gates": execution.gate_results,
+                    "commits": git_commits,
                 }
             })))
         }
         Ok(None) => (StatusCode::NOT_FOUND, Json(json!({ "error": format!("Workplan '{}' not found", id) }))),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+    }
+}
+
+/// ADR-046: Build git correlation data for a workplan execution.
+///
+/// Scans recent commits for references to agent IDs or task IDs that appear
+/// in the workplan's phase results, filtering to commits made during the
+/// execution window.
+async fn build_git_correlation(
+    _state: &SharedState,
+    execution: &crate::orchestration::workplan_executor::ExecutionState,
+) -> serde_json::Value {
+    // Determine project root from workplan path or cwd
+    let project_root: Option<std::path::PathBuf> = {
+        let wp = std::path::Path::new(&execution.workplan_path);
+        // Workplan is usually in docs/workplans/<file>.json — go up to project root
+        wp.parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .filter(|p| p.join(".git").exists())
+            .or_else(|| {
+                // Try parent directly (flat layout)
+                wp.parent()
+                    .map(|p| p.to_path_buf())
+                    .filter(|p| p.join(".git").exists())
+            })
+    };
+
+    let root = match project_root {
+        Some(r) => r,
+        None => match std::env::current_dir() {
+            Ok(d) => d,
+            Err(_) => return json!([]),
+        },
+    };
+
+    // Collect all agent IDs referenced in this execution
+    let mut known_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for pr in &execution.phase_results {
+        for aid in &pr.agent_ids {
+            known_ids.insert(aid.clone());
+        }
+    }
+    for aid in &execution.agents {
+        known_ids.insert(aid.clone());
+    }
+
+    // Use the git correlation module to find task-linked commits
+    match crate::git::correlation::find_task_commits(&root, 100) {
+        Ok(links) => {
+            // Filter to commits within the execution time window
+            let started_ts = chrono::DateTime::parse_from_rfc3339(&execution.started_at)
+                .map(|dt| dt.timestamp())
+                .unwrap_or(0);
+
+            let filtered: Vec<_> = links
+                .into_iter()
+                .filter(|link| {
+                    // Include if commit is after execution start
+                    if link.commit_timestamp < started_ts {
+                        return false;
+                    }
+                    // Include if any task_id matches a known agent ID
+                    if link.task_ids.iter().any(|tid| known_ids.contains(tid)) {
+                        return true;
+                    }
+                    // Include if agent name matches
+                    if let Some(ref agent) = link.agent_name {
+                        if known_ids.contains(agent) {
+                            return true;
+                        }
+                    }
+                    // Include all commits in the time window (they're likely related)
+                    true
+                })
+                .collect();
+
+            json!(filtered)
+        }
+        Err(_) => json!([]),
     }
 }

@@ -287,6 +287,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/files", get(files::read_file)
             .put(files::save_file)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
+        // Config re-sync (T15: manual refresh from repo → SpacetimeDB)
+        .route("/api/config/sync", post(files::resync_config))
 
         // HexFlo coordination (ADR-027)
         .route("/api/hexflo/memory", post(hexflo::memory_store)

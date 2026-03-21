@@ -28,6 +28,7 @@ import DependencyGraphPane from '../components/graph/DependencyGraphPane';
 import InferencePanel from '../components/fleet/InferencePanel';
 import FleetView from '../components/fleet/FleetView';
 import { ControlPlane, AgentFleet, ProjectDetail, ADRBrowser, ConfigPage } from '../components/views';
+import ProjectSidebar from '../components/project/ProjectSidebar';
 
 const App: Component = () => {
   const [theme, setTheme] = createSignal(
@@ -268,7 +269,10 @@ const App: Component = () => {
               <ChatView />
             </Match>
             <Match when={route().page === "project"}>
-              <ProjectDetail />
+              <div class="flex flex-1 overflow-hidden">
+                <ProjectSidebar />
+                <ProjectDetail />
+              </div>
             </Match>
             <Match when={route().page === "adrs" || route().page === "project-adr"}>
               <ADRBrowser />

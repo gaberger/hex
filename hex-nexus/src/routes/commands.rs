@@ -42,16 +42,25 @@ pub async fn send_command(
     let source = body.source.unwrap_or_else(|| "browser".to_string());
     let payload = body.payload.unwrap_or(serde_json::Value::Object(Default::default()));
 
-    // Single write lock: verify project exists, insert command as "dispatched" atomically
+    // Verify project exists via state_port, then insert command as "dispatched"
     let broadcast_data = {
-        let projects = state.projects.read().await;
-        if !projects.contains_key(&project_id) {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "Project not registered" })),
-            );
+        if let Some(sp) = state.state_port.as_ref() {
+            match sp.project_get(&project_id).await {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(json!({ "error": "Project not registered" })),
+                    );
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": e.to_string() })),
+                    );
+                }
+            }
         }
-        drop(projects);
 
         let command = HubCommand {
             command_id: command_id.clone(),

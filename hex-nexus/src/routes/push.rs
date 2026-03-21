@@ -8,57 +8,64 @@ pub async fn push_state(
     State(state): State<SharedState>,
     Json(body): Json<PushRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // Snapshot broadcast data while holding the lock, then broadcast after releasing
-    let broadcast_envelope = {
-        let mut projects = state.projects.write().await;
-        let entry = match projects.get_mut(&body.project_id) {
-            Some(e) => e,
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(json!({ "error": "Project not registered" })),
-                )
-            }
-        };
-
-        entry.last_push_at = chrono::Utc::now().timestamp_millis();
-
-        let data = body.data.unwrap_or(serde_json::Value::Null);
-
-        match body.push_type.as_str() {
-            "health" => entry.state.health = Some(data),
-            "tokens" => entry.state.tokens = Some(data),
-            "tokenFile" => {
-                if let Some(file_path) = &body.file_path {
-                    entry.state.token_files.insert(file_path.clone(), data);
-                }
-            }
-            "swarm" => entry.state.swarm = Some(data),
-            "graph" => entry.state.graph = Some(data),
-            "project" => {
-                entry.state.project = serde_json::from_value(data).ok();
-            }
-            other => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({ "error": format!("Unknown state type: {}", other) })),
-                )
-            }
-        }
-
-        // Snapshot envelope before dropping write lock
-        WsEnvelope {
-            topic: format!("project:{}:state", body.project_id),
-            event: "state-update".to_string(),
-            data: json!({
-                "projectId": body.project_id,
-                "type": body.push_type,
-                "timestamp": chrono::Utc::now().timestamp_millis()
-            }),
-        }
+    let sp = match state.require_state_port() {
+        Ok(sp) => sp.clone(),
+        Err(e) => return e,
     };
-    // Lock released — broadcast without holding it
-    if state.ws_tx.send(broadcast_envelope).is_err() {
+
+    // Verify project exists
+    match sp.project_get(&body.project_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "Project not registered" })),
+            )
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": e.to_string() })),
+            )
+        }
+    }
+
+    let data = body.data.unwrap_or(serde_json::Value::Null);
+
+    // Validate push_type before updating
+    match body.push_type.as_str() {
+        "health" | "tokens" | "tokenFile" | "swarm" | "graph" | "project" => {}
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": format!("Unknown state type: {}", other) })),
+            )
+        }
+    }
+
+    if let Err(e) = sp.project_update_state(
+        &body.project_id,
+        &body.push_type,
+        data,
+        body.file_path.as_deref(),
+    ).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        );
+    }
+
+    // Broadcast state update
+    let envelope = WsEnvelope {
+        topic: format!("project:{}:state", body.project_id),
+        event: "state-update".to_string(),
+        data: json!({
+            "projectId": body.project_id,
+            "type": body.push_type,
+            "timestamp": chrono::Utc::now().timestamp_millis()
+        }),
+    };
+    if state.ws_tx.send(envelope).is_err() {
         tracing::debug!("WS broadcast: no receivers for state-update");
     }
 
@@ -69,34 +76,47 @@ pub async fn push_event(
     State(state): State<SharedState>,
     Json(body): Json<EventRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // Update timestamp while holding lock, snapshot broadcast data, then release
-    let broadcast_envelope = {
-        let mut projects = state.projects.write().await;
-        let entry = match projects.get_mut(&body.project_id) {
-            Some(e) => e,
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(json!({ "error": "Project not registered" })),
-                )
-            }
-        };
-
-        entry.last_push_at = chrono::Utc::now().timestamp_millis();
-
-        let mut event_data = body.data.unwrap_or(serde_json::Value::Object(Default::default()));
-        if let Some(obj) = event_data.as_object_mut() {
-            obj.insert("project".to_string(), json!(body.project_id));
-        }
-
-        WsEnvelope {
-            topic: format!("project:{}:events", body.project_id),
-            event: body.event,
-            data: event_data,
-        }
+    let sp = match state.require_state_port() {
+        Ok(sp) => sp.clone(),
+        Err(e) => return e,
     };
-    // Lock released — broadcast without holding it
-    if state.ws_tx.send(broadcast_envelope).is_err() {
+
+    // Verify project exists and update timestamp
+    match sp.project_get(&body.project_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "Project not registered" })),
+            )
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": e.to_string() })),
+            )
+        }
+    }
+
+    // Touch last_push_at via a no-op update
+    let _ = sp.project_update_state(
+        &body.project_id,
+        "touch",
+        serde_json::Value::Null,
+        None,
+    ).await;
+
+    let mut event_data = body.data.unwrap_or(serde_json::Value::Object(Default::default()));
+    if let Some(obj) = event_data.as_object_mut() {
+        obj.insert("project".to_string(), json!(body.project_id));
+    }
+
+    let envelope = WsEnvelope {
+        topic: format!("project:{}:events", body.project_id),
+        event: body.event,
+        data: event_data,
+    };
+    if state.ws_tx.send(envelope).is_err() {
         tracing::debug!("WS broadcast: no receivers for event");
     }
 

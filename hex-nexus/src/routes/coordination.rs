@@ -5,10 +5,14 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::ports::state::{
+    InstanceHeartbeat, InstanceRecord, TaskClaimRecord, UnstagedFileRecord,
+    UnstagedRecord, WorktreeLockRecord,
+};
 use crate::state::{
-    ActivityEntry, ActivityRequest, HeartbeatRequest, InstanceInfo, LockRequest,
-    RegisterInstanceRequest, SharedState, TaskClaim, TaskClaimRequest, UnstagedState,
-    WorktreeLock, MAX_ACTIVITIES,
+    ActivityEntry, ActivityRequest, HeartbeatRequest,
+    RegisterInstanceRequest, SharedState, TaskClaimRequest, LockRequest,
+    MAX_ACTIVITIES,
 };
 
 // ── Instance Management ─────────────────────────────────
@@ -17,9 +21,14 @@ pub async fn register_instance(
     State(state): State<SharedState>,
     Json(req): Json<RegisterInstanceRequest>,
 ) -> Json<serde_json::Value> {
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return Json(json!({ "error": "State port not configured" })),
+    };
+
     let instance_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    let info = InstanceInfo {
+    let info = InstanceRecord {
         instance_id: instance_id.clone(),
         project_id: req.project_id.clone(),
         pid: req.pid,
@@ -31,7 +40,12 @@ pub async fn register_instance(
         completed_task_count: None,
         topology: None,
     };
-    state.instances.write().await.insert(instance_id.clone(), info);
+
+    if let Err(e) = sp.instance_register(info).await {
+        tracing::error!("Failed to register instance: {}", e);
+        return Json(json!({ "error": e.to_string() }));
+    }
+
     Json(json!({ "instanceId": instance_id }))
 }
 
@@ -39,56 +53,44 @@ pub async fn heartbeat_instance(
     State(state): State<SharedState>,
     Json(req): Json<HeartbeatRequest>,
 ) -> Json<serde_json::Value> {
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return Json(json!({ "error": "State port not configured" })),
+    };
+
     let now = chrono::Utc::now().to_rfc3339();
 
     // Update instance last_seen and swarm state
-    let mut instances = state.instances.write().await;
-    if let Some(inst) = instances.get_mut(&req.instance_id) {
-        inst.last_seen = now.clone();
-        if req.agent_count.is_some() {
-            inst.agent_count = req.agent_count;
-        }
-        if req.active_task_count.is_some() {
-            inst.active_task_count = req.active_task_count;
-        }
-        if req.completed_task_count.is_some() {
-            inst.completed_task_count = req.completed_task_count;
-        }
-        if req.topology.is_some() {
-            inst.topology = req.topology.clone();
-        }
-    } else {
-        return Json(json!({ "error": "instance not found" }));
+    let update = InstanceHeartbeat {
+        agent_count: req.agent_count,
+        active_task_count: req.active_task_count,
+        completed_task_count: req.completed_task_count,
+        topology: req.topology.clone(),
+    };
+
+    if let Err(e) = sp.instance_heartbeat(&req.instance_id, update).await {
+        return Json(json!({ "error": format!("instance not found: {}", e) }));
     }
-    drop(instances);
 
     // Refresh heartbeat on all locks held by this instance
-    let mut locks = state.worktree_locks.write().await;
-    for lock in locks.values_mut() {
-        if lock.instance_id == req.instance_id {
-            lock.heartbeat_at = now.clone();
-        }
-    }
-    drop(locks);
+    let _ = sp.worktree_lock_refresh(&req.instance_id, &now).await;
 
     // Refresh heartbeat on all task claims held by this instance
-    let mut claims = state.task_claims.write().await;
-    for claim in claims.values_mut() {
-        if claim.instance_id == req.instance_id {
-            claim.heartbeat_at = now.clone();
-        }
-    }
-    drop(claims);
+    let _ = sp.task_claim_refresh(&req.instance_id, &now).await;
 
     // Update unstaged files
     if let Some(files) = req.unstaged_files {
-        let unstaged = UnstagedState {
+        let unstaged = UnstagedRecord {
             instance_id: req.instance_id.clone(),
             project_id: req.project_id,
-            files,
+            files: files.into_iter().map(|f| UnstagedFileRecord {
+                path: f.path,
+                status: f.status,
+                layer: f.layer,
+            }).collect(),
             captured_at: now,
         };
-        state.unstaged.write().await.insert(req.instance_id, unstaged);
+        let _ = sp.unstaged_update(&req.instance_id, unstaged).await;
     }
 
     Json(json!({ "ok": true }))
@@ -104,20 +106,25 @@ pub async fn list_instances(
     State(state): State<SharedState>,
     Query(q): Query<ProjectQuery>,
 ) -> Json<serde_json::Value> {
-    let instances = state.instances.read().await;
-    let list: Vec<_> = instances
-        .values()
-        .filter(|i| q.project_id.as_ref().map_or(true, |pid| &i.project_id == pid))
-        .cloned()
-        .collect();
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return Json(json!([])),
+    };
+
+    let list = sp.instance_list(q.project_id.as_deref()).await.unwrap_or_default();
     Json(json!(list))
 }
 
 pub async fn cleanup_stale_sessions(
     State(state): State<SharedState>,
 ) -> Json<serde_json::Value> {
-    match crate::cleanup::cleanup_stale_sessions(&state).await {
-        Ok(removed) => Json(json!({ "removed": removed })),
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return Json(json!({ "error": "State port not configured", "removed": 0 })),
+    };
+
+    match sp.coordination_cleanup_stale(360).await {
+        Ok(report) => Json(json!({ "removed": report.instances_removed })),
         Err(e) => {
             tracing::error!("Cleanup failed: {}", e);
             Json(json!({ "error": "Cleanup failed", "removed": 0 }))
@@ -131,36 +138,39 @@ pub async fn acquire_lock(
     State(state): State<SharedState>,
     Json(req): Json<LockRequest>,
 ) -> Json<serde_json::Value> {
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return Json(json!({ "error": "State port not configured" })),
+    };
+
     let key = format!("{}:{}:{}", req.project_id, req.feature, req.layer);
     let now = chrono::Utc::now().to_rfc3339();
-    let ttl = req.ttl_secs.unwrap_or(300); // default 5 minutes
+    let ttl = req.ttl_secs.unwrap_or(300);
 
-    let mut locks = state.worktree_locks.write().await;
+    let lock = WorktreeLockRecord {
+        key: key.clone(),
+        instance_id: req.instance_id,
+        project_id: req.project_id,
+        feature: req.feature,
+        layer: req.layer,
+        acquired_at: now.clone(),
+        heartbeat_at: now,
+        ttl_secs: ttl,
+    };
+    let lock_result = lock.clone();
 
-    if let Some(existing) = locks.get(&key) {
-        // Already held — conflict
-        Json(json!({
+    match sp.worktree_lock_acquire(lock).await {
+        Ok(true) => Json(json!({
+            "acquired": true,
+            "lock": lock_result,
+            "conflict": null,
+        })),
+        Ok(false) => Json(json!({
             "acquired": false,
             "lock": null,
-            "conflict": existing,
-        }))
-    } else {
-        let lock = WorktreeLock {
-            instance_id: req.instance_id,
-            project_id: req.project_id,
-            feature: req.feature,
-            layer: req.layer,
-            acquired_at: now.clone(),
-            heartbeat_at: now,
-            ttl_secs: ttl,
-        };
-        let result = lock.clone();
-        locks.insert(key, lock);
-        Json(json!({
-            "acquired": true,
-            "lock": result,
-            "conflict": null,
-        }))
+            "conflict": { "key": key },
+        })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
 
@@ -168,21 +178,25 @@ pub async fn release_lock(
     State(state): State<SharedState>,
     Path(key): Path<String>,
 ) -> Json<serde_json::Value> {
-    let mut locks = state.worktree_locks.write().await;
-    let removed = locks.remove(&key).is_some();
-    Json(json!({ "released": removed }))
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return Json(json!({ "error": "State port not configured" })),
+    };
+
+    let released = sp.worktree_lock_release(&key).await.unwrap_or(false);
+    Json(json!({ "released": released }))
 }
 
 pub async fn list_locks(
     State(state): State<SharedState>,
     Query(q): Query<ProjectQuery>,
 ) -> Json<serde_json::Value> {
-    let locks = state.worktree_locks.read().await;
-    let list: Vec<_> = locks
-        .values()
-        .filter(|l| q.project_id.as_ref().map_or(true, |pid| &l.project_id == pid))
-        .cloned()
-        .collect();
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return Json(json!([])),
+    };
+
+    let list = sp.worktree_lock_list(q.project_id.as_deref()).await.unwrap_or_default();
     Json(json!(list))
 }
 
@@ -192,29 +206,32 @@ pub async fn claim_task(
     State(state): State<SharedState>,
     Json(req): Json<TaskClaimRequest>,
 ) -> Json<serde_json::Value> {
-    let now = chrono::Utc::now().to_rfc3339();
-    let mut claims = state.task_claims.write().await;
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return Json(json!({ "error": "State port not configured" })),
+    };
 
-    if let Some(existing) = claims.get(&req.task_id) {
-        Json(json!({
+    let now = chrono::Utc::now().to_rfc3339();
+    let claim = TaskClaimRecord {
+        task_id: req.task_id.clone(),
+        instance_id: req.instance_id,
+        claimed_at: now.clone(),
+        heartbeat_at: now,
+    };
+    let claim_result = claim.clone();
+
+    match sp.task_claim_acquire(claim).await {
+        Ok(true) => Json(json!({
+            "claimed": true,
+            "claim": claim_result,
+            "conflict": null,
+        })),
+        Ok(false) => Json(json!({
             "claimed": false,
             "claim": null,
-            "conflict": existing,
-        }))
-    } else {
-        let claim = TaskClaim {
-            task_id: req.task_id.clone(),
-            instance_id: req.instance_id,
-            claimed_at: now.clone(),
-            heartbeat_at: now,
-        };
-        let result = claim.clone();
-        claims.insert(req.task_id, claim);
-        Json(json!({
-            "claimed": true,
-            "claim": result,
-            "conflict": null,
-        }))
+            "conflict": { "taskId": req.task_id },
+        })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
 
@@ -222,29 +239,25 @@ pub async fn release_task(
     State(state): State<SharedState>,
     Path(task_id): Path<String>,
 ) -> Json<serde_json::Value> {
-    let mut claims = state.task_claims.write().await;
-    let removed = claims.remove(&task_id).is_some();
-    Json(json!({ "released": removed }))
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return Json(json!({ "error": "State port not configured" })),
+    };
+
+    let released = sp.task_claim_release(&task_id).await.unwrap_or(false);
+    Json(json!({ "released": released }))
 }
 
 pub async fn list_claims(
     State(state): State<SharedState>,
     Query(q): Query<ProjectQuery>,
 ) -> Json<serde_json::Value> {
-    let claims = state.task_claims.read().await;
-    let instances = state.instances.read().await;
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return Json(json!([])),
+    };
 
-    let list: Vec<_> = claims
-        .values()
-        .filter(|c| {
-            q.project_id.as_ref().map_or(true, |pid| {
-                instances
-                    .get(&c.instance_id)
-                    .map_or(false, |i| &i.project_id == pid)
-            })
-        })
-        .cloned()
-        .collect();
+    let list = sp.task_claim_list(q.project_id.as_deref()).await.unwrap_or_default();
     Json(json!(list))
 }
 
@@ -309,12 +322,12 @@ pub async fn get_unstaged(
     State(state): State<SharedState>,
     Query(q): Query<ProjectQuery>,
 ) -> Json<serde_json::Value> {
-    let unstaged = state.unstaged.read().await;
-    let list: Vec<_> = unstaged
-        .values()
-        .filter(|u| q.project_id.as_ref().map_or(true, |pid| &u.project_id == pid))
-        .cloned()
-        .collect();
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return Json(json!([])),
+    };
+
+    let list = sp.unstaged_list(q.project_id.as_deref()).await.unwrap_or_default();
     Json(json!(list))
 }
 
@@ -324,71 +337,27 @@ pub async fn get_unstaged(
 /// Removes dead instances, their locks, claims, and unstaged state.
 #[allow(dead_code)] // Will be wired into background eviction loop
 pub async fn evict_stale(state: &SharedState) {
-    let now = chrono::Utc::now();
-    let heartbeat_timeout = chrono::Duration::seconds(60); // 2x the 30s heartbeat
-
-    // 1. Find dead instances
-    let dead_instances: Vec<String> = {
-        let instances = state.instances.read().await;
-        instances
-            .iter()
-            .filter_map(|(id, info)| {
-                let last = chrono::DateTime::parse_from_rfc3339(&info.last_seen).ok()?;
-                if now.signed_duration_since(last) > heartbeat_timeout {
-                    Some(id.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return,
     };
 
-    if dead_instances.is_empty() {
-        return;
-    }
-
-    let dead_count = dead_instances.len();
-
-    // 2. Remove dead instances
-    {
-        let mut instances = state.instances.write().await;
-        for id in &dead_instances {
-            instances.remove(id);
-        }
-    }
-
-    // 3. Release locks held by dead instances
-    {
-        let mut locks = state.worktree_locks.write().await;
-        locks.retain(|_, lock| !dead_instances.contains(&lock.instance_id));
-    }
-
-    // 4. Release task claims held by dead instances
-    {
-        let mut claims = state.task_claims.write().await;
-        claims.retain(|_, claim| !dead_instances.contains(&claim.instance_id));
-    }
-
-    // 5. Remove unstaged state for dead instances
-    {
-        let mut unstaged = state.unstaged.write().await;
-        for id in &dead_instances {
-            unstaged.remove(id);
-        }
-    }
-
-    // 6. Evict expired locks (TTL exceeded even if instance is alive)
-    {
-        let mut locks = state.worktree_locks.write().await;
-        locks.retain(|_, lock| {
-            if let Ok(hb) = chrono::DateTime::parse_from_rfc3339(&lock.heartbeat_at) {
-                let elapsed = now.signed_duration_since(hb);
-                elapsed < chrono::Duration::seconds(lock.ttl_secs as i64)
-            } else {
-                false // can't parse timestamp — evict
+    match sp.coordination_cleanup_stale(60).await {
+        Ok(report) => {
+            if report.instances_removed > 0 {
+                tracing::debug!(
+                    "Coordination eviction: removed {} dead instance(s), {} locks, {} claims",
+                    report.instances_removed,
+                    report.locks_released,
+                    report.claims_released,
+                );
             }
-        });
+        }
+        Err(e) => {
+            tracing::error!("Coordination eviction failed: {}", e);
+        }
     }
 
-    tracing::debug!("Coordination eviction: removed {} dead instance(s)", dead_count);
+    // Also evict expired locks (TTL exceeded even if instance is alive)
+    let _ = sp.worktree_lock_evict_expired().await;
 }

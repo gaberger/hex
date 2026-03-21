@@ -5,10 +5,8 @@ use axum::{
 use http::StatusCode;
 use serde_json::json;
 
-use crate::state::{
-    make_project_id, ProjectEntry, ProjectMeta, ProjectState, SharedState,
-    WsEnvelope,
-};
+use crate::ports::state::ProjectRegistration;
+use crate::state::{make_project_id, SharedState, WsEnvelope};
 
 pub async fn register(
     State(state): State<SharedState>,
@@ -31,54 +29,37 @@ pub async fn register(
                 .to_string()
         });
 
-    // Hold write lock, snapshot broadcast data, release before broadcasting
-    let broadcast_envelope = {
-        let mut projects = state.projects.write().await;
-        let is_new = !projects.contains_key(&id);
-
-        if is_new {
-            let entry = ProjectEntry {
-                id: id.clone(),
-                name: name.clone(),
-                root_path: root_path.clone(),
-                registered_at: chrono::Utc::now().timestamp_millis(),
-                last_push_at: 0,
-                state: ProjectState {
-                    project: Some(ProjectMeta {
-                        root_path: root_path.clone(),
-                        name: name.clone(),
-                        ast_is_stub,
-                    }),
-                    ..Default::default()
-                },
-            };
-            projects.insert(id.clone(), entry);
-
-            Some(WsEnvelope {
-                topic: "hub:projects".to_string(),
-                event: "project-registered".to_string(),
-                data: json!({
-                    "id": id,
-                    "name": name,
-                    "rootPath": root_path,
-                    "timestamp": chrono::Utc::now().timestamp_millis()
-                }),
-            })
-        } else {
-            // Update metadata on re-register
-            let entry = projects.get_mut(&id).unwrap();
-            entry.name = name.clone();
-            entry.state.project = Some(ProjectMeta {
-                root_path: root_path.clone(),
-                name: name.clone(),
-                ast_is_stub,
-            });
-            None
-        }
+    let sp = match state.require_state_port() {
+        Ok(sp) => sp.clone(),
+        Err(e) => return e,
     };
 
-    // Broadcast AFTER releasing write lock
-    if let Some(envelope) = broadcast_envelope {
+    // Check if project already exists
+    let existing = sp.project_get(&id).await.unwrap_or(None);
+    let is_new = existing.is_none();
+
+    if let Err(e) = sp.project_register(ProjectRegistration {
+        id: id.clone(),
+        name: name.clone(),
+        root_path: root_path.clone(),
+        ast_is_stub,
+    }).await {
+        tracing::error!("Failed to register project: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })));
+    }
+
+    // Broadcast AFTER successful registration
+    if is_new {
+        let envelope = WsEnvelope {
+            topic: "hub:projects".to_string(),
+            event: "project-registered".to_string(),
+            data: json!({
+                "id": id,
+                "name": name,
+                "rootPath": root_path,
+                "timestamp": chrono::Utc::now().timestamp_millis()
+            }),
+        };
         if state.ws_tx.send(envelope).is_err() {
             tracing::debug!("WS broadcast: no receivers for project-registered");
         }
@@ -91,34 +72,39 @@ pub async fn unregister(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let broadcast_envelope = {
-        let mut projects = state.projects.write().await;
-        if projects.remove(&id).is_some() {
-            Some(WsEnvelope {
+    let sp = match state.require_state_port() {
+        Ok(sp) => sp.clone(),
+        Err(e) => return e,
+    };
+
+    match sp.project_unregister(&id).await {
+        Ok(true) => {
+            let envelope = WsEnvelope {
                 topic: "hub:projects".to_string(),
                 event: "project-unregistered".to_string(),
                 data: json!({ "id": id, "timestamp": chrono::Utc::now().timestamp_millis() }),
-            })
-        } else {
-            return (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" })));
+            };
+            if state.ws_tx.send(envelope).is_err() {
+                tracing::debug!("WS broadcast: no receivers for project-unregistered");
+            }
+            (StatusCode::OK, Json(json!({ "ok": true })))
         }
-    };
-
-    if let Some(envelope) = broadcast_envelope {
-        if state.ws_tx.send(envelope).is_err() {
-            tracing::debug!("WS broadcast: no receivers for project-unregistered");
-        }
+        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
     }
-
-    (StatusCode::OK, Json(json!({ "ok": true })))
 }
 
 pub async fn list_projects(
     State(state): State<SharedState>,
 ) -> Json<serde_json::Value> {
-    let projects = state.projects.read().await;
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return Json(json!({ "projects": [] })),
+    };
+
+    let projects = sp.project_list().await.unwrap_or_default();
     let list: Vec<serde_json::Value> = projects
-        .values()
+        .iter()
         .map(|p| {
             json!({
                 "id": p.id,
@@ -126,7 +112,7 @@ pub async fn list_projects(
                 "rootPath": p.root_path,
                 "registeredAt": p.registered_at,
                 "lastPushAt": p.last_push_at,
-                "astIsStub": p.state.project.as_ref().map(|m| m.ast_is_stub).unwrap_or(false),
+                "astIsStub": p.ast_is_stub,
             })
         })
         .collect();

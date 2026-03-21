@@ -11,10 +11,13 @@ pub async fn get_health(
     State(state): State<SharedState>,
     Path(project_id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let projects = state.projects.read().await;
-    match projects.get(&project_id) {
-        Some(entry) => {
-            let data = entry.state.health.clone().unwrap_or_else(|| {
+    let sp = match state.require_state_port() {
+        Ok(sp) => sp.clone(),
+        Err(e) => return e,
+    };
+    match sp.project_get(&project_id).await {
+        Ok(Some(entry)) => {
+            let data = entry.health.unwrap_or_else(|| {
                 json!({
                     "summary": {
                         "healthScore": 0,
@@ -28,7 +31,8 @@ pub async fn get_health(
             });
             (StatusCode::OK, Json(data))
         }
-        None => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
     }
 }
 
@@ -36,13 +40,17 @@ pub async fn get_tokens_overview(
     State(state): State<SharedState>,
     Path(project_id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let projects = state.projects.read().await;
-    match projects.get(&project_id) {
-        Some(entry) => {
-            let data = entry.state.tokens.clone().unwrap_or(json!({ "files": [] }));
+    let sp = match state.require_state_port() {
+        Ok(sp) => sp.clone(),
+        Err(e) => return e,
+    };
+    match sp.project_get(&project_id).await {
+        Ok(Some(entry)) => {
+            let data = entry.tokens.unwrap_or(json!({ "files": [] }));
             (StatusCode::OK, Json(data))
         }
-        None => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
     }
 }
 
@@ -50,16 +58,20 @@ pub async fn get_token_file(
     State(state): State<SharedState>,
     Path((project_id, file)): Path<(String, String)>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let projects = state.projects.read().await;
-    match projects.get(&project_id) {
-        Some(entry) => {
+    let sp = match state.require_state_port() {
+        Ok(sp) => sp.clone(),
+        Err(e) => return e,
+    };
+    match sp.project_get(&project_id).await {
+        Ok(Some(entry)) => {
             let decoded = urlencoding::decode(&file).unwrap_or_default().into_owned();
-            match entry.state.token_files.get(&decoded) {
+            match entry.token_files.get(&decoded) {
                 Some(data) => (StatusCode::OK, Json(data.clone())),
                 None => (StatusCode::NOT_FOUND, Json(json!({ "error": "File not found" }))),
             }
         }
-        None => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
     }
 }
 
@@ -67,17 +79,21 @@ pub async fn get_swarm(
     State(state): State<SharedState>,
     Path(project_id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let projects = state.projects.read().await;
-    match projects.get(&project_id) {
-        Some(entry) => {
-            let data = entry.state.swarm.clone().unwrap_or(json!({
+    let sp = match state.require_state_port() {
+        Ok(sp) => sp.clone(),
+        Err(e) => return e,
+    };
+    match sp.project_get(&project_id).await {
+        Ok(Some(entry)) => {
+            let data = entry.swarm.unwrap_or(json!({
                 "status": { "status": "idle", "agentCount": 0, "activeTaskCount": 0, "completedTaskCount": 0 },
                 "tasks": [],
                 "agents": []
             }));
             (StatusCode::OK, Json(data))
         }
-        None => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
     }
 }
 
@@ -85,13 +101,17 @@ pub async fn get_graph(
     State(state): State<SharedState>,
     Path(project_id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let projects = state.projects.read().await;
-    match projects.get(&project_id) {
-        Some(entry) => {
-            let data = entry.state.graph.clone().unwrap_or(json!({ "nodes": [], "edges": [] }));
+    let sp = match state.require_state_port() {
+        Ok(sp) => sp.clone(),
+        Err(e) => return e,
+    };
+    match sp.project_get(&project_id).await {
+        Ok(Some(entry)) => {
+            let data = entry.graph.unwrap_or(json!({ "nodes": [], "edges": [] }));
             (StatusCode::OK, Json(data))
         }
-        None => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
     }
 }
 
@@ -99,22 +119,20 @@ pub async fn get_project(
     State(state): State<SharedState>,
     Path(project_id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let projects = state.projects.read().await;
-    match projects.get(&project_id) {
-        Some(entry) => {
-            let data = match &entry.state.project {
-                Some(meta) => json!({
-                    "rootPath": meta.root_path,
-                    "name": meta.name,
-                    "astIsStub": meta.ast_is_stub
-                }),
-                None => json!({
-                    "rootPath": entry.root_path,
-                    "name": entry.name
-                }),
-            };
+    let sp = match state.require_state_port() {
+        Ok(sp) => sp.clone(),
+        Err(e) => return e,
+    };
+    match sp.project_get(&project_id).await {
+        Ok(Some(entry)) => {
+            let data = json!({
+                "rootPath": entry.root_path,
+                "name": entry.name,
+                "astIsStub": entry.ast_is_stub,
+            });
             (StatusCode::OK, Json(data))
         }
-        None => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({ "error": "Not found" }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
     }
 }

@@ -1,6 +1,7 @@
 import { Component, Switch, Match, For, createMemo } from 'solid-js';
 import { route, navigate } from '../../stores/router';
 import { BlueprintView, MCPToolsView, ContextView, HooksView, SkillsView, AgentDefsView, SpacetimeDBView } from '../config';
+import { addToast } from '../../stores/toast';
 
 interface NavItem {
   id: string;
@@ -82,8 +83,22 @@ const ConfigPage: Component = () => {
         class="flex w-60 shrink-0 flex-col border-r border-gray-800 overflow-y-auto"
         style={{ "background-color": "#111827" }}
       >
-        <div class="px-4 py-4">
+        <div class="flex items-center justify-between px-4 py-4">
           <span class="text-xs font-bold uppercase tracking-wider text-gray-500">Configure</span>
+          <button
+            class="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-400 hover:border-cyan-600 hover:text-cyan-300 transition-colors"
+            onClick={async () => {
+              try {
+                const res = await fetch('/api/config/sync', { method: 'POST' });
+                if (res.ok) addToast('success', 'Config re-synced from repo files');
+                else addToast('error', 'Sync failed');
+              } catch {
+                addToast('error', 'Sync failed — is nexus running?');
+              }
+            }}
+          >
+            Refresh
+          </button>
         </div>
         <div class="flex flex-col gap-0.5 px-2">
           <For each={NAV_ITEMS}>

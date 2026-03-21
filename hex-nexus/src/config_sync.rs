@@ -1,4 +1,7 @@
 //! Config sync: reads repo config files and pushes to SpacetimeDB on startup.
+//!
+//! TODO(T16): Add config change history tracking — store previous values with
+//! timestamps so the dashboard can show a diff/audit log of config changes.
 
 use std::path::Path;
 

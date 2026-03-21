@@ -25,26 +25,23 @@ use crate::state::{SharedState, WsEnvelope};
 /// (project registry) lives in SpacetimeDB. The frontend reads the path
 /// from SpacetimeDB and passes it via `?path=`.
 async fn resolve_project_path(state: &SharedState, project_id: &str) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    // Strategy 1: REST registry — direct ID lookup
-    let projects = state.projects.read().await;
-    if let Some(p) = projects.get(project_id) {
-        return Ok(p.root_path.clone());
-    }
-    // Strategy 2: Match by name (SpacetimeDB projects use simple names)
-    if let Some(p) = projects.values().find(|p| p.name == project_id) {
-        return Ok(p.root_path.clone());
-    }
-    // Strategy 3: Match by root_path basename
-    if let Some(p) = projects.values().find(|p| {
-        p.root_path.rsplit('/').next().unwrap_or("") == project_id
-    }) {
-        return Ok(p.root_path.clone());
-    }
+    let sp = state.state_port.as_ref().ok_or_else(|| (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({ "ok": false, "error": "State port not configured" })),
+    ))?;
 
-    Err((
-        StatusCode::NOT_FOUND,
-        Json(json!({ "ok": false, "error": format!("Project '{}' not found. Register via POST /api/projects/register with rootPath", project_id) })),
-    ))
+    // Use project_find which checks by ID, name, and basename
+    match sp.project_find(project_id).await {
+        Ok(Some(p)) => Ok(p.root_path),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "ok": false, "error": format!("Project '{}' not found. Register via POST /api/projects/register with rootPath", project_id) })),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "ok": false, "error": e.to_string() })),
+        )),
+    }
 }
 
 fn git_error(msg: String) -> (StatusCode, Json<serde_json::Value>) {

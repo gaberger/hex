@@ -2,6 +2,7 @@ import { Component, createSignal, createResource, For, Show, createMemo } from '
 import { navigate, route } from '../../stores/router';
 import { MarkdownEditor } from '../editor';
 import { addToast } from '../../stores/toast';
+import { getHexfloConn } from '../../stores/connection';
 
 interface ADRListItem {
   id: string;
@@ -403,6 +404,14 @@ const ADRBrowser: Component = () => {
                   { label: "Drivers", value: detail().drivers || "Pending API integration" },
                 ]}
                 onSave={async (content) => {
+                  // 1. Sync to SpacetimeDB (reactive)
+                  const conn = getHexfloConn();
+                  if (conn) {
+                    try {
+                      conn.reducers.syncConfig(`adr_${detail().id}`, 'hex-intf', content, `docs/adrs/ADR-${detail().id}.md`, new Date().toISOString());
+                    } catch { /* best-effort */ }
+                  }
+                  // 2. Write to file (persistent)
                   try {
                     const res = await fetch(`/api/adrs/${detail().id}`, {
                       method: 'PUT',

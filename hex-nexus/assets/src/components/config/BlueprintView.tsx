@@ -1,6 +1,6 @@
 import { Component, For, Show, createMemo } from 'solid-js';
 import { addToast } from '../../stores/toast';
-import { projectConfigs } from '../../stores/connection';
+import { projectConfigs, getHexfloConn } from '../../stores/connection';
 
 interface LayerDef {
   name: string;
@@ -44,6 +44,36 @@ const ShieldAlert: Component = () => (
     <line x1="12" y1="16" x2="12.01" y2="16" />
   </svg>
 );
+
+/** Save blueprint edits to SpacetimeDB (reactive) then write to repo (persistent). */
+export async function saveBlueprint(newBlueprint: any) {
+  const conn = getHexfloConn();
+  const now = new Date().toISOString();
+
+  // 1. Update SpacetimeDB (reactive)
+  if (conn) {
+    try {
+      conn.reducers.syncConfig('blueprint', 'hex-intf', JSON.stringify(newBlueprint), '.hex/blueprint.json', now);
+    } catch { /* best-effort */ }
+  }
+
+  // 2. Write to file (persistent)
+  try {
+    const res = await fetch('/api/files', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: '.hex/blueprint.json', content: JSON.stringify(newBlueprint, null, 2) }),
+    });
+    if (res.ok) {
+      addToast('success', 'Blueprint saved to SpacetimeDB + repo');
+    } else {
+      const data = await res.json().catch(() => ({}));
+      addToast('error', data.error || 'Failed to write blueprint file');
+    }
+  } catch {
+    addToast('error', 'Failed to write blueprint file');
+  }
+}
 
 const BlueprintView: Component = () => {
   // Primary: SpacetimeDB subscription

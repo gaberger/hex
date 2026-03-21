@@ -1,6 +1,7 @@
 import { Component, createSignal, createEffect } from 'solid-js';
 import { MarkdownEditor } from '../editor';
 import { addToast } from '../../stores/toast';
+import { getHexfloConn } from '../../stores/connection';
 
 const SAMPLE_CLAUDE_MD = `# hex -- Hexagonal Architecture for LLM-Driven Development
 
@@ -57,6 +58,14 @@ const ContextView: Component = () => {
         initialMode="edit"
         editable={true}
         onSave={async (newContent) => {
+          // 1. Sync to SpacetimeDB (reactive)
+          const conn = getHexfloConn();
+          if (conn) {
+            try {
+              conn.reducers.syncConfig('claude_md', 'hex-intf', newContent, 'CLAUDE.md', new Date().toISOString());
+            } catch { /* best-effort */ }
+          }
+          // 2. Write to file (persistent)
           try {
             const res = await fetch('/api/files', {
               method: 'PUT',

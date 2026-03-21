@@ -101,13 +101,22 @@ pub async fn analyze_project(
     Path(project_id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let root_path = {
-        let projects = state.projects.read().await;
-        match projects.get(&project_id) {
-            Some(entry) => entry.root_path.clone(),
-            None => {
+        let sp = match state.require_state_port() {
+            Ok(sp) => sp.clone(),
+            Err(e) => return e,
+        };
+        match sp.project_get(&project_id).await {
+            Ok(Some(entry)) => entry.root_path,
+            Ok(None) => {
                 return (
                     StatusCode::NOT_FOUND,
                     Json(json!({ "error": format!("Project '{}' not found", project_id) })),
+                )
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
                 )
             }
         }
@@ -154,10 +163,14 @@ pub async fn analyze_project_text(
     Path(project_id): Path<String>,
 ) -> (StatusCode, String) {
     let root_path = {
-        let projects = state.projects.read().await;
-        match projects.get(&project_id) {
-            Some(entry) => entry.root_path.clone(),
-            None => return (StatusCode::NOT_FOUND, format!("Project '{}' not found", project_id)),
+        let sp = match state.state_port.as_ref() {
+            Some(sp) => sp,
+            None => return (StatusCode::SERVICE_UNAVAILABLE, "State port not configured".to_string()),
+        };
+        match sp.project_get(&project_id).await {
+            Ok(Some(entry)) => entry.root_path,
+            Ok(None) => return (StatusCode::NOT_FOUND, format!("Project '{}' not found", project_id)),
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Error: {}", e)),
         }
     };
 
@@ -271,16 +284,22 @@ pub async fn analyze_project_adr_compliance(
     Path(project_id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let root_path = {
-        let projects = state.projects.read().await;
-        match projects.get(&project_id)
-            .or_else(|| projects.values().find(|p| p.name == project_id))
-            .or_else(|| projects.values().find(|p| p.root_path.rsplit('/').next().unwrap_or("") == project_id))
-        {
-            Some(entry) => entry.root_path.clone(),
-            None => {
+        let sp = match state.require_state_port() {
+            Ok(sp) => sp.clone(),
+            Err(e) => return e,
+        };
+        match sp.project_find(&project_id).await {
+            Ok(Some(entry)) => entry.root_path,
+            Ok(None) => {
                 return (
                     StatusCode::NOT_FOUND,
                     Json(json!({ "error": format!("Project '{}' not found", project_id) })),
+                )
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
                 )
             }
         }
