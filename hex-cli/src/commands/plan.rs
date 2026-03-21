@@ -32,6 +32,15 @@ pub enum PlanAction {
         /// Workplan filename (e.g. feat-secrets-plan-b.json)
         file: String,
     },
+    /// Show currently active (running/paused) workplan executions
+    Active,
+    /// Show all past workplan executions
+    History,
+    /// Show aggregate report for a workplan execution (ADR-046)
+    Report {
+        /// Workplan execution ID
+        id: String,
+    },
 }
 
 /// A workplan step.
@@ -65,6 +74,9 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Create { requirements, lang } => create_plan(&requirements, &lang).await,
         PlanAction::List => list_plans().await,
         PlanAction::Status { file } => show_plan_status(&file).await,
+        PlanAction::Active => show_active_executions().await,
+        PlanAction::History => show_execution_history().await,
+        PlanAction::Report { id } => show_execution_report(&id).await,
     }
 }
 
@@ -332,6 +344,252 @@ async fn show_plan_file(path: &Path) -> anyhow::Result<()> {
             deps.dimmed(),
         );
         println!("     adapter: {} | tier: {}", step.adapter, step.tier);
+    }
+
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════
+// WORKPLAN EXECUTION COMMANDS (ADR-046)
+// ═══════════════════════════════════════════════════════════
+
+/// Show currently active (running/paused) workplan executions via nexus.
+async fn show_active_executions() -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    let data = nexus.get("/api/workplan/list").await?;
+    let executions = data["data"]["executions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    let active: Vec<_> = executions
+        .iter()
+        .filter(|e| {
+            let status = e["status"].as_str().unwrap_or("");
+            status == "running" || status == "paused"
+        })
+        .collect();
+
+    if active.is_empty() {
+        println!("No active workplan executions.");
+        return Ok(());
+    }
+
+    println!(
+        "{} {} active workplan execution(s)",
+        "\u{2b21}".cyan(),
+        active.len()
+    );
+    println!();
+
+    for exec in &active {
+        let id = exec["id"].as_str().unwrap_or("?");
+        let status = exec["status"].as_str().unwrap_or("?");
+        let feature = exec["feature"].as_str().unwrap_or("");
+        let phase = exec["currentPhase"].as_str().unwrap_or("?");
+        let completed = exec["completedPhases"].as_u64().unwrap_or(0);
+        let total = exec["totalPhases"].as_u64().unwrap_or(0);
+
+        let status_icon = if status == "running" {
+            "\u{25cf}".yellow()
+        } else {
+            "\u{25a0}".dimmed()
+        };
+
+        let label = if feature.is_empty() {
+            id.to_string()
+        } else {
+            format!("{} ({})", feature, &id[..8.min(id.len())])
+        };
+
+        println!("  {} {} [{}] phase: {} ({}/{})",
+            status_icon, label, status, phase, completed, total);
+    }
+
+    Ok(())
+}
+
+/// Show all past workplan executions (history) via nexus.
+async fn show_execution_history() -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    let data = nexus.get("/api/workplan/list").await?;
+    let executions = data["data"]["executions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    if executions.is_empty() {
+        println!("No workplan executions found.");
+        return Ok(());
+    }
+
+    let total = data["data"]["total"].as_u64().unwrap_or(0);
+    let active = data["data"]["activeCount"].as_u64().unwrap_or(0);
+
+    println!(
+        "{} {} workplan execution(s) ({} active, {} completed)",
+        "\u{2b21}".cyan(),
+        total,
+        active,
+        total.saturating_sub(active),
+    );
+    println!();
+
+    for exec in &executions {
+        let id = exec["id"].as_str().unwrap_or("?");
+        let status = exec["status"].as_str().unwrap_or("?");
+        let feature = exec["feature"].as_str().unwrap_or("");
+        let started = exec["startedAt"].as_str().unwrap_or("?");
+        let tasks_done = exec["completedTasks"].as_u64().unwrap_or(0);
+        let tasks_total = exec["totalTasks"].as_u64().unwrap_or(0);
+
+        let status_icon = match status {
+            "completed" => "\u{2713}".green(),
+            "running" => "\u{25cf}".yellow(),
+            "paused" => "\u{25a0}".dimmed(),
+            "failed" => "\u{2717}".red(),
+            _ => "\u{25cb}".dimmed(),
+        };
+
+        let label = if feature.is_empty() {
+            id[..8.min(id.len())].to_string()
+        } else {
+            format!("{}", feature)
+        };
+
+        println!(
+            "  {} {} [{}] tasks: {}/{} started: {}",
+            status_icon, label, status, tasks_done, tasks_total, started
+        );
+        println!("    id: {}", id.dimmed());
+    }
+
+    Ok(())
+}
+
+/// Show aggregate report for a workplan execution, including git correlation.
+async fn show_execution_report(id: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    let data = nexus.get(&format!("/api/workplan/{}/report", id)).await?;
+
+    if let Some(error) = data["error"].as_str() {
+        anyhow::bail!("{}", error);
+    }
+
+    let report = &data["data"];
+    let workplan = &report["workplan"];
+    let summary = &report["summary"];
+
+    // Header
+    let feature = workplan["feature"].as_str().unwrap_or("(unnamed)");
+    let status = workplan["status"].as_str().unwrap_or("?");
+    println!(
+        "{} Workplan Report: {} [{}]",
+        "\u{2b21}".cyan(),
+        feature.bold(),
+        status
+    );
+    println!("  ID: {}", workplan["id"].as_str().unwrap_or("?"));
+    println!("  Path: {}", workplan["workplanPath"].as_str().unwrap_or("?"));
+    println!(
+        "  Started: {} | Updated: {}",
+        workplan["startedAt"].as_str().unwrap_or("?"),
+        workplan["updatedAt"].as_str().unwrap_or("?"),
+    );
+    println!();
+
+    // Summary
+    println!("  {}", "SUMMARY".bold());
+    if let Some(dur) = summary["durationMinutes"].as_i64() {
+        println!("    Duration: {} min", dur);
+    }
+    println!(
+        "    Phases:  {}/{}",
+        summary["phasesCompleted"].as_u64().unwrap_or(0),
+        summary["phasesTotal"].as_u64().unwrap_or(0),
+    );
+    println!(
+        "    Tasks:   {}/{} ({} failed)",
+        summary["tasksCompleted"].as_u64().unwrap_or(0),
+        summary["tasksTotal"].as_u64().unwrap_or(0),
+        summary["tasksFailed"].as_u64().unwrap_or(0),
+    );
+    println!(
+        "    Gates:   {} passed, {} failed",
+        summary["gatesPassed"].as_u64().unwrap_or(0),
+        summary["gatesFailed"].as_u64().unwrap_or(0),
+    );
+    if let Some(agents) = summary["agentsUsed"].as_array() {
+        if !agents.is_empty() {
+            let names: Vec<_> = agents.iter().filter_map(|a| a.as_str()).collect();
+            println!("    Agents:  {}", names.join(", "));
+        }
+    }
+    println!();
+
+    // Phase results
+    if let Some(phases) = report["phases"].as_array() {
+        if !phases.is_empty() {
+            println!("  {}", "PHASES".bold());
+            for p in phases {
+                let name = p["phase"].as_str().unwrap_or("?");
+                let pstatus = p["status"].as_str().unwrap_or("?");
+                let icon = match pstatus {
+                    "completed" => "\u{2713}".green(),
+                    "failed" => "\u{2717}".red(),
+                    _ => "\u{25cb}".dimmed(),
+                };
+                println!("    {} {} [{}]", icon, name, pstatus);
+                if let Some(errs) = p["errors"].as_array() {
+                    for err in errs {
+                        if let Some(e) = err.as_str() {
+                            println!("      {} {}", "\u{2717}".red(), e);
+                        }
+                    }
+                }
+            }
+            println!();
+        }
+    }
+
+    // Gate results
+    if let Some(gates) = report["gates"].as_array() {
+        if !gates.is_empty() {
+            println!("  {}", "GATES".bold());
+            for g in gates {
+                let phase = g["phase"].as_str().unwrap_or("?");
+                let cmd = g["gateCommand"].as_str().unwrap_or("?");
+                let passed = g["passed"].as_bool().unwrap_or(false);
+                let icon = if passed {
+                    "\u{2713}".green()
+                } else {
+                    "\u{2717}".red()
+                };
+                println!("    {} {} ({})", icon, phase, cmd.dimmed());
+            }
+            println!();
+        }
+    }
+
+    // Git correlation (ADR-046)
+    if let Some(commits) = report["commits"].as_array() {
+        if !commits.is_empty() {
+            println!("  {}", "GIT COMMITS".bold());
+            for c in commits {
+                let sha = c["commitShort"].as_str().unwrap_or("?");
+                let msg = c["commitMessage"].as_str().unwrap_or("?");
+                let author = c["author"].as_str().unwrap_or("?");
+                println!("    {} {} — {} ({})", sha.yellow(), msg, author.dimmed(),
+                    c["agentName"].as_str().unwrap_or("manual").dimmed());
+            }
+            println!();
+        }
     }
 
     Ok(())
