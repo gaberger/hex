@@ -263,6 +263,74 @@ hex agent disconnect <agent-id>
 hex agent route <task-id> --to <agent-id>
 ```
 
+### 8. One-Command Remote Deploy (`hex agent spawn-remote`)
+
+**Validated 2026-03-21**: hex-agent on bazzite.local successfully connected to Mac's nexus
+via SSH reverse tunnel, registered as `hex-swift-prism-57d3`, and entered hub-managed mode
+with 45 skills loaded. The manual process was:
+
+```
+1. rsync source to bazzite
+2. cargo build on bazzite
+3. ssh -f -N -R 5555:127.0.0.1:5555 bazzite.local
+4. ssh bazzite.local "hex-agent --hub-url http://127.0.0.1:5555 ..."
+```
+
+This must become one command: `hex agent spawn-remote gary@bazzite.local`
+
+#### Spawn Protocol
+
+When the operator runs `hex agent spawn-remote user@host`, nexus performs:
+
+```
+Phase 1: PROVISION
+  ├─ SSH connect to user@host (russh, key or agent auth)
+  ├─ Check if hex-agent binary exists at ~/.hex/bin/hex-agent
+  ├─ If missing or outdated: scp the binary from nexus host
+  │   └─ Cross-compile target selection: detect remote arch via `uname -m`
+  │      ├─ x86_64 → linux-x86_64 binary
+  │      └─ aarch64 → linux-aarch64 binary
+  └─ Verify binary: ssh run `~/.hex/bin/hex-agent --build-hash`
+
+Phase 2: TUNNEL
+  ├─ Establish SSH reverse tunnel: remote:$AGENT_PORT → localhost:$NEXUS_PORT
+  │   └─ Uses russh channel_open_direct_tcpip (programmatic, no ssh CLI)
+  └─ Verify tunnel: ssh run `curl -s http://127.0.0.1:$AGENT_PORT/api/version`
+
+Phase 3: LAUNCH
+  ├─ SSH exec: `~/.hex/bin/hex-agent --hub-url http://127.0.0.1:$AGENT_PORT
+  │     --hub-token $SESSION_TOKEN --project-dir $PROJECT_DIR --no-preflight`
+  ├─ Wait for WebSocket Register message (30s timeout)
+  ├─ Send RegisterAck with session nonce
+  └─ Start heartbeat monitor
+
+Phase 4: CONFIRM
+  ├─ Agent appears in `hex agent list`
+  ├─ Nexus dashboard shows remote agent with host + models
+  └─ Agent is ready to receive tasks
+```
+
+#### Binary Distribution Strategy
+
+Rather than requiring Rust on every remote machine, nexus ships pre-built binaries:
+
+| Strategy | When |
+|----------|------|
+| **Pre-built in ~/.hex/bin/** | Default — check `--build-hash` matches nexus version |
+| **scp from nexus host** | If binary missing or version mismatch |
+| **cargo build on remote** | Fallback if no pre-built binary for the arch |
+
+The binary is ~15MB (release, stripped). SCP over LAN takes <1s.
+
+#### Environment Variables Injected at Launch
+
+```bash
+HEX_NEXUS_URL=http://127.0.0.1:$AGENT_PORT  # tunneled nexus
+HEX_AGENT_ID=$UUID                            # assigned by nexus
+HEX_AGENT_TOKEN=$SESSION_TOKEN                # per-session auth
+HEX_PROJECT_DIR=$PROJECT_DIR                  # working directory
+```
+
 ## Consequences
 
 ### Positive
