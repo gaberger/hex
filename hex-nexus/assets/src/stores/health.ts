@@ -67,7 +67,6 @@ export async function fetchHealth(rootPath?: string) {
         return null;
       }
       setHealthData(data as HealthData);
-      addToast("success", `Health: ${data.health_score}/100 — ${data.violation_count ?? 0} violations`);
       return data as HealthData;
     } else {
       const err = await res.json().catch(() => ({}));

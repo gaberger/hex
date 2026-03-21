@@ -181,9 +181,15 @@ function hashToRoute(hash: string): Route {
 
 /** Initialize router — call once at app startup */
 export function initRouter() {
-  setRoute(hashToRoute(window.location.hash));
+  const initial = hashToRoute(window.location.hash);
+  setRoute(initial);
+  const pid = (initial as any).projectId;
+  if (pid) setActiveProjectId(pid);
 
   window.addEventListener("hashchange", () => {
-    setRoute(hashToRoute(window.location.hash));
+    const r = hashToRoute(window.location.hash);
+    setRoute(r);
+    const p = (r as any).projectId;
+    if (p) setActiveProjectId(p);
   });
 }

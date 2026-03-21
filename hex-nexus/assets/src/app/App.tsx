@@ -35,8 +35,6 @@ const AgentFleet = lazy(() => import('../components/views/AgentFleet'));
 const ADRBrowser = lazy(() => import('../components/views/ADRBrowser'));
 const ConfigPage = lazy(() => import('../components/views/ConfigPage'));
 const FileTreeView = lazy(() => import('../components/views/FileTreeView'));
-import ProjectLayout from '../components/project/ProjectLayout';
-import ProjectSidebar from '../components/project/ProjectSidebar';
 
 const App: Component = () => {
   const [theme, setTheme] = createSignal(
@@ -429,31 +427,22 @@ const App: Component = () => {
             <Match when={route().page === "control-plane"}>
               <ControlPlane />
             </Match>
-            <Match when={(route().page.startsWith("project") && (route() as any).projectId) || (route().page === "adrs" && (route() as any).projectId)}>
-              <div class="flex flex-1 overflow-hidden">
-                <ProjectSidebar />
-                <ProjectLayout>
-                  <Switch>
-                    <Match when={route().page === "project"}>
-                      <ProjectDetail />
-                    </Match>
-                    <Match when={route().page === "project-chat"}>
-                      <ChatView />
-                    </Match>
-                    <Match when={route().page === "adrs" || route().page === "project-adr"}>
-                      <ADRBrowser />
-                    </Match>
-                    <Match when={route().page === "project-health"}>
-                      <div class="flex-1 overflow-auto p-6">
-                        <HealthPane />
-                      </div>
-                    </Match>
-                    <Match when={route().page === "project-graph"}>
-                      <DependencyGraphPane />
-                    </Match>
-                  </Switch>
-                </ProjectLayout>
+            <Match when={route().page === "project"}>
+              <ProjectDetail />
+            </Match>
+            <Match when={route().page === "project-chat"}>
+              <ChatView />
+            </Match>
+            <Match when={(route().page === "adrs" || route().page === "project-adr") && (route() as any).projectId}>
+              <ADRBrowser />
+            </Match>
+            <Match when={route().page === "project-health"}>
+              <div class="flex-1 overflow-auto p-6">
+                <HealthPane />
               </div>
+            </Match>
+            <Match when={route().page === "project-graph"}>
+              <DependencyGraphPane />
             </Match>
             <Match when={route().page === "adrs" && !(route() as any).projectId}>
               <ADRBrowser />
