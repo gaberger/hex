@@ -259,15 +259,8 @@ const App: Component = () => {
       {/* Breadcrumbs */}
       <Breadcrumbs />
 
-      {/* Main area — layout depends on route */}
+      {/* Main area — full width, no sidebar */}
       <div class="flex flex-1 overflow-hidden">
-        {/* Sidebar: only on project-scoped pages */}
-        <Show when={route().page.startsWith("project")}>
-          <div class="hidden md:block">
-            <Sidebar />
-          </div>
-        </Show>
-
         {/* Center content — route-based view switching */}
         <div class="flex flex-1 flex-col overflow-hidden">
           <Switch fallback={<ControlPlane />}>
