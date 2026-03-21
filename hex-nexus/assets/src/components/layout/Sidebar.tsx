@@ -6,7 +6,8 @@ import { setPanelContent } from '../../stores/context-panel';
 import { sessions, activeSessionId, setActiveSessionId, createSession } from '../../stores/session';
 import { clearMessages } from '../../stores/chat';
 import { viewMode, setViewMode } from '../../stores/view';
-import { navigate } from '../../stores/router';
+import { navigate, route } from '../../stores/router';
+import { projects } from '../../stores/projects';
 import HealthBadge from '../health/HealthBadge';
 
 const SectionHeader: Component<{ title: string; expanded: boolean; onToggle: () => void }> = (props) => (
@@ -71,49 +72,68 @@ const Sidebar: Component = () => {
         <SectionHeader title="Projects" expanded={projectsOpen()} onToggle={() => setProjectsOpen(!projectsOpen())} />
         <Show when={projectsOpen()}>
           <div class="px-3 pb-3 space-y-1">
-            <button
-              class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-base text-gray-300 hover:bg-gray-800 transition-colors"
-              onClick={() => navigate({ page: "control-plane" })}
-            >
-              <svg class="h-5 w-5 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="3" width="7" height="7" />
-                <rect x="14" y="3" width="7" height="7" />
-                <rect x="3" y="14" width="7" height="7" />
-                <rect x="14" y="14" width="7" height="7" />
-              </svg>
-              Overview
-            </button>
-            <button
-              class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-base text-gray-400 hover:bg-gray-800 transition-colors"
-              onClick={() => navigate({ page: "project-chat", projectId: "current" })}
-            >
-              <svg class="h-5 w-5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-              Chat
-            </button>
-            <button
-              class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-base text-gray-400 hover:bg-gray-800 transition-colors"
-              onClick={() => navigate({ page: "adrs" })}
-            >
-              <svg class="h-5 w-5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <line x1="16" y1="13" x2="8" y2="13" />
-                <line x1="16" y1="17" x2="8" y2="17" />
-              </svg>
-              ADRs
-            </button>
-            <button
-              class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-base text-gray-400 hover:bg-gray-800 transition-colors"
-              onClick={() => navigate({ page: "config", section: "blueprint" })}
-            >
-              <svg class="h-5 w-5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-              Config
-            </button>
+            {/* Registered projects list */}
+            <For each={projects()}>
+              {(proj) => {
+                const isActive = () => {
+                  const r = route();
+                  return (r as any).page === "project" && (r as any).projectId === proj.id;
+                };
+                const name = () => proj.name || proj.id.split("-")[0] || "unnamed";
+                return (
+                  <button
+                    class={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
+                      isActive()
+                        ? "bg-gray-800 text-gray-100"
+                        : "text-gray-400 hover:bg-gray-800/60 hover:text-gray-300"
+                    }`}
+                    onClick={() => navigate({ page: "project", projectId: proj.id })}
+                  >
+                    <span class={`h-1.5 w-1.5 shrink-0 rounded-full ${isActive() ? "bg-emerald-500" : "bg-gray-600"}`} />
+                    <span style={{ "font-family": "'JetBrains Mono', monospace" }}>{name()}</span>
+                  </button>
+                );
+              }}
+            </For>
+
+            {/* Show empty state if no projects */}
+            <Show when={projects().length === 0}>
+              <p class="px-3 py-2 text-xs text-gray-600 italic">No projects registered</p>
+            </Show>
+
+            {/* Quick nav links */}
+            <div class="mt-2 border-t border-gray-800 pt-2 space-y-1">
+              <button
+                class="flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-800/60 hover:text-gray-400 transition-colors"
+                onClick={() => navigate({ page: "control-plane" })}
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+                  <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+                </svg>
+                Overview
+              </button>
+              <button
+                class="flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-800/60 hover:text-gray-400 transition-colors"
+                onClick={() => navigate({ page: "adrs" })}
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                ADRs
+              </button>
+              <button
+                class="flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-800/60 hover:text-gray-400 transition-colors"
+                onClick={() => navigate({ page: "config", section: "blueprint" })}
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+                Config
+              </button>
+            </div>
             <HealthBadge />
           </div>
         </Show>
