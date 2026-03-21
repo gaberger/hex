@@ -1,4 +1,4 @@
-import { type Component, createMemo, onMount, onCleanup, Show, For } from "solid-js";
+import { type Component, createMemo, createEffect, onMount, onCleanup, Show, For } from "solid-js";
 import { route } from "../../stores/router";
 import { projects } from "../../stores/projects";
 import { registryAgents } from "../../stores/connection";
@@ -116,10 +116,13 @@ const ProjectDetail: Component = () => {
       fetchAllGitData(pid, p?.path);
       subscribeGitEvents(pid);
     }
+  });
 
-    // Auto-fetch health on mount if we have a project path and no data yet
-    if (p?.path && !health()) {
-      fetchHealth(p.path);
+  // Auto-fetch health whenever the active project changes (reactive)
+  createEffect(() => {
+    const proj = project();
+    if (proj?.path) {
+      fetchHealth(proj.path);
     }
   });
 
@@ -153,6 +156,14 @@ const ProjectDetail: Component = () => {
             <p class="text-xs text-gray-500" style={{ "font-family": "'JetBrains Mono', monospace" }}>
               {project()?.path ?? ""}
             </p>
+          </div>
+          {/* Project description (display-only until SpacetimeDB schema supports it) */}
+          <Show when={project()}>
+            <p class="text-sm text-gray-500 mt-1">
+              {(project() as any)?.description || "No description"}
+            </p>
+          </Show>
+          <div class="mt-1 flex items-center gap-3">
             {/* Git status badge */}
             <Show when={status()}>
               <span class="inline-flex items-center gap-1.5 rounded-full bg-gray-800 px-2.5 py-0.5 text-[10px] font-medium text-gray-300 border border-gray-700">
