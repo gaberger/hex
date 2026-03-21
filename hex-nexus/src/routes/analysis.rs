@@ -18,6 +18,7 @@ use serde_json::json;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+use crate::analysis::adr_compliance;
 use crate::analysis::analyzer::ArchAnalyzer;
 use crate::analysis::ports::ArchAnalysisPort;
 use crate::analysis::treesitter_adapter::TreeSitterAdapter;
@@ -222,6 +223,68 @@ pub async fn analyze_project_text(
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Analysis failed: {}", e)),
     }
+}
+
+// ── ADR Compliance (ADR-045) ────────────────────────────
+
+/// POST /api/analyze/adr-compliance — check ADR compliance for a directory.
+pub async fn analyze_adr_compliance(
+    Json(body): Json<AnalyzeRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let root = std::path::Path::new(&body.root_path);
+    if !root.is_dir() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("'{}' is not a directory", body.root_path) })),
+        );
+    }
+
+    let result = adr_compliance::check_compliance(root).await;
+
+    let violation_count = result.violations.len();
+    let error_count = result.violations.iter()
+        .filter(|v| matches!(v.severity, adr_compliance::AdrSeverity::Error))
+        .count();
+    let warning_count = result.violations.iter()
+        .filter(|v| matches!(v.severity, adr_compliance::AdrSeverity::Warning))
+        .count();
+
+    (StatusCode::OK, Json(json!({
+        "ok": true,
+        "data": {
+            "violationCount": violation_count,
+            "errorCount": error_count,
+            "warningCount": warning_count,
+            "rulesChecked": result.rules_checked,
+            "filesScanned": result.files_scanned,
+            "violations": result.violations,
+            "compliant": error_count == 0,
+        }
+    })))
+}
+
+/// GET /api/{project_id}/analyze/adr-compliance — check ADR compliance for a registered project.
+pub async fn analyze_project_adr_compliance(
+    State(state): State<SharedState>,
+    Path(project_id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let root_path = {
+        let projects = state.projects.read().await;
+        match projects.get(&project_id)
+            .or_else(|| projects.values().find(|p| p.name == project_id))
+            .or_else(|| projects.values().find(|p| p.root_path.rsplit('/').next().unwrap_or("") == project_id))
+        {
+            Some(entry) => entry.root_path.clone(),
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": format!("Project '{}' not found", project_id) })),
+                )
+            }
+        }
+    };
+
+    analyze_adr_compliance(Json(AnalyzeRequest { root_path })).await
 }
 
 // ── Helpers ──────────────────────────────────────────────

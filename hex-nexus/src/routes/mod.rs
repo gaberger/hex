@@ -138,6 +138,10 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/{project_id}/analyze", get(analysis::analyze_project))
         .route("/api/{project_id}/analyze/text", get(analysis::analyze_project_text))
+        // ADR compliance (ADR-045) — check code against accepted ADRs
+        .route("/api/analyze/adr-compliance", post(analysis::analyze_adr_compliance)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/{project_id}/analyze/adr-compliance", get(analysis::analyze_project_adr_compliance))
         // Commands (browser/MCP → hub → project, bidirectional)
         .route("/api/{project_id}/command", post(commands::send_command)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
@@ -255,7 +259,16 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/{project_id}/git/diff", get(git::git_diff))
         .route("/api/{project_id}/git/diff/{refspec}", get(git::git_diff_refs))
         .route("/api/{project_id}/git/branches", get(git::git_branches))
-        .route("/api/{project_id}/git/worktrees", get(git::git_worktrees))
+        .route("/api/{project_id}/git/worktrees", get(git::git_worktrees)
+            .post(git::git_worktree_create)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/{project_id}/git/worktrees/{name}", delete(git::git_worktree_delete))
+        .route("/api/{project_id}/git/log/{sha}", get(git::git_commit_detail))
+        // Phase 3: Cross-cutting git intelligence
+        .route("/api/{project_id}/git/task-commits", get(git::git_task_commits))
+        .route("/api/{project_id}/git/violation-blame", post(git::git_violation_blame)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/{project_id}/git/timeline", get(git::git_timeline))
 
         // ADR (Architecture Decision Records) — filesystem read-only
         .route("/api/adrs", get(adrs::list_adrs))
