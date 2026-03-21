@@ -1,0 +1,159 @@
+{
+  "feature": "Remote Agent — Remaining Work",
+  "adrs": ["ADR-040", "ADR-041"],
+  "created": "2026-03-21",
+  "status": "planned",
+  "description": "Complete the remote agent feature: cross-session output routing, SpacetimeDB inference gateway wiring, ADR review agent, and production hardening.",
+
+  "tracks": {
+    "A": {
+      "name": "Cross-Session Output Routing (BLOCKER)",
+      "priority": "P0",
+      "description": "Agent stream_chunks reach the agent's chat session but don't forward to the requesting client's session. This is the last gap for end-to-end remote agent UX.",
+      "steps": [
+        {
+          "id": "A-1",
+          "title": "Add agent output relay in chat handler — forward stream_chunk/tool_call/tool_result from agent session to requesting session",
+          "files": ["hex-nexus/src/routes/chat.rs"],
+          "notes": "When a chat_message is broadcast to agent:broadcast:input with a sourceSessionId, the agent's response events should be relayed back to that source session's topic. Add sourceSessionId to the broadcast payload, then have the agent's chat handler tag output events with it."
+        },
+        {
+          "id": "A-2",
+          "title": "Update test to use longer timeout (10 min) and verify stream_chunk receipt",
+          "files": ["hex-nexus/tests/send_task_to_agent.rs"],
+          "notes": "Use qwen3.5:9b for faster response. Pre-warm model with curl to Ollama before test."
+        },
+        {
+          "id": "A-3",
+          "title": "Dashboard: show remote agent responses in chat view regardless of session",
+          "files": ["hex-nexus/assets/src/components/chat/ChatView.tsx"],
+          "notes": "Subscribe to agent:*:output in the React chat component. Display stream_chunks as they arrive."
+        }
+      ]
+    },
+
+    "B": {
+      "name": "SpacetimeDB Inference Gateway (Phase 6)",
+      "priority": "P1",
+      "description": "Wire hex-agent's IInferencePort through SpacetimeDB reducers instead of direct Ollama/Anthropic calls. Enables nexus-managed inference routing.",
+      "steps": [
+        {
+          "id": "B-1",
+          "title": "Implement SpacetimeInferenceAdapter.complete() — call request_inference reducer, poll for response",
+          "files": ["hex-agent/src/adapters/secondary/spacetime_inference.rs"],
+          "notes": "Replace the Phase 6 stub. Call nexus HTTP API POST /api/inference/request, poll GET /api/inference/response/{id} until complete. Timeout 5 min."
+        },
+        {
+          "id": "B-2",
+          "title": "Implement SpacetimeInferenceAdapter.stream() — SSE or WS streaming from inference gateway",
+          "files": ["hex-agent/src/adapters/secondary/spacetime_inference.rs"],
+          "notes": "Streaming is harder — either use SSE from nexus or subscribe to SpacetimeDB response table for incremental updates."
+        },
+        {
+          "id": "B-3",
+          "title": "Add inference provider auto-registration — when agent starts with --provider ollama, register the Ollama endpoint in SpacetimeDB",
+          "files": ["hex-agent/src/main.rs", "hex-nexus/src/adapters/spacetime_inference.rs"],
+          "notes": "On agent startup, call register_provider reducer with Ollama URL + available models. Nexus can then route inference requests to this agent's Ollama."
+        },
+        {
+          "id": "B-4",
+          "title": "Wire SpacetimeInferenceAdapter into agent composition root when hub-connected",
+          "files": ["hex-agent/src/main.rs"],
+          "notes": "When --hub-url is set and inference gateway is reachable, use SpacetimeInferenceAdapter as primary LLM instead of direct Ollama/Anthropic. Falls back to direct provider if gateway unavailable."
+        }
+      ]
+    },
+
+    "C": {
+      "name": "ADR Review Agent (ADR-041)",
+      "priority": "P1",
+      "description": "Autonomous agent that validates new ADRs against all existing ones for scope conflicts, architectural drift, and stale references.",
+      "steps": [
+        {
+          "id": "C-1",
+          "title": "Create IAdrReviewPort trait and domain types (ReviewFinding, Severity, ReviewVerdict)",
+          "files": [
+            "hex-nexus/src/ports/adr_review.rs",
+            "hex-nexus/src/remote/adr_review_types.rs"
+          ]
+        },
+        {
+          "id": "C-2",
+          "title": "Implement AdrReviewAdapter — filesystem scan + LLM-powered semantic comparison",
+          "files": ["hex-nexus/src/adapters/adr_review.rs"],
+          "notes": "5 checks: scope conflict, architectural drift, supersession chain, stale references, metadata validation. Uses IInferencePort for semantic comparison."
+        },
+        {
+          "id": "C-3",
+          "title": "Add hex adr review CLI command",
+          "files": ["hex-cli/src/commands/adr.rs"],
+          "notes": "hex adr review [ADR-040] — review specific or all. --strict for CI. --fix for auto-fix metadata."
+        },
+        {
+          "id": "C-4",
+          "title": "Create adr-reviewer agent definition",
+          "files": ["agents/adr-reviewer.yml"],
+          "notes": "Agent definition for Claude Code integration. Triggers on ADR file changes."
+        }
+      ]
+    },
+
+    "D": {
+      "name": "Production Hardening",
+      "priority": "P2",
+      "description": "Resilience, security, and UX improvements for remote agents.",
+      "steps": [
+        {
+          "id": "D-1",
+          "title": "Auto-reconnect spawned agents on tunnel drop",
+          "files": ["hex-nexus/src/adapters/agent_lifecycle.rs"],
+          "notes": "When heartbeat monitor detects dead spawned agent, re-run spawn_remote_full with stored config. Max 3 attempts."
+        },
+        {
+          "id": "D-2",
+          "title": "Secrets forwarding over SSH tunnel (T3-2 from original workplan)",
+          "files": ["hex-nexus/src/adapters/secrets_forward.rs"],
+          "notes": "Forward ANTHROPIC_API_KEY and other secrets to remote agents via encrypted SSH channel. Per-session scoped, revoked on disconnect."
+        },
+        {
+          "id": "D-3",
+          "title": "hex agent status command — detailed agent view with tunnel health and task history",
+          "files": ["hex-cli/src/commands/agent.rs"],
+          "notes": "Shows tunnel health (connected/degraded/disconnected), last heartbeat, uptime, tasks completed, models available."
+        },
+        {
+          "id": "D-4",
+          "title": "Dashboard RemoteAgentPanel — React component showing fleet status",
+          "files": [
+            "hex-nexus/assets/src/components/fleet/RemoteAgentPanel.tsx",
+            "hex-nexus/assets/src/stores/remote-agents.ts"
+          ],
+          "notes": "T4-2 from original workplan. SpacetimeDB subscriptions for real-time agent status."
+        },
+        {
+          "id": "D-5",
+          "title": "Nexus bind address — add --bind 0.0.0.0 flag for direct network access (alternative to SSH tunnel)",
+          "files": ["hex-nexus/src/lib.rs", "hex-nexus/src/bin/hex-nexus.rs"],
+          "notes": "Default stays 127.0.0.1. --bind 0.0.0.0 enables direct access from LAN. Document security implications."
+        }
+      ]
+    }
+  },
+
+  "executionOrder": [
+    "A (P0 — cross-session routing is the blocker for usable remote agents)",
+    "B-1, B-3 in parallel (inference gateway basics)",
+    "C-1, C-2 in parallel with B (ADR review is independent)",
+    "B-2, B-4 (streaming + wiring after basics work)",
+    "C-3, C-4 (CLI + agent def after core review logic)",
+    "D-1 through D-5 (hardening, can be done incrementally)"
+  ],
+
+  "successCriteria": [
+    "hex agent spawn-remote gary@bazzite.local → agent responds to chat in <30s (with warm model)",
+    "Stream chunks visible in both CLI test and dashboard",
+    "hex adr review ADR-040 produces a findings report",
+    "Agent auto-reconnects after tunnel drop within 60s",
+    "Inference routed through SpacetimeDB when available, direct fallback when not"
+  ]
+}
