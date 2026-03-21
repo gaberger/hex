@@ -11,7 +11,8 @@ export type Route =
   | { page: "config"; section: string }
   | { page: "adrs"; projectId?: string }
   | { page: "inference" }
-  | { page: "fleet-nodes" };
+  | { page: "fleet-nodes" }
+  | { page: "file-viewer"; filePath: string; projectId?: string };
 
 const [route, setRoute] = createSignal<Route>({ page: "control-plane" });
 export { route };
@@ -81,6 +82,10 @@ export const breadcrumbs = createMemo<Breadcrumb[]>(() => {
     crumbs.push({ label: "Inference", icon: "server" });
   } else if (r.page === "fleet-nodes") {
     crumbs.push({ label: "Fleet Nodes", icon: "monitor" });
+  } else if (r.page === "file-viewer") {
+    const fp = (r as Extract<Route, { page: "file-viewer" }>).filePath ?? "";
+    const filename = fp.split("/").pop() || fp;
+    crumbs.push({ label: filename, icon: "file-text" });
   }
 
   return crumbs;
@@ -116,6 +121,8 @@ function routeToHash(r: Route): string {
       return "#/inference";
     case "fleet-nodes":
       return "#/fleet";
+    case "file-viewer":
+      return `#/file/${encodeURIComponent(r.filePath)}`;
     default:
       return "#/";
   }
@@ -140,6 +147,10 @@ function hashToRoute(hash: string): Route {
     return { page: "project", projectId };
   }
   if (parts[0] === "adrs") return { page: "adrs" };
+  if (parts[0] === "file" && parts[1]) {
+    const filePath = decodeURIComponent(parts.slice(1).join("/"));
+    return { page: "file-viewer", filePath };
+  }
   if (parts[0] === "agents") return { page: "agent-fleet" };
   if (parts[0] === "config")
     return { page: "config", section: parts[1] || "blueprint" };

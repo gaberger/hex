@@ -1,6 +1,6 @@
 import { Component, createSignal, createResource, For, Show, createMemo } from 'solid-js';
 import { navigate, route } from '../../stores/router';
-import MarkdownContent from '../chat/MarkdownContent';
+import { MarkdownEditor } from '../editor';
 
 interface ADRListItem {
   id: string;
@@ -26,6 +26,14 @@ function statusBadgeClasses(status: string): string {
   if (s === 'deprecated') return 'bg-red-500/15 text-red-400 border border-red-500/30';
   if (s === 'abandoned') return 'bg-gray-500/15 text-gray-400 border border-gray-500/30';
   return 'bg-gray-500/15 text-gray-400 border border-gray-500/30';
+}
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  if (s === 'proposed') return '#eab308';
+  if (s === 'accepted') return '#4ade80';
+  if (s === 'superseded') return '#f87149';
+  return '#6b7280';
 }
 
 async function fetchADRList(): Promise<ADRListItem[]> {
@@ -242,7 +250,6 @@ async function fetchADRDetail(id: string): Promise<ADRDetail | null> {
 const ADRBrowser: Component = () => {
   const [searchQuery, setSearchQuery] = createSignal('');
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
-  const [showRaw, setShowRaw] = createSignal(false);
 
   const [adrList] = createResource(fetchADRList);
 
@@ -381,99 +388,24 @@ const ADRBrowser: Component = () => {
         >
           {(() => {
             const detail = () => adrDetail()!;
-            const meta = () => selectedADR();
 
             return (
-              <>
-                {/* Title bar */}
-                <div class="flex items-center gap-3 border-b border-gray-800 px-6 py-4">
-                  <svg
-                    class="h-5 w-5 shrink-0 text-gray-500"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                    <line x1="16" y1="13" x2="8" y2="13" />
-                    <line x1="16" y1="17" x2="8" y2="17" />
-                    <polyline points="10 9 9 9 8 9" />
-                  </svg>
-                  <h1 class="flex-1 text-base font-bold text-[#e5e7eb]">
-                    ADR-{detail().id}: {detail().title}
-                  </h1>
-                  <div class="flex items-center gap-2">
-                    <button
-                      class="rounded-md border border-gray-700 px-3 py-1 text-xs text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition-colors"
-                      onClick={() => {
-                        // TODO: Open in editor
-                      }}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      class="rounded-md border border-gray-700 px-3 py-1 text-xs transition-colors"
-                      classList={{
-                        'bg-gray-800 text-gray-200': showRaw(),
-                        'text-gray-400 hover:bg-gray-800 hover:text-gray-200': !showRaw(),
-                      }}
-                      onClick={() => setShowRaw(!showRaw())}
-                    >
-                      Raw
-                    </button>
-                  </div>
-                </div>
-
-                {/* Metadata bar */}
-                <div class="flex flex-wrap items-center gap-4 bg-[#111827] px-6 py-3 text-xs">
-                  <div class="flex items-center gap-2">
-                    <span class="text-gray-500">Status</span>
-                    <span
-                      class={`rounded px-2 py-0.5 font-medium ${statusBadgeClasses(meta()?.status ?? detail().status)}`}
-                    >
-                      {meta()?.status ?? detail().status}
-                    </span>
-                  </div>
-                  <Show when={detail().date || meta()?.date}>
-                    <div class="flex items-center gap-2">
-                      <span class="text-gray-500">Date</span>
-                      <span class="text-gray-300">{detail().date ?? meta()?.date}</span>
-                    </div>
-                  </Show>
-                  <Show when={detail().drivers}>
-                    <div class="flex items-center gap-2">
-                      <span class="text-gray-500">Drivers</span>
-                      <span class="text-gray-300">{detail().drivers}</span>
-                    </div>
-                  </Show>
-                </div>
-
-                {/* Content */}
-                <div class="flex-1 overflow-y-auto px-6 py-6">
-                  <Show
-                    when={!showRaw()}
-                    fallback={
-                      <pre
-                        class="whitespace-pre-wrap text-sm text-[#d1d5db] leading-relaxed"
-                        style={{ 'font-family': "'JetBrains Mono', monospace", 'font-size': '14px' }}
-                      >
-                        {detail().content}
-                      </pre>
-                    }
-                  >
-                    <div
-                      class="adr-markdown-content"
-                      style={{
-                        '--md-heading-size': '16px',
-                        '--md-body-size': '14px',
-                      } as any}
-                    >
-                      <MarkdownContent content={detail().content} />
-                    </div>
-                  </Show>
-                </div>
-              </>
+              <MarkdownEditor
+                content={detail().content}
+                title={`ADR-${detail().id}: ${detail().title}`}
+                filePath={`docs/adrs/ADR-${detail().id}-*.md`}
+                initialMode="view"
+                editable={true}
+                metadata={[
+                  { label: "Status", value: detail().status, color: statusColor(detail().status) },
+                  { label: "Date", value: detail().date || "\u2014" },
+                  { label: "Drivers", value: detail().drivers || "Pending API integration" },
+                ]}
+                onSave={(content) => {
+                  // TODO: Save back to filesystem via API
+                  console.log("Save ADR:", content);
+                }}
+              />
             );
           })()}
         </Show>

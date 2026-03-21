@@ -1,4 +1,4 @@
-import { type Component, createMemo, onMount, Show, For } from "solid-js";
+import { type Component, createMemo, onMount, onCleanup, Show, For } from "solid-js";
 import { route } from "../../stores/router";
 import { projects } from "../../stores/projects";
 import { healthData, healthLoading, fetchHealth } from "../../stores/health";
@@ -8,6 +8,8 @@ import {
   gitLog,
   gitLoading,
   fetchAllGitData,
+  subscribeGitEvents,
+  unsubscribeGitEvents,
   type WorktreeInfo,
   type CommitInfo,
 } from "../../stores/git";
@@ -97,8 +99,9 @@ const ProjectDetail: Component = () => {
   onMount(() => {
     const pid = projectId();
     if (pid) {
-      // Fetch git data on mount
+      // Fetch git data on mount + subscribe to real-time updates
       fetchAllGitData(pid);
+      subscribeGitEvents(pid);
     }
 
     // Auto-fetch health on mount if we have a project path and no data yet
@@ -106,6 +109,11 @@ const ProjectDetail: Component = () => {
     if (p?.path && !health()) {
       fetchHealth(p.path);
     }
+  });
+
+  // Cleanup WebSocket on unmount
+  onCleanup(() => {
+    unsubscribeGitEvents();
   });
 
   /** Format epoch seconds to relative time */
