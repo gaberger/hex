@@ -54,6 +54,7 @@ constraints:
   - All worktrees must be merged before integration tests run
   - Preserve git history — use merge commits, not squash
   - Tag the integration commit for traceability
+  - When creating a new project/app, always include README.md and start.sh (see project-output skill)
 
 tools:
   required:

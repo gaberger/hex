@@ -65,6 +65,7 @@ constraints:
   - Validation-judge verdict is a BLOCKING gate — FAIL means iterate
   - Merge worktrees in dependency order (domain → ports → secondary → primary → integration)
   - Always clean up worktrees after merge
+  - When creating a new project/app, always include README.md and start.sh (see project-output skill)
 
 tools:
   required:

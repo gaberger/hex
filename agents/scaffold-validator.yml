@@ -64,6 +64,7 @@ constraints:
   - README MUST contain exact commands to install, run, and test
   - If the project targets browser, a dev server is REQUIRED
   - .env files must NEVER be committed — only .env.example
+  - When creating a new project/app, always include README.md and start.sh (see project-output skill)
 
 tools:
   - file_read

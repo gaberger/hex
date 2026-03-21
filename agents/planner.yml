@@ -50,6 +50,7 @@ constraints:
   - Maximum 8 parallel tasks (limited by worktree count)
   - Each task must have a clear done-condition (compile + lint + test pass)
   - Task descriptions must include the specific port interface being implemented
+  - When creating a new project/app, always include README.md and start.sh (see project-output skill)
 
 tools:
   required:
