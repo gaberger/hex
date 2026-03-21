@@ -42,9 +42,13 @@ async fn test_send_fizzbuzz_task() {
         println!("LLM bridge available: {}", has_llm);
     }
 
-    // Subscribe to all agent output events
+    // Subscribe to all agent output events (wildcard)
     let sub = serde_json::json!({ "type": "subscribe", "topic": "agent:*" });
     ws.send(Message::Text(sub.to_string().into())).await.unwrap();
+
+    // Subscribe to the cross-session broadcast topic explicitly (A-1 fix)
+    let sub_all = serde_json::json!({ "type": "subscribe", "topic": "agent:all:output" });
+    ws.send(Message::Text(sub_all.to_string().into())).await.unwrap();
 
     // Also subscribe to chat events
     let sub2 = serde_json::json!({ "type": "subscribe", "topic": "chat:*" });
@@ -52,6 +56,75 @@ async fn test_send_fizzbuzz_task() {
 
     // Small delay to let subscriptions register
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+    // Pre-warm: send a quick "hello" so Ollama loads the model before the real task
+    let warmup = serde_json::json!({
+        "type": "publish",
+        "topic": "agent:broadcast:input",
+        "event": "chat_message",
+        "data": {
+            "content": "hello",
+            "senderName": "test"
+        }
+    });
+    ws.send(Message::Text(warmup.to_string().into()))
+        .await
+        .expect("Failed to send warmup");
+    println!("Warmup 'hello' sent. Waiting for model to load...");
+
+    // Drain warmup responses (up to 120s for cold model load)
+    let warmup_timeout = tokio::time::Duration::from_secs(120);
+    let warmup_start = tokio::time::Instant::now();
+    let mut warmup_done = false;
+    while warmup_start.elapsed() < warmup_timeout {
+        let msg = tokio::time::timeout(
+            tokio::time::Duration::from_secs(90),
+            ws.next(),
+        )
+        .await;
+        match msg {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                let text_str = text.to_string();
+                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&text_str) {
+                    let event = data.get("event")
+                        .or_else(|| data.get("type"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    match event {
+                        "agent_status" => {
+                            let status = data.get("data")
+                                .and_then(|d| d.get("status"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            println!("[warmup] agent_status: {}", status);
+                            if status == "idle" {
+                                warmup_done = true;
+                                break;
+                            }
+                        }
+                        "stream_chunk" | "chat_response" => {
+                            // warmup response text — ignore content
+                            println!("[warmup] got {} (model is warm)", event);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err(_) => {
+                println!("[warmup] timeout — proceeding anyway");
+                break;
+            }
+            _ => {}
+        }
+    }
+    if warmup_done {
+        println!("Model pre-warmed successfully.\n");
+    } else {
+        println!("Warmup phase ended (may not have received idle). Proceeding.\n");
+    }
+
+    // Small gap before the real task
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // Publish chat_message to agent:broadcast:input via the /ws pub/sub channel.
     // The agent's chat session forwards chat_message events to the agent's WS.
@@ -72,15 +145,15 @@ async fn test_send_fizzbuzz_task() {
     println!("\nTask sent. Waiting for response...\n");
     println!("─────────────────────────────────────────");
 
-    // Collect responses
+    // Collect responses — 300s total timeout for Ollama 27B cold load
     let mut got_response = false;
     let mut all_text = String::new();
-    let timeout = tokio::time::Duration::from_secs(120);
+    let timeout = tokio::time::Duration::from_secs(300);
     let start = tokio::time::Instant::now();
 
     while start.elapsed() < timeout {
         let msg = tokio::time::timeout(
-            tokio::time::Duration::from_secs(60),
+            tokio::time::Duration::from_secs(300),
             ws.next(),
         )
         .await;
@@ -154,7 +227,7 @@ async fn test_send_fizzbuzz_task() {
                 break;
             }
             Err(_) => {
-                println!("\nTimeout waiting for response (60s)");
+                println!("\nTimeout waiting for response (300s)");
                 break;
             }
             _ => {}
