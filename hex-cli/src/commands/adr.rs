@@ -16,6 +16,14 @@ pub enum AdrAction {
     },
     /// Detect stale/abandoned ADRs
     Abandoned,
+    /// Review ADRs for consistency issues (ADR-041)
+    Review {
+        /// Specific ADR to review (e.g. ADR-040). Omit for all.
+        adr_id: Option<String>,
+        /// Exit non-zero if any WARNING+ findings (for CI)
+        #[arg(long)]
+        strict: bool,
+    },
 }
 
 pub async fn run(action: AdrAction) -> anyhow::Result<()> {
@@ -24,6 +32,7 @@ pub async fn run(action: AdrAction) -> anyhow::Result<()> {
         AdrAction::Status => status().await,
         AdrAction::Search { query } => search(&query).await,
         AdrAction::Abandoned => abandoned().await,
+        AdrAction::Review { adr_id, strict } => super::adr_review::run(adr_id, strict).await,
     }
 }
 

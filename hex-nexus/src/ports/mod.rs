@@ -7,6 +7,7 @@ pub mod remote_registry;
 pub mod inference_router;
 pub mod agent_lifecycle;
 pub mod agent_orchestrator;
+pub mod adr_review;
 
 pub use secret_grant::ISecretGrantPort;
 pub use session::ISessionPort;
@@ -17,6 +18,7 @@ pub use remote_registry::IRemoteRegistryPort;
 pub use inference_router::IInferenceRouterPort;
 pub use agent_lifecycle::IAgentLifecyclePort;
 pub use agent_orchestrator::IAgentOrchestratorPort;
+pub use adr_review::IAdrReviewPort;
 
 // Re-export hex-core ports for downstream consumers
 pub use hex_core::ports::coordination;

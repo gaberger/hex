@@ -7,6 +7,7 @@ pub mod spacetime_state;
 pub mod remote_registry;
 pub mod agent_lifecycle;
 pub mod inference_router;
+pub mod adr_review;
 
 #[cfg(feature = "sqlite-session")]
 pub mod sqlite_session;
