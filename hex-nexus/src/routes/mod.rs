@@ -1,3 +1,4 @@
+pub mod adrs;
 pub mod agents;
 pub mod analysis;
 pub mod chat;
@@ -5,6 +6,7 @@ pub mod commands;
 pub mod coordination;
 pub mod decisions;
 pub mod fleet;
+pub mod git;
 pub mod hexflo;
 pub mod inference;
 pub mod orchestration;
@@ -244,6 +246,20 @@ pub fn build_router(state: SharedState) -> Router {
         // ═══════════════════════════════════════════════════════════
         // HEXFLO COORDINATION — write routes stay, reads via SpacetimeDB
         // ═══════════════════════════════════════════════════════════
+
+        // ═══════════════════════════════════════════════════════════
+        // GIT INTEGRATION (ADR-044) — project-scoped git queries
+        // ═══════════════════════════════════════════════════════════
+        .route("/api/{project_id}/git/status", get(git::git_status))
+        .route("/api/{project_id}/git/log", get(git::git_log))
+        .route("/api/{project_id}/git/diff", get(git::git_diff))
+        .route("/api/{project_id}/git/diff/{refspec}", get(git::git_diff_refs))
+        .route("/api/{project_id}/git/branches", get(git::git_branches))
+        .route("/api/{project_id}/git/worktrees", get(git::git_worktrees))
+
+        // ADR (Architecture Decision Records) — filesystem read-only
+        .route("/api/adrs", get(adrs::list_adrs))
+        .route("/api/adrs/{id}", get(adrs::get_adr))
 
         // HexFlo coordination (ADR-027)
         .route("/api/hexflo/memory", post(hexflo::memory_store)
