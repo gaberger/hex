@@ -8,34 +8,12 @@ export interface ChatMessage {
   content: string;
   model?: string;
   timestamp: string;
-  // Structured tool call data (populated for role === 'tool')
   toolName?: string;
   toolInput?: string;
   toolResult?: string;
   toolUseId?: string;
   isError?: boolean;
 }
-
-const roleBadgeStyles: Record<ChatMessage['role'], string> = {
-  user: 'bg-blue-600/30 text-blue-300',
-  assistant: 'bg-green-600/30 text-green-300',
-  system: 'bg-gray-600/30 text-gray-300',
-  tool: 'bg-purple-600/30 text-purple-300',
-};
-
-const roleLabels: Record<ChatMessage['role'], string> = {
-  user: 'User',
-  assistant: 'Assistant',
-  system: 'System',
-  tool: 'Tool',
-};
-
-const messageBgStyles: Record<ChatMessage['role'], string> = {
-  user: 'bg-blue-900/20 border-l-2 border-blue-500',
-  assistant: 'bg-gray-800/50',
-  system: 'bg-gray-800/30 italic',
-  tool: 'bg-gray-800/30 border-l-2 border-purple-500',
-};
 
 function relativeTime(iso: string): string {
   const now = Date.now();
@@ -53,7 +31,6 @@ function relativeTime(iso: string): string {
 }
 
 const Message: Component<{ message: ChatMessage }> = (props) => {
-  /** For tool messages, extract toolName and detail from structured fields or content fallback */
   const toolInfo = () => {
     const msg = props.message;
     if (msg.role !== 'tool') return { name: '', input: '', result: '', isError: false };
@@ -65,7 +42,6 @@ const Message: Component<{ message: ChatMessage }> = (props) => {
         isError: !!msg.isError,
       };
     }
-    // Fallback: parse "toolName: detail" from content
     const colonIdx = msg.content.indexOf(': ');
     return {
       name: colonIdx > 0 ? msg.content.slice(0, colonIdx) : 'tool',
@@ -75,22 +51,42 @@ const Message: Component<{ message: ChatMessage }> = (props) => {
     };
   };
 
+  const isUser = () => props.message.role === 'user';
+
   return (
-    <div class={`px-4 py-3 ${messageBgStyles[props.message.role]}`}>
-      <div class="flex items-center gap-2 mb-1">
-        <span class={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${roleBadgeStyles[props.message.role]}`}>
-          {roleLabels[props.message.role]}
+    <div
+      class="rounded-[10px]"
+      style={{
+        padding: '12px 16px',
+        background: isUser() ? 'var(--bg-surface)' : 'transparent',
+        border: isUser() ? '1px solid rgba(30,58,95,0.25)' : 'none',
+      }}
+    >
+      {/* Role badge row */}
+      <div class="flex items-center gap-2 mb-1.5">
+        <span
+          class="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+          style={{
+            background: isUser() ? 'rgba(59,130,246,0.2)' : 'rgba(74,222,128,0.2)',
+            color: isUser() ? '#60a5fa' : '#4ade80',
+          }}
+        >
+          {props.message.role === 'user' ? 'User' : props.message.role === 'assistant' ? 'Discovery' : props.message.role}
         </span>
         <Show when={props.message.model}>
-          <span class="rounded bg-gray-700/60 px-1.5 py-0.5 text-[10px] text-gray-300 font-mono">
+          <span
+            class="rounded px-1.5 py-0.5 text-[10px] font-mono"
+            style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}
+          >
             {props.message.model}
           </span>
         </Show>
-        <span class="ml-auto text-[10px] text-gray-300">
+        <span class="ml-auto text-[10px]" style={{ color: 'var(--text-faint)' }}>
           {relativeTime(props.message.timestamp)}
         </span>
       </div>
 
+      {/* Content */}
       <Show when={props.message.role === 'tool'}>
         <ToolCallCard
           toolName={toolInfo().name}
@@ -105,13 +101,19 @@ const Message: Component<{ message: ChatMessage }> = (props) => {
       </Show>
 
       <Show when={props.message.role === 'user'}>
-        <div class="whitespace-pre-wrap break-words text-sm text-gray-300 leading-relaxed">
+        <div
+          class="whitespace-pre-wrap break-words text-[15px] leading-[1.5]"
+          style={{ color: 'var(--text-secondary)' }}
+        >
           {props.message.content}
         </div>
       </Show>
 
       <Show when={props.message.role === 'system'}>
-        <div class="whitespace-pre-wrap break-words text-sm text-gray-400 leading-relaxed italic">
+        <div
+          class="whitespace-pre-wrap break-words text-[14px] leading-relaxed italic"
+          style={{ color: 'var(--text-muted)' }}
+        >
           {props.message.content}
         </div>
       </Show>
