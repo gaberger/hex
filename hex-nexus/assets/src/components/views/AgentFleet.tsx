@@ -63,6 +63,20 @@ const AgentFleet: Component = () => {
 
   const totalCount = createMemo(() => registryAgents().length);
 
+  /** Group local agents by project. Returns null when grouping adds no value. */
+  const agentsByProject = createMemo(() => {
+    const agents = localAgents();
+    const groups = new Map<string, any[]>();
+    for (const agent of agents) {
+      const proj = agent.project ?? agent.projectId ?? agent.project_id ?? "unassigned";
+      if (!groups.has(proj)) groups.set(proj, []);
+      groups.get(proj)!.push(agent);
+    }
+    // Skip grouping if all agents belong to a single bucket
+    if (groups.size <= 1) return null;
+    return groups;
+  });
+
   function agentProject(agent: any): string {
     const pid = agent.project ?? agent.project_id ?? "";
     if (!pid) return "--";
@@ -144,65 +158,33 @@ const AgentFleet: Component = () => {
             </div>
           }
         >
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-            <For each={localAgents()}>
-              {(agent) => {
-                const status = () => agent.status ?? "idle";
-                const name = () => agent.name ?? agent.agent_name ?? "unnamed";
-                const role = () => agent.agentType ?? agent.agent_type ?? agent.role ?? "--";
-                const model = () => agent.model ?? "--";
-                const uptime = () => formatUptime(agent.started_at ?? agent.created_at);
-                const task = () => agentTask(agent);
-
-                return (
-                  <button
-                    class="group flex flex-col gap-2.5 rounded-xl border border-gray-800 bg-gray-900 p-4 text-left transition-all hover:border-gray-700 hover:bg-[#111827] focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
-                    onClick={() => handleAgentClick(agent)}
-                  >
-                    {/* Top row: dot + name + status badge */}
-                    <div class="flex items-center justify-between">
-                      <div class="flex items-center gap-2">
-                        <span class={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDotColor(status())}`} />
-                        <span class="truncate font-mono text-xs font-semibold text-gray-100">
-                          {name()}
-                        </span>
-                      </div>
-                      <span
-                        class={`rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadgeBg(status())}`}
-                      >
-                        {status()}
-                      </span>
+          <Show
+            when={agentsByProject()}
+            fallback={
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                <For each={localAgents()}>
+                  {(agent) => <AgentCard agent={agent} agentProject={agentProject} agentTask={agentTask} agentHeartbeatAge={agentHeartbeatAge} onClick={handleAgentClick} />}
+                </For>
+              </div>
+            }
+          >
+            {(groups) => (
+              <For each={[...groups().entries()]}>
+                {([projectName, agents]) => (
+                  <div>
+                    <h4 class="mb-2 text-xs font-bold uppercase tracking-wider text-gray-500">
+                      {projectName} ({agents.length})
+                    </h4>
+                    <div class="mb-6 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      <For each={agents}>
+                        {(agent) => <AgentCard agent={agent} agentProject={agentProject} agentTask={agentTask} agentHeartbeatAge={agentHeartbeatAge} onClick={handleAgentClick} />}
+                      </For>
                     </div>
-
-                    {/* Details grid */}
-                    <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-[12px]">
-                      <DetailRow label="Role" value={role()} />
-                      <DetailRow label="Project" value={agentProject(agent)} />
-                      <DetailRow label="Uptime" value={uptime()} />
-                      <DetailRow label="Model" value={model()} />
-                    </div>
-
-                    {/* Current task */}
-                    <Show when={task()}>
-                      <div class="flex items-center gap-2 rounded-lg bg-cyan-900/20 px-2.5 py-1.5">
-                        <div class="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" />
-                        <span class="truncate text-[11px] text-cyan-300">
-                          {task()}
-                        </span>
-                      </div>
-                    </Show>
-
-                    {/* Heartbeat */}
-                    <Show when={agentHeartbeatAge(agent)}>
-                      <p class="text-[10px] text-gray-500">
-                        Heartbeat: {agentHeartbeatAge(agent)}
-                      </p>
-                    </Show>
-                  </button>
-                );
-              }}
-            </For>
-          </div>
+                  </div>
+                )}
+              </For>
+            )}
+          </Show>
         </Show>
       </section>
 
@@ -272,6 +254,69 @@ const AgentFleet: Component = () => {
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
+
+const AgentCard: Component<{
+  agent: any;
+  agentProject: (a: any) => string;
+  agentTask: (a: any) => string | null;
+  agentHeartbeatAge: (a: any) => string | null;
+  onClick: (a: any) => void;
+}> = (props) => {
+  const agent = props.agent;
+  const status = () => agent.status ?? "idle";
+  const name = () => agent.name ?? agent.agent_name ?? "unnamed";
+  const role = () => agent.agentType ?? agent.agent_type ?? agent.role ?? "--";
+  const model = () => agent.model ?? "--";
+  const uptime = () => formatUptime(agent.started_at ?? agent.created_at);
+  const task = () => props.agentTask(agent);
+
+  return (
+    <button
+      class="group flex flex-col gap-2.5 rounded-xl border border-gray-800 bg-gray-900 p-4 text-left transition-all hover:border-gray-700 hover:bg-[#111827] focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
+      onClick={() => props.onClick(agent)}
+    >
+      {/* Top row: dot + name + status badge */}
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDotColor(status())}`} />
+          <span class="truncate font-mono text-xs font-semibold text-gray-100">
+            {name()}
+          </span>
+        </div>
+        <span
+          class={`rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadgeBg(status())}`}
+        >
+          {status()}
+        </span>
+      </div>
+
+      {/* Details grid */}
+      <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-[12px]">
+        <DetailRow label="Role" value={role()} />
+        <DetailRow label="Project" value={props.agentProject(agent)} />
+        <DetailRow label="Uptime" value={uptime()} />
+        <DetailRow label="Model" value={model()} />
+      </div>
+
+      {/* Current task */}
+      <Show when={task()}>
+        <div class="flex items-center gap-2 rounded-lg bg-cyan-900/20 px-2.5 py-1.5">
+          <div class="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" />
+          <span class="truncate text-[11px] text-cyan-300">
+            {task()}
+          </span>
+        </div>
+      </Show>
+
+      {/* Heartbeat */}
+      <Show when={props.agentHeartbeatAge(agent)}>
+        <p class="text-[10px] text-gray-500">
+          Heartbeat: {props.agentHeartbeatAge(agent)}
+        </p>
+      </Show>
+    </button>
+  );
+};
 
 const DetailRow: Component<{ label: string; value: string }> = (props) => (
   <div class="flex items-baseline gap-1.5">

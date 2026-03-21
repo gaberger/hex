@@ -1,6 +1,6 @@
 use axum::{extract::Path, Json};
 use http::StatusCode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -199,6 +199,56 @@ pub async fn get_adr(Path(id): Path<String>) -> (StatusCode, Json<serde_json::Va
                     StatusCode::OK,
                     Json(serde_json::to_value(&detail).unwrap_or_default()),
                 );
+            }
+        }
+    }
+
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({ "error": format!("ADR-{} not found", id) })),
+    )
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveADRRequest {
+    pub content: String,
+}
+
+/// PUT /api/adrs/:id — save ADR content back to filesystem.
+pub async fn save_adr(
+    Path(id): Path<String>,
+    Json(body): Json<SaveADRRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let dir = match find_adr_dir() {
+        Some(d) => d,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "ADR directory not found" })),
+            )
+        }
+    };
+
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            if !filename.ends_with(".md") {
+                continue;
+            }
+
+            let file_id = extract_id(&filename);
+
+            if file_id == id {
+                return match std::fs::write(entry.path(), &body.content) {
+                    Ok(()) => (
+                        StatusCode::OK,
+                        Json(json!({ "ok": true, "file": filename })),
+                    ),
+                    Err(e) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": format!("Failed to write ADR: {}", e) })),
+                    ),
+                };
             }
         }
     }

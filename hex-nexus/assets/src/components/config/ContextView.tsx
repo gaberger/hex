@@ -28,12 +28,25 @@ hex is a **harness** -- a framework + CLI tool that gets **installed into target
 
 const ContextView: Component = () => {
   const [content, setContent] = createSignal(SAMPLE_CLAUDE_MD);
+  const [loading, setLoading] = createSignal(true);
 
-  // TODO: Fetch real CLAUDE.md content from API
-  // createEffect(async () => {
-  //   const res = await fetch('/api/projects/current/files?path=CLAUDE.md');
-  //   if (res.ok) { const data = await res.json(); setContent(data.content); }
-  // });
+  // Fetch real CLAUDE.md content from the file read API
+  createEffect(async () => {
+    try {
+      // Try fetching via generic file endpoint (reads project root CLAUDE.md)
+      const res = await fetch('/api/files?path=CLAUDE.md');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.content) {
+          setContent(data.content);
+        }
+      }
+    } catch {
+      // API not available, keep sample content
+    } finally {
+      setLoading(false);
+    }
+  });
 
   return (
     <div class="flex flex-1 flex-col overflow-hidden">
@@ -43,9 +56,23 @@ const ContextView: Component = () => {
         filePath="CLAUDE.md"
         initialMode="edit"
         editable={true}
-        onSave={(newContent) => {
-          setContent(newContent);
-          addToast("info", "CLAUDE.md save requires file write API — edit CLAUDE.md directly for now");
+        onSave={async (newContent) => {
+          try {
+            const res = await fetch('/api/files', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: 'CLAUDE.md', content: newContent }),
+            });
+            if (res.ok) {
+              setContent(newContent);
+              addToast('success', 'CLAUDE.md saved');
+            } else {
+              const data = await res.json().catch(() => ({}));
+              addToast('error', data.error || 'Save failed');
+            }
+          } catch {
+            addToast('error', 'Save failed — is nexus running?');
+          }
         }}
       />
     </div>

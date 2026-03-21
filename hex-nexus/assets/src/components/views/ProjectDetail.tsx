@@ -1,6 +1,7 @@
 import { type Component, createMemo, onMount, onCleanup, Show, For } from "solid-js";
 import { route } from "../../stores/router";
 import { projects } from "../../stores/projects";
+import { registryAgents } from "../../stores/connection";
 import { healthData, healthLoading, fetchHealth } from "../../stores/health";
 import {
   gitStatus,
@@ -90,6 +91,15 @@ const ProjectDetail: Component = () => {
   });
 
   const status = gitStatus;
+
+  const projectAgents = createMemo(() => {
+    const pid = projectId();
+    if (!pid) return [];
+    return registryAgents().filter((a: any) => {
+      const agentProj = a.project ?? a.projectId ?? a.project_id ?? "";
+      return agentProj === pid;
+    });
+  });
 
   const handleAnalyze = () => {
     const p = project();
@@ -338,6 +348,68 @@ const ProjectDetail: Component = () => {
                 </div>
               </div>
             )}
+          </For>
+        </div>
+      </Show>
+
+      {/* Project Agents */}
+      <h2 class="mb-3 mt-8 text-sm font-semibold uppercase tracking-wider text-gray-400">
+        Agents
+      </h2>
+      <Show
+        when={projectAgents().length > 0}
+        fallback={
+          <div class="rounded-xl border border-gray-800 bg-[#111827] px-4 py-6 text-center text-sm text-gray-500">
+            No agents assigned to this project
+          </div>
+        }
+      >
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+          <For each={projectAgents()}>
+            {(agent: any) => {
+              const status = () => agent.status ?? "idle";
+              const name = () => agent.name ?? agent.agent_name ?? "unnamed";
+              const role = () => agent.agentType ?? agent.agent_type ?? agent.role ?? "--";
+              const model = () => agent.model ?? "--";
+
+              const dotColor = () => {
+                const s = status();
+                if (s === "active" || s === "online") return "bg-green-500";
+                if (s === "idle") return "bg-yellow-500";
+                if (s === "stale") return "bg-yellow-500";
+                if (s === "dead" || s === "offline") return "bg-red-500";
+                return "bg-gray-500";
+              };
+
+              const badgeBg = () => {
+                const s = status();
+                if (s === "active" || s === "online") return "bg-green-900/30 text-green-400";
+                if (s === "idle") return "bg-yellow-900/30 text-yellow-400";
+                if (s === "stale") return "bg-yellow-900/30 text-yellow-400";
+                if (s === "dead" || s === "offline") return "bg-red-900/30 text-red-400";
+                return "bg-gray-800 text-gray-400";
+              };
+
+              return (
+                <div class="flex items-center gap-3 rounded-xl border border-gray-800 bg-[#111827] px-4 py-3 transition-colors hover:border-gray-700">
+                  <span class={`h-2.5 w-2.5 shrink-0 rounded-full ${dotColor()}`} />
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                      <span class="truncate text-xs font-semibold text-gray-200" style={{ "font-family": "'JetBrains Mono', monospace" }}>
+                        {name()}
+                      </span>
+                      <span class={`rounded-full px-2 py-0.5 text-[10px] font-medium ${badgeBg()}`}>
+                        {status()}
+                      </span>
+                    </div>
+                    <div class="mt-0.5 flex items-center gap-3 text-[11px] text-gray-500">
+                      <span>Role: <span class="text-gray-400">{role()}</span></span>
+                      <span>Model: <span class="text-gray-400">{model()}</span></span>
+                    </div>
+                  </div>
+                </div>
+              );
+            }}
           </For>
         </div>
       </Show>

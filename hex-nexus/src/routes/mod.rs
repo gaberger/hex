@@ -1,5 +1,6 @@
 pub mod adrs;
 pub mod agents;
+pub mod files;
 pub mod analysis;
 pub mod chat;
 pub mod commands;
@@ -21,7 +22,7 @@ pub mod swarms;
 pub mod openapi;
 pub mod ws;
 
-use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
+use axum::{Router, Json, routing::{get, post, put, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
 use tower_http::cors::{CorsLayer, AllowOrigin};
 use http::{HeaderValue, Method};
@@ -91,7 +92,7 @@ pub fn build_router(state: SharedState) -> Router {
             let s = origin.to_str().unwrap_or("");
             is_local_origin(s)
         }))
-        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE, Method::OPTIONS])
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE, Method::OPTIONS])
         .allow_headers([
             http::header::CONTENT_TYPE,
             http::header::AUTHORIZATION,
@@ -215,6 +216,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/workplan/status", get(orchestration::workplan_status))
         .route("/api/workplan/pause", post(orchestration::pause_workplan))
         .route("/api/workplan/resume", post(orchestration::resume_workplan))
+        // Workplan reporting (ADR-046)
+        .route("/api/workplan/list", get(orchestration::list_workplans))
+        .route("/api/workplan/{id}", get(orchestration::get_workplan))
+        .route("/api/workplan/{id}/report", get(orchestration::workplan_report))
         // Fleet (remote compute)
         .route("/api/fleet", get(fleet::list_nodes))
         .route("/api/fleet/register", post(fleet::register_node)
@@ -270,9 +275,15 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/{project_id}/git/timeline", get(git::git_timeline))
 
-        // ADR (Architecture Decision Records) — filesystem read-only
+        // ADR (Architecture Decision Records)
         .route("/api/adrs", get(adrs::list_adrs))
-        .route("/api/adrs/{id}", get(adrs::get_adr))
+        .route("/api/adrs/{id}", get(adrs::get_adr)
+            .put(adrs::save_adr)
+            .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
+
+        // Generic file write (path-traversal protected)
+        .route("/api/files", put(files::save_file)
+            .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
 
         // HexFlo coordination (ADR-027)
         .route("/api/hexflo/memory", post(hexflo::memory_store)

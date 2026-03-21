@@ -19,6 +19,36 @@ pub struct ExecutionState {
     pub updated_at: String,
     pub agents: Vec<String>,
     pub result: Option<serde_json::Value>,
+    // ADR-046: Aggregate tracking for reporting
+    #[serde(default)]
+    pub total_phases: usize,
+    #[serde(default)]
+    pub completed_phases: usize,
+    #[serde(default)]
+    pub total_tasks: usize,
+    #[serde(default)]
+    pub completed_tasks: usize,
+    #[serde(default)]
+    pub failed_tasks: usize,
+    #[serde(default)]
+    pub feature: String,
+    #[serde(default)]
+    pub project_id: String,
+    #[serde(default)]
+    pub phase_results: Vec<PhaseResult>,
+    #[serde(default)]
+    pub gate_results: Vec<GateResult>,
+}
+
+/// Result of a phase gate check (ADR-046).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateResult {
+    pub phase: String,
+    pub gate_command: String,
+    pub passed: bool,
+    pub output: String,
+    pub checked_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -161,6 +191,8 @@ impl WorkplanExecutor {
         let now = chrono::Utc::now().to_rfc3339();
         let first_phase = workplan.phases[0].name.clone();
 
+        let total_tasks: usize = workplan.phases.iter().map(|p| p.tasks.len()).sum();
+
         let exec_state = ExecutionState {
             id: id.clone(),
             workplan_path: workplan_path.to_string(),
@@ -170,6 +202,15 @@ impl WorkplanExecutor {
             updated_at: now.clone(),
             agents: Vec::new(),
             result: None,
+            total_phases: workplan.phases.len(),
+            completed_phases: 0,
+            total_tasks,
+            completed_tasks: 0,
+            failed_tasks: 0,
+            feature: workplan.name.clone().unwrap_or_default(),
+            project_id: String::new(),
+            phase_results: Vec::new(),
+            gate_results: Vec::new(),
         };
 
         // Persist via state port
@@ -229,10 +270,50 @@ impl WorkplanExecutor {
 
             match Self::execute_phase(&state_port, &shared_state, &workplan, phase).await {
                 Ok(result) => {
-                    all_agent_ids.extend(result.agent_ids);
+                    all_agent_ids.extend(result.agent_ids.clone());
+
+                    // Update aggregate stats (ADR-046)
+                    if let Ok(Some(mut exec)) = Self::load_execution(state_port.as_ref(), &execution_id).await {
+                        exec.completed_phases += 1;
+                        exec.completed_tasks += result.agent_ids.len();
+                        exec.failed_tasks += result.errors.len();
+                        exec.phase_results.push(result.clone());
+                        exec.updated_at = chrono::Utc::now().to_rfc3339();
+                        Self::store_execution(state_port.as_ref(), &exec).await.ok();
+                    }
+
                     if result.status == "failed" {
                         Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&result.errors)).await.ok();
                         return;
+                    }
+
+                    // ADR-046: Execute phase gate if present
+                    if let Some(ref gate_cmd) = phase.gate {
+                        if !gate_cmd.is_empty() {
+                            let gate_result = Self::run_gate(gate_cmd, &phase.name).await;
+                            // Persist gate result
+                            if let Ok(Some(mut exec)) = Self::load_execution(state_port.as_ref(), &execution_id).await {
+                                exec.gate_results.push(gate_result.clone());
+                                Self::store_execution(state_port.as_ref(), &exec).await.ok();
+                            }
+
+                            if !gate_result.passed {
+                                tracing::warn!(
+                                    execution_id = %execution_id,
+                                    phase = %phase.name,
+                                    gate = %gate_cmd,
+                                    "Phase gate FAILED — blocking advancement"
+                                );
+                                Self::mark_status(
+                                    state_port.as_ref(),
+                                    &execution_id,
+                                    ExecutionStatus::Failed,
+                                    Some(&[format!("Gate failed for phase '{}': {}", phase.name, gate_result.output)]),
+                                ).await.ok();
+                                return;
+                            }
+                            tracing::info!(execution_id = %execution_id, phase = %phase.name, "Phase gate passed");
+                        }
                     }
                 }
                 Err(e) => {
@@ -447,6 +528,74 @@ impl WorkplanExecutor {
         state.current_phase = phase.to_string();
         state.updated_at = chrono::Utc::now().to_rfc3339();
         Self::store_execution(port, &state).await
+    }
+
+    /// ADR-046: Execute a phase gate command and return the result.
+    async fn run_gate(command: &str, phase_name: &str) -> GateResult {
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let output = tokio::process::Command::new("sh")
+            .args(["-c", command])
+            .output()
+            .await;
+
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let combined = if stderr.is_empty() {
+                    stdout.to_string()
+                } else {
+                    format!("{}\n{}", stdout, stderr)
+                };
+                // Truncate output to avoid bloating SpacetimeDB
+                let truncated = if combined.len() > 2000 {
+                    format!("{}...(truncated)", &combined[..2000])
+                } else {
+                    combined
+                };
+
+                GateResult {
+                    phase: phase_name.to_string(),
+                    gate_command: command.to_string(),
+                    passed: out.status.success(),
+                    output: truncated,
+                    checked_at: now,
+                }
+            }
+            Err(e) => GateResult {
+                phase: phase_name.to_string(),
+                gate_command: command.to_string(),
+                passed: false,
+                output: format!("Failed to execute gate: {}", e),
+                checked_at: now,
+            },
+        }
+    }
+
+    /// ADR-046: List all workplan executions (active + historical).
+    pub async fn list_all(&self) -> Result<Vec<ExecutionState>, String> {
+        let results = self
+            .state_port
+            .hexflo_memory_search("workplan:")
+            .await
+            .map_err(|e| format!("State port search error: {}", e))?;
+
+        let mut executions = Vec::new();
+        for (_key, json) in &results {
+            if let Ok(state) = serde_json::from_str::<ExecutionState>(json) {
+                executions.push(state);
+            }
+        }
+
+        // Sort by started_at descending
+        executions.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        Ok(executions)
+    }
+
+    /// ADR-046: Get a specific workplan execution by ID.
+    pub async fn get_by_id(&self, id: &str) -> Result<Option<ExecutionState>, String> {
+        Self::load_execution(self.state_port.as_ref(), id).await
     }
 
     /// Mark execution with a new status, optionally recording errors.

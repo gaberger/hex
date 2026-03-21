@@ -4,9 +4,10 @@
  * Calls POST /api/agents/spawn with project dir, model, and agent type.
  * New agents appear in sidebar automatically via SpacetimeDB subscription.
  */
-import { Component, Show, createSignal, For } from "solid-js";
+import { Component, Show, createSignal, createMemo, createEffect, For } from "solid-js";
 import { inferenceProviders } from "../../stores/connection";
 import { projects as sharedProjects } from "../../stores/projects";
+import { route } from "../../stores/router";
 
 const AGENT_TYPES = [
   { value: "hex-coder", label: "Coder", desc: "Write code with TDD" },
@@ -23,12 +24,36 @@ export interface SpawnDialogProps {
 
 const SpawnDialog: Component<SpawnDialogProps> = (props) => {
   const projects = sharedProjects;
+
+  // Pre-fill project from current route when on a project page
+  const currentProjectId = createMemo(() => {
+    const r = route();
+    return (r as any).projectId ?? "";
+  });
+
+  const defaultProjectDir = createMemo(() => {
+    const pid = currentProjectId();
+    if (!pid) return "";
+    const proj = projects().find((p) => p.id === pid);
+    return proj?.path ?? "";
+  });
+
   const [projectDir, setProjectDir] = createSignal("");
   const [agentType, setAgentType] = createSignal("hex-coder");
   const [model, setModel] = createSignal("");
   const [spawning, setSpawning] = createSignal(false);
   const [error, setError] = createSignal("");
   const [success, setSuccess] = createSignal("");
+
+  // When dialog opens, pre-fill project dir from route context
+  createEffect(() => {
+    if (props.open) {
+      const dir = defaultProjectDir();
+      if (dir && !projectDir()) {
+        setProjectDir(dir);
+      }
+    }
+  });
 
   const models = () => {
     const providers = inferenceProviders();

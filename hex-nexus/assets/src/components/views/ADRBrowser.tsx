@@ -402,8 +402,22 @@ const ADRBrowser: Component = () => {
                   { label: "Date", value: detail().date || "\u2014" },
                   { label: "Drivers", value: detail().drivers || "Pending API integration" },
                 ]}
-                onSave={(_content) => {
-                  addToast("info", "ADR save requires file write API — edit docs/adrs/ directly for now");
+                onSave={async (content) => {
+                  try {
+                    const res = await fetch(`/api/adrs/${detail().id}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ content }),
+                    });
+                    if (res.ok) {
+                      addToast('success', `ADR-${detail().id} saved`);
+                    } else {
+                      const data = await res.json().catch(() => ({}));
+                      addToast('error', data.error || 'Save failed');
+                    }
+                  } catch {
+                    addToast('error', 'Save failed — is nexus running?');
+                  }
                 }}
               />
             );
