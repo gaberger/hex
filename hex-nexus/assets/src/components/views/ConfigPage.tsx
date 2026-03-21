@@ -76,6 +76,9 @@ const ConfigPage: Component = () => {
     return (r as any).section || 'blueprint';
   });
 
+  const projectId = createMemo(() => (route() as any).projectId || '');
+  const projectName = createMemo(() => projectId() || 'Global');
+
   return (
     <div class="flex flex-1 overflow-hidden">
       {/* Left nav */}
@@ -83,7 +86,16 @@ const ConfigPage: Component = () => {
         class="flex w-60 shrink-0 flex-col border-r border-gray-800 overflow-y-auto"
         style={{ "background-color": "#111827" }}
       >
-        <div class="flex items-center justify-between px-4 py-4">
+        <div class="px-4 py-3">
+          <div class="flex items-center gap-2 mb-1">
+            <svg class="h-4 w-4 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            </svg>
+            <span class="text-sm font-bold text-cyan-300">{projectName()}</span>
+          </div>
+          <span class="text-[10px] uppercase tracking-wider text-gray-600">Project Configuration</span>
+        </div>
+        <div class="flex items-center justify-between px-4 py-2">
           <span class="text-xs font-bold uppercase tracking-wider text-gray-500">Configure</span>
           <button
             class="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-400 hover:border-cyan-600 hover:text-cyan-300 transition-colors"
@@ -111,7 +123,7 @@ const ConfigPage: Component = () => {
                     "bg-gray-800": selected(),
                     "hover:bg-gray-800/50": !selected(),
                   }}
-                  onClick={() => navigate({ page: 'config', section: item.id })}
+                  onClick={() => navigate({ page: 'config', section: item.id, projectId: projectId() })}
                 >
                   <span
                     classList={{
