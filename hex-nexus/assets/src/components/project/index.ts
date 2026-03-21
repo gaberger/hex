@@ -4,3 +4,4 @@ export { default as ProjectSidebar } from './ProjectSidebar';
 export { default as FileTree } from './FileTree';
 export { default as TaskBoard } from './TaskBoard';
 export { default as AgentLog } from './AgentLog';
+export { default as BranchPicker } from './BranchPicker';

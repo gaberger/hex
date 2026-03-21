@@ -63,15 +63,31 @@ export interface BranchInfo {
   isHead: boolean;
 }
 
+export interface DiffFile {
+  path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  patch: string;
+}
+
+export interface DiffResult {
+  files: DiffFile[];
+  totalAdditions: number;
+  totalDeletions: number;
+  raw: string;
+}
+
 // ── Signals ───────────────────────────────────────────
 
 const [gitStatus, setGitStatus] = createSignal<GitStatus | null>(null);
 const [gitWorktrees, setGitWorktrees] = createSignal<WorktreeInfo[]>([]);
 const [gitLog, setGitLog] = createSignal<LogResult | null>(null);
 const [gitBranches, setGitBranches] = createSignal<BranchInfo[]>([]);
+const [gitDiff, setGitDiff] = createSignal<DiffResult | null>(null);
 const [gitLoading, setGitLoading] = createSignal(false);
 
-export { gitStatus, gitWorktrees, gitLog, gitBranches, gitLoading };
+export { gitStatus, gitWorktrees, gitLog, gitBranches, gitDiff, gitLoading };
 
 // ── Helpers ───────────────────────────────────────────
 
@@ -169,6 +185,60 @@ export async function fetchGitBranches(projectId: string, projectPath?: string):
     console.error("[git] branches fetch failed:", e);
   }
   return [];
+}
+
+export async function fetchGitDiff(
+  projectId: string,
+  projectPath?: string,
+  staged?: boolean,
+): Promise<DiffResult | null> {
+  try {
+    await ensureRegistered(projectId, projectPath);
+    const params = new URLSearchParams();
+    if (staged) params.set("staged", "true");
+    const qs = params.toString();
+
+    const res = await fetch(`/api/${projectId}/git/diff${qs ? "?" + qs : ""}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.ok) {
+        setGitDiff(json.data);
+        return json.data;
+      }
+      // If the response is raw diff text (no json.ok wrapper)
+      if (typeof json === "string" || json.raw) {
+        const raw = typeof json === "string" ? json : json.raw;
+        const result: DiffResult = { files: [], totalAdditions: 0, totalDeletions: 0, raw };
+        setGitDiff(result);
+        return result;
+      }
+    }
+  } catch (e) {
+    console.error("[git] diff fetch failed:", e);
+  }
+  return null;
+}
+
+export async function fetchGitDiffRange(
+  projectId: string,
+  base: string,
+  head: string,
+  projectPath?: string,
+): Promise<DiffResult | null> {
+  try {
+    await ensureRegistered(projectId, projectPath);
+    const res = await fetch(`/api/${projectId}/git/diff/${base}...${head}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.ok) {
+        setGitDiff(json.data);
+        return json.data;
+      }
+    }
+  } catch (e) {
+    console.error("[git] diff-range fetch failed:", e);
+  }
+  return null;
 }
 
 /** Fetch all git data for a project in parallel. */

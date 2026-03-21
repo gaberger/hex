@@ -1,10 +1,19 @@
 /**
- * DiffViewer.tsx — Inline diff rendering.
+ * DiffViewer.tsx — Git diff viewer with staged/unstaged toggle.
  *
- * Renders unified diff output with line-level add/remove coloring.
- * Supports both unified diff format and raw +/- lines.
+ * Two modes:
+ *   1. Standalone (props.diff) — renders a raw diff string (original behavior)
+ *   2. Connected (props.projectId) — fetches from GET /api/{project_id}/git/diff
+ *
+ * When connected, shows:
+ *   - File-level summary (added/modified/deleted with +/- counts)
+ *   - Toggle between staged and unstaged changes
+ *   - Expandable hunk-level diffs with colored additions/deletions
  */
-import { Component, For, createMemo } from "solid-js";
+import { Component, For, Show, createSignal, createEffect, createMemo } from "solid-js";
+import { gitDiff, fetchGitDiff, type DiffResult, type DiffFile } from "../../stores/git";
+
+// ── Diff parser (shared between modes) ──────────────────
 
 interface DiffLine {
   type: "add" | "remove" | "context" | "header";
@@ -20,7 +29,6 @@ function parseDiff(diff: string): DiffLine[] {
   for (const raw of diff.split("\n")) {
     if (raw.startsWith("@@")) {
       lines.push({ type: "header", content: raw });
-      // Parse line numbers from @@ -a,b +c,d @@
       const match = raw.match(/@@ -(\d+)/);
       if (match) removeNum = parseInt(match[1], 10);
       const match2 = raw.match(/\+(\d+)/);
@@ -54,17 +62,13 @@ const GUTTER_STYLES = {
   header:  "text-blue-600",
 };
 
-interface DiffViewerProps {
-  diff: string;
-  filename?: string;
-}
+// ── Inline diff renderer (original simple mode) ──────────
 
-const DiffViewer: Component<DiffViewerProps> = (props) => {
+const InlineDiff: Component<{ diff: string; filename?: string }> = (props) => {
   const lines = createMemo(() => parseDiff(props.diff));
 
   return (
     <div class="rounded-lg border border-gray-800 bg-gray-900/80 overflow-hidden">
-      {/* Header */}
       {props.filename && (
         <div class="flex items-center gap-2 border-b border-gray-800 px-3 py-1.5">
           <svg class="h-3.5 w-3.5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -76,18 +80,14 @@ const DiffViewer: Component<DiffViewerProps> = (props) => {
           </span>
         </div>
       )}
-
-      {/* Diff lines */}
       <div class="overflow-auto">
         <pre class="text-xs leading-5 font-mono">
           <For each={lines()}>
             {(line) => (
               <div class={`flex ${LINE_STYLES[line.type]}`}>
-                {/* Gutter */}
                 <span class={`w-12 shrink-0 select-none px-2 text-right ${GUTTER_STYLES[line.type]}`}>
                   {line.type === "add" ? "+" : line.type === "remove" ? "-" : line.type === "header" ? "@@" : " "}
                 </span>
-                {/* Content */}
                 <span class="flex-1 px-2 whitespace-pre">{line.content}</span>
               </div>
             )}
@@ -95,6 +95,287 @@ const DiffViewer: Component<DiffViewerProps> = (props) => {
         </pre>
       </div>
     </div>
+  );
+};
+
+// ── File status icon ─────────────────────────────────────
+
+const FILE_STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  added:    { label: "A", color: "#34D399" },
+  modified: { label: "M", color: "#FBBF24" },
+  deleted:  { label: "D", color: "#F87171" },
+  renamed:  { label: "R", color: "#60A5FA" },
+  copied:   { label: "C", color: "#A78BFA" },
+  A:        { label: "A", color: "#34D399" },
+  M:        { label: "M", color: "#FBBF24" },
+  D:        { label: "D", color: "#F87171" },
+  R:        { label: "R", color: "#60A5FA" },
+};
+
+// ── Connected DiffViewer (fetches from API) ──────────────
+
+interface ConnectedDiffViewerProps {
+  projectId: string;
+  projectPath?: string;
+}
+
+const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
+  const [staged, setStaged] = createSignal(false);
+  const [expandedFiles, setExpandedFiles] = createSignal<Set<string>>(new Set());
+  const [loading, setLoading] = createSignal(false);
+
+  // Fetch diff when projectId or staged toggle changes
+  createEffect(async () => {
+    const pid = props.projectId;
+    const isStaged = staged();
+    if (!pid) return;
+
+    setLoading(true);
+    try {
+      await fetchGitDiff(pid, props.projectPath, isStaged);
+    } finally {
+      setLoading(false);
+    }
+  });
+
+  const diff = createMemo(() => gitDiff());
+
+  const files = createMemo(() => diff()?.files ?? []);
+
+  const totalAdded = createMemo(() => diff()?.totalAdditions ?? 0);
+  const totalDeleted = createMemo(() => diff()?.totalDeletions ?? 0);
+
+  function toggleFile(path: string) {
+    const next = new Set(expandedFiles());
+    if (next.has(path)) {
+      next.delete(path);
+    } else {
+      next.add(path);
+    }
+    setExpandedFiles(next);
+  }
+
+  function expandAll() {
+    setExpandedFiles(new Set(files().map((f) => f.path)));
+  }
+
+  function collapseAll() {
+    setExpandedFiles(new Set());
+  }
+
+  return (
+    <div class="flex flex-col gap-4">
+      {/* Toolbar: staged/unstaged toggle + summary */}
+      <div class="flex items-center gap-3">
+        {/* Toggle buttons */}
+        <div class="flex rounded-md border" style={{ "border-color": "#374151" }}>
+          <button
+            class="px-3 py-1.5 text-[11px] font-medium transition-colors"
+            style={{
+              background: !staged() ? "#1E293B" : "transparent",
+              color: !staged() ? "#67E8F9" : "#9CA3AF",
+            }}
+            onClick={() => setStaged(false)}
+          >
+            Unstaged
+          </button>
+          <button
+            class="px-3 py-1.5 text-[11px] font-medium transition-colors border-l"
+            style={{
+              background: staged() ? "#1E293B" : "transparent",
+              color: staged() ? "#67E8F9" : "#9CA3AF",
+              "border-color": "#374151",
+            }}
+            onClick={() => setStaged(true)}
+          >
+            Staged
+          </button>
+        </div>
+
+        {/* Summary stats */}
+        <Show when={!loading()}>
+          <span class="text-[11px]" style={{ color: "#9CA3AF" }}>
+            {files().length} file{files().length !== 1 ? "s" : ""} changed
+          </span>
+          <Show when={totalAdded() > 0}>
+            <span class="text-[11px] font-mono" style={{ color: "#34D399" }}>
+              +{totalAdded()}
+            </span>
+          </Show>
+          <Show when={totalDeleted() > 0}>
+            <span class="text-[11px] font-mono" style={{ color: "#F87171" }}>
+              -{totalDeleted()}
+            </span>
+          </Show>
+        </Show>
+
+        <div class="flex-1" />
+
+        {/* Expand/collapse buttons */}
+        <Show when={files().length > 0}>
+          <button
+            class="text-[10px] transition-colors"
+            style={{ color: "#9CA3AF" }}
+            onClick={expandAll}
+          >
+            Expand all
+          </button>
+          <button
+            class="text-[10px] transition-colors"
+            style={{ color: "#9CA3AF" }}
+            onClick={collapseAll}
+          >
+            Collapse all
+          </button>
+        </Show>
+      </div>
+
+      {/* Loading state */}
+      <Show when={loading()}>
+        <div class="flex items-center justify-center py-8">
+          <div class="h-5 w-5 animate-spin rounded-full border-2 border-gray-700 border-t-cyan-400" />
+          <span class="ml-2 text-[11px]" style={{ color: "#9CA3AF" }}>Loading diff...</span>
+        </div>
+      </Show>
+
+      {/* Empty state */}
+      <Show when={!loading() && files().length === 0}>
+        <div class="rounded-lg border p-8 text-center" style={{ "border-color": "#1F2937", background: "#0D1117" }}>
+          <svg class="mx-auto mb-3 h-8 w-8" style={{ color: "#374151" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p class="text-[13px]" style={{ color: "#9CA3AF" }}>
+            {staged() ? "No staged changes" : "No unstaged changes"}
+          </p>
+          <p class="mt-1 text-[11px]" style={{ color: "#6B7280" }}>
+            Working tree is clean
+          </p>
+        </div>
+      </Show>
+
+      {/* File list with expandable diffs */}
+      <Show when={!loading() && files().length > 0}>
+        <div class="flex flex-col rounded-lg border overflow-hidden" style={{ "border-color": "#1F2937", background: "#0D1117" }}>
+          <For each={files()}>
+            {(file, idx) => {
+              const isExpanded = () => expandedFiles().has(file.path);
+              const statusInfo = () => FILE_STATUS_LABELS[file.status] ?? { label: "?", color: "#9CA3AF" };
+
+              return (
+                <>
+                  {/* File header row */}
+                  <button
+                    class="flex items-center gap-2 px-3 py-2 text-left transition-colors"
+                    style={{
+                      background: isExpanded() ? "#111827" : "transparent",
+                      "border-top": idx() > 0 ? "1px solid #1F2937" : "none",
+                    }}
+                    classList={{ "hover:bg-[#111827]/50": !isExpanded() }}
+                    onClick={() => toggleFile(file.path)}
+                  >
+                    {/* Expand chevron */}
+                    <svg
+                      class="h-3 w-3 shrink-0 transition-transform"
+                      style={{
+                        color: "#6B7280",
+                        transform: isExpanded() ? "rotate(90deg)" : "rotate(0deg)",
+                      }}
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="3"
+                    >
+                      <polyline points="9 18 15 12 9 6" />
+                    </svg>
+
+                    {/* Status badge */}
+                    <span
+                      class="shrink-0 rounded px-1 py-0.5 text-[9px] font-bold"
+                      style={{
+                        color: statusInfo().color,
+                        background: statusInfo().color + "15",
+                      }}
+                    >
+                      {statusInfo().label}
+                    </span>
+
+                    {/* File path */}
+                    <span class="flex-1 truncate text-[11px] font-mono" style={{ color: "#D1D5DB" }}>
+                      {file.path}
+                    </span>
+
+                    {/* Line counts */}
+                    <Show when={file.additions > 0}>
+                      <span class="text-[10px] font-mono" style={{ color: "#34D399" }}>
+                        +{file.additions}
+                      </span>
+                    </Show>
+                    <Show when={file.deletions > 0}>
+                      <span class="text-[10px] font-mono" style={{ color: "#F87171" }}>
+                        -{file.deletions}
+                      </span>
+                    </Show>
+                  </button>
+
+                  {/* Expanded diff hunks */}
+                  <Show when={isExpanded() && file.patch}>
+                    <div
+                      class="border-t overflow-auto"
+                      style={{ "border-color": "#1F2937" }}
+                    >
+                      <pre class="text-xs leading-5 font-mono">
+                        <For each={parseDiff(file.patch)}>
+                          {(line) => (
+                            <div class={`flex ${LINE_STYLES[line.type]}`}>
+                              <span class={`w-12 shrink-0 select-none px-2 text-right ${GUTTER_STYLES[line.type]}`}>
+                                {line.type === "add" ? "+" : line.type === "remove" ? "-" : line.type === "header" ? "@@" : " "}
+                              </span>
+                              <span class="flex-1 px-2 whitespace-pre">{line.content}</span>
+                            </div>
+                          )}
+                        </For>
+                      </pre>
+                    </div>
+                  </Show>
+                </>
+              );
+            }}
+          </For>
+        </div>
+      </Show>
+
+      {/* Raw diff fallback — if API returns raw text only */}
+      <Show when={!loading() && files().length === 0 && diff()?.raw}>
+        <InlineDiff diff={diff()!.raw} />
+      </Show>
+    </div>
+  );
+};
+
+// ── Main export — auto-selects mode ──────────────────────
+
+interface DiffViewerProps {
+  /** Raw diff string (standalone mode) */
+  diff?: string;
+  /** Filename label for standalone mode */
+  filename?: string;
+  /** Project ID for connected mode (fetches from API) */
+  projectId?: string;
+  /** Project filesystem path */
+  projectPath?: string;
+}
+
+const DiffViewer: Component<DiffViewerProps> = (props) => {
+  return (
+    <Show
+      when={props.projectId}
+      fallback={<InlineDiff diff={props.diff ?? ""} filename={props.filename} />}
+    >
+      <ConnectedDiffViewer
+        projectId={props.projectId!}
+        projectPath={props.projectPath}
+      />
+    </Show>
   );
 };
 
