@@ -1,0 +1,25 @@
+---
+name: hex-intf
+description: Hexagonal Architecture Framework for LLM-Driven Development
+version: "26.3.1"
+created: "2024-09-15"
+
+# SpacetimeDB project registration
+# When hex nexus starts in this directory, it auto-registers
+# this project in SpacetimeDB via the registerProject reducer.
+auto_register: true
+
+# Default agent configuration
+agent:
+  provider: auto
+  model: claude-sonnet-4-20250514
+  project_dir: .
+
+# Inference servers available to this project
+inference:
+  - name: ollama-bazzite
+    host: bazzite.local
+    port: 11434
+    models:
+      - qwen3.5:27b
+      - qwen3.5:9b
