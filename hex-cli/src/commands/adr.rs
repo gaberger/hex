@@ -90,6 +90,32 @@ async fn collect_adrs(dir: &Path) -> anyhow::Result<Vec<(PathBuf, String)>> {
     Ok(adrs)
 }
 
+/// Parse the `Enforced-By` field from an ADR markdown.
+///
+/// Looks for a line starting with `## Enforced-By:` or a frontmatter field
+/// `enforced-by:`. Returns Some(description) if found, None otherwise.
+fn parse_enforced_by(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // Check for heading style: ## Enforced-By: <tool>
+        if let Some(rest) = trimmed.strip_prefix("## Enforced-By:") {
+            let val = rest.trim();
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+        // Check for frontmatter style: enforced-by: <tool>
+        let lower = trimmed.to_lowercase();
+        if lower.starts_with("enforced-by:") {
+            let val = trimmed["enforced-by:".len()..].trim();
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Extract the title from an ADR file (first # heading or filename).
 fn extract_title(path: &Path, content: &str) -> String {
     for line in content.lines() {
@@ -119,12 +145,13 @@ async fn list() -> anyhow::Result<()> {
 
     // Header
     println!(
-        "  {:<8} {:<12} {}",
+        "  {:<8} {:<12} {:<14} {}",
         "ID".bold(),
         "Status".bold(),
+        "Enforcement".bold(),
         "Title".bold()
     );
-    println!("  {}", "\u{2500}".repeat(60).dimmed());
+    println!("  {}", "\u{2500}".repeat(76).dimmed());
 
     for (path, content) in &adrs {
         let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("???");
@@ -134,6 +161,7 @@ async fn list() -> anyhow::Result<()> {
             .unwrap_or(filename);
         let status = parse_adr_status(content);
         let title = extract_title(path, content);
+        let enforced = parse_enforced_by(content);
 
         let status_colored = match status {
             "accepted" => status.green().to_string(),
@@ -144,7 +172,12 @@ async fn list() -> anyhow::Result<()> {
             _ => status.dimmed().to_string(),
         };
 
-        println!("  {:<8} {:<21} {}", id, status_colored, title);
+        let enforcement_display = match &enforced {
+            Some(_) => "\u{2713} enforced".green().to_string(),
+            None => "\u{2014} honor system".dimmed().to_string(),
+        };
+
+        println!("  {:<8} {:<21} {:<23} {}", id, status_colored, enforcement_display, title);
     }
 
     println!();
