@@ -112,6 +112,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/projects", get(projects::list_projects))
         .route("/api/projects/register", post(projects::register)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/projects/init", post(files::init_project)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/projects/{id}", delete(projects::unregister))
         // Push (projects → hub) — size-limited
         .route("/api/push", post(push::push_state)

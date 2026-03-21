@@ -153,6 +153,145 @@ pub async fn read_file(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Project initialization (scaffolding)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct InitProjectRequest {
+    pub path: String,
+    pub name: Option<String>,
+}
+
+/// POST /api/projects/init — scaffold the standard hex config directory structure.
+///
+/// Idempotent: only creates files/directories that don't already exist.
+pub async fn init_project(
+    Json(body): Json<InitProjectRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let root = PathBuf::from(&body.path);
+    if !root.is_dir() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Path is not a directory" })),
+        );
+    }
+
+    let name = body.name.unwrap_or_else(|| {
+        root.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+    });
+
+    let mut created: Vec<&str> = Vec::new();
+
+    // Create .hex/ directory with default config files
+    let hex_dir = root.join(".hex");
+    if !hex_dir.exists() {
+        let _ = std::fs::create_dir_all(&hex_dir);
+        created.push(".hex/");
+
+        // Write default blueprint.json
+        let blueprint = json!({
+            "layers": [
+                { "name": "domain", "path": "src/core/domain/", "imports": [] },
+                { "name": "ports", "path": "src/core/ports/", "imports": ["domain"] },
+                { "name": "usecases", "path": "src/core/usecases/", "imports": ["domain", "ports"] },
+                { "name": "primary", "path": "src/adapters/primary/", "imports": ["ports"] },
+                { "name": "secondary", "path": "src/adapters/secondary/", "imports": ["ports"] }
+            ],
+            "rules": [
+                "Adapters must NEVER import other adapters",
+                "Domain must only import from domain"
+            ]
+        });
+        let _ = std::fs::write(
+            hex_dir.join("blueprint.json"),
+            serde_json::to_string_pretty(&blueprint).unwrap_or_default(),
+        );
+        created.push(".hex/blueprint.json");
+
+        // Write state.json pointing to SpacetimeDB
+        let state = json!({
+            "host": "http://127.0.0.1:3000",
+            "database": "hexflo-coordination"
+        });
+        let _ = std::fs::write(
+            hex_dir.join("state.json"),
+            serde_json::to_string_pretty(&state).unwrap_or_default(),
+        );
+        created.push(".hex/state.json");
+    }
+
+    // Create .claude/ directories
+    let claude_dir = root.join(".claude");
+    if !claude_dir.exists() {
+        let _ = std::fs::create_dir_all(claude_dir.join("skills"));
+        let _ = std::fs::create_dir_all(claude_dir.join("agents"));
+        created.push(".claude/skills/");
+        created.push(".claude/agents/");
+    }
+
+    // Create docs/adrs/ with template
+    let adrs_dir = root.join("docs").join("adrs");
+    if !adrs_dir.exists() {
+        let _ = std::fs::create_dir_all(&adrs_dir);
+        created.push("docs/adrs/");
+
+        let readme = format!(
+            "# Architecture Decision Records\n\n\
+             See the [ADR guide](https://github.com/hex-intf/hex/blob/main/docs/adrs/README.md) for conventions.\n"
+        );
+        let _ = std::fs::write(adrs_dir.join("README.md"), readme);
+
+        let template = "# ADR-{NNN}: {Title}\n\n\
+            **Status:** Proposed\n\
+            **Date:** {YYYY-MM-DD}\n\
+            **Drivers:** {reason}\n\n\
+            ## Context\n\n\
+            {description}\n\n\
+            ## Decision\n\n\
+            {what we decided}\n\n\
+            ## Consequences\n\n\
+            **Positive:**\n\
+            - \n\n\
+            **Negative:**\n\
+            - \n";
+        let _ = std::fs::write(adrs_dir.join("TEMPLATE.md"), template);
+        created.push("docs/adrs/TEMPLATE.md");
+    }
+
+    // Create CLAUDE.md if missing
+    let claude_md = root.join("CLAUDE.md");
+    if !claude_md.exists() {
+        let content = format!(
+            "# {} -- Project Instructions\n\n\
+             ## What This Project Is\n\n\
+             {} is a project managed by Hex Nexus.\n\n\
+             ## Build & Test\n\n\
+             ```bash\n\
+             # TODO: Add build commands\n\
+             ```\n\n\
+             ## Architecture\n\n\
+             This project uses hexagonal architecture. See `.hex/blueprint.json` for layer definitions.\n",
+            name, name
+        );
+        let _ = std::fs::write(&claude_md, content);
+        created.push("CLAUDE.md");
+    }
+
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "initialized": true,
+            "name": name,
+            "path": body.path,
+            "created": created,
+        })),
+    )
+}
+
 /// PUT /api/files — write content to a project file (path-traversal protected).
 pub async fn save_file(
     Json(body): Json<SaveFileRequest>,
