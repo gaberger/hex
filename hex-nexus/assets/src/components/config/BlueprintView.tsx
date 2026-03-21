@@ -1,5 +1,6 @@
-import { Component, For } from 'solid-js';
+import { Component, For, Show, createMemo } from 'solid-js';
 import { addToast } from '../../stores/toast';
+import { projectConfigs } from '../../stores/connection';
 
 interface LayerDef {
   name: string;
@@ -45,6 +46,35 @@ const ShieldAlert: Component = () => (
 );
 
 const BlueprintView: Component = () => {
+  // Primary: SpacetimeDB subscription
+  const stdbBlueprint = createMemo((): { layers: LayerDef[]; rules: BoundaryRule[] } | null => {
+    const configs = projectConfigs();
+    const bp = configs.find((c: any) => (c.key ?? c.configKey) === 'blueprint');
+    if (bp) {
+      try {
+        const parsed = JSON.parse(bp.valueJson ?? bp.value_json ?? '{}');
+        if (parsed.layers && Array.isArray(parsed.layers)) {
+          return {
+            layers: parsed.layers.map((l: any) => ({
+              name: l.name ?? '',
+              color: l.color ?? '#6b7280',
+              imports: l.imports ?? '',
+              path: l.path ?? '',
+            })),
+            rules: Array.isArray(parsed.rules)
+              ? parsed.rules.map((r: any) => ({ passing: !!r.passing, text: r.text ?? '' }))
+              : RULES,
+          };
+        }
+      } catch { /* fall through */ }
+    }
+    return null;
+  });
+
+  const dataSource = createMemo(() => stdbBlueprint() !== null ? 'stdb' as const : 'hardcoded' as const);
+  const layers = () => stdbBlueprint()?.layers ?? LAYERS;
+  const rules = () => stdbBlueprint()?.rules ?? RULES;
+
   return (
     <div class="flex-1 overflow-auto p-6">
       {/* Header */}
@@ -53,6 +83,9 @@ const BlueprintView: Component = () => {
           <h2 class="text-xl font-bold text-gray-100">Architecture Blueprint</h2>
           <p class="mt-1 text-sm text-gray-400">
             Hexagonal architecture layers and boundary enforcement rules.
+            <Show when={dataSource() === 'stdb'}>
+              <span class="ml-2 inline-flex items-center rounded-full bg-cyan-900/30 px-2 py-0.5 text-[10px] font-medium text-cyan-400">SpacetimeDB</span>
+            </Show>
           </p>
         </div>
         <button class="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors border border-gray-700"
@@ -65,7 +98,7 @@ const BlueprintView: Component = () => {
       <div class="mb-8">
         <h3 class="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Layers</h3>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          <For each={LAYERS}>
+          <For each={layers()}>
             {(layer) => (
               <div
                 class="rounded-lg p-3"
@@ -93,7 +126,7 @@ const BlueprintView: Component = () => {
       <div>
         <h3 class="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Boundary Rules</h3>
         <div class="space-y-2">
-          <For each={RULES}>
+          <For each={rules()}>
             {(rule) => (
               <div class="flex items-center gap-3 rounded-lg px-4 py-2.5" style={{ "background-color": "#111827" }}>
                 {rule.passing ? <ShieldCheck /> : <ShieldAlert />}

@@ -1,6 +1,7 @@
-import { Component, For } from 'solid-js';
+import { Component, For, Show, createMemo } from 'solid-js';
 import { addToast } from '../../stores/toast';
 import { setSpawnDialogOpen } from '../../stores/ui';
+import { agentDefinitions } from '../../stores/connection';
 
 interface AgentDef {
   name: string;
@@ -10,6 +11,14 @@ interface AgentDef {
   tools: string[];
   color: string;
 }
+
+const ROLE_COLORS: Record<string, string> = {
+  coder: '#4ade80',
+  planner: '#60a5fa',
+  integrator: '#22d3ee',
+  reviewer: '#a78bfa',
+  tester: '#eab308',
+};
 
 const AGENT_DEFS: AgentDef[] = [
   { name: "hex-coder", role: "coder", model: "opus", desc: "Write code with TDD loop", tools: ["Read", "Write", "Edit", "Bash", "Grep"], color: "#4ade80" },
@@ -26,6 +35,23 @@ const modelBadgeColor: Record<string, string> = {
 };
 
 const AgentDefsView: Component = () => {
+  // Primary: SpacetimeDB subscription
+  const stdbAgents = createMemo((): AgentDef[] | null => {
+    const defs = agentDefinitions();
+    if (defs.length === 0) return null;
+    return defs.map((d: any) => ({
+      name: d.name ?? '',
+      role: d.role ?? '',
+      model: d.model ?? '',
+      desc: d.description ?? '',
+      tools: (() => { try { return JSON.parse(d.toolsJson ?? d.tools_json ?? '[]'); } catch { return []; } })(),
+      color: ROLE_COLORS[d.role] || '#6b7280',
+    }));
+  });
+
+  const dataSource = createMemo(() => stdbAgents() !== null ? 'stdb' as const : 'hardcoded' as const);
+  const agentList = () => stdbAgents() ?? AGENT_DEFS;
+
   return (
     <div class="flex-1 overflow-auto p-6">
       {/* Header */}
@@ -34,6 +60,9 @@ const AgentDefsView: Component = () => {
           <h2 class="text-xl font-bold text-gray-100">Agent Definitions</h2>
           <p class="mt-1 text-sm text-gray-400">
             Role definitions from <code class="text-xs font-mono text-gray-500">.claude/agents/</code> that configure agent capabilities.
+            <Show when={dataSource() === 'stdb'}>
+              <span class="ml-2 inline-flex items-center rounded-full bg-cyan-900/30 px-2 py-0.5 text-[10px] font-medium text-cyan-400">SpacetimeDB</span>
+            </Show>
           </p>
         </div>
         <button class="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors border border-gray-700"
@@ -44,7 +73,7 @@ const AgentDefsView: Component = () => {
 
       {/* Agent cards grid */}
       <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        <For each={AGENT_DEFS}>
+        <For each={agentList()}>
           {(agent) => (
             <div
               class="rounded-xl p-4 border"

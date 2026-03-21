@@ -1,5 +1,6 @@
-import { Component, For, Show, createResource } from 'solid-js';
+import { Component, For, Show, createResource, createMemo } from 'solid-js';
 import { addToast } from '../../stores/toast';
+import { projectConfigs, hexfloConnected } from '../../stores/connection';
 
 interface MCPServer {
   name: string;
@@ -53,7 +54,28 @@ async function discoverServers(): Promise<MCPServer[]> {
 const MCPToolsView: Component = () => {
   const [servers] = createResource(discoverServers);
 
-  const serverList = () => servers() ?? HARDCODED_SERVERS;
+  // Primary: SpacetimeDB subscription
+  const stdbServers = createMemo((): MCPServer[] | null => {
+    const configs = projectConfigs();
+    const mcpConfig = configs.find((c: any) => (c.key ?? c.configKey) === 'mcp_servers');
+    if (mcpConfig) {
+      try {
+        const parsed = JSON.parse(mcpConfig.valueJson ?? mcpConfig.value_json ?? '{}');
+        return Object.entries(parsed).map(([name, config]: [string, any]) => ({
+          name,
+          status: 'configured' as const,
+          command: config.command || '',
+          args: config.args || [],
+          tools: [],
+          totalTools: 0,
+        }));
+      } catch { /* fall through */ }
+    }
+    return null;
+  });
+
+  const dataSource = createMemo(() => stdbServers() !== null ? 'stdb' as const : 'rest' as const);
+  const serverList = () => stdbServers() ?? servers() ?? HARDCODED_SERVERS;
 
   return (
     <div class="flex-1 overflow-auto p-6">
@@ -63,6 +85,9 @@ const MCPToolsView: Component = () => {
           <h2 class="text-xl font-bold text-gray-100">MCP Tool Servers</h2>
           <p class="mt-1 text-sm text-gray-400">
             {servers.loading ? 'Discovering MCP servers...' : `${serverList().length} MCP servers from settings.`}
+            <Show when={dataSource() === 'stdb'}>
+              <span class="ml-2 inline-flex items-center rounded-full bg-cyan-900/30 px-2 py-0.5 text-[10px] font-medium text-cyan-400">SpacetimeDB</span>
+            </Show>
           </p>
         </div>
         <button class="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors border border-gray-700"

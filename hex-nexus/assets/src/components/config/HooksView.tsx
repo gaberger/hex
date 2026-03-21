@@ -1,5 +1,6 @@
-import { Component, For, createResource } from 'solid-js';
+import { Component, For, Show, createResource, createMemo } from 'solid-js';
 import { addToast } from '../../stores/toast';
+import { projectConfigs } from '../../stores/connection';
 
 interface Hook {
   name: string;
@@ -76,7 +77,29 @@ async function discoverHooks(): Promise<HookType[]> {
 const HooksView: Component = () => {
   const [hookData] = createResource(discoverHooks);
 
-  const hookTypes = () => hookData() ?? HARDCODED_HOOKS;
+  // Primary: SpacetimeDB subscription
+  const stdbHooks = createMemo((): HookType[] | null => {
+    const configs = projectConfigs();
+    const hookConfig = configs.find((c: any) => (c.key ?? c.configKey) === 'hooks');
+    if (hookConfig) {
+      try {
+        const parsed = JSON.parse(hookConfig.valueJson ?? hookConfig.value_json ?? '{}');
+        return Object.entries(parsed).map(([event, items]: [string, any]) => ({
+          event,
+          desc: EVENT_DESCRIPTIONS[event] || event,
+          hooks: (Array.isArray(items) ? items : []).map((h: any, i: number) => ({
+            name: h.matcher || (typeof h.command === 'string' ? h.command.split('/').pop() : null) || `hook-${i}`,
+            cmd: typeof h.command === 'string' ? h.command : (Array.isArray(h.command) ? h.command.join(' ') : ''),
+            enabled: true,
+          })),
+        }));
+      } catch { /* fall through */ }
+    }
+    return null;
+  });
+
+  const dataSource = createMemo(() => stdbHooks() !== null ? 'stdb' as const : 'rest' as const);
+  const hookTypes = () => stdbHooks() ?? hookData() ?? HARDCODED_HOOKS;
 
   return (
     <div class="flex-1 overflow-auto p-6" style={{ "background-color": "#0a0e14" }}>
@@ -86,6 +109,9 @@ const HooksView: Component = () => {
           <h2 class="text-xl font-bold text-gray-100">Hooks</h2>
           <p class="mt-1 text-sm text-gray-400">
             {hookData.loading ? 'Discovering hooks...' : 'Claude Code hooks that run at specific lifecycle events.'}
+            <Show when={dataSource() === 'stdb'}>
+              <span class="ml-2 inline-flex items-center rounded-full bg-cyan-900/30 px-2 py-0.5 text-[10px] font-medium text-cyan-400">SpacetimeDB</span>
+            </Show>
           </p>
         </div>
       </div>

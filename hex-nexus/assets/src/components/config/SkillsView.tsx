@@ -1,5 +1,6 @@
-import { Component, For, createResource, createMemo } from 'solid-js';
+import { Component, For, Show, createResource, createMemo } from 'solid-js';
 import { addToast } from '../../stores/toast';
+import { skillRegistry } from '../../stores/connection';
 
 interface Skill {
   name: string;
@@ -112,8 +113,22 @@ async function discoverSkills(): Promise<Skill[] | null> {
 const SkillsView: Component = () => {
   const [discoveredSkills] = createResource(discoverSkills);
 
+  // Primary: SpacetimeDB subscription
+  const stdbSkills = createMemo((): Skill[] | null => {
+    const skills = skillRegistry();
+    if (skills.length === 0) return null;
+    return skills.map((s: any) => ({
+      name: s.name ?? s.skillName ?? '',
+      trigger: s.triggerCmd ?? s.trigger_cmd ?? s.trigger ?? '',
+      desc: s.description ?? '',
+      source: s.sourcePath ?? s.source_path ?? '.claude/skills/',
+    }));
+  });
+
+  const dataSource = createMemo(() => stdbSkills() !== null ? 'stdb' as const : 'rest' as const);
+
   const categories = createMemo((): SkillCategory[] => {
-    const discovered = discoveredSkills();
+    const discovered = stdbSkills() ?? discoveredSkills();
     if (!discovered) return HARDCODED_CATEGORIES;
 
     // Build category map from hardcoded as base
@@ -154,6 +169,9 @@ const SkillsView: Component = () => {
           <h2 class="text-xl font-bold text-gray-100">Skills</h2>
           <p class="mt-1 text-sm text-gray-400">
             {discoveredSkills.loading ? 'Discovering skills...' : `${totalSkills()} slash commands across ${categories().length} categories`}
+            <Show when={dataSource() === 'stdb'}>
+              <span class="ml-2 inline-flex items-center rounded-full bg-cyan-900/30 px-2 py-0.5 text-[10px] font-medium text-cyan-400">SpacetimeDB</span>
+            </Show>
           </p>
         </div>
         <button class="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-400 hover:border-cyan-600 hover:text-cyan-300 transition-colors"
