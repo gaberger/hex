@@ -17,6 +17,7 @@ pub mod state;
 pub mod usecases;
 pub mod state_config;
 pub mod spacetime_bindings;
+pub mod config_sync;
 pub mod spacetime_launcher;
 
 use std::sync::Arc;
@@ -149,6 +150,17 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         app_state.chat_stdb = Some(Arc::new(chat_client));
         tracing::info!("SpacetimeDB inference-gateway + chat-relay clients initialized");
 
+    }
+
+    // Sync project config files to SpacetimeDB (fire-and-forget)
+    if let Ok(cwd) = std::env::current_dir() {
+        let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+        let stdb_db = std::env::var("HEX_SPACETIMEDB_DATABASE")
+            .unwrap_or_else(|_| "hexflo-coordination".to_string());
+        tokio::spawn(async move {
+            config_sync::sync_project_config(&cwd, &stdb_host, &stdb_db).await;
+        });
     }
 
     // Initialize session persistence (ADR-036)
