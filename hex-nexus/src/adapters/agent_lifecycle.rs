@@ -2,9 +2,11 @@
 //! ports to manage the full lifecycle of remote agents (ADR-040).
 
 use std::sync::Arc;
+use async_trait::async_trait;
 use tokio::sync::RwLock;
 use tracing;
 
+use crate::ports::agent_lifecycle::IAgentLifecyclePort;
 use crate::ports::agent_transport::IAgentTransportPort;
 use crate::ports::remote_registry::IRemoteRegistryPort;
 use crate::ports::ssh_tunnel::ISshTunnelPort;
@@ -240,5 +242,38 @@ impl AgentLifecycleAdapter {
     /// Get a specific agent's info.
     pub async fn get_agent(&self, agent_id: &str) -> Result<Option<RemoteAgent>, TransportError> {
         self.registry_port.get_agent(agent_id).await
+    }
+}
+
+#[async_trait]
+impl IAgentLifecyclePort for AgentLifecycleAdapter {
+    async fn spawn_remote_agent(
+        &self,
+        config: SshTunnelConfig,
+        agent_name: String,
+        project_dir: String,
+    ) -> Result<RemoteAgent, TransportError> {
+        self.spawn_remote_agent(config, agent_name, project_dir).await
+    }
+
+    async fn accept_agent(
+        &self,
+        agent_id: String,
+        capabilities: AgentCapabilities,
+        project_dir: String,
+    ) -> Result<RemoteAgent, TransportError> {
+        self.accept_agent(agent_id, capabilities, project_dir).await
+    }
+
+    async fn disconnect_agent(&self, agent_id: &str) -> Result<(), TransportError> {
+        self.disconnect_agent(agent_id).await
+    }
+
+    async fn list_agents(&self) -> Result<Vec<RemoteAgent>, TransportError> {
+        self.list_agents().await
+    }
+
+    async fn get_agent(&self, agent_id: &str) -> Result<Option<RemoteAgent>, TransportError> {
+        self.get_agent(agent_id).await
     }
 }

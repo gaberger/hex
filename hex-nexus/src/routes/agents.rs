@@ -1,8 +1,8 @@
 //! REST API route handlers for remote agent management (ADR-040, T4-3).
 //!
 //! These handlers expose the remote agent lifecycle, fleet status, and
-//! spawn-via-SSH functionality over HTTP. They compose the AgentLifecycleAdapter,
-//! RemoteRegistryAdapter (via IRemoteRegistryPort), and RemoteAgentOrchestrator.
+//! spawn-via-SSH functionality over HTTP. They depend ONLY on port traits,
+//! never on concrete adapters or use cases (hexagonal architecture).
 
 use axum::{
     extract::{Path, State},
@@ -12,20 +12,17 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
-use crate::adapters::agent_lifecycle::AgentLifecycleAdapter;
-use crate::adapters::remote_registry::RemoteRegistryAdapter;
-use crate::ports::remote_registry::IRemoteRegistryPort;
+use crate::ports::agent_lifecycle::IAgentLifecyclePort;
+use crate::ports::agent_orchestrator::IAgentOrchestratorPort;
 use crate::remote::transport::*;
-use crate::usecases::remote_agent_orchestrator::RemoteAgentOrchestrator;
 
 // ── Shared state for agent routes ────────────────────
 
 /// Dedicated state type for agent routes.
-/// Will be folded into SharedState in a future iteration.
+/// Uses port traits — wired to concrete adapters in the composition root.
 pub struct AgentState {
-    pub lifecycle: Arc<AgentLifecycleAdapter>,
-    pub orchestrator: Arc<RemoteAgentOrchestrator>,
-    pub registry: Arc<RemoteRegistryAdapter>,
+    pub lifecycle: Arc<dyn IAgentLifecyclePort>,
+    pub orchestrator: Arc<dyn IAgentOrchestratorPort>,
 }
 
 // ── Handlers ─────────────────────────────────────────
@@ -34,7 +31,7 @@ pub struct AgentState {
 pub async fn list_agents(
     State(state): State<Arc<AgentState>>,
 ) -> Json<serde_json::Value> {
-    match state.registry.list_agents(None).await {
+    match state.lifecycle.list_agents().await {
         Ok(agents) => Json(json!(agents)),
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
@@ -45,7 +42,7 @@ pub async fn get_agent(
     State(state): State<Arc<AgentState>>,
     Path(agent_id): Path<String>,
 ) -> Json<serde_json::Value> {
-    match state.registry.get_agent(&agent_id).await {
+    match state.lifecycle.get_agent(&agent_id).await {
         Ok(Some(agent)) => Json(json!(agent)),
         Ok(None) => Json(json!({ "error": "Agent not found" })),
         Err(e) => Json(json!({ "error": e.to_string() })),

@@ -4,11 +4,16 @@
 //! Depends ONLY on port traits — never on adapters (hexagonal architecture).
 
 use std::sync::Arc;
+use async_trait::async_trait;
 
+use crate::ports::agent_orchestrator::IAgentOrchestratorPort;
 use crate::ports::agent_transport::IAgentTransportPort;
-use crate::ports::inference_router::{FleetCapacity, IInferenceRouterPort};
+use crate::ports::inference_router::IInferenceRouterPort;
 use crate::ports::remote_registry::IRemoteRegistryPort;
 use crate::remote::transport::*;
+
+// Re-export FleetStatus from the port so downstream consumers find it here too.
+pub use crate::ports::agent_orchestrator::FleetStatus;
 
 /// Orchestrates remote code generation across the agent fleet.
 ///
@@ -209,12 +214,22 @@ impl RemoteAgentOrchestrator {
     }
 }
 
-/// Summary of fleet-wide agent status.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FleetStatus {
-    pub total_agents: u32,
-    pub online_agents: u32,
-    pub busy_agents: u32,
-    pub capacity: FleetCapacity,
+// FleetStatus is defined in crate::ports::agent_orchestrator and re-exported.
+
+#[async_trait]
+impl IAgentOrchestratorPort for RemoteAgentOrchestrator {
+    async fn submit_code_gen(
+        &self,
+        request: CodeGenRequest,
+    ) -> Result<CodeGenResult, TransportError> {
+        self.submit_code_gen(request).await
+    }
+
+    async fn fleet_status(&self) -> Result<FleetStatus, TransportError> {
+        self.fleet_status().await
+    }
+
+    async fn handle_agent_death(&self, dead_agent_id: &str) -> Result<u32, TransportError> {
+        self.handle_agent_death(dead_agent_id).await
+    }
 }
