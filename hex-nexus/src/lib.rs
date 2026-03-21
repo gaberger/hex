@@ -243,6 +243,9 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         }
     });
 
+    // Background task: git status polling for registered projects (ADR-044 Phase 2)
+    git::poller::spawn_git_poller(state.clone(), 10);
+
     // Build router
     let app = routes::build_router(state.clone());
 

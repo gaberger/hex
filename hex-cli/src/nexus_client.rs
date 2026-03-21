@@ -131,6 +131,27 @@ impl NexusClient {
         resp.json().await.with_context(|| format!("Failed to parse JSON from {}", path))
     }
 
+    /// DELETE a resource from nexus and return the response.
+    pub async fn delete(&self, path: &str) -> anyhow::Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let mut req = self.http.delete(&url);
+        if let Some(ref token) = self.auth_token {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+        let resp = req
+            .send()
+            .await
+            .with_context(|| format!("DELETE {} failed", url))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            bail!("DELETE {} returned {}: {}", path, status, text);
+        }
+
+        resp.json().await.with_context(|| format!("Failed to parse JSON from {}", path))
+    }
+
     /// Base URL for display purposes.
     pub fn url(&self) -> &str {
         &self.base_url

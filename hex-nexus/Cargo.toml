@@ -52,6 +52,8 @@ utoipa = { version = "5", features = ["axum_extras"] }
 tokio-tungstenite = "0.24"
 # Git repository introspection (ADR-044)
 git2 = { version = "0.19", features = ["vendored-libgit2"] }
+# ADR compliance rule loading (ADR-045)
+toml = "0.8"
 # Shared domain types and port traits (hex-core is the gravity center)
 hex-core = { path = "../hex-core" }
 # SQLite for offline-first session persistence (ADR-036)

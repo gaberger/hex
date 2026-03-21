@@ -14,3 +14,4 @@ pub mod boundary_checker;
 pub mod cycle_detector;
 pub mod dead_export_finder;
 pub mod analyzer;
+pub mod adr_compliance;

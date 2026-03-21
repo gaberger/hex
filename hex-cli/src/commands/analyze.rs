@@ -175,6 +175,38 @@ pub async fn run(path: &str) -> anyhow::Result<()> {
         );
     }
 
+    // ADR compliance check (ADR-045) — runs locally, no nexus needed
+    println!();
+    println!("  {}", "ADR compliance:".bold());
+    let adr_violations = check_adr_compliance(&root);
+    if adr_violations.is_empty() {
+        println!(
+            "    {} All ADR rules satisfied",
+            "\u{2713}".green()
+        );
+    } else {
+        let errors = adr_violations.iter().filter(|v| v.severity == "error").count();
+        let warnings = adr_violations.iter().filter(|v| v.severity == "warning").count();
+        println!(
+            "    {} {} ADR violation(s): {} error(s), {} warning(s)",
+            "\u{26a0}".yellow(),
+            adr_violations.len(),
+            errors,
+            warnings,
+        );
+        for v in &adr_violations {
+            let icon = if v.severity == "error" {
+                "\u{2717}".red()
+            } else {
+                "\u{26a0}".yellow()
+            };
+            println!(
+                "    {} [{}] {}:{} — {}",
+                icon, v.adr, v.file, v.line, v.message,
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -293,6 +325,138 @@ fn resolve_relative_path(source_dir: &str, import_path: &str) -> String {
     }
 
     parts.join("/")
+}
+
+// ── ADR Compliance (ADR-045) ────────────────────────────
+// Rules are loaded from the project's `.hex/adr-rules.toml` — hex ships no
+// project-specific rules. The engine is the framework; the rules are the project's.
+
+struct AdrViolationLocal {
+    adr: String,
+    file: String,
+    line: usize,
+    message: String,
+    severity: String,
+}
+
+#[derive(serde::Deserialize)]
+struct AdrRulesFile {
+    #[serde(default)]
+    rules: Vec<AdrRuleConfig>,
+}
+
+#[derive(serde::Deserialize)]
+struct AdrRuleConfig {
+    adr: String,
+    #[allow(dead_code)]
+    id: String,
+    message: String,
+    #[serde(default = "default_severity")]
+    severity: String,
+    #[serde(default)]
+    file_patterns: Vec<String>,
+    #[serde(default)]
+    exclude_patterns: Vec<String>,
+    #[serde(default)]
+    violation_patterns: Vec<String>,
+}
+
+fn default_severity() -> String { "warning".to_string() }
+
+fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
+    // Load rules from project's .hex/adr-rules.toml
+    let rules_path = root.join(".hex").join("adr-rules.toml");
+    let rules = if rules_path.is_file() {
+        match std::fs::read_to_string(&rules_path) {
+            Ok(content) => match toml::from_str::<AdrRulesFile>(&content) {
+                Ok(parsed) => {
+                    println!(
+                        "    {} Loaded {} rule(s) from {}",
+                        "\u{2713}".green(),
+                        parsed.rules.len(),
+                        rules_path.strip_prefix(root).unwrap_or(&rules_path).display(),
+                    );
+                    parsed.rules
+                }
+                Err(e) => {
+                    println!(
+                        "    {} Failed to parse adr-rules.toml: {}",
+                        "\u{2717}".red(), e
+                    );
+                    return Vec::new();
+                }
+            },
+            Err(_) => return Vec::new(),
+        }
+    } else {
+        println!(
+            "    {} No .hex/adr-rules.toml found — skipping compliance check",
+            "\u{25cb}".dimmed()
+        );
+        return Vec::new();
+    };
+
+    let active_rules: Vec<&AdrRuleConfig> = rules
+        .iter()
+        .filter(|r| !r.violation_patterns.is_empty())
+        .collect();
+
+    let mut violations = Vec::new();
+    let files = collect_source_files(&root.join("src"));
+
+    // Also scan hex-nexus/src if it exists (multi-crate projects)
+    let mut all_files = files;
+    for subdir in &["hex-nexus/src", "hex-cli/src"] {
+        let sub = root.join(subdir);
+        if sub.is_dir() {
+            all_files.extend(collect_source_files(&sub));
+        }
+    }
+
+    for path in &all_files {
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
+
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        for rule in &active_rules {
+            if !rule.file_patterns.is_empty()
+                && !rule.file_patterns.iter().any(|p| rel.ends_with(p.as_str()))
+            {
+                continue;
+            }
+            if rule.exclude_patterns.iter().any(|p| rel.contains(p.as_str())) {
+                continue;
+            }
+
+            for (line_num, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
+                    continue;
+                }
+                for pattern in &rule.violation_patterns {
+                    if line.contains(pattern.as_str()) {
+                        violations.push(AdrViolationLocal {
+                            adr: rule.adr.to_string(),
+                            file: rel.clone(),
+                            line: line_num + 1,
+                            message: rule.message.to_string(),
+                            severity: rule.severity.clone(),
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    violations
 }
 
 fn print_check(label: &str, present: bool) {
