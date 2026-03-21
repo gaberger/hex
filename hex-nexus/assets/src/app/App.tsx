@@ -151,14 +151,68 @@ const App: Component = () => {
           <span class="text-sm font-semibold tracking-wide text-gray-100">
             HEX NEXUS
           </span>
+          {/* Section navigation tabs */}
+          <nav class="hidden md:flex items-center gap-1 ml-4">
+            <button
+              class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+              classList={{
+                "bg-gray-800 text-gray-100": route().page === "control-plane",
+                "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "control-plane",
+              }}
+              onClick={() => navigate({ page: "control-plane" })}
+            >
+              Projects
+            </button>
+            <button
+              class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+              classList={{
+                "bg-gray-800 text-gray-100": route().page === "agent-fleet",
+                "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "agent-fleet",
+              }}
+              onClick={() => navigate({ page: "agent-fleet" })}
+            >
+              Agents
+            </button>
+            <button
+              class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+              classList={{
+                "bg-gray-800 text-gray-100": route().page === "adrs" || route().page === "project-adr",
+                "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "adrs" && route().page !== "project-adr",
+              }}
+              onClick={() => navigate({ page: "adrs" })}
+            >
+              ADRs
+            </button>
+            <button
+              class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+              classList={{
+                "bg-gray-800 text-gray-100": route().page === "config",
+                "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "config",
+              }}
+              onClick={() => navigate({ page: "config", section: "blueprint" })}
+            >
+              Config
+            </button>
+            <button
+              class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+              classList={{
+                "bg-gray-800 text-gray-100": route().page === "inference",
+                "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50": route().page !== "inference",
+              }}
+              onClick={() => navigate({ page: "inference" })}
+            >
+              Inference
+            </button>
+          </nav>
+          {/* Plan/Build mode */}
           <button
-            class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
+            class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ml-3"
             classList={{
               "bg-blue-900/30 text-blue-400 hover:bg-blue-900/50": mode() === "plan",
               "bg-green-900/30 text-green-400 hover:bg-green-900/50": mode() === "build",
             }}
             onClick={toggleMode}
-            title="Toggle Plan/Build mode (Tab in empty input)"
+            title="Toggle Plan/Build mode (Tab)"
           >
             <span class="h-1.5 w-1.5 rounded-full"
               classList={{
@@ -168,30 +222,6 @@ const App: Component = () => {
             />
             {mode() === "plan" ? "Plan" : "Build"}
           </button>
-          <div class="flex items-center rounded-md border border-gray-700 overflow-hidden">
-            <button
-              class="px-2 py-1 text-[10px] font-medium transition-colors"
-              classList={{
-                "bg-gray-700 text-gray-100": viewMode() === "chat",
-                "text-gray-500 hover:text-gray-300": viewMode() !== "chat",
-              }}
-              onClick={() => setViewMode("chat")}
-              title="Chat view"
-            >
-              Chat
-            </button>
-            <button
-              class="px-2 py-1 text-[10px] font-medium transition-colors"
-              classList={{
-                "bg-gray-700 text-gray-100": viewMode() === "panes",
-                "text-gray-500 hover:text-gray-300": viewMode() !== "panes",
-              }}
-              onClick={() => setViewMode("panes")}
-              title="Tiling panes (Ctrl+Shift+C)"
-            >
-              Panes
-            </button>
-          </div>
         </div>
         <div class="flex items-center gap-3 text-[10px] text-gray-300">
           <span class="hidden lg:inline">
