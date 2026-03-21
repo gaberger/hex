@@ -27,8 +27,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        chat: resolve(__dirname, 'chat.html'),
-        dashboard: resolve(__dirname, 'dashboard.html'),
       },
     },
   },

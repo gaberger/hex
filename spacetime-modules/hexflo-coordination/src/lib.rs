@@ -65,6 +65,62 @@ pub struct HexFloMemory {
     pub updated_at: String,
 }
 
+// ─── Project Registry ──────────────────────────────────────────────────────
+
+#[table(name = project, public)]
+#[derive(Clone, Debug)]
+pub struct Project {
+    #[primary_key]
+    pub project_id: String,
+    pub name: String,
+    pub path: String,
+    pub registered_at: String,
+}
+
+/// Register or update a project.
+#[reducer]
+pub fn register_project(
+    ctx: &ReducerContext,
+    project_id: String,
+    name: String,
+    path: String,
+    registered_at: String,
+) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("Project path is required".to_string());
+    }
+    if let Some(existing) = ctx.db.project().project_id().find(&project_id) {
+        ctx.db.project().project_id().update(Project {
+            name,
+            path,
+            registered_at,
+            ..existing
+        });
+    } else {
+        ctx.db.project().insert(Project {
+            project_id,
+            name,
+            path,
+            registered_at,
+        });
+    }
+    Ok(())
+}
+
+/// Remove a project by ID.
+#[reducer]
+pub fn remove_project(
+    ctx: &ReducerContext,
+    project_id: String,
+) -> Result<(), String> {
+    if ctx.db.project().project_id().find(&project_id).is_some() {
+        ctx.db.project().project_id().delete(&project_id);
+        Ok(())
+    } else {
+        Err(format!("Project '{}' not found", project_id))
+    }
+}
+
 // ============================================================
 //  Swarm Lifecycle Reducers
 // ============================================================

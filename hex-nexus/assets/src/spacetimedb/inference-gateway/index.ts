@@ -38,6 +38,7 @@ import AppendStreamChunkReducer from "./append_stream_chunk_reducer";
 import CompleteInferenceReducer from "./complete_inference_reducer";
 import FailInferenceReducer from "./fail_inference_reducer";
 import RegisterProviderReducer from "./register_provider_reducer";
+import RemoveProviderReducer from "./remove_provider_reducer";
 import RequestInferenceReducer from "./request_inference_reducer";
 import ResetRateCountersReducer from "./reset_rate_counters_reducer";
 import SetAgentBudgetReducer from "./set_agent_budget_reducer";
@@ -118,6 +119,7 @@ const reducersSchema = __reducers(
   __reducerSchema("complete_inference", CompleteInferenceReducer),
   __reducerSchema("fail_inference", FailInferenceReducer),
   __reducerSchema("register_provider", RegisterProviderReducer),
+  __reducerSchema("remove_provider", RemoveProviderReducer),
   __reducerSchema("request_inference", RequestInferenceReducer),
   __reducerSchema("reset_rate_counters", ResetRateCountersReducer),
   __reducerSchema("set_agent_budget", SetAgentBudgetReducer),

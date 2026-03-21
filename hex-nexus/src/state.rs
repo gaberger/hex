@@ -12,8 +12,6 @@ use crate::remote::fleet::FleetManager;
 use crate::adapters::spacetime_chat::SpacetimeChatClient;
 use crate::adapters::spacetime_inference::SpacetimeInferenceClient;
 use crate::adapters::spacetime_secrets::SpacetimeSecretClient;
-use crate::routes::secrets::InferenceEndpointEntry;
-
 // ── App State ───────────────────────────────────────────
 
 pub type SharedState = Arc<AppState>;
@@ -39,7 +37,6 @@ pub struct AppState {
     pub workplan_executor: OnceLock<Arc<WorkplanExecutor>>,
     // Secret broker state (ADR-026) — SpacetimeDB only, no in-memory fallback
     pub spacetime_secrets: Option<Arc<SpacetimeSecretClient>>,
-    pub inference_endpoints: RwLock<HashMap<String, InferenceEndpointEntry>>,
     // HexFlo coordination (ADR-027)
     pub hexflo: Option<Arc<HexFlo>>,
     // Unified state port (ADR-025) — abstracts RL, patterns, agents, etc.
@@ -78,7 +75,6 @@ impl AppState {
             agent_manager: None,
             workplan_executor: OnceLock::new(),
             spacetime_secrets: None,
-            inference_endpoints: RwLock::new(HashMap::new()),
             hexflo: None,
             state_port: None,
             inference_stdb: None,

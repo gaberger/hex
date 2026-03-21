@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>hex Chat</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%2300d4aa'/%3E%3Cstop offset='100%25' style='stop-color:%2358a6ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpolygon points='32,4 58,19 58,45 32,60 6,45 6,19' fill='url(%23g)' opacity='0.12' stroke='url(%23g)' stroke-width='2.5' stroke-linejoin='round'/%3E%3Cpolygon points='32,16 46,24 46,40 32,48 18,40 18,24' fill='url(%23g)' opacity='0.25' stroke='url(%23g)' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpolygon points='32,27 37,30 37,34 32,37 27,34 27,30' fill='url(%23g)' opacity='0.8'/%3E%3C/svg%3E">
+
+<!-- CSS Variables -->
+<style>
+:root{
+  --bg:#0d1117;--bg2:#0a0e14;--card:#161b22;--card-elevated:#1c2333;--border:#30363d;--border-subtle:#272d38;
+  --accent:#58a6ff;--accent-dim:rgba(88,166,255,.12);--green:#3fb950;--yellow:#e3b341;--red:#f85149;
+  --purple:#bc8cff;--text:#e6edf3;--text2:#9eaab8;--text3:#6e7a88;
+  --radius:10px;--radius-sm:6px;--gap:16px;
+  --shadow-card:0 2px 8px rgba(0,0,0,.25),0 0 1px rgba(0,0,0,.3);
+  --shadow-elevated:0 4px 16px rgba(0,0,0,.35),0 0 1px rgba(0,0,0,.4);
+  --transition:all .2s ease;
+  --font:-apple-system,'Inter',system-ui,'Segoe UI',sans-serif;
+  --font-mono:'JetBrains Mono','SF Mono','Fira Code',monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:14px;-webkit-font-smoothing:antialiased}
+body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh;overflow:hidden;display:grid;grid-template-rows:48px 1fr;grid-template-columns:1fr 280px}
+@media(max-width:768px){body{grid-template-columns:1fr}
+  .sidebar{position:fixed;right:0;top:48px;bottom:0;width:280px;transform:translateX(100%);transition:transform .25s ease;z-index:100;border-left:1px solid var(--border)}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar-toggle{display:flex !important}
+}
+</style>
+
+<link rel="stylesheet" href="/src/chat.css">
+</head>
+<body>
+
+<!-- Top Bar -->
+<div class="topbar">
+  <div class="topbar-left">
+    <button class="dash-toggle-btn" id="dashToggle" aria-label="Toggle dashboard">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    </button>
+    <svg class="hex-logo" viewBox="0 0 64 64" fill="none">
+      <defs><linearGradient id="lg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#00d4aa"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>
+      <polygon points="32,4 58,19 58,45 32,60 6,45 6,19" fill="url(#lg)" opacity=".12" stroke="url(#lg)" stroke-width="2.5"/>
+      <polygon points="32,16 46,24 46,40 32,48 18,40 18,24" fill="url(#lg)" opacity=".25" stroke="url(#lg)" stroke-width="1.5"/>
+      <polygon points="32,27 37,30 37,34 32,37 27,34 27,30" fill="url(#lg)" opacity=".8"/>
+    </svg>
+    <h1><span>hex</span> chat</h1>
+    <select class="model-badge" id="modelSelect"><option value="">detecting...</option></select>
+  </div>
+  <div style="display:flex;align-items:center;gap:14px">
+    <div class="conn-status">
+      <span class="conn-dot disconnected" id="connDot"></span>
+      <span id="connLabel">disconnected</span>
+    </div>
+    <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- Dashboard Panel -->
+<div class="dash-panel" id="dashPanel">
+  <div class="dash-header">
+    <span class="dash-header-title">Dashboard</span>
+    <button class="dash-close-btn" id="dashClose" aria-label="Close dashboard">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="dash-body">
+    <div class="dash-section">
+      <div class="dash-section-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Codebase</div>
+      <div class="dash-stats" id="dashStats">
+        <div class="dash-stat"><div class="dash-stat-value good" id="dashFiles">--</div><div class="dash-stat-label">Files</div></div>
+        <div class="dash-stat"><div class="dash-stat-value good" id="dashEdges">--</div><div class="dash-stat-label">Imports</div></div>
+        <div class="dash-stat"><div class="dash-stat-value good" id="dashExports">--</div><div class="dash-stat-label">Exports</div></div>
+      </div>
+    </div>
+    <div class="dash-section">
+      <div class="dash-section-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Event Log</div>
+      <div class="dash-events" id="dashEvents"><div class="dash-events-empty">Connecting...</div></div>
+    </div>
+    <div class="dash-section">
+      <div class="dash-section-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Instances</div>
+      <div id="dashInstances"><div class="dash-empty">No active instances</div></div>
+    </div>
+    <div class="dash-section">
+      <div class="dash-section-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Swarms</div>
+      <div id="hexfloSwarms"><span class="hexflo-empty">No active swarms</span></div>
+    </div>
+    <div class="dash-section">
+      <div class="dash-section-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Agents</div>
+      <div id="hexfloAgents" class="agent-list"><span class="hexflo-empty">No agents</span></div>
+    </div>
+    <div class="dash-section dash-files-section">
+      <div class="dash-section-title" id="filePanelToggle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>Files</div>
+      <div class="file-panel" id="filePanel">
+        <div class="fp-header">
+          <button class="fp-back-btn" id="fpBack" disabled aria-label="Back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
+          <div class="fp-breadcrumb" id="fpBreadcrumb">/</div>
+          <button class="fp-close-btn" id="fpClose" aria-label="Close panel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="fp-body" id="fpBody"><div class="fp-loading">Click to browse project files</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Chat Area -->
+<div class="chat-area">
+  <div class="messages" id="messages">
+    <div class="welcome"><h2>hex agent</h2><p>Send a message to begin.</p></div>
+  </div>
+  <div class="input-area">
+    <div class="input-row">
+      <textarea id="input" rows="1" placeholder="Message hex agent..." autocomplete="off"></textarea>
+      <button class="send-btn" id="sendBtn" disabled aria-label="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
+    <div class="input-hint">Enter to send, Shift+Enter for new line</div>
+  </div>
+</div>
+
+<!-- Right Sidebar -->
+<div class="sidebar" id="sidebar">
+  <div class="sb-section">
+    <div class="sb-title">Token Budget</div>
+    <div class="gauge-wrap">
+      <svg class="gauge-svg" viewBox="0 0 120 120">
+        <circle class="gauge-bg" cx="60" cy="60" r="50"/>
+        <circle class="gauge-fill" id="gaugeFill" cx="60" cy="60" r="50" stroke-dasharray="314.16" stroke-dashoffset="314.16" transform="rotate(-90 60 60)"/>
+        <text class="gauge-text" x="60" y="58" text-anchor="middle" id="gaugePct">0%</text>
+        <text class="gauge-label" x="60" y="74" text-anchor="middle">tokens used</text>
+      </svg>
+      <dl class="token-detail"><dt>Input</dt><dd id="tokIn">0</dd><dt>Output</dt><dd id="tokOut">0</dd><dt>Total In</dt><dd id="tokTotalIn">0</dd><dt>Total Out</dt><dd id="tokTotalOut">0</dd></dl>
+    </div>
+  </div>
+  <div class="sb-section">
+    <div class="sb-title">Agent Info</div>
+    <div class="agent-info">
+      <div class="agent-row"><span class="label">Status</span><span class="status-pill idle" id="agentStatus">idle</span></div>
+      <div class="agent-row"><span class="label">Turns</span><span class="value" id="turnCount">0</span></div>
+      <div class="agent-row"><span class="label">Project</span><span class="value" id="projectDir">--</span></div>
+    </div>
+  </div>
+  <div class="sb-section">
+    <div class="sb-title">Controls</div>
+    <div class="controls">
+      <button class="ctrl-btn" data-cmd="/clear">/clear</button>
+      <button class="ctrl-btn" data-cmd="/tokens">/tokens</button>
+      <button class="ctrl-btn" data-cmd="/status">/status</button>
+    </div>
+  </div>
+  <div class="sb-section">
+    <div class="sb-title">RL Insights</div>
+    <div class="rl-card">
+      <div class="rl-action" id="rlAction">--</div>
+      <div class="rl-conf" id="rlConf">No data yet</div>
+    </div>
+  </div>
+  <div class="sb-section">
+    <div class="sb-title">Architecture Health</div>
+    <div id="healthPanel"><span class="hexflo-empty">Loading...</span></div>
+  </div>
+</div>
+
+<!-- External libs -->
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
+
+<!-- JS scripts -->
+<script src="/js/chat-state.js"></script>
+<script src="/js/chat-utils.js"></script>
+<script src="/js/chat-markdown.js"></script>
+<script src="/js/chat-websocket.js"></script>
+<script src="/js/chat-ui.js"></script>
+<script src="/js/chat-stream.js"></script>
+<script src="/js/chat-tools.js"></script>
+<script src="/js/chat-messages.js"></script>
+<script src="/js/chat-sessions.js"></script>
+<script src="/js/chat-sidebar.js"></script>
+<script src="/js/chat-hexflo.js"></script>
+<script src="/js/chat-file-panel.js"></script>
+<script src="/js/chat-health.js"></script>
+<script src="/js/chat-dashboard.js"></script>
+<script src="/js/chat-init.js"></script>
+</body>
+</html>

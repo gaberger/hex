@@ -8,16 +8,16 @@ use rust_embed::Embed;
 struct DashboardAssets;
 
 pub async fn serve_index() -> Response {
-    // Unified view: chat is the primary interface with collapsible dashboard panel
-    serve_asset("chat.html").await
-}
-
-pub async fn serve_legacy_dashboard() -> Response {
     serve_asset("index.html").await
 }
 
+pub async fn serve_legacy_dashboard() -> Response {
+    serve_asset("index.legacy.html").await
+}
+
 pub async fn serve_chat() -> Response {
-    serve_asset("chat.html").await
+    // Chat is now integrated into the main SolidJS dashboard
+    serve_asset("index.html").await
 }
 
 /// Serve any static asset from the embedded assets directory (css/, js/ subdirs).

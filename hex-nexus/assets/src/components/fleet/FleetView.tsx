@@ -5,7 +5,8 @@
  * Data from SpacetimeDB fleet-state subscription + REST API.
  */
 import { Component, For, Show, createSignal, createMemo } from "solid-js";
-import { fleetNodes } from "../../stores/connection";
+import { fleetNodes, fleetConnected, getFleetConn } from "../../stores/connection";
+import { addToast } from "../../stores/toast";
 
 function healthColor(status: string): string {
   if (status === "healthy" || status === "active" || status === "online") return "bg-green-500";
@@ -43,20 +44,52 @@ const FleetView: Component = () => {
     if (!host) return;
     setRegistering(true);
     try {
-      await fetch("/api/fleet/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostname: host }),
-      });
+      const conn = getFleetConn();
+      if (fleetConnected() && conn?.reducers?.registerNode) {
+        // SpacetimeDB reducer: registerNode(id, host, port, username, maxAgents)
+        const nodeId = crypto.randomUUID();
+        conn.reducers.registerNode(nodeId, host, 22, "", 4);
+        addToast("success", `Node registered via SpacetimeDB: ${host}`);
+      } else {
+        // REST fallback
+        const res = await fetch("/api/fleet/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hostname: host }),
+        });
+        if (res.ok) {
+          addToast("success", `Node registered: ${host}`);
+        } else {
+          const err = await res.json().catch(() => ({}));
+          addToast("error", `Register failed: ${(err as any).error || res.statusText}`);
+        }
+      }
       setNewHost("");
       setRegisterOpen(false);
+    } catch (err: any) {
+      addToast("error", `Register error: ${err.message}`);
     } finally {
       setRegistering(false);
     }
   }
 
   async function removeNode(id: string) {
-    await fetch(`/api/fleet/${encodeURIComponent(id)}`, { method: "DELETE" });
+    try {
+      const conn = getFleetConn();
+      if (fleetConnected() && conn?.reducers?.removeNode) {
+        conn.reducers.removeNode(id);
+        addToast("info", "Node removed via SpacetimeDB");
+      } else {
+        const res = await fetch(`/api/fleet/${encodeURIComponent(id)}`, { method: "DELETE" });
+        if (res.ok) {
+          addToast("info", "Node removed");
+        } else {
+          addToast("error", `Remove failed: ${res.statusText}`);
+        }
+      }
+    } catch (err: any) {
+      addToast("error", `Remove error: ${err.message}`);
+    }
   }
 
   return (

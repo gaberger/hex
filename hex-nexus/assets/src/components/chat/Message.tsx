@@ -1,4 +1,6 @@
-import { Component, Show, createSignal } from 'solid-js';
+import { Component, Show } from 'solid-js';
+import MarkdownContent from './MarkdownContent';
+import ToolCallCard from './ToolCallCard';
 
 export interface ChatMessage {
   id: string;
@@ -6,6 +8,12 @@ export interface ChatMessage {
   content: string;
   model?: string;
   timestamp: string;
+  // Structured tool call data (populated for role === 'tool')
+  toolName?: string;
+  toolInput?: string;
+  toolResult?: string;
+  toolUseId?: string;
+  isError?: boolean;
 }
 
 const roleBadgeStyles: Record<ChatMessage['role'], string> = {
@@ -45,7 +53,27 @@ function relativeTime(iso: string): string {
 }
 
 const Message: Component<{ message: ChatMessage }> = (props) => {
-  const [expanded, setExpanded] = createSignal(false);
+  /** For tool messages, extract toolName and detail from structured fields or content fallback */
+  const toolInfo = () => {
+    const msg = props.message;
+    if (msg.role !== 'tool') return { name: '', input: '', result: '', isError: false };
+    if (msg.toolName) {
+      return {
+        name: msg.toolName,
+        input: msg.toolInput || '',
+        result: msg.toolResult || msg.content,
+        isError: !!msg.isError,
+      };
+    }
+    // Fallback: parse "toolName: detail" from content
+    const colonIdx = msg.content.indexOf(': ');
+    return {
+      name: colonIdx > 0 ? msg.content.slice(0, colonIdx) : 'tool',
+      input: colonIdx > 0 ? msg.content.slice(colonIdx + 2) : msg.content,
+      result: '',
+      isError: false,
+    };
+  };
 
   return (
     <div class={`px-4 py-3 ${messageBgStyles[props.message.role]}`}>
@@ -64,21 +92,26 @@ const Message: Component<{ message: ChatMessage }> = (props) => {
       </div>
 
       <Show when={props.message.role === 'tool'}>
-        <button
-          class="mb-1 text-[11px] text-purple-400 hover:text-purple-300 transition-colors"
-          onClick={() => setExpanded(!expanded())}
-        >
-          {expanded() ? 'Hide output' : 'Show output'}
-        </button>
-        <Show when={expanded()}>
-          <pre class="whitespace-pre-wrap break-words text-sm text-gray-300 font-mono bg-gray-900/50 rounded p-2">
-            {props.message.content}
-          </pre>
-        </Show>
+        <ToolCallCard
+          toolName={toolInfo().name}
+          input={toolInfo().input}
+          result={toolInfo().result}
+          isError={toolInfo().isError}
+        />
       </Show>
 
-      <Show when={props.message.role !== 'tool'}>
+      <Show when={props.message.role === 'assistant'}>
+        <MarkdownContent content={props.message.content} />
+      </Show>
+
+      <Show when={props.message.role === 'user'}>
         <div class="whitespace-pre-wrap break-words text-sm text-gray-300 leading-relaxed">
+          {props.message.content}
+        </div>
+      </Show>
+
+      <Show when={props.message.role === 'system'}>
+        <div class="whitespace-pre-wrap break-words text-sm text-gray-400 leading-relaxed italic">
           {props.message.content}
         </div>
       </Show>

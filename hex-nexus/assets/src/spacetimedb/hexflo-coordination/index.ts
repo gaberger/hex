@@ -42,6 +42,8 @@ import AgentRemoveReducer from "./agent_remove_reducer";
 import MemoryClearScopeReducer from "./memory_clear_scope_reducer";
 import MemoryDeleteReducer from "./memory_delete_reducer";
 import MemoryStoreReducer from "./memory_store_reducer";
+import RegisterProjectReducer from "./register_project_reducer";
+import RemoveProjectReducer from "./remove_project_reducer";
 import SwarmCompleteReducer from "./swarm_complete_reducer";
 import SwarmFailReducer from "./swarm_fail_reducer";
 import SwarmInitReducer from "./swarm_init_reducer";
@@ -55,6 +57,7 @@ import TaskReclaimReducer from "./task_reclaim_reducer";
 
 // Import all table schema definitions
 import HexfloMemoryRow from "./hexflo_memory_table";
+import ProjectRow from "./project_table";
 import SwarmRow from "./swarm_table";
 import SwarmAgentRow from "./swarm_agent_table";
 import SwarmTaskRow from "./swarm_task_table";
@@ -74,6 +77,17 @@ const tablesSchema = __schema({
       { name: 'hexflo_memory_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, HexfloMemoryRow),
+  project: __table({
+    name: 'project',
+    indexes: [
+      { accessor: 'project_id', name: 'project_project_id_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'project_project_id_key', constraint: 'unique', columns: ['projectId'] },
+    ],
+  }, ProjectRow),
   swarm: __table({
     name: 'swarm',
     indexes: [
@@ -119,6 +133,8 @@ const reducersSchema = __reducers(
   __reducerSchema("memory_clear_scope", MemoryClearScopeReducer),
   __reducerSchema("memory_delete", MemoryDeleteReducer),
   __reducerSchema("memory_store", MemoryStoreReducer),
+  __reducerSchema("register_project", RegisterProjectReducer),
+  __reducerSchema("remove_project", RemoveProjectReducer),
   __reducerSchema("swarm_complete", SwarmCompleteReducer),
   __reducerSchema("swarm_fail", SwarmFailReducer),
   __reducerSchema("swarm_init", SwarmInitReducer),

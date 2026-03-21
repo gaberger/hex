@@ -4,8 +4,9 @@
  * Calls POST /api/agents/spawn with project dir, model, and agent type.
  * New agents appear in sidebar automatically via SpacetimeDB subscription.
  */
-import { Component, Show, createSignal, createResource, For } from "solid-js";
+import { Component, Show, createSignal, For } from "solid-js";
 import { inferenceProviders } from "../../stores/connection";
+import { projects as sharedProjects } from "../../stores/projects";
 
 const AGENT_TYPES = [
   { value: "hex-coder", label: "Coder", desc: "Write code with TDD" },
@@ -15,28 +16,13 @@ const AGENT_TYPES = [
   { value: "reviewer", label: "Reviewer", desc: "Code review + quality" },
 ] as const;
 
-async function fetchProjects(): Promise<{ id: string; name: string; path: string }[]> {
-  try {
-    const res = await fetch("/api/projects");
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.projects ?? data ?? []).map((p: any) => ({
-      id: p.id ?? p.name,
-      name: p.name ?? "unnamed",
-      path: p.path ?? "",
-    }));
-  } catch {
-    return [];
-  }
-}
-
 export interface SpawnDialogProps {
   open: boolean;
   onClose: () => void;
 }
 
 const SpawnDialog: Component<SpawnDialogProps> = (props) => {
-  const [projects] = createResource(fetchProjects);
+  const projects = sharedProjects;
   const [projectDir, setProjectDir] = createSignal("");
   const [agentType, setAgentType] = createSignal("hex-coder");
   const [model, setModel] = createSignal("");
@@ -127,7 +113,7 @@ const SpawnDialog: Component<SpawnDialogProps> = (props) => {
                 Project Directory
               </label>
               <Show
-                when={(projects()?.length ?? 0) > 0}
+                when={projects().length > 0}
                 fallback={
                   <input
                     type="text"

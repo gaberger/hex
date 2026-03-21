@@ -155,6 +155,9 @@ export const swarmAgents: Accessor<any[]> = useTable(
 export const hexfloMemory: Accessor<any[]> = useTable(
   () => hexfloConn()?.db.hexflo_memory as SpacetimeDBTableHandle<any> | undefined,
 );
+export const registeredProjects: Accessor<any[]> = useTable(
+  () => hexfloConn()?.db.project as SpacetimeDBTableHandle<any> | undefined,
+);
 
 // agent-registry tables
 export const registryAgents: Accessor<any[]> = useTable(
@@ -201,6 +204,8 @@ export function initConnections() {
   initialized = true;
 
   // hexflo-coordination: swarms, tasks, agents, memory
+  // This is the canonical coordination database — the IStatePort adapter
+  // should also write here (see feedback_spacetimedb_single_source.md)
   connectModule({
     module: "hexflo-coordination",
     builder: HexfloDbConnection,
@@ -211,6 +216,7 @@ export function initConnections() {
       "SELECT * FROM swarm_task",
       "SELECT * FROM swarm_agent",
       "SELECT * FROM hexflo_memory",
+      "SELECT * FROM project",
     ],
   });
 

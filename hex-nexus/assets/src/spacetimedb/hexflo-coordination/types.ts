@@ -18,6 +18,14 @@ export const HexFloMemory = __t.object("HexFloMemory", {
 });
 export type HexFloMemory = __Infer<typeof HexFloMemory>;
 
+export const Project = __t.object("Project", {
+  projectId: __t.string(),
+  name: __t.string(),
+  path: __t.string(),
+  registeredAt: __t.string(),
+});
+export type Project = __Infer<typeof Project>;
+
 export const Swarm = __t.object("Swarm", {
   id: __t.string(),
   projectId: __t.string(),

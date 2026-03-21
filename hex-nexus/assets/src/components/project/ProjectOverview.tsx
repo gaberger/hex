@@ -5,9 +5,10 @@
  * are hidden but accessible via "Show N more". Each card has a dismiss button.
  * Dismissed state stored in localStorage.
  */
-import { Component, For, Show, createSignal, createResource, createMemo } from "solid-js";
+import { Component, For, Show, createSignal, createMemo } from "solid-js";
 import ProjectCard, { type ProjectInfo } from "./ProjectCard";
 import { registryAgents, swarms, anyConnected } from "../../stores/connection";
+import { projects as sharedProjects, registerProject as sharedRegisterProject } from "../../stores/projects";
 
 const MAX_VISIBLE = 4;
 const DISMISSED_KEY = "hex_dismissed_projects";
@@ -25,25 +26,16 @@ function saveDismissed(ids: Set<string>) {
   localStorage.setItem(DISMISSED_KEY, JSON.stringify([...ids]));
 }
 
-async function fetchProjects(): Promise<ProjectInfo[]> {
-  try {
-    const res = await fetch("/api/projects");
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.projects ?? data ?? []).map((p: any) => ({
-      id: p.id ?? p.project_id ?? p.name,
-      name: p.name ?? p.project_name ?? "unnamed",
-      path: p.path ?? p.project_path ?? "",
-      health: p.health ?? "green",
-      lastActivity: p.last_activity ?? undefined,
-    }));
-  } catch {
-    return [];
-  }
-}
-
 const ProjectOverview: Component = () => {
-  const [projects, { refetch }] = createResource(fetchProjects);
+  // Map shared projects to ProjectInfo shape
+  const projects = () => sharedProjects().map((p): ProjectInfo => ({
+    id: p.id,
+    name: p.name,
+    path: p.path,
+    health: p.health ?? "green",
+    lastActivity: p.lastActivity,
+  }));
+
   const [registering, setRegistering] = createSignal(false);
   const [newPath, setNewPath] = createSignal("");
   const [dismissed, setDismissed] = createSignal(loadDismissed());
@@ -89,19 +81,14 @@ const ProjectOverview: Component = () => {
     setShowAll(false);
   }
 
-  async function registerProject(e: Event) {
+  async function handleRegisterProject(e: Event) {
     e.preventDefault();
     const path = newPath().trim();
     if (!path) return;
     setRegistering(true);
     try {
-      await fetch("/api/projects/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
+      await sharedRegisterProject(path);
       setNewPath("");
-      refetch();
     } finally {
       setRegistering(false);
     }
@@ -151,8 +138,8 @@ const ProjectOverview: Component = () => {
 
       {/* Project grid */}
       <Show
-        when={(projects()?.length ?? 0) > 0}
-        fallback={<EmptyState onRegister={registerProject} path={newPath} setPath={setNewPath} registering={registering} />}
+        when={projects().length > 0}
+        fallback={<EmptyState onRegister={handleRegisterProject} path={newPath} setPath={setNewPath} registering={registering} />}
       >
         <div class="grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
           <For each={displayProjects()}>
@@ -192,7 +179,7 @@ const ProjectOverview: Component = () => {
           {/* Add project card — only if under limit */}
           <Show when={displayProjects().length < MAX_VISIBLE && !showAll()}>
             <AddProjectCard
-              onRegister={registerProject}
+              onRegister={handleRegisterProject}
               path={newPath}
               setPath={setNewPath}
               registering={registering}

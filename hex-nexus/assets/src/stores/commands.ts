@@ -13,7 +13,11 @@ import {
   replaceActivePane,
   openPane,
 } from "./panes";
-import { setSpawnDialogOpen } from "./ui";
+import { setSpawnDialogOpen, setSwarmInitDialogOpen } from "./ui";
+import { toggleViewMode } from "./view";
+import { addToast } from "./toast";
+import { fetchHealth } from "./health";
+import { setPanelContent } from "./context-panel";
 
 export type CommandCategory =
   | "project"
@@ -64,6 +68,13 @@ const commands: Command[] = [
     action: () => toggleMaximize(),
   },
   {
+    id: "view.toggle",
+    label: "Toggle Chat / Panes View",
+    category: "view",
+    shortcut: "Ctrl+Shift+C",
+    action: () => toggleViewMode(),
+  },
+  {
     id: "view.next-pane",
     label: "Focus Next Pane",
     category: "view",
@@ -105,12 +116,41 @@ const commands: Command[] = [
     label: "Run Architecture Analysis",
     category: "project",
     action: async () => {
-      await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: "." }),
-      });
+      try {
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: "." }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          addToast("success", `Analysis complete — Score: ${data.health_score ?? "?"}/100`);
+        } else {
+          addToast("error", "Analysis failed");
+        }
+      } catch {
+        addToast("error", "Analysis request failed — is nexus running?");
+      }
     },
+  },
+
+  // ── Health ──
+  {
+    id: "project.health",
+    label: "Show Architecture Health",
+    category: "project",
+    action: async () => {
+      await fetchHealth();
+      setPanelContent({ type: "health-detail" });
+    },
+  },
+
+  // ── Dependency Graph ──
+  {
+    id: "view.dep-graph",
+    label: "Show Dependency Graph",
+    category: "view",
+    action: () => openPane("dep-graph", "Dependencies"),
   },
 
   // ── Inference ──
@@ -134,15 +174,7 @@ const commands: Command[] = [
     id: "swarm.init",
     label: "Initialize New Swarm",
     category: "swarm",
-    action: async () => {
-      const name = prompt("Swarm name:");
-      if (!name) return;
-      await fetch("/api/swarms", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, topology: "hierarchical" }),
-      });
-    },
+    action: () => setSwarmInitDialogOpen(true),
   },
 ];
 

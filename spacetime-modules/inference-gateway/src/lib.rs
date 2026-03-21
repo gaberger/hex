@@ -386,6 +386,21 @@ pub fn register_provider(
     Ok(())
 }
 
+/// Remove an inference provider by ID.
+#[reducer]
+pub fn remove_provider(
+    ctx: &ReducerContext,
+    provider_id: String,
+) -> Result<(), String> {
+    if let Some(_existing) = ctx.db.inference_provider().provider_id().find(&provider_id) {
+        ctx.db.inference_provider().provider_id().delete(&provider_id);
+        log::info!("Provider removed: {}", provider_id);
+        Ok(())
+    } else {
+        Err(format!("Provider '{}' not found", provider_id))
+    }
+}
+
 /// Set or update an agent's token/cost budget.
 #[reducer]
 pub fn set_agent_budget(

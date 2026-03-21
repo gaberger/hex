@@ -1,4 +1,4 @@
-import { type Component, onMount, onCleanup, createSignal } from 'solid-js';
+import { type Component, onMount, onCleanup, createSignal, Show, Switch, Match, lazy } from 'solid-js';
 import { initConnections } from '../stores/connection';
 import {
   splitPane,
@@ -10,13 +10,24 @@ import {
   replaceActivePane,
 } from '../stores/panes';
 import Sidebar from '../components/layout/Sidebar';
-import RightPanel from '../components/layout/RightPanel';
+import ContextPanel from '../components/layout/ContextPanel';
 import BottomBar from '../components/layout/BottomBar';
+import Breadcrumbs from '../components/layout/Breadcrumbs';
 import PaneManager from '../components/panes/PaneManager';
 import SpawnDialog from '../components/agent/SpawnDialog';
+import SwarmInitDialog from '../components/swarm/SwarmInitDialog';
 import CommandPalette from '../components/command/CommandPalette';
-import { spawnDialogOpen, setSpawnDialogOpen, commandPaletteOpen, setCommandPaletteOpen } from '../stores/ui';
+import ToastContainer from '../components/layout/ToastContainer';
+import { spawnDialogOpen, setSpawnDialogOpen, commandPaletteOpen, setCommandPaletteOpen, swarmInitDialogOpen, setSwarmInitDialogOpen } from '../stores/ui';
 import { startNexusHealthPoll, stopNexusHealthPoll } from '../stores/nexus-health';
+import { mode, toggleMode } from '../stores/mode';
+import { viewMode, setViewMode, toggleViewMode } from '../stores/view';
+import { initChatConnection, disconnectChat } from '../stores/chat';
+import { startHexFloMonitor } from '../stores/hexflo-monitor';
+import { route, initRouter, navigate } from '../stores/router';
+import ChatView from '../components/chat/ChatView';
+import { ControlPlane } from '../components/views';
+import { AgentFleet } from '../components/views';
 
 const App: Component = () => {
   const [theme, setTheme] = createSignal(
@@ -27,11 +38,15 @@ const App: Component = () => {
   onMount(() => {
     initConnections();
     startNexusHealthPoll();
+    initChatConnection();
+    startHexFloMonitor();
+    initRouter();
     document.documentElement.setAttribute('data-theme', theme());
   });
 
   onCleanup(() => {
     stopNexusHealthPoll();
+    disconnectChat();
   });
 
   const toggleTheme = () => {
@@ -44,6 +59,16 @@ const App: Component = () => {
   // ── Keyboard shortcuts (tiling WM style) ──
   function handleKeyboard(e: KeyboardEvent) {
     const ctrl = e.ctrlKey || e.metaKey;
+
+    // Tab (no modifier, no focused input) — toggle mode
+    if (e.key === 'Tab' && !ctrl && !e.shiftKey) {
+      const active = document.activeElement;
+      const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
+      if (!isInput) {
+        e.preventDefault();
+        toggleMode();
+      }
+    }
 
     // Ctrl+\ — split horizontal
     if (ctrl && e.key === '\\') {
@@ -85,6 +110,11 @@ const App: Component = () => {
       e.preventDefault();
       setSpawnDialogOpen(true);
     }
+    // Ctrl+Shift+C — toggle chat/panes view
+    if (ctrl && e.shiftKey && e.key === 'C') {
+      e.preventDefault();
+      toggleViewMode();
+    }
     // Ctrl+P — command palette
     if (ctrl && e.key === 'p') {
       e.preventDefault();
@@ -118,13 +148,54 @@ const App: Component = () => {
           <span class="text-sm font-semibold tracking-wide text-gray-100">
             HEX NEXUS
           </span>
+          <button
+            class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
+            classList={{
+              "bg-blue-900/30 text-blue-400 hover:bg-blue-900/50": mode() === "plan",
+              "bg-green-900/30 text-green-400 hover:bg-green-900/50": mode() === "build",
+            }}
+            onClick={toggleMode}
+            title="Toggle Plan/Build mode (Tab in empty input)"
+          >
+            <span class="h-1.5 w-1.5 rounded-full"
+              classList={{
+                "bg-blue-400": mode() === "plan",
+                "bg-green-400": mode() === "build",
+              }}
+            />
+            {mode() === "plan" ? "Plan" : "Build"}
+          </button>
+          <div class="flex items-center rounded-md border border-gray-700 overflow-hidden">
+            <button
+              class="px-2 py-1 text-[10px] font-medium transition-colors"
+              classList={{
+                "bg-gray-700 text-gray-100": viewMode() === "chat",
+                "text-gray-500 hover:text-gray-300": viewMode() !== "chat",
+              }}
+              onClick={() => setViewMode("chat")}
+              title="Chat view"
+            >
+              Chat
+            </button>
+            <button
+              class="px-2 py-1 text-[10px] font-medium transition-colors"
+              classList={{
+                "bg-gray-700 text-gray-100": viewMode() === "panes",
+                "text-gray-500 hover:text-gray-300": viewMode() !== "panes",
+              }}
+              onClick={() => setViewMode("panes")}
+              title="Tiling panes (Ctrl+Shift+C)"
+            >
+              Panes
+            </button>
+          </div>
         </div>
         <div class="flex items-center gap-3 text-[10px] text-gray-300">
-          <span class="hidden sm:inline">
+          <span class="hidden lg:inline">
             <kbd class="rounded border border-gray-700 bg-gray-800 px-1 py-0.5 text-gray-300">Ctrl+\</kbd> split
             <kbd class="ml-2 rounded border border-gray-700 bg-gray-800 px-1 py-0.5 text-gray-300">Ctrl+W</kbd> close
           </span>
-          <kbd class="rounded border border-gray-700 bg-gray-800 px-1.5 py-0.5 text-gray-300">Ctrl+P</kbd>
+          <kbd class="hidden md:inline rounded border border-gray-700 bg-gray-800 px-1.5 py-0.5 text-gray-300">Ctrl+P</kbd>
           <button
             class="rounded p-1.5 text-gray-300 hover:bg-gray-800 transition-colors"
             aria-label="Toggle theme"
@@ -152,19 +223,100 @@ const App: Component = () => {
         </div>
       </header>
 
-      {/* Main 3-column area */}
+      {/* Breadcrumbs */}
+      <Breadcrumbs />
+
+      {/* Main 3-column area — responsive */}
       <div class="flex flex-1 overflow-hidden">
-        <Sidebar />
-        <PaneManager />
-        <RightPanel />
+        {/* Sidebar: hidden on mobile */}
+        <div class="hidden md:block">
+          <Sidebar />
+        </div>
+
+        {/* Center content — route-based view switching */}
+        <div class="flex flex-1 flex-col overflow-hidden">
+          <Switch fallback={<ControlPlane />}>
+            <Match when={route().page === "control-plane"}>
+              <ControlPlane />
+            </Match>
+            <Match when={route().page === "project-chat" || (route().page === "project" && viewMode() === "chat")}>
+              <ChatView />
+            </Match>
+            <Match when={route().page === "project" && viewMode() === "panes"}>
+              <PaneManager />
+            </Match>
+            <Match when={route().page === "agent-fleet"}>
+              <AgentFleet />
+            </Match>
+            <Match when={route().page === "project-health"}>
+              <ChatView />
+            </Match>
+            <Match when={route().page === "config"}>
+              <div class="flex-1 overflow-auto p-8 text-gray-400">
+                <h2 class="text-xl font-bold text-gray-200 mb-2">Configuration</h2>
+                <p>Configuration views coming soon. Use the left nav to switch sections.</p>
+              </div>
+            </Match>
+            <Match when={route().page === "inference"}>
+              <div class="flex-1 overflow-auto">
+                <ChatView />
+              </div>
+            </Match>
+          </Switch>
+        </div>
+
+        {/* Right panel: hidden on mobile and tablet */}
+        <div class="hidden lg:block">
+          <ContextPanel />
+        </div>
       </div>
 
       {/* BottomBar */}
       <BottomBar />
 
+      {/* Mobile bottom tabs — only shown on small screens */}
+      <div class="flex md:hidden items-center justify-around border-t border-gray-800 bg-gray-900 py-2">
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1"
+          classList={{ "text-cyan-400": viewMode() === "chat" }}
+          onClick={() => setViewMode("chat")}
+        >
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <span class="text-[10px]">Chat</span>
+        </button>
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1"
+          classList={{ "text-cyan-400": viewMode() === "panes" }}
+          onClick={() => { setViewMode("panes"); }}
+        >
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7" />
+            <rect x="14" y="3" width="7" height="7" />
+            <rect x="3" y="14" width="7" height="7" />
+            <rect x="14" y="14" width="7" height="7" />
+          </svg>
+          <span class="text-[10px]">Projects</span>
+        </button>
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1">
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+          </svg>
+          <span class="text-[10px]">Health</span>
+        </button>
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1">
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+          <span class="text-[10px]">Settings</span>
+        </button>
+      </div>
+
       {/* SpawnDialog overlay */}
       <SpawnDialog open={spawnDialogOpen()} onClose={() => setSpawnDialogOpen(false)} />
+      <SwarmInitDialog open={swarmInitDialogOpen()} onClose={() => setSwarmInitDialogOpen(false)} />
       <CommandPalette open={commandPaletteOpen()} onClose={() => setCommandPaletteOpen(false)} />
+      <ToastContainer />
     </div>
   );
 };

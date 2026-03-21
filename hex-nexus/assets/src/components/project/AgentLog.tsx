@@ -5,20 +5,8 @@
  * Controls: kill, restart, reassign.
  * Data from SpacetimeDB agent-registry + hexflo-coordination subscriptions.
  */
-import { Component, Show, For, createMemo, createSignal, createResource } from "solid-js";
+import { Component, Show, For, createMemo, createSignal } from "solid-js";
 import { registryAgents, agentHeartbeats, swarmTasks, hexfloMemory } from "../../stores/connection";
-
-async function fetchAgentMemory(agentId: string): Promise<any[]> {
-  if (!agentId) return [];
-  try {
-    const res = await fetch(`/api/hexflo/memory/search?q=&scope=agent:${encodeURIComponent(agentId)}`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.results ?? data ?? [];
-  } catch {
-    return [];
-  }
-}
 
 const AgentLog: Component<{ agentId: string }> = (props) => {
   const agent = createMemo(() =>
@@ -39,10 +27,10 @@ const AgentLog: Component<{ agentId: string }> = (props) => {
     )
   );
 
-  // Agent-scoped memory from SpacetimeDB
+  // Agent-scoped memory from SpacetimeDB subscription (no fetch needed)
   const agentMemory = createMemo(() =>
     hexfloMemory().filter((m: any) =>
-      (m.scope ?? "").includes(props.agentId)
+      (m.scope ?? m.memory_scope ?? "").includes(`agent:${props.agentId}`)
     )
   );
 

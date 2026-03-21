@@ -19,6 +19,7 @@ const AgentLog = lazy(() => import("../project/AgentLog"));
 const SwarmMonitor = lazy(() => import("../swarm/SwarmMonitor"));
 const FleetView = lazy(() => import("../fleet/FleetView"));
 const InferencePanel = lazy(() => import("../fleet/InferencePanel"));
+const DependencyGraphPane = lazy(() => import("../graph/DependencyGraphPane"));
 
 /** Render the content for a tab based on its paneType. */
 const TabContent: Component<{ tab: PaneTab }> = (props) => (
@@ -46,6 +47,9 @@ const TabContent: Component<{ tab: PaneTab }> = (props) => (
     </Match>
     <Match when={props.tab.paneType === "inference"}>
       <InferencePanel />
+    </Match>
+    <Match when={props.tab.paneType === "dep-graph"}>
+      <DependencyGraphPane />
     </Match>
   </Switch>
 );

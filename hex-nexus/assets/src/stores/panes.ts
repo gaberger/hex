@@ -26,7 +26,8 @@ export type PaneType =
   | "agent-log"
   | "diff"
   | "fleet-view"
-  | "inference";
+  | "inference"
+  | "dep-graph";
 
 /** A single tab within a pane leaf. */
 export interface PaneTab {

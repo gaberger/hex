@@ -65,6 +65,12 @@ impl SpacetimeInferenceClient {
         }
     }
 
+    /// Get the SpacetimeDB host URL.
+    pub fn host_url(&self) -> &str { &self.host }
+
+    /// Get the SpacetimeDB database name.
+    pub fn database_name(&self) -> &str { &self.database }
+
     // ── Reducer calls ───────────────────────────────────────────────────
 
     /// Register (or update) an inference provider in SpacetimeDB.
@@ -91,6 +97,11 @@ impl SpacetimeInferenceClient {
             ]),
         )
         .await
+    }
+
+    /// Remove an inference provider from SpacetimeDB.
+    pub async fn remove_provider(&self, provider_id: &str) -> Result<(), String> {
+        self.call_reducer("remove_provider", serde_json::json!([provider_id])).await
     }
 
     /// Submit an inference request to SpacetimeDB (status = "queued").

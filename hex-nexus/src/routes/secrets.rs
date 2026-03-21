@@ -260,87 +260,71 @@ pub async fn register_inference(
         "ollama" | "openai-compatible" | "vllm" | "llama-cpp" => {}
         _ => return (StatusCode::BAD_REQUEST, Json(json!({ "error": format!("Unknown provider '{}'", body.provider) }))),
     }
-    let endpoint = InferenceEndpointEntry {
-        id: body.id.clone(), url: body.url.clone(), provider: body.provider.clone(), model: body.model.clone(),
-        status: "unknown".to_string(), requires_auth: body.requires_auth.unwrap_or(false),
-        secret_key: body.secret_key.clone().unwrap_or_default(), health_checked_at: String::new(),
+
+    let Some(ref stdb_client) = state.inference_stdb else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "SpacetimeDB not connected" })));
     };
-    state.inference_endpoints.write().await.insert(body.id.clone(), endpoint);
 
-    // Persist to SpacetimeDB inference-gateway (fire-and-forget)
-    if let Some(ref client) = state.inference_stdb {
-        let client = client.clone();
-        let id = body.id.clone();
-        // Map hex provider names to inference-gateway provider_type
-        let provider_type = match body.provider.as_str() {
-            "ollama" => "ollama",
-            "openai-compatible" => "openai_compat",
-            "vllm" => "vllm",
-            "llama-cpp" => "openai_compat",
-            _ => "openai_compat",
-        };
-        let base_url = body.url;
-        let api_key_ref = body.secret_key.unwrap_or_default();
-        let models_json = body.models_json
-            .unwrap_or_else(|| serde_json::json!([body.model]).to_string());
-        tokio::spawn(async move {
-            if let Err(e) = client
-                .register_provider(&id, provider_type, &base_url, &api_key_ref, &models_json, 60, 100_000)
-                .await
-            {
-                tracing::warn!(error = %e, "Failed to persist inference provider to SpacetimeDB");
-            }
-        });
+    let provider_type = match body.provider.as_str() {
+        "ollama" => "ollama",
+        "openai-compatible" => "openai_compat",
+        "vllm" => "vllm",
+        "llama-cpp" => "openai_compat",
+        _ => "openai_compat",
+    };
+    let models_json = body.models_json
+        .unwrap_or_else(|| serde_json::json!([body.model]).to_string());
+
+    match stdb_client.register_provider(
+        &body.id, provider_type, &body.url,
+        &body.secret_key.unwrap_or_default(),
+        &models_json, 60, 100_000,
+    ).await {
+        Ok(()) => (StatusCode::CREATED, Json(json!({ "id": body.id }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
     }
-
-    (StatusCode::CREATED, Json(json!({ "id": body.id })))
 }
 
 // DEPRECATED(ADR-039): Browser will use SpacetimeDB direct subscription
 pub async fn list_inference(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // Try SpacetimeDB as primary source, fall back to in-memory
-    if let Some(ref client) = state.inference_stdb {
-        match client.list_providers().await {
-            Ok(providers) if !providers.is_empty() => {
-                let list: Vec<serde_json::Value> = providers.iter().map(|p| {
-                    json!({
-                        "id": p.provider_id,
-                        "url": p.base_url,
-                        "provider": p.provider_type,
-                        "model": p.models_json,
-                        "status": if p.healthy == 1 { "healthy" } else { "unknown" },
-                        "requiresAuth": !p.api_key_ref.is_empty(),
-                        "healthCheckedAt": p.last_health_check,
-                        "avgLatencyMs": p.avg_latency_ms,
-                        "rateLimitRpm": p.rate_limit_rpm,
-                    })
-                }).collect();
-                return (StatusCode::OK, Json(json!({ "endpoints": list, "source": "spacetimedb" })));
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "SpacetimeDB inference query failed, using in-memory");
-            }
-            _ => {} // empty result, fall through to in-memory
-        }
-    }
+    let Some(ref client) = state.inference_stdb else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "SpacetimeDB not connected" })));
+    };
 
-    let endpoints = state.inference_endpoints.read().await;
-    let list: Vec<serde_json::Value> = endpoints.values().map(|e| {
-        json!({ "id": e.id, "url": e.url, "provider": e.provider, "model": e.model,
-                "status": e.status, "requiresAuth": e.requires_auth, "healthCheckedAt": e.health_checked_at })
-    }).collect();
-    (StatusCode::OK, Json(json!({ "endpoints": list, "source": "memory" })))
+    match client.list_providers().await {
+        Ok(providers) => {
+            let list: Vec<serde_json::Value> = providers.iter().map(|p| {
+                json!({
+                    "id": p.provider_id,
+                    "url": p.base_url,
+                    "provider": p.provider_type,
+                    "model": p.models_json,
+                    "status": if p.healthy == 1 { "healthy" } else { "unknown" },
+                    "requiresAuth": !p.api_key_ref.is_empty(),
+                    "healthCheckedAt": p.last_health_check,
+                    "avgLatencyMs": p.avg_latency_ms,
+                    "rateLimitRpm": p.rate_limit_rpm,
+                })
+            }).collect();
+            (StatusCode::OK, Json(json!({ "endpoints": list, "source": "spacetimedb" })))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": format!("SpacetimeDB query failed: {}", e) }))),
+    }
 }
 
 pub async fn remove_inference(
     State(state): State<SharedState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match state.inference_endpoints.write().await.remove(&id) {
-        Some(_) => (StatusCode::OK, Json(json!({ "removed": id }))),
-        None => (StatusCode::NOT_FOUND, Json(json!({ "error": format!("Endpoint '{}' not found", id) }))),
+    let Some(ref stdb_client) = state.inference_stdb else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "SpacetimeDB not connected" })));
+    };
+
+    match stdb_client.remove_provider(&id).await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "removed": id }))),
+        Err(e) => (StatusCode::OK, Json(json!({ "removed": id, "warning": e }))),
     }
 }
 
@@ -348,27 +332,32 @@ pub async fn check_inference_health(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().unwrap();
-    let now = chrono::Utc::now().to_rfc3339();
-    let checks: Vec<(String, String, String)> = {
-        let eps = state.inference_endpoints.read().await;
-        eps.values().map(|e| (e.id.clone(), e.url.clone(), e.provider.clone())).collect()
+
+    // Get providers from SpacetimeDB ONLY (ADR-041)
+    let checks: Vec<(String, String, String)> = if let Some(ref stdb_client) = state.inference_stdb {
+        match stdb_client.list_providers().await {
+            Ok(providers) => providers.iter().map(|p| (p.provider_id.clone(), p.base_url.clone(), p.provider_type.clone())).collect(),
+            Err(e) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": format!("SpacetimeDB query failed: {}", e) })));
+            }
+        }
+    } else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "SpacetimeDB not connected" })));
     };
+
     let mut results = Vec::new();
     for (id, url, provider) in checks {
         let health_url = match provider.as_str() {
             "ollama" => format!("{}/api/tags", url),
             _ => format!("{}/v1/models", url),
         };
+        let start = std::time::Instant::now();
         let status = match client.get(&health_url).send().await {
             Ok(res) if res.status().is_success() => "healthy",
             _ => "unhealthy",
         };
-        results.push(json!({ "id": id, "status": status }));
-        let mut eps = state.inference_endpoints.write().await;
-        if let Some(ep) = eps.get_mut(&id) {
-            ep.status = status.to_string();
-            ep.health_checked_at = now.clone();
-        }
+        let latency_ms = start.elapsed().as_millis() as u64;
+        results.push(json!({ "id": id, "status": status, "latency_ms": latency_ms, "url": url }));
     }
     (StatusCode::OK, Json(json!({ "results": results })))
 }
