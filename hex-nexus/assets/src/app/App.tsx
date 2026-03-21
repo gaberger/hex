@@ -26,7 +26,7 @@ import { initChatConnection, disconnectChat } from '../stores/chat';
 import { startHexFloMonitor } from '../stores/hexflo-monitor';
 import { route, initRouter, navigate } from '../stores/router';
 import ChatView from '../components/chat/ChatView';
-import { ControlPlane, AgentFleet, ProjectDetail, ADRBrowser } from '../components/views';
+import { ControlPlane, AgentFleet, ProjectDetail, ADRBrowser, ConfigPage } from '../components/views';
 
 const App: Component = () => {
   const [theme, setTheme] = createSignal(
@@ -257,10 +257,7 @@ const App: Component = () => {
               <ChatView />
             </Match>
             <Match when={route().page === "config"}>
-              <div class="flex-1 overflow-auto p-8 text-gray-400">
-                <h2 class="text-xl font-bold text-gray-200 mb-2">Configuration</h2>
-                <p>Configuration views coming soon. Use the left nav to switch sections.</p>
-              </div>
+              <ConfigPage />
             </Match>
             <Match when={route().page === "inference"}>
               <div class="flex-1 overflow-auto">
