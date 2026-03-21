@@ -19,15 +19,15 @@ const ProjectSidebar: Component = () => {
     const agents = registryAgents();
     const online = agents.filter((a: any) => {
       const s = (a.status ?? "idle").toLowerCase();
-      return s === "online" || s === "active";
+      return s === "online" || s === "active" || s === "running" || s === "registered";
     }).length;
     const busy = agents.filter((a: any) => {
       const s = (a.status ?? "idle").toLowerCase();
-      return s === "busy";
+      return s === "busy" || s === "spawning";
     }).length;
     const idle = agents.filter((a: any) => {
       const s = (a.status ?? "idle").toLowerCase();
-      return s === "idle";
+      return s === "idle" || s === "completed";
     }).length;
     const offline = agents.length - online - busy - idle;
     return { online, busy, idle, offline, total: agents.length };
@@ -39,14 +39,14 @@ const ProjectSidebar: Component = () => {
       style={{
         width: "220px",
         "min-width": "220px",
-        background: "#0D1526",
+        background: "var(--bg-base)",
         padding: "16px 12px",
       }}
     >
       {/* Projects section */}
       <span
         class="text-[10px] font-semibold uppercase tracking-wider"
-        style={{ color: "#6B7280", "letter-spacing": "1.2px" }}
+        style={{ color: "var(--text-faint)", "letter-spacing": "1.2px" }}
       >
         Projects
       </span>
@@ -59,7 +59,7 @@ const ProjectSidebar: Component = () => {
               <button
                 class="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left transition-colors"
                 style={{
-                  background: isSelected() ? "#1E293B" : "transparent",
+                  background: isSelected() ? "var(--bg-elevated)" : "transparent",
                 }}
                 classList={{
                   "hover:bg-[#1E293B]/50": !isSelected(),
@@ -77,7 +77,7 @@ const ProjectSidebar: Component = () => {
                   style={{
                     "font-family": "'JetBrains Mono', monospace",
                     "font-weight": isSelected() ? "600" : "400",
-                    color: isSelected() ? "#E5E7EB" : "#9CA3AF",
+                    color: isSelected() ? "var(--text-body)" : "var(--text-muted)",
                   }}
                 >
                   {project.name}
@@ -96,12 +96,12 @@ const ProjectSidebar: Component = () => {
       </div>
 
       {/* Divider */}
-      <div style={{ height: "1px", background: "#1E293B" }} />
+      <div style={{ height: "1px", background: "var(--border-subtle)" }} />
 
       {/* Fleet Status section */}
       <span
         class="text-[10px] font-semibold uppercase tracking-wider"
-        style={{ color: "#6B7280", "letter-spacing": "1.2px" }}
+        style={{ color: "var(--text-faint)", "letter-spacing": "1.2px" }}
       >
         Fleet Status
       </span>
@@ -110,7 +110,7 @@ const ProjectSidebar: Component = () => {
         <Show when={fleetSummary().online > 0}>
           <div class="flex items-center gap-1.5">
             <span class="h-1.5 w-1.5 rounded-full" style={{ background: "#10B981" }} />
-            <span class="text-[11px]" style={{ color: "#9CA3AF" }}>
+            <span class="text-[11px]" style={{ color: "var(--text-muted)" }}>
               {fleetSummary().online} agent{fleetSummary().online !== 1 ? "s" : ""} online
             </span>
           </div>
@@ -118,7 +118,7 @@ const ProjectSidebar: Component = () => {
         <Show when={fleetSummary().busy > 0}>
           <div class="flex items-center gap-1.5">
             <span class="h-1.5 w-1.5 rounded-full" style={{ background: "#FBBF24" }} />
-            <span class="text-[11px]" style={{ color: "#9CA3AF" }}>
+            <span class="text-[11px]" style={{ color: "var(--text-muted)" }}>
               {fleetSummary().busy} agent{fleetSummary().busy !== 1 ? "s" : ""} busy
             </span>
           </div>
@@ -126,7 +126,7 @@ const ProjectSidebar: Component = () => {
         <Show when={fleetSummary().idle > 0}>
           <div class="flex items-center gap-1.5">
             <span class="h-1.5 w-1.5 rounded-full" style={{ background: "#6B7280" }} />
-            <span class="text-[11px]" style={{ color: "#9CA3AF" }}>
+            <span class="text-[11px]" style={{ color: "var(--text-muted)" }}>
               {fleetSummary().idle} agent{fleetSummary().idle !== 1 ? "s" : ""} idle
             </span>
           </div>
@@ -134,7 +134,7 @@ const ProjectSidebar: Component = () => {
         <Show when={fleetSummary().total === 0}>
           <div class="flex items-center gap-1.5">
             <span class="h-1.5 w-1.5 rounded-full" style={{ background: "#EF4444" }} />
-            <span class="text-[11px]" style={{ color: "#9CA3AF" }}>
+            <span class="text-[11px]" style={{ color: "var(--text-muted)" }}>
               No agents connected
             </span>
           </div>

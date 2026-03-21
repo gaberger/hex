@@ -59,19 +59,19 @@ const ProjectChatWidget: Component<{
       style={{
         width: "350px",
         "min-width": "350px",
-        background: "#0D1526",
-        "border-color": "#1E293B",
+        background: "var(--bg-base)",
+        "border-color": "var(--border-subtle)",
       }}
     >
       {/* Header */}
       <div
         class="flex items-center justify-between px-4 py-3"
-        style={{ "border-bottom": "1px solid #1E293B" }}
+        style={{ "border-bottom": "1px solid var(--border-subtle)" }}
       >
         <div class="flex items-center gap-2">
           <span
             class="text-[13px] font-semibold"
-            style={{ color: "#E5E7EB" }}
+            style={{ color: "var(--text-body)" }}
           >
             Project Chat
           </span>
@@ -90,7 +90,7 @@ const ProjectChatWidget: Component<{
           >
             <svg
               class="h-3.5 w-3.5"
-              style={{ color: "#6B7280" }}
+              style={{ color: "var(--text-faint)" }}
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -106,7 +106,7 @@ const ProjectChatWidget: Component<{
           >
             <svg
               class="h-4 w-4"
-              style={{ color: "#6B7280" }}
+              style={{ color: "var(--text-faint)" }}
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -131,28 +131,28 @@ const ProjectChatWidget: Component<{
                 style={{
                   background:
                     msg.role === "user"
-                      ? "#1E3A5F"
+                      ? "color-mix(in srgb, var(--accent) 20%, var(--bg-base))"
                       : msg.role === "tool"
-                        ? "#1A1A2E"
-                        : "#111827",
+                        ? "color-mix(in srgb, var(--purple) 10%, var(--bg-base))"
+                        : "var(--bg-surface)",
                   color:
                     msg.role === "user"
                       ? "#93C5FD"
                       : msg.role === "tool"
-                        ? "#A78BFA"
-                        : "#D1D5DB",
+                        ? "var(--purple)"
+                        : "var(--text-secondary)",
                   border:
                     msg.role === "user"
                       ? "none"
                       : msg.role === "tool"
-                        ? "1px solid #2D2B55"
-                        : "1px solid #1E293B",
+                        ? "1px solid color-mix(in srgb, var(--purple) 30%, transparent)"
+                        : "1px solid var(--border-subtle)",
                 }}
               >
                 <Show when={msg.role === "tool" && msg.toolName}>
                   <div
                     class="mb-1 text-[10px] font-semibold"
-                    style={{ color: "#7C3AED" }}
+                    style={{ color: "var(--purple)" }}
                   >
                     {msg.toolName}
                   </div>
@@ -160,7 +160,7 @@ const ProjectChatWidget: Component<{
                 <p class="whitespace-pre-wrap break-words">{msg.content}</p>
                 <div
                   class="mt-1 text-[9px]"
-                  style={{ color: "#4B5563" }}
+                  style={{ color: "var(--text-dim)" }}
                 >
                   {formatTime(msg.timestamp)}
                 </div>
@@ -175,9 +175,9 @@ const ProjectChatWidget: Component<{
             <div
               class="max-w-[85%] rounded-lg px-3 py-2 text-[12px]"
               style={{
-                background: "#111827",
-                color: "#D1D5DB",
-                border: "1px solid #1E293B",
+                background: "var(--bg-surface)",
+                color: "var(--text-secondary)",
+                border: "1px solid var(--border-subtle)",
               }}
             >
               <p class="whitespace-pre-wrap break-words">
@@ -185,7 +185,7 @@ const ProjectChatWidget: Component<{
               </p>
               <span
                 class="inline-block h-2 w-2 animate-pulse rounded-full"
-                style={{ background: "#22D3EE" }}
+                style={{ background: "var(--accent-hover)" }}
               />
             </div>
           </div>
@@ -198,7 +198,7 @@ const ProjectChatWidget: Component<{
           <div class="flex flex-col items-center justify-center py-8 text-center">
             <svg
               class="mb-3 h-8 w-8"
-              style={{ color: "#374151" }}
+              style={{ color: "var(--border)" }}
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -206,7 +206,7 @@ const ProjectChatWidget: Component<{
             >
               <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
             </svg>
-            <p class="text-[11px]" style={{ color: "#6B7280" }}>
+            <p class="text-[11px]" style={{ color: "var(--text-faint)" }}>
               Ask about your project's architecture, ADRs, or get coding
               help.
             </p>
@@ -219,7 +219,7 @@ const ProjectChatWidget: Component<{
       {/* Input bar */}
       <div
         class="flex items-center gap-2 px-3 py-3"
-        style={{ "border-top": "1px solid #1E293B" }}
+        style={{ "border-top": "1px solid var(--border-subtle)" }}
       >
         <input
           ref={inputRef}
@@ -230,16 +230,16 @@ const ProjectChatWidget: Component<{
           onKeyDown={handleKeyDown}
           class="flex-1 rounded-md border px-3 py-2 text-[12px] focus:outline-none"
           style={{
-            background: "#111827",
-            "border-color": "#1E293B",
-            color: "#E5E7EB",
+            background: "var(--bg-surface)",
+            "border-color": "var(--border-subtle)",
+            color: "var(--text-body)",
           }}
         />
         <button
           onClick={handleSend}
           disabled={!input().trim() || !chat.connected()}
           class="shrink-0 rounded-md px-3 py-2 text-[11px] font-medium transition-colors disabled:opacity-40"
-          style={{ background: "#0E7490", color: "#FFFFFF" }}
+          style={{ background: "var(--accent)", color: "#FFFFFF" }}
         >
           Send
         </button>

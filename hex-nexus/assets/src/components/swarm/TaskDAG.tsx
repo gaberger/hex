@@ -18,8 +18,8 @@ interface TaskNode {
 }
 
 const STATUS_COLORS: Record<string, { fill: string; stroke: string; text: string }> = {
-  pending:     { fill: "#1f2937", stroke: "#374151", text: "#9ca3af" },
-  in_progress: { fill: "#164e63", stroke: "#06b6d4", text: "#67e8f9" },
+  pending:     { fill: "var(--bg-elevated)", stroke: "var(--border)", text: "var(--text-muted)" },
+  in_progress: { fill: "color-mix(in srgb, var(--accent) 20%, var(--bg-base))", stroke: "var(--accent)", text: "var(--accent-hover)" },
   completed:   { fill: "#14532d", stroke: "#22c55e", text: "#86efac" },
   failed:      { fill: "#450a0a", stroke: "#ef4444", text: "#fca5a5" },
 };
@@ -125,7 +125,7 @@ const TaskDAG: Component<{ tasks: TaskNode[] }> = (props) => {
                 <path
                   d={`M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`}
                   fill="none"
-                  stroke="#374151"
+                  stroke="var(--border)"
                   stroke-width="1.5"
                   stroke-dasharray={node.task.status === "pending" ? "4 4" : undefined}
                 />
@@ -182,7 +182,7 @@ const TaskDAG: Component<{ tasks: TaskNode[] }> = (props) => {
               <text
                 x={node.x + 26}
                 y={node.y + 40}
-                fill="#6b7280"
+                fill="var(--text-faint)"
                 font-size="9"
                 font-family="ui-monospace, monospace"
               >

@@ -168,12 +168,12 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
       {/* Toolbar: staged/unstaged toggle + summary */}
       <div class="flex items-center gap-3">
         {/* Toggle buttons */}
-        <div class="flex rounded-md border" style={{ "border-color": "#374151" }}>
+        <div class="flex rounded-md border" style={{ "border-color": "var(--border)" }}>
           <button
             class="px-3 py-1.5 text-[11px] font-medium transition-colors"
             style={{
-              background: !staged() ? "#1E293B" : "transparent",
-              color: !staged() ? "#67E8F9" : "#9CA3AF",
+              background: !staged() ? "var(--bg-elevated)" : "transparent",
+              color: !staged() ? "var(--accent-hover)" : "var(--text-muted)",
             }}
             onClick={() => setStaged(false)}
           >
@@ -182,9 +182,9 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
           <button
             class="px-3 py-1.5 text-[11px] font-medium transition-colors border-l"
             style={{
-              background: staged() ? "#1E293B" : "transparent",
-              color: staged() ? "#67E8F9" : "#9CA3AF",
-              "border-color": "#374151",
+              background: staged() ? "var(--bg-elevated)" : "transparent",
+              color: staged() ? "var(--accent-hover)" : "var(--text-muted)",
+              "border-color": "var(--border)",
             }}
             onClick={() => setStaged(true)}
           >
@@ -194,7 +194,7 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
 
         {/* Summary stats */}
         <Show when={!loading()}>
-          <span class="text-[11px]" style={{ color: "#9CA3AF" }}>
+          <span class="text-[11px]" style={{ color: "var(--text-muted)" }}>
             {files().length} file{files().length !== 1 ? "s" : ""} changed
           </span>
           <Show when={totalAdded() > 0}>
@@ -215,14 +215,14 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
         <Show when={files().length > 0}>
           <button
             class="text-[10px] transition-colors"
-            style={{ color: "#9CA3AF" }}
+            style={{ color: "var(--text-muted)" }}
             onClick={expandAll}
           >
             Expand all
           </button>
           <button
             class="text-[10px] transition-colors"
-            style={{ color: "#9CA3AF" }}
+            style={{ color: "var(--text-muted)" }}
             onClick={collapseAll}
           >
             Collapse all
@@ -234,20 +234,20 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
       <Show when={loading()}>
         <div class="flex items-center justify-center py-8">
           <div class="h-5 w-5 animate-spin rounded-full border-2 border-gray-700 border-t-cyan-400" />
-          <span class="ml-2 text-[11px]" style={{ color: "#9CA3AF" }}>Loading diff...</span>
+          <span class="ml-2 text-[11px]" style={{ color: "var(--text-muted)" }}>Loading diff...</span>
         </div>
       </Show>
 
       {/* Empty state */}
       <Show when={!loading() && files().length === 0}>
         <div class="rounded-lg border p-8 text-center" style={{ "border-color": "var(--border-subtle)", background: "var(--bg-base)" }}>
-          <svg class="mx-auto mb-3 h-8 w-8" style={{ color: "#374151" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <svg class="mx-auto mb-3 h-8 w-8" style={{ color: "var(--border)" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <p class="text-[13px]" style={{ color: "#9CA3AF" }}>
+          <p class="text-[13px]" style={{ color: "var(--text-muted)" }}>
             {staged() ? "No staged changes" : "No unstaged changes"}
           </p>
-          <p class="mt-1 text-[11px]" style={{ color: "#6B7280" }}>
+          <p class="mt-1 text-[11px]" style={{ color: "var(--text-faint)" }}>
             Working tree is clean
           </p>
         </div>
@@ -259,7 +259,7 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
           <For each={files()}>
             {(file, idx) => {
               const isExpanded = () => expandedFiles().has(file.path);
-              const statusInfo = () => FILE_STATUS_LABELS[file.status] ?? { label: "?", color: "#9CA3AF" };
+              const statusInfo = () => FILE_STATUS_LABELS[file.status] ?? { label: "?", color: "var(--text-muted)" };
 
               return (
                 <>
@@ -277,7 +277,7 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
                     <svg
                       class="h-3 w-3 shrink-0 transition-transform"
                       style={{
-                        color: "#6B7280",
+                        color: "var(--text-faint)",
                         transform: isExpanded() ? "rotate(90deg)" : "rotate(0deg)",
                       }}
                       viewBox="0 0 24 24"
@@ -300,7 +300,7 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
                     </span>
 
                     {/* File path */}
-                    <span class="flex-1 truncate text-[11px] font-mono" style={{ color: "#D1D5DB" }}>
+                    <span class="flex-1 truncate text-[11px] font-mono" style={{ color: "var(--text-secondary)" }}>
                       {file.path}
                     </span>
 

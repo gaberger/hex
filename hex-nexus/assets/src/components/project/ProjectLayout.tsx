@@ -21,6 +21,11 @@ const tabs: NavTab[] = [
     icon: "M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10",
   },
   {
+    label: "Files",
+    page: "file-tree",
+    icon: "M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z",
+  },
+  {
     label: "ADRs",
     page: "adrs",
     icon: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8",
@@ -77,6 +82,9 @@ const ProjectLayout: Component<{ children: JSX.Element }> = (props) => {
       case "project-graph":
         navigate({ page: "project-graph", projectId: pid });
         break;
+      case "file-tree":
+        navigate({ page: "file-tree", projectId: pid });
+        break;
       case "config":
         navigate({ page: "config", section: "blueprint" });
         break;
@@ -89,17 +97,17 @@ const ProjectLayout: Component<{ children: JSX.Element }> = (props) => {
       <div
         class="flex items-center gap-0 px-4 shrink-0"
         style={{
-          background: "#0B1120",
-          "border-bottom": "1px solid #1E293B",
+          background: "var(--bg-base)",
+          "border-bottom": "1px solid var(--border-subtle)",
         }}
       >
         {tabs.map((tab) => (
           <button
             class="flex items-center gap-1.5 px-3 py-2.5 text-[11px] font-medium transition-colors"
             style={{
-              color: isActive(tab) ? "#67E8F9" : "#6B7280",
+              color: isActive(tab) ? "var(--accent-hover)" : "var(--text-faint)",
               "border-bottom": isActive(tab)
-                ? "2px solid #0E7490"
+                ? "2px solid var(--accent)"
                 : "2px solid transparent",
               "letter-spacing": "0.5px",
             }}

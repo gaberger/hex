@@ -144,8 +144,8 @@ const MarkdownEditor: Component<MarkdownEditorProps> = (props) => {
               <span
                 class="rounded px-2 py-0.5 font-medium"
                 style={{
-                  color: m.color || '#d1d5db',
-                  "background-color": m.color ? m.color + '20' : '#1f2937',
+                  color: m.color || 'var(--text-secondary)',
+                  "background-color": m.color ? m.color + '20' : 'var(--bg-elevated)',
                 }}
               >
                 {m.value}

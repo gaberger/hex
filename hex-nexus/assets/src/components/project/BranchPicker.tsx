@@ -74,8 +74,8 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
         class="flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-mono transition-colors"
         style={{
           background: "var(--bg-surface)",
-          "border-color": open() ? "#0E7490" : "#374151",
-          color: "#D1D5DB",
+          "border-color": open() ? "var(--accent)" : "var(--border)",
+          color: "var(--text-secondary)",
         }}
         onClick={() => setOpen(!open())}
       >
@@ -116,7 +116,7 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
             <Show when={localBranches().length > 0}>
               <div
                 class="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-wider"
-                style={{ color: "#6B7280" }}
+                style={{ color: "var(--text-faint)" }}
               >
                 Local branches
               </div>
@@ -135,7 +135,7 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
             <Show when={remoteBranches().length > 0}>
               <div
                 class="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-wider"
-                style={{ color: "#6B7280", "border-top": "1px solid var(--border-subtle)" }}
+                style={{ color: "var(--text-faint)", "border-top": "1px solid var(--border-subtle)" }}
               >
                 Remote branches
               </div>
@@ -152,7 +152,7 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
 
             {/* Empty state */}
             <Show when={localBranches().length === 0 && remoteBranches().length === 0}>
-              <div class="px-3 py-4 text-center text-[11px]" style={{ color: "#6B7280" }}>
+              <div class="px-3 py-4 text-center text-[11px]" style={{ color: "var(--text-faint)" }}>
                 {filter() ? "No matching branches" : "No branches found"}
               </div>
             </Show>
@@ -171,14 +171,14 @@ const BranchItem: Component<{
   <button
     class="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] font-mono transition-colors"
     style={{
-      background: props.isActive ? "#1E293B" : "transparent",
-      color: props.isActive ? "#67E8F9" : "#D1D5DB",
+      background: props.isActive ? "var(--bg-elevated)" : "transparent",
+      color: props.isActive ? "var(--accent-hover)" : "var(--text-secondary)",
     }}
     classList={{ "hover:bg-[#1E293B]/50": !props.isActive }}
     onClick={props.onSelect}
   >
     <Show when={props.isActive}>
-      <svg class="h-2.5 w-2.5 shrink-0" style={{ color: "#67E8F9" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+      <svg class="h-2.5 w-2.5 shrink-0" style={{ color: "var(--accent-hover)" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
         <polyline points="20 6 9 17 4 12" />
       </svg>
     </Show>
@@ -186,7 +186,7 @@ const BranchItem: Component<{
       <span class="h-2.5 w-2.5 shrink-0" />
     </Show>
     <span class="truncate">{props.branch.name}</span>
-    <span class="ml-auto text-[9px]" style={{ color: "#6B7280" }}>
+    <span class="ml-auto text-[9px]" style={{ color: "var(--text-faint)" }}>
       {props.branch.shortSha}
     </span>
   </button>

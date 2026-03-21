@@ -235,7 +235,7 @@ const ControlPlane: Component = () => {
             <div class="flex items-center gap-3">
               <button
                 style={{
-                  background: "#164e6380",
+                  background: "color-mix(in srgb, var(--accent) 30%, transparent)",
                   color: "var(--accent-hover)",
                   border: "none",
                   "border-radius": "8px",
@@ -252,7 +252,7 @@ const ControlPlane: Component = () => {
                 style={{
                   background: "transparent",
                   color: "var(--text-body)",
-                  border: "1px solid #374151",
+                  border: "1px solid var(--border)",
                   "border-radius": "8px",
                   padding: "6px 14px",
                   "font-size": "13px",
@@ -282,7 +282,7 @@ const ControlPlane: Component = () => {
               style={{
                 flex: "1",
                 background: "var(--bg-surface)",
-                border: "1px solid #374151",
+                border: "1px solid var(--border)",
                 "border-radius": "8px",
                 padding: "8px 12px",
                 "font-size": "13px",
@@ -290,7 +290,7 @@ const ControlPlane: Component = () => {
                 outline: "none",
               }}
               onFocus={(e) =>
-                (e.currentTarget.style.borderColor = "#22d3ee80")
+                (e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent-hover) 50%, transparent)")
               }
               onBlur={(e) =>
                 (e.currentTarget.style.borderColor = "var(--border)")
@@ -300,7 +300,7 @@ const ControlPlane: Component = () => {
               type="submit"
               disabled={registering() || !newPath().trim()}
               style={{
-                background: "#164e6380",
+                background: "color-mix(in srgb, var(--accent) 30%, transparent)",
                 color: "var(--accent-hover)",
                 border: "none",
                 "border-radius": "8px",
@@ -318,7 +318,7 @@ const ControlPlane: Component = () => {
               style={{
                 background: "transparent",
                 color: "var(--text-faint)",
-                border: "1px solid #374151",
+                border: "1px solid var(--border)",
                 "border-radius": "8px",
                 padding: "8px 12px",
                 "font-size": "13px",
@@ -358,7 +358,7 @@ const ControlPlane: Component = () => {
                     style={{
                       background: "var(--bg-surface)",
                       border: hasSwarms()
-                        ? "1px solid #22d3ee40"
+                        ? "1px solid color-mix(in srgb, var(--accent-hover) 25%, transparent)"
                         : "1px solid var(--border-subtle)",
                       "border-radius": "12px",
                       padding: "16px",
@@ -581,7 +581,7 @@ const ControlPlane: Component = () => {
                               height: "100%",
                               width: `${prog().percent}%`,
                               "border-radius": "6px",
-                              background: "#22d3ee",
+                              background: "var(--accent-hover)",
                               transition: "width 500ms ease",
                             }}
                           />
@@ -665,7 +665,7 @@ const EmptyState: Component<{
         style={{
           flex: "1",
           background: "var(--bg-surface)",
-          border: "1px solid #374151",
+          border: "1px solid var(--border)",
           "border-radius": "8px",
           padding: "10px 14px",
           "font-size": "13px",
@@ -673,7 +673,7 @@ const EmptyState: Component<{
           outline: "none",
         }}
         onFocus={(e) =>
-          (e.currentTarget.style.borderColor = "#22d3ee80")
+          (e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent-hover) 50%, transparent)")
         }
         onBlur={(e) =>
           (e.currentTarget.style.borderColor = "var(--border)")
@@ -683,7 +683,7 @@ const EmptyState: Component<{
         type="submit"
         disabled={props.registering() || !props.path().trim()}
         style={{
-          background: "#164e6380",
+          background: "color-mix(in srgb, var(--accent) 30%, transparent)",
           color: "var(--accent-hover)",
           border: "none",
           "border-radius": "8px",

@@ -69,7 +69,7 @@ const SpacetimeDBView: Component = () => {
               <div
                 class="rounded-xl p-4 border"
                 style={{
-                  "background-color": "#111827",
+                  "background-color": "var(--bg-surface)",
                   "border-color": isConnected() ? "rgba(34,211,238,0.25)" : "rgba(107,114,128,0.3)",
                 }}
               >

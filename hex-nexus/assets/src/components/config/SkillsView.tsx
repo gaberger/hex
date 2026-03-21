@@ -194,7 +194,7 @@ const SkillsView: Component = () => {
                       style={{ "background-color": "var(--bg-surface)" }}
                     >
                       <span class="text-sm font-bold text-gray-200 min-w-[150px]">{skill.name}</span>
-                      <span class="text-xs min-w-[160px]" style={{ "font-family": "'JetBrains Mono', monospace", color: "#22d3ee" }}>
+                      <span class="text-xs min-w-[160px]" style={{ "font-family": "'JetBrains Mono', monospace", color: "var(--accent-hover)" }}>
                         {skill.trigger}
                       </span>
                       <span class="text-sm text-gray-400 flex-1">{skill.desc}</span>

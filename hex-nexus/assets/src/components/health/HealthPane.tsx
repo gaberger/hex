@@ -134,7 +134,7 @@ const HealthPane: Component = () => {
                       cy="60"
                       r={RING_RADIUS}
                       fill="none"
-                      stroke="#1f2937"
+                      stroke="var(--bg-elevated)"
                       stroke-width="8"
                     />
                     {/* Score ring */}

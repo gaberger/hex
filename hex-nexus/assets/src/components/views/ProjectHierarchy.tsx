@@ -120,12 +120,12 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
 
                 <span
                   class="h-2 w-2 shrink-0 rounded-full"
-                  style={{ background: dotColor[status()] ?? "#6B7280" }}
+                  style={{ background: dotColor[status()] ?? "var(--text-faint)" }}
                 />
 
                 <span
                   class="text-[13px] font-semibold"
-                  style={{ color: "#E5E7EB", "font-family": "'JetBrains Mono', monospace" }}
+                  style={{ color: "var(--text-body)", "font-family": "'JetBrains Mono', monospace" }}
                 >
                   {name()}
                 </span>
@@ -157,7 +157,7 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                   <Show
                     when={wts().length > 0}
                     fallback={
-                      <p class="text-[11px]" style={{ color: "#4B5563" }}>
+                      <p class="text-[11px]" style={{ color: "var(--text-dim)" }}>
                         No worktrees
                       </p>
                     }
@@ -180,7 +180,7 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                               <span
                                 class="text-[12px]"
                                 style={{
-                                  color: "#E5E7EB",
+                                  color: "var(--text-body)",
                                   "font-family": "'JetBrains Mono', monospace",
                                   "font-weight": wt.isMain ? "600" : "400",
                                 }}
@@ -218,7 +218,7 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                                     </span>
                                     <span
                                       class="min-w-0 flex-1 truncate text-[11px]"
-                                      style={{ color: "#D1D5DB" }}
+                                      style={{ color: "var(--text-secondary)" }}
                                     >
                                       {truncate(c.message.split("\n")[0], 60)}
                                     </span>
@@ -232,7 +232,7 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                                 )}
                               </For>
                               <Show when={commitsForBranch(wt.branch).length === 0}>
-                                <p class="text-[10px] italic" style={{ color: "#4B5563" }}>
+                                <p class="text-[10px] italic" style={{ color: "var(--text-dim)" }}>
                                   no recent commits
                                 </p>
                               </Show>

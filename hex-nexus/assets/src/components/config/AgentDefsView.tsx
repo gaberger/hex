@@ -78,7 +78,7 @@ const AgentDefsView: Component = () => {
             <div
               class="rounded-xl p-4 border"
               style={{
-                "background-color": "#111827",
+                "background-color": "var(--bg-surface)",
                 "border-color": agent.color + "40",
               }}
             >

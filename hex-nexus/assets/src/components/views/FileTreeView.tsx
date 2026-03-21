@@ -1,6 +1,7 @@
 import { type Component, For, Show, createSignal, createMemo } from 'solid-js';
 import { MarkdownEditor } from '../editor';
 import { navigate, route } from '../../stores/router';
+import { projects } from '../../stores/projects';
 
 interface TreeNode {
   name: string;
@@ -76,7 +77,7 @@ const TreeNodeItem: Component<{
         class="flex w-full items-center gap-1.5 rounded px-1.5 py-[3px] text-left text-[12px] transition-colors"
         style={{
           "padding-left": `${props.depth * 14 + 6}px`,
-          color: isSelected() ? '#22D3EE' : '#D1D5DB',
+          color: isSelected() ? 'var(--accent-hover)' : 'var(--text-secondary)',
           background: isSelected() ? 'rgba(34,211,238,0.08)' : 'transparent',
         }}
         onMouseEnter={(e) => {
@@ -94,7 +95,7 @@ const TreeNodeItem: Component<{
         }}
       >
         {/* Icon */}
-        <span style={{ color: props.node.isDir ? '#FBBF24' : '#9CA3AF', "font-size": '13px', width: '16px', "text-align": 'center', "flex-shrink": '0' }}>
+        <span style={{ color: props.node.isDir ? 'var(--yellow)' : 'var(--text-muted)', "font-size": '13px', width: '16px', "text-align": 'center', "flex-shrink": '0' }}>
           {props.node.isDir
             ? (props.node.expanded ? '\u{1F4C2}' : '\u{1F4C1}')
             : '\u{1F4C4}'}
@@ -103,7 +104,7 @@ const TreeNodeItem: Component<{
         <Show when={props.node.isDir}>
           <svg
             class="h-3 w-3 flex-shrink-0 transition-transform"
-            style={{ transform: props.node.expanded ? 'rotate(90deg)' : 'rotate(0deg)', color: '#6B7280' }}
+            style={{ transform: props.node.expanded ? 'rotate(90deg)' : 'rotate(0deg)', color: 'var(--text-faint)' }}
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -146,6 +147,15 @@ const FileTreeView: Component = () => {
   const [loading, setLoading] = createSignal(false);
   const [treeLoading, setTreeLoading] = createSignal(true);
 
+  // Resolve project root path from route → projects store
+  const projectRoot = createMemo(() => {
+    const r = route();
+    const pid = (r as any).projectId ?? "";
+    if (!pid) return ".";
+    const proj = projects().find((p) => p.id === pid);
+    return proj?.path || ".";
+  });
+
   const isMarkdown = createMemo(() => {
     const fp = selectedFile();
     return fp ? fp.endsWith('.md') || fp.endsWith('.mdx') : false;
@@ -157,10 +167,11 @@ const FileTreeView: Component = () => {
     return fp.split('/').pop() ?? fp;
   });
 
-  // Load root on init
+  // Load root on init (scoped to project directory)
   (async () => {
     setTreeLoading(true);
-    const nodes = await fetchDir('.');
+    const root = projectRoot();
+    const nodes = await fetchDir(root);
     setTree(nodes);
     setTreeLoading(false);
   })();
@@ -229,12 +240,12 @@ const FileTreeView: Component = () => {
           class="flex items-center gap-2 border-b px-3 py-2"
           style={{ "border-color": 'var(--border-subtle)' }}
         >
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="2">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
           <span
             class="text-[11px] font-semibold uppercase"
-            style={{ color: '#9CA3AF', "letter-spacing": '0.8px' }}
+            style={{ color: 'var(--text-muted)', "letter-spacing": '0.8px' }}
           >
             Files
           </span>
@@ -242,12 +253,12 @@ const FileTreeView: Component = () => {
           {/* Refresh button */}
           <button
             class="rounded p-1 transition-colors"
-            style={{ color: '#6B7280' }}
-            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#D1D5DB')}
-            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = '#6B7280')}
+            style={{ color: 'var(--text-faint)' }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)')}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-faint)')}
             onClick={async () => {
               setTreeLoading(true);
-              const nodes = await fetchDir('.');
+              const nodes = await fetchDir(projectRoot());
               setTree(nodes);
               setTreeLoading(false);
             }}
@@ -264,12 +275,12 @@ const FileTreeView: Component = () => {
         <div class="flex-1 overflow-y-auto py-1" style={{ "scrollbar-width": 'thin' }}>
           <Show when={!treeLoading()} fallback={
             <div class="flex items-center justify-center py-8">
-              <span class="text-[11px]" style={{ color: '#6B7280' }}>Loading...</span>
+              <span class="text-[11px]" style={{ color: 'var(--text-faint)' }}>Loading...</span>
             </div>
           }>
             <Show when={tree().length > 0} fallback={
               <div class="px-3 py-4 text-center">
-                <span class="text-[11px]" style={{ color: '#6B7280' }}>No files found</span>
+                <span class="text-[11px]" style={{ color: 'var(--text-faint)' }}>No files found</span>
               </div>
             }>
               <For each={tree()}>
@@ -295,11 +306,11 @@ const FileTreeView: Component = () => {
           fallback={
             <div class="flex flex-1 items-center justify-center">
               <div class="text-center">
-                <svg class="mx-auto mb-3 h-12 w-12" viewBox="0 0 24 24" fill="none" stroke="#374151" stroke-width="1">
+                <svg class="mx-auto mb-3 h-12 w-12" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                   <polyline points="14 2 14 8 20 8" />
                 </svg>
-                <p class="text-[12px]" style={{ color: '#6B7280' }}>
+                <p class="text-[12px]" style={{ color: 'var(--text-faint)' }}>
                   Select a file to preview
                 </p>
               </div>
@@ -313,14 +324,14 @@ const FileTreeView: Component = () => {
           >
             <span
               class="text-[11px] font-medium truncate"
-              style={{ color: '#D1D5DB', "font-family": "'JetBrains Mono', monospace" }}
+              style={{ color: 'var(--text-secondary)', "font-family": "'JetBrains Mono', monospace" }}
             >
               {selectedFile()}
             </span>
             <div class="flex-1" />
             <button
               class="rounded px-2 py-0.5 text-[10px] font-medium transition-colors"
-              style={{ color: '#9CA3AF', border: '1px solid #374151' }}
+              style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
               onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'var(--bg-elevated)')}
               onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
               onClick={() => {
@@ -337,7 +348,7 @@ const FileTreeView: Component = () => {
           <div class="flex-1 overflow-auto">
             <Show when={!loading()} fallback={
               <div class="flex items-center justify-center py-12">
-                <span class="text-[11px]" style={{ color: '#6B7280' }}>Loading...</span>
+                <span class="text-[11px]" style={{ color: 'var(--text-faint)' }}>Loading...</span>
               </div>
             }>
               <Show
@@ -346,7 +357,7 @@ const FileTreeView: Component = () => {
                   <pre
                     class="p-4 text-[12px] leading-relaxed"
                     style={{
-                      color: '#D1D5DB',
+                      color: 'var(--text-secondary)',
                       "font-family": "'JetBrains Mono', monospace",
                       "white-space": 'pre-wrap',
                       "word-break": 'break-word',
