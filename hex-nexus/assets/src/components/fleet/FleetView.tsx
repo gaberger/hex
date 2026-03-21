@@ -93,13 +93,13 @@ const FleetView: Component = () => {
   }
 
   return (
-    <div class="flex h-full flex-col overflow-auto bg-gray-950 p-4">
+    <div class="flex h-full flex-col overflow-auto bg-gray-950 p-6">
       {/* Header */}
-      <div class="mb-4 flex items-center justify-between">
+      <div class="mb-6 flex items-center justify-between">
         <div>
-          <h3 class="text-sm font-semibold text-gray-100">Fleet</h3>
-          <p class="text-xs text-gray-300">
-            {onlineCount()}/{fleetNodes().length} nodes online — {totalAgents()} agents
+          <h2 class="text-[22px] font-bold text-gray-100">Fleet Nodes</h2>
+          <p class="mt-0.5 text-xs text-gray-400">
+            {onlineCount()}/{fleetNodes().length} node{fleetNodes().length !== 1 ? 's' : ''} online — {totalAgents()} agents
           </p>
         </div>
         <button
@@ -135,12 +135,19 @@ const FleetView: Component = () => {
       <Show
         when={fleetNodes().length > 0}
         fallback={
-          <div class="flex flex-1 items-center justify-center">
-            <p class="text-sm text-gray-300">No fleet nodes registered</p>
+          <div class="flex flex-1 flex-col items-center justify-center gap-2 text-gray-500">
+            <svg class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="2" y="2" width="20" height="8" rx="2" />
+              <rect x="2" y="14" width="20" height="8" rx="2" />
+              <circle cx="6" cy="6" r="1" fill="currentColor" />
+              <circle cx="6" cy="18" r="1" fill="currentColor" />
+            </svg>
+            <p class="text-sm">No fleet nodes registered</p>
+            <p class="text-xs">Click "Add Node" to register a compute node</p>
           </div>
         }
       >
-        <div class="grid gap-3 grid-cols-[repeat(auto-fill,minmax(240px,1fr))]">
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           <For each={fleetNodes()}>
             {(node) => {
               const status = () => node.status ?? node.state ?? "unknown";

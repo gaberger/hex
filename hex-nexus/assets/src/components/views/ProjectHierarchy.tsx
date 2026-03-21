@@ -1,80 +1,51 @@
 import { type Component, For, Show, createMemo, createSignal } from "solid-js";
 import type { WorktreeInfo, CommitInfo } from "../../stores/git";
 
-// ── Status badge colors ─────────────────────────────────
+// ── Status colors ───────────────────────────────────────
 
-const statusColors: Record<string, string> = {
-  online: "bg-emerald-900/30 text-emerald-400 border border-emerald-500/30",
-  active: "bg-emerald-900/30 text-emerald-400 border border-emerald-500/30",
-  busy: "bg-yellow-900/30 text-yellow-400 border border-yellow-500/30",
-  stale: "bg-orange-900/30 text-orange-400 border border-orange-500/30",
-  dead: "bg-red-900/30 text-red-400 border border-red-500/30",
-  offline: "bg-red-900/30 text-red-400 border border-red-500/30",
+const badgeStyle: Record<string, string> = {
+  online: "bg-emerald-900/40 text-emerald-400",
+  active: "bg-emerald-900/40 text-emerald-400",
+  busy:   "bg-yellow-900/40 text-yellow-400",
+  idle:   "bg-yellow-900/40 text-yellow-400",
+  stale:  "bg-orange-900/40 text-orange-400",
+  dead:   "bg-red-900/40 text-red-400",
+  offline:"bg-red-900/40 text-red-400",
 };
 
-const statusDot: Record<string, string> = {
+const dotColor: Record<string, string> = {
   online: "bg-emerald-500",
   active: "bg-emerald-500",
-  busy: "bg-yellow-500",
-  stale: "bg-orange-500",
-  dead: "bg-red-500",
-  offline: "bg-red-500",
+  busy:   "bg-yellow-500",
+  idle:   "bg-yellow-500",
+  stale:  "bg-orange-500",
+  dead:   "bg-red-500",
+  offline:"bg-red-500",
 };
 
-// ── Icons ────────────────────────────────────────────────
+const modelColor: Record<string, string> = {
+  qwen:    "text-blue-400",
+  claude:  "text-purple-400",
+  ollama:  "text-blue-400",
+  sonnet:  "text-purple-400",
+  opus:    "text-pink-400",
+  haiku:   "text-cyan-400",
+  default: "text-gray-400",
+};
 
-const ChevronIcon: Component<{ open: boolean }> = (props) => (
-  <svg
-    class={`h-4 w-4 shrink-0 text-gray-500 transition-transform ${props.open ? "rotate-90" : ""}`}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  >
-    <polyline points="9 18 15 12 9 6" />
-  </svg>
-);
+const getModelColor = (model: string): string => {
+  const m = model.toLowerCase();
+  for (const [key, color] of Object.entries(modelColor)) {
+    if (m.includes(key)) return color;
+  }
+  return modelColor.default;
+};
 
-const GitCommitIcon: Component = () => (
-  <svg
-    class="h-3.5 w-3.5 shrink-0"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  >
-    <circle cx="12" cy="12" r="3" />
-    <line x1="3" y1="12" x2="9" y2="12" />
-    <line x1="15" y1="12" x2="21" y2="12" />
-  </svg>
-);
-
-const GitBranchIcon: Component = () => (
-  <svg
-    class="h-3.5 w-3.5 shrink-0"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  >
-    <line x1="6" y1="3" x2="6" y2="15" />
-    <circle cx="18" cy="6" r="3" />
-    <circle cx="6" cy="18" r="3" />
-    <path d="M18 9a9 9 0 0 1-9 9" />
-  </svg>
-);
-
-// ── Helpers ──────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────
 
 const relativeTime = (epoch: number): string => {
   const diff = Math.floor(Date.now() / 1000) - epoch;
-  if (diff < 60) return "just now";
+  if (diff < 60) return "now";
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
@@ -83,7 +54,7 @@ const relativeTime = (epoch: number): string => {
 const truncate = (s: string, max: number): string =>
   s.length > max ? s.slice(0, max - 1) + "\u2026" : s;
 
-// ── Props ────────────────────────────────────────────────
+// ── Props ───────────────────────────────────────────────
 
 interface ProjectHierarchyProps {
   projectId: string;
@@ -92,169 +63,157 @@ interface ProjectHierarchyProps {
   commits: CommitInfo[];
 }
 
-// ── Component ────────────────────────────────────────────
+// ── Component ───────────────────────────────────────────
 
 const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
-  const [expandedAgents, setExpandedAgents] = createSignal<Set<string>>(new Set());
+  // First agent starts expanded
+  const [expanded, setExpanded] = createSignal<Set<string>>(
+    new Set(props.agents.length > 0 ? [props.agents[0]?.name ?? "0"] : [])
+  );
 
-  const toggleAgent = (id: string) => {
-    setExpandedAgents((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  const toggle = (key: string) =>
+    setExpanded((s) => {
+      const n = new Set(s);
+      n.has(key) ? n.delete(key) : n.add(key);
+      return n;
     });
+
+  // Group commits by branch — match commit to worktree branch
+  const commitsForBranch = (branch: string): CommitInfo[] => {
+    if (!branch || branch === "(detached)") return [];
+    // Show all commits — in a real impl we'd filter by branch ancestry
+    // For now show the most recent commits (they're from the active branch)
+    return props.commits.slice(0, 5);
   };
 
-  /** Match worktrees to an agent by branch name or path containing the agent name. */
-  const worktreesForAgent = (agent: any): WorktreeInfo[] => {
-    const name = (agent.name ?? agent.agent_name ?? "").toLowerCase();
-    if (!name) return [];
-    return props.worktrees.filter((wt) => {
-      const branch = (wt.branch ?? "").toLowerCase();
-      const path = (wt.path ?? "").toLowerCase();
-      return branch.includes(name) || path.includes(name);
-    });
+  // Each agent "owns" worktrees — for now all worktrees go under the primary agent
+  // In future: match by agent.worktree_path or SpacetimeDB assignment
+  const agentWorktrees = (_agent: any, index: number): WorktreeInfo[] => {
+    if (index === 0) return props.worktrees.filter((wt) => !wt.isBare);
+    return [];
   };
-
-  /** Match commits to a worktree by branch name appearing in the commit message or by headSha prefix. */
-  const commitsForWorktree = (wt: WorktreeInfo): CommitInfo[] => {
-    return props.commits.filter((c) => {
-      if (wt.headSha && c.sha.startsWith(wt.headSha.slice(0, 7))) return true;
-      // Show commits whose SHA prefix matches the worktree head lineage (simple heuristic)
-      return false;
-    }).slice(0, 5);
-  };
-
-  /** Unmatched worktrees (not claimed by any agent). */
-  const unmatchedWorktrees = createMemo(() => {
-    const claimed = new Set<string>();
-    for (const agent of props.agents) {
-      for (const wt of worktreesForAgent(agent)) {
-        claimed.add(wt.path);
-      }
-    }
-    return props.worktrees.filter((wt) => !claimed.has(wt.path));
-  });
 
   return (
-    <div class="rounded-xl border border-gray-800 bg-[#111827] p-5">
-      {/* Project header */}
-      <h2
-        class="mb-4 text-lg font-bold text-gray-100"
-        style={{ "font-family": "'JetBrains Mono', monospace" }}
-      >
-        {props.projectId}
+    <>
+      <h2 class="mb-3 mt-8 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+        Agents · Worktrees · Commits
       </h2>
 
-      {/* Agents */}
-      <Show
-        when={props.agents.length > 0}
-        fallback={<p class="text-sm text-gray-500">No agents assigned</p>}
-      >
-        <div class="space-y-2">
-          <For each={props.agents}>
-            {(agent) => {
-              const id = () => agent.id ?? agent.name ?? agent.agent_name ?? "";
-              const name = () => agent.name ?? agent.agent_name ?? "unnamed";
-              const host = () => agent.host ?? agent.hostname ?? "--";
-              const status = () => agent.status ?? "offline";
-              const model = () => agent.model ?? "--";
-              const isOpen = () => expandedAgents().has(id());
-              const agentWts = () => worktreesForAgent(agent);
+      <div class="space-y-3">
+        <For each={props.agents}>
+          {(agent, idx) => {
+            const name = () => agent.name ?? agent.agent_name ?? "unnamed";
+            const host = () => agent.host ?? agent.hostname ?? "local";
+            const status = () => agent.status ?? "idle";
+            const model = () => agent.model ?? "--";
+            const key = () => name();
+            const isOpen = () => expanded().has(key());
+            const wts = () => agentWorktrees(agent, idx());
 
-              return (
-                <div class="rounded-lg border border-gray-700/50">
-                  {/* Agent row */}
-                  <button
-                    class="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-gray-800/50 transition-colors rounded-lg"
-                    onClick={() => toggleAgent(id())}
+            return (
+              <div class="rounded-xl border border-gray-800 bg-[#111827] overflow-hidden">
+                {/* Agent header */}
+                <button
+                  class="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-gray-800/40"
+                  onClick={() => toggle(key())}
+                >
+                  <svg
+                    class={`h-3 w-3 shrink-0 text-gray-500 transition-transform duration-150 ${isOpen() ? "rotate-90" : ""}`}
+                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                    stroke-linecap="round" stroke-linejoin="round"
                   >
-                    <ChevronIcon open={isOpen()} />
-                    <span class={`h-2 w-2 shrink-0 rounded-full ${statusDot[status()] ?? "bg-gray-500"}`} />
-                    <span
-                      class="text-xs font-semibold text-gray-200"
-                      style={{ "font-family": "'JetBrains Mono', monospace" }}
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+
+                  <span class={`h-2 w-2 shrink-0 rounded-full ${dotColor[status()] ?? "bg-gray-500"}`} />
+
+                  <span class="text-[13px] font-semibold text-gray-200" style={{"font-family": "'JetBrains Mono', monospace"}}>
+                    {name()}
+                  </span>
+
+                  <span class={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold ${badgeStyle[status()] ?? "bg-gray-800 text-gray-400"}`}>
+                    {status()}
+                  </span>
+
+                  <span class="ml-auto flex items-center gap-3 text-[11px]">
+                    <span class="text-gray-500">{host()}</span>
+                    <span class={`${getModelColor(model())}`} style={{"font-family": "'JetBrains Mono', monospace"}}>
+                      {model()}
+                    </span>
+                  </span>
+                </button>
+
+                {/* Expanded: worktrees + commits */}
+                <Show when={isOpen()}>
+                  <div class="border-t border-gray-800/60 px-4 pb-3 pt-2">
+                    <Show
+                      when={wts().length > 0}
+                      fallback={<p class="pl-7 text-[11px] text-gray-600">No worktrees</p>}
                     >
-                      {name()}
-                    </span>
-                    <span class={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${statusColors[status()] ?? "bg-gray-800 text-gray-400"}`}>
-                      {status()}
-                    </span>
-                    <span class="ml-auto text-[10px] text-gray-500">
-                      {host()} &middot; {model()}
-                    </span>
-                  </button>
+                      <div class="space-y-3 pl-7">
+                        <For each={wts()}>
+                          {(wt) => (
+                            <div>
+                              {/* Worktree header */}
+                              <div class="flex items-center gap-2">
+                                <svg class="h-3.5 w-3.5 shrink-0 text-yellow-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                  <line x1="6" y1="3" x2="6" y2="15" />
+                                  <circle cx="18" cy="6" r="3" />
+                                  <circle cx="6" cy="18" r="3" />
+                                  <path d="M18 9a9 9 0 0 1-9 9" />
+                                </svg>
+                                <span class="text-[12px] font-medium text-gray-200" style={{"font-family": "'JetBrains Mono', monospace"}}>
+                                  {wt.branch || "(detached)"}
+                                </span>
+                                <Show when={wt.isMain}>
+                                  <span class="rounded-full bg-emerald-900/40 px-2 py-0.5 text-[9px] font-semibold text-emerald-400">
+                                    HEAD
+                                  </span>
+                                </Show>
+                                <Show when={wt.commitCount != null && wt.commitCount > 0}>
+                                  <span class="rounded-full bg-gray-800 px-2 py-0.5 text-[9px] font-medium text-gray-400">
+                                    {wt.commitCount} ahead
+                                  </span>
+                                </Show>
+                              </div>
 
-                  {/* Expanded: worktrees */}
-                  <Show when={isOpen()}>
-                    <div class="border-t border-gray-800 px-3 pb-3 pt-2">
-                      <Show
-                        when={agentWts().length > 0}
-                        fallback={<p class="pl-6 text-[11px] text-gray-600">No matched worktrees</p>}
-                      >
-                        <div class="space-y-2 pl-6">
-                          <For each={agentWts()}>
-                            {(wt) => {
-                              const wtCommits = () => commitsForWorktree(wt);
-                              return (
-                                <div>
-                                  <div class="flex items-center gap-1.5 text-gray-400">
-                                    <GitBranchIcon />
-                                    <span class="text-xs font-medium text-gray-300" style={{ "font-family": "'JetBrains Mono', monospace" }}>
-                                      {wt.branch || "(detached)"}
-                                    </span>
-                                    <span class="ml-1 text-[10px] text-gray-600 font-mono">
-                                      {wt.path.length > 40 ? "\u2026" + wt.path.slice(-37) : wt.path}
-                                    </span>
-                                  </div>
-                                  <Show when={wtCommits().length > 0}>
-                                    <div class="mt-1 space-y-0.5 pl-5">
-                                      <For each={wtCommits()}>
-                                        {(c) => (
-                                          <div class="flex items-center gap-2 text-[11px]">
-                                            <GitCommitIcon />
-                                            <span class="font-mono text-blue-400">{c.shortSha}</span>
-                                            <span class="text-gray-300">{truncate(c.message.split("\n")[0], 60)}</span>
-                                            <span class="ml-auto text-gray-500">{relativeTime(c.timestamp)}</span>
-                                          </div>
-                                        )}
-                                      </For>
+                              {/* Commits under this worktree */}
+                              <div class="mt-1.5 space-y-1 pl-5">
+                                <For each={commitsForBranch(wt.branch)}>
+                                  {(c) => (
+                                    <div class="flex items-center gap-2 text-[11px]">
+                                      <span class="font-mono text-blue-400">{c.shortSha}</span>
+                                      <span class="flex-1 truncate text-gray-300">
+                                        {truncate(c.message.split("\n")[0], 60)}
+                                      </span>
+                                      <span class="shrink-0 text-gray-600">{relativeTime(c.timestamp)}</span>
                                     </div>
-                                  </Show>
-                                </div>
-                              );
-                            }}
-                          </For>
-                        </div>
-                      </Show>
-                    </div>
-                  </Show>
-                </div>
-              );
-            }}
-          </For>
-        </div>
-      </Show>
-
-      {/* Unmatched worktrees */}
-      <Show when={unmatchedWorktrees().length > 0}>
-        <h3 class="mt-4 mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-          Unassigned Worktrees
-        </h3>
-        <div class="space-y-1 pl-2">
-          <For each={unmatchedWorktrees()}>
-            {(wt) => (
-              <div class="flex items-center gap-1.5 text-gray-500">
-                <GitBranchIcon />
-                <span class="text-xs text-gray-400 font-mono">{wt.branch || "(detached)"}</span>
-                <span class="text-[10px] text-gray-600 font-mono">{wt.headSha?.slice(0, 7)}</span>
+                                  )}
+                                </For>
+                                <Show when={commitsForBranch(wt.branch).length === 0}>
+                                  <p class="text-[10px] text-gray-600 italic">no recent commits</p>
+                                </Show>
+                              </div>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
               </div>
-            )}
-          </For>
-        </div>
-      </Show>
-    </div>
+            );
+          }}
+        </For>
+
+        {/* Empty state */}
+        <Show when={props.agents.length === 0}>
+          <div class="rounded-xl border border-gray-800 bg-[#111827] px-4 py-8 text-center text-sm text-gray-500">
+            No agents connected — start one with <code class="mx-1 rounded bg-gray-800 px-1.5 py-0.5 font-mono text-[11px] text-gray-400">hex nexus start</code>
+          </div>
+        </Show>
+      </div>
+    </>
   );
 };
 

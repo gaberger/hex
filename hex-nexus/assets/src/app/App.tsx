@@ -1,4 +1,4 @@
-import { type Component, onMount, onCleanup, createSignal, Show, Switch, Match, lazy } from 'solid-js';
+import { type Component, onMount, onCleanup, createSignal, Show, Switch, Match } from 'solid-js';
 import { initConnections } from '../stores/connection';
 import {
   splitPane,
@@ -7,13 +7,10 @@ import {
   focusNextPane,
   focusPrevPane,
   focusPaneByIndex,
-  replaceActivePane,
 } from '../stores/panes';
-import Sidebar from '../components/layout/Sidebar';
 import ContextPanel from '../components/layout/ContextPanel';
 import BottomBar from '../components/layout/BottomBar';
 import Breadcrumbs from '../components/layout/Breadcrumbs';
-import PaneManager from '../components/panes/PaneManager';
 import SpawnDialog from '../components/agent/SpawnDialog';
 import SwarmInitDialog from '../components/swarm/SwarmInitDialog';
 import CommandPalette from '../components/command/CommandPalette';
@@ -21,7 +18,7 @@ import ToastContainer from '../components/layout/ToastContainer';
 import { spawnDialogOpen, setSpawnDialogOpen, commandPaletteOpen, setCommandPaletteOpen, swarmInitDialogOpen, setSwarmInitDialogOpen } from '../stores/ui';
 import { startNexusHealthPoll, stopNexusHealthPoll } from '../stores/nexus-health';
 import { mode, toggleMode } from '../stores/mode';
-import { viewMode, setViewMode, toggleViewMode } from '../stores/view';
+import { toggleViewMode } from '../stores/view';
 import { initChatConnection, disconnectChat } from '../stores/chat';
 import { startHexFloMonitor } from '../stores/hexflo-monitor';
 import { route, initRouter, navigate } from '../stores/router';
@@ -317,17 +314,8 @@ const App: Component = () => {
       {/* Mobile bottom tabs — only shown on small screens */}
       <div class="flex md:hidden items-center justify-around border-t border-gray-800 bg-gray-900 py-2">
         <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1"
-          classList={{ "text-cyan-400": viewMode() === "chat" }}
-          onClick={() => setViewMode("chat")}
-        >
-          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-          <span class="text-[10px]">Chat</span>
-        </button>
-        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1"
-          classList={{ "text-cyan-400": viewMode() === "panes" }}
-          onClick={() => { setViewMode("panes"); }}
+          classList={{ "text-cyan-400": route().page === "control-plane" }}
+          onClick={() => navigate({ page: "control-plane" })}
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="3" width="7" height="7" />
@@ -337,18 +325,36 @@ const App: Component = () => {
           </svg>
           <span class="text-[10px]">Projects</span>
         </button>
-        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1">
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1"
+          classList={{ "text-cyan-400": route().page === "agent-fleet" }}
+          onClick={() => navigate({ page: "agent-fleet" })}
+        >
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+          <span class="text-[10px]">Agents</span>
+        </button>
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1"
+          classList={{ "text-cyan-400": route().page === "project-health" }}
+          onClick={() => navigate({ page: "project-health", projectId: "current" })}
+        >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
           </svg>
           <span class="text-[10px]">Health</span>
         </button>
-        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1">
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-4 py-1"
+          classList={{ "text-cyan-400": route().page === "config" }}
+          onClick={() => navigate({ page: "config", section: "blueprint" })}
+        >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3" />
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
-          <span class="text-[10px]">Settings</span>
+          <span class="text-[10px]">Config</span>
         </button>
       </div>
 

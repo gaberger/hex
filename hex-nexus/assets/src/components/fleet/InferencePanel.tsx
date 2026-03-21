@@ -118,12 +118,12 @@ const InferencePanel: Component = () => {
   }
 
   return (
-    <div class="flex h-full flex-col overflow-auto bg-gray-950 p-4">
+    <div class="flex h-full flex-col overflow-auto bg-gray-950 p-6">
       {/* Header */}
-      <div class="mb-3 flex items-center justify-between">
+      <div class="mb-6 flex items-center justify-between">
         <div>
-          <h3 class="text-sm font-semibold text-gray-100">Inference</h3>
-          <p class="text-xs text-gray-500">
+          <h2 class="text-[22px] font-bold text-gray-100">Inference</h2>
+          <p class="mt-0.5 text-xs text-gray-400">
             {inferenceProviders().length} provider{inferenceProviders().length !== 1 ? 's' : ''} — {totalRequests()} requests
           </p>
         </div>
@@ -172,7 +172,7 @@ const InferencePanel: Component = () => {
           <p class="text-[10px]">Click "+ Add" to register one</p>
         </div>
       }>
-        <div class="space-y-2">
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           <For each={inferenceProviders()}>
             {(provider) => {
               const id = () => provider.providerId ?? provider.provider_id ?? provider.name ?? provider.provider_name ?? "unnamed";
