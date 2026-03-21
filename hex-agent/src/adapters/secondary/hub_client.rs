@@ -24,6 +24,10 @@ pub struct HubClientAdapter {
     sink: Mutex<Option<WsSink>>,
     stream: Mutex<Option<WsStream>>,
     connected: AtomicBool,
+    /// Stored URL for reconnection
+    last_url: Mutex<Option<String>>,
+    /// Stored token for reconnection
+    last_token: Mutex<Option<String>>,
 }
 
 impl HubClientAdapter {
@@ -32,6 +36,8 @@ impl HubClientAdapter {
             sink: Mutex::new(None),
             stream: Mutex::new(None),
             connected: AtomicBool::new(false),
+            last_url: Mutex::new(None),
+            last_token: Mutex::new(None),
         }
     }
 }
@@ -39,6 +45,10 @@ impl HubClientAdapter {
 #[async_trait]
 impl HubClientPort for HubClientAdapter {
     async fn connect(&self, hub_url: &str, auth_token: &str) -> Result<(), HubError> {
+        // Store URL and token for reconnection
+        *self.last_url.lock().await = Some(hub_url.to_string());
+        *self.last_token.lock().await = Some(auth_token.to_string());
+
         // Build WebSocket URL: ws(s)://host/ws/agent?token=xxx
         let ws_url = if hub_url.starts_with("https") {
             hub_url.replacen("https", "wss", 1)
@@ -152,6 +162,26 @@ impl HubClientPort for HubClientAdapter {
 
     fn is_connected(&self) -> bool {
         self.connected.load(Ordering::SeqCst)
+    }
+
+    async fn reconnect(&self) -> Result<(), HubError> {
+        // Close existing connection (best-effort)
+        {
+            let mut sink_guard = self.sink.lock().await;
+            if let Some(mut sink) = sink_guard.take() {
+                let _ = sink.send(WsMessage::Close(None)).await;
+            }
+            *self.stream.lock().await = None;
+            self.connected.store(false, Ordering::SeqCst);
+        }
+
+        // Re-establish using stored URL and token
+        let url = self.last_url.lock().await.clone()
+            .ok_or_else(|| HubError::ConnectionFailed("No stored URL for reconnect".into()))?;
+        let token = self.last_token.lock().await.clone()
+            .ok_or_else(|| HubError::ConnectionFailed("No stored token for reconnect".into()))?;
+
+        self.connect(&url, &token).await
     }
 
     async fn disconnect(&self) -> Result<(), HubError> {

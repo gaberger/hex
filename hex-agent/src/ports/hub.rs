@@ -80,6 +80,12 @@ pub enum HubMessage {
         #[serde(default)]
         authenticated: bool,
     },
+    /// Agent deregisters from the hub (graceful shutdown)
+    #[serde(rename = "agent_deregister")]
+    Deregister {
+        agent_id: String,
+        reason: String,
+    },
     /// Catch-all for unknown message types from the hub
     #[serde(other)]
     Unknown,
@@ -102,6 +108,10 @@ pub trait HubClientPort: Send + Sync {
 
     /// Check if connected.
     fn is_connected(&self) -> bool;
+
+    /// Reconnect to the hub using the stored URL and token.
+    /// Closes any existing connection, then re-establishes.
+    async fn reconnect(&self) -> Result<(), HubError>;
 
     /// Disconnect from the hub.
     async fn disconnect(&self) -> Result<(), HubError>;

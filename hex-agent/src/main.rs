@@ -3,7 +3,8 @@ use hex_agent::{domain, ports, adapters, usecases};
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::time::Duration;
 
 use adapters::primary::cli::CliAdapter;
 use adapters::primary::migrate::ConfigMigrator;
@@ -662,6 +663,15 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        // --- Graceful Shutdown Signal (P2.3) ---
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let sf = shutdown_flag.clone();
+        tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.ok();
+            tracing::info!("Received SIGINT, initiating graceful shutdown");
+            sf.store(true, Ordering::Relaxed);
+        });
+
         // Shared agent status: 0=idle, 1=thinking, 2=executing
         let agent_status_flag = Arc::new(AtomicU8::new(0));
 
@@ -670,13 +680,19 @@ async fn main() -> anyhow::Result<()> {
         let hb_agent_id = agent_id.clone();
         let hb_agent_name = agent_display_name.clone();
         let hb_status = agent_status_flag.clone();
+        let hb_shutdown = shutdown_flag.clone();
         let hb_start = std::time::Instant::now();
         let heartbeat_handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+            let mut interval = tokio::time::interval(Duration::from_secs(15));
             loop {
                 interval.tick().await;
-                if !hb_client.is_connected() {
+                if hb_shutdown.load(Ordering::Relaxed) {
                     break;
+                }
+                if !hb_client.is_connected() {
+                    // Pause heartbeats while disconnected — don't send to a dead socket
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue;
                 }
                 let status_str = match hb_status.load(Ordering::Relaxed) {
                     1 => "thinking",
@@ -693,141 +709,199 @@ async fn main() -> anyhow::Result<()> {
             }
         });
 
-        // Conversation state persists across turns
+        // Conversation state persists across reconnects (declared outside loops)
         let mut conv_state = domain::ConversationState::new(uuid::Uuid::new_v4().to_string());
         conv_state.system_prompt = system_prompt.clone();
 
-        loop {
-            let msg = match hub_client.recv().await {
-                Ok(msg) => msg,
-                Err(e) => {
-                    tracing::warn!("Hub connection lost: {}", e);
-                    break;
+        // --- Reconnection Loop (P2.1) ---
+        let mut reconnect_backoff = 1u64; // seconds
+
+        'reconnect: loop {
+            // Inner message loop — processes hub messages until disconnect
+            loop {
+                // Check shutdown between messages
+                if shutdown_flag.load(Ordering::Relaxed) {
+                    break 'reconnect;
                 }
-            };
 
-            match msg {
-                HubMessage::ChatMessage { content } => {
-                    agent_status_flag.store(1, Ordering::Relaxed); // thinking
-                    hub_client
-                        .send(HubMessage::AgentStatus {
-                            status: "thinking".into(),
-                            detail: String::new(),
-                            agent_name: Some(agent_display_name.clone()),
-                        })
-                        .await
-                        .ok();
+                let msg = match hub_client.recv().await {
+                    Ok(msg) => {
+                        reconnect_backoff = 1; // reset on successful receive
+                        msg
+                    }
+                    Err(e) => {
+                        tracing::warn!("Hub connection lost: {}", e);
+                        break; // break inner loop, enter reconnect
+                    }
+                };
 
-                    // Create event channel and forward events to hub
-                    let (event_tx, mut event_rx) =
-                        tokio::sync::mpsc::unbounded_channel::<ConversationEvent>();
-
-                    let hub_fwd = hub_client.clone();
-                    let fwd_name = agent_display_name.clone();
-                    let fwd_status = agent_status_flag.clone();
-                    let forwarder = tokio::spawn(async move {
-                        while let Some(event) = event_rx.recv().await {
-                            let hub_msg = match &event {
-                                ConversationEvent::TextChunk(text) => {
-                                    Some(HubMessage::StreamChunk {
-                                        text: text.clone(),
-                                        agent_name: Some(fwd_name.clone()),
-                                    })
-                                }
-                                ConversationEvent::ToolCallStart { name, input } => {
-                                    fwd_status.store(2, Ordering::Relaxed); // executing
-                                    Some(HubMessage::ToolCall {
-                                        tool_name: name.clone(),
-                                        tool_input: serde_json::Value::String(input.clone()),
-                                        agent_name: Some(fwd_name.clone()),
-                                    })
-                                }
-                                ConversationEvent::ToolCallResult {
-                                    name,
-                                    content,
-                                    is_error,
-                                } => {
-                                    fwd_status.store(1, Ordering::Relaxed); // back to thinking
-                                    Some(HubMessage::ToolResultMsg {
-                                        tool_name: name.clone(),
-                                        content: content.clone(),
-                                        is_error: *is_error,
-                                        agent_name: Some(fwd_name.clone()),
-                                    })
-                                }
-                                ConversationEvent::TokenUpdate(usage) => {
-                                    Some(HubMessage::TokenUpdate {
-                                        input_tokens: usage.input_tokens,
-                                        output_tokens: usage.output_tokens,
-                                        total_input: usage.input_tokens as u64,
-                                        total_output: usage.output_tokens as u64,
-                                        agent_name: Some(fwd_name.clone()),
-                                    })
-                                }
-                                ConversationEvent::TurnComplete { .. } => {
-                                    fwd_status.store(0, Ordering::Relaxed); // idle
-                                    Some(HubMessage::AgentStatus {
-                                        status: "idle".into(),
-                                        detail: String::new(),
-                                        agent_name: Some(fwd_name.clone()),
-                                    })
-                                }
-                                ConversationEvent::Error(msg) => {
-                                    fwd_status.store(0, Ordering::Relaxed);
-                                    Some(HubMessage::AgentStatus {
-                                        status: "error".into(),
-                                        detail: msg.clone(),
-                                        agent_name: Some(fwd_name.clone()),
-                                    })
-                                }
-                                _ => None,
-                            };
-                            if let Some(m) = hub_msg {
-                                hub_fwd.send(m).await.ok();
-                            }
-                        }
-                    });
-
-                    let result = conversation
-                        .process_message(&mut conv_state, &content, &event_tx)
-                        .await;
-                    drop(event_tx); // Signal forwarder to stop
-                    forwarder.await.ok();
-
-                    agent_status_flag.store(0, Ordering::Relaxed); // idle
-                    if let Err(e) = result {
+                match msg {
+                    HubMessage::ChatMessage { content } => {
+                        agent_status_flag.store(1, Ordering::Relaxed); // thinking
                         hub_client
                             .send(HubMessage::AgentStatus {
-                                status: "error".into(),
-                                detail: e.to_string(),
+                                status: "thinking".into(),
+                                detail: String::new(),
+                                agent_name: Some(agent_display_name.clone()),
+                            })
+                            .await
+                            .ok();
+
+                        // Create event channel and forward events to hub
+                        let (event_tx, mut event_rx) =
+                            tokio::sync::mpsc::unbounded_channel::<ConversationEvent>();
+
+                        let hub_fwd = hub_client.clone();
+                        let fwd_name = agent_display_name.clone();
+                        let fwd_status = agent_status_flag.clone();
+                        let forwarder = tokio::spawn(async move {
+                            while let Some(event) = event_rx.recv().await {
+                                let hub_msg = match &event {
+                                    ConversationEvent::TextChunk(text) => {
+                                        Some(HubMessage::StreamChunk {
+                                            text: text.clone(),
+                                            agent_name: Some(fwd_name.clone()),
+                                        })
+                                    }
+                                    ConversationEvent::ToolCallStart { name, input } => {
+                                        fwd_status.store(2, Ordering::Relaxed); // executing
+                                        Some(HubMessage::ToolCall {
+                                            tool_name: name.clone(),
+                                            tool_input: serde_json::Value::String(input.clone()),
+                                            agent_name: Some(fwd_name.clone()),
+                                        })
+                                    }
+                                    ConversationEvent::ToolCallResult {
+                                        name,
+                                        content,
+                                        is_error,
+                                    } => {
+                                        fwd_status.store(1, Ordering::Relaxed); // back to thinking
+                                        Some(HubMessage::ToolResultMsg {
+                                            tool_name: name.clone(),
+                                            content: content.clone(),
+                                            is_error: *is_error,
+                                            agent_name: Some(fwd_name.clone()),
+                                        })
+                                    }
+                                    ConversationEvent::TokenUpdate(usage) => {
+                                        Some(HubMessage::TokenUpdate {
+                                            input_tokens: usage.input_tokens,
+                                            output_tokens: usage.output_tokens,
+                                            total_input: usage.input_tokens as u64,
+                                            total_output: usage.output_tokens as u64,
+                                            agent_name: Some(fwd_name.clone()),
+                                        })
+                                    }
+                                    ConversationEvent::TurnComplete { .. } => {
+                                        fwd_status.store(0, Ordering::Relaxed); // idle
+                                        Some(HubMessage::AgentStatus {
+                                            status: "idle".into(),
+                                            detail: String::new(),
+                                            agent_name: Some(fwd_name.clone()),
+                                        })
+                                    }
+                                    ConversationEvent::Error(msg) => {
+                                        fwd_status.store(0, Ordering::Relaxed);
+                                        Some(HubMessage::AgentStatus {
+                                            status: "error".into(),
+                                            detail: msg.clone(),
+                                            agent_name: Some(fwd_name.clone()),
+                                        })
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(m) = hub_msg {
+                                    hub_fwd.send(m).await.ok();
+                                }
+                            }
+                        });
+
+                        let result = conversation
+                            .process_message(&mut conv_state, &content, &event_tx)
+                            .await;
+                        drop(event_tx); // Signal forwarder to stop
+                        forwarder.await.ok();
+
+                        agent_status_flag.store(0, Ordering::Relaxed); // idle
+                        if let Err(e) = result {
+                            hub_client
+                                .send(HubMessage::AgentStatus {
+                                    status: "error".into(),
+                                    detail: e.to_string(),
+                                    agent_name: Some(agent_display_name.clone()),
+                                })
+                                .await
+                                .ok();
+                        }
+
+                        hub_client
+                            .send(HubMessage::AgentStatus {
+                                status: "idle".into(),
+                                detail: String::new(),
                                 agent_name: Some(agent_display_name.clone()),
                             })
                             .await
                             .ok();
                     }
+                    HubMessage::Connected { session_id, .. } => {
+                        tracing::info!(session_id = %session_id, "Hub confirmed connection");
+                    }
+                    HubMessage::Done { .. } => {
+                        tracing::info!("Hub requested shutdown");
+                        break 'reconnect;
+                    }
+                    _ => {}
+                }
+            }
 
+            // --- Reconnect with exponential backoff (P2.1) ---
+            if shutdown_flag.load(Ordering::Relaxed) {
+                break 'reconnect;
+            }
+
+            tracing::info!(backoff_secs = reconnect_backoff, "Reconnecting to hub...");
+            tokio::time::sleep(Duration::from_secs(reconnect_backoff)).await;
+            reconnect_backoff = (reconnect_backoff * 2).min(30);
+
+            // Check shutdown again after sleeping
+            if shutdown_flag.load(Ordering::Relaxed) {
+                break 'reconnect;
+            }
+
+            match hub_client.reconnect().await {
+                Ok(_) => {
+                    // Re-register after reconnect
                     hub_client
-                        .send(HubMessage::AgentStatus {
-                            status: "idle".into(),
-                            detail: String::new(),
-                            agent_name: Some(agent_display_name.clone()),
+                        .send(HubMessage::Register {
+                            agent_id: agent_id.clone(),
+                            agent_name: agent_display_name.clone(),
+                            project_dir: project_dir.to_string_lossy().into(),
                         })
                         .await
                         .ok();
+                    tracing::info!("Reconnected to hub successfully");
                 }
-                HubMessage::Connected { session_id, .. } => {
-                    tracing::info!(session_id = %session_id, "Hub confirmed connection");
+                Err(e) => {
+                    tracing::warn!("Reconnect failed: {}", e);
+                    continue 'reconnect;
                 }
-                HubMessage::Done { .. } => {
-                    tracing::info!("Hub requested shutdown");
-                    break;
-                }
-                _ => {}
             }
         }
 
+        // --- Graceful Shutdown (P2.3) ---
+        // Send deregister message before disconnecting
+        hub_client
+            .send(HubMessage::Deregister {
+                agent_id: agent_id.clone(),
+                reason: "graceful shutdown".into(),
+            })
+            .await
+            .ok();
+
         heartbeat_handle.abort();
         hub_client.disconnect().await.ok();
+        tracing::info!("Agent shut down gracefully");
         return Ok(());
     }
 
