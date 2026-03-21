@@ -1,8 +1,8 @@
 /**
- * BottomBar.tsx — OpenCode-style editor panel at the bottom.
+ * BottomBar.tsx — Chat input bar matching Pencil design spec.
  *
- * Full-width textarea with visible border, multi-line support,
- * auto-grow up to 8 lines, mode indicator, and slash commands.
+ * Compact single-line input with mode pill, connection status,
+ * and inline send button. Theme-aware via CSS variables.
  *
  * Enter = send, Shift+Enter = newline, Tab = toggle mode (when empty).
  */
@@ -10,9 +10,6 @@ import { Component, createSignal, createMemo, Show, For } from 'solid-js';
 import { searchCommands, type Command } from '../../stores/commands';
 import { mode, toggleMode } from '../../stores/mode';
 import { sendMessage, isStreaming, chatConnected } from '../../stores/chat';
-
-const MAX_ROWS = 8;
-const LINE_HEIGHT = 22;
 
 const BottomBar: Component = () => {
   let textareaRef: HTMLTextAreaElement | undefined;
@@ -29,7 +26,7 @@ const BottomBar: Component = () => {
   function autoGrow() {
     if (!textareaRef) return;
     textareaRef.style.height = 'auto';
-    const max = LINE_HEIGHT * MAX_ROWS;
+    const max = 22 * 6;
     textareaRef.style.height = Math.min(textareaRef.scrollHeight, max) + 'px';
   }
 
@@ -54,7 +51,6 @@ const BottomBar: Component = () => {
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-    // Enter (no shift) = send
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -63,7 +59,6 @@ const BottomBar: Component = () => {
       setShowHints(false);
       textareaRef?.blur();
     }
-    // Tab: toggle mode when empty, slash-complete otherwise
     if (e.key === 'Tab') {
       if (value().trim() === '') {
         e.preventDefault();
@@ -90,22 +85,42 @@ const BottomBar: Component = () => {
   }
 
   return (
-    <div class="relative border-t border-gray-800 bg-gray-900">
+    <div
+      class="relative flex flex-col"
+      style={{
+        background: 'var(--bg-surface)',
+        "border-top": '1px solid var(--border)',
+        padding: '8px 16px 12px 16px',
+        gap: '6px',
+      }}
+    >
       {/* Slash command hints */}
       <Show when={showHints() && slashMatches().length > 0}>
-        <div class="absolute bottom-full left-0 right-0 border-t border-gray-700 bg-gray-900/95 backdrop-blur-sm py-1 shadow-xl z-10">
+        <div
+          class="absolute bottom-full left-0 right-0 py-1 shadow-xl z-10 backdrop-blur-sm"
+          style={{ background: 'var(--bg-surface)', "border-top": '1px solid var(--border)' }}
+        >
           <For each={slashMatches()}>
             {(cmd) => (
               <button
-                class="flex w-full items-center gap-3 px-5 py-2 text-left text-xs text-gray-400 hover:bg-gray-800 transition-colors"
+                class="flex w-full items-center gap-3 px-5 py-2 text-left text-xs transition-colors"
+                style={{ color: 'var(--text-muted)' }}
                 onClick={() => selectHint(cmd)}
+                onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-elevated)'}
+                onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
               >
-                <span class="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[9px] uppercase text-cyan-300">
+                <span
+                  class="shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase"
+                  style={{ background: 'var(--bg-elevated)', color: 'var(--accent)' }}
+                >
                   {cmd.category}
                 </span>
-                <span class="text-gray-200">{cmd.label}</span>
+                <span style={{ color: 'var(--text-body)' }}>{cmd.label}</span>
                 <Show when={cmd.shortcut}>
-                  <kbd class="ml-auto rounded border border-gray-700 bg-gray-800 px-1.5 py-0.5 text-[9px] text-gray-500">{cmd.shortcut}</kbd>
+                  <kbd
+                    class="ml-auto rounded px-1.5 py-0.5 text-[9px]"
+                    style={{ border: '1px solid var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-faint)' }}
+                  >{cmd.shortcut}</kbd>
                 </Show>
               </button>
             )}
@@ -113,96 +128,91 @@ const BottomBar: Component = () => {
         </div>
       </Show>
 
-      {/* Status bar above input */}
-      <div class="flex items-center gap-2 px-4 pt-2 pb-1">
-        {/* Mode toggle */}
+      {/* Status row — mode pill + connection (Pencil: gap 8) */}
+      <div class="flex items-center" style={{ gap: '8px' }}>
         <button
-          class="flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[10px] font-semibold transition-colors select-none"
-          classList={{
-            "bg-blue-900/40 text-blue-400 hover:bg-blue-900/60": mode() === "plan",
-            "bg-green-900/40 text-green-400 hover:bg-green-900/60": mode() === "build",
+          class="flex items-center text-[10px] font-semibold select-none transition-colors"
+          style={{
+            gap: '6px',
+            "border-radius": '6px',
+            padding: '3px 8px',
+            background: mode() === 'plan' ? 'rgba(30,58,95,0.3)' : 'rgba(22,163,74,0.15)',
+            color: mode() === 'plan' ? '#60a5fa' : '#4ade80',
           }}
           onClick={toggleMode}
           title="Toggle Plan/Build mode (Tab)"
         >
-          <span class="h-1.5 w-1.5 rounded-full"
-            classList={{
-              "bg-blue-400": mode() === "plan",
-              "bg-green-400": mode() === "build",
-            }}
+          <span
+            class="h-1.5 w-1.5 rounded-full"
+            style={{ background: mode() === 'plan' ? '#60a5fa' : '#4ade80' }}
           />
-          {mode() === "plan" ? "Plan" : "Build"}
+          {mode() === 'plan' ? 'Plan' : 'Build'}
         </button>
-
-        {/* Connection status */}
-        <div class="flex items-center gap-1.5">
-          <span class="h-1.5 w-1.5 rounded-full" classList={{ "bg-green-500": chatConnected(), "bg-red-500": !chatConnected() }} />
-          <span class="text-[10px] text-gray-600">{chatConnected() ? 'connected' : 'disconnected'}</span>
-        </div>
-
-        {/* Streaming indicator */}
+        <span class="h-1.5 w-1.5 rounded-full" style={{ background: chatConnected() ? '#4ade80' : '#ef4444' }} />
+        <span class="text-[10px]" style={{ color: 'var(--text-dim)' }}>
+          {chatConnected() ? 'connected' : 'disconnected'}
+        </span>
         <Show when={isStreaming()}>
-          <div class="flex items-center gap-1.5 text-[10px] text-cyan-500">
-            <span class="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-pulse" />
-            streaming...
-          </div>
+          <span class="h-1.5 w-1.5 rounded-full animate-pulse ml-2" style={{ background: 'var(--accent)' }} />
+          <span class="text-[10px]" style={{ color: 'var(--accent)' }}>streaming...</span>
         </Show>
-
-        {/* Hints on right */}
-        <div class="ml-auto hidden sm:flex items-center gap-2 text-[9px] text-gray-600">
-          <Show when={value().startsWith('/')}>
-            <span class="rounded bg-cyan-900/30 px-1.5 py-0.5 text-cyan-400">Command</span>
-          </Show>
-          <span>Enter send</span>
-          <span>Shift+Enter newline</span>
-          <kbd class="rounded border border-gray-700 bg-gray-800 px-1 py-0.5 text-gray-500">Tab</kbd>
-          <span>mode</span>
-        </div>
       </div>
 
-      {/* Editor area */}
-      <div class="px-4 pb-3">
-        <div
-          class="flex rounded-lg border bg-gray-950 transition-colors"
-          classList={{
-            "border-gray-700": !focused(),
-            "border-blue-500/50": focused() && mode() === "plan",
-            "border-green-500/50": focused() && mode() === "build",
+      {/* Input row (Pencil: rounded 10, padding [12,16], gap 12) */}
+      <div
+        class="flex items-center transition-colors"
+        style={{
+          background: 'var(--bg-base)',
+          "border-radius": '10px',
+          border: focused()
+            ? `1px solid ${mode() === 'build' ? 'rgba(22,83,37,0.5)' : 'var(--ring-active)'}`
+            : '1px solid var(--border)',
+          padding: '12px 16px',
+          gap: '12px',
+        }}
+      >
+        <textarea
+          ref={textareaRef}
+          value={value()}
+          onInput={handleInput}
+          onKeyDown={handleKeyDown}
+          onFocus={() => { setFocused(true); if (value().startsWith('/')) setShowHints(true); }}
+          onBlur={() => { setFocused(false); setTimeout(() => setShowHints(false), 150); }}
+          disabled={isStreaming()}
+          placeholder={
+            isStreaming()
+              ? 'Waiting for response...'
+              : mode() === 'plan'
+                ? 'Ask a question, discuss architecture, plan changes...'
+                : 'Describe what to build, fix, or change...'
+          }
+          rows={1}
+          class="flex-1 resize-none bg-transparent text-[14px] outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{
+            color: 'var(--text-body)',
+            "line-height": '22px',
+            "min-height": '22px',
+            "max-height": '132px',
           }}
+        />
+        <button
+          onClick={handleSubmit}
+          disabled={isStreaming() || !value().trim()}
+          class="flex shrink-0 items-center justify-center transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+          style={{
+            width: '32px',
+            height: '32px',
+            "border-radius": '8px',
+            background: value().trim() ? '#16a34a' : 'var(--bg-elevated)',
+          }}
+          title="Send (Enter)"
         >
-          <textarea
-            ref={textareaRef}
-            value={value()}
-            onInput={handleInput}
-            onKeyDown={handleKeyDown}
-            onFocus={() => { setFocused(true); if (value().startsWith('/')) setShowHints(true); }}
-            onBlur={() => { setFocused(false); setTimeout(() => setShowHints(false), 150); }}
-            disabled={isStreaming()}
-            placeholder={isStreaming() ? 'Waiting for response...' : mode() === "plan" ? 'Ask a question, discuss architecture, plan changes...' : 'Describe what to build, fix, or change...'}
-            rows={3}
-            class="flex-1 resize-none bg-transparent px-4 py-3 text-sm text-gray-100 placeholder-gray-600 outline-none disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ "min-height": `${LINE_HEIGHT * 3}px`, "max-height": `${LINE_HEIGHT * MAX_ROWS}px`, "line-height": `${LINE_HEIGHT}px` }}
-          />
-          {/* Send button */}
-          <div class="flex flex-col items-center justify-end p-2 gap-1">
-            <button
-              onClick={handleSubmit}
-              disabled={isStreaming() || !value().trim()}
-              class="flex h-8 w-8 items-center justify-center rounded-md transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
-              classList={{
-                "bg-blue-600 hover:bg-blue-500 text-white": mode() === "plan" && !!value().trim(),
-                "bg-green-600 hover:bg-green-500 text-white": mode() === "build" && !!value().trim(),
-                "bg-gray-800 text-gray-600": !value().trim(),
-              }}
-              title="Send (Enter)"
-            >
-              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                <line x1="22" y1="2" x2="11" y2="13" />
-                <polygon points="22 2 15 22 11 13 2 9 22 2" />
-              </svg>
-            </button>
-          </div>
-        </div>
+          {/* Lucide send icon — 16x16: white on green when has text, muted when empty */}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={value().trim() ? '#ffffff' : 'var(--text-faint)'} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 2 11 13" />
+            <path d="M22 2 15 22 11 13 2 9 22 2" />
+          </svg>
+        </button>
       </div>
     </div>
   );

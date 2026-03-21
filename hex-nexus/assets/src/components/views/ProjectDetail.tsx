@@ -55,8 +55,10 @@ const ProjectDetail: Component = () => {
 
   const projectAgents = createMemo(() => {
     const pid = projectId();
+    const allAgents = registryAgents();
+    console.log(`[DEBUG] registryAgents count: ${allAgents.length}, projectId: ${pid}`, allAgents);
     if (!pid) return [];
-    return registryAgents().filter((a: any) => {
+    return allAgents.filter((a: any) => {
       // Primary: match by project_id (SpacetimeDB project ID like "hex-intf-1xq8wun")
       const agentProjId = a.projectId ?? a.project_id ?? "";
       if (agentProjId && agentProjId === pid) return true;
@@ -101,13 +103,13 @@ const ProjectDetail: Component = () => {
         <div class="mb-5 flex items-center gap-3">
           <h1
             class="text-[22px] font-bold"
-            style={{ color: "#F3F4F6", "font-family": "Inter, sans-serif" }}
+            style={{ color: "var(--text-primary)", "font-family": "Inter, sans-serif" }}
           >
             {project()?.name ?? projectId()}
           </h1>
           <span
             class="text-[11px]"
-            style={{ color: "#6B7280", "font-family": "'JetBrains Mono', monospace" }}
+            style={{ color: "var(--text-faint)", "font-family": "'JetBrains Mono', monospace" }}
           >
             {project()?.path ?? ""}
           </span>
@@ -130,7 +132,7 @@ const ProjectDetail: Component = () => {
           <button
             class="px-4 py-2 text-[11px] font-semibold uppercase transition-colors"
             style={{
-              color: activeTab() === "overview" ? "#67E8F9" : "#6B7280",
+              color: activeTab() === "overview" ? "var(--accent-hover)" : "var(--text-faint)",
               "border-bottom": activeTab() === "overview" ? "2px solid #0E7490" : "2px solid transparent",
               "letter-spacing": "1px",
             }}
@@ -141,7 +143,7 @@ const ProjectDetail: Component = () => {
           <button
             class="px-4 py-2 text-[11px] font-semibold uppercase transition-colors"
             style={{
-              color: activeTab() === "changes" ? "#67E8F9" : "#6B7280",
+              color: activeTab() === "changes" ? "var(--accent-hover)" : "var(--text-faint)",
               "border-bottom": activeTab() === "changes" ? "2px solid #0E7490" : "2px solid transparent",
               "letter-spacing": "1px",
             }}
@@ -156,7 +158,7 @@ const ProjectDetail: Component = () => {
           {/* Section label */}
           <h2
             class="mb-4 text-[10px] font-semibold uppercase"
-            style={{ color: "#6B7280", "letter-spacing": "1.2px" }}
+            style={{ color: "var(--text-faint)", "letter-spacing": "1.2px" }}
           >
             Agents &middot; Worktrees &middot; Commits
           </h2>

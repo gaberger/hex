@@ -467,12 +467,11 @@ const App: Component = () => {
               <FileTreeView />
             </Match>
           </Switch>
+          {/* BottomBar — inside center content so it doesn't span under sidebar */}
+          <BottomBar />
         </div>
 
       </div>
-
-      {/* BottomBar */}
-      <BottomBar />
 
       {/* Mobile bottom tabs — only shown on small screens */}
       <div class="flex md:hidden items-center justify-around border-t border-gray-800 bg-gray-900 py-2">
