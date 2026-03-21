@@ -592,6 +592,35 @@ async fn main() -> anyhow::Result<()> {
 
         tracing::info!(agent_id = %agent_id, name = %agent_display_name, hub = %hub_url, "Running in hub-managed mode");
 
+        // Register project with nexus so dashboard can see it and git APIs work
+        {
+            let project_name = project_dir.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let register_url = format!("{}/api/projects/register", hub_url);
+            let register_body = serde_json::json!({
+                "rootPath": project_dir.to_string_lossy(),
+                "name": project_name,
+            });
+            match reqwest::Client::new()
+                .post(&register_url)
+                .json(&register_body)
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    tracing::info!(project = %project_name, "Registered project with nexus");
+                }
+                Ok(resp) => {
+                    tracing::warn!(status = %resp.status(), "Project registration response: {}", resp.status());
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Could not register project with nexus");
+                }
+            }
+        }
+
         // Register inference provider with nexus (ADR-040)
         // Best-effort: failure is non-fatal — log and continue.
         if provider == "ollama" {
