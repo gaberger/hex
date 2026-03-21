@@ -26,6 +26,10 @@ import { initChatConnection, disconnectChat } from '../stores/chat';
 import { startHexFloMonitor } from '../stores/hexflo-monitor';
 import { route, initRouter, navigate } from '../stores/router';
 import ChatView from '../components/chat/ChatView';
+import HealthPane from '../components/health/HealthPane';
+import DependencyGraphPane from '../components/graph/DependencyGraphPane';
+import InferencePanel from '../components/fleet/InferencePanel';
+import FleetView from '../components/fleet/FleetView';
 import { ControlPlane, AgentFleet, ProjectDetail, ADRBrowser, ConfigPage } from '../components/views';
 
 const App: Component = () => {
@@ -253,14 +257,24 @@ const App: Component = () => {
               <AgentFleet />
             </Match>
             <Match when={route().page === "project-health"}>
-              <ChatView />
+              <div class="flex-1 overflow-auto p-6">
+                <HealthPane />
+              </div>
+            </Match>
+            <Match when={route().page === "project-graph"}>
+              <DependencyGraphPane />
             </Match>
             <Match when={route().page === "config"}>
               <ConfigPage />
             </Match>
             <Match when={route().page === "inference"}>
               <div class="flex-1 overflow-auto">
-                <ChatView />
+                <InferencePanel />
+              </div>
+            </Match>
+            <Match when={route().page === "fleet-nodes"}>
+              <div class="flex-1 overflow-auto">
+                <FleetView />
               </div>
             </Match>
           </Switch>
