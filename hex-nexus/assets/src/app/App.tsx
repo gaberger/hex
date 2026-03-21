@@ -225,12 +225,14 @@ const App: Component = () => {
       {/* Breadcrumbs */}
       <Breadcrumbs />
 
-      {/* Main 3-column area — responsive */}
+      {/* Main area — layout depends on route */}
       <div class="flex flex-1 overflow-hidden">
-        {/* Sidebar: hidden on mobile */}
-        <div class="hidden md:block">
-          <Sidebar />
-        </div>
+        {/* Sidebar: only on project-scoped pages */}
+        <Show when={route().page.startsWith("project")}>
+          <div class="hidden md:block">
+            <Sidebar />
+          </div>
+        </Show>
 
         {/* Center content — route-based view switching */}
         <div class="flex flex-1 flex-col overflow-hidden">
@@ -264,10 +266,12 @@ const App: Component = () => {
           </Switch>
         </div>
 
-        {/* Right panel: hidden on mobile and tablet */}
-        <div class="hidden lg:block">
-          <ContextPanel />
-        </div>
+        {/* Right panel: only on project-scoped pages */}
+        <Show when={route().page.startsWith("project")}>
+          <div class="hidden lg:block">
+            <ContextPanel />
+          </div>
+        </Show>
       </div>
 
       {/* BottomBar */}
