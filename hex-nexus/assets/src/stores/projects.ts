@@ -1,11 +1,11 @@
 /**
- * projects.ts — Project list store backed by SpacetimeDB with REST fallback.
+ * projects.ts — Project list store backed by SpacetimeDB subscription.
  *
- * Primary source: SpacetimeDB `project` table subscription (reactive).
- * Fallback: REST /api/projects when SpacetimeDB is not connected.
+ * Source: SpacetimeDB `project` table via hexflo-coordination module.
+ * Projects are registered via SpacetimeDB reducers, not REST.
  */
 import { createMemo } from "solid-js";
-import { registeredProjects, getHexfloConn, hexfloConnected } from "./connection";
+import { registeredProjects, getHexfloConn } from "./connection";
 import { addToast } from "./toast";
 
 export interface Project {
@@ -14,7 +14,7 @@ export interface Project {
   path: string;
 }
 
-// Primary: reactive signal from SpacetimeDB subscription
+// Reactive project list from SpacetimeDB subscription
 export const projects = createMemo<Project[]>(() => {
   return registeredProjects().map((p: any) => ({
     id: p.projectId ?? p.project_id ?? p.id ?? "",
@@ -25,51 +25,19 @@ export const projects = createMemo<Project[]>(() => {
 
 export async function registerProject(path: string): Promise<boolean> {
   const conn = getHexfloConn();
-  if (conn) {
-    try {
-      const id = path.split("/").pop() || `project-${Date.now()}`;
-      const name = id;
-      const timestamp = new Date().toISOString();
-      conn.reducers.registerProject(id, name, path, timestamp);
-      addToast("success", `Project registered: ${path}`);
-      return true;
-    } catch (err: any) {
-      addToast("error", `Register failed: ${err.message}`);
-    }
-  } else {
-    // REST fallback
-    try {
-      const res = await fetch("/api/projects/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-      if (res.ok) {
-        addToast("success", `Project registered: ${path}`);
-        return true;
-      }
-    } catch {}
+  if (!conn) {
+    addToast("error", "SpacetimeDB not connected — cannot register project");
+    return false;
   }
-  return false;
-}
-
-// Keep fetchProjects for components that need imperative refresh
-export async function fetchProjects(): Promise<Project[]> {
-  // If SpacetimeDB is connected, just return the subscription data
-  if (hexfloConnected()) {
-    return projects();
-  }
-  // REST fallback
   try {
-    const res = await fetch("/api/projects");
-    if (res.ok) {
-      const data = await res.json();
-      return (data.projects ?? data ?? []).map((p: any) => ({
-        id: p.id ?? p.name ?? "",
-        name: p.name ?? "unnamed",
-        path: p.path ?? p.root_path ?? "",
-      }));
-    }
-  } catch {}
-  return [];
+    const id = path.split("/").pop() || `project-${Date.now()}`;
+    const name = id;
+    const timestamp = new Date().toISOString();
+    conn.reducers.registerProject(id, name, path, timestamp);
+    addToast("success", `Project registered: ${path}`);
+    return true;
+  } catch (err: any) {
+    addToast("error", `Register failed: ${err.message}`);
+    return false;
+  }
 }
