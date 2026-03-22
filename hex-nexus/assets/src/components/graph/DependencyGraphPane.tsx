@@ -5,6 +5,7 @@
  * Data comes from POST /api/analyze with include_graph: true.
  */
 import { Component, onMount, onCleanup, createSignal, Show } from 'solid-js';
+import { restClient } from '../../services/rest-client';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -121,17 +122,7 @@ const DependencyGraphPane: Component = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ root_path: '.', include_graph: true }),
-      });
-      if (!res.ok) {
-        setError(`API error: ${res.status}`);
-        setLoading(false);
-        return;
-      }
-      const data = await res.json();
+      const data = await restClient.post('/api/analyze', { root_path: '.', include_graph: true });
       buildGraph(data);
     } catch (e: any) {
       setError(e?.message ?? 'Failed to fetch');

@@ -7,6 +7,7 @@
 import { Component, Show, createMemo } from "solid-js";
 import { agentHeartbeats, swarmTasks } from "../../stores/connection";
 import { openPane } from "../../stores/panes";
+import { restClient } from "../../services/rest-client";
 
 export interface AgentInfo {
   id: string;
@@ -59,9 +60,7 @@ const AgentCard: Component<{ agent: AgentInfo }> = (props) => {
   async function handleKill(e: MouseEvent) {
     e.stopPropagation();
     try {
-      await fetch(`/api/agents/${encodeURIComponent(props.agent.id)}/kill`, {
-        method: "POST",
-      });
+      await restClient.post(`/api/agents/${encodeURIComponent(props.agent.id)}/kill`);
     } catch {
       // Agent will disappear from SpacetimeDB subscription when it dies
     }

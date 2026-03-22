@@ -7,6 +7,7 @@
 import { Component, For, Show, createSignal, createMemo } from "solid-js";
 import { fleetNodes, fleetConnected, getFleetConn } from "../../stores/connection";
 import { addToast } from "../../stores/toast";
+import { restClient } from "../../services/rest-client";
 
 function healthColor(status: string): string {
   if (status === "healthy" || status === "active" || status === "online") return "bg-green-500";
@@ -52,17 +53,8 @@ const FleetView: Component = () => {
         addToast("success", `Node registered via SpacetimeDB: ${host}`);
       } else {
         // REST fallback
-        const res = await fetch("/api/fleet/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ hostname: host }),
-        });
-        if (res.ok) {
-          addToast("success", `Node registered: ${host}`);
-        } else {
-          const err = await res.json().catch(() => ({}));
-          addToast("error", `Register failed: ${(err as any).error || res.statusText}`);
-        }
+        await restClient.post("/api/fleet/register", { hostname: host });
+        addToast("success", `Node registered: ${host}`);
       }
       setNewHost("");
       setRegisterOpen(false);
@@ -80,12 +72,8 @@ const FleetView: Component = () => {
         conn.reducers.removeNode(id);
         addToast("info", "Node removed via SpacetimeDB");
       } else {
-        const res = await fetch(`/api/fleet/${encodeURIComponent(id)}`, { method: "DELETE" });
-        if (res.ok) {
-          addToast("info", "Node removed");
-        } else {
-          addToast("error", `Remove failed: ${res.statusText}`);
-        }
+        await restClient.delete(`/api/fleet/${encodeURIComponent(id)}`);
+        addToast("info", "Node removed");
       }
     } catch (err: any) {
       addToast("error", `Remove error: ${err.message}`);

@@ -2,6 +2,7 @@ import { Component, createSignal, createEffect } from 'solid-js';
 import { MarkdownEditor } from '../editor';
 import { addToast } from '../../stores/toast';
 import { getHexfloConn } from '../../stores/connection';
+import { restClient } from '../../services/rest-client';
 
 const SAMPLE_CLAUDE_MD = `# hex -- Hexagonal Architecture for LLM-Driven Development
 
@@ -34,13 +35,9 @@ const ContextView: Component = () => {
   // Fetch real CLAUDE.md content from the file read API
   createEffect(async () => {
     try {
-      // Try fetching via generic file endpoint (reads project root CLAUDE.md)
-      const res = await fetch('/api/files?path=CLAUDE.md');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.content) {
-          setContent(data.content);
-        }
+      const data = await restClient.get('/api/files?path=CLAUDE.md');
+      if (data.content) {
+        setContent(data.content);
       }
     } catch {
       // API not available, keep sample content
@@ -67,20 +64,11 @@ const ContextView: Component = () => {
           }
           // 2. Write to file (persistent)
           try {
-            const res = await fetch('/api/files', {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ path: 'CLAUDE.md', content: newContent }),
-            });
-            if (res.ok) {
-              setContent(newContent);
-              addToast('success', 'CLAUDE.md saved');
-            } else {
-              const data = await res.json().catch(() => ({}));
-              addToast('error', data.error || 'Save failed');
-            }
-          } catch {
-            addToast('error', 'Save failed — is nexus running?');
+            await restClient.post('/api/files', { path: 'CLAUDE.md', content: newContent });
+            setContent(newContent);
+            addToast('success', 'CLAUDE.md saved');
+          } catch (e: any) {
+            addToast('error', e.message || 'Save failed — is nexus running?');
           }
         }}
       />

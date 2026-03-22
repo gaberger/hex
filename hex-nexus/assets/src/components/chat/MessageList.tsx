@@ -33,15 +33,15 @@ const MessageList: Component<MessageListProps> = (props) => {
       {/* Empty state */}
       <Show when={props.messages().length === 0 && !props.streamingText()}>
         <div class="flex h-full items-center justify-center">
-          <div class="text-center" style={{ gap: '8px', display: 'flex', "flex-direction": 'column', "align-items": 'center' }}>
-            <div class="text-[28px] font-light" style={{ color: 'var(--text-dim)' }}>hex</div>
-            <p class="text-[14px]" style={{ color: 'var(--text-faint)' }}>No messages yet. Start a conversation below.</p>
+          <div class="flex flex-col items-center gap-2 text-center">
+            <div class="text-[28px] font-light text-[var(--text-dim)]">hex</div>
+            <p class="text-[14px] text-[var(--text-faint)]">No messages yet. Start a conversation below.</p>
           </div>
         </div>
       </Show>
 
       {/* Messages */}
-      <div style={{ padding: '16px 24px', display: 'flex', "flex-direction": 'column', gap: '12px' }}>
+      <div class="flex flex-col gap-3 px-6 py-4">
         <For each={props.messages()}>
           {(msg) => <Message message={msg} />}
         </For>
@@ -49,26 +49,24 @@ const MessageList: Component<MessageListProps> = (props) => {
 
       {/* Streaming message (in-progress) */}
       <Show when={props.streamingText()}>
-        <div style={{ padding: '12px 24px' }}>
+        <div class="px-6 py-3">
           <div
-            class="rounded-[10px]"
-            style={{ padding: '12px 16px' }}
+            class="rounded-[10px] px-4 py-3"
           >
             <div class="flex items-center gap-2 mb-1.5">
               <span
                 class="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-                style={{ background: 'rgba(74,222,128,0.2)', color: '#4ade80' }}
+                class="bg-green-500/20 text-status-active"
               >
                 Assistant
               </span>
-              <span class="ml-auto flex items-center gap-1 text-[10px]" style={{ color: 'var(--accent)' }}>
-                <span class="inline-block h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: 'var(--accent)' }} />
+              <span class="ml-auto flex items-center gap-1 text-[10px] text-[var(--accent)]">
+                <span class="inline-block h-1.5 w-1.5 rounded-full animate-pulse bg-[var(--accent)]" />
                 streaming
               </span>
             </div>
             <div
-              class="whitespace-pre-wrap break-words text-[15px] leading-[1.5] streaming-cursor"
-              style={{ color: 'var(--text-secondary)' }}
+              class="whitespace-pre-wrap break-words text-[15px] leading-[1.5] text-[var(--text-secondary)] streaming-cursor"
             >
               {props.streamingText()}
             </div>

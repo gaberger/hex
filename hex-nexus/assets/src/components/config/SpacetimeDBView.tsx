@@ -67,10 +67,10 @@ const SpacetimeDBView: Component = () => {
             const isConnected = () => mod.connected();
             return (
               <div
-                class="rounded-xl p-4 border"
-                style={{
-                  "background-color": "var(--bg-surface)",
-                  "border-color": isConnected() ? "rgba(34,211,238,0.25)" : "rgba(107,114,128,0.3)",
+                class="rounded-xl bg-[var(--bg-surface)] p-4 border"
+                classList={{
+                  "border-[rgba(34,211,238,0.25)]": isConnected(),
+                  "border-[rgba(107,114,128,0.3)]": !isConnected(),
                 }}
               >
                 {/* Status dot + module name */}

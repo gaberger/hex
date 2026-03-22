@@ -2,6 +2,7 @@ import { Component, Switch, Match, For, createMemo } from 'solid-js';
 import { route, navigate } from '../../stores/router';
 import { BlueprintView, MCPToolsView, ContextView, HooksView, SkillsView, AgentDefsView, SpacetimeDBView } from '../config';
 import { addToast } from '../../stores/toast';
+import { restClient } from '../../services/rest-client';
 
 interface NavItem {
   id: string;
@@ -83,8 +84,7 @@ const ConfigPage: Component = () => {
     <div class="flex flex-1 overflow-hidden">
       {/* Left nav */}
       <nav
-        class="flex w-60 shrink-0 flex-col border-r border-gray-800 overflow-y-auto"
-        style={{ "background-color": "var(--bg-surface)" }}
+        class="flex w-60 shrink-0 flex-col border-r border-gray-800 bg-[var(--bg-surface)] overflow-y-auto"
       >
         <div class="px-4 py-3">
           <div class="flex items-center gap-2 mb-1">
@@ -101,9 +101,8 @@ const ConfigPage: Component = () => {
             class="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-400 hover:border-cyan-600 hover:text-cyan-300 transition-colors"
             onClick={async () => {
               try {
-                const res = await fetch('/api/config/sync', { method: 'POST' });
-                if (res.ok) addToast('success', 'Config re-synced from repo files');
-                else addToast('error', 'Sync failed');
+                await restClient.post('/api/config/sync');
+                addToast('success', 'Config re-synced from repo files');
               } catch {
                 addToast('error', 'Sync failed — is nexus running?');
               }

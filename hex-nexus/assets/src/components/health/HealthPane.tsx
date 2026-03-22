@@ -149,9 +149,7 @@ const HealthPane: Component = () => {
                       stroke-dasharray={RING_CIRCUMFERENCE}
                       stroke-dashoffset={dashOffset()}
                       transform="rotate(-90 60 60)"
-                      style={{
-                        transition: "stroke-dashoffset 0.6s ease-out",
-                      }}
+                      class="transition-[stroke-dashoffset] duration-[0.6s] ease-out"
                     />
                   </svg>
                   {/* Center text */}

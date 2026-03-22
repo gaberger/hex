@@ -86,40 +86,30 @@ const BottomBar: Component = () => {
 
   return (
     <div
-      class="relative flex flex-col"
-      style={{
-        background: 'var(--bg-surface)',
-        "border-top": '1px solid var(--border)',
-        padding: '8px 16px 12px 16px',
-        gap: '6px',
-      }}
+      class="relative flex flex-col gap-1.5 border-t border-[var(--border)] bg-[var(--bg-surface)] px-4 pb-3 pt-2"
     >
       {/* Slash command hints */}
       <Show when={showHints() && slashMatches().length > 0}>
         <div
-          class="absolute bottom-full left-0 right-0 py-1 shadow-xl z-10 backdrop-blur-sm"
-          style={{ background: 'var(--bg-surface)', "border-top": '1px solid var(--border)' }}
+          class="absolute bottom-full left-0 right-0 border-t border-[var(--border)] bg-[var(--bg-surface)] py-1 shadow-xl z-10 backdrop-blur-sm"
         >
           <For each={slashMatches()}>
             {(cmd) => (
               <button
-                class="flex w-full items-center gap-3 px-5 py-2 text-left text-xs transition-colors"
-                style={{ color: 'var(--text-muted)' }}
+                class="flex w-full items-center gap-3 px-5 py-2 text-left text-xs text-[var(--text-muted)] transition-colors"
                 onClick={() => selectHint(cmd)}
                 onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-elevated)'}
                 onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
               >
                 <span
-                  class="shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase"
-                  style={{ background: 'var(--bg-elevated)', color: 'var(--accent)' }}
+                  class="shrink-0 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-[9px] uppercase text-[var(--accent)]"
                 >
                   {cmd.category}
                 </span>
-                <span style={{ color: 'var(--text-body)' }}>{cmd.label}</span>
+                <span class="text-[var(--text-body)]">{cmd.label}</span>
                 <Show when={cmd.shortcut}>
                   <kbd
-                    class="ml-auto rounded px-1.5 py-0.5 text-[9px]"
-                    style={{ border: '1px solid var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-faint)' }}
+                    class="ml-auto rounded border border-[var(--border)] bg-[var(--bg-elevated)] px-1.5 py-0.5 text-[9px] text-[var(--text-faint)]"
                   >{cmd.shortcut}</kbd>
                 </Show>
               </button>
@@ -129,7 +119,7 @@ const BottomBar: Component = () => {
       </Show>
 
       {/* Status row — mode pill + connection (Pencil: gap 8) */}
-      <div class="flex items-center" style={{ gap: '8px' }}>
+      <div class="flex items-center gap-2">
         <button
           class={`flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[10px] font-semibold select-none transition-colors ${mode() === 'plan' ? 'bg-blue-900/30 text-blue-400' : 'bg-green-900/15 text-green-400'}`}
           onClick={toggleMode}
@@ -141,26 +131,22 @@ const BottomBar: Component = () => {
           {mode() === 'plan' ? 'Plan' : 'Build'}
         </button>
         <span class={`h-1.5 w-1.5 rounded-full ${chatConnected() ? 'bg-green-400' : 'bg-red-500'}`} />
-        <span class="text-[10px]" style={{ color: 'var(--text-dim)' }}>
+        <span class="text-[10px] text-[var(--text-dim)]">
           {chatConnected() ? 'connected' : 'disconnected'}
         </span>
         <Show when={isStreaming()}>
-          <span class="h-1.5 w-1.5 rounded-full animate-pulse ml-2" style={{ background: 'var(--accent)' }} />
-          <span class="text-[10px]" style={{ color: 'var(--accent)' }}>streaming...</span>
+          <span class="h-1.5 w-1.5 rounded-full animate-pulse ml-2 bg-[var(--accent)]" />
+          <span class="text-[10px] text-[var(--accent)]">streaming...</span>
         </Show>
       </div>
 
       {/* Input row (Pencil: rounded 10, padding [12,16], gap 12) */}
       <div
-        class="flex items-center transition-colors"
+        class="flex items-center gap-3 rounded-[10px] bg-[var(--bg-base)] px-4 py-3 transition-colors"
         style={{
-          background: 'var(--bg-base)',
-          "border-radius": '10px',
           border: focused()
             ? `1px solid ${mode() === 'build' ? 'rgba(22,83,37,0.5)' : 'var(--ring-active)'}`
             : '1px solid var(--border)',
-          padding: '12px 16px',
-          gap: '12px',
         }}
       >
         <textarea
@@ -179,13 +165,7 @@ const BottomBar: Component = () => {
                 : 'Describe what to build, fix, or change...'
           }
           rows={1}
-          class="flex-1 resize-none bg-transparent text-[14px] outline-none disabled:opacity-40 disabled:cursor-not-allowed"
-          style={{
-            color: 'var(--text-body)',
-            "line-height": '22px',
-            "min-height": '22px',
-            "max-height": '132px',
-          }}
+          class="flex-1 resize-none bg-transparent text-[14px] leading-[22px] text-[var(--text-body)] outline-none disabled:opacity-40 disabled:cursor-not-allowed min-h-[22px] max-h-[132px]"
         />
         <button
           onClick={handleSubmit}

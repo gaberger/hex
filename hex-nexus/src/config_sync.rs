@@ -251,6 +251,71 @@ pub async fn sync_project_config_with_report(
         }
     }
 
+    // 4. MCP tool definitions from config/mcp-tools.json
+    let tools_path = project_root.join("config/mcp-tools.json");
+    if tools_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&tools_path) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                let version = parsed
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("0.0.0")
+                    .to_string();
+
+                if let Some(tools) = parsed.get("tools").and_then(|t| t.as_array()) {
+                    let mut tool_count = 0usize;
+                    for tool in tools {
+                        let name = tool["name"].as_str().unwrap_or_default().to_string();
+                        if name.is_empty() {
+                            continue;
+                        }
+                        let category = tool["category"].as_str().unwrap_or("").to_string();
+                        let description =
+                            tool["description"].as_str().unwrap_or("").to_string();
+                        let route_method =
+                            tool["route"]["method"].as_str().unwrap_or("").to_string();
+                        let route_path =
+                            tool["route"]["path"].as_str().unwrap_or("").to_string();
+                        let input_schema = tool
+                            .get("inputSchema")
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "{}".to_string());
+
+                        if call_reducer(
+                            &client,
+                            stdb_host,
+                            stdb_db,
+                            "mcp_tool_sync",
+                            serde_json::json!([
+                                name,
+                                category,
+                                description,
+                                route_method,
+                                route_path,
+                                input_schema,
+                                &version,
+                                &now,
+                            ]),
+                        )
+                        .await
+                        .is_ok()
+                        {
+                            tool_count += 1;
+                        }
+                    }
+                    if tool_count > 0 {
+                        report.record_ok(&format!("mcp_tools({})", tool_count));
+                    } else if !tools.is_empty() {
+                        report.record_fail(
+                            "mcp_tools",
+                            "All tool syncs failed".to_string(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     report
 }
 

@@ -8,6 +8,7 @@
 import { createMemo } from "solid-js";
 import { registeredProjects, getHexfloConn } from "./connection";
 import { addToast } from "./toast";
+import { restClient } from "../services/rest-client";
 
 export interface Project {
   id: string;
@@ -45,19 +46,12 @@ export async function registerProject(path: string): Promise<boolean> {
   // Step 1: Scaffold .hex/, .claude/, docs/adrs/, CLAUDE.md (REST — filesystem op)
   let initResult: InitResult | null = null;
   try {
-    const res = await fetch("/api/projects/init", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
-    });
-    if (res.ok) {
-      initResult = await res.json();
-      if (initResult && initResult.created.length > 0) {
-        addToast(
-          "success",
-          `Scaffolded ${initResult.created.length} file(s): ${initResult.created.join(", ")}`,
-        );
-      }
+    initResult = await restClient.post<InitResult>("/api/projects/init", { path });
+    if (initResult && initResult.created.length > 0) {
+      addToast(
+        "success",
+        `Scaffolded ${initResult.created.length} file(s): ${initResult.created.join(", ")}`,
+      );
     }
   } catch {
     // Non-fatal — continue with registration even if scaffold fails
@@ -115,18 +109,12 @@ export async function archiveProject(
 
   // 1. Delete config files from disk (REST — filesystem op)
   try {
-    const res = await fetch(`/api/projects/${id}/archive`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ removeClaude, path }),
-    });
-    if (!res.ok && res.status !== 404) {
-      const err = await res.json().catch(() => ({}));
-      addToast("error", `Archive failed: ${err.error ?? res.statusText}`);
-      return false;
+    await restClient.post(`/api/projects/${id}/archive`, { removeClaude, path });
+  } catch (e: any) {
+    // 404 is acceptable (nothing to archive), other errors are non-fatal
+    if (!e.message?.includes("404")) {
+      // Filesystem cleanup failed — still remove from state
     }
-  } catch {
-    // Filesystem cleanup failed — still remove from state
   }
 
   // 2. Remove from SpacetimeDB (instant UI update via subscription)
@@ -150,16 +138,7 @@ export async function deleteProject(id: string): Promise<boolean> {
 
   // 1. Delete all files from disk (REST — filesystem op)
   try {
-    const res = await fetch(`/api/projects/${id}/delete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirm: true, path }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      addToast("error", `File deletion failed: ${err.error ?? res.statusText}`);
-      return false;
-    }
+    await restClient.post(`/api/projects/${id}/delete`, { confirm: true, path });
   } catch (err: any) {
     addToast("error", `Delete failed: ${err.message}`);
     return false;

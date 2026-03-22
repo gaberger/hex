@@ -109,16 +109,16 @@ const HookForm: Component<HookFormProps> = (props) => {
   };
 
   return (
-    <form onSubmit={handleSubmit} class="rounded-lg border p-4 space-y-3 mt-2" style={{ "background-color": "var(--bg-elevated)", "border-color": "var(--border-subtle)" }}>
+    <form onSubmit={handleSubmit} class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4 space-y-3 mt-2">
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div>
-          <label class="block text-xs font-medium text-gray-400 mb-1" style={{ "font-size": "13px" }}>Event</label>
+          <label class="block text-[13px] font-medium text-gray-400 mb-1">Event</label>
           <select
             value={event()}
             onChange={(e) => setEvent(e.currentTarget.value)}
             disabled={props.eventDisabled}
             class="w-full rounded-md border px-3 py-1.5 text-sm text-gray-200 outline-none focus:border-[var(--accent)]"
-            style={{ "background-color": "var(--bg-input)", "border-color": "var(--border-subtle)", "font-size": "14px" }}
+            class="bg-[var(--bg-input)] border-[var(--border-subtle)] text-sm"
           >
             <For each={[...HOOK_EVENTS]}>
               {(ev) => <option value={ev}>{ev}</option>}
@@ -126,35 +126,35 @@ const HookForm: Component<HookFormProps> = (props) => {
           </select>
         </div>
         <div>
-          <label class="block text-xs font-medium text-gray-400 mb-1" style={{ "font-size": "13px" }}>Matcher (optional)</label>
+          <label class="block text-[13px] font-medium text-gray-400 mb-1">Matcher (optional)</label>
           <input
             type="text"
             value={matcher()}
             onInput={(e) => setMatcher(e.currentTarget.value)}
             placeholder="e.g. Bash"
             class="w-full rounded-md border px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-[var(--accent)]"
-            style={{ "background-color": "var(--bg-input)", "border-color": "var(--border-subtle)", "font-size": "14px" }}
+            class="bg-[var(--bg-input)] border-[var(--border-subtle)] text-sm"
           />
         </div>
         <div>
-          <label class="block text-xs font-medium text-gray-400 mb-1" style={{ "font-size": "13px" }}>Command</label>
+          <label class="block text-[13px] font-medium text-gray-400 mb-1">Command</label>
           <input
             type="text"
             value={command()}
             onInput={(e) => setCommand(e.currentTarget.value)}
             placeholder="node ~/.hex/hooks/my-hook.js"
             class="w-full rounded-md border px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-[var(--accent)]"
-            style={{ "background-color": "var(--bg-input)", "border-color": "var(--border-subtle)", "font-size": "14px" }}
+            class="bg-[var(--bg-input)] border-[var(--border-subtle)] text-sm"
           />
         </div>
         <div>
-          <label class="block text-xs font-medium text-gray-400 mb-1" style={{ "font-size": "13px" }}>Timeout (ms)</label>
+          <label class="block text-[13px] font-medium text-gray-400 mb-1">Timeout (ms)</label>
           <input
             type="number"
             value={timeout()}
             onInput={(e) => setTimeout(parseInt(e.currentTarget.value) || 10000)}
             class="w-full rounded-md border px-3 py-1.5 text-sm text-gray-200 outline-none focus:border-[var(--accent)]"
-            style={{ "background-color": "var(--bg-input)", "border-color": "var(--border-subtle)", "font-size": "14px" }}
+            class="bg-[var(--bg-input)] border-[var(--border-subtle)] text-sm"
           />
         </div>
       </div>
@@ -164,8 +164,7 @@ const HookForm: Component<HookFormProps> = (props) => {
           Cancel
         </button>
         <button type="submit"
-          class="rounded-md px-4 py-1.5 text-xs font-medium text-white transition-colors"
-          style={{ "background-color": "var(--accent)" }}>
+          class="rounded-md bg-[var(--accent)] px-4 py-1.5 text-xs font-medium text-white transition-colors">
           {props.submitLabel}
         </button>
       </div>
@@ -255,7 +254,7 @@ const HooksView: Component = () => {
   };
 
   return (
-    <div class="flex-1 overflow-auto p-6" style={{ "background-color": "var(--bg-base)" }}>
+    <div class="flex-1 overflow-auto bg-[var(--bg-base)] p-6">
       {/* Header */}
       <div class="flex items-center justify-between mb-6">
         <div>
@@ -271,7 +270,7 @@ const HooksView: Component = () => {
 
       {/* Empty state */}
       <Show when={hookTypes().length === 0}>
-        <div class="rounded-lg border px-6 py-10 text-center" style={{ "background-color": "var(--bg-surface)", "border-color": "var(--border-subtle)" }}>
+        <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-10 text-center">
           <p class="text-sm text-gray-400">No hooks configured.</p>
           <p class="text-xs text-gray-600 mt-1">Run <code class="text-cyan-400">hex nexus start</code> to sync from repo.</p>
         </div>
@@ -289,8 +288,7 @@ const HooksView: Component = () => {
                 <div class="flex items-center justify-between mb-3">
                   <div>
                     <h3
-                      class="font-bold text-gray-200"
-                      style={{ "font-size": "14px" }}
+                      class="text-sm font-bold text-gray-200"
                     >
                       {hookType.event}
                     </h3>
@@ -319,7 +317,7 @@ const HooksView: Component = () => {
                   <For each={hookType.hooks} fallback={
                     <div
                       class="rounded-lg px-4 py-3 text-xs text-gray-600 border"
-                      style={{ "background-color": "var(--bg-surface)", "border-color": "var(--border-subtle)" }}
+                      class="bg-[var(--bg-surface)] border-[var(--border-subtle)]"
                     >
                       No hooks configured.
                     </div>
@@ -333,7 +331,7 @@ const HooksView: Component = () => {
                         <div>
                           <div
                             class="flex items-center gap-3 rounded-lg px-4 py-3 border"
-                            style={{ "background-color": "var(--bg-surface)", "border-color": "var(--border-subtle)" }}
+                            class="bg-[var(--bg-surface)] border-[var(--border-subtle)]"
                           >
                             {/* Enable/disable toggle */}
                             <span
@@ -351,8 +349,7 @@ const HooksView: Component = () => {
                             </span>
                             {/* Command */}
                             <span
-                              class="text-xs text-gray-500 truncate flex-1"
-                              style={{ "font-family": "'JetBrains Mono', monospace" }}
+                              class="font-mono text-xs text-gray-500 truncate flex-1"
                             >
                               {hook.cmd}
                             </span>
@@ -376,7 +373,7 @@ const HooksView: Component = () => {
 
                           {/* Confirm remove */}
                           <Show when={isConfirmingThis()}>
-                            <div class="flex items-center gap-3 rounded-md border px-3 py-2 mt-2" style={{ "background-color": "var(--bg-elevated)", "border-color": "var(--border-subtle)" }}>
+                            <div class="flex items-center gap-3 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 mt-2">
                               <span class="text-xs text-gray-300">Remove this hook?</span>
                               <button
                                 class="rounded-md px-3 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-500 transition-colors"

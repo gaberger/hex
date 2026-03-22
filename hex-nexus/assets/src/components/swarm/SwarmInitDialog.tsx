@@ -7,6 +7,7 @@
 import { Component, Show, For, createSignal } from "solid-js";
 import { addToast } from "../../stores/toast";
 import { getHexfloConn, hexfloConnected } from "../../stores/connection";
+import { restClient } from "../../services/rest-client";
 
 const TOPOLOGIES = [
   { value: "hierarchical", label: "Hierarchical", desc: "Leader delegates to workers" },
@@ -42,18 +43,7 @@ const SwarmInitDialog: Component<SwarmInitDialogProps> = (props) => {
       const conn = getHexfloConn();
       if (!conn) {
         // Fallback to REST if SpacetimeDB not connected
-        const res = await fetch("/api/swarms", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: trimmed, topology: topology() }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          const msg = data.error ?? `Failed (${res.status})`;
-          setError(msg);
-          addToast("error", `Failed to create swarm: ${msg}`);
-          return;
-        }
+        await restClient.post("/api/swarms", { name: trimmed, topology: topology() });
       } else {
         // Use SpacetimeDB reducer directly (WebSocket)
         const id = crypto.randomUUID();

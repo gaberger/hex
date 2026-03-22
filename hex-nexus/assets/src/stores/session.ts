@@ -5,6 +5,8 @@
 import { createSignal } from "solid-js";
 import { addToast } from "./toast";
 import { loadChatHistory } from "./chat";
+import { restClient } from "../services/rest-client";
+import { storage } from "../services/local-storage";
 
 export interface Session {
   id: string;
@@ -33,33 +35,22 @@ export { sessions, setSessions, activeSessionId, setActiveSessionId, loading };
 
 const STORAGE_KEY = "hex-active-session";
 
-// ── Fetch helpers ──────────────────────────────────────────
-
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  return res.json();
-}
-
 // ── Load sessions from backend ─────────────────────────────
 
 export async function loadSessions(): Promise<void> {
   setLoading(true);
   try {
-    const raw = await apiFetch<any[]>("/api/sessions");
+    const raw = await restClient.get<any[]>("/api/sessions");
     const list = (raw ?? []).map(normalizeSession);
     setSessions(list);
 
-    // Restore active session from localStorage (if it still exists)
-    const savedId = localStorage.getItem(STORAGE_KEY);
+    // Restore active session from storage (if it still exists)
+    const savedId = storage.get<string>(STORAGE_KEY);
     if (savedId && list.some((s) => s.id === savedId)) {
       setActiveSessionId(savedId);
     } else if (list.length > 0) {
       setActiveSessionId(list[0].id);
-      localStorage.setItem(STORAGE_KEY, list[0].id);
+      storage.set(STORAGE_KEY, list[0].id);
     }
   } catch (e: any) {
     // Backend may be unavailable — fall back to empty list silently
@@ -94,15 +85,11 @@ export async function createSession(name?: string): Promise<Session> {
   );
 
   try {
-    const raw = await apiFetch<any>("/api/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: "", title }),
-    });
+    const raw = await restClient.post<any>("/api/sessions", { projectId: "", title });
     const session = normalizeSession(raw);
     setSessions((prev) => [session, ...prev]);
     setActiveSessionId(session.id);
-    localStorage.setItem(STORAGE_KEY, session.id);
+    storage.set(STORAGE_KEY, session.id);
     return session;
   } catch (e: any) {
     // Fall back to local-only session
@@ -116,7 +103,7 @@ export async function createSession(name?: string): Promise<Session> {
     };
     setSessions((prev) => [local, ...prev]);
     setActiveSessionId(local.id);
-    localStorage.setItem(STORAGE_KEY, local.id);
+    storage.set(STORAGE_KEY, local.id);
     return local;
   }
 }
@@ -125,14 +112,14 @@ export async function createSession(name?: string): Promise<Session> {
 
 export async function switchSession(id: string): Promise<void> {
   setActiveSessionId(id);
-  localStorage.setItem(STORAGE_KEY, id);
+  storage.set(STORAGE_KEY, id);
 
   // Reload chat history for the newly active session
   loadChatHistory(id);
 
   try {
     // Load the session detail to ensure it exists on the backend
-    const raw = await apiFetch<any>(`/api/sessions/${id}`);
+    const raw = await restClient.get<any>(`/api/sessions/${id}`);
     const session = normalizeSession(raw);
     // Update local list with latest server data
     setSessions((prev) =>
@@ -148,7 +135,7 @@ export async function switchSession(id: string): Promise<void> {
 
 export async function deleteSession(id: string): Promise<void> {
   try {
-    await apiFetch<any>(`/api/sessions/${id}`, { method: "DELETE" });
+    await restClient.delete(`/api/sessions/${id}`);
   } catch (e: any) {
     addToast("error", `Failed to delete session: ${e.message}`);
   }
@@ -160,10 +147,10 @@ export async function deleteSession(id: string): Promise<void> {
     const remaining = sessions();
     if (remaining.length > 0) {
       setActiveSessionId(remaining[0].id);
-      localStorage.setItem(STORAGE_KEY, remaining[0].id);
+      storage.set(STORAGE_KEY, remaining[0].id);
     } else {
       setActiveSessionId("");
-      localStorage.removeItem(STORAGE_KEY);
+      storage.remove(STORAGE_KEY);
     }
   }
 }

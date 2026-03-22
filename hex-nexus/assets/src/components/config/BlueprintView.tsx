@@ -1,6 +1,7 @@
 import { Component, For, Show, createMemo } from 'solid-js';
 import { addToast } from '../../stores/toast';
 import { projectConfigs, getHexfloConn } from '../../stores/connection';
+import { restClient } from '../../services/rest-client';
 
 interface LayerDef {
   name: string;
@@ -31,14 +32,14 @@ const RULES: BoundaryRule[] = [
 ];
 
 const ShieldCheck: Component = () => (
-  <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2">
+  <svg class="h-4 w-4 shrink-0 stroke-status-active" viewBox="0 0 24 24" fill="none" stroke-width="2">
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     <polyline points="9 12 11 14 15 10" />
   </svg>
 );
 
 const ShieldAlert: Component = () => (
-  <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="#f87149" stroke-width="2">
+  <svg class="h-4 w-4 shrink-0 stroke-status-error" viewBox="0 0 24 24" fill="none" stroke-width="2">
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     <line x1="12" y1="8" x2="12" y2="12" />
     <line x1="12" y1="16" x2="12.01" y2="16" />
@@ -59,19 +60,10 @@ export async function saveBlueprint(newBlueprint: any) {
 
   // 2. Write to file (persistent)
   try {
-    const res = await fetch('/api/files', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: '.hex/blueprint.json', content: JSON.stringify(newBlueprint, null, 2) }),
-    });
-    if (res.ok) {
-      addToast('success', 'Blueprint saved to SpacetimeDB + repo');
-    } else {
-      const data = await res.json().catch(() => ({}));
-      addToast('error', data.error || 'Failed to write blueprint file');
-    }
-  } catch {
-    addToast('error', 'Failed to write blueprint file');
+    await restClient.post('/api/files', { path: '.hex/blueprint.json', content: JSON.stringify(newBlueprint, null, 2) });
+    addToast('success', 'Blueprint saved to SpacetimeDB + repo');
+  } catch (e: any) {
+    addToast('error', e.message || 'Failed to write blueprint file');
   }
 }
 
@@ -131,9 +123,8 @@ const BlueprintView: Component = () => {
           <For each={layers()}>
             {(layer) => (
               <div
-                class="rounded-lg p-3"
+                class="rounded-lg bg-[var(--bg-surface)] p-3"
                 style={{
-                  "background-color": "var(--bg-surface)",
                   "border": `1px solid ${layer.color}40`,
                 }}
               >
@@ -143,7 +134,7 @@ const BlueprintView: Component = () => {
                 <div class="text-xs text-gray-500 mb-1">
                   Imports: <span class="text-gray-400">{layer.imports}</span>
                 </div>
-                <div class="text-[11px] text-gray-600" style={{ "font-family": "'JetBrains Mono', monospace" }}>
+                <div class="font-mono text-[11px] text-gray-600">
                   {layer.path}
                 </div>
               </div>
@@ -158,7 +149,7 @@ const BlueprintView: Component = () => {
         <div class="space-y-2">
           <For each={rules()}>
             {(rule) => (
-              <div class="flex items-center gap-3 rounded-lg px-4 py-2.5" style={{ "background-color": "var(--bg-surface)" }}>
+              <div class="flex items-center gap-3 rounded-lg bg-[var(--bg-surface)] px-4 py-2.5">
                 {rule.passing ? <ShieldCheck /> : <ShieldAlert />}
                 <span
                   class="text-sm"

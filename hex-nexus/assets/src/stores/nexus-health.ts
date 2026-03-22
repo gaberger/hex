@@ -5,6 +5,7 @@
  * Polls every 10 seconds. Falls back gracefully when nexus is offline.
  */
 import { createSignal, onCleanup } from "solid-js";
+import { restClient } from "../services/rest-client";
 
 export interface NexusStatus {
   online: boolean;
@@ -35,12 +36,7 @@ let _pollTimer: ReturnType<typeof setInterval> | null = null;
 
 async function pollNexus() {
   try {
-    const res = await fetch("/api/version", { signal: AbortSignal.timeout(3000) });
-    if (!res.ok) {
-      setNexusStatus({ ...DEFAULT, online: false });
-      return;
-    }
-    const data = await res.json();
+    const data = await restClient.get<any>("/api/version");
     setNexusStatus({
       online: true,
       version: data.version ?? data.hex_version ?? "—",

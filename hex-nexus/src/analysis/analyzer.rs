@@ -17,6 +17,7 @@ use super::dead_export_finder::{self, FileData};
 use super::domain::{
     ArchAnalysisResult, DeadExport, DependencyViolation, ImportEdge, Language,
 };
+use super::frontend_checker;
 use super::layer_classifier::classify_layer;
 use super::path_normalizer::{normalize_path, resolve_import_path};
 use super::ports::{AnalysisError, AstPort, ArchAnalysisPort};
@@ -321,6 +322,9 @@ impl ArchAnalysisPort for ArchAnalyzer {
             unused_ports.len(),
         );
 
+        // ADR-056: Frontend hexagonal architecture checks (skipped if no assets/src/)
+        let frontend = frontend_checker::check_frontend(root_path);
+
         Ok(ArchAnalysisResult {
             violations,
             dead_exports,
@@ -330,6 +334,7 @@ impl ArchAnalysisPort for ArchAnalyzer {
             health_score,
             file_count: file_data.len(),
             edge_count: edges.len(),
+            frontend,
         })
     }
 

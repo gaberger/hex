@@ -128,14 +128,12 @@ const ProjectDetail: Component = () => {
         {/* Header — project name + path + BranchPicker + grade badge */}
         <div class="mb-5 flex items-center gap-3">
           <h1
-            class="text-[22px] font-bold"
-            style={{ color: "var(--text-primary)", "font-family": "Inter, sans-serif" }}
+            class="text-[22px] font-bold text-[var(--text-primary)] font-[Inter,sans-serif]"
           >
             {project()?.name ?? projectId()}
           </h1>
           <span
-            class="text-[11px]"
-            style={{ color: "var(--text-faint)", "font-family": "'JetBrains Mono', monospace" }}
+            class="font-mono text-[11px] text-[var(--text-faint)]"
           >
             {project()?.path ?? ""}
           </span>
@@ -155,8 +153,7 @@ const ProjectDetail: Component = () => {
           {/* Project actions menu */}
           <div class="relative">
             <button
-              class="rounded-md p-2 transition-colors hover:bg-gray-800"
-              style={{ color: "var(--text-muted)" }}
+              class="rounded-md p-2 text-[var(--text-muted)] transition-colors hover:bg-gray-800"
               onClick={() => setMenuOpen(!menuOpen())}
               title="Project actions"
             >
@@ -236,7 +233,7 @@ const ProjectDetail: Component = () => {
         </Show>
 
         {/* Tab bar: Overview | Changes */}
-        <div class="mb-4 flex items-center gap-0 border-b" style={{ "border-color": "var(--border-subtle)" }}>
+        <div class="mb-4 flex items-center gap-0 border-b border-[var(--border-subtle)]">
           <button
             class={`px-4 py-2 text-[11px] font-semibold uppercase tracking-wide transition-colors border-b-2 ${activeTab() === "overview" ? "border-cyan-700" : "border-transparent"}`}
             style={{
@@ -261,8 +258,7 @@ const ProjectDetail: Component = () => {
         <Show when={activeTab() === "overview"}>
           {/* Section label */}
           <h2
-            class="mb-4 text-[10px] font-semibold uppercase"
-            style={{ color: "var(--text-faint)", "letter-spacing": "1.2px" }}
+            class="mb-4 text-[10px] font-semibold uppercase tracking-[1.2px] text-[var(--text-faint)]"
           >
             Agents &middot; Worktrees &middot; Commits
           </h2>

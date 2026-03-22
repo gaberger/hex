@@ -10,6 +10,7 @@ import { projects } from "../../stores/projects";
 import { setSpawnDialogOpen } from "../../stores/ui";
 import { openPane } from "../../stores/panes";
 import { addToast } from "../../stores/toast";
+import { restClient } from "../../services/rest-client";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -281,13 +282,8 @@ const AgentCard: Component<{
     }
     setConfirming(false);
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}`, { method: "DELETE" });
-      if (res.ok) {
-        addToast("success", `Agent "${name()}" terminated`);
-      } else {
-        const body = await res.text();
-        addToast("error", `Failed to terminate agent: ${body || res.statusText}`);
-      }
+      await restClient.delete(`/api/agents/${encodeURIComponent(agentId)}`);
+      addToast("success", `Agent "${name()}" terminated`);
     } catch (err: any) {
       addToast("error", `Failed to terminate agent: ${err.message ?? err}`);
     }

@@ -8,6 +8,7 @@
 import { Component, For, Show, createSignal, createMemo } from "solid-js";
 import { inferenceProviders, inferenceRequests, getInferenceConn, inferenceConnected } from "../../stores/connection";
 import { addToast } from "../../stores/toast";
+import { restClient } from "../../services/rest-client";
 
 // Cost estimates per 1K tokens by provider type
 const COST_PER_1K: Record<string, number> = {
@@ -90,27 +91,22 @@ const InferencePanel: Component = () => {
   async function testProvider(id: string, _url: string) {
     addToast("info", `Testing all providers...`);
     try {
-      const res = await fetch("/api/inference/health", { method: "POST" });
-      if (res.ok) {
-        const data = await res.json();
-        const results = data.results ?? [];
-        const result = results.find((r: any) => r.id === id);
-        if (result) {
-          if (result.status === "healthy") {
-            addToast("success", `${id}: healthy (${result.latency_ms}ms)`);
-          } else {
-            addToast("error", `${id}: ${result.status}`);
-          }
+      const data = await restClient.post("/api/inference/health");
+      const results = data.results ?? [];
+      const result = results.find((r: any) => r.id === id);
+      if (result) {
+        if (result.status === "healthy") {
+          addToast("success", `${id}: healthy (${result.latency_ms}ms)`);
         } else {
-          addToast("error", `${id}: not found in health check results`);
-        }
-        // Also show summary for other providers
-        const healthy = results.filter((r: any) => r.status === "healthy").length;
-        if (results.length > 1) {
-          addToast("info", `${healthy}/${results.length} providers healthy`);
+          addToast("error", `${id}: ${result.status}`);
         }
       } else {
-        addToast("error", `Health check failed: ${res.statusText}`);
+        addToast("error", `${id}: not found in health check results`);
+      }
+      // Also show summary for other providers
+      const healthy = results.filter((r: any) => r.status === "healthy").length;
+      if (results.length > 1) {
+        addToast("info", `${healthy}/${results.length} providers healthy`);
       }
     } catch (err: any) {
       addToast("error", `Health check error: ${err.message}`);

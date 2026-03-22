@@ -7,6 +7,7 @@
  * and change indicators when agents have modified files.
  */
 import { Component, For, Show, createSignal, createResource, createMemo } from "solid-js";
+import { restClient } from "../../services/rest-client";
 
 interface FileNode {
   name: string;
@@ -19,9 +20,7 @@ interface FileNode {
 async function fetchFileTree(projectId: string): Promise<FileNode[]> {
   if (!projectId) return [];
   try {
-    const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files`);
-    if (!res.ok) return [];
-    const data = await res.json();
+    const data = await restClient.get(`/api/projects/${encodeURIComponent(projectId)}/files`);
     return data.files ?? data.tree ?? data ?? [];
   } catch {
     return [];

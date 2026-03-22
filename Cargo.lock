@@ -2448,7 +2448,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hex-agent"
-version = "26.3.1"
+version = "26.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2477,7 +2477,7 @@ dependencies = [
 
 [[package]]
 name = "hex-cli"
-version = "26.3.1"
+version = "26.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2501,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "hex-core"
-version = "26.3.1"
+version = "26.4.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -2537,7 +2537,7 @@ checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
 
 [[package]]
 name = "hex-nexus"
-version = "26.3.1"
+version = "26.4.0"
 dependencies = [
  "aes-gcm",
  "async-trait",

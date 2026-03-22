@@ -1,5 +1,6 @@
 import { Component, For, Show, createSignal, createResource, onMount } from 'solid-js';
 import { selectedModel, setSelectedModel } from '../../stores/chat';
+import { restClient } from '../../services/rest-client';
 
 interface InferenceEndpoint {
   id: string;
@@ -33,20 +34,22 @@ function isHealthy(endpoint: InferenceEndpoint): boolean {
 }
 
 async function fetchEndpoints(): Promise<ModelOption[]> {
-  const res = await fetch('/api/inference/endpoints');
-  if (!res.ok) return [];
-  const endpoints: InferenceEndpoint[] = await res.json();
-  const options: ModelOption[] = [];
-  for (const ep of endpoints) {
-    if (!isHealthy(ep)) continue;
-    for (const model of parseModels(ep)) {
-      options.push({
-        value: `${model}@${ep.id}`,
-        label: `${model} (${ep.name || ep.provider_type})`,
-      });
+  try {
+    const endpoints: InferenceEndpoint[] = await restClient.get('/api/inference/endpoints');
+    const options: ModelOption[] = [];
+    for (const ep of endpoints) {
+      if (!isHealthy(ep)) continue;
+      for (const model of parseModels(ep)) {
+        options.push({
+          value: `${model}@${ep.id}`,
+          label: `${model} (${ep.name || ep.provider_type})`,
+        });
+      }
     }
+    return options;
+  } catch {
+    return [];
   }
-  return options;
 }
 
 const ModelSelector: Component = () => {

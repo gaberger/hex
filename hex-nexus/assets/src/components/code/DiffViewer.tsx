@@ -168,7 +168,7 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
       {/* Toolbar: staged/unstaged toggle + summary */}
       <div class="flex items-center gap-3">
         {/* Toggle buttons */}
-        <div class="flex rounded-md border" style={{ "border-color": "var(--border)" }}>
+        <div class="flex rounded-md border border-[var(--border)]">
           <button
             class="px-3 py-1.5 text-[11px] font-medium transition-colors"
             style={{
@@ -194,16 +194,16 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
 
         {/* Summary stats */}
         <Show when={!loading()}>
-          <span class="text-[11px]" style={{ color: "var(--text-muted)" }}>
+          <span class="text-[11px] text-[var(--text-muted)]">
             {files().length} file{files().length !== 1 ? "s" : ""} changed
           </span>
           <Show when={totalAdded() > 0}>
-            <span class="text-[11px] font-mono" style={{ color: "#34D399" }}>
+            <span class="text-[11px] font-mono text-status-active">
               +{totalAdded()}
             </span>
           </Show>
           <Show when={totalDeleted() > 0}>
-            <span class="text-[11px] font-mono" style={{ color: "#F87171" }}>
+            <span class="text-[11px] font-mono text-status-error">
               -{totalDeleted()}
             </span>
           </Show>
@@ -214,15 +214,13 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
         {/* Expand/collapse buttons */}
         <Show when={files().length > 0}>
           <button
-            class="text-[10px] transition-colors"
-            style={{ color: "var(--text-muted)" }}
+            class="text-[10px] text-[var(--text-muted)] transition-colors"
             onClick={expandAll}
           >
             Expand all
           </button>
           <button
-            class="text-[10px] transition-colors"
-            style={{ color: "var(--text-muted)" }}
+            class="text-[10px] text-[var(--text-muted)] transition-colors"
             onClick={collapseAll}
           >
             Collapse all
@@ -234,20 +232,20 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
       <Show when={loading()}>
         <div class="flex items-center justify-center py-8">
           <div class="h-5 w-5 animate-spin rounded-full border-2 border-gray-700 border-t-cyan-400" />
-          <span class="ml-2 text-[11px]" style={{ color: "var(--text-muted)" }}>Loading diff...</span>
+          <span class="ml-2 text-[11px] text-[var(--text-muted)]">Loading diff...</span>
         </div>
       </Show>
 
       {/* Empty state */}
       <Show when={!loading() && files().length === 0}>
-        <div class="rounded-lg border p-8 text-center" style={{ "border-color": "var(--border-subtle)", background: "var(--bg-base)" }}>
-          <svg class="mx-auto mb-3 h-8 w-8" style={{ color: "var(--border)" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] p-8 text-center">
+          <svg class="mx-auto mb-3 h-8 w-8 text-[var(--border)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <p class="text-[13px]" style={{ color: "var(--text-muted)" }}>
+          <p class="text-[13px] text-[var(--text-muted)]">
             {staged() ? "No staged changes" : "No unstaged changes"}
           </p>
-          <p class="mt-1 text-[11px]" style={{ color: "var(--text-faint)" }}>
+          <p class="mt-1 text-[11px] text-[var(--text-faint)]">
             Working tree is clean
           </p>
         </div>
@@ -255,7 +253,7 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
 
       {/* File list with expandable diffs */}
       <Show when={!loading() && files().length > 0}>
-        <div class="flex flex-col rounded-lg border overflow-hidden" style={{ "border-color": "var(--border-subtle)", background: "var(--bg-base)" }}>
+        <div class="flex flex-col rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] overflow-hidden">
           <For each={files()}>
             {(file, idx) => {
               const isExpanded = () => expandedFiles().has(file.path);
@@ -300,18 +298,18 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
                     </span>
 
                     {/* File path */}
-                    <span class="flex-1 truncate text-[11px] font-mono" style={{ color: "var(--text-secondary)" }}>
+                    <span class="flex-1 truncate text-[11px] font-mono text-[var(--text-secondary)]">
                       {file.path}
                     </span>
 
                     {/* Line counts */}
                     <Show when={file.additions > 0}>
-                      <span class="text-[10px] font-mono" style={{ color: "#34D399" }}>
+                      <span class="text-[10px] font-mono text-status-active">
                         +{file.additions}
                       </span>
                     </Show>
                     <Show when={file.deletions > 0}>
-                      <span class="text-[10px] font-mono" style={{ color: "#F87171" }}>
+                      <span class="text-[10px] font-mono text-status-error">
                         -{file.deletions}
                       </span>
                     </Show>
@@ -320,8 +318,7 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
                   {/* Expanded diff hunks */}
                   <Show when={isExpanded() && file.patch}>
                     <div
-                      class="border-t overflow-auto"
-                      style={{ "border-color": "var(--border-subtle)" }}
+                      class="border-t border-[var(--border-subtle)] overflow-auto"
                     >
                       <pre class="text-xs leading-5 font-mono">
                         <For each={parseDiff(file.patch)}>

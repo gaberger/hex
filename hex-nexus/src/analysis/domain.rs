@@ -143,6 +143,9 @@ pub struct ArchAnalysisResult {
     pub health_score: u8,
     pub file_count: usize,
     pub edge_count: usize,
+    /// ADR-056: Frontend hexagonal architecture check results (None if no frontend found).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frontend: Option<super::frontend_checker::FrontendCheckResult>,
 }
 
 impl ArchAnalysisResult {

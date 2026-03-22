@@ -1,11 +1,16 @@
 /**
- * project-chat.ts — Factory for per-project chat connections.
+ * project-chat.ts — Factory for per-project chat connections (ADR-056).
  *
  * Unlike the global chat store (chat.ts), this creates an isolated
  * WebSocket + signal set scoped to a single project. Used by the
  * ProjectChatWidget embedded in ProjectDetail.
+ *
+ * Note: This factory creates per-project WebSocket instances via a
+ * lightweight transport wrapper, keeping the WebSocket lifecycle
+ * inside the service layer (ADR-056 F2 compliance).
  */
 import { createSignal } from "solid-js";
+import { createProjectChatTransport } from '../services/project-chat-ws';
 
 export interface ChatMessage {
   id: string;
@@ -26,53 +31,14 @@ export function createProjectChat(projectId: string) {
   const [streamingText, setStreamingText] = createSignal("");
   const [isStreaming, setIsStreaming] = createSignal(false);
   const [connected, setConnected] = createSignal(false);
-  let ws: WebSocket | null = null;
-  let reconnectTimer: number | undefined;
-  let reconnectDelay = 1000;
+
+  // Delegate WebSocket lifecycle to the service layer (ADR-056)
+  const transport = createProjectChatTransport(projectId);
+  transport.onMessage(handleMessage);
+  transport.onStatus(setConnected);
 
   function connect() {
-    if (ws && ws.readyState < 2) return; // already open or connecting
-
-    const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const host = location.host || "localhost:5555";
-    const params = new URLSearchParams();
-    params.set("project_id", projectId);
-
-    // Check for auth token in localStorage
-    const token = localStorage.getItem("stdb_token_hexflo-coordination");
-    if (token) params.set("token", token);
-
-    ws = new WebSocket(`${proto}//${host}/ws/chat?${params}`);
-
-    ws.onopen = () => {
-      setConnected(true);
-      reconnectDelay = 1000;
-    };
-
-    ws.onclose = () => {
-      setConnected(false);
-      ws = null;
-      reconnectTimer = window.setTimeout(() => {
-        reconnectDelay = Math.min(reconnectDelay * 1.5, 15000);
-        connect();
-      }, reconnectDelay);
-    };
-
-    ws.onerror = () => {
-      ws?.close();
-    };
-
-    ws.onmessage = (ev) => {
-      try {
-        const raw = JSON.parse(ev.data);
-        // Normalize { event, data } envelope into flat { type, ...data }
-        const msg =
-          raw.event && raw.data ? { ...raw.data, type: raw.event } : raw;
-        handleMessage(msg);
-      } catch {
-        // ignore parse errors
-      }
-    };
+    transport.connect();
   }
 
   function handleMessage(msg: any) {
@@ -152,7 +118,7 @@ export function createProjectChat(projectId: string) {
   }
 
   function send(text: string) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!transport.connected) return;
 
     // Add user message immediately
     setMessages((prev) => [
@@ -177,13 +143,11 @@ export function createProjectChat(projectId: string) {
       payload.content = atMatch[2];
     }
 
-    ws.send(JSON.stringify(payload));
+    transport.send(payload);
   }
 
   function disconnect() {
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    ws?.close();
-    ws = null;
+    transport.disconnect();
     setConnected(false);
   }
 

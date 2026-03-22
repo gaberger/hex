@@ -1,12 +1,12 @@
 /**
- * chat.ts — Shared chat store (SolidJS signals + single persistent WebSocket).
+ * chat.ts — Shared chat store (SolidJS signals).
  *
- * Extracts WebSocket management from ChatView.tsx so that both ChatView
- * and BottomBar can share the same connection. Fixes the critical bug
- * where BottomBar created a NEW WebSocket per message.
+ * All WebSocket and HTTP I/O is delegated to the chatWs service (ADR-056).
+ * This store owns only reactive state and message-handling logic.
  */
 import { createSignal } from 'solid-js';
-import type { ChatMessage } from '../components/chat/Message';
+import type { ChatMessage } from '../types/chat';
+import { chatWs } from '../services/chat-ws';
 
 // ── Signals ──────────────────────────────────────────────────────────────────
 
@@ -19,9 +19,6 @@ const [selectedModel, setSelectedModel] = createSignal<string>('');
 
 // ── Internal state ───────────────────────────────────────────────────────────
 
-let ws: WebSocket | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let reconnectDelay = 1000;
 let currentStreamAgent: string | null = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -32,18 +29,6 @@ function makeId(): string {
 
 function nowISO(): string {
   return new Date().toISOString();
-}
-
-function getAuthToken(): string | null {
-  const stored = localStorage.getItem('hex-auth-token');
-  if (stored) return stored;
-  const params = new URLSearchParams(location.search);
-  const t = params.get('token');
-  if (t) {
-    localStorage.setItem('hex-auth-token', t);
-    return t;
-  }
-  return null;
 }
 
 // ── History loading ──────────────────────────────────────────────────────────
@@ -91,17 +76,12 @@ function backendMessageToChatMessage(msg: any): ChatMessage | null {
  * Called on WebSocket connect and when switching sessions.
  */
 async function loadChatHistory(sessionId?: string): Promise<void> {
-  const sid = sessionId ?? localStorage.getItem('hex-active-session') ?? '';
+  const sid = sessionId ?? '';
   if (!sid) return;
 
   setLoadingHistory(true);
   try {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sid)}/messages`);
-    if (!res.ok) {
-      console.warn(`[chat store] failed to load history: HTTP ${res.status}`);
-      return;
-    }
-    const raw: any[] = await res.json();
+    const raw: any[] = await chatWs.loadHistory(sid);
     const messages: ChatMessage[] = [];
     for (const m of raw) {
       const mapped = backendMessageToChatMessage(m);
@@ -113,58 +93,6 @@ async function loadChatHistory(sessionId?: string): Promise<void> {
   } finally {
     setLoadingHistory(false);
   }
-}
-
-// ── WebSocket lifecycle ──────────────────────────────────────────────────────
-
-function connect() {
-  const token = getAuthToken();
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = location.host || 'localhost:5555';
-  const url = token
-    ? `${proto}//${host}/ws/chat?token=${encodeURIComponent(token)}`
-    : `${proto}//${host}/ws/chat`;
-
-  ws = new WebSocket(url);
-
-  ws.onopen = () => {
-    setChatConnected(true);
-    reconnectDelay = 1000;
-    // Load persisted chat history for the active session
-    loadChatHistory();
-  };
-
-  ws.onclose = () => {
-    setChatConnected(false);
-    if (isStreaming()) endStream();
-    scheduleReconnect();
-  };
-
-  ws.onerror = () => {
-    ws?.close();
-  };
-
-  ws.onmessage = (e) => {
-    try {
-      const raw = JSON.parse(e.data);
-      // Normalize { event, data } envelope into flat { type, ...data }
-      const msg = raw.event && raw.data
-        ? { ...raw.data, type: raw.event }
-        : raw;
-      handleMessage(msg);
-    } catch (err) {
-      console.error('[chat store] ws parse error', err);
-    }
-  };
-}
-
-function scheduleReconnect() {
-  if (reconnectTimer) return;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
-    connect();
-  }, reconnectDelay);
 }
 
 // ── Message dispatch ─────────────────────────────────────────────────────────
@@ -190,7 +118,8 @@ function handleMessage(msg: any) {
       if (isStreaming()) endStream();
       break;
     case 'connected':
-      // connection ack — no action needed
+      // connection ack — load history for active session
+      loadChatHistory();
       break;
     default:
       if (
@@ -344,7 +273,7 @@ function formatHexFloEvent(msg: any): string {
 // ── Public actions ───────────────────────────────────────────────────────────
 
 function sendMessage(text: string) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!chatWs.connected) return;
 
   // Add user message locally
   setChatMessages((prev) => [
@@ -352,23 +281,8 @@ function sendMessage(text: string) {
     { id: makeId(), role: 'user', content: text, timestamp: nowISO() },
   ]);
 
-  // Build payload matching vanilla JS protocol
-  const payload: Record<string, string> = { type: 'chat_message', content: text };
-
-  // Include model selection if set
-  const model = selectedModel();
-  if (model) {
-    payload.model = model;
-  }
-
-  // @agent routing
-  const atMatch = text.match(/^@(\S+)\s+([\s\S]*)$/);
-  if (atMatch) {
-    payload.agent_id = atMatch[1];
-    payload.content = atMatch[2];
-  }
-
-  ws.send(JSON.stringify(payload));
+  // Delegate to transport service
+  chatWs.sendChatMessage(text, { model: selectedModel() || undefined });
 }
 
 function clearMessages() {
@@ -379,16 +293,16 @@ function clearMessages() {
 }
 
 function initChatConnection() {
-  connect();
+  chatWs.onMessage(handleMessage);
+  chatWs.onStatus((connected) => {
+    setChatConnected(connected);
+    if (!connected && isStreaming()) endStream();
+  });
+  chatWs.connect();
 }
 
 function disconnectChat() {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  ws?.close();
-  ws = null;
+  chatWs.disconnect();
 }
 
 // ── Exports ──────────────────────────────────────────────────────────────────

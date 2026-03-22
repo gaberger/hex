@@ -9,6 +9,7 @@
  *   import { workplans, activeWorkplan, fetchReport } from "../stores/workplan";
  */
 import { createSignal, createEffect, onCleanup } from "solid-js";
+import { restClient } from "../services/rest-client";
 
 // ── Types ─────────────────────────────────────────────
 
@@ -61,31 +62,27 @@ export async function fetchWorkplans(): Promise<WorkplanExecution[]> {
   _listInFlight = true;
   setWorkplanLoading(true);
   try {
-    const res = await fetch("/api/workplan/list");
-    if (res.ok) {
-      const json = await res.json();
-      const list: WorkplanExecution[] = json.ok ? json.data : (Array.isArray(json) ? json : []);
-      setWorkplans(list);
-      setWorkplanError(null);
+    const json = await restClient.get<any>("/api/workplan/list");
+    const list: WorkplanExecution[] = json.ok ? json.data : (Array.isArray(json) ? json : []);
+    setWorkplans(list);
+    setWorkplanError(null);
 
-      // Detect active execution (including paused — still needs monitoring)
-      const active = list.find(
-        (w) => w.status === "active" || w.status === "pending" || w.status === "paused"
-      );
-      setActiveWorkplan(active ?? null);
+    // Detect active execution (including paused — still needs monitoring)
+    const active = list.find(
+      (w) => w.status === "active" || w.status === "pending" || w.status === "paused"
+    );
+    setActiveWorkplan(active ?? null);
 
-      return list;
-    }
-    // Non-ok: set empty but don't error for 404 (no workplans yet)
-    if (res.status === 404) {
+    return list;
+  } catch (e: any) {
+    // Handle 404 (no workplans yet) gracefully
+    if (e.message?.includes("404")) {
       setWorkplans([]);
       setActiveWorkplan(null);
       setWorkplanError(null);
       return [];
     }
-    setWorkplanError(`Failed to fetch workplans: ${res.status}`);
-  } catch (e) {
-    setWorkplanError(`Network error fetching workplans`);
+    setWorkplanError(`Failed to fetch workplans`);
   } finally {
     _listInFlight = false;
     setWorkplanLoading(false);
@@ -99,11 +96,8 @@ export async function fetchReport(id: string): Promise<WorkplanReport | null> {
   if (_reportInFlight) return null;
   _reportInFlight = true;
   try {
-    const res = await fetch(`/api/workplan/${encodeURIComponent(id)}/report`);
-    if (res.ok) {
-      const json = await res.json();
-      return json.ok ? json.data : json;
-    }
+    const json = await restClient.get<any>(`/api/workplan/${encodeURIComponent(id)}/report`);
+    return json.ok ? json.data : json;
   } catch {
     // Silently fail — caller can handle null
   } finally {
@@ -116,47 +110,31 @@ export async function fetchReport(id: string): Promise<WorkplanReport | null> {
 
 export async function executeWorkplan(path: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch("/api/workplan/execute", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
-    });
-    if (res.ok) {
-      await fetchWorkplans();
-      return { ok: true };
-    }
-    const text = await res.text();
-    return { ok: false, error: text || `HTTP ${res.status}` };
-  } catch (e) {
-    return { ok: false, error: "Network error" };
+    await restClient.post("/api/workplan/execute", { path });
+    await fetchWorkplans();
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message || "Network error" };
   }
 }
 
 export async function pauseWorkplan(): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch("/api/workplan/pause", { method: "POST" });
-    if (res.ok) {
-      await fetchWorkplans();
-      return { ok: true };
-    }
-    const text = await res.text();
-    return { ok: false, error: text || `HTTP ${res.status}` };
-  } catch (e) {
-    return { ok: false, error: "Network error" };
+    await restClient.post("/api/workplan/pause");
+    await fetchWorkplans();
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message || "Network error" };
   }
 }
 
 export async function resumeWorkplan(): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch("/api/workplan/resume", { method: "POST" });
-    if (res.ok) {
-      await fetchWorkplans();
-      return { ok: true };
-    }
-    const text = await res.text();
-    return { ok: false, error: text || `HTTP ${res.status}` };
-  } catch (e) {
-    return { ok: false, error: "Network error" };
+    await restClient.post("/api/workplan/resume");
+    await fetchWorkplans();
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message || "Network error" };
   }
 }
 

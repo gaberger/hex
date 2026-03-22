@@ -1,8 +1,8 @@
 {
   "feature": "checkpoint-remaining",
   "parent_workplan": "feat-stateful-project-tracking.json",
-  "status": "in_progress",
-  "status_note": "All 3 integration tests not yet written. Low priority — checkpoint round-trip working in unit tests.",
+  "status": "completed",
+  "status_note": "All 5 integration tests passing (92 assertions, 1.4s). Closed 2026-03-22.",
   "description": "Remaining work for stateful project tracking — integration tests only. Steps 1-5 are complete.",
   "completed_steps": {
     "step-1": "Checkpoint domain types — src/core/domain/checkpoint-types.ts",

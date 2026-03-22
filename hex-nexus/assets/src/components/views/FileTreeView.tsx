@@ -2,6 +2,7 @@ import { type Component, For, Show, createSignal, createMemo } from 'solid-js';
 import { MarkdownEditor } from '../editor';
 import { navigate, route } from '../../stores/router';
 import { projects } from '../../stores/projects';
+import { restClient } from '../../services/rest-client';
 
 interface TreeNode {
   name: string;
@@ -31,9 +32,7 @@ function sortNodes(nodes: TreeNode[]): TreeNode[] {
 
 async function fetchDir(path: string): Promise<TreeNode[]> {
   try {
-    const res = await fetch(`/api/files?path=${encodeURIComponent(path)}&list=true`);
-    if (!res.ok) return [];
-    const data = await res.json();
+    const data = await restClient.get(`/api/files?path=${encodeURIComponent(path)}&list=true`);
     const files: string[] = data.files ?? data ?? [];
     return sortNodes(
       files.map((f) => ({
@@ -51,12 +50,10 @@ async function fetchDir(path: string): Promise<TreeNode[]> {
 
 async function fetchFileContent(path: string): Promise<string> {
   try {
-    const res = await fetch(`/api/files?path=${encodeURIComponent(path)}`);
-    if (!res.ok) return `// Error loading file: ${res.status}`;
-    const data = await res.json();
+    const data = await restClient.get(`/api/files?path=${encodeURIComponent(path)}`);
     return data.content ?? '';
-  } catch {
-    return '// Failed to fetch file';
+  } catch (e: any) {
+    return `// Error loading file: ${e.message}`;
   }
 }
 
@@ -95,7 +92,7 @@ const TreeNodeItem: Component<{
         }}
       >
         {/* Icon */}
-        <span style={{ color: props.node.isDir ? 'var(--yellow)' : 'var(--text-muted)', "font-size": '13px', width: '16px', "text-align": 'center', "flex-shrink": '0' }}>
+        <span class="w-4 shrink-0 text-center text-[13px]" style={{ color: props.node.isDir ? 'var(--yellow)' : 'var(--text-muted)' }}>
           {props.node.isDir
             ? (props.node.expanded ? '\u{1F4C2}' : '\u{1F4C1}')
             : '\u{1F4C4}'}
@@ -114,9 +111,9 @@ const TreeNodeItem: Component<{
           </svg>
         </Show>
         <Show when={!props.node.isDir}>
-          <span style={{ width: '12px' }} />
+          <span class="w-3" />
         </Show>
-        <span class="truncate" style={{ "font-family": "'JetBrains Mono', monospace" }}>
+        <span class="truncate font-mono">
           {props.node.name}
         </span>
       </button>
@@ -225,11 +222,11 @@ const FileTreeView: Component = () => {
   }
 
   return (
-    <div class="flex flex-1 overflow-hidden relative" style={{ background: 'var(--bg-base)' }}>
+    <div class="flex flex-1 overflow-hidden relative bg-[var(--bg-base)]">
       {/* Mobile tree panel toggle */}
       <button
         class="md:hidden absolute top-2 left-2 z-20 rounded-lg p-1.5 transition-colors"
-        style={{ border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-muted)' }}
+        class="border border-[var(--border)] bg-[var(--bg-base)] text-[var(--text-muted)]"
         onClick={() => setTreePanelOpen((v) => !v)}
         title={treePanelOpen() ? 'Hide file tree' : 'Show file tree'}
       >
@@ -248,22 +245,17 @@ const FileTreeView: Component = () => {
           'max-md:-translate-x-full': !treePanelOpen(),
           'max-md:translate-x-0': treePanelOpen(),
         }}
-        style={{
-          "border-color": 'var(--border-subtle)',
-          background: 'var(--bg-base)',
-        }}
+        class="border-[var(--border-subtle)] bg-[var(--bg-base)]"
       >
         {/* Tree header */}
         <div
-          class="flex items-center gap-2 border-b px-3 py-2"
-          style={{ "border-color": 'var(--border-subtle)' }}
+          class="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3 py-2"
         >
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
           <span
-            class="text-[11px] font-semibold uppercase"
-            style={{ color: 'var(--text-muted)', "letter-spacing": '0.8px' }}
+            class="text-[11px] font-semibold uppercase tracking-[0.8px] text-[var(--text-muted)]"
           >
             Files
           </span>
@@ -290,15 +282,15 @@ const FileTreeView: Component = () => {
         </div>
 
         {/* Tree body */}
-        <div class="flex-1 overflow-y-auto py-1" style={{ "scrollbar-width": 'thin' }}>
+        <div class="flex-1 overflow-y-auto py-1 [scrollbar-width:thin]">
           <Show when={!treeLoading()} fallback={
             <div class="flex items-center justify-center py-8">
-              <span class="text-[11px]" style={{ color: 'var(--text-faint)' }}>Loading...</span>
+              <span class="text-[11px] text-[var(--text-faint)]">Loading...</span>
             </div>
           }>
             <Show when={tree().length > 0} fallback={
               <div class="px-3 py-4 text-center">
-                <span class="text-[11px]" style={{ color: 'var(--text-faint)' }}>No files found</span>
+                <span class="text-[11px] text-[var(--text-faint)]">No files found</span>
               </div>
             }>
               <For each={tree()}>
@@ -318,7 +310,7 @@ const FileTreeView: Component = () => {
       </div>
 
       {/* Right panel: file preview */}
-      <div class="flex flex-1 flex-col overflow-hidden" style={{ background: 'var(--bg-base)' }}>
+      <div class="flex flex-1 flex-col overflow-hidden bg-[var(--bg-base)]">
         <Show
           when={selectedFile()}
           fallback={
@@ -328,7 +320,7 @@ const FileTreeView: Component = () => {
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                   <polyline points="14 2 14 8 20 8" />
                 </svg>
-                <p class="text-[12px]" style={{ color: 'var(--text-faint)' }}>
+                <p class="text-[12px] text-[var(--text-faint)]">
                   Select a file to preview
                 </p>
               </div>
@@ -337,19 +329,16 @@ const FileTreeView: Component = () => {
         >
           {/* File header bar */}
           <div
-            class="flex items-center gap-2 border-b px-4 py-2"
-            style={{ "border-color": 'var(--border-subtle)', background: 'var(--bg-base)' }}
+            class="flex items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-base)] px-4 py-2"
           >
             <span
-              class="text-[11px] font-medium truncate"
-              style={{ color: 'var(--text-secondary)', "font-family": "'JetBrains Mono', monospace" }}
+              class="font-mono text-[11px] font-medium truncate text-[var(--text-secondary)]"
             >
               {selectedFile()}
             </span>
             <div class="flex-1" />
             <button
-              class="rounded px-2 py-0.5 text-[10px] font-medium transition-colors"
-              style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
+              class="rounded border border-[var(--border)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-muted)] transition-colors"
               onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'var(--bg-elevated)')}
               onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
               onClick={() => {
@@ -366,21 +355,14 @@ const FileTreeView: Component = () => {
           <div class="flex-1 overflow-auto">
             <Show when={!loading()} fallback={
               <div class="flex items-center justify-center py-12">
-                <span class="text-[11px]" style={{ color: 'var(--text-faint)' }}>Loading...</span>
+                <span class="text-[11px] text-[var(--text-faint)]">Loading...</span>
               </div>
             }>
               <Show
                 when={isMarkdown()}
                 fallback={
                   <pre
-                    class="p-4 text-[12px] leading-relaxed"
-                    style={{
-                      color: 'var(--text-secondary)',
-                      "font-family": "'JetBrains Mono', monospace",
-                      "white-space": 'pre-wrap',
-                      "word-break": 'break-word',
-                      "tab-size": '4',
-                    }}
+                    class="p-4 font-mono text-[12px] leading-relaxed whitespace-pre-wrap break-words text-[var(--text-secondary)] [tab-size:4]"
                   >
                     {fileContent()}
                   </pre>

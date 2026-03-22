@@ -7,6 +7,7 @@
  */
 import { Component, Show, For, createMemo, createSignal } from "solid-js";
 import { registryAgents, agentHeartbeats, swarmTasks, hexfloMemory } from "../../stores/connection";
+import { restClient } from "../../services/rest-client";
 
 const AgentLog: Component<{ agentId: string }> = (props) => {
   const agent = createMemo(() =>
@@ -54,7 +55,7 @@ const AgentLog: Component<{ agentId: string }> = (props) => {
   async function handleKill() {
     setKilling(true);
     try {
-      await fetch(`/api/agents/${encodeURIComponent(props.agentId)}/kill`, { method: "POST" });
+      await restClient.post(`/api/agents/${encodeURIComponent(props.agentId)}/kill`);
     } finally {
       setKilling(false);
     }
@@ -65,13 +66,9 @@ const AgentLog: Component<{ agentId: string }> = (props) => {
     if (!a) return;
     await handleKill();
     // Re-spawn with same config
-    await fetch("/api/agents/spawn", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        projectDir: a.project ?? a.project_dir ?? ".",
-        agentName: a.name ?? a.agent_name,
-      }),
+    await restClient.post("/api/agents/spawn", {
+      projectDir: a.project ?? a.project_dir ?? ".",
+      agentName: a.name ?? a.agent_name,
     });
   }
 

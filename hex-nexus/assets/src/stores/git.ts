@@ -2,82 +2,37 @@
  * git.ts — Git state store for project-scoped git operations (ADR-044).
  *
  * Provides reactive signals for git status, worktrees, branches, and commit log.
- * Data is fetched from the hex-nexus REST API (stateless filesystem I/O).
+ * Data is fetched via restClient (ADR-056) from the hex-nexus REST API.
+ * Real-time updates arrive via gitWs WebSocket service.
  *
  * Architecture (ADR-039): SpacetimeDB owns project state. The frontend reads
  * project paths from SpacetimeDB and passes them to nexus REST for git operations.
  */
 import { createSignal } from "solid-js";
 import { addToast } from "./toast";
+import { restClient } from '../services/rest-client';
+import { gitWs } from '../services/git-ws';
 
-// ── Types ─────────────────────────────────────────────
+// ── Types (re-exported from canonical location) ──────
 
-export interface GitStatus {
-  branch: string;
-  headSha: string;
-  isDetached: boolean;
-  dirtyCount: number;
-  stagedCount: number;
-  untrackedCount: number;
-  ahead: number;
-  behind: number;
-  stashCount: number;
-  files: StatusFile[];
-}
+export type {
+  GitStatus,
+  StatusFile,
+  WorktreeInfo,
+  CommitInfo,
+  LogResult,
+  BranchInfo,
+  DiffFile,
+  DiffResult,
+} from '../types/git';
 
-export interface StatusFile {
-  path: string;
-  status: string;
-  staged: boolean;
-}
-
-export interface WorktreeInfo {
-  path: string;
-  branch: string;
-  headSha: string;
-  isMain: boolean;
-  isBare: boolean;
-  commitCount: number | null;
-}
-
-export interface CommitInfo {
-  sha: string;
-  shortSha: string;
-  message: string;
-  authorName: string;
-  authorEmail: string;
-  timestamp: number;
-  parentCount: number;
-}
-
-export interface LogResult {
-  commits: CommitInfo[];
-  hasMore: boolean;
-  nextCursor: string | null;
-}
-
-export interface BranchInfo {
-  name: string;
-  sha: string;
-  shortSha: string;
-  isRemote: boolean;
-  isHead: boolean;
-}
-
-export interface DiffFile {
-  path: string;
-  status: string;
-  additions: number;
-  deletions: number;
-  patch: string;
-}
-
-export interface DiffResult {
-  files: DiffFile[];
-  totalAdditions: number;
-  totalDeletions: number;
-  raw: string;
-}
+import type {
+  GitStatus,
+  WorktreeInfo,
+  LogResult,
+  BranchInfo,
+  DiffResult,
+} from '../types/git';
 
 // ── Signals ───────────────────────────────────────────
 
@@ -103,11 +58,7 @@ async function ensureRegistered(projectId: string, projectPath?: string): Promis
   if (_registeredProjects.has(projectId)) return;
   // Lightweight: POST /api/projects/register is idempotent.
   // This tells nexus "I need filesystem access to this path" — not business logic.
-  await fetch("/api/projects/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rootPath: projectPath, name: projectId }),
-  }).catch(() => {});
+  await restClient.post('/api/projects/register', { rootPath: projectPath, name: projectId }).catch(() => {});
   _registeredProjects.add(projectId);
 }
 
@@ -120,16 +71,13 @@ export async function fetchGitStatus(projectId: string, projectPath?: string): P
   _statusInFlight = true;
   try {
     await ensureRegistered(projectId, projectPath);
-    const res = await fetch(`/api/${projectId}/git/status`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json.ok) {
-        setGitStatus(json.data);
-        setGitError(null);
-        return json.data;
-      }
+    const json = await restClient.get(`/api/${projectId}/git/status`);
+    if (json.ok) {
+      setGitStatus(json.data);
+      setGitError(null);
+      return json.data;
     }
-    setGitError(`Git status fetch failed (HTTP ${res.status})`);
+    setGitError("Git status fetch failed");
   } catch (e: any) {
     const msg = e?.message ?? "Git status fetch failed";
     setGitError(msg);
@@ -147,17 +95,14 @@ export async function fetchGitWorktrees(projectId: string, projectPath?: string)
   _worktreesInFlight = true;
   try {
     await ensureRegistered(projectId, projectPath);
-    const res = await fetch(`/api/${projectId}/git/worktrees`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json.ok) {
-        const wts = json.data.worktrees ?? [];
-        setGitWorktrees(wts);
-        setGitError(null);
-        return wts;
-      }
+    const json = await restClient.get(`/api/${projectId}/git/worktrees`);
+    if (json.ok) {
+      const wts = json.data.worktrees ?? [];
+      setGitWorktrees(wts);
+      setGitError(null);
+      return wts;
     }
-    setGitError(`Git worktrees fetch failed (HTTP ${res.status})`);
+    setGitError("Git worktrees fetch failed");
   } catch (e: any) {
     const msg = e?.message ?? "Git worktrees fetch failed";
     setGitError(msg);
@@ -186,16 +131,13 @@ export async function fetchGitLog(
     if (limit) params.set("limit", String(limit));
     const qs = params.toString();
 
-    const res = await fetch(`/api/${projectId}/git/log${qs ? "?" + qs : ""}`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json.ok) {
-        setGitLog(json.data);
-        setGitError(null);
-        return json.data;
-      }
+    const json = await restClient.get(`/api/${projectId}/git/log${qs ? "?" + qs : ""}`);
+    if (json.ok) {
+      setGitLog(json.data);
+      setGitError(null);
+      return json.data;
     }
-    setGitError(`Git log fetch failed (HTTP ${res.status})`);
+    setGitError("Git log fetch failed");
   } catch (e: any) {
     const msg = e?.message ?? "Git log fetch failed";
     setGitError(msg);
@@ -214,15 +156,12 @@ export async function fetchGitBranches(projectId: string, projectPath?: string):
   _branchesInFlight = true;
   try {
     await ensureRegistered(projectId, projectPath);
-    const res = await fetch(`/api/${projectId}/git/branches`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json.ok) {
-        const branches = json.data.branches ?? [];
-        setGitBranches(branches);
-        _branchesBackoff = 0;
-        return branches;
-      }
+    const json = await restClient.get(`/api/${projectId}/git/branches`);
+    if (json.ok) {
+      const branches = json.data.branches ?? [];
+      setGitBranches(branches);
+      _branchesBackoff = 0;
+      return branches;
     }
     // Non-ok response: backoff
     _branchesBackoff = Math.min((_branchesBackoff || 500) * 2, MAX_BACKOFF);
@@ -256,21 +195,18 @@ export async function fetchGitDiff(
     if (staged) params.set("staged", "true");
     const qs = params.toString();
 
-    const res = await fetch(`/api/${projectId}/git/diff${qs ? "?" + qs : ""}`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json.ok) {
-        setGitDiff(json.data);
-        _diffBackoff = 0;
-        return json.data;
-      }
-      if (typeof json === "string" || json.raw) {
-        const raw = typeof json === "string" ? json : json.raw;
-        const result: DiffResult = { files: [], totalAdditions: 0, totalDeletions: 0, raw };
-        setGitDiff(result);
-        _diffBackoff = 0;
-        return result;
-      }
+    const json = await restClient.get(`/api/${projectId}/git/diff${qs ? "?" + qs : ""}`);
+    if (json.ok) {
+      setGitDiff(json.data);
+      _diffBackoff = 0;
+      return json.data;
+    }
+    if (typeof json === "string" || json.raw) {
+      const raw = typeof json === "string" ? json : json.raw;
+      const result: DiffResult = { files: [], totalAdditions: 0, totalDeletions: 0, raw };
+      setGitDiff(result);
+      _diffBackoff = 0;
+      return result;
     }
     _diffBackoff = Math.min((_diffBackoff || 500) * 2, MAX_BACKOFF);
     if (_diffBackoffTimer) clearTimeout(_diffBackoffTimer);
@@ -293,13 +229,10 @@ export async function fetchGitDiffRange(
 ): Promise<DiffResult | null> {
   try {
     await ensureRegistered(projectId, projectPath);
-    const res = await fetch(`/api/${projectId}/git/diff/${base}...${head}`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json.ok) {
-        setGitDiff(json.data);
-        return json.data;
-      }
+    const json = await restClient.get(`/api/${projectId}/git/diff/${base}...${head}`);
+    if (json.ok) {
+      setGitDiff(json.data);
+      return json.data;
     }
   } catch (e) {
     console.error("[git] diff-range fetch failed:", e);
@@ -332,7 +265,7 @@ export async function fetchAllGitData(projectId: string, projectPath?: string): 
     // Success: reset backoff
     _fetchBackoff = 0;
   } catch {
-    // Failure: exponential backoff (1s → 2s → 4s → ... → 30s)
+    // Failure: exponential backoff (1s -> 2s -> 4s -> ... -> 30s)
     _fetchBackoff = Math.min((_fetchBackoff || 500) * 2, MAX_BACKOFF);
     if (_fetchBackoffTimer) clearTimeout(_fetchBackoffTimer);
     _fetchBackoffTimer = setTimeout(() => { _fetchBackoff = 0; }, _fetchBackoff);
@@ -342,68 +275,34 @@ export async function fetchAllGitData(projectId: string, projectPath?: string): 
   }
 }
 
-// ── WebSocket listener (Phase 2) ─────────────────────
+// ── WebSocket listener (via gitWs service, ADR-056) ──
 
-let gitWs: WebSocket | null = null;
-let subscribedProjectId: string | null = null;
-
-/**
- * Subscribe to real-time git events for a project via the /ws endpoint.
- * The backend poller broadcasts changes on topic `project:{id}:git`.
- */
+/** Subscribe to real-time git events for a project. */
 export function subscribeGitEvents(projectId: string): void {
-  if (subscribedProjectId === projectId && gitWs?.readyState === WebSocket.OPEN) {
-    return;
-  }
-
-  unsubscribeGitEvents();
-  subscribedProjectId = projectId;
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${proto}//${location.host}/ws`;
-
-  try {
-    gitWs = new WebSocket(url);
-
-    gitWs.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        const expectedTopic = `project:${projectId}:git`;
-        if (msg.topic !== expectedTopic) return;
-
-        switch (msg.event) {
-          case "status-changed":
-          case "branch-switched":
-            fetchGitStatus(projectId);
-            break;
-          case "commit-pushed":
-            fetchGitStatus(projectId);
-            fetchGitLog(projectId);
-            break;
-          case "worktree-created":
-          case "worktree-removed":
-            fetchGitWorktrees(projectId);
-            break;
-        }
-      } catch { /* ignore */ }
-    };
-
-    gitWs.onclose = () => {
-      if (subscribedProjectId === projectId) {
-        setTimeout(() => {
-          if (subscribedProjectId === projectId) {
-            subscribeGitEvents(projectId);
-          }
-        }, 5000);
-      }
-    };
-  } catch { /* WebSocket unavailable */ }
+  gitWs.subscribe(projectId);
 }
 
+/** Unsubscribe from git events and disconnect the WebSocket. */
 export function unsubscribeGitEvents(): void {
-  subscribedProjectId = null;
-  if (gitWs) {
-    gitWs.onclose = null;
-    gitWs.close();
-    gitWs = null;
-  }
+  gitWs.disconnect();
 }
+
+// Wire git WS events to store fetchers
+gitWs.onMessage((msg) => {
+  const projectId = msg.topic?.split(':')[1];
+  if (!projectId) return;
+  switch (msg.event) {
+    case 'status-changed':
+    case 'branch-switched':
+      fetchGitStatus(projectId);
+      break;
+    case 'commit-pushed':
+      fetchGitStatus(projectId);
+      fetchGitLog(projectId);
+      break;
+    case 'worktree-created':
+    case 'worktree-removed':
+      fetchGitWorktrees(projectId);
+      break;
+  }
+});

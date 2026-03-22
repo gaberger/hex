@@ -9,6 +9,7 @@ import {
   loadSessions,
 } from '../../stores/session';
 import type { Session } from '../../stores/session';
+import { restClient } from '../../services/rest-client';
 
 function relativeTime(iso: string): string {
   const now = Date.now();
@@ -58,8 +59,7 @@ const SessionListPanel: Component = () => {
   const handleFork = async (id: string) => {
     setForking(true);
     try {
-      const res = await fetch(`/api/sessions/${id}/fork`, { method: 'POST' });
-      if (!res.ok) throw new Error(`Fork failed: ${res.statusText}`);
+      await restClient.post(`/api/sessions/${id}/fork`);
       await loadSessions();
     } catch (e: any) {
       console.error('[session] fork failed:', e.message);

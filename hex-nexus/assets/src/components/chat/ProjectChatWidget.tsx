@@ -55,30 +55,23 @@ const ProjectChatWidget: Component<{
 
   return (
     <div
-      class="flex flex-col border-l"
-      style={{
-        width: "350px",
-        "min-width": "350px",
-        background: "var(--bg-base)",
-        "border-color": "var(--border-subtle)",
-      }}
+      class="flex w-[350px] min-w-[350px] flex-col border-l border-[var(--border-subtle)] bg-[var(--bg-base)]"
     >
       {/* Header */}
       <div
-        class="flex items-center justify-between px-4 py-3"
-        style={{ "border-bottom": "1px solid var(--border-subtle)" }}
+        class="flex items-center justify-between border-b border-[var(--border-subtle)] px-4 py-3"
       >
         <div class="flex items-center gap-2">
           <span
-            class="text-[13px] font-semibold"
-            style={{ color: "var(--text-body)" }}
+            class="text-[13px] font-semibold text-[var(--text-body)]"
           >
             Project Chat
           </span>
           <span
             class="h-1.5 w-1.5 rounded-full"
-            style={{
-              background: chat.connected() ? "#10B981" : "#EF4444",
+            classList={{
+              "bg-status-active": chat.connected(),
+              "bg-status-error": !chat.connected(),
             }}
           />
         </div>
@@ -89,8 +82,7 @@ const ProjectChatWidget: Component<{
             title="Clear messages"
           >
             <svg
-              class="h-3.5 w-3.5"
-              style={{ color: "var(--text-faint)" }}
+              class="h-3.5 w-3.5 text-[var(--text-faint)]"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -105,8 +97,7 @@ const ProjectChatWidget: Component<{
             title="Close chat"
           >
             <svg
-              class="h-4 w-4"
-              style={{ color: "var(--text-faint)" }}
+              class="h-4 w-4 text-[var(--text-faint)]"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -151,16 +142,14 @@ const ProjectChatWidget: Component<{
               >
                 <Show when={msg.role === "tool" && msg.toolName}>
                   <div
-                    class="mb-1 text-[10px] font-semibold"
-                    style={{ color: "var(--purple)" }}
+                    class="mb-1 text-[10px] font-semibold text-[var(--purple)]"
                   >
                     {msg.toolName}
                   </div>
                 </Show>
                 <p class="whitespace-pre-wrap break-words">{msg.content}</p>
                 <div
-                  class="mt-1 text-[9px]"
-                  style={{ color: "var(--text-dim)" }}
+                  class="mt-1 text-[9px] text-[var(--text-dim)]"
                 >
                   {formatTime(msg.timestamp)}
                 </div>
@@ -173,19 +162,13 @@ const ProjectChatWidget: Component<{
         <Show when={chat.streamingText()}>
           <div class="flex justify-start">
             <div
-              class="max-w-[85%] rounded-lg px-3 py-2 text-[12px]"
-              style={{
-                background: "var(--bg-surface)",
-                color: "var(--text-secondary)",
-                border: "1px solid var(--border-subtle)",
-              }}
+              class="max-w-[85%] rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-[12px] text-[var(--text-secondary)]"
             >
               <p class="whitespace-pre-wrap break-words">
                 {chat.streamingText()}
               </p>
               <span
-                class="inline-block h-2 w-2 animate-pulse rounded-full"
-                style={{ background: "var(--accent-hover)" }}
+                class="inline-block h-2 w-2 animate-pulse rounded-full bg-[var(--accent-hover)]"
               />
             </div>
           </div>
@@ -197,8 +180,7 @@ const ProjectChatWidget: Component<{
         >
           <div class="flex flex-col items-center justify-center py-8 text-center">
             <svg
-              class="mb-3 h-8 w-8"
-              style={{ color: "var(--border)" }}
+              class="mb-3 h-8 w-8 text-[var(--border)]"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -206,7 +188,7 @@ const ProjectChatWidget: Component<{
             >
               <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
             </svg>
-            <p class="text-[11px]" style={{ color: "var(--text-faint)" }}>
+            <p class="text-[11px] text-[var(--text-faint)]">
               Ask about your project's architecture, ADRs, or get coding
               help.
             </p>
@@ -218,8 +200,7 @@ const ProjectChatWidget: Component<{
 
       {/* Input bar */}
       <div
-        class="flex items-center gap-2 px-3 py-3"
-        style={{ "border-top": "1px solid var(--border-subtle)" }}
+        class="flex items-center gap-2 border-t border-[var(--border-subtle)] px-3 py-3"
       >
         <input
           ref={inputRef}
@@ -228,18 +209,12 @@ const ProjectChatWidget: Component<{
           value={input()}
           onInput={(e) => setInput(e.currentTarget.value)}
           onKeyDown={handleKeyDown}
-          class="flex-1 rounded-md border px-3 py-2 text-[12px] focus:outline-none"
-          style={{
-            background: "var(--bg-surface)",
-            "border-color": "var(--border-subtle)",
-            color: "var(--text-body)",
-          }}
+          class="flex-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-[12px] text-[var(--text-body)] focus:outline-none"
         />
         <button
           onClick={handleSend}
           disabled={!input().trim() || !chat.connected()}
-          class="shrink-0 rounded-md px-3 py-2 text-[11px] font-medium transition-colors disabled:opacity-40"
-          style={{ background: "var(--accent)", color: "#FFFFFF" }}
+          class="shrink-0 rounded-md bg-[var(--accent)] px-3 py-2 text-[11px] font-medium text-white transition-colors disabled:opacity-40"
         >
           Send
         </button>

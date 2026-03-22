@@ -96,11 +96,10 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
       {/* Dropdown */}
       <Show when={open()}>
         <div
-          class="absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border shadow-xl overflow-hidden"
-          style={{ background: "var(--bg-surface)", "border-color": "var(--border-subtle)" }}
+          class="absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-xl overflow-hidden"
         >
           {/* Search input */}
-          <div class="border-b" style={{ "border-color": "var(--border-subtle)" }}>
+          <div class="border-b border-[var(--border-subtle)]">
             <input
               type="text"
               placeholder="Filter branches..."
@@ -115,8 +114,7 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
             {/* Local branches */}
             <Show when={localBranches().length > 0}>
               <div
-                class="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-wider"
-                style={{ color: "var(--text-faint)" }}
+                class="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-wider text-[var(--text-faint)]"
               >
                 Local branches
               </div>
@@ -134,8 +132,7 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
             {/* Remote branches */}
             <Show when={remoteBranches().length > 0}>
               <div
-                class="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-wider"
-                style={{ color: "var(--text-faint)", "border-top": "1px solid var(--border-subtle)" }}
+                class="border-t border-[var(--border-subtle)] px-3 py-1.5 text-[9px] font-semibold uppercase tracking-wider text-[var(--text-faint)]"
               >
                 Remote branches
               </div>
@@ -152,7 +149,7 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
 
             {/* Empty state */}
             <Show when={localBranches().length === 0 && remoteBranches().length === 0}>
-              <div class="px-3 py-4 text-center text-[11px]" style={{ color: "var(--text-faint)" }}>
+              <div class="px-3 py-4 text-center text-[11px] text-[var(--text-faint)]">
                 {filter() ? "No matching branches" : "No branches found"}
               </div>
             </Show>
@@ -186,7 +183,7 @@ const BranchItem: Component<{
       <span class="h-2.5 w-2.5 shrink-0" />
     </Show>
     <span class="truncate">{props.branch.name}</span>
-    <span class="ml-auto text-[9px]" style={{ color: "var(--text-faint)" }}>
+    <span class="ml-auto text-[9px] text-[var(--text-faint)]">
       {props.branch.shortSha}
     </span>
   </button>

@@ -102,18 +102,15 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
 
           return (
             <div
-              class="overflow-hidden rounded-[10px]"
-              style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)" }}
+              class="overflow-hidden rounded-[10px] bg-[var(--bg-surface)] border border-[var(--border-subtle)]"
             >
               {/* Agent header row */}
               <button
-                class="flex w-full items-center gap-2.5 text-left transition-colors hover:bg-gray-800/40"
-                style={{ padding: "12px 16px" }}
+                class="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-gray-800/40"
                 onClick={() => toggle(key())}
               >
                 <span
-                  class="shrink-0 text-[10px]"
-                  style={{ color: "var(--text-faint)" }}
+                  class="shrink-0 text-[10px] text-[var(--text-faint)]"
                 >
                   {isOpen() ? "\u25BC" : "\u25B6"}
                 </span>
@@ -124,8 +121,7 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                 />
 
                 <span
-                  class="text-[13px] font-semibold"
-                  style={{ color: "var(--text-body)", "font-family": "'JetBrains Mono', monospace" }}
+                  class="font-mono text-[13px] font-semibold text-[var(--text-body)]"
                 >
                   {name()}
                 </span>
@@ -140,7 +136,7 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                 {/* Spacer */}
                 <div class="flex-1" />
 
-                <span class="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                <span class="text-[11px] text-[var(--text-muted)]">
                   {host()}
                 </span>
                 <span
@@ -153,11 +149,11 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
 
               {/* Expanded: worktrees + commits */}
               <Show when={isOpen()}>
-                <div style={{ padding: "0 16px 12px 40px" }}>
+                <div class="pb-3 pl-10 pr-4">
                   <Show
                     when={wts().length > 0}
                     fallback={
-                      <p class="text-[11px]" style={{ color: "var(--text-dim)" }}>
+                      <p class="text-[11px] text-[var(--text-dim)]">
                         No worktrees
                       </p>
                     }
@@ -166,39 +162,32 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                       <For each={wts()}>
                         {(wt) => (
                           <div
-                            class="rounded-md"
-                            style={{ background: "var(--bg-base)", padding: "8px 12px" }}
+                            class="rounded-md bg-[var(--bg-base)] px-3 py-2"
                           >
                             {/* Worktree header */}
                             <div class="flex items-center gap-2">
                               <span
                                 class="text-[12px]"
-                                style={{ color: wt.isMain ? "#10B981" : "#FBBF24" }}
+                                classList={{ "text-status-active": wt.isMain, "text-status-warning": !wt.isMain }}
                               >
                                 &#x2387;
                               </span>
                               <span
-                                class="text-[12px]"
-                                style={{
-                                  color: "var(--text-body)",
-                                  "font-family": "'JetBrains Mono', monospace",
-                                  "font-weight": wt.isMain ? "600" : "400",
-                                }}
+                                class="font-mono text-[12px] text-[var(--text-body)]"
+                                classList={{ "font-semibold": wt.isMain, "font-normal": !wt.isMain }}
                               >
                                 {wt.branch || "(detached)"}
                               </span>
                               <Show when={wt.isMain}>
                                 <span
-                                  class="rounded-full px-2 py-0.5 text-[9px] font-semibold"
-                                  style={{ color: "#34D399", background: "#064E3B" }}
+                                  class="rounded-full bg-[#064E3B] px-2 py-0.5 text-[9px] font-semibold text-status-active"
                                 >
                                   HEAD
                                 </span>
                               </Show>
                               <Show when={wt.commitCount != null && wt.commitCount > 0}>
                                 <span
-                                  class="rounded-full px-2 py-0.5 text-[9px] font-medium"
-                                  style={{ color: "var(--text-muted)", background: "var(--bg-elevated)" }}
+                                  class="rounded-full bg-[var(--bg-elevated)] px-2 py-0.5 text-[9px] font-medium text-[var(--text-muted)]"
                                 >
                                   {wt.commitCount} ahead
                                 </span>
@@ -206,25 +195,22 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                             </div>
 
                             {/* Commits under this worktree */}
-                            <div class="mt-1 space-y-0.5" style={{ "padding-left": "20px" }}>
+                            <div class="mt-1 space-y-0.5 pl-5">
                               <For each={commitsForBranch(wt.branch)}>
                                 {(c) => (
                                   <div class="flex items-center gap-2 py-0.5">
                                     <span
-                                      class="shrink-0 text-[11px]"
-                                      style={{ color: "#60A5FA", "font-family": "'JetBrains Mono', monospace" }}
+                                      class="shrink-0 font-mono text-[11px] text-hex-domain"
                                     >
                                       {c.shortSha}
                                     </span>
                                     <span
-                                      class="min-w-0 flex-1 truncate text-[11px]"
-                                      style={{ color: "var(--text-secondary)" }}
+                                      class="min-w-0 flex-1 truncate text-[11px] text-[var(--text-secondary)]"
                                     >
                                       {truncate(c.message.split("\n")[0], 60)}
                                     </span>
                                     <span
-                                      class="shrink-0 text-[10px]"
-                                      style={{ color: "var(--text-faint)" }}
+                                      class="shrink-0 text-[10px] text-[var(--text-faint)]"
                                     >
                                       {relativeTime(c.timestamp)}
                                     </span>
@@ -232,7 +218,7 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                                 )}
                               </For>
                               <Show when={commitsForBranch(wt.branch).length === 0}>
-                                <p class="text-[10px] italic" style={{ color: "var(--text-dim)" }}>
+                                <p class="text-[10px] italic text-[var(--text-dim)]">
                                   no recent commits
                                 </p>
                               </Show>
@@ -252,13 +238,11 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
       {/* Empty state */}
       <Show when={props.agents.length === 0}>
         <div
-          class="rounded-[10px] px-4 py-8 text-center text-sm"
-          style={{ background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", color: "var(--text-faint)" }}
+          class="rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-8 text-center text-sm text-[var(--text-faint)]"
         >
           No agents connected — start one with{" "}
           <code
-            class="mx-1 rounded px-1.5 py-0.5 text-[11px]"
-            style={{ background: "var(--bg-elevated)", color: "var(--text-muted)", "font-family": "'JetBrains Mono', monospace" }}
+            class="mx-1 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-muted)]"
           >
             hex nexus start
           </code>

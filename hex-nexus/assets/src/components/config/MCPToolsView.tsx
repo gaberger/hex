@@ -74,10 +74,10 @@ const ServerForm: Component<ServerFormProps> = (props) => {
   };
 
   return (
-    <form onSubmit={handleSubmit} class="rounded-lg border p-4 space-y-3 mt-2" style={{ "background-color": "var(--bg-elevated)", "border-color": "var(--border-subtle)" }}>
+    <form onSubmit={handleSubmit} class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4 space-y-3 mt-2">
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
-          <label class="block text-xs font-medium text-gray-400 mb-1" style={{ "font-size": "13px" }}>Name</label>
+          <label class="block text-[13px] font-medium text-gray-400 mb-1">Name</label>
           <input
             type="text"
             value={name()}
@@ -85,29 +85,29 @@ const ServerForm: Component<ServerFormProps> = (props) => {
             disabled={props.nameDisabled}
             placeholder="my-server"
             class="w-full rounded-md border px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-[var(--accent)]"
-            style={{ "background-color": "var(--bg-input)", "border-color": "var(--border-subtle)", "font-size": "14px" }}
+            class="bg-[var(--bg-input)] border-[var(--border-subtle)] text-sm"
           />
         </div>
         <div>
-          <label class="block text-xs font-medium text-gray-400 mb-1" style={{ "font-size": "13px" }}>Command</label>
+          <label class="block text-[13px] font-medium text-gray-400 mb-1">Command</label>
           <input
             type="text"
             value={command()}
             onInput={(e) => setCommand(e.currentTarget.value)}
             placeholder="npx -y @my/server"
             class="w-full rounded-md border px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-[var(--accent)]"
-            style={{ "background-color": "var(--bg-input)", "border-color": "var(--border-subtle)", "font-size": "14px" }}
+            class="bg-[var(--bg-input)] border-[var(--border-subtle)] text-sm"
           />
         </div>
         <div>
-          <label class="block text-xs font-medium text-gray-400 mb-1" style={{ "font-size": "13px" }}>Args (comma-separated)</label>
+          <label class="block text-[13px] font-medium text-gray-400 mb-1">Args (comma-separated)</label>
           <input
             type="text"
             value={args()}
             onInput={(e) => setArgs(e.currentTarget.value)}
             placeholder="--port, 3000"
             class="w-full rounded-md border px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-[var(--accent)]"
-            style={{ "background-color": "var(--bg-input)", "border-color": "var(--border-subtle)", "font-size": "14px" }}
+            class="bg-[var(--bg-input)] border-[var(--border-subtle)] text-sm"
           />
         </div>
       </div>
@@ -117,8 +117,7 @@ const ServerForm: Component<ServerFormProps> = (props) => {
           Cancel
         </button>
         <button type="submit"
-          class="rounded-md px-4 py-1.5 text-xs font-medium text-white transition-colors"
-          style={{ "background-color": "var(--accent)" }}>
+          class="rounded-md bg-[var(--accent)] px-4 py-1.5 text-xs font-medium text-white transition-colors">
           {props.submitLabel}
         </button>
       </div>
@@ -209,7 +208,7 @@ const MCPToolsView: Component = () => {
 
       {/* Empty state */}
       <Show when={serverList().length === 0}>
-        <div class="rounded-lg border px-6 py-10 text-center" style={{ "background-color": "var(--bg-surface)", "border-color": "var(--border-subtle)" }}>
+        <div class="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-10 text-center">
           <p class="text-sm text-gray-400">No MCP servers configured.</p>
           <p class="text-xs text-gray-600 mt-1">Run <code class="text-cyan-400">hex nexus start</code> to sync from repo.</p>
         </div>
@@ -225,7 +224,7 @@ const MCPToolsView: Component = () => {
             const isConfirming = () => confirmRemove() === server.name;
 
             return (
-              <div class="rounded-lg border border-gray-700/50 p-4" style={{ "background-color": "var(--bg-surface)" }}>
+              <div class="rounded-lg border border-gray-700/50 bg-[var(--bg-surface)] p-4">
                 {/* Server header */}
                 <div class="flex items-center gap-3 mb-3">
                   <span
@@ -237,7 +236,7 @@ const MCPToolsView: Component = () => {
                       "bg-gray-500": server.status === 'disconnected',
                     }}
                   />
-                  <span class="text-base font-bold text-gray-200" style={{ "font-family": "'JetBrains Mono', monospace" }}>
+                  <span class="font-mono text-base font-bold text-gray-200">
                     {server.name}
                   </span>
                   <span class="rounded-full px-2.5 py-0.5 text-xs font-medium"
@@ -277,7 +276,7 @@ const MCPToolsView: Component = () => {
 
                 {/* Confirm remove */}
                 <Show when={isConfirming()}>
-                  <div class="flex items-center gap-3 rounded-md border px-3 py-2 mb-3" style={{ "background-color": "var(--bg-elevated)", "border-color": "var(--border-subtle)" }}>
+                  <div class="flex items-center gap-3 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 py-2 mb-3">
                     <span class="text-xs text-gray-300">Remove "{server.name}"?</span>
                     <button
                       class="rounded-md px-3 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-500 transition-colors"
@@ -323,7 +322,7 @@ const MCPToolsView: Component = () => {
                       {(tool) => (
                         <span
                           class="rounded-md bg-gray-800 px-2.5 py-1 text-xs text-gray-400 border border-gray-700/50"
-                          style={{ "font-family": "'JetBrains Mono', monospace" }}
+                          class="font-mono"
                         >
                           {tool}
                         </span>

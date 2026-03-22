@@ -96,6 +96,93 @@ async fn get_health(
     }))
 }
 
+/// GET /api/workplans — read docs/workplans/*.json files and return summaries.
+/// Gives dashboard visibility into workplan definitions on disk (distinct from
+/// /api/workplan/list which tracks SpacetimeDB execution state).
+async fn workplan_files() -> Json<serde_json::Value> {
+    // Try cwd first, then HEX_PROJECT_ROOT
+    let roots = [
+        std::env::current_dir().ok(),
+        std::env::var("HEX_PROJECT_ROOT")
+            .ok()
+            .map(std::path::PathBuf::from),
+    ];
+
+    for root in roots.iter().flatten() {
+        let dir = root.join("docs/workplans");
+        if !dir.is_dir() {
+            continue;
+        }
+
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let mut workplans = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let filename = entry.file_name().to_string_lossy().to_string();
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let phase_count = parsed
+                        .get("phases")
+                        .and_then(|p| p.as_array())
+                        .map(|a| a.len())
+                        .unwrap_or(0);
+
+                    let task_count: usize = parsed
+                        .get("phases")
+                        .and_then(|p| p.as_array())
+                        .map(|phases| {
+                            phases
+                                .iter()
+                                .filter_map(|ph| ph.get("tasks").and_then(|t| t.as_array()))
+                                .map(|tasks| tasks.len())
+                                .sum()
+                        })
+                        .unwrap_or(0);
+
+                    workplans.push(json!({
+                        "file": filename,
+                        "id": parsed.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                        "title": parsed.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                        "priority": parsed.get("priority").and_then(|v| v.as_str()).unwrap_or(""),
+                        "created_at": parsed.get("created_at").and_then(|v| v.as_str()).unwrap_or(""),
+                        "phases": phase_count,
+                        "tasks": task_count,
+                        "related_adrs": parsed.get("related_adrs").cloned().unwrap_or(json!([])),
+                    }));
+                }
+            }
+        }
+
+        workplans.sort_by(|a, b| {
+            let pa = a["priority"].as_str().unwrap_or("");
+            let pb = b["priority"].as_str().unwrap_or("");
+            let order = |p: &str| match p {
+                "critical" => 0,
+                "high" => 1,
+                "medium" => 2,
+                "low" => 3,
+                _ => 4,
+            };
+            order(pa).cmp(&order(pb))
+        });
+
+        return Json(json!({
+            "ok": true,
+            "count": workplans.len(),
+            "workplans": workplans,
+        }));
+    }
+
+    Json(json!({ "ok": false, "count": 0, "workplans": [], "error": "docs/workplans/ not found" }))
+}
+
 /// GET /api/tools — serve MCP tool definitions from config/mcp-tools.json.
 /// Falls back to an empty list if the file is not found.
 async fn tools_registry() -> Json<serde_json::Value> {
@@ -280,6 +367,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/workplan/{id}/report", get(orchestration::workplan_report))
         // MCP tool registry — serves config/mcp-tools.json for dashboard discovery
         .route("/api/tools", get(tools_registry))
+        // Workplan file definitions — reads docs/workplans/*.json from disk
+        .route("/api/workplans", get(workplan_files))
         // Fleet (remote compute)
         .route("/api/fleet", get(fleet::list_nodes))
         .route("/api/fleet/register", post(fleet::register_node)

@@ -8,6 +8,7 @@ import { Component, Show, createSignal, createMemo, createEffect, For } from "so
 import { inferenceProviders } from "../../stores/connection";
 import { projects as sharedProjects } from "../../stores/projects";
 import { route } from "../../stores/router";
+import { restClient } from "../../services/rest-client";
 
 const AGENT_TYPES = [
   { value: "hex-coder", label: "Coder", desc: "Write code with TDD" },
@@ -78,21 +79,11 @@ const SpawnDialog: Component<SpawnDialogProps> = (props) => {
     setSuccess("");
 
     try {
-      const res = await fetch("/api/agents/spawn", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectDir: dir,
-          agentName: agentType(),
-          model: model() || undefined,
-        }),
+      const data = await restClient.post("/api/agents/spawn", {
+        projectDir: dir,
+        agentName: agentType(),
+        model: model() || undefined,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? `Spawn failed (${res.status})`);
-        return;
-      }
 
       setSuccess(`Agent spawned: ${data.agent?.id ?? "ok"}`);
       setTimeout(() => {

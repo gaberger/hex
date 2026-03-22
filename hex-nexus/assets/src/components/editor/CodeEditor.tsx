@@ -100,43 +100,35 @@ const CodeEditor: Component<CodeEditorProps> = (props) => {
 
   return (
     <div
-      class="flex flex-col overflow-hidden rounded-lg border"
-      style={{
-        "border-color": "var(--border-subtle)",
-        background: "var(--bg-base)",
-        "min-height": props.minHeight ?? "200px",
-      }}
+      class="flex flex-col overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)]"
+      style={{ "min-height": props.minHeight ?? "200px" }}
     >
       {/* Header — skip in compact mode */}
       <Show when={!props.compact}>
         <div
-          class="flex items-center justify-between px-4 py-2 shrink-0"
-          style={{ "border-bottom": "1px solid var(--border-subtle)" }}
+          class="flex items-center justify-between border-b border-[var(--border-subtle)] px-4 py-2 shrink-0"
         >
           <div class="flex items-center gap-2">
             <Show when={props.title}>
-              <span class="text-[13px] font-semibold" style={{ color: "var(--text-primary)" }}>
+              <span class="text-[13px] font-semibold text-[var(--text-primary)]">
                 {props.title}
               </span>
             </Show>
             <Show when={props.filePath}>
               <span
-                class="text-[11px]"
-                style={{ color: "var(--text-faint)", "font-family": "var(--font-mono, 'JetBrains Mono', monospace)" }}
+                class="font-mono text-[11px] text-[var(--text-faint)]"
               >
                 {props.filePath}
               </span>
             </Show>
             <span
-              class="rounded px-1.5 py-0.5 text-[10px] font-medium"
-              style={{ color: "var(--accent)", background: "var(--accent-dim)" }}
+              class="rounded bg-[var(--accent-dim)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]"
             >
               {langLabel()}
             </span>
             <Show when={dirty()}>
               <span
-                class="rounded px-1.5 py-0.5 text-[10px] font-semibold"
-                style={{ color: "#FBBF24", background: "rgba(251, 191, 36, 0.15)" }}
+                class="rounded bg-[rgba(251,191,36,0.15)] px-1.5 py-0.5 text-[10px] font-semibold text-status-warning"
               >
                 unsaved
               </span>
@@ -146,8 +138,7 @@ const CodeEditor: Component<CodeEditorProps> = (props) => {
           <div class="flex items-center gap-2">
             <Show when={props.editable !== false && !editing()}>
               <button
-                class="rounded px-3 py-1 text-[11px] font-medium transition-colors"
-                style={{ color: "var(--accent)", border: "1px solid var(--border)" }}
+                class="rounded border border-[var(--border)] px-3 py-1 text-[11px] font-medium text-[var(--accent)] transition-colors"
                 onClick={() => setEditing(true)}
               >
                 Edit
@@ -155,15 +146,13 @@ const CodeEditor: Component<CodeEditorProps> = (props) => {
             </Show>
             <Show when={dirty()}>
               <button
-                class="rounded px-3 py-1 text-[11px] font-medium text-white transition-colors"
-                style={{ background: "var(--accent)" }}
+                class="rounded bg-[var(--accent)] px-3 py-1 text-[11px] font-medium text-white transition-colors"
                 onClick={handleSave}
               >
                 Save
               </button>
               <button
-                class="rounded px-3 py-1 text-[11px] transition-colors"
-                style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
+                class="rounded border border-[var(--border)] px-3 py-1 text-[11px] text-[var(--text-muted)] transition-colors"
                 onClick={handleCancel}
               >
                 Cancel
@@ -179,27 +168,15 @@ const CodeEditor: Component<CodeEditorProps> = (props) => {
           when={editing()}
           fallback={
             <pre
-              class="p-4 text-[13px] leading-relaxed whitespace-pre-wrap"
-              style={{
-                color: "var(--text-secondary)",
-                "font-family": "var(--font-mono, 'JetBrains Mono', monospace)",
-                "tab-size": "2",
-              }}
+              class="p-4 font-mono text-[13px] leading-relaxed whitespace-pre-wrap text-[var(--text-secondary)] [tab-size:2]"
             >
               {editContent() || '(empty)'}
             </pre>
           }
         >
           <textarea
-            class="h-full w-full resize-none p-4 text-[13px] outline-none"
-            style={{
-              background: "var(--bg-base)",
-              color: "var(--text-secondary)",
-              "font-family": "var(--font-mono, 'JetBrains Mono', monospace)",
-              "line-height": "1.7",
-              "tab-size": "2",
-              "min-height": props.minHeight ?? "200px",
-            }}
+            class="h-full w-full resize-none bg-[var(--bg-base)] p-4 font-mono text-[13px] leading-[1.7] text-[var(--text-secondary)] outline-none [tab-size:2]"
+            style={{ "min-height": props.minHeight ?? "200px" }}
             value={editContent()}
             onInput={handleInput}
             onKeyDown={handleKeyDown}
@@ -210,12 +187,7 @@ const CodeEditor: Component<CodeEditorProps> = (props) => {
 
       {/* Footer status bar */}
       <div
-        class="flex items-center justify-between px-4 py-1.5 shrink-0"
-        style={{
-          "border-top": "1px solid var(--border-subtle)",
-          color: "var(--text-dim)",
-          "font-size": "11px",
-        }}
+        class="flex items-center justify-between border-t border-[var(--border-subtle)] px-4 py-1.5 shrink-0 text-[11px] text-[var(--text-dim)]"
       >
         <span>{lineCount()} lines, {charCount()} chars</span>
         <span>{langLabel()}</span>

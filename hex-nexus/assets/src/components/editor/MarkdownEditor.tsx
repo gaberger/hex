@@ -71,7 +71,7 @@ const MarkdownEditor: Component<MarkdownEditorProps> = (props) => {
             <span class="text-base font-bold text-gray-100">{props.title}</span>
           </Show>
           <Show when={props.filePath}>
-            <span class="text-xs text-gray-600" style={{ "font-family": "'JetBrains Mono', monospace" }}>
+            <span class="font-mono text-xs text-gray-600">
               {props.filePath}
             </span>
           </Show>
@@ -173,12 +173,7 @@ const MarkdownEditor: Component<MarkdownEditorProps> = (props) => {
                 Editor
               </div>
               <textarea
-                class="h-full w-full resize-none bg-gray-950 p-4 text-sm text-gray-300 outline-none"
-                style={{
-                  "font-family": "'JetBrains Mono', monospace",
-                  "line-height": "1.7",
-                  "tab-size": "2",
-                }}
+                class="h-full w-full resize-none bg-gray-950 p-4 font-mono text-sm leading-[1.7] text-gray-300 outline-none [tab-size:2]"
                 value={editContent()}
                 onInput={handleInput}
                 spellcheck={false}
@@ -200,8 +195,7 @@ const MarkdownEditor: Component<MarkdownEditorProps> = (props) => {
         <Show when={mode() === "raw"}>
           <div class="h-full overflow-auto">
             <pre
-              class="p-5 text-sm text-gray-400 leading-relaxed"
-              style={{ "font-family": "'JetBrains Mono', monospace" }}
+              class="p-5 font-mono text-sm text-gray-400 leading-relaxed"
             >
               {editContent()}
             </pre>

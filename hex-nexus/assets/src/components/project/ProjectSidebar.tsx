@@ -35,18 +35,11 @@ const ProjectSidebar: Component = () => {
 
   return (
     <div
-      class="flex flex-col gap-3 overflow-y-auto"
-      style={{
-        width: "220px",
-        "min-width": "220px",
-        background: "var(--bg-base)",
-        padding: "16px 12px",
-      }}
+      class="flex w-[220px] min-w-[220px] flex-col gap-3 overflow-y-auto bg-[var(--bg-base)] px-3 py-4"
     >
       {/* Projects section */}
       <span
-        class="text-[10px] font-semibold uppercase tracking-wider"
-        style={{ color: "var(--text-faint)", "letter-spacing": "1.2px" }}
+        class="text-[10px] font-semibold uppercase tracking-[1.2px] text-[var(--text-faint)]"
       >
         Projects
       </span>
@@ -68,8 +61,9 @@ const ProjectSidebar: Component = () => {
               >
                 <span
                   class="h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{
-                    background: isSelected() ? "#10B981" : "#6B7280",
+                  classList={{
+                    "bg-status-active": isSelected(),
+                    "bg-status-idle": !isSelected(),
                   }}
                 />
                 <span
@@ -96,12 +90,11 @@ const ProjectSidebar: Component = () => {
       </div>
 
       {/* Divider */}
-      <div style={{ height: "1px", background: "var(--border-subtle)" }} />
+      <div class="h-px bg-[var(--border-subtle)]" />
 
       {/* Fleet Status section */}
       <span
-        class="text-[10px] font-semibold uppercase tracking-wider"
-        style={{ color: "var(--text-faint)", "letter-spacing": "1.2px" }}
+        class="text-[10px] font-semibold uppercase tracking-[1.2px] text-[var(--text-faint)]"
       >
         Fleet Status
       </span>
@@ -109,32 +102,32 @@ const ProjectSidebar: Component = () => {
       <div class="flex flex-col gap-2">
         <Show when={fleetSummary().online > 0}>
           <div class="flex items-center gap-1.5">
-            <span class="h-1.5 w-1.5 rounded-full" style={{ background: "#10B981" }} />
-            <span class="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            <span class="h-1.5 w-1.5 rounded-full bg-status-active" />
+            <span class="text-[11px] text-[var(--text-muted)]">
               {fleetSummary().online} agent{fleetSummary().online !== 1 ? "s" : ""} online
             </span>
           </div>
         </Show>
         <Show when={fleetSummary().busy > 0}>
           <div class="flex items-center gap-1.5">
-            <span class="h-1.5 w-1.5 rounded-full" style={{ background: "#FBBF24" }} />
-            <span class="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            <span class="h-1.5 w-1.5 rounded-full bg-status-warning" />
+            <span class="text-[11px] text-[var(--text-muted)]">
               {fleetSummary().busy} agent{fleetSummary().busy !== 1 ? "s" : ""} busy
             </span>
           </div>
         </Show>
         <Show when={fleetSummary().idle > 0}>
           <div class="flex items-center gap-1.5">
-            <span class="h-1.5 w-1.5 rounded-full" style={{ background: "#6B7280" }} />
-            <span class="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            <span class="h-1.5 w-1.5 rounded-full bg-status-idle" />
+            <span class="text-[11px] text-[var(--text-muted)]">
               {fleetSummary().idle} agent{fleetSummary().idle !== 1 ? "s" : ""} idle
             </span>
           </div>
         </Show>
         <Show when={fleetSummary().total === 0}>
           <div class="flex items-center gap-1.5">
-            <span class="h-1.5 w-1.5 rounded-full" style={{ background: "#EF4444" }} />
-            <span class="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            <span class="h-1.5 w-1.5 rounded-full bg-status-error" />
+            <span class="text-[11px] text-[var(--text-muted)]">
               No agents connected
             </span>
           </div>
