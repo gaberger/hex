@@ -50,7 +50,7 @@ const SkillsView: Component = () => {
   const projectId = createMemo(() => (route() as any).projectId ?? '');
   const project = createMemo(() => projects().find(p => p.id === projectId()));
 
-  const [activeTab, setActiveTab] = createSignal<TabId>('global');
+  const [activeTab, setActiveTab] = createSignal<TabId>('project');
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [editorContent, setEditorContent] = createSignal('');
   const [editorPath, setEditorPath] = createSignal('');

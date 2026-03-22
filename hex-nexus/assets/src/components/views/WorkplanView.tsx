@@ -4,7 +4,7 @@
  *
  * Data source: hex-nexus REST API via workplan store.
  */
-import { Component, For, Show, createSignal, createMemo, onMount, onCleanup } from "solid-js";
+import { Component, For, Show, createSignal, createMemo, createResource, onMount, onCleanup } from "solid-js";
 import {
   workplans,
   activeWorkplan,
@@ -21,6 +21,30 @@ import {
   type WorkplanPhase,
   type WorkplanReport,
 } from "../../stores/workplan";
+import { restClient } from "../../services/rest-client";
+
+// ── Workplan file types ──────────────────────────────────────────────────────
+
+interface WorkplanFile {
+  file: string;
+  id: string;
+  title: string;
+  priority: string;
+  created_at: string;
+  phases: number;
+  tasks: number;
+  related_adrs: string[];
+}
+
+interface WorkplanFilesResponse {
+  ok: boolean;
+  count: number;
+  workplans: WorkplanFile[];
+}
+
+async function fetchWorkplanFiles(): Promise<WorkplanFilesResponse> {
+  return restClient.get<WorkplanFilesResponse>("/api/workplans");
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -127,6 +151,8 @@ const WorkplanView: Component = () => {
   const [actionLoading, setActionLoading] = createSignal(false);
   const [toast, setToast] = createSignal<{ message: string; type: "success" | "error" } | null>(null);
 
+  const [workplanFiles, { refetch: refetchFiles }] = createResource(fetchWorkplanFiles);
+
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   function showToast(message: string, type: "success" | "error") {
@@ -145,6 +171,17 @@ const WorkplanView: Component = () => {
     setExecutePath("");
     if (result.ok) {
       showToast("Workplan execution started", "success");
+    } else {
+      showToast(`Execute failed: ${result.error}`, "error");
+    }
+  }
+
+  async function handleExecuteFile(file: string) {
+    setActionLoading(true);
+    const result = await executeWorkplan(`docs/workplans/${file}`);
+    setActionLoading(false);
+    if (result.ok) {
+      showToast(`Workplan "${file}" execution started`, "success");
     } else {
       showToast(`Execute failed: ${result.error}`, "error");
     }
@@ -327,23 +364,9 @@ const WorkplanView: Component = () => {
         </div>
       </Show>
 
-      {/* Empty state */}
-      <Show when={!workplanLoading() && workplans().length === 0 && !workplanError()}>
-        <div class="rounded-xl border border-dashed border-gray-800 bg-gray-900/30 px-6 py-12 text-center">
-          <p class="text-sm text-gray-400">No workplan executions found</p>
-          <p class="mt-1 text-[11px] text-gray-500">
-            Start a feature with{" "}
-            <code class="rounded bg-gray-800 px-1 py-0.5 font-mono text-[10px] text-cyan-300">
-              /hex-feature-dev
-            </code>{" "}
-            to create a workplan execution.
-          </p>
-        </div>
-      </Show>
-
-      {/* Execution history table */}
+      {/* Execution history table (shown above file list when there are executions) */}
       <Show when={workplans().length > 0}>
-        <section>
+        <section class="mb-6">
           <h3 class="mb-3 text-[12px] font-semibold uppercase tracking-wider text-gray-500">
             Execution History
           </h3>
@@ -424,6 +447,141 @@ const WorkplanView: Component = () => {
           </div>
         </section>
       </Show>
+
+      {/* Workplan Files section */}
+      <section>
+        <h3 class="mb-3 text-[12px] font-semibold uppercase tracking-wider text-gray-500">
+          Workplan Files{" "}
+          <Show when={workplanFiles()?.count}>
+            ({workplanFiles()!.count})
+          </Show>
+        </h3>
+
+        <Show when={workplanFiles.loading}>
+          <div class="flex items-center justify-center py-8">
+            <p class="text-sm text-gray-500">Loading workplan files...</p>
+          </div>
+        </Show>
+
+        <Show when={workplanFiles.error}>
+          <div class="mb-4 rounded-lg border border-red-900/50 bg-red-950/30 px-4 py-3 text-sm text-red-400">
+            Failed to load workplan files
+          </div>
+        </Show>
+
+        <Show when={!workplanFiles.loading && workplanFiles()?.workplans?.length === 0}>
+          <div class="rounded-xl border border-dashed border-gray-800 bg-gray-900/30 px-6 py-12 text-center">
+            <p class="text-sm text-gray-400">No workplan files found</p>
+            <p class="mt-1 text-[11px] text-gray-500">
+              Create workplans in{" "}
+              <code class="rounded bg-gray-800 px-1 py-0.5 font-mono text-[10px] text-cyan-300">
+                docs/workplans/
+              </code>{" "}
+              or use{" "}
+              <code class="rounded bg-gray-800 px-1 py-0.5 font-mono text-[10px] text-cyan-300">
+                /hex-feature-dev
+              </code>{" "}
+              to generate one.
+            </p>
+          </div>
+        </Show>
+
+        <Show when={(workplanFiles()?.workplans?.length ?? 0) > 0}>
+          <div class="overflow-hidden rounded-xl border border-gray-800">
+            {/* Table header */}
+            <div class="grid grid-cols-[1fr_80px] md:grid-cols-[1fr_90px_70px_70px_150px_120px_80px] gap-2 border-b border-gray-800 bg-gray-900/60 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+              <span>File</span>
+              <span>Priority</span>
+              <span class="hidden md:inline">Phases</span>
+              <span class="hidden md:inline">Tasks</span>
+              <span class="hidden md:inline">Related ADRs</span>
+              <span class="hidden md:inline">Created</span>
+              <span />
+            </div>
+
+            <For each={workplanFiles()!.workplans}>
+              {(wp) => (
+                <div class="grid grid-cols-[1fr_80px] md:grid-cols-[1fr_90px_70px_70px_150px_120px_80px] gap-2 border-b border-gray-800/50 px-4 py-3 text-sm transition-colors hover:bg-gray-900/30">
+                  {/* File name */}
+                  <div class="flex items-center gap-2">
+                    <span class="h-2 w-2 shrink-0 rounded-full bg-gray-600" />
+                    <span class="truncate font-medium text-gray-200" title={wp.file}>
+                      {wp.title || wp.file.replace(/\.json$/, "")}
+                    </span>
+                  </div>
+
+                  {/* Priority badge */}
+                  <div>
+                    <Show when={wp.priority} fallback={<span class="text-xs text-gray-600">--</span>}>
+                      <span
+                        class="inline-block rounded-full px-2 py-0.5 text-[10px] font-medium"
+                        classList={{
+                          "bg-red-900/30 text-red-400": wp.priority === "critical",
+                          "bg-orange-900/30 text-orange-400": wp.priority === "high",
+                          "bg-yellow-900/30 text-yellow-400": wp.priority === "medium",
+                          "bg-gray-800 text-gray-400": wp.priority === "low" || (wp.priority !== "critical" && wp.priority !== "high" && wp.priority !== "medium"),
+                        }}
+                      >
+                        {wp.priority}
+                      </span>
+                    </Show>
+                  </div>
+
+                  {/* Phase count */}
+                  <span class="hidden md:inline text-xs text-gray-400">
+                    {wp.phases}
+                  </span>
+
+                  {/* Task count */}
+                  <span class="hidden md:inline text-xs text-gray-400">
+                    {wp.tasks}
+                  </span>
+
+                  {/* Related ADRs */}
+                  <div class="hidden md:flex items-center gap-1 overflow-hidden">
+                    <For each={wp.related_adrs?.slice(0, 3) ?? []}>
+                      {(adr) => (
+                        <span class="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] font-mono text-cyan-300">
+                          {adr}
+                        </span>
+                      )}
+                    </For>
+                    <Show when={(wp.related_adrs?.length ?? 0) > 3}>
+                      <span class="text-[10px] text-gray-500">
+                        +{wp.related_adrs!.length - 3}
+                      </span>
+                    </Show>
+                    <Show when={!wp.related_adrs?.length}>
+                      <span class="text-[10px] text-gray-600">--</span>
+                    </Show>
+                  </div>
+
+                  {/* Created date */}
+                  <span class="hidden md:inline text-xs text-gray-500">
+                    {wp.created_at
+                      ? new Date(wp.created_at).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                        })
+                      : "--"}
+                  </span>
+
+                  {/* Execute button */}
+                  <div>
+                    <button
+                      class="rounded-lg border border-green-800/50 bg-green-900/20 px-2.5 py-1 text-[10px] font-medium text-green-400 transition-colors hover:border-green-700 hover:bg-green-900/40 disabled:opacity-50"
+                      disabled={actionLoading()}
+                      onClick={() => handleExecuteFile(wp.file)}
+                    >
+                      Execute
+                    </button>
+                  </div>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </section>
     </div>
   );
 };
