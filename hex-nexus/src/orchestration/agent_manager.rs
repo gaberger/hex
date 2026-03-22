@@ -136,6 +136,9 @@ fn instance_to_agent_info(inst: &AgentInstance) -> AgentInfo {
 
 // ── Agent Manager ──────────────────────────────────────
 
+/// A function that resolves a secret key to its value (ADR-001: injected, not read from env).
+pub type SecretResolver = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
 pub struct AgentManager {
     state_port: Arc<dyn IStatePort>,
     /// In-memory map of agent ID → process ID (port doesn't track PIDs)
@@ -143,6 +146,9 @@ pub struct AgentManager {
     /// Child process handles for locally-spawned agents (ADR-037).
     /// These are killed on nexus shutdown via `stop_local_agents()`.
     local_children: Mutex<Vec<LocalAgent>>,
+    /// Resolves secret keys to values for injection into agent child processes (ADR-026).
+    /// Injected by the composition root — keeps orchestration free of std::env access.
+    secret_resolver: SecretResolver,
 }
 
 /// A locally-spawned agent child process tracked for lifecycle management (ADR-037).
@@ -155,11 +161,12 @@ pub struct LocalAgent {
 }
 
 impl AgentManager {
-    pub fn new(state_port: Arc<dyn IStatePort>) -> Self {
+    pub fn new(state_port: Arc<dyn IStatePort>, secret_resolver: SecretResolver) -> Self {
         Self {
             state_port,
             pid_map: Mutex::new(HashMap::new()),
             local_children: Mutex::new(Vec::new()),
+            secret_resolver,
         }
     }
 
@@ -191,7 +198,7 @@ impl AgentManager {
         // trusted source) — never from SpacetimeDB.
         let mut injected_count = 0u32;
         for key in &config.secret_keys {
-            if let Ok(value) = std::env::var(key) {
+            if let Some(value) = (self.secret_resolver)(key) {
                 cmd.env(key, &value);
                 injected_count += 1;
                 tracing::debug!(key = %key, agent_id = %id, "Injected secret into agent env");

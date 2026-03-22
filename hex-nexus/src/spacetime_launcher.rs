@@ -809,6 +809,7 @@ pub async fn publish_all_modules(
 // ── Utility ───────────────────────────────────────────────
 
 /// Locate an executable by name on `$PATH` (portable, no shell).
+// TODO: ADR-001 — accept `path_var` as parameter to avoid direct env access
 fn which(name: &str) -> Result<PathBuf, String> {
     let path_var = std::env::var("PATH").unwrap_or_default();
 

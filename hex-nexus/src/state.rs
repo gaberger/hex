@@ -48,9 +48,8 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(auth_token: Option<String>) -> Self {
+    pub fn new(auth_token: Option<String>, anthropic_api_key: Option<String>) -> Self {
         let (ws_tx, _) = broadcast::channel(512);
-        let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
         if anthropic_api_key.is_some() {
             tracing::info!("ANTHROPIC_API_KEY loaded — chat LLM bridge enabled");
         } else {

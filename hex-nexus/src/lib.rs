@@ -70,14 +70,17 @@ impl Default for HubConfig {
 /// Background cleanup tasks are spawned automatically.
 pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
     // Create shared state
-    let mut app_state = AppState::new(config.token.clone());
+    let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
+    let mut app_state = AppState::new(config.token.clone(), anthropic_api_key);
 
     // Wire IStatePort → AgentManager + HexFlo (ADR-025 Phase 2/4, ADR-032 Phase 3)
     // Backend: SpacetimeDB (only backend, ADR-032)
     match state_config::create_default_state_backend() {
         Ok(state_port) => {
+            let secret_resolver: orchestration::agent_manager::SecretResolver =
+                Arc::new(|key: &str| std::env::var(key).ok());
             let agent_mgr = Arc::new(
-                orchestration::agent_manager::AgentManager::new(Arc::clone(&state_port)),
+                orchestration::agent_manager::AgentManager::new(Arc::clone(&state_port), secret_resolver),
             );
             app_state.agent_manager = Some(agent_mgr);
             app_state.state_port = Some(state_port);
