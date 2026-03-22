@@ -591,7 +591,7 @@ const DependencyGraphPane: Component = () => {
           </div>
         ))}
         <div class="flex items-center gap-1.5">
-          <span class="inline-block h-0.5 w-4 rounded" style={{ background: '#f85149' }} />
+          <span class="inline-block h-0.5 w-4 rounded bg-[#f85149]" />
           <span class="text-[10px] text-red-400">Violation</span>
         </div>
       </div>

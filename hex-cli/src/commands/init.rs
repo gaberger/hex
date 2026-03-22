@@ -294,10 +294,11 @@ fn create_mcp_json(target: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Embedded settings template from hex-setup/ — single source of truth.
-/// This file is baked into the binary at compile time via include_str!.
-const SETTINGS_TEMPLATE: &str =
-    include_str!("../../../hex-setup/mcp/hex-claude-settings.json");
+/// Load the embedded settings template (ADR-2603221522).
+fn settings_template() -> String {
+    crate::assets::Assets::get_str("templates/hex-claude-settings.json")
+        .expect("hex-claude-settings.json must be embedded in assets/templates/")
+}
 
 fn create_claude_settings(target: &Path) -> Result<()> {
     let claude_dir = target.join(".claude");
@@ -306,7 +307,7 @@ fn create_claude_settings(target: &Path) -> Result<()> {
     let settings_path = claude_dir.join("settings.json");
 
     // Parse the embedded template (skip $schema — it's for editor hints only)
-    let template: serde_json::Value = serde_json::from_str(SETTINGS_TEMPLATE)
+    let template: serde_json::Value = serde_json::from_str(&settings_template())
         .context("Failed to parse embedded hex-claude-settings.json template")?;
 
     // If settings.json exists, merge template fields in rather than overwriting
@@ -384,33 +385,9 @@ fn create_claude_md(target: &Path, project_name: &str) -> Result<()> {
     Ok(())
 }
 
-fn hex_claude_md_section() -> &'static str {
-    r#"## Hexagonal Architecture Rules (ENFORCED)
-
-These rules are checked by `hex analyze .`:
-
-1. **domain/** must only import from **domain/**
-2. **ports/** may import from **domain/** but nothing else
-3. **usecases/** may import from **domain/** and **ports/** only
-4. **adapters/primary/** may import from **ports/** only
-5. **adapters/secondary/** may import from **ports/** only
-6. **adapters must NEVER import other adapters** (cross-adapter coupling)
-7. **composition-root** is the ONLY file that imports from adapters
-8. All relative imports MUST use `.js` extensions (NodeNext module resolution)
-
-## File Organization
-
-```
-src/
-  core/
-    domain/          # Pure business logic, zero external deps
-    ports/           # Typed interfaces (contracts between layers)
-    usecases/        # Application logic composing ports
-  adapters/
-    primary/         # Driving adapters (CLI, HTTP, browser input)
-    secondary/       # Driven adapters (DB, API, filesystem)
-  composition-root   # Wires adapters to ports (single DI point)
-```"#
+fn hex_claude_md_section() -> String {
+    crate::assets::Assets::get_str("templates/claude-md-hex-section.md")
+        .expect("claude-md-hex-section.md must be embedded in assets/templates/")
 }
 
 fn create_scaffold(target: &Path) -> Result<()> {

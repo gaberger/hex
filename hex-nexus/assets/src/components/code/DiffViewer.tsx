@@ -171,20 +171,19 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
         <div class="flex rounded-md border border-[var(--border)]">
           <button
             class="px-3 py-1.5 text-[11px] font-medium transition-colors"
-            style={{
-              background: !staged() ? "var(--bg-elevated)" : "transparent",
-              color: !staged() ? "var(--accent-hover)" : "var(--text-muted)",
+            classList={{
+              "bg-[var(--bg-elevated)] text-[var(--accent-hover)]": !staged(),
+              "bg-transparent text-[var(--text-muted)]": staged(),
             }}
             onClick={() => setStaged(false)}
           >
             Unstaged
           </button>
           <button
-            class="px-3 py-1.5 text-[11px] font-medium transition-colors border-l"
-            style={{
-              background: staged() ? "var(--bg-elevated)" : "transparent",
-              color: staged() ? "var(--accent-hover)" : "var(--text-muted)",
-              "border-color": "var(--border)",
+            class="px-3 py-1.5 text-[11px] font-medium transition-colors border-l border-[var(--border)]"
+            classList={{
+              "bg-[var(--bg-elevated)] text-[var(--accent-hover)]": staged(),
+              "bg-transparent text-[var(--text-muted)]": !staged(),
             }}
             onClick={() => setStaged(true)}
           >
@@ -264,19 +263,19 @@ const ConnectedDiffViewer: Component<ConnectedDiffViewerProps> = (props) => {
                   {/* File header row */}
                   <button
                     class="flex items-center gap-2 px-3 py-2 text-left transition-colors"
-                    style={{
-                      background: isExpanded() ? "var(--bg-surface)" : "transparent",
-                      "border-top": idx() > 0 ? "1px solid var(--border-subtle)" : "none",
+                    classList={{
+                      "bg-[var(--bg-surface)]": isExpanded(),
+                      "bg-transparent hover:bg-gray-900/50": !isExpanded(),
+                      "border-t border-[var(--border-subtle)]": idx() > 0,
                     }}
-                    classList={{ "hover:bg-gray-900/50": !isExpanded() }}
                     onClick={() => toggleFile(file.path)}
                   >
                     {/* Expand chevron */}
                     <svg
-                      class="h-3 w-3 shrink-0 transition-transform"
-                      style={{
-                        color: "var(--text-faint)",
-                        transform: isExpanded() ? "rotate(90deg)" : "rotate(0deg)",
+                      class="h-3 w-3 shrink-0 text-[var(--text-faint)] transition-transform"
+                      classList={{
+                        "rotate-90": isExpanded(),
+                        "rotate-0": !isExpanded(),
                       }}
                       viewBox="0 0 24 24"
                       fill="none"

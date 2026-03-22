@@ -69,13 +69,9 @@ const WorkPlanDetail: Component = () => {
 
       for (const filePath of candidates) {
         try {
-          const res = await fetch(`/api/files?path=${encodeURIComponent(filePath)}`);
-          if (res.ok) {
-            const data = await res.json();
-            // /api/files may wrap content or return raw
-            const content = data.content ?? data;
-            return typeof content === "string" ? JSON.parse(content) : content;
-          }
+          const data = await restClient.get<any>(`/api/files?path=${encodeURIComponent(filePath)}`);
+          const content = data.content ?? data;
+          return typeof content === "string" ? JSON.parse(content) : content;
         } catch {
           continue;
         }
@@ -88,11 +84,9 @@ const WorkPlanDetail: Component = () => {
           (w: any) => (w.id ?? "").includes(wpId) || (w.file ?? "").includes(wpId),
         );
         if (match?.file) {
-          const res = await fetch(`/api/files?path=docs/workplans/${encodeURIComponent(match.file)}`);
-          if (res.ok) {
-            const data = await res.json();
-            return typeof data.content === "string" ? JSON.parse(data.content) : (data.content ?? data);
-          }
+          const data = await restClient.get<any>(`/api/files?path=docs/workplans/${encodeURIComponent(match.file)}`);
+          const content = data.content ?? data;
+          return typeof content === "string" ? JSON.parse(content) : content;
         }
       } catch {}
 

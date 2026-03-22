@@ -1,6 +1,6 @@
 # ADR-056: Frontend Hexagonal Architecture — Preventing UI Species Drift
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-22
 **Drivers:** Dashboard audit revealed 3 incompatible frontend applications (vanilla JS x2, SolidJS) with no shared state, duplicate WebSocket connections, and inconsistent styling — the exact class of problems hex architecture prevents on the backend.
 

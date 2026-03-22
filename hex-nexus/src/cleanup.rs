@@ -1,7 +1,8 @@
-use std::time::Duration;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 use tokio::time;
-use tracing::{error, info, debug};
+use tracing::{error, info, debug, warn};
 
 use crate::state::SharedState;
 
@@ -34,6 +35,10 @@ impl CleanupService {
             .and_then(|p| p.metadata().ok())
             .and_then(|m| m.modified().ok());
 
+        // ADR-060 step 9: Track last escalation attempt per agent for rate limiting
+        let mut last_escalation: HashMap<String, Instant> = HashMap::new();
+        let mut escalation_failures: HashMap<String, u32> = HashMap::new();
+
         loop {
             interval.tick().await;
 
@@ -50,11 +55,46 @@ impl CleanupService {
                 }
             }
 
+            // ── hex_agent cleanup (ADR-058 unified registry) ──
+            // Step 1: mark online/idle agents as stale/dead based on heartbeat age
+            // Step 2: evict dead agents (removes rows older than 1h)
+            if let Some(sp) = &self.state.state_port {
+                if let Err(e) = sp.hex_agent_mark_inactive().await {
+                    debug!("hex_agent mark_inactive skipped: {}", e);
+                }
+                if let Err(e) = sp.hex_agent_evict_dead().await {
+                    debug!("hex_agent evict_dead skipped: {}", e);
+                } else {
+                    debug!("hex_agent cleanup cycle completed");
+                }
+            }
+
+            // ── Swarm agent cleanup (HexFlo swarm_agent table) ──
+            if let Some(sp) = &self.state.state_port {
+                match sp.swarm_cleanup_stale(45, 120).await {
+                    Ok(report) if report.stale_count > 0 || report.dead_count > 0 => {
+                        info!(
+                            "Swarm agent cleanup: {} stale, {} dead, {} tasks reclaimed",
+                            report.stale_count, report.dead_count, report.reclaimed_tasks
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        debug!("Swarm agent cleanup skipped: {}", e);
+                    }
+                }
+            }
+
             // ── Inbox expiry (ADR-060) ──────────────────────
             if let Some(sp) = &self.state.state_port {
                 if let Err(e) = sp.inbox_expire(86400).await {
                     debug!("Inbox expiry failed: {}", e);
                 }
+            }
+
+            // ── Idle agent escalation (ADR-060 step 9) ──────
+            if let Some(sp) = &self.state.state_port {
+                escalate_idle_agents(sp.as_ref(), &mut last_escalation, &mut escalation_failures).await;
             }
 
             // ── Binary update detection (ADR-060) ───────────
@@ -66,7 +106,9 @@ impl CleanupService {
                                 info!("Binary update detected — notifying all agents");
                                 last_binary_mtime = Some(current_mtime);
                                 if let Some(sp) = &self.state.state_port {
-                                    let project_id = std::env::var("HEX_PROJECT_ID").unwrap_or_default();
+                                    let project_id = std::env::current_dir()
+                                        .map(|p| crate::state::make_project_id(&p.to_string_lossy()))
+                                        .unwrap_or_default();
                                     let payload = serde_json::json!({
                                         "reason": "hex-nexus binary updated",
                                         "binary": bp.to_string_lossy(),
@@ -81,6 +123,125 @@ impl CleanupService {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// ADR-060 step 9: Escalate unacked critical notifications to idle agents.
+///
+/// Checks for priority-2 notifications older than 60s where the target agent's
+/// heartbeat is also >60s stale. For each, attempts `claude --resume <session_id>`
+/// to wake the agent. Rate-limited to 1 resume per agent per 5 minutes.
+/// After 3 consecutive failures, marks the agent as dead.
+async fn escalate_idle_agents(
+    sp: &dyn crate::ports::state::IStatePort,
+    last_escalation: &mut HashMap<String, Instant>,
+    escalation_failures: &mut HashMap<String, u32>,
+) {
+    // Get all agents to find stale ones with session IDs
+    let agents = match sp.hex_agent_list().await {
+        Ok(a) => a,
+        Err(_) => return,
+    };
+
+    let now = chrono::Utc::now();
+    let rate_limit = Duration::from_secs(300); // 5 minutes
+
+    for agent in &agents {
+        let agent_id = match agent["id"].as_str() {
+            Some(id) => id.to_string(),
+            None => continue,
+        };
+
+        let session_id = match agent["session_id"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => continue, // No session to resume
+        };
+
+        let status = agent["status"].as_str().unwrap_or("unknown");
+        // Only escalate to stale or idle agents — online agents see notifications via hook
+        if status != "stale" && status != "idle" {
+            continue;
+        }
+
+        // Rate limit: skip if we escalated this agent recently
+        if let Some(last) = last_escalation.get(&agent_id) {
+            if last.elapsed() < rate_limit {
+                continue;
+            }
+        }
+
+        // Check for unacked priority-2 notifications for this agent
+        let notifications = match sp
+            .inbox_query(&agent_id, Some(2), true)
+            .await
+        {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+
+        if notifications.is_empty() {
+            continue;
+        }
+
+        // Check if the oldest unacked notification is >60s old
+        let oldest_created = notifications
+            .iter()
+            .filter_map(|n| chrono::DateTime::parse_from_rfc3339(&n.created_at).ok())
+            .min();
+
+        let is_old_enough = oldest_created
+            .map(|created| (now - created.with_timezone(&chrono::Utc)).num_seconds() > 60)
+            .unwrap_or(false);
+
+        if !is_old_enough {
+            continue;
+        }
+
+        // Check failure count — give up after 3 consecutive failures
+        let failures = escalation_failures.get(&agent_id).copied().unwrap_or(0);
+        if failures >= 3 {
+            warn!(
+                agent_id = %agent_id,
+                "Giving up on escalation after 3 failures — agent may be unreachable"
+            );
+            continue;
+        }
+
+        // Attempt to resume the agent's Claude Code session
+        info!(
+            agent_id = %agent_id,
+            session_id = %session_id,
+            unacked = notifications.len(),
+            "Escalating: resuming idle agent with unacked critical notifications"
+        );
+
+        last_escalation.insert(agent_id.clone(), Instant::now());
+
+        let resume_result = tokio::process::Command::new("claude")
+            .args([
+                "--resume",
+                &session_id,
+                "-p",
+                "Check your hex inbox for critical notifications: hex inbox list",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+
+        match resume_result {
+            Ok(_child) => {
+                info!(agent_id = %agent_id, "Resume command dispatched");
+                escalation_failures.remove(&agent_id);
+            }
+            Err(e) => {
+                warn!(
+                    agent_id = %agent_id,
+                    error = %e,
+                    "Failed to resume agent session"
+                );
+                *escalation_failures.entry(agent_id).or_insert(0) += 1;
             }
         }
     }

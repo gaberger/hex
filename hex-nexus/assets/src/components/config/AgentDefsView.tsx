@@ -276,14 +276,14 @@ const AgentDefsView: Component = () => {
             <div>
               <label class="block text-xs text-gray-500 mb-1">Role</label>
               <select value={newRole()} onChange={(e) => setNewRole(e.currentTarget.value)}
-                class={selectClass} style={inputStyle}>
+                class={selectClass}>
                 <For each={ROLES}>{(r) => <option value={r}>{r}</option>}</For>
               </select>
             </div>
             <div>
               <label class="block text-xs text-gray-500 mb-1">Model</label>
               <select value={newModel()} onChange={(e) => setNewModel(e.currentTarget.value)}
-                class={selectClass} style={inputStyle}>
+                class={selectClass}>
                 <For each={MODELS}>{(m) => <option value={m}>{m}</option>}</For>
               </select>
             </div>
@@ -320,9 +320,8 @@ const AgentDefsView: Component = () => {
         <For each={agentList()}>
           {(agent) => (
             <div
-              class="rounded-xl p-4 border"
+              class="rounded-xl p-4 border bg-[var(--bg-surface)]"
               style={{
-                "background-color": "var(--bg-surface)",
                 "border-color": agent.color + "40",
               }}
             >
@@ -453,14 +452,14 @@ const AgentDefsView: Component = () => {
                     <div>
                       <label class="block text-xs text-gray-500 mb-1">Role</label>
                       <select value={editRole()} onChange={(e) => setEditRole(e.currentTarget.value)}
-                        class={selectClass} style={inputStyle}>
+                        class={selectClass}>
                         <For each={ROLES}>{(r) => <option value={r}>{r}</option>}</For>
                       </select>
                     </div>
                     <div>
                       <label class="block text-xs text-gray-500 mb-1">Model</label>
                       <select value={editModel()} onChange={(e) => setEditModel(e.currentTarget.value)}
-                        class={selectClass} style={inputStyle}>
+                        class={selectClass}>
                         <For each={MODELS}>{(m) => <option value={m}>{m}</option>}</For>
                       </select>
                     </div>

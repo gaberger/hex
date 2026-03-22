@@ -52,28 +52,35 @@ fn find_adr_dir() -> Option<PathBuf> {
     }
 }
 
-/// Parse the status from an ADR markdown file's frontmatter or first heading.
+/// Parse the status from an ADR markdown file.
+///
+/// Handles both formats:
+///   - YAML frontmatter: `status: Accepted`
+///   - Bold markdown:    `**Status:** Accepted`
 fn parse_adr_status(content: &str) -> &str {
-    // Look for "status: <value>" in YAML frontmatter
     for line in content.lines() {
-        let trimmed = line.trim().to_lowercase();
-        if trimmed.starts_with("status:") {
-            let val = line.trim()["status:".len()..].trim();
-            // Return a static str approximation
-            return match val.to_lowercase().as_str() {
-                s if s.contains("proposed") => "proposed",
-                s if s.contains("accepted") => "accepted",
-                s if s.contains("deprecated") => "deprecated",
-                s if s.contains("abandoned") => "abandoned",
-                s if s.contains("superseded") => "superseded",
-                _ => "unknown",
-            };
-        }
-        // Stop at end of frontmatter
-        if trimmed == "---" && content.starts_with("---") && !trimmed.is_empty() {
-            // We might be at the closing ---
-            // Continue only within frontmatter
-        }
+        let trimmed = line.trim();
+        let lower = trimmed.to_lowercase();
+
+        // Extract the value after "status:" in either format
+        let val = if lower.starts_with("**status:**") {
+            // **Status:** Accepted
+            trimmed["**Status:**".len()..].trim()
+        } else if lower.starts_with("status:") && !lower.starts_with("status_") {
+            // status: Accepted (YAML frontmatter)
+            trimmed["status:".len()..].trim()
+        } else {
+            continue;
+        };
+
+        return match val.to_lowercase().as_str() {
+            s if s.contains("proposed") => "proposed",
+            s if s.contains("accepted") => "accepted",
+            s if s.contains("deprecated") => "deprecated",
+            s if s.contains("abandoned") => "abandoned",
+            s if s.contains("superseded") => "superseded",
+            _ => "unknown",
+        };
     }
     "unknown"
 }
@@ -85,6 +92,11 @@ async fn collect_adrs(dir: &Path) -> anyhow::Result<Vec<(PathBuf, String)>> {
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            // Only include files that start with "ADR-" (skip TEMPLATE.md, README.md, etc.)
+            let fname = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+            if !fname.starts_with("ADR-") {
+                continue;
+            }
             let content = tokio::fs::read_to_string(&path).await?;
             adrs.push((path, content));
         }
@@ -119,6 +131,20 @@ fn parse_enforced_by(content: &str) -> Option<String> {
     None
 }
 
+/// Extract the ADR ID from a filename stem, e.g. "ADR-059-foo" → "ADR-059",
+/// "ADR-2603221500-foo" → "ADR-2603221500".
+fn extract_adr_id(filename: &str) -> String {
+    // Match "ADR-" followed by digits
+    if let Some(rest) = filename.strip_prefix("ADR-").or_else(|| filename.strip_prefix("adr-")) {
+        // Take all leading digits
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            return format!("ADR-{}", digits);
+        }
+    }
+    filename.to_string()
+}
+
 /// Extract the title from an ADR file (first # heading or filename).
 fn extract_title(path: &Path, content: &str) -> String {
     for line in content.lines() {
@@ -148,20 +174,18 @@ async fn list() -> anyhow::Result<()> {
 
     // Header
     println!(
-        "  {:<8} {:<12} {:<14} {}",
+        "  {:<16} {:<12} {:<14} {}",
         "ID".bold(),
         "Status".bold(),
         "Enforcement".bold(),
         "Title".bold()
     );
-    println!("  {}", "\u{2500}".repeat(76).dimmed());
+    println!("  {}", "\u{2500}".repeat(84).dimmed());
 
     for (path, content) in &adrs {
         let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("???");
-        let id = filename
-            .split('-')
-            .next()
-            .unwrap_or(filename);
+        // Extract ADR-NNN or ADR-YYMMDDHHMM prefix from filename
+        let id = extract_adr_id(filename);
         let status = parse_adr_status(content);
         let title = extract_title(path, content);
         let enforced = parse_enforced_by(content);
@@ -180,7 +204,7 @@ async fn list() -> anyhow::Result<()> {
             None => "\u{2014} honor system".dimmed().to_string(),
         };
 
-        println!("  {:<8} {:<21} {:<23} {}", id, status_colored, enforcement_display, title);
+        println!("  {:<16} {:<21} {:<23} {}", id, status_colored, enforcement_display, title);
     }
 
     println!();
@@ -276,19 +300,18 @@ async fn search(query: &str) -> anyhow::Result<()> {
 async fn schema() -> anyhow::Result<()> {
     let adr_dir = find_adr_dir().ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
 
-    // Determine next available number by scanning existing ADRs
-    let next_number = find_next_adr_number(&adr_dir).await;
-
-    // Try to reserve in SpacetimeDB via nexus
-    let reserved = reserve_adr_number(next_number).await;
-    let number_source = if reserved { "reserved in SpacetimeDB" } else { "from filesystem scan" };
+    // Generate timestamp-based ID (YYMMDDHHMM) — no reservation needed
+    let timestamp_id = generate_timestamp_adr_id();
+    let now = chrono::Local::now();
+    let human_readable = now.format("%Y-%m-%d %H:%M").to_string();
 
     println!("{} ADR Schema (for inference engines)", "\u{2b21}".cyan());
     println!();
-    println!("  {:<20} {}", "Next number:".bold(), format!("ADR-{:03}", next_number).green());
-    println!("  {:<20} {}", "Source:".bold(), number_source.dimmed());
+    println!("  {:<20} {}", "Next ID:".bold(), format!("ADR-{}", timestamp_id).green());
+    println!("  {:<20} {}", "Readable:".bold(), human_readable.dimmed());
+    println!("  {:<20} {}", "Format:".bold(), "YYMMDDHHMM (timestamp, no reservation needed)".dimmed());
     println!("  {:<20} {}", "Directory:".bold(), adr_dir.display());
-    println!("  {:<20} {}", "Filename pattern:".bold(), "ADR-{NNN}-{kebab-slug}.md");
+    println!("  {:<20} {}", "Filename pattern:".bold(), "ADR-{YYMMDDHHMM}-{kebab-slug}.md");
     println!();
 
     println!("{}", "── Valid statuses ──".bold());
@@ -313,7 +336,8 @@ async fn schema() -> anyhow::Result<()> {
     if template_path.exists() {
         let template = tokio::fs::read_to_string(&template_path).await?;
         // Replace the placeholder number with the actual next number
-        let filled = template.replace("{NNN}", &format!("{:03}", next_number));
+        let filled = template.replace("{YYMMDDHHMM}", &timestamp_id)
+            .replace("{NNN}", &timestamp_id);
         println!("{}", filled);
     } else {
         println!("  {} TEMPLATE.md not found", "\u{26a0}".yellow());
@@ -322,17 +346,18 @@ async fn schema() -> anyhow::Result<()> {
     // Output machine-readable JSON for inference engines
     println!("{}", "── Machine-readable (JSON) ──".bold());
     let schema_json = serde_json::json!({
-        "next_number": next_number,
-        "number_source": number_source,
+        "next_id": format!("ADR-{}", timestamp_id),
+        "id_format": "YYMMDDHHMM",
+        "id_readable": human_readable,
         "directory": adr_dir.to_string_lossy(),
-        "filename_pattern": "ADR-{NNN}-{kebab-slug}.md",
+        "filename_pattern": "ADR-{YYMMDDHHMM}-{kebab-slug}.md",
         "valid_statuses": ["Proposed", "Accepted", "Deprecated", "Superseded", "Abandoned"],
         "required_sections": ["Context", "Decision", "Consequences", "Implementation", "References"],
         "frontmatter_fields": {
             "Status": "required — one of valid_statuses",
             "Date": "required — YYYY-MM-DD",
             "Drivers": "required — what triggered this decision",
-            "Supersedes": "optional — ADR-NNN if replacing an earlier decision"
+            "Supersedes": "optional — ADR-YYMMDDHHMM if replacing an earlier decision"
         }
     });
     println!("{}", serde_json::to_string_pretty(&schema_json)?);
@@ -340,38 +365,11 @@ async fn schema() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Find the next available ADR number by scanning existing files.
-async fn find_next_adr_number(adr_dir: &Path) -> u32 {
-    let mut max_num: u32 = 0;
-    if let Ok(mut entries) = tokio::fs::read_dir(adr_dir).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let name = entry.file_name().to_string_lossy().to_string();
-            // Match ADR-NNN or adr-NNN patterns
-            if let Some(rest) = name.strip_prefix("ADR-").or_else(|| name.strip_prefix("adr-")) {
-                if let Some(num_str) = rest.split('-').next() {
-                    if let Ok(num) = num_str.parse::<u32>() {
-                        if num > max_num {
-                            max_num = num;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    max_num + 1
-}
-
-/// Try to reserve the next ADR number in SpacetimeDB via nexus.
-/// Returns true if reservation succeeded, false if nexus unavailable.
-async fn reserve_adr_number(number: u32) -> bool {
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    match nexus.post(
-        "/api/adr/reserve",
-        &serde_json::json!({ "number": number }),
-    ).await {
-        Ok(_) => true,
-        Err(_) => false,
-    }
+/// Generate a timestamp-based ADR ID in YYMMDDHHMM format (ADR-2603221500).
+/// This eliminates race conditions from sequential max+1 numbering.
+fn generate_timestamp_adr_id() -> String {
+    let now = chrono::Local::now();
+    now.format("%y%m%d%H%M").to_string()
 }
 
 async fn abandoned() -> anyhow::Result<()> {
@@ -424,6 +422,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_status_bold_markdown() {
+        assert_eq!(parse_adr_status("# ADR-001\n\n**Status:** Accepted\n**Date:** 2026-01-01\n"), "accepted");
+    }
+
+    #[test]
+    fn parse_status_bold_proposed() {
+        assert_eq!(parse_adr_status("# ADR\n**Status:** Proposed\n"), "proposed");
+    }
+
+    #[test]
     fn parse_status_missing() {
         assert_eq!(parse_adr_status("# ADR-001: No status here\n\nJust text.\n"), "unknown");
     }
@@ -454,5 +462,44 @@ mod tests {
     #[test]
     fn parse_enforced_by_missing() {
         assert_eq!(parse_enforced_by("# ADR\n\nNo enforcement.\n"), None);
+    }
+
+    // ── Timestamp ID tests (ADR-2603221500) ──
+
+    #[test]
+    fn extract_adr_id_legacy() {
+        assert_eq!(extract_adr_id("ADR-059-canonical-project-identity"), "ADR-059");
+    }
+
+    #[test]
+    fn extract_adr_id_timestamp() {
+        assert_eq!(extract_adr_id("ADR-2603221500-timestamp-adr-numbering"), "ADR-2603221500");
+    }
+
+    #[test]
+    fn extract_adr_id_case_insensitive() {
+        assert_eq!(extract_adr_id("adr-001-foo"), "ADR-001");
+    }
+
+    #[test]
+    fn extract_adr_id_no_prefix() {
+        assert_eq!(extract_adr_id("TEMPLATE"), "TEMPLATE");
+    }
+
+    #[test]
+    fn generate_timestamp_id_format() {
+        let id = generate_timestamp_adr_id();
+        // Should be exactly 10 digits (YYMMDDHHMM)
+        assert_eq!(id.len(), 10, "Timestamp ID should be 10 digits, got: {}", id);
+        assert!(id.chars().all(|c| c.is_ascii_digit()), "Should be all digits: {}", id);
+    }
+
+    #[test]
+    fn extract_title_timestamp_adr() {
+        let path = std::path::Path::new("ADR-2603221500-test.md");
+        assert_eq!(
+            extract_title(path, "# ADR-2603221500: My Title\n"),
+            "ADR-2603221500: My Title"
+        );
     }
 }

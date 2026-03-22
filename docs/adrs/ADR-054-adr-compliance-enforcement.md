@@ -1,6 +1,6 @@
 # ADR-054: ADR Compliance Enforcement — Preventing Architectural Drift
 
-**Status:** Proposed
+**Status:** Accepted
 ## Date: 2026-03-21
 
 ## Context

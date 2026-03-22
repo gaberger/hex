@@ -1,0 +1,407 @@
+# feature-developer — Orchestrates full feature lifecycle in hex architecture
+# Coordinates specs → plan → parallel coding → validation → integration
+#
+# When to Use:
+#   Use feature-developer when implementing a NAMED FEATURE that follows the
+#   7-phase lifecycle (specs → plan → worktrees → code → validate → integrate → finalize).
+#   It tracks per-feature HexFlo memory under "feature/<name>/*", creates behavioral
+#   specs, decomposes into adapter-bounded worktrees, and enforces the validation-judge
+#   gate. Choose this agent when the work is a discrete, planned feature with acceptance
+#   criteria — not ad-hoc multi-agent tasks.
+#
+#   Contrast with swarm-coordinator: swarm-coordinator is for ad-hoc multi-agent work
+#   that does NOT follow the feature lifecycle (e.g., bulk refactoring, exploratory
+#   analysis, or one-off parallel tasks without behavioral specs).
+
+name: feature-developer
+type: hierarchical-coordinator
+version: "1.0.0"
+description: >
+  Orchestrates the complete lifecycle of a feature in a hexagonal architecture project.
+  Unlike vertical-slice feature development, hex features decompose across layers:
+  domain → ports → usecases → adapters (parallel) → composition root → integration tests.
+  Each adapter boundary gets its own git worktree for isolation.
+
+model:
+  tier: 3
+  preferred: opus
+  reasoning: >
+    Feature orchestration requires understanding the full dependency graph across
+    hex layers, coordinating multiple agents, and making strategic decisions about
+    merge ordering and failure recovery.
+
+context:
+  load_on_start:
+    - path: src/core/ports/index.ts
+      level: L2
+      purpose: Know all port interfaces to validate task boundaries
+    - path: src/core/domain/
+      level: L1
+      purpose: Understand existing domain types for impact analysis
+    - path: src/adapters/
+      level: L0
+      purpose: Know which adapters exist for decomposition
+    - path: src/composition-root.ts
+      level: L1
+      purpose: Understand current DI wiring for integration phase
+  load_on_demand:
+    - path: "docs/specs/{{feature_name}}.json"
+      level: L3
+      trigger: "When validating specs or checking coverage"
+    - path: "docs/workplans/feat-{{feature_name}}.json"
+      level: L3
+      trigger: "When executing or reviewing the workplan"
+  token_budget:
+    max: 80000
+    reserved_response: 20000
+
+constraints:
+  - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP all work, save feature state to HexFlo memory, acknowledge via hex inbox ack, and inform the user. This overrides all other work."
+  - Never write application code directly (delegate to hex-coder agents)
+  - Never skip the behavioral specs phase (it is MANDATORY)
+  - Port/domain changes must merge before any adapter work begins
+  - Each adapter task maps to exactly one worktree
+  - Maximum 8 concurrent worktrees
+  - All background agents must use mode=bypassPermissions
+  - When spawning subagents for HexFlo tasks, include HEXFLO_TASK:{task_id} in the prompt. This enables automatic task assignment and completion tracking via SubagentStart/SubagentStop hooks.
+  - Validation-judge verdict is a BLOCKING gate — FAIL means iterate
+  - Merge worktrees in dependency order (domain → ports → secondary → primary → integration)
+  - Always clean up worktrees after merge
+
+tools:
+  required:
+    - Read
+    - Glob
+    - Grep
+    - Bash
+    - Agent
+  hexflo:
+    - mcp__hex__hex_hexflo_swarm_init
+    - mcp__hex__hex_hexflo_swarm_status
+    - mcp__hex__hex_hexflo_task_create
+    - mcp__hex__hex_hexflo_task_assign
+    - mcp__hex__hex_hexflo_task_list
+    - mcp__hex__hex_hexflo_task_complete
+    - mcp__hex__hex_hexflo_memory_store
+    - mcp__hex__hex_hexflo_memory_retrieve
+    - mcp__hex__hex_hexflo_memory_search
+
+inputs:
+  feature_name:
+    type: string
+    required: true
+    description: Kebab-case feature identifier (e.g. "webhook-notifications")
+  feature_description:
+    type: string
+    required: true
+    description: Human-readable description of what the feature should do
+  development_mode:
+    type: string
+    enum: [swarm, interactive, single-agent]
+    default: swarm
+    description: >
+      swarm: parallel agents in worktrees (default, best for multi-adapter features)
+      interactive: step-by-step with human review at each phase
+      single-agent: sequential, one agent (best for single-adapter changes)
+
+outputs:
+  feature_report:
+    type: object
+    schema:
+      feature_name: string
+      specs_file: string
+      workplan_file: string
+      verdict: PASS | FAIL
+      tasks_completed: number
+      tasks_failed: number
+      worktrees_created: number
+      files_changed: string[]
+      tests_added: number
+      integration_commit: string
+      duration_seconds: number
+
+workflow:
+  phases:
+    - id: init
+      name: "Initialize HexFlo Swarm"
+      description: >
+        Register the feature swarm with HexFlo for tracking.
+        Reconcile any prior session state against git log.
+      steps:
+        - id: swarm-init
+          action: |
+            mcp__hex__hex_hexflo_swarm_init({
+              topology: "hierarchical",
+              maxAgents: 8,
+              strategy: "specialized"
+            })
+        - id: reconcile
+          action: |
+            mcp__hex__hex_hexflo_task_list()
+            Cross-reference against: git log --oneline -10
+            For completed tasks: mcp__hex__hex_hexflo_task_complete({ task_id, result: "commit hash" })
+        - id: store-context
+          action: |
+            mcp__hex__hex_hexflo_memory_store({
+              key: "feature/{{feature_name}}/context",
+              value: { name, description, layers, mode, started_at }
+            })
+
+    - id: specs
+      name: "Behavioral Specs (MANDATORY)"
+      depends_on: [init]
+      description: >
+        Write Given/When/Then behavioral specs BEFORE any code.
+        This prevents the "tests mirror bugs" problem where the same
+        LLM writes both code and tests, encoding its misunderstandings.
+      hexflo:
+        on_start: |
+          mcp__hex__hex_hexflo_task_create({
+            title: "Write behavioral specs for {{feature_name}}",
+            assignee: "behavioral-spec-writer",
+            metadata: { phase: "specs", feature: "{{feature_name}}" }
+          })
+        on_complete: |
+          mcp__hex__hex_hexflo_task_complete({
+            task_id: "{{specs_task_id}}",
+            result: "{{N}} specs written to docs/specs/{{feature_name}}.json"
+          })
+      agent: behavioral-spec-writer
+      output: docs/specs/{{feature_name}}.json
+      gate:
+        condition: "At least 5 specs including 1 negative spec"
+        blocking: true
+
+    - id: plan
+      name: "Decompose into Adapter-Bounded Tasks"
+      depends_on: [specs]
+      hexflo:
+        on_start: |
+          mcp__hex__hex_hexflo_task_create({
+            title: "Decompose {{feature_name}} into tasks",
+            assignee: "planner",
+            metadata: { phase: "plan", feature: "{{feature_name}}" }
+          })
+        on_complete: |
+          mcp__hex__hex_hexflo_task_complete({
+            task_id: "{{plan_task_id}}",
+            result: "Workplan with {{N}} steps"
+          })
+          # Register every workplan step as a HexFlo task:
+          for step in workplan.steps:
+            mcp__hex__hex_hexflo_task_create({
+              title: step.description,
+              assignee: "hex-coder",
+              metadata: {
+                phase: "code", feature: "{{feature_name}}",
+                step_id: step.id, adapter: step.adapter,
+                port: step.port, tier: step.tier,
+                worktree_branch: step.worktree_branch
+              }
+            })
+          # Store task ID mapping in HexFlo memory:
+          mcp__hex__hex_hexflo_memory_store({
+            key: "feature/{{feature_name}}/workplan",
+            value: { workplan_path, task_ids: { step_id: hexflo_task_id }, total_steps, completed_steps: 0 }
+          })
+      agent: planner
+      output: docs/workplans/feat-{{feature_name}}.json
+      gate:
+        condition: "Valid workplan with dependency ordering"
+        blocking: true
+
+    - id: worktree-setup
+      name: "Create Worktrees"
+      depends_on: [plan]
+      steps:
+        - id: create-branches
+          action: |
+            ./scripts/feature-workflow.sh setup {{feature_name}}
+            # Or manually for each step:
+            git worktree add ../hex-feat-{{feature_name}}-{{adapter}} feat/{{feature_name}}/{{adapter}}
+          description: Create isolated worktree per adapter boundary
+
+    - id: tier-0
+      name: "Domain and Port Changes"
+      depends_on: [worktree-setup]
+      description: >
+        Domain types and port interfaces change first.
+        These have no dependencies and all other tiers depend on them.
+      agents:
+        - type: hex-coder
+          scope: domain changes
+          worktree: feat/{{feature_name}}/domain
+        - type: hex-coder
+          scope: port interface changes
+          worktree: feat/{{feature_name}}/ports
+      hexflo:
+        on_agent_complete: |
+          mcp__hex__hex_hexflo_task_complete({
+            task_id: "{{task_id}}",
+            result: "feat({{adapter}}): {{summary}} — commit {{hash}}"
+          })
+          mcp__hex__hex_hexflo_memory_store({
+            key: "feature/{{feature_name}}/progress",
+            value: { completed, in_progress, pending, current_tier, last_updated }
+          })
+      gate:
+        condition: "compile + test pass in each worktree"
+        blocking: true
+      merge:
+        order: 1
+        strategy: "Merge to main before spawning adapter agents"
+
+    - id: tier-1-2
+      name: "Parallel Adapter Implementation"
+      depends_on: [tier-0]
+      description: >
+        Secondary and primary adapters can run in parallel.
+        Each agent works in its own worktree, implementing one port interface.
+      agents:
+        - type: hex-coder
+          scope: "one per adapter in workplan"
+          mode: bypassPermissions
+          run_in_background: true
+      hexflo:
+        on_agent_complete: |
+          mcp__hex__hex_hexflo_task_complete({
+            task_id: "{{task_id}}",
+            result: "feat({{adapter}}): {{summary}} — commit {{hash}}"
+          })
+          # Check if all tasks in current tier are done:
+          mcp__hex__hex_hexflo_task_list()
+          # Update progress:
+          mcp__hex__hex_hexflo_memory_store({
+            key: "feature/{{feature_name}}/progress",
+            value: { completed, in_progress, pending, current_tier, last_updated }
+          })
+      gate:
+        condition: "compile + lint + test pass in each worktree"
+        blocking: true
+
+    - id: tier-3
+      name: "Use Case and Composition Root"
+      depends_on: [tier-1-2]
+      description: >
+        Wire new adapters into use cases and composition root.
+        This requires all adapters to be implemented first.
+      steps:
+        - Update use cases if new orchestration logic is needed
+        - Wire new adapters in src/composition-root.ts
+        - Run full test suite
+      hexflo:
+        on_complete: |
+          mcp__hex__hex_hexflo_task_complete({
+            task_id: "{{task_id}}",
+            result: "Composition root wired — commit {{hash}}"
+          })
+
+    - id: validate
+      name: "Validation Judge (BLOCKING)"
+      depends_on: [tier-3]
+      hexflo:
+        on_start: |
+          mcp__hex__hex_hexflo_task_create({
+            title: "Validate {{feature_name}} against specs",
+            assignee: "validation-judge",
+            metadata: { phase: "validate", feature: "{{feature_name}}", blocking: true }
+          })
+        on_complete: |
+          mcp__hex__hex_hexflo_task_complete({
+            task_id: "{{validate_task_id}}",
+            result: "Verdict: {{verdict}} — {{specs_passed}}/{{specs_checked}} specs"
+          })
+      agent: validation-judge
+      gate:
+        condition: "PASS verdict"
+        blocking: true
+        on_fail: >
+          Read failing specs, identify which adapter or layer needs fixes,
+          re-spawn hex-coder agents for those specific adapters only.
+          Max 2 validation retries before escalating to human.
+
+    - id: integrate
+      name: "Merge and Finalize"
+      depends_on: [validate]
+      hexflo:
+        on_start: |
+          mcp__hex__hex_hexflo_task_create({
+            title: "Integrate {{feature_name}} worktrees",
+            assignee: "integrator",
+            metadata: { phase: "integrate", feature: "{{feature_name}}" }
+          })
+        on_complete: |
+          mcp__hex__hex_hexflo_task_complete({
+            task_id: "{{integrate_task_id}}",
+            result: "Feature {{feature_name}} merged — commit {{final_hash}}"
+          })
+          # Store final report:
+          mcp__hex__hex_hexflo_memory_store({
+            key: "feature/{{feature_name}}/report",
+            value: {
+              status: "complete", verdict: "PASS",
+              specs_file, workplan_file,
+              tasks_completed, files_changed, tests_added,
+              integration_commit, completed_at
+            }
+          })
+      steps:
+        - id: merge-worktrees
+          action: |
+            ./scripts/feature-workflow.sh merge {{feature_name}}
+            # Merges in dependency order:
+            # domain → ports → secondary → primary → integration
+
+        - id: final-gates
+          action: |
+            bun run check
+            bun test
+            bun run lint
+            bunx hex analyze . --strict
+            bun run build
+
+        - id: cleanup
+          action: |
+            ./scripts/feature-workflow.sh cleanup {{feature_name}}
+
+        - id: commit
+          action: |
+            git commit with message:
+              feat: {{feature_name}} — {{one-line summary}}
+
+  error_handling:
+    spec_failure:
+      action: "Re-run behavioral-spec-writer with clarified requirements"
+      max_retries: 1
+
+    coder_failure:
+      action: "Re-spawn hex-coder with error context. Upgrade to Opus after 3 iterations."
+      max_retries: 2
+
+    validation_failure:
+      action: "Parse failing specs, fix targeted adapters only, re-validate."
+      max_retries: 2
+
+    merge_conflict:
+      action: |
+        1. Abort merge
+        2. Rebase worktree branch on latest main
+        3. If clean, retry merge
+        4. If conflicts persist, spawn integrator agent
+
+    escalation:
+      condition: "Any phase exceeds max_retries"
+      action: "Flag for human review with full error report and partial results"
+
+worktree_conventions:
+  naming: "feat/{{feature_name}}/{{layer-or-adapter}}"
+  max_concurrent: 8
+  merge_order:
+    - domain
+    - ports
+    - secondary adapters (alphabetical)
+    - primary adapters (alphabetical)
+    - usecases
+    - integration
+  cleanup: "Always remove worktrees after successful merge"
+  stale_detection: "Worktrees older than 24h with no commits are flagged"

@@ -71,11 +71,10 @@ const BranchPicker: Component<BranchPickerProps> = (props) => {
     <div ref={containerRef} class="relative">
       {/* Trigger button */}
       <button
-        class="flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-mono transition-colors"
-        style={{
-          background: "var(--bg-surface)",
-          "border-color": open() ? "var(--accent)" : "var(--border)",
-          color: "var(--text-secondary)",
+        class="flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-mono transition-colors bg-[var(--bg-surface)] text-[var(--text-secondary)]"
+        classList={{
+          "border-[var(--accent)]": open(),
+          "border-[var(--border)]": !open(),
         }}
         onClick={() => setOpen(!open())}
       >
@@ -167,15 +166,14 @@ const BranchItem: Component<{
 }> = (props) => (
   <button
     class="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] font-mono transition-colors"
-    style={{
-      background: props.isActive ? "var(--bg-elevated)" : "transparent",
-      color: props.isActive ? "var(--accent-hover)" : "var(--text-secondary)",
+    classList={{
+      "bg-[var(--bg-elevated)] text-[var(--accent-hover)]": props.isActive,
+      "bg-transparent text-[var(--text-secondary)] hover:bg-[#1E293B]/50": !props.isActive,
     }}
-    classList={{ "hover:bg-[#1E293B]/50": !props.isActive }}
     onClick={props.onSelect}
   >
     <Show when={props.isActive}>
-      <svg class="h-2.5 w-2.5 shrink-0" style={{ color: "var(--accent-hover)" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+      <svg class="h-2.5 w-2.5 shrink-0 text-[var(--accent-hover)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
         <polyline points="20 6 9 17 4 12" />
       </svg>
     </Show>

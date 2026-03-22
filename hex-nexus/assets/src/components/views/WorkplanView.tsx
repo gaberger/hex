@@ -47,10 +47,7 @@ async function fetchWorkplanFiles(): Promise<WorkplanFilesResponse> {
   try {
     return await restClient.get<WorkplanFilesResponse>("/api/workplans");
   } catch {
-    // Fallback: direct fetch in case restClient has issues
-    const res = await fetch("/api/workplans");
-    if (!res.ok) return { ok: false as any, count: 0, workplans: [] };
-    return res.json();
+    return { ok: false as any, count: 0, workplans: [] };
   }
 }
 

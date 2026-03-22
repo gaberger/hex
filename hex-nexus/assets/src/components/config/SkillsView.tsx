@@ -215,9 +215,9 @@ const SkillsView: Component = () => {
       <div class="flex border-b border-[var(--border-subtle)] mb-4">
         <button
           class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
-          style={{
-            color: activeTab() === 'global' ? "var(--accent-hover)" : "var(--text-faint)",
-            "border-color": activeTab() === 'global' ? "var(--accent)" : "transparent",
+          classList={{
+            "text-[var(--accent-hover)] border-[var(--accent)]": activeTab() === 'global',
+            "text-[var(--text-faint)] border-transparent": activeTab() !== 'global',
           }}
           onClick={() => { setActiveTab('global'); setSelectedId(null); }}
         >
@@ -225,9 +225,9 @@ const SkillsView: Component = () => {
         </button>
         <button
           class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
-          style={{
-            color: activeTab() === 'project' ? "var(--accent-hover)" : "var(--text-faint)",
-            "border-color": activeTab() === 'project' ? "var(--accent)" : "transparent",
+          classList={{
+            "text-[var(--accent-hover)] border-[var(--accent)]": activeTab() === 'project',
+            "text-[var(--text-faint)] border-transparent": activeTab() !== 'project',
           }}
           onClick={() => { setActiveTab('project'); setSelectedId(null); }}
         >
@@ -280,13 +280,8 @@ const SkillsView: Component = () => {
         <div class="rounded-lg border border-[var(--border-subtle)] overflow-hidden">
           {/* Table header */}
           <div
-            class="grid gap-4 px-4 py-2 text-[11px] font-semibold uppercase"
-            style={{
-              "grid-template-columns": "24px 1fr 140px 2fr 100px",
-              color: "var(--text-dim)",
-              background: "var(--bg-elevated)",
-              "letter-spacing": "0.5px",
-            }}
+            class="grid gap-4 px-4 py-2 text-[11px] font-semibold uppercase text-[var(--text-dim)] bg-[var(--bg-elevated)] tracking-wide"
+            style={{ "grid-template-columns": "24px 1fr 140px 2fr 100px" }}
           >
             <span />
             <span>Name</span>
@@ -306,16 +301,20 @@ const SkillsView: Component = () => {
                   {/* Row */}
                   <button
                     class="grid w-full gap-4 px-4 py-2.5 text-left transition-colors"
-                    style={{
-                      "grid-template-columns": "24px 1fr 140px 2fr 100px",
-                      background: isSelected() ? "var(--accent-dim)" : "var(--bg-surface)",
+                    classList={{
+                      "bg-[var(--accent-dim)]": isSelected(),
+                      "bg-[var(--bg-surface)]": !isSelected(),
                     }}
+                    style={{ "grid-template-columns": "24px 1fr 140px 2fr 100px" }}
                     onClick={() => handleSelect(skill)}
                   >
                     <span class="flex items-center justify-center">
                       <span
                         class="h-2 w-2 rounded-full"
-                        style={{ background: isGlobalSkill(skill.path) ? '#60a5fa' : '#4ade80' }}
+                        classList={{
+                          "bg-blue-400": isGlobalSkill(skill.path),
+                          "bg-green-400": !isGlobalSkill(skill.path),
+                        }}
                       />
                     </span>
                     <span class="text-sm font-medium truncate text-[var(--text-primary)]">
@@ -364,10 +363,10 @@ const SkillsView: Component = () => {
 
                       {/* Copy */}
                       <button
-                        class="rounded px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50"
-                        style={{
-                          color: activeTab() === 'global' ? '#4ade80' : '#60a5fa',
-                          border: "1px solid var(--border)",
+                        class="rounded px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 border border-[var(--border)]"
+                        classList={{
+                          "text-green-400": activeTab() === 'global',
+                          "text-blue-400": activeTab() !== 'global',
                         }}
                         disabled={actionLoading() === skill.skillId}
                         onClick={(e) => { e.stopPropagation(); handleCopy(skill); }}
@@ -380,11 +379,10 @@ const SkillsView: Component = () => {
                       {/* Delete (project only) */}
                       <Show when={activeTab() === 'project'}>
                         <button
-                          class="rounded px-2.5 py-1 text-[11px] font-medium transition-colors"
-                          style={{
-                            color: isConfirmingDelete() ? '#FFFFFF' : '#F87171',
-                            background: isConfirmingDelete() ? '#991B1B' : 'transparent',
-                            border: "1px solid var(--border)",
+                          class="rounded px-2.5 py-1 text-[11px] font-medium transition-colors border border-[var(--border)]"
+                          classList={{
+                            "text-white bg-red-900": isConfirmingDelete(),
+                            "text-red-400 bg-transparent": !isConfirmingDelete(),
                           }}
                           onClick={(e) => { e.stopPropagation(); handleDelete(skill); }}
                         >

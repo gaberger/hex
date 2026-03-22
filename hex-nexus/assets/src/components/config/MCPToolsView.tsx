@@ -310,7 +310,7 @@ const MCPToolsView: Component = () => {
 
                 {/* Command info for discovered servers */}
                 <Show when={server.command && !isEditing()}>
-                  <div class="mb-2 text-xs text-gray-500 truncate" style={{ "font-family": "'JetBrains Mono', monospace" }}>
+                  <div class="mb-2 font-mono text-xs text-gray-500 truncate">
                     {server.command} {(server.args || []).join(' ')}
                   </div>
                 </Show>

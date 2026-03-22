@@ -98,8 +98,8 @@ const BottomBar: Component = () => {
               <button
                 class="flex w-full items-center gap-3 px-5 py-2 text-left text-xs text-[var(--text-muted)] transition-colors"
                 onClick={() => selectHint(cmd)}
-                onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-elevated)'}
-                onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                onMouseOver={(e) => (e.currentTarget.style.background = 'var(--bg-elevated)')}
+                onMouseOut={(e) => (e.currentTarget.style.background = 'transparent')}
               >
                 <span
                   class="shrink-0 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-[9px] uppercase text-[var(--accent)]"
@@ -170,9 +170,10 @@ const BottomBar: Component = () => {
         <button
           onClick={handleSubmit}
           disabled={isStreaming() || !value().trim()}
-          class={`flex shrink-0 items-center justify-center rounded-lg h-8 w-8 transition-colors disabled:opacity-20 disabled:cursor-not-allowed ${value().trim() ? 'bg-green-600' : ''}`}
-          style={{
-            ...(!value().trim() ? { background: 'var(--bg-elevated)' } : {}),
+          class="flex shrink-0 items-center justify-center rounded-lg h-8 w-8 transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+          classList={{
+            "bg-green-600": !!value().trim(),
+            "bg-[var(--bg-elevated)]": !value().trim(),
           }}
           title="Send (Enter)"
         >

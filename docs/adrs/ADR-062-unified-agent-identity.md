@@ -1,6 +1,7 @@
 # ADR-058: Unified Agent Identity — Single Registry, Reliable Resolution
 
-**Status:** Proposed
+**Status:** Superseded
+**Superseded-By:** ADR-065 (Registration Lifecycle Gaps — implemented in bb22bec, 91a37a2)
 **Date:** 2026-03-22
 **Priority:** P0-BLOCKER
 **Drivers:** During ADR-056 implementation, HexFlo task mutations returned 403 because the agent guard validated against `swarm_agent` (hexflo-coordination) while agents registered via `/api/agents/connect` (orchestration/agent-registry). Agent names showed `?` in CLI because the two systems don't share metadata. 24 stale agents accumulated with no eviction.

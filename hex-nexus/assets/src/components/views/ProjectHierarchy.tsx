@@ -140,8 +140,8 @@ const ProjectHierarchy: Component<ProjectHierarchyProps> = (props) => {
                   {host()}
                 </span>
                 <span
-                  class="text-[11px]"
-                  style={{ color: getModelColor(model()), "font-family": "'JetBrains Mono', monospace" }}
+                  class="text-[11px] font-mono"
+                  style={{ color: getModelColor(model()) }}
                 >
                   {model()}
                 </span>

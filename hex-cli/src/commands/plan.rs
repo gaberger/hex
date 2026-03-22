@@ -49,6 +49,8 @@ pub enum PlanAction {
         /// Workplan execution ID
         id: String,
     },
+    /// Output the canonical workplan JSON schema
+    Schema,
 }
 
 /// A workplan step.
@@ -64,17 +66,89 @@ struct Step {
     status: String,
 }
 
-/// A workplan document.
+/// A workplan document — supports both legacy (steps) and current (phases/tasks) formats.
 #[derive(Debug, Serialize, Deserialize)]
 struct Workplan {
     #[serde(default)]
     title: String,
     #[serde(default)]
+    feature: String,
+    #[serde(default)]
     language: String,
     #[serde(default)]
     steps: Vec<Step>,
+    #[serde(default)]
+    phases: Vec<Phase>,
     #[serde(default, rename = "createdAt")]
     created_at: String,
+    #[serde(default)]
+    created_at_alt: String,
+    #[serde(default)]
+    adr: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    priority: String,
+}
+
+/// A phase in the current workplan format.
+#[derive(Debug, Serialize, Deserialize)]
+struct Phase {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    tasks: Vec<PhaseTask>,
+}
+
+/// A task within a phase.
+#[derive(Debug, Serialize, Deserialize)]
+struct PhaseTask {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    layer: String,
+}
+
+impl Workplan {
+    /// Get the display title (prefers feature over title).
+    fn display_title(&self) -> &str {
+        if !self.feature.is_empty() {
+            &self.feature
+        } else if !self.title.is_empty() {
+            &self.title
+        } else {
+            ""
+        }
+    }
+
+    /// Count total tasks across both formats.
+    fn total_tasks(&self) -> usize {
+        if !self.phases.is_empty() {
+            self.phases.iter().map(|p| p.tasks.len()).sum()
+        } else {
+            self.steps.len()
+        }
+    }
+
+    /// Count completed tasks across both formats.
+    fn completed_tasks(&self) -> usize {
+        if !self.phases.is_empty() {
+            self.phases.iter()
+                .flat_map(|p| &p.tasks)
+                .filter(|t| t.status == "completed")
+                .count()
+        } else {
+            self.steps.iter()
+                .filter(|s| s.status == "completed")
+                .count()
+        }
+    }
 }
 
 pub async fn run(action: PlanAction) -> anyhow::Result<()> {
@@ -85,6 +159,7 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Active => show_active_executions().await,
         PlanAction::History => show_execution_history().await,
         PlanAction::Report { id } => show_execution_report(&id).await,
+        PlanAction::Schema => show_schema().await,
     }
 }
 
@@ -232,9 +307,15 @@ async fn create_plan(requirements: &[String], lang: &str, adr: Option<&str>, no_
 
         let plan = Workplan {
             title: format!("Plan: {}", requirements.join(", ")),
+            feature: String::new(),
             language: lang.to_string(),
             steps,
+            phases: Vec::new(),
             created_at: chrono::Utc::now().to_rfc3339(),
+            created_at_alt: String::new(),
+            adr: String::new(),
+            description: String::new(),
+            priority: String::new(),
         };
 
         let json = serde_json::to_string_pretty(&plan)?;
@@ -289,27 +370,34 @@ async fn list_plans() -> anyhow::Result<()> {
             match std::fs::read_to_string(&path) {
                 Ok(contents) => {
                     if let Ok(plan) = serde_json::from_str::<Workplan>(&contents) {
-                        let total = plan.steps.len();
-                        let done = plan
-                            .steps
-                            .iter()
-                            .filter(|s| s.status == "completed")
-                            .count();
-                        let title = if plan.title.is_empty() {
-                            name.to_string()
+                        let total = plan.total_tasks();
+                        let done = plan.completed_tasks();
+                        let title = {
+                            let dt = plan.display_title();
+                            if dt.is_empty() { name.to_string() } else { dt.to_string() }
+                        };
+
+                        let adr_tag = if plan.adr.is_empty() {
+                            String::new()
                         } else {
-                            plan.title.clone()
+                            format!(" [{}]", plan.adr.dimmed())
                         };
 
                         let progress = if total == 0 {
-                            "(empty)".dimmed().to_string()
+                            "(no tasks)".dimmed().to_string()
                         } else if done == total {
                             format!("{}/{} {}", done, total, "\u{2713}".green())
                         } else {
                             format!("{}/{}", done, total)
                         };
 
-                        println!("  {} {} {}", "\u{25cb}".dimmed(), title, progress);
+                        let priority_tag = if plan.priority.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" {}", plan.priority.red())
+                        };
+
+                        println!("  {} {}{} {}{}", "\u{25cb}".dimmed(), title, adr_tag, progress, priority_tag);
                     } else {
                         println!("  {} {} (parse error)", "\u{25cb}".dimmed(), name);
                     }
@@ -632,6 +720,14 @@ async fn show_execution_report(id: &str) -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Output the canonical workplan JSON schema.
+async fn show_schema() -> anyhow::Result<()> {
+    let schema = crate::assets::Assets::get_str("schemas/workplan.schema.json")
+        .ok_or_else(|| anyhow::anyhow!("Workplan schema not found in embedded assets"))?;
+    print!("{}", schema);
     Ok(())
 }
 

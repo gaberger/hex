@@ -1,8 +1,9 @@
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
+pub mod assets;
 mod commands;
-mod nexus_client;
+pub(crate) mod nexus_client;
 
 use commands::{
     adr::AdrAction,
@@ -138,6 +139,8 @@ enum Commands {
         #[command(subcommand)]
         action: SkillAction,
     },
+    /// Inspect embedded assets baked into the binary (ADR-2603221522)
+    Assets,
     /// Project status
     Status,
 }
@@ -179,6 +182,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Mcp => commands::mcp::run_mcp_server().await,
         Commands::Test { action } => commands::test::run(action).await,
         Commands::Skill { action } => commands::skill::run(action).await,
+        Commands::Assets => commands::assets_cmd::list().await,
         Commands::Status => status::run().await,
     }
 }

@@ -1,6 +1,6 @@
 # ADR-058: Test Session Persistence and Outcome Tracking
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-22
 **Drivers:** No visibility into test health trends. Each `hex test all` run produces results that vanish after the terminal scrolls. We cannot answer: "Are tests getting more stable?", "Which tests flake most?", "Did this commit break something that was green yesterday?"
 
@@ -129,11 +129,11 @@ Workplan steps with `"done_condition": "bun test ... passes"` can be auto-verifi
 
 | Phase | Description | Status |
 |-------|------------|--------|
-| P1 | Create `test-results` SpacetimeDB module with tables and reducers | Pending |
-| P2 | Add `TestSession` collection to `hex test` runner in test.rs | Pending |
-| P3 | Add REST endpoints in hex-nexus for session recording and querying | Pending |
-| P4 | Add `hex test history` and `hex test trends` CLI commands | Pending |
-| P5 | Add flake detection and regression comparison | Pending |
+| P1 | Create `test-results` SpacetimeDB module with tables and reducers | Done |
+| P2 | Add `TestSession` collection to `hex test` runner in test.rs | Done |
+| P3 | Add REST endpoints in hex-nexus for session recording and querying | Done |
+| P4 | Add `hex test history` and `hex test trends` CLI commands | Done |
+| P5 | Add flake detection and regression comparison | Done |
 | P6 | Wire workplan gate auto-verification | Pending |
 | P7 | Add dashboard test health panel | Pending |
 

@@ -51,11 +51,9 @@ const ProjectSidebar: Component = () => {
             return (
               <button
                 class="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left transition-colors"
-                style={{
-                  background: isSelected() ? "var(--bg-elevated)" : "transparent",
-                }}
                 classList={{
-                  "hover:bg-[#1E293B]/50": !isSelected(),
+                  "bg-[var(--bg-elevated)]": isSelected(),
+                  "bg-transparent hover:bg-[#1E293B]/50": !isSelected(),
                 }}
                 onClick={() => navigate({ page: "project", projectId: project.id })}
               >
@@ -67,11 +65,10 @@ const ProjectSidebar: Component = () => {
                   }}
                 />
                 <span
-                  class="truncate text-[13px]"
-                  style={{
-                    "font-family": "'JetBrains Mono', monospace",
-                    "font-weight": isSelected() ? "600" : "400",
-                    color: isSelected() ? "var(--text-body)" : "var(--text-muted)",
+                  class="truncate text-[13px] font-mono"
+                  classList={{
+                    "font-semibold text-[var(--text-body)]": isSelected(),
+                    "font-normal text-[var(--text-muted)]": !isSelected(),
                   }}
                 >
                   {project.name}

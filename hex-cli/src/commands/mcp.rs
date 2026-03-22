@@ -45,9 +45,13 @@ struct JsonRpcError {
 
 // ─── Tool Definitions ────────────────────────────────────
 
-/// Compiled-in fallback: the JSON is baked in at build time so the MCP server
-/// works even when `config/mcp-tools.json` is not on disk (e.g. installed binary).
-const BUILTIN_TOOLS_JSON: &str = include_str!("../../../config/mcp-tools.json");
+/// Compiled-in fallback: the JSON is baked in at build time via rust-embed
+/// (ADR-2603221522) so the MCP server works even when `config/mcp-tools.json`
+/// is not on disk (e.g. installed binary).
+fn builtin_tools_json() -> String {
+    crate::assets::Assets::get_str("schemas/mcp-tools.json")
+        .expect("mcp-tools.json must be embedded in assets/schemas/")
+}
 
 /// Load tool definitions from `config/mcp-tools.json` at runtime.
 /// Falls back to the compiled-in copy if the file is missing.
@@ -109,9 +113,9 @@ fn load_tools_json() -> String {
         }
     }
 
-    // 4. Compiled-in fallback
+    // 4. Compiled-in fallback (embedded via rust-embed)
     eprintln!("[hex] Using compiled-in tool definitions");
-    BUILTIN_TOOLS_JSON.to_string()
+    builtin_tools_json()
 }
 
 // ─── Tool Dispatch ───────────────────────────────────────
@@ -578,13 +582,7 @@ fn write_response(out: &mut impl Write, resp: &JsonRpcResponse) -> anyhow::Resul
 }
 
 /// Resolve the current session's agent_id from the persisted session state file.
-/// Returns None if no session is registered (nexus down, first run, etc.).
+/// Delegates to the canonical resolution in nexus_client (ADR-065 §4).
 fn resolve_session_agent_id() -> Option<String> {
-    let session_id = std::env::var("CLAUDE_SESSION_ID").ok()?;
-    let state_file = dirs::home_dir()?
-        .join(".hex/sessions")
-        .join(format!("agent-{}.json", session_id));
-    let content = std::fs::read_to_string(state_file).ok()?;
-    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
-    parsed["agentId"].as_str().map(|s| s.to_string())
+    crate::nexus_client::read_session_agent_id()
 }

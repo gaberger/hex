@@ -72,17 +72,11 @@ const TreeNodeItem: Component<{
     <>
       <button
         class="flex w-full items-center gap-1.5 rounded px-1.5 py-[3px] text-left text-[12px] transition-colors"
-        style={{
-          "padding-left": `${props.depth * 14 + 6}px`,
-          color: isSelected() ? 'var(--accent-hover)' : 'var(--text-secondary)',
-          background: isSelected() ? 'rgba(34,211,238,0.08)' : 'transparent',
+        classList={{
+          "text-[var(--accent-hover)] bg-cyan-400/[0.08]": isSelected(),
+          "text-[var(--text-secondary)] bg-transparent hover:bg-white/[0.04]": !isSelected(),
         }}
-        onMouseEnter={(e) => {
-          if (!isSelected()) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)';
-        }}
-        onMouseLeave={(e) => {
-          if (!isSelected()) (e.currentTarget as HTMLElement).style.background = 'transparent';
-        }}
+        style={{ "padding-left": `${props.depth * 14 + 6}px` }}
         onClick={() => {
           if (props.node.isDir) {
             props.onToggle(props.node);
@@ -92,7 +86,7 @@ const TreeNodeItem: Component<{
         }}
       >
         {/* Icon */}
-        <span class="w-4 shrink-0 text-center text-[13px]" style={{ color: props.node.isDir ? 'var(--yellow)' : 'var(--text-muted)' }}>
+        <span class="w-4 shrink-0 text-center text-[13px]" classList={{ "text-[var(--yellow)]": props.node.isDir, "text-[var(--text-muted)]": !props.node.isDir }}>
           {props.node.isDir
             ? (props.node.expanded ? '\u{1F4C2}' : '\u{1F4C1}')
             : '\u{1F4C4}'}
@@ -100,8 +94,8 @@ const TreeNodeItem: Component<{
         {/* Expand chevron for directories */}
         <Show when={props.node.isDir}>
           <svg
-            class="h-3 w-3 flex-shrink-0 transition-transform"
-            style={{ transform: props.node.expanded ? 'rotate(90deg)' : 'rotate(0deg)', color: 'var(--text-faint)' }}
+            class="h-3 w-3 flex-shrink-0 transition-transform text-[var(--text-faint)]"
+            classList={{ "rotate-90": props.node.expanded, "rotate-0": !props.node.expanded }}
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -262,10 +256,7 @@ const FileTreeView: Component = () => {
           <div class="flex-1" />
           {/* Refresh button */}
           <button
-            class="rounded p-1 transition-colors"
-            style={{ color: 'var(--text-faint)' }}
-            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)')}
-            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-faint)')}
+            class="rounded p-1 transition-colors text-[var(--text-faint)] hover:text-[var(--text-secondary)]"
             onClick={async () => {
               setTreeLoading(true);
               const nodes = await fetchDir(projectRoot());
@@ -338,9 +329,7 @@ const FileTreeView: Component = () => {
             </span>
             <div class="flex-1" />
             <button
-              class="rounded border border-[var(--border)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-muted)] transition-colors"
-              onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'var(--bg-elevated)')}
-              onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
+              class="rounded border border-[var(--border)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-elevated)]"
               onClick={() => {
                 const fp = selectedFile();
                 if (fp) navigate({ page: 'file-viewer', filePath: fp });

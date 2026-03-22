@@ -1,0 +1,121 @@
+# hex-lifecycle-enforcement — ADR-050 lifecycle pipeline enforcement
+# Validates ADR -> Workplan -> HexFlo Memory -> Swarm pipeline at every edit
+
+name: hex-lifecycle-enforcement
+type: pre-edit
+description: >
+  Enforces the ADR-050 agent lifecycle pipeline. Before any code edit,
+  validates that the session has an active workplan and HexFlo swarm.
+  Advisory mode (default) prints warnings to stdout (visible to Claude).
+  Mandatory mode blocks edits that violate the pipeline.
+
+trigger: PreToolUse (Write|Edit|MultiEdit)
+blocking: true  # In mandatory mode, exits non-zero to block the edit
+
+pipeline:
+  required_chain: "ADR -> Workplan -> HexFlo Memory -> Swarm"
+  enforcement_config: ".hex/project.json → lifecycle_enforcement"
+
+checks:
+  workplan_active:
+    description: "Session must have an active workplan before editing code"
+    action: |
+      Load SessionState from ~/.hex/sessions/agent-{sessionId}.json.
+      Check that workplan_id is not null.
+
+      If null AND mandatory mode:
+        BLOCK: "No active workplan. Create one first: hex plan create <name> --adr ADR-NNN"
+        Exit code 2.
+
+      If null AND advisory mode:
+        WARN (stdout): "Editing without an active workplan. Consider: hex plan create <name>"
+
+  swarm_registered:
+    description: "Session must have an active HexFlo swarm tracking the work"
+    action: |
+      Check that swarm_id is not null in SessionState.
+
+      If null AND workplan_id is set AND mandatory mode:
+        BLOCK: "Workplan active but no HexFlo swarm. Run: hex swarm init <name>"
+        Exit code 2.
+
+      If null AND advisory mode:
+        WARN (stdout): "Editing without a HexFlo swarm. Consider: hex swarm init <name>"
+
+  workplan_boundary:
+    description: "Edited file must fall within workplan's declared adapter boundary"
+    action: |
+      Load workplan JSON from docs/workplans/{workplan_id}.
+      Collect all declared files from tiers/steps (file and files fields).
+      Check if the target file matches any declared file (prefix match).
+
+      If no match AND mandatory mode:
+        BLOCK: "File outside workplan boundary"
+        Exit code 2.
+
+      If no match AND advisory mode:
+        WARN (stdout): "File outside the active workplan's declared boundary"
+
+  confirmatory_prompt_detection:
+    description: "Short confirmatory responses inherit work classification"
+    action: |
+      In the route (UserPromptSubmit) hook, detect short responses like
+      "yes", "do it", "go ahead" that confirm a proposed code change.
+      These inherit the work classification and trigger workplan warnings.
+
+      Match list: yes, yep, yeah, y, sure, ok, okay, go, go ahead,
+      do it, proceed, continue, ship it, lgtm, approved, let's go,
+      sounds good, go for it, make it so, please, correct.
+
+      Only match responses <= 30 characters.
+
+  adr_required_for_workplan:
+    description: "hex plan create requires an ADR reference"
+    action: |
+      When creating a workplan via `hex plan create`:
+        1. Require --adr ADR-NNN flag (or --no-adr to bypass)
+        2. Verify the ADR file exists in docs/adrs/
+        3. Fail with pipeline reminder if ADR not found
+
+      Error message: "Workplan requires an ADR reference. Use --adr ADR-NNN or --no-adr to skip.
+                       Pipeline: ADR -> Workplan -> HexFlo Memory -> Swarm"
+
+modes:
+  advisory:
+    description: "Default mode — warnings on stdout, never blocks"
+    config: ".hex/project.json → lifecycle_enforcement: 'advisory'"
+    output_channel: stdout  # Critical: stdout enters Claude's context, stderr does not
+    exit_code: 0  # Always succeeds
+
+  mandatory:
+    description: "Production mode — blocks edits that violate pipeline"
+    config: ".hex/project.json → lifecycle_enforcement: 'mandatory'"
+    output_channel: stdout
+    exit_code: 2  # Non-zero blocks the tool call
+
+bypass:
+  flag: "--no-adr"
+  scope: "hex plan create only"
+  warning: >
+    Pipeline bypass should only be used for exploratory work or emergency fixes.
+    A follow-up ADR should be created immediately.
+
+implementation:
+  cli_command: "hex hook pre-edit"
+  source_file: "hex-cli/src/commands/hook.rs"
+  adr: "ADR-050"
+  session_state: "~/.hex/sessions/agent-{sessionId}.json"
+
+output:
+  on_pass: "Lifecycle check passed — workplan and swarm active"
+  on_fail: |
+    Pipeline violation detected:
+
+    Required: ADR -> Workplan -> HexFlo Memory -> Swarm
+    Missing:  {{missing_step}}
+
+    To fix:
+      1. Create/find ADR:    hex adr list
+      2. Create workplan:    hex plan create <name> --adr ADR-NNN
+      3. Init swarm:         hex swarm init <name>
+      4. Then edit code.
