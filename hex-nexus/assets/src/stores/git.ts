@@ -105,7 +105,11 @@ async function ensureRegistered(projectId: string, projectPath?: string): Promis
 
 // ── Fetchers ──────────────────────────────────────────
 
+let _statusInFlight = false;
+
 export async function fetchGitStatus(projectId: string, projectPath?: string): Promise<GitStatus | null> {
+  if (_statusInFlight) return null;
+  _statusInFlight = true;
   try {
     await ensureRegistered(projectId, projectPath);
     const res = await fetch(`/api/${projectId}/git/status`);
@@ -116,13 +120,19 @@ export async function fetchGitStatus(projectId: string, projectPath?: string): P
         return json.data;
       }
     }
-  } catch (e) {
-    console.error("[git] status fetch failed:", e);
+  } catch {
+    // Errors handled by fetchAllGitData backoff
+  } finally {
+    _statusInFlight = false;
   }
   return null;
 }
 
+let _worktreesInFlight = false;
+
 export async function fetchGitWorktrees(projectId: string, projectPath?: string): Promise<WorktreeInfo[]> {
+  if (_worktreesInFlight) return [];
+  _worktreesInFlight = true;
   try {
     await ensureRegistered(projectId, projectPath);
     const res = await fetch(`/api/${projectId}/git/worktrees`);
@@ -134,11 +144,15 @@ export async function fetchGitWorktrees(projectId: string, projectPath?: string)
         return wts;
       }
     }
-  } catch (e) {
-    console.error("[git] worktrees fetch failed:", e);
+  } catch {
+    // Errors handled by fetchAllGitData backoff
+  } finally {
+    _worktreesInFlight = false;
   }
   return [];
 }
+
+let _logInFlight = false;
 
 export async function fetchGitLog(
   projectId: string,
@@ -147,6 +161,8 @@ export async function fetchGitLog(
   cursor?: string,
   limit?: number
 ): Promise<LogResult | null> {
+  if (_logInFlight) return null;
+  _logInFlight = true;
   try {
     await ensureRegistered(projectId, projectPath);
     const params = new URLSearchParams();
@@ -163,13 +179,21 @@ export async function fetchGitLog(
         return json.data;
       }
     }
-  } catch (e) {
-    console.error("[git] log fetch failed:", e);
+  } catch {
+    // Errors handled by fetchAllGitData backoff
+  } finally {
+    _logInFlight = false;
   }
   return null;
 }
 
+let _branchesInFlight = false;
+let _branchesBackoff = 0;
+let _branchesBackoffTimer: ReturnType<typeof setTimeout> | null = null;
+
 export async function fetchGitBranches(projectId: string, projectPath?: string): Promise<BranchInfo[]> {
+  if (_branchesInFlight || _branchesBackoff > 0) return [];
+  _branchesInFlight = true;
   try {
     await ensureRegistered(projectId, projectPath);
     const res = await fetch(`/api/${projectId}/git/branches`);
@@ -178,20 +202,36 @@ export async function fetchGitBranches(projectId: string, projectPath?: string):
       if (json.ok) {
         const branches = json.data.branches ?? [];
         setGitBranches(branches);
+        _branchesBackoff = 0;
         return branches;
       }
     }
+    // Non-ok response: backoff
+    _branchesBackoff = Math.min((_branchesBackoff || 500) * 2, MAX_BACKOFF);
+    if (_branchesBackoffTimer) clearTimeout(_branchesBackoffTimer);
+    _branchesBackoffTimer = setTimeout(() => { _branchesBackoff = 0; }, _branchesBackoff);
   } catch (e) {
-    console.error("[git] branches fetch failed:", e);
+    console.warn("[git] branches fetch failed (will backoff)");
+    _branchesBackoff = Math.min((_branchesBackoff || 500) * 2, MAX_BACKOFF);
+    if (_branchesBackoffTimer) clearTimeout(_branchesBackoffTimer);
+    _branchesBackoffTimer = setTimeout(() => { _branchesBackoff = 0; }, _branchesBackoff);
+  } finally {
+    _branchesInFlight = false;
   }
   return [];
 }
+
+let _diffInFlight = false;
+let _diffBackoff = 0;
+let _diffBackoffTimer: ReturnType<typeof setTimeout> | null = null;
 
 export async function fetchGitDiff(
   projectId: string,
   projectPath?: string,
   staged?: boolean,
 ): Promise<DiffResult | null> {
+  if (_diffInFlight || _diffBackoff > 0) return null;
+  _diffInFlight = true;
   try {
     await ensureRegistered(projectId, projectPath);
     const params = new URLSearchParams();
@@ -203,18 +243,26 @@ export async function fetchGitDiff(
       const json = await res.json();
       if (json.ok) {
         setGitDiff(json.data);
+        _diffBackoff = 0;
         return json.data;
       }
-      // If the response is raw diff text (no json.ok wrapper)
       if (typeof json === "string" || json.raw) {
         const raw = typeof json === "string" ? json : json.raw;
         const result: DiffResult = { files: [], totalAdditions: 0, totalDeletions: 0, raw };
         setGitDiff(result);
+        _diffBackoff = 0;
         return result;
       }
     }
-  } catch (e) {
-    console.error("[git] diff fetch failed:", e);
+    _diffBackoff = Math.min((_diffBackoff || 500) * 2, MAX_BACKOFF);
+    if (_diffBackoffTimer) clearTimeout(_diffBackoffTimer);
+    _diffBackoffTimer = setTimeout(() => { _diffBackoff = 0; }, _diffBackoff);
+  } catch {
+    _diffBackoff = Math.min((_diffBackoff || 500) * 2, MAX_BACKOFF);
+    if (_diffBackoffTimer) clearTimeout(_diffBackoffTimer);
+    _diffBackoffTimer = setTimeout(() => { _diffBackoff = 0; }, _diffBackoff);
+  } finally {
+    _diffInFlight = false;
   }
   return null;
 }
@@ -241,8 +289,19 @@ export async function fetchGitDiffRange(
   return null;
 }
 
-/** Fetch all git data for a project in parallel. */
+/** Fetch all git data for a project in parallel (with deduplication + backoff). */
+let _fetchInFlight = false;
+let _fetchBackoff = 0;
+let _fetchBackoffTimer: ReturnType<typeof setTimeout> | null = null;
+const MAX_BACKOFF = 30_000; // 30s max
+
 export async function fetchAllGitData(projectId: string, projectPath?: string): Promise<void> {
+  // Dedup: skip if already fetching
+  if (_fetchInFlight) return;
+  // Backoff: skip if in cooldown after repeated failures
+  if (_fetchBackoff > 0) return;
+
+  _fetchInFlight = true;
   setGitLoading(true);
   try {
     // Ensure registered once before parallel fetches
@@ -252,7 +311,15 @@ export async function fetchAllGitData(projectId: string, projectPath?: string): 
       fetchGitWorktrees(projectId),
       fetchGitLog(projectId, undefined, undefined, undefined, 10),
     ]);
+    // Success: reset backoff
+    _fetchBackoff = 0;
+  } catch {
+    // Failure: exponential backoff (1s → 2s → 4s → ... → 30s)
+    _fetchBackoff = Math.min((_fetchBackoff || 500) * 2, MAX_BACKOFF);
+    if (_fetchBackoffTimer) clearTimeout(_fetchBackoffTimer);
+    _fetchBackoffTimer = setTimeout(() => { _fetchBackoff = 0; }, _fetchBackoff);
   } finally {
+    _fetchInFlight = false;
     setGitLoading(false);
   }
 }

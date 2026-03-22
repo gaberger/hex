@@ -13,6 +13,8 @@ import {
 export default {
   id: __t.string(),
   name: __t.string(),
+  projectId: __t.string(),
   projectDir: __t.string(),
   model: __t.string(),
+  startedAt: __t.string(),
 };

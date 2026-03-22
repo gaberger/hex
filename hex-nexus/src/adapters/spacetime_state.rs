@@ -432,34 +432,94 @@ mod real {
         // ── Agent Registry ──────────────────────────────
         // Maps to: agent-registry module
 
-        async fn agent_register(&self, _info: AgentInfo) -> Result<String, StateError> {
-            // conn.reducers().register_agent(id, name, project_dir, model, timestamp)
-            Err(Self::not_connected())
+        async fn agent_register(&self, info: AgentInfo) -> Result<String, StateError> {
+            const AGENT_DB: &str = "agent-registry";
+            self.call_reducer_on(AGENT_DB, "register_agent", serde_json::json!({
+                "id": info.id,
+                "name": info.name,
+                "project_id": info.project_id,
+                "project_dir": info.project_dir,
+                "model": info.model,
+                "started_at": info.started_at
+            })).await?;
+            Ok(info.id)
         }
 
         async fn agent_update_status(
             &self,
-            _id: &str,
-            _status: AgentStatus,
-            _metrics: Option<AgentMetricsData>,
+            id: &str,
+            status: AgentStatus,
+            metrics: Option<AgentMetricsData>,
         ) -> Result<(), StateError> {
-            // conn.reducers().update_status(id, status_str, input_tokens, output_tokens, tool_calls, turns, timestamp)
-            Err(Self::not_connected())
+            const AGENT_DB: &str = "agent-registry";
+            let status_str = match status {
+                AgentStatus::Spawning => "spawning",
+                AgentStatus::Running => "running",
+                AgentStatus::Completed => "completed",
+                AgentStatus::Failed => "failed",
+            };
+            let metrics_json = metrics
+                .map(|m| serde_json::to_string(&m).unwrap_or_else(|_| "{}".into()))
+                .unwrap_or_else(|| "{}".into());
+            self.call_reducer_on(AGENT_DB, "update_status", serde_json::json!({
+                "id": id,
+                "status": status_str,
+                "metrics_json": metrics_json
+            })).await?;
+            Ok(())
         }
 
         async fn agent_list(&self) -> Result<Vec<AgentInfo>, StateError> {
-            // conn.db().agent().iter().map(|a| AgentInfo { ... }).collect()
-            Err(Self::not_connected())
+            const AGENT_DB: &str = "agent-registry";
+            let rows = self.query_table_on(AGENT_DB, "SELECT * FROM agent").await?;
+            Ok(rows.iter().filter_map(|row| {
+                Some(AgentInfo {
+                    id: row.get("id")?.as_str()?.to_string(),
+                    name: row.get("name")?.as_str()?.to_string(),
+                    project_id: row.get("project_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    project_dir: row.get("project_dir").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    model: row.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    status: match row.get("status").and_then(|v| v.as_str()).unwrap_or("") {
+                        "spawning" => AgentStatus::Spawning,
+                        "running" => AgentStatus::Running,
+                        "completed" => AgentStatus::Completed,
+                        "failed" => AgentStatus::Failed,
+                        _ => AgentStatus::Running,
+                    },
+                    started_at: row.get("started_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                })
+            }).collect())
         }
 
-        async fn agent_get(&self, _id: &str) -> Result<Option<AgentInfo>, StateError> {
-            // conn.db().agent().id().find(id).map(|a| AgentInfo { ... })
-            Err(Self::not_connected())
+        async fn agent_get(&self, id: &str) -> Result<Option<AgentInfo>, StateError> {
+            const AGENT_DB: &str = "agent-registry";
+            let safe_id = id.replace('\'', "''");
+            let rows = self.query_table_on(AGENT_DB, &format!("SELECT * FROM agent WHERE id = '{}'", safe_id)).await?;
+            Ok(rows.first().and_then(|row| {
+                Some(AgentInfo {
+                    id: row.get("id")?.as_str()?.to_string(),
+                    name: row.get("name")?.as_str()?.to_string(),
+                    project_id: row.get("project_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    project_dir: row.get("project_dir").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    model: row.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    status: match row.get("status").and_then(|v| v.as_str()).unwrap_or("") {
+                        "spawning" => AgentStatus::Spawning,
+                        "running" => AgentStatus::Running,
+                        "completed" => AgentStatus::Completed,
+                        "failed" => AgentStatus::Failed,
+                        _ => AgentStatus::Running,
+                    },
+                    started_at: row.get("started_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                })
+            }))
         }
 
-        async fn agent_remove(&self, _id: &str) -> Result<(), StateError> {
-            // conn.reducers().remove_agent(id)
-            Err(Self::not_connected())
+        async fn agent_remove(&self, id: &str) -> Result<(), StateError> {
+            const AGENT_DB: &str = "agent-registry";
+            self.call_reducer_on(AGENT_DB, "remove_agent", serde_json::json!({
+                "id": id
+            })).await?;
+            Ok(())
         }
 
         // ── Workplan ────────────────────────────────────

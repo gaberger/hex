@@ -13,6 +13,7 @@ import {
 export default __t.row({
   id: __t.string(),
   name: __t.string(),
+  projectId: __t.string().name("project_id"),
   projectDir: __t.string().name("project_dir"),
   model: __t.string(),
   status: __t.string(),

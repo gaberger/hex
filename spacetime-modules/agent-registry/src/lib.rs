@@ -6,6 +6,7 @@ pub struct Agent {
     #[unique]
     pub id: String,
     pub name: String,
+    pub project_id: String,
     pub project_dir: String,
     pub model: String,
     pub status: String,
@@ -29,16 +30,19 @@ pub fn register_agent(
     ctx: &ReducerContext,
     id: String,
     name: String,
+    project_id: String,
     project_dir: String,
     model: String,
+    started_at: String,
 ) -> Result<(), String> {
     ctx.db.agent().insert(Agent {
         id: id.clone(),
         name,
+        project_id,
         project_dir,
         model,
         status: "registered".to_string(),
-        started_at: String::new(),
+        started_at,
         ended_at: String::new(),
         metrics_json: "{}".to_string(),
     });

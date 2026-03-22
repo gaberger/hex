@@ -79,7 +79,13 @@ export function useTable<Row>(
 
     // ------ onInsert ------
     table.onInsert((_ctx: any, row: Row) => {
-      setRows((prev) => [...prev, row]);
+      const key = getKey(row);
+      setRows((prev) => {
+        // Deduplicate: if row with same key already exists, replace it
+        const exists = prev.some((r) => getKey(r) === key);
+        if (exists) return prev.map((r) => (getKey(r) === key ? row : r));
+        return [...prev, row];
+      });
     });
 
     // ------ onUpdate ------

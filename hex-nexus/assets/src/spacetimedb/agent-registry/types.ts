@@ -13,6 +13,7 @@ import {
 export const Agent = __t.object("Agent", {
   id: __t.string(),
   name: __t.string(),
+  projectId: __t.string(),
   projectDir: __t.string(),
   model: __t.string(),
   status: __t.string(),

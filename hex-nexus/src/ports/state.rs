@@ -57,6 +57,7 @@ pub struct AgentInfo {
     pub id: String,
     pub name: String,
     pub project_dir: String,
+    pub project_id: String,
     pub model: String,
     pub status: AgentStatus,
     pub started_at: String,

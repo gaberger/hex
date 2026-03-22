@@ -126,6 +126,7 @@ fn instance_to_agent_info(inst: &AgentInstance) -> AgentInfo {
     AgentInfo {
         id: inst.id.clone(),
         name: inst.agent_name.clone(),
+        project_id: String::new(),
         project_dir: inst.project_dir.clone(),
         model: inst.model.clone(),
         status: local_status_to_port(&inst.status),

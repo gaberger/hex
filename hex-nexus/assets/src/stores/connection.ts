@@ -80,21 +80,26 @@ function connectModule(opts: ConnectOpts) {
         .withDatabaseName(opts.module)
         .onConnect((ctx: any, _identity: any, token: string) => {
           localStorage.setItem(tokenKey, token);
-          opts.setConn(ctx);
-          opts.setConnected(true);
           retryCount = 0;
 
-          // Subscribe to all tables for this module
+          // Subscribe first, then expose connection after subscription snapshot arrives.
           if (opts.subscribeQueries.length > 0) {
             ctx
               .subscriptionBuilder()
               .onApplied(() => {
-                console.log(`[stdb:${opts.module}] subscription applied`);
+                console.log(`[stdb:${opts.module}] subscription applied (${opts.subscribeQueries.length} queries)`);
+                opts.setConn(ctx);
+                opts.setConnected(true);
               })
               .onError((_errCtx: any, err: Error) => {
                 console.error(`[stdb:${opts.module}] subscription error:`, err);
+                opts.setConn(ctx);
+                opts.setConnected(true);
               })
               .subscribe(opts.subscribeQueries);
+          } else {
+            opts.setConn(ctx);
+            opts.setConnected(true);
           }
         })
         .onDisconnect((_ctx: any, _error?: Error) => {
@@ -217,6 +222,18 @@ let initialized = false;
 export function initConnections() {
   if (initialized) return;
   initialized = true;
+
+  // Clear stale tokens after module schema changes (e.g., spacetime publish --clear-database).
+  // The SDK caches tokens in localStorage; stale tokens cause DataView deserialization crashes.
+  // TODO: Replace with schema version check once SDK supports it.
+  const SCHEMA_VERSION = "5"; // Bump when re-publishing any module with --clear-database
+  if (localStorage.getItem("stdb_schema_version") !== SCHEMA_VERSION) {
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith(TOKEN_KEY_PREFIX))
+      .forEach((k) => localStorage.removeItem(k));
+    localStorage.setItem("stdb_schema_version", SCHEMA_VERSION);
+    console.log("[stdb] Cleared stale tokens after schema version change");
+  }
 
   // hexflo-coordination: swarms, tasks, agents, memory
   // This is the canonical coordination database — the IStatePort adapter

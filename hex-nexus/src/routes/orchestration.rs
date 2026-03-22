@@ -200,17 +200,32 @@ pub async fn connect_agent(
     let project_dir = body["project_dir"].as_str().unwrap_or("").to_string();
     let model = body["model"].as_str().unwrap_or("").to_string();
 
+    // Resolve project_id from project_dir by matching against registered projects
+    let mut project_id = body["project_id"].as_str().unwrap_or("").to_string();
+    if project_id.is_empty() && !project_dir.is_empty() {
+        if let Some(sp) = state.state_port.as_ref() {
+            if let Ok(projects) = sp.project_list().await {
+                if let Some(proj) = projects.iter().find(|p| p.root_path == project_dir) {
+                    project_id = proj.id.clone();
+                }
+            }
+        }
+    }
+
     // Register via state_port (SpacetimeDB primary, SQLite fallback)
     if let Some(sp) = state.state_port.as_ref() {
         let info = crate::ports::state::AgentInfo {
             id: agent_id.clone(),
             name: agent_name.clone(),
             project_dir: project_dir.clone(),
+            project_id: project_id.clone(),
             model: model.clone(),
             status: crate::ports::state::AgentStatus::Running,
             started_at: chrono::Utc::now().to_rfc3339(),
         };
-        let _ = sp.agent_register(info).await;
+        if let Err(e) = sp.agent_register(info).await {
+            tracing::warn!(agent_id = %agent_id, error = %e, "Failed to register agent in state backend");
+        }
     }
 
     // Broadcast connection event

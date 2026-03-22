@@ -78,7 +78,7 @@ const AgentFleet: Component = () => {
   });
 
   function agentProject(agent: any): string {
-    const pid = agent.project ?? agent.project_id ?? "";
+    const pid = agent.projectId ?? agent.project_id ?? agent.project ?? "";
     if (!pid) return "--";
     const proj = projects().find((p) => p.id === pid);
     return proj?.name ?? pid;
@@ -265,9 +265,9 @@ const AgentCard: Component<{
   const agent = props.agent;
   const status = () => agent.status ?? "idle";
   const name = () => agent.name ?? agent.agent_name ?? "unnamed";
-  const role = () => agent.agentType ?? agent.agent_type ?? agent.role ?? "--";
+  const role = () => agent.agentType ?? agent.agent_type ?? agent.role ?? (name().startsWith("claude-code") ? "claude-code" : "--");
   const model = () => agent.model ?? "--";
-  const uptime = () => formatUptime(agent.started_at ?? agent.created_at);
+  const uptime = () => formatUptime(agent.startedAt ?? agent.started_at ?? agent.created_at ?? agent.connectedAt ?? agent.connected_at);
   const task = () => props.agentTask(agent);
 
   return (

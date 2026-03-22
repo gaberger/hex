@@ -56,7 +56,6 @@ const ProjectDetail: Component = () => {
   const projectAgents = createMemo(() => {
     const pid = projectId();
     const allAgents = registryAgents();
-    console.log(`[DEBUG] registryAgents count: ${allAgents.length}, projectId: ${pid}`, allAgents);
     if (!pid) return [];
     return allAgents.filter((a: any) => {
       // Primary: match by project_id (SpacetimeDB project ID like "hex-intf-1xq8wun")
