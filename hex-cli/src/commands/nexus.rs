@@ -355,29 +355,6 @@ async fn start(port: u16, token: Option<&str>, no_agent: bool) -> anyhow::Result
             port
         );
 
-        // Auto-start hex-chat web dashboard
-        if let Some(chat_bin) = find_chat_binary() {
-            let nexus_url = format!("http://127.0.0.1:{}", port);
-            match std::process::Command::new(&chat_bin)
-                .args(["web", "--nexus", &nexus_url])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-            {
-                Ok(child) => {
-                    println!(
-                        "{} hex-chat web started (PID {}) at {}",
-                        "\u{2b21}".green(),
-                        child.id(),
-                        "http://127.0.0.1:5556".blue().underline()
-                    );
-                }
-                Err(e) => {
-                    tracing::debug!("hex-chat web failed to start: {e}");
-                }
-            }
-        }
-
         // Auto-start default hex-agent (ADR-037)
         if !no_agent {
             if let Some(agent_bin) = find_agent_binary() {
@@ -472,26 +449,6 @@ fn find_agent_binary() -> Option<PathBuf> {
         if candidate.is_file() { return Some(candidate); }
     }
     let bin = PathBuf::from("./bin/hex-agent");
-    if bin.is_file() { return Some(bin); }
-    None
-}
-
-/// Find the hex-chat binary (same search strategy as nexus).
-fn find_chat_binary() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("HEX_CHAT_BIN") {
-        let path = PathBuf::from(p);
-        if path.is_file() { return Some(path); }
-    }
-    let path_var = std::env::var("PATH").unwrap_or_default();
-    for dir in path_var.split(':') {
-        let candidate = PathBuf::from(dir).join("hex-chat");
-        if candidate.is_file() { return Some(candidate); }
-    }
-    for profile in &["release", "debug"] {
-        let candidate = PathBuf::from(format!("target/{}/hex-chat", profile));
-        if candidate.is_file() { return Some(candidate); }
-    }
-    let bin = PathBuf::from("./bin/hex-chat");
     if bin.is_file() { return Some(bin); }
     None
 }
@@ -688,20 +645,8 @@ async fn status() -> anyhow::Result<()> {
                 Err(_) => println!("  Sessions: {} (SQLite not enabled)", "unavailable".dimmed()),
             }
 
-            // hex-chat web dashboard
-            if let Some(ref client) = client {
-                let chat_ok = client
-                    .get("http://127.0.0.1:5556")
-                    .send()
-                    .await
-                    .map(|r| r.status().is_success())
-                    .unwrap_or(false);
-                if chat_ok {
-                    println!("  Dashboard: {} ({})", "running".green(), "http://127.0.0.1:5556".blue());
-                } else {
-                    println!("  Dashboard: {}", "not running".dimmed());
-                }
-            }
+            // Dashboard is served by hex-nexus at the same port
+            println!("  Dashboard: {}", format!("http://127.0.0.1:{}", 5555).blue());
         } else {
             println!("  API:  {} (not responding)", nexus.url().yellow());
         }

@@ -1,7 +1,7 @@
 //! hex-core — Shared domain types and port traits for the hex framework.
 //!
 //! This crate is the single source of truth for types used across hex-nexus,
-//! hex-agent, hex-chat, and hex-cli. It has zero runtime dependencies beyond
+//! hex-agent, and hex-cli. It has zero runtime dependencies beyond
 //! serde, thiserror, and async-trait.
 //!
 //! # Architecture

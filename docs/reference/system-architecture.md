@@ -257,8 +257,6 @@ fleet-state          → compute node status
 | **hex-cli** | `hex-cli/` | Rust (clap) | Canonical CLI — all hex commands. Also serves MCP tools via `hex mcp`. |
 | **hex-dashboard** | `hex-nexus/assets/` | Solid.js SPA | Browser-based control plane (see above). |
 | **hex-desktop** | `hex-desktop/` | Tauri wrapper | Native desktop app wrapping the web dashboard. |
-| **hex-chat** | `hex-chat/` | Tauri + TypeScript | Conversational interface for agent interaction. |
-
 **CLI commands (19 subcommands):**
 ```
 hex nexus [start|stop|status]    # Manage hex-nexus daemon

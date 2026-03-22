@@ -224,7 +224,6 @@ spacetime publish hex-nexus  # Deploy to SpacetimeDB instance
 - hex-dashboard (real-time subscriptions via WebSocket)
 - hex-cli (state queries)
 - hex-agent (coordination and enforcement state)
-- hex-chat (message relay)
 - hex-desktop (via dashboard)
 
 ## Related ADRs

@@ -91,7 +91,7 @@ These rules are checked by `hex analyze .` and the dead-code-analyzer agent:
 ## File Organization
 
 ```
-# ── Rust Workspace (7 crates) ──────────────────────────────────────────────
+# ── Rust Workspace (6 crates) ──────────────────────────────────────────────
 hex-cli/                 # CLI binary — canonical user entry point (all hex commands)
 hex-nexus/               # Filesystem bridge daemon + dashboard (axum, port 5555)
   src/
@@ -105,7 +105,6 @@ hex-nexus/               # Filesystem bridge daemon + dashboard (axum, port 5555
     src/spacetimedb/     #     Auto-generated SpacetimeDB client bindings
 hex-core/                # Shared domain types & port traits (zero external deps)
 hex-agent/               # Architecture enforcement runtime (agent runtime for AI dev agents)
-hex-chat/                # Conversational chat UI (Tauri + TypeScript)
 hex-desktop/             # Desktop app (Tauri wrapper for dashboard)
 hex-parser/              # Code parsing utilities
 

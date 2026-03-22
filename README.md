@@ -195,7 +195,6 @@ All hex clients connect to SpacetimeDB via WebSocket for real-time state:
 | **hex CLI** (`hex-cli/`) | Rust binary | Primary user interface — all hex commands |
 | **hex Web** (dashboard) | Solid.js SPA | Browser-based control plane |
 | **hex Desktop** (`hex-desktop/`) | Tauri wrapper | Native desktop app wrapping the web dashboard |
-| **hex Chat** (`hex-chat/`) | Tauri + TypeScript | Conversational interface for agent interaction |
 
 The CLI delegates to hex-nexus REST API for filesystem operations and queries SpacetimeDB directly for state. MCP tools (`hex mcp`) are served from the same binary, ensuring CLI and MCP share the same backend.
 
@@ -1019,7 +1018,6 @@ hex-nexus/               # Filesystem bridge daemon (axum REST API, port 5555)
     src/spacetimedb/     #     Auto-generated SpacetimeDB client bindings
 hex-core/                # Shared domain types & port traits (zero external deps)
 hex-agent/               # Architecture enforcement runtime (agent runtime for AI dev agents)
-hex-chat/                # Conversational chat UI (Tauri + TypeScript)
 hex-desktop/             # Desktop app (Tauri wrapper for dashboard)
 hex-parser/              # Code parsing utilities
 

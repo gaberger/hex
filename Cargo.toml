@@ -1,5 +1,5 @@
 [workspace]
-members = ["hex-nexus", "hex-desktop", "hex-core", "hex-parser", "hex-agent", "hex-cli", "hex-chat"]
+members = ["hex-nexus", "hex-desktop", "hex-core", "hex-parser", "hex-agent", "hex-cli"]
 resolver = "2"
 
 [workspace.package]

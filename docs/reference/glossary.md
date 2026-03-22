@@ -14,7 +14,6 @@
 | **hex-agent** | Architecture enforcement runtime — the component that must be present (locally or remotely) on any system running hex development agents. Enforces hexagonal architecture through skills, hooks, ADRs, workplans, HexFlo dispatchers, and agent definitions. Named "agent" because it is the runtime environment for hex's AI agents. | Do not confuse with the hexagonal architecture concept of "adapter" |
 | **hex-dashboard** | Developer control plane — a single interface for managing AI-driven development across multiple projects and systems. Provides agent fleet control, architecture health monitoring, command dispatch, and inference monitoring. Served by hex-nexus as a Solid.js SPA. | "dashboard" alone (ambiguous), "UI" alone |
 | **hex-cli** | The canonical CLI binary (Rust). All hex commands go through this binary. Also serves MCP tools via `hex mcp`. | "the CLI" without specifying which one |
-| **hex-chat** | Conversational chat interface (Tauri + TypeScript) for agent interaction. | |
 | **hex-desktop** | Desktop application — a Tauri wrapper around the hex-dashboard web UI. | |
 | **hex-core** | Shared Rust library — domain types and port traits used across all Rust crates. Zero external dependencies beyond serde. | |
 | **hex-parser** | Code parsing utilities Rust crate. | |

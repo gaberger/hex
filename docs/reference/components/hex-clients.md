@@ -75,14 +75,6 @@ See [hex-dashboard.md](hex-dashboard.md) for full details.
 
 Provides native OS integration (system tray, notifications, file dialogs) while rendering the same Solid.js dashboard. Useful for developers who prefer a dedicated app window over a browser tab.
 
-### hex-chat — Conversational Interface
-
-**Crate:** `hex-chat/`
-**Technology:** Tauri + TypeScript
-**Purpose:** Conversational chat interface for agent interaction
-
-Provides a chat-style interface for interacting with hex agents. Messages are routed through the `chat-relay` SpacetimeDB module, enabling human-agent and agent-agent communication.
-
 ## Connection Architecture
 
 All clients follow the same pattern:

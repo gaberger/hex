@@ -137,7 +137,7 @@ fn run_unit_tests(r: &mut TestResults) {
 
     r.check("hex-nexus lib tests pass", cargo_test("hex-nexus", Some("--lib")));
 
-    for crate_name in &["hex-chat", "hex-cli"] {
+    for crate_name in &["hex-cli"] {
         let ok = cargo_check(crate_name);
         r.check(&format!("{} compiles", crate_name), ok);
     }
