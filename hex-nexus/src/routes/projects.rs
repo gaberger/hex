@@ -105,15 +105,17 @@ pub async fn archive_project(
         Err(e) => return e,
     };
 
-    // Get project to find root path
-    let project = match sp.project_get(&id).await {
-        Ok(Some(p)) => p,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({ "error": "Project not found" }))),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+    // Get project root path — try state first, fall back to body.path
+    let root_path = match sp.project_get(&id).await {
+        Ok(Some(p)) => p.root_path,
+        _ => match body.get("path").and_then(|v| v.as_str()) {
+            Some(p) if !p.is_empty() => p.to_string(),
+            _ => return (StatusCode::NOT_FOUND, Json(json!({ "error": "Project not found and no path provided" }))),
+        },
     };
 
     let remove_claude = body.get("removeClaude").and_then(|v| v.as_bool()).unwrap_or(false);
-    let root = std::path::Path::new(&project.root_path);
+    let root = std::path::Path::new(&root_path);
     let mut removed = Vec::new();
 
     // Remove .hex/ directory
@@ -172,14 +174,16 @@ pub async fn delete_project(
         Err(e) => return e,
     };
 
-    // Get project to find root path
-    let project = match sp.project_get(&id).await {
-        Ok(Some(p)) => p,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({ "error": "Project not found" }))),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+    // Get project root path — try state first, fall back to body.path
+    let root_path = match sp.project_get(&id).await {
+        Ok(Some(p)) => p.root_path,
+        _ => match body.get("path").and_then(|v| v.as_str()) {
+            Some(p) if !p.is_empty() => p.to_string(),
+            _ => return (StatusCode::NOT_FOUND, Json(json!({ "error": "Project not found and no path provided" }))),
+        },
     };
 
-    let root = std::path::Path::new(&project.root_path);
+    let root = std::path::Path::new(&root_path);
     let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let path_str = canon.to_string_lossy();
 
@@ -215,7 +219,7 @@ pub async fn delete_project(
         match std::fs::remove_dir_all(root) {
             Ok(()) => true,
             Err(e) => {
-                tracing::error!("Failed to delete {}: {}", project.root_path, e);
+                tracing::error!("Failed to delete {}: {}", root_path, e);
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({ "error": format!("Delete failed: {}", e) })),
@@ -229,11 +233,11 @@ pub async fn delete_project(
     let envelope = WsEnvelope {
         topic: "hub:projects".to_string(),
         event: "project-deleted".to_string(),
-        data: json!({ "id": id, "path": project.root_path }),
+        data: json!({ "id": id, "path": root_path }),
     };
     let _ = state.ws_tx.send(envelope);
 
-    (StatusCode::OK, Json(json!({ "ok": true, "deleted": deleted, "path": project.root_path })))
+    (StatusCode::OK, Json(json!({ "ok": true, "deleted": deleted, "path": root_path })))
 }
 
 pub async fn list_projects(

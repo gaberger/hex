@@ -98,80 +98,75 @@ export async function unregisterProject(id: string): Promise<boolean> {
 }
 
 /**
- * Archive a project — remove from SpacetimeDB + delete config files from disk.
- * Reducer: SpacetimeDB (state). REST: hex-nexus (filesystem cleanup).
+ * Archive a project — delete config files, then remove from SpacetimeDB.
+ * Order: filesystem first (needs project path from state), reducer second (UI update).
  */
 export async function archiveProject(
   id: string,
   removeClaude = false,
 ): Promise<boolean> {
-  // 1. Remove from SpacetimeDB (instant UI update via subscription)
-  const conn = getHexfloConn();
-  if (conn) {
-    try {
-      conn.reducers.removeProject(id);
-    } catch {
-      // Continue — REST fallback will also unregister
-    }
-  }
+  // Get path from local state BEFORE removing from SpacetimeDB
+  const project = projects().find((p) => p.id === id);
+  const path = project?.path ?? "";
 
-  // 2. Delete config files from disk (REST — filesystem op, WASM can't do this)
+  // 1. Delete config files from disk (REST — filesystem op)
   try {
     const res = await fetch(`/api/projects/${id}/archive`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ removeClaude }),
+      body: JSON.stringify({ removeClaude, path }),
     });
-    if (res.ok) {
-      addToast("success", "Project archived — config removed, source files preserved");
-      return true;
+    if (!res.ok && res.status !== 404) {
+      const err = await res.json().catch(() => ({}));
+      addToast("error", `Archive failed: ${err.error ?? res.statusText}`);
+      return false;
     }
-    // 404 means the archive endpoint isn't available — that's fine, state is already removed
-    if (res.status === 404) {
-      addToast("success", "Project unregistered (config files need manual cleanup)");
-      return true;
-    }
-    const err = await res.json().catch(() => ({}));
-    addToast("error", `Archive failed: ${err.error ?? res.statusText}`);
-    return false;
-  } catch (err: any) {
-    // SpacetimeDB removal succeeded even if REST failed
-    addToast("warning", "Project unregistered but config cleanup failed — remove .hex/ manually");
-    return true;
+  } catch {
+    // Filesystem cleanup failed — still remove from state
   }
+
+  // 2. Remove from SpacetimeDB (instant UI update via subscription)
+  const conn = getHexfloConn();
+  if (conn) {
+    try { conn.reducers.removeProject(id); } catch { /* ignore */ }
+  }
+
+  addToast("success", "Project archived — config removed, source files preserved");
+  return true;
 }
 
 /**
- * Delete a project — remove from SpacetimeDB + delete ALL files from disk.
- * Reducer: SpacetimeDB (state). REST: hex-nexus (filesystem deletion).
+ * Delete a project — delete ALL files from disk, then remove from SpacetimeDB.
+ * Order: filesystem first (needs project path from state), reducer second (UI update).
  */
 export async function deleteProject(id: string): Promise<boolean> {
-  // 1. Remove from SpacetimeDB (instant UI update via subscription)
-  const conn = getHexfloConn();
-  if (conn) {
-    try {
-      conn.reducers.removeProject(id);
-    } catch {
-      // Continue — REST will also handle state removal
-    }
-  }
+  // Get path from local state BEFORE removing from SpacetimeDB
+  const project = projects().find((p) => p.id === id);
+  const path = project?.path ?? "";
 
-  // 2. Delete all files from disk (REST — filesystem op, WASM can't do this)
+  // 1. Delete all files from disk (REST — filesystem op)
   try {
     const res = await fetch(`/api/projects/${id}/delete`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirm: true }),
+      body: JSON.stringify({ confirm: true, path }),
     });
-    if (res.ok) {
-      addToast("success", "Project deleted permanently");
-      return true;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      addToast("error", `File deletion failed: ${err.error ?? res.statusText}`);
+      return false;
     }
-    const err = await res.json().catch(() => ({}));
-    addToast("error", `File deletion failed: ${err.error ?? res.statusText}`);
-    return false;
   } catch (err: any) {
     addToast("error", `Delete failed: ${err.message}`);
     return false;
   }
+
+  // 2. Remove from SpacetimeDB (instant UI update via subscription)
+  const conn = getHexfloConn();
+  if (conn) {
+    try { conn.reducers.removeProject(id); } catch { /* ignore */ }
+  }
+
+  addToast("success", "Project deleted permanently");
+  return true;
 }
