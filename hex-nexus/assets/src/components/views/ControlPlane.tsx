@@ -1,36 +1,29 @@
 /**
- * ControlPlane.tsx — Main dashboard view showing all projects, active swarms,
- * and infrastructure status. Matches Pencil design spec exactly.
+ * ControlPlane.tsx — Aggregated landing page across ALL projects.
+ *
+ * Shows a grid of project cards with health badges, swarm/agent counts,
+ * plus a global activity summary row. Click a card to navigate into that project.
  *
  * Data sources: SpacetimeDB subscriptions via connection + projects stores.
  */
-import { Component, For, Show, createMemo, createSignal, onMount } from "solid-js";
+import { Component, For, Show, createMemo, createSignal } from "solid-js";
 import {
   swarms,
   swarmTasks,
   registryAgents,
-  inferenceProviders,
 } from "../../stores/connection";
 import { projects, registerProject } from "../../stores/projects";
 import { navigate } from "../../stores/router";
-import { setSpawnDialogOpen, setSwarmInitDialogOpen } from "../../stores/ui";
-
-// Git worktree counts per project (fetched from /api/{id}/git/worktrees)
-const [worktreeCounts, setWorktreeCounts] = createSignal<Record<string, number>>({});
+import { setSwarmInitDialogOpen } from "../../stores/ui";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function healthScore(projectId: string): number | null {
-  const agents = registryAgents().filter(
-    (a: any) => (a.project ?? a.project_id ?? "") === projectId,
-  );
   const tasks = swarmTasks().filter(
     (t: any) => (t.project ?? t.project_id ?? "") === projectId,
   );
-  // No agents and no tasks means no analysis data — return null
-  if (agents.length === 0 && tasks.length === 0) return null;
   if (tasks.length === 0) return null;
   const completed = tasks.filter(
     (t: any) => t.status === "completed" || t.status === "done",
@@ -38,39 +31,63 @@ function healthScore(projectId: string): number | null {
   return Math.round((completed.length / tasks.length) * 100);
 }
 
-function healthBadge(score: number | null): { bg: string; text: string } {
-  if (score === null) return { bg: "#374151", text: "#9ca3af" };
-  if (score >= 80) return { bg: "#16532580", text: "#4ade80" };
-  if (score >= 60) return { bg: "#eab30820", text: "#eab308" };
-  return { bg: "#dc262620", text: "#f87171" };
+function scoreColor(score: number | null): string {
+  if (score === null) return "text-gray-500";
+  if (score >= 80) return "text-green-400";
+  if (score >= 60) return "text-yellow-400";
+  return "text-red-400";
 }
 
-function timeAgo(iso: string | undefined): string {
-  if (!iso) return "never";
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return `${Math.floor(diff / 86_400_000)}d ago`;
+function scoreRingBg(score: number | null): string {
+  if (score === null) return "text-gray-800";
+  if (score >= 80) return "text-green-500/20";
+  if (score >= 60) return "text-yellow-500/20";
+  return "text-red-500/20";
 }
 
 // ---------------------------------------------------------------------------
-// Folder icon (20x20)
+// Small health ring (48x48)
 // ---------------------------------------------------------------------------
 
-const FolderIcon: Component<{ active?: boolean }> = (props) => (
-  <svg
-    class="shrink-0"
-    width="20"
-    height="20"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke={props.active ? "var(--accent-hover)" : "var(--text-faint)"}
-    stroke-width="1.5"
-  >
-    <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-  </svg>
-);
+const MiniHealthRing: Component<{ score: number | null }> = (props) => {
+  const pct = () => props.score ?? 0;
+  const circumference = 2 * Math.PI * 18; // r=18
+
+  return (
+    <div class="relative">
+      <svg width="48" height="48" viewBox="0 0 48 48">
+        <circle
+          cx="24"
+          cy="24"
+          r="18"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="4"
+          class="text-gray-800"
+        />
+        <Show when={props.score !== null}>
+          <circle
+            cx="24"
+            cy="24"
+            r="18"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="4"
+            stroke-linecap="round"
+            stroke-dasharray={`${(pct() / 100) * circumference} ${circumference}`}
+            transform="rotate(-90 24 24)"
+            class={scoreColor(props.score)}
+          />
+        </Show>
+      </svg>
+      <span
+        class={`absolute inset-0 flex items-center justify-center text-xs font-bold ${scoreColor(props.score)}`}
+      >
+        {props.score !== null ? props.score : "--"}
+      </span>
+    </div>
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -81,22 +98,7 @@ const ControlPlane: Component = () => {
   const [registering, setRegistering] = createSignal(false);
   const [newPath, setNewPath] = createSignal("");
 
-  // Fetch worktree counts for registered projects (SpacetimeDB is source of truth — no re-registration)
-  onMount(() => {
-    projects().forEach((p) => {
-      if (!p.id) return;
-      fetch(`/api/${p.id}/git/worktrees`)
-        .then((r) => r.ok ? r.json() : null)
-        .then((json) => {
-          if (json?.ok) {
-            const count = (json.data.worktrees ?? []).filter((w: any) => !w.isBare).length;
-            setWorktreeCounts((prev) => ({ ...prev, [p.id]: count }));
-          }
-        })
-        .catch(() => {});
-    });
-  });
-
+  // Project list with computed stats
   const projectList = createMemo(() =>
     projects().map((p) => {
       const score = healthScore(p.id);
@@ -106,79 +108,26 @@ const ControlPlane: Component = () => {
       const swarmCount = swarms().filter(
         (s: any) => (s.project ?? s.project_id ?? "") === p.id,
       ).length;
-      const worktreeCount = worktreeCounts()[p.id] ?? 0;
-      const taskCount = swarmTasks().filter(
-        (t: any) => (t.project ?? t.project_id ?? "") === p.id,
-      ).length;
-      const completedTasks = swarmTasks().filter(
-        (t: any) =>
-          (t.project ?? t.project_id ?? "") === p.id &&
-          (t.status === "completed" || t.status === "done"),
-      ).length;
-      return {
-        ...p,
-        score,
-        agentCount,
-        swarmCount,
-        worktreeCount,
-        taskCount,
-        completedTasks,
-      };
+      return { ...p, score, agentCount, swarmCount };
     }),
   );
 
-  const activeSwarms = createMemo(() =>
-    swarms().filter(
-      (s: any) =>
-        s.status === "active" || s.status === "running" || !s.status,
-    ),
+  // Global activity summary
+  const totalTasksInProgress = createMemo(() =>
+    swarmTasks().filter(
+      (t: any) =>
+        t.status === "in_progress" ||
+        t.status === "running" ||
+        t.status === "assigned",
+    ).length,
   );
 
-  const subtitle = createMemo(() => {
-    const parts: string[] = [];
-    parts.push(
-      `${projectList().length} project${projectList().length !== 1 ? "s" : ""}`,
-    );
-    parts.push(
-      `${activeSwarms().length} active swarm${activeSwarms().length !== 1 ? "s" : ""}`,
-    );
-    parts.push(
-      `${registryAgents().length} agent${registryAgents().length !== 1 ? "s" : ""}`,
-    );
-    parts.push(
-      `${inferenceProviders().length} inference provider${inferenceProviders().length !== 1 ? "s" : ""}`,
-    );
-    return parts.join(" \u00b7 ");
-  });
-
-  function swarmProgress(swarmId: string): {
-    percent: number;
-    done: number;
-    total: number;
-  } {
-    const tasks = swarmTasks().filter(
-      (t: any) => (t.swarmId ?? t.swarm_id ?? "") === swarmId,
-    );
-    if (tasks.length === 0) return { percent: 0, done: 0, total: 0 };
-    const done = tasks.filter(
-      (t: any) => t.status === "completed" || t.status === "done",
-    ).length;
-    return {
-      percent: Math.round((done / tasks.length) * 100),
-      done,
-      total: tasks.length,
-    };
-  }
-
-  function swarmProjectId(swarm: any): string {
-    return swarm.project ?? swarm.project_id ?? "";
-  }
-
-  function swarmProjectName(swarm: any): string {
-    const pid = swarmProjectId(swarm);
-    const proj = projects().find((p) => p.id === pid);
-    return proj?.name ?? pid ?? "unassigned";
-  }
+  const totalActiveAgents = createMemo(() =>
+    registryAgents().filter(
+      (a: any) =>
+        a.status === "active" || a.status === "running" || a.status === "online",
+    ).length,
+  );
 
   async function handleRegister(e: Event) {
     e.preventDefault();
@@ -196,43 +145,43 @@ const ControlPlane: Component = () => {
 
   return (
     <div class="flex h-full flex-col overflow-auto bg-[var(--bg-base)]">
-      {/* Padding container */}
       <div class="flex flex-col gap-6 p-6">
-        {/* Header: Title + action buttons */}
-        <div>
-          <div class="flex items-start justify-between">
-            <div>
-              <h2 class="text-[22px] font-bold leading-tight text-[var(--text-body)]">
-                Control Plane
-              </h2>
-              <p class="mt-1 text-[13px] text-[var(--text-faint)]">
-                {subtitle()}
-              </p>
-            </div>
-
-            <div class="flex items-center gap-3">
-              <button
-                class="rounded-lg border-none bg-[color-mix(in_srgb,var(--accent)_30%,transparent)] px-3.5 py-1.5 text-[13px] font-semibold text-[var(--accent-hover)] cursor-pointer"
-                onClick={() => setShowRegisterForm(true)}
-              >
-                + Add Project
-              </button>
-              <button
-                class="rounded-lg border border-[var(--border)] bg-transparent px-3.5 py-1.5 text-[13px] font-semibold text-[var(--text-body)] cursor-pointer"
-                onClick={() => setSwarmInitDialogOpen(true)}
-              >
-                New Swarm
-              </button>
-            </div>
+        {/* Header */}
+        <div class="flex items-start justify-between">
+          <div>
+            <h2 class="text-[22px] font-bold leading-tight text-[var(--text-body)]">
+              Control Plane
+            </h2>
+            <p class="mt-1 text-[13px] text-[var(--text-faint)]">
+              {projectList().length} project
+              {projectList().length !== 1 ? "s" : ""}
+              {" \u00b7 "}
+              {totalActiveAgents()} active agent
+              {totalActiveAgents() !== 1 ? "s" : ""}
+              {" \u00b7 "}
+              {totalTasksInProgress()} task
+              {totalTasksInProgress() !== 1 ? "s" : ""} in progress
+            </p>
+          </div>
+          <div class="flex items-center gap-3">
+            <button
+              class="rounded-lg border-none bg-[color-mix(in_srgb,var(--accent)_30%,transparent)] px-3.5 py-1.5 text-[13px] font-semibold text-[var(--accent-hover)] cursor-pointer"
+              onClick={() => setShowRegisterForm(true)}
+            >
+              + Add Project
+            </button>
+            <button
+              class="rounded-lg border border-[var(--border)] bg-transparent px-3.5 py-1.5 text-[13px] font-semibold text-[var(--text-body)] cursor-pointer"
+              onClick={() => setSwarmInitDialogOpen(true)}
+            >
+              New Swarm
+            </button>
           </div>
         </div>
 
-        {/* Inline register form (shown when + Add Project is clicked) */}
-        <Show when={showRegisterForm() && projectList().length > 0}>
-          <form
-            class="flex items-center gap-3"
-            onSubmit={handleRegister}
-          >
+        {/* Inline register form */}
+        <Show when={showRegisterForm()}>
+          <form class="flex items-center gap-3" onSubmit={handleRegister}>
             <input
               type="text"
               placeholder="/path/to/project"
@@ -240,9 +189,6 @@ const ControlPlane: Component = () => {
               onInput={(e) => setNewPath(e.currentTarget.value)}
               autofocus
               class="flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2 text-[13px] text-[var(--text-body)] outline-none focus:border-[color-mix(in_srgb,var(--accent-hover)_50%,transparent)]"
-              onBlur={(e) =>
-                (e.currentTarget.style.borderColor = "var(--border)")
-              }
             />
             <button
               type="submit"
@@ -264,7 +210,7 @@ const ControlPlane: Component = () => {
           </form>
         </Show>
 
-        {/* Main content */}
+        {/* Project cards grid */}
         <Show
           when={projectList().length > 0}
           fallback={
@@ -276,147 +222,75 @@ const ControlPlane: Component = () => {
             />
           }
         >
-          {/* Project cards grid */}
-          <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             <For each={projectList()}>
-              {(project) => {
-                const badge = () => healthBadge(project.score);
-                const hasSwarms = () => project.swarmCount > 0;
-                return (
-                  <button
-                    class="group flex flex-col rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 text-left cursor-pointer transition-all hover:border-[color-mix(in_srgb,var(--accent-hover)_40%,transparent)]"
-                    classList={{
-                      "border-[color-mix(in_srgb,var(--accent-hover)_25%,transparent)]": hasSwarms(),
-                    }}
-                    onClick={() =>
-                      navigate({ page: "project", projectId: project.id })
-                    }
-                  >
-                    {/* Top row: folder icon + name + health badge */}
-                    <div class="flex w-full items-center justify-between">
-                      <div class="flex items-center gap-2.5 overflow-hidden">
-                        <FolderIcon active={hasSwarms()} />
-                        <span class="truncate text-[16px] font-bold text-[var(--text-body)]">
-                          {project.name}
-                        </span>
-                      </div>
-                      <span
-                        class="ml-2 shrink-0 rounded-full px-2 py-0.5 text-[12px] font-bold"
-                        style={{
-                          background: badge().bg,
-                          color: badge().text,
-                        }}
-                      >
-                        {project.score !== null ? project.score : "--"}
-                      </span>
-                    </div>
+              {(project) => (
+                <button
+                  class="group flex items-start gap-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 text-left cursor-pointer transition-all hover:border-[color-mix(in_srgb,var(--accent-hover)_40%,transparent)]"
+                  onClick={() =>
+                    navigate({ page: "project", projectId: project.id })
+                  }
+                >
+                  {/* Mini health ring */}
+                  <MiniHealthRing score={project.score} />
 
-                    {/* Stats row */}
-                    <div class="mt-2 flex items-center gap-3 text-[12px]">
-                      <span class="text-[var(--text-faint)]">
-                        {project.worktreeCount} worktree
-                        {project.worktreeCount !== 1 ? "s" : ""}
-                      </span>
-                      <span class="text-[var(--accent-hover)]">
+                  {/* Info */}
+                  <div class="flex flex-1 flex-col overflow-hidden">
+                    <span class="truncate text-[15px] font-bold text-[var(--text-body)]">
+                      {project.name}
+                    </span>
+                    <div class="mt-1 flex items-center gap-3 text-[12px] text-[var(--text-faint)]">
+                      <span>
                         {project.swarmCount} swarm
                         {project.swarmCount !== 1 ? "s" : ""}
                       </span>
-                    </div>
-
-                    {/* Agent count */}
-                    <Show when={project.agentCount > 0}>
-                      <div class="mt-1 text-[12px] text-[var(--text-muted)]">
+                      <span>
                         {project.agentCount} agent
                         {project.agentCount !== 1 ? "s" : ""}
-                      </div>
-                    </Show>
-
-                    {/* Health bar */}
-                    <div class="mt-3 h-1.5 w-full overflow-hidden rounded-md bg-[var(--bg-elevated)]">
-                      <div
-                        class="h-full rounded-md transition-[width] duration-500 ease-in-out"
-                        style={{
-                          width: `${project.score ?? 0}%`,
-                          background: badge().text,
-                        }}
-                      />
+                      </span>
                     </div>
-
-                    {/* Last activity */}
-                    <div class="mt-2 text-[11px] text-[var(--text-dim)]">
-                      Last: {timeAgo((project as any).lastActivity)}
-                    </div>
-                  </button>
-                );
-              }}
+                  </div>
+                </button>
+              )}
             </For>
+
+            {/* Add Project card */}
+            <button
+              class="flex items-center justify-center gap-2 rounded-xl border border-dashed border-gray-700 bg-transparent p-4 text-[14px] text-[var(--text-faint)] cursor-pointer transition-colors hover:border-[var(--accent)] hover:text-[var(--accent-hover)]"
+              onClick={() => setShowRegisterForm(true)}
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Add Project
+            </button>
           </div>
 
-          {/* Active Swarms section */}
-          <Show when={activeSwarms().length > 0}>
-            <div class="mt-2">
-              <h3 class="mb-3 text-[14px] font-bold uppercase tracking-wide text-[var(--text-body)]">
-                Active Swarms
-              </h3>
-              <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <For each={activeSwarms()}>
-                  {(swarm) => {
-                    const prog = () =>
-                      swarmProgress(swarm.id ?? swarm.swarm_id ?? "");
-                    const topology = () =>
-                      swarm.topology ?? swarm.swarm_topology ?? "hier";
-                    const topoShort = () => {
-                      const t = topology();
-                      if (t.startsWith("hier")) return "hier";
-                      if (t.startsWith("mesh")) return "mesh";
-                      if (t.startsWith("star")) return "star";
-                      return t.slice(0, 4);
-                    };
-                    return (
-                      <button
-                        class="flex flex-col rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 text-left cursor-pointer transition-all hover:border-[var(--accent)]"
-                        onClick={() => {
-                          const pid = swarmProjectId(swarm);
-                          if (pid) {
-                            navigate({ page: "project", projectId: pid });
-                          }
-                        }}
-                      >
-                        {/* Swarm name + progress% + topology */}
-                        <div class="flex w-full items-center justify-between">
-                          <span class="truncate font-mono text-[14px] font-bold text-[var(--text-body)]">
-                            {swarm.name ?? swarm.swarm_name ?? "unnamed"}
-                          </span>
-                          <div class="flex items-center gap-2">
-                            <span class="text-[12px] font-semibold text-[var(--accent-hover)]">
-                              {prog().percent}%
-                            </span>
-                            <span class="font-mono text-[11px] text-[var(--text-faint)]">
-                              {topoShort()}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Project name + task count */}
-                        <div class="mt-1 text-[12px] text-[var(--text-faint)]">
-                          {swarmProjectName(swarm)} &middot;{" "}
-                          {prog().done}/{prog().total} tasks
-                        </div>
-
-                        {/* Progress bar */}
-                        <div class="mt-3 h-1.5 w-full overflow-hidden rounded-md bg-[var(--bg-elevated)]">
-                          <div
-                            class="h-full rounded-md bg-[var(--accent-hover)] transition-[width] duration-500 ease-in-out"
-                            style={{ width: `${prog().percent}%` }}
-                          />
-                        </div>
-                      </button>
-                    );
-                  }}
-                </For>
-              </div>
+          {/* Global activity summary */}
+          <div class="flex items-center gap-6 rounded-lg border border-gray-800 bg-gray-900 px-5 py-3">
+            <div class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-[var(--accent-hover)]" />
+              <span class="text-[13px] text-[var(--text-body)]">
+                {totalTasksInProgress()} task
+                {totalTasksInProgress() !== 1 ? "s" : ""} in progress
+              </span>
             </div>
-          </Show>
+            <div class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-green-400" />
+              <span class="text-[13px] text-[var(--text-body)]">
+                {totalActiveAgents()} active agent
+                {totalActiveAgents() !== 1 ? "s" : ""}
+              </span>
+            </div>
+          </div>
         </Show>
       </div>
     </div>
@@ -424,7 +298,7 @@ const ControlPlane: Component = () => {
 };
 
 // ---------------------------------------------------------------------------
-// Empty state — shown when no projects are registered
+// Empty state
 // ---------------------------------------------------------------------------
 
 const EmptyState: Component<{
@@ -451,23 +325,17 @@ const EmptyState: Component<{
         No projects registered
       </p>
       <p class="mx-auto mt-2 max-w-md text-[13px] text-[var(--text-faint)]">
-        Register a project directory to start tracking its architecture,
-        agents, and swarms.
+        Register a project directory to start tracking its architecture, agents,
+        and swarms.
       </p>
     </div>
-    <form
-      class="flex w-full max-w-lg gap-2"
-      onSubmit={props.onRegister}
-    >
+    <form class="flex w-full max-w-lg gap-2" onSubmit={props.onRegister}>
       <input
         type="text"
         placeholder="/path/to/project"
         value={props.path()}
         onInput={(e) => props.setPath(e.currentTarget.value)}
         class="flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3.5 py-2.5 text-[13px] text-[var(--text-body)] outline-none focus:border-[color-mix(in_srgb,var(--accent-hover)_50%,transparent)]"
-        onBlur={(e) =>
-          (e.currentTarget.style.borderColor = "var(--border)")
-        }
       />
       <button
         type="submit"

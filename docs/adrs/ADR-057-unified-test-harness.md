@@ -155,7 +155,7 @@ hex test unit           # Rust + TS + Dashboard + SpacetimeDB module tests
 hex test lint           # clippy + tsc + biome
 hex test arch           # hex analyze . (boundaries, cycles, dead code)
 hex test services       # API endpoint smoke tests (requires nexus)
-hex test e2e            # Browser tests via Playwright (opt-in)
+hex test e2e            # Browser tests via agent-browser (opt-in)
 hex test all            # unit + lint + arch + services
 hex test full           # all + e2e
 ```
@@ -195,8 +195,34 @@ jobs:
     runs-on: ubuntu-latest
     needs: [integration]
     steps:
-      - npx playwright test
+      - hex nexus start
+      - hex test e2e    # Uses agent-browser for AI-optimized snapshot testing
 ```
+
+### E2E via agent-browser
+
+E2E tests use `agent-browser` (Playwright-based, AI-optimized snapshots) rather than raw Playwright test scripts. This provides:
+
+- **93% context reduction**: Accessibility tree snapshots with element refs (`@e1`, `@e2`) instead of full DOM
+- **Agent-driven testing**: Hex agents can run E2E tests as part of swarm validation using the `/browser` skill
+- **Snapshot assertions**: `agent-browser snapshot -i` captures interactive elements for state verification
+
+```bash
+# E2E test flow (invoked by hex test e2e)
+agent-browser open http://127.0.0.1:5555        # Open dashboard
+agent-browser snapshot -i                         # Capture interactive elements
+agent-browser click @sidebar-projects             # Navigate
+agent-browser snapshot -i                         # Verify state change
+agent-browser screenshot tests/e2e/dashboard.png  # Visual evidence
+agent-browser close
+```
+
+The `hex test e2e` subcommand orchestrates agent-browser commands against a running nexus instance, validating:
+- Dashboard loads and renders project list
+- Swarm monitor reflects real-time task state
+- ADR browser lists all ADRs
+- Agent fleet shows connected agents
+- Chat interface sends and receives messages
 
 ### 9. Quality Gate Integration (ADR-005)
 
@@ -220,7 +246,7 @@ ADR-005's 6-gate pipeline maps to the test levels:
 | 3 | Setup Vitest in `hex-nexus/assets/`, test critical stores | Medium |
 | 4 | Integration test cleanup (swarm + memory teardown) | Small |
 | 5 | Add tests for P0 SpacetimeDB modules (agent-registry, workplan-state) | Medium |
-| 6 | E2E test setup with Playwright | Large |
+| 6 | E2E test setup with agent-browser + `/browser` skill | Medium |
 | 7 | CI pipeline yaml | Medium |
 
 ## Consequences
@@ -233,8 +259,8 @@ ADR-005's 6-gate pipeline maps to the test levels:
 - CI pipeline provides confidence for merges
 
 ### Negative
-- Vitest + Playwright add dev dependencies to the dashboard
-- E2E tests are slow (~30s) and require headless browser setup
+- Vitest adds a dev dependency to the dashboard
+- E2E tests require agent-browser installed and a running nexus instance
 - SpacetimeDB module tests require the separate workspace, complicating CI
 
 ### Mitigations

@@ -17,13 +17,18 @@ import type { Route } from '../stores/router';
 import { projects } from '../stores/projects';
 import ChatView from '../components/chat/ChatView';
 import { ControlPlane, ProjectDetail } from '../components/views';
+import { ProjectHome } from '../components/project';
 
-// Lazy-load views that are not on the initial render path (T25 perf audit)
+// Lazy-load views that are not on the initial render path
 const AgentFleet = lazy(() => import('../components/views/AgentFleet'));
 const ADRBrowser = lazy(() => import('../components/views/ADRBrowser'));
 const ConfigPage = lazy(() => import('../components/views/ConfigPage'));
 const FileTreeView = lazy(() => import('../components/views/FileTreeView'));
 const WorkplanView = lazy(() => import('../components/views/WorkplanView'));
+const AgentList = lazy(() => import('../components/project/AgentList'));
+const AgentDetailView = lazy(() => import('../components/project/AgentDetail'));
+const SwarmDetail = lazy(() => import('../components/project/SwarmDetail'));
+const WorkPlanDetail = lazy(() => import('../components/project/WorkPlanDetail'));
 
 // ── Sidebar nav item definitions ─────────────────────────────────────────────
 
@@ -361,16 +366,16 @@ const App: Component = () => {
           <Breadcrumbs />
           <Switch fallback={<ControlPlane />}>
             <Match when={route().page === "control-plane"}><ControlPlane /></Match>
-            <Match when={route().page === "project"}><ProjectDetail /></Match>
-            <Match when={route().page === "project-agents"}><AgentFleet /></Match>
-            <Match when={route().page === "project-agent-detail"}><AgentFleet /></Match>
-            <Match when={route().page === "project-swarms"}><ControlPlane /></Match>
-            <Match when={route().page === "project-swarm-detail"}><ControlPlane /></Match>
-            <Match when={route().page === "project-swarm-task"}><ControlPlane /></Match>
+            <Match when={route().page === "project"}><ProjectHome /></Match>
+            <Match when={route().page === "project-agents"}><AgentList /></Match>
+            <Match when={route().page === "project-agent-detail"}><AgentDetailView /></Match>
+            <Match when={route().page === "project-swarms"}><ProjectHome /></Match>
+            <Match when={route().page === "project-swarm-detail"}><SwarmDetail /></Match>
+            <Match when={route().page === "project-swarm-task"}><SwarmDetail /></Match>
             <Match when={route().page === "project-adrs"}><ADRBrowser /></Match>
             <Match when={route().page === "project-adr-detail"}><ADRBrowser /></Match>
             <Match when={route().page === "project-workplans"}><WorkplanView /></Match>
-            <Match when={route().page === "project-workplan-detail"}><WorkplanView /></Match>
+            <Match when={route().page === "project-workplan-detail"}><WorkPlanDetail /></Match>
             <Match when={route().page === "project-health"}><ProjectDetail /></Match>
             <Match when={route().page === "project-graph"}><ProjectDetail /></Match>
             <Match when={route().page === "project-files"}><FileTreeView /></Match>

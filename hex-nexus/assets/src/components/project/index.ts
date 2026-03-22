@@ -1,7 +1,13 @@
 export { default as ProjectCard } from './ProjectCard';
+export { default as ProjectHome } from './ProjectHome';
 export { default as ProjectOverview } from './ProjectOverview';
 export { default as ProjectSidebar } from './ProjectSidebar';
 export { default as FileTree } from './FileTree';
 export { default as TaskBoard } from './TaskBoard';
 export { default as AgentLog } from './AgentLog';
 export { default as BranchPicker } from './BranchPicker';
+export { default as GovernancePipeline } from './GovernancePipeline';
+export { default as AgentList } from './AgentList';
+export { default as AgentDetail } from './AgentDetail';
+export { default as SwarmDetail } from './SwarmDetail';
+export { default as WorkPlanDetail } from './WorkPlanDetail';
