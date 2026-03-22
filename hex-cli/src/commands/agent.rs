@@ -87,15 +87,50 @@ async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Cross-reference: fetch active swarms to show agent→swarm mapping
+    let swarms_resp = nexus.get("/api/swarms/active").await.ok();
+    let swarms = swarms_resp
+        .as_ref()
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // Build agent→swarm lookup: agent_id → (swarm_name, pending, completed, total)
+    let mut agent_swarm_map: std::collections::HashMap<String, (String, usize, usize, usize)> =
+        std::collections::HashMap::new();
+    for swarm in &swarms {
+        let swarm_name = swarm["name"].as_str().unwrap_or("-");
+        if let Some(tasks) = swarm["tasks"].as_array() {
+            for task in tasks {
+                let agent_id = task["agentId"].as_str()
+                    .or_else(|| task["agent_id"].as_str())
+                    .unwrap_or("");
+                if agent_id.is_empty() {
+                    continue;
+                }
+                let status = task["status"].as_str().unwrap_or("pending");
+                let entry = agent_swarm_map
+                    .entry(agent_id.to_string())
+                    .or_insert_with(|| (swarm_name.to_string(), 0, 0, 0));
+                entry.3 += 1; // total
+                match status {
+                    "completed" => entry.2 += 1,
+                    "pending" => entry.1 += 1,
+                    _ => {} // in_progress, failed, etc.
+                }
+            }
+        }
+    }
+
     println!("{} Agents ({})", "\u{2b21}".cyan(), agents.len());
     println!();
     println!(
-        "  {:<14} {:<16} {:<20} {:<10} {}",
+        "  {:<14} {:<16} {:<10} {:<18} {}",
         "ID".bold(),
         "NAME".bold(),
-        "HOST".bold(),
         "STATUS".bold(),
-        "MODELS".bold(),
+        "SWARM".bold(),
+        "TASKS".bold(),
     );
     println!("  {}", "\u{2500}".repeat(80).dimmed());
 
@@ -107,20 +142,7 @@ async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
         let id_short = if id.len() > 12 { &id[..12] } else { id };
 
         let name = agent["name"].as_str().unwrap_or("?");
-        let host = agent["host"].as_str()
-            .or_else(|| agent["project_dir"].as_str())
-            .unwrap_or("local");
         let status = agent["status"].as_str().unwrap_or("?");
-
-        let models = agent["capabilities"]["models"]
-            .as_array()
-            .map(|m| {
-                m.iter()
-                    .filter_map(|v| v.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            })
-            .unwrap_or_else(|| agent["model"].as_str().unwrap_or("").to_string());
 
         let status_colored = match status {
             "online" | "active" | "connected" | "running" => status.green().to_string(),
@@ -137,9 +159,24 @@ async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
             name.to_string()
         };
 
+        // Agent→swarm cross-reference
+        let (swarm_display, task_display) = if let Some((swarm_name, _pending, completed, total)) =
+            agent_swarm_map.get(id)
+        {
+            let swarm_short = if swarm_name.len() > 16 {
+                format!("{}…", &swarm_name[..15])
+            } else {
+                swarm_name.clone()
+            };
+            let tasks = format!("{}/{} done", completed, total);
+            (swarm_short, tasks)
+        } else {
+            ("—".dimmed().to_string(), "—".dimmed().to_string())
+        };
+
         println!(
-            "  {:<14} {:<16} {:<20} {:<19} {}",
-            id_short, name_display, host, status_colored, models,
+            "  {:<14} {:<16} {:<19} {:<18} {}",
+            id_short, name_display, status_colored, swarm_display, task_display,
         );
     }
 

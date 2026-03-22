@@ -13,7 +13,7 @@ mod config_tests {
     fn test_default_config_is_spacetimedb() {
         let config = StateBackendConfig::default();
         assert_eq!(config.host, "http://localhost:3000");
-        assert_eq!(config.database, "hex-nexus");
+        assert_eq!(config.database, "hexflo-coordination");
         assert!(config.auth_token.is_none());
     }
 
@@ -58,7 +58,7 @@ mod config_tests {
         let json = r#"{}"#;
         let config: StateBackendConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.host, "http://localhost:3000");
-        assert_eq!(config.database, "hex-nexus");
+        assert_eq!(config.database, "hexflo-coordination");
         assert!(config.auth_token.is_none());
     }
 
@@ -123,12 +123,23 @@ mod spacetime_adapter_tests {
     }
 
     #[tokio::test]
-    async fn test_connect_returns_error_without_server() {
-        let adapter = SpacetimeStateAdapter::new(SpacetimeConfig::default());
-        let result = adapter.connect().await;
+    async fn test_connect_without_server_leaves_adapter_disconnected() {
+        // connect() is lenient by design (returns Ok even on failure),
+        // but the adapter should remain in a disconnected state so that
+        // methods requiring a live connection will return errors.
+        let config = SpacetimeConfig {
+            host: "http://127.0.0.1:19999".to_string(),
+            database: "nonexistent-db".to_string(),
+            auth_token: None,
+        };
+        let adapter = SpacetimeStateAdapter::new(config);
+        let _ = adapter.connect().await;
+
+        // After a failed connect, state-dependent methods should error
+        let result = adapter.rl_get_stats().await;
         assert!(
             result.is_err(),
-            "connect() should fail without a running SpacetimeDB server"
+            "rl_get_stats() should fail when adapter is not connected"
         );
     }
 
@@ -147,7 +158,7 @@ mod spacetime_adapter_tests {
     fn test_spacetime_config_default() {
         let config = SpacetimeConfig::default();
         assert_eq!(config.host, "http://localhost:3000");
-        assert_eq!(config.database, "hex-nexus");
+        assert_eq!(config.database, "hexflo-coordination");
         assert!(config.auth_token.is_none());
     }
 

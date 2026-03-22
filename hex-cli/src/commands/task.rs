@@ -111,21 +111,34 @@ async fn list() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    println!("{} Tasks ({})", "\u{2b21}".cyan(), all_tasks.len());
+    // Count stats
+    let completed = all_tasks.iter().filter(|(_, _, t)| t["status"].as_str() == Some("completed")).count();
+    let total = all_tasks.len();
+
+    println!(
+        "{} Tasks ({}/{} completed)",
+        "\u{2b21}".cyan(),
+        completed,
+        total
+    );
     println!();
     println!(
-        "  {:<15} {:<12} {:<36} {}",
+        "  {:<15} {:<12} {:<14} {:<12} {}",
         "SWARM".bold(),
         "STATUS".bold(),
+        "AGENT".bold(),
         "TASK ID".bold(),
         "TITLE".bold()
     );
-    println!("  {}", "\u{2500}".repeat(80).dimmed());
+    println!("  {}", "\u{2500}".repeat(90).dimmed());
 
     for (swarm_name, _swarm_id, task) in &all_tasks {
         let tid = task["id"].as_str().unwrap_or("-");
         let title = task["title"].as_str().unwrap_or("-");
         let status = task["status"].as_str().unwrap_or("pending");
+        let agent_id = task["agentId"].as_str()
+            .or_else(|| task["agent_id"].as_str())
+            .unwrap_or("");
 
         let status_colored = match status {
             "completed" => status.green().to_string(),
@@ -135,10 +148,18 @@ async fn list() -> anyhow::Result<()> {
             _ => status.to_string(),
         };
 
-        let tid_short = if tid.len() > 34 { &tid[..34] } else { tid };
+        let agent_display = if agent_id.is_empty() {
+            "—".dimmed().to_string()
+        } else if agent_id.len() > 12 {
+            agent_id[..12].to_string()
+        } else {
+            agent_id.to_string()
+        };
+
+        let tid_short = if tid.len() > 10 { &tid[..10] } else { tid };
         println!(
-            "  {:<15} {:<21} {:<36} {}",
-            swarm_name, status_colored, tid_short, title
+            "  {:<15} {:<21} {:<14} {:<12} {}",
+            swarm_name, status_colored, agent_display, tid_short, title
         );
     }
 

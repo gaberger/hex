@@ -7,6 +7,57 @@
 
 use std::path::Path;
 
+/// Report of a config sync operation (T7: enhanced reporting).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SyncReport {
+    /// Number of config items successfully synced.
+    pub synced: usize,
+    /// Number of config items that failed to sync.
+    pub failed: usize,
+    /// Per-item details (category → status).
+    pub items: Vec<SyncItem>,
+    /// Timestamp of this sync run.
+    pub timestamp: String,
+}
+
+/// A single config item sync result.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SyncItem {
+    pub category: String,
+    pub status: String, // "ok" or "failed"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl SyncReport {
+    fn new() -> Self {
+        Self {
+            synced: 0,
+            failed: 0,
+            items: Vec::new(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+
+    fn record_ok(&mut self, category: &str) {
+        self.synced += 1;
+        self.items.push(SyncItem {
+            category: category.to_string(),
+            status: "ok".to_string(),
+            error: None,
+        });
+    }
+
+    fn record_fail(&mut self, category: &str, error: String) {
+        self.failed += 1;
+        self.items.push(SyncItem {
+            category: category.to_string(),
+            status: "failed".to_string(),
+            error: Some(error),
+        });
+    }
+}
+
 // ── Project Manifest (ADR-043) ──────────────────────────
 
 /// Parsed `.hex/project.yaml` manifest for auto-registration.
@@ -94,6 +145,113 @@ pub async fn auto_register_project(project_root: &Path, stdb_host: &str, stdb_db
             );
         }
     }
+}
+
+/// Sync project config files to SpacetimeDB with detailed reporting.
+///
+/// Returns a [`SyncReport`] with per-category success/failure status.
+/// This is used by the hydration pipeline (T7) to verify config sync completed.
+pub async fn sync_project_config_with_report(
+    project_root: &Path,
+    stdb_host: &str,
+    stdb_db: &str,
+) -> SyncReport {
+    let mut report = SyncReport::new();
+    let client = reqwest::Client::new();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // 1. Blueprint
+    let blueprint_path = project_root.join(".hex/blueprint.json");
+    if blueprint_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&blueprint_path) {
+            match call_reducer(
+                &client,
+                stdb_host,
+                stdb_db,
+                "sync_config",
+                serde_json::json!([
+                    "blueprint",
+                    project_root.file_name().unwrap_or_default().to_string_lossy(),
+                    content,
+                    ".hex/blueprint.json",
+                    &now,
+                ]),
+            )
+            .await
+            {
+                Ok(()) => report.record_ok("blueprint"),
+                Err(e) => report.record_fail("blueprint", e),
+            }
+        }
+    }
+
+    // 2. Settings (MCP servers + hooks)
+    let settings_path = project_root.join(".claude/settings.json");
+    if settings_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&settings_path) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(mcp) = parsed.get("mcpServers") {
+                    match call_reducer(
+                        &client, stdb_host, stdb_db, "sync_config",
+                        serde_json::json!([
+                            "mcp_servers",
+                            project_root.file_name().unwrap_or_default().to_string_lossy(),
+                            mcp.to_string(),
+                            ".claude/settings.json",
+                            &now,
+                        ]),
+                    ).await {
+                        Ok(()) => report.record_ok("mcp_servers"),
+                        Err(e) => report.record_fail("mcp_servers", e),
+                    }
+                }
+                if let Some(hooks) = parsed.get("hooks") {
+                    match call_reducer(
+                        &client, stdb_host, stdb_db, "sync_config",
+                        serde_json::json!([
+                            "hooks",
+                            project_root.file_name().unwrap_or_default().to_string_lossy(),
+                            hooks.to_string(),
+                            ".claude/settings.json",
+                            &now,
+                        ]),
+                    ).await {
+                        Ok(()) => report.record_ok("hooks"),
+                        Err(e) => report.record_fail("hooks", e),
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Skills + agents + MCP tools (count-based)
+    let global_skills_dir = project_root.join("skills");
+    if global_skills_dir.is_dir() {
+        let mut skill_count = 0usize;
+        if let Ok(entries) = std::fs::read_dir(&global_skills_dir) {
+            for entry in entries.flatten() {
+                if !entry.path().is_dir() { continue; }
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                let skill_md = entry.path().join("SKILL.md");
+                if !skill_md.exists() { continue; }
+                if let Ok(content) = std::fs::read_to_string(&skill_md) {
+                    let (name, trigger, desc) = parse_skill_frontmatter(&content, &dir_name);
+                    let project_id = project_root.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    if call_reducer(
+                        &client, stdb_host, stdb_db, "sync_skill",
+                        serde_json::json!([&dir_name, project_id, name, trigger, desc, format!("skills/{}/SKILL.md", dir_name), &now]),
+                    ).await.is_ok() {
+                        skill_count += 1;
+                    }
+                }
+            }
+        }
+        if skill_count > 0 {
+            report.record_ok(&format!("skills({})", skill_count));
+        }
+    }
+
+    report
 }
 
 /// Sync project config files to SpacetimeDB.

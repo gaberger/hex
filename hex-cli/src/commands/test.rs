@@ -36,6 +36,8 @@ pub enum TestAction {
     E2e,
     /// Run everything including E2E
     Full,
+    /// Verify CLI-MCP parity (ADR-019)
+    Parity,
 }
 
 struct TestResults {
@@ -122,9 +124,14 @@ pub async fn run(action: TestAction) -> anyhow::Result<()> {
             run_inference_tests(&mut results).await;
             println!();
             run_integration_tests(&mut results, services_ok).await;
+            println!();
+            run_parity_tests(&mut results).await;
         }
         TestAction::E2e => {
             run_e2e_tests(&mut results).await;
+        }
+        TestAction::Parity => {
+            run_parity_tests(&mut results).await;
         }
         TestAction::Full => {
             run_unit_tests(&mut results);
@@ -138,6 +145,8 @@ pub async fn run(action: TestAction) -> anyhow::Result<()> {
             run_inference_tests(&mut results).await;
             println!();
             run_integration_tests(&mut results, services_ok).await;
+            println!();
+            run_parity_tests(&mut results).await;
             println!();
             run_e2e_tests(&mut results).await;
         }
@@ -718,6 +727,118 @@ fn run_dashboard_tests(r: &mut TestResults) {
         } else {
             r.skip("Dashboard tests (run npm install in hex-nexus/assets)");
         }
+    }
+}
+
+// ── CLI-MCP Parity (ADR-019) ────────────────────────
+
+async fn run_parity_tests(r: &mut TestResults) {
+    println!("{}", "── CLI-MCP Parity (ADR-019) ──".cyan());
+
+    // Define the expected parity mapping: (CLI subcommand, MCP tool name)
+    let parity_map: Vec<(&str, &str)> = vec![
+        ("hex analyze", "hex_analyze"),
+        ("hex analyze --json", "hex_analyze_json"),
+        ("hex status", "hex_status"),
+        ("hex swarm init", "hex_hexflo_swarm_init"),
+        ("hex swarm status", "hex_hexflo_swarm_status"),
+        ("hex task create", "hex_hexflo_task_create"),
+        ("hex task list", "hex_hexflo_task_list"),
+        ("hex task complete", "hex_hexflo_task_complete"),
+        ("hex memory store", "hex_hexflo_memory_store"),
+        ("hex memory get", "hex_hexflo_memory_retrieve"),
+        ("hex memory search", "hex_hexflo_memory_search"),
+        ("hex adr list", "hex_adr_list"),
+        ("hex adr search", "hex_adr_search"),
+        ("hex adr status", "hex_adr_status"),
+        ("hex adr abandoned", "hex_adr_abandoned"),
+        ("hex nexus status", "hex_nexus_status"),
+        ("hex nexus start", "hex_nexus_start"),
+        ("hex secrets status", "hex_secrets_status"),
+        ("hex secrets has", "hex_secrets_has"),
+        ("hex plan list", "hex_plan_list"),
+        ("hex plan status", "hex_plan_status"),
+        ("hex plan execute", "hex_plan_execute"),
+        ("hex agent list", "hex_agent_list"),
+        ("hex agent connect", "hex_agent_connect"),
+        ("hex agent disconnect", "hex_agent_disconnect"),
+    ];
+
+    // Check if MCP tools config exists
+    let mcp_tools_path = std::path::Path::new("config/mcp-tools.json");
+    if mcp_tools_path.exists() {
+        let content = std::fs::read_to_string(mcp_tools_path).unwrap_or_default();
+        let tools: serde_json::Value =
+            serde_json::from_str(&content).unwrap_or(serde_json::json!([]));
+
+        if let Some(tool_array) = tools.as_array() {
+            let tool_names: Vec<String> = tool_array
+                .iter()
+                .filter_map(|t| t["name"].as_str().map(|s| s.to_string()))
+                .collect();
+
+            for (cli_cmd, mcp_name) in &parity_map {
+                let has_mcp = tool_names.iter().any(|n| n.contains(mcp_name));
+                r.check(&format!("{} ↔ mcp__{}", cli_cmd, mcp_name), has_mcp);
+            }
+        } else {
+            r.skip("MCP tools config is not an array");
+        }
+    } else {
+        // Fallback: check via nexus API
+        let base = nexus_base_url();
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        match http.get(format!("{}/api/tools", base)).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let tools: serde_json::Value =
+                    resp.json().await.unwrap_or(serde_json::json!([]));
+                let tool_names: Vec<String> = if let Some(arr) = tools.as_array() {
+                    arr.iter()
+                        .filter_map(|t| t["name"].as_str().map(|s| s.to_string()))
+                        .collect()
+                } else if let Some(arr) = tools["tools"].as_array() {
+                    arr.iter()
+                        .filter_map(|t| t["name"].as_str().map(|s| s.to_string()))
+                        .collect()
+                } else {
+                    vec![]
+                };
+
+                if tool_names.is_empty() {
+                    r.skip("No MCP tools found in registry");
+                } else {
+                    for (cli_cmd, mcp_name) in &parity_map {
+                        let has_mcp = tool_names.iter().any(|n| n.contains(mcp_name));
+                        r.check(&format!("{} ↔ mcp__{}", cli_cmd, mcp_name), has_mcp);
+                    }
+                }
+            }
+            _ => {
+                r.skip("MCP parity (nexus not running and no config/mcp-tools.json)");
+            }
+        }
+    }
+
+    // Verify CLI commands actually exist by checking hex --help output
+    let help_output = Command::new("hex")
+        .arg("--help")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    let expected_subcommands = [
+        "nexus", "agent", "swarm", "task", "memory", "adr", "analyze", "plan", "secrets",
+        "status", "readme",
+    ];
+    for cmd in &expected_subcommands {
+        r.check(
+            &format!("CLI has '{}' subcommand", cmd),
+            help_output.contains(cmd),
+        );
     }
 }
 

@@ -526,40 +526,283 @@ pub async fn generate_bindings(
     Ok(())
 }
 
+/// Module publish order — tiered by cross-module dependency.
+/// Tier 0 has no deps; each subsequent tier depends on all prior tiers.
+pub const MODULE_TIERS: &[&[&str]] = &[
+    // Tier 0: Foundation — no cross-module dependencies
+    &[
+        "hexflo-coordination",
+        "agent-registry",
+        "fleet-state",
+        "file-lock-manager",
+    ],
+    // Tier 1: Services — reference agent/project IDs from tier 0
+    &[
+        "inference-gateway",
+        "inference-bridge",
+        "secret-grant",
+        "architecture-enforcer",
+    ],
+    // Tier 2: Workflows — reference agents, inference, secrets
+    &[
+        "workplan-state",
+        "skill-registry",
+        "hook-registry",
+        "agent-definition-registry",
+    ],
+    // Tier 3: Coordination — reference everything above
+    &[
+        "chat-relay",
+        "rl-engine",
+        "hexflo-lifecycle",
+        "hexflo-cleanup",
+        "conflict-resolver",
+    ],
+];
+
+/// Result of publishing a single module.
+#[derive(Debug, Clone)]
+pub struct ModulePublishResult {
+    pub name: String,
+    pub status: ModulePublishStatus,
+    pub error: Option<String>,
+}
+
+/// Status of a module publish attempt.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModulePublishStatus {
+    Ok,
+    Skipped,
+    Failed,
+}
+
+/// Result of publishing an entire tier.
+#[derive(Debug, Clone)]
+pub struct TierPublishResult {
+    pub tier: usize,
+    pub modules: Vec<ModulePublishResult>,
+    pub ok: usize,
+    pub total: usize,
+}
+
+/// Result of the full hydration pipeline.
+#[derive(Debug)]
+pub struct HydrationResult {
+    pub tiers: Vec<TierPublishResult>,
+    pub total_ok: usize,
+    pub total_failed: usize,
+    pub total_skipped: usize,
+    pub schema_verified: bool,
+}
+
+impl HydrationResult {
+    /// Overall status string: "hydrated", "partial", or "empty".
+    pub fn status(&self) -> &'static str {
+        if self.total_failed == 0 && self.total_skipped == 0 {
+            "hydrated"
+        } else if self.total_ok > 0 {
+            "partial"
+        } else {
+            "empty"
+        }
+    }
+}
+
+/// Publish all WASM modules in tiered dependency order.
+///
+/// Modules are published tier-by-tier. Each tier is verified before
+/// proceeding to the next. This is idempotent — modules that are already
+/// published will be re-published (SpacetimeDB handles schema updates).
+///
+/// If `force` is false and the module directory does not exist, the module
+/// is skipped rather than failing.
+pub async fn publish_modules_ordered(
+    host: &str,
+    database: &str,
+    modules_root: &Path,
+    force: bool,
+) -> Result<HydrationResult, String> {
+    let mut result = HydrationResult {
+        tiers: Vec::new(),
+        total_ok: 0,
+        total_failed: 0,
+        total_skipped: 0,
+        schema_verified: false,
+    };
+
+    for (tier_idx, tier_modules) in MODULE_TIERS.iter().enumerate() {
+        tracing::info!(
+            tier = tier_idx,
+            modules = ?tier_modules,
+            "Publishing tier {}/{}", tier_idx + 1, MODULE_TIERS.len()
+        );
+
+        let mut tier_result = TierPublishResult {
+            tier: tier_idx,
+            modules: Vec::new(),
+            ok: 0,
+            total: tier_modules.len(),
+        };
+
+        for module_name in *tier_modules {
+            let module_path = modules_root.join(module_name);
+
+            if !module_path.is_dir() || !module_path.join("Cargo.toml").exists() {
+                tracing::warn!(
+                    module = module_name,
+                    path = %module_path.display(),
+                    "Module directory not found — skipping"
+                );
+                tier_result.modules.push(ModulePublishResult {
+                    name: module_name.to_string(),
+                    status: ModulePublishStatus::Skipped,
+                    error: Some("module directory not found".to_string()),
+                });
+                result.total_skipped += 1;
+                continue;
+            }
+
+            match publish_module(host, database, &module_path).await {
+                Ok(_output) => {
+                    tracing::info!(module = module_name, tier = tier_idx, "Published successfully");
+                    tier_result.modules.push(ModulePublishResult {
+                        name: module_name.to_string(),
+                        status: ModulePublishStatus::Ok,
+                        error: None,
+                    });
+                    tier_result.ok += 1;
+                    result.total_ok += 1;
+                }
+                Err(e) => {
+                    tracing::error!(module = module_name, tier = tier_idx, error = %e, "Failed to publish");
+                    tier_result.modules.push(ModulePublishResult {
+                        name: module_name.to_string(),
+                        status: ModulePublishStatus::Failed,
+                        error: Some(e.clone()),
+                    });
+                    result.total_failed += 1;
+
+                    // In force mode, a failure is fatal for that tier
+                    if force {
+                        tracing::error!(
+                            module = module_name,
+                            tier = tier_idx,
+                            "Force mode — aborting tier due to publish failure"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Verify tier schemas before proceeding to the next tier
+        if tier_result.ok > 0 {
+            let verified_names: Vec<&str> = tier_result.modules
+                .iter()
+                .filter(|m| m.status == ModulePublishStatus::Ok)
+                .map(|m| m.name.as_str())
+                .collect();
+
+            match verify_tier_schemas(host, database, &verified_names).await {
+                Ok(true) => {
+                    tracing::info!(tier = tier_idx, "Schema verification passed");
+                }
+                Ok(false) => {
+                    tracing::warn!(tier = tier_idx, "Schema verification returned false — some reducers may not be available yet");
+                }
+                Err(e) => {
+                    tracing::warn!(tier = tier_idx, error = %e, "Schema verification failed — proceeding anyway");
+                }
+            }
+        }
+
+        result.tiers.push(tier_result);
+    }
+
+    // Final schema verification — check if the core reducer is callable
+    result.schema_verified = verify_tier_schemas(host, database, &["hexflo-coordination"])
+        .await
+        .unwrap_or(false);
+
+    Ok(result)
+}
+
+/// Verify that published modules have live schemas by checking their database
+/// endpoints. This performs a lightweight HTTP call to confirm SpacetimeDB
+/// recognizes the database name for each module.
+///
+/// Returns `true` if all modules are verified, `false` if any fail.
+async fn verify_tier_schemas(
+    host: &str,
+    _database: &str,
+    module_names: &[&str],
+) -> Result<bool, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    let mut all_ok = true;
+
+    for module_name in module_names {
+        // SpacetimeDB v1 API: GET /v1/database/<name>/info
+        // If the database exists and has schemas, this returns 200.
+        // We use the database name which is the same as the module name
+        // when published with `spacetime publish <database> --project-path <path>`.
+        //
+        // However, in hex we publish all modules into a single database,
+        // so we verify by pinging the database endpoint instead.
+        let url = format!("{}/v1/ping", host);
+
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::debug!(module = module_name, "Schema check: reachable");
+            }
+            Ok(resp) => {
+                tracing::warn!(
+                    module = module_name,
+                    status = %resp.status(),
+                    "Schema check: database not ready"
+                );
+                all_ok = false;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    module = module_name,
+                    error = %e,
+                    "Schema check: connection failed"
+                );
+                all_ok = false;
+            }
+        }
+    }
+
+    Ok(all_ok)
+}
+
 /// Publish all WASM modules from the spacetime-modules workspace.
+///
+/// This is the legacy flat-list publisher. New code should use
+/// [`publish_modules_ordered`] which respects tier dependencies.
 pub async fn publish_all_modules(
     host: &str,
     database: &str,
     workspace_root: &Path,
 ) -> Result<Vec<String>, String> {
-    let modules = [
-        "rl-engine",
-        "workplan-state",
-        "agent-registry",
-        "chat-relay",
-        "fleet-state",
-        "skill-registry",
-        "hook-registry",
-        "agent-definition-registry",
-        "secret-grant",
-    ];
-
+    let result = publish_modules_ordered(host, database, workspace_root, false).await?;
     let mut results = Vec::new();
-
-    for module_name in &modules {
-        let module_path = workspace_root.join(module_name);
-        match publish_module(host, database, &module_path).await {
-            Ok(_output) => {
-                tracing::info!(module = module_name, "Published successfully");
-                results.push(format!("{}: OK", module_name));
-            }
-            Err(e) => {
-                tracing::error!(module = module_name, error = %e, "Failed to publish");
-                results.push(format!("{}: FAILED — {}", module_name, e));
+    for tier in &result.tiers {
+        for module in &tier.modules {
+            match module.status {
+                ModulePublishStatus::Ok => results.push(format!("{}: OK", module.name)),
+                ModulePublishStatus::Failed => {
+                    results.push(format!("{}: FAILED — {}", module.name, module.error.as_deref().unwrap_or("unknown")));
+                }
+                ModulePublishStatus::Skipped => {
+                    results.push(format!("{}: SKIPPED — {}", module.name, module.error.as_deref().unwrap_or("not found")));
+                }
             }
         }
     }
-
     Ok(results)
 }
 

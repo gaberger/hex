@@ -157,6 +157,93 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
 
     }
 
+    // Auto-hydrate SpacetimeDB schemas on startup (T9: zero-setup first boot).
+    // Runs in background — publishes WASM modules if SpacetimeDB is empty.
+    {
+        let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
+            .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+        let stdb_database = std::env::var("HEX_SPACETIMEDB_DATABASE")
+            .unwrap_or_else(|_| "hex".to_string());
+        let stdb_host_clone = stdb_host.clone();
+        let stdb_db_clone = stdb_database.clone();
+
+        tokio::spawn(async move {
+            // Check if SpacetimeDB is reachable first
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(3))
+                .build()
+                .unwrap_or_default();
+
+            let ping_ok = client
+                .get(format!("{}/v1/ping", stdb_host_clone))
+                .send()
+                .await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+
+            if !ping_ok {
+                tracing::info!(
+                    "SpacetimeDB not reachable at {} — skipping auto-hydration. \
+                     Run `hex stdb hydrate` manually after starting SpacetimeDB.",
+                    stdb_host_clone
+                );
+                return;
+            }
+
+            // Look for spacetime-modules directory
+            let modules_dir = if let Ok(cwd) = std::env::current_dir() {
+                let candidate = cwd.join("spacetime-modules");
+                if candidate.is_dir() {
+                    Some(candidate)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let Some(modules_dir) = modules_dir {
+                tracing::info!(
+                    "Auto-hydrating SpacetimeDB schemas ({} → {})",
+                    stdb_host_clone,
+                    stdb_db_clone
+                );
+
+                match spacetime_launcher::publish_modules_ordered(
+                    &stdb_host_clone,
+                    &stdb_db_clone,
+                    &modules_dir,
+                    false,
+                )
+                .await
+                {
+                    Ok(result) => {
+                        tracing::info!(
+                            status = result.status(),
+                            published = result.total_ok,
+                            failed = result.total_failed,
+                            skipped = result.total_skipped,
+                            "SpacetimeDB hydration complete: {} — {}/{} modules published",
+                            result.status(),
+                            result.total_ok,
+                            result.total_ok + result.total_failed + result.total_skipped
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "SpacetimeDB auto-hydration failed: {} — run `hex stdb hydrate` manually",
+                            e
+                        );
+                    }
+                }
+            } else {
+                tracing::debug!(
+                    "spacetime-modules/ not found — skipping auto-hydration (normal for installed hex)"
+                );
+            }
+        });
+    }
+
     // Auto-register project + sync config files to SpacetimeDB (fire-and-forget)
     if let Ok(cwd) = std::env::current_dir() {
         let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")

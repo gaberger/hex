@@ -102,22 +102,32 @@ async fn status() -> anyhow::Result<()> {
     println!("  Topology: {}", topology);
     println!("  Tasks:    {}", task_count);
 
-    // Show task summary if any
+    // Show task summary with agent assignments
     if let Some(tasks) = swarm["tasks"].as_array() {
         if !tasks.is_empty() {
+            let completed = tasks.iter().filter(|t| t["status"].as_str() == Some("completed")).count();
+            let total = tasks.len();
+            println!(
+                "  Progress: {}/{} completed",
+                completed, total
+            );
             println!();
             println!(
-                "  {:<36} {:<12} {}",
-                "TASK ID".bold(),
+                "  {:<12} {:<16} {:<36} {}",
                 "STATUS".bold(),
+                "AGENT".bold(),
+                "TASK ID".bold(),
                 "TITLE".bold()
             );
-            println!("  {}", "\u{2500}".repeat(70).dimmed());
+            println!("  {}", "\u{2500}".repeat(90).dimmed());
 
             for task in tasks {
                 let tid = task["id"].as_str().unwrap_or("-");
                 let title = task["title"].as_str().unwrap_or("-");
                 let status = task["status"].as_str().unwrap_or("unknown");
+                let agent_id = task["agentId"].as_str()
+                    .or_else(|| task["agent_id"].as_str())
+                    .unwrap_or("");
 
                 let status_colored = match status {
                     "completed" => status.green().to_string(),
@@ -127,8 +137,19 @@ async fn status() -> anyhow::Result<()> {
                     _ => status.to_string(),
                 };
 
+                let agent_display = if agent_id.is_empty() {
+                    "—".dimmed().to_string()
+                } else if agent_id.len() > 14 {
+                    agent_id[..14].to_string()
+                } else {
+                    agent_id.to_string()
+                };
+
                 let tid_short = if tid.len() > 34 { &tid[..34] } else { tid };
-                println!("  {:<36} {:<21} {}", tid_short, status_colored, title);
+                println!(
+                    "  {:<21} {:<16} {:<36} {}",
+                    status_colored, agent_display, tid_short, title
+                );
             }
         }
     }
@@ -151,27 +172,57 @@ async fn list() -> anyhow::Result<()> {
     println!("{} Swarms ({})", "\u{2b21}".cyan(), swarms.len());
     println!();
     println!(
-        "  {:<36} {:<20} {:<15} {}",
+        "  {:<36} {:<20} {:<15} {:<10} {}",
         "ID".bold(),
         "NAME".bold(),
         "TOPOLOGY".bold(),
-        "TASKS".bold()
+        "STATUS".bold(),
+        "TASKS".bold(),
     );
-    println!("  {}", "\u{2500}".repeat(80).dimmed());
+    println!("  {}", "\u{2500}".repeat(95).dimmed());
 
     for swarm in &swarms {
         let id = swarm["id"].as_str().unwrap_or("-");
         let name = swarm["name"].as_str().unwrap_or("-");
         let topology = swarm["topology"].as_str().unwrap_or("-");
-        let task_count = swarm["tasks"]
-            .as_array()
-            .map(|t| t.len())
+        let swarm_status = swarm["status"].as_str().unwrap_or("active");
+        let tasks = swarm["tasks"].as_array();
+        let total = tasks.map(|t| t.len()).unwrap_or(0);
+        let completed = tasks
+            .map(|t| t.iter().filter(|tk| tk["status"].as_str() == Some("completed")).count())
             .unwrap_or(0);
+        let in_progress = tasks
+            .map(|t| t.iter().filter(|tk| {
+                let s = tk["status"].as_str().unwrap_or("");
+                s == "in_progress" || s == "running"
+            }).count())
+            .unwrap_or(0);
+        let pending = total - completed - in_progress;
+
+        let status_colored = match swarm_status {
+            "active" => swarm_status.green().to_string(),
+            "completed" => swarm_status.dimmed().to_string(),
+            _ => swarm_status.to_string(),
+        };
+
+        // Format: "3/5 done (1 active)"
+        let task_summary = if total == 0 {
+            "0".dimmed().to_string()
+        } else if completed == total {
+            format!("{}", format!("{}/{} done", completed, total).green())
+        } else if in_progress > 0 {
+            format!(
+                "{}/{} done ({} active, {} pending)",
+                completed, total, in_progress, pending
+            )
+        } else {
+            format!("{}/{} done ({} pending)", completed, total, pending)
+        };
 
         let id_short = if id.len() > 34 { &id[..34] } else { id };
         println!(
-            "  {:<36} {:<20} {:<15} {}",
-            id_short, name, topology, task_count
+            "  {:<36} {:<20} {:<15} {:<19} {}",
+            id_short, name, topology, status_colored, task_summary
         );
     }
 
