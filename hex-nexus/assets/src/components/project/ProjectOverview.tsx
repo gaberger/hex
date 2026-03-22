@@ -6,9 +6,15 @@
  * Dismissed state stored in localStorage.
  */
 import { Component, For, Show, createSignal, createMemo } from "solid-js";
-import ProjectCard, { type ProjectInfo } from "./ProjectCard";
+import ProjectCard, { type ProjectInfo, type ProjectAction } from "./ProjectCard";
 import { registryAgents, swarms, anyConnected } from "../../stores/connection";
-import { projects as sharedProjects, registerProject as sharedRegisterProject } from "../../stores/projects";
+import {
+  projects as sharedProjects,
+  registerProject as sharedRegisterProject,
+  unregisterProject,
+  archiveProject,
+  deleteProject,
+} from "../../stores/projects";
 
 const MAX_VISIBLE = 4;
 const DISMISSED_KEY = "hex_dismissed_projects";
@@ -40,6 +46,28 @@ const ProjectOverview: Component = () => {
   const [newPath, setNewPath] = createSignal("");
   const [dismissed, setDismissed] = createSignal(loadDismissed());
   const [showAll, setShowAll] = createSignal(false);
+  const [confirmDelete, setConfirmDelete] = createSignal<ProjectInfo | null>(null);
+
+  async function handleProjectAction(action: ProjectAction, id: string) {
+    const project = projects().find((p) => p.id === id);
+    if (!project) return;
+
+    if (action === "unregister") {
+      await unregisterProject(id);
+    } else if (action === "archive") {
+      await archiveProject(id);
+    } else if (action === "delete") {
+      // Show confirmation dialog — this is destructive
+      setConfirmDelete(project);
+    }
+  }
+
+  async function confirmDeleteProject() {
+    const project = confirmDelete();
+    if (!project) return;
+    setConfirmDelete(null);
+    await deleteProject(project.id);
+  }
 
   const visibleProjects = createMemo(() => {
     const all = projects() ?? [];
@@ -145,7 +173,7 @@ const ProjectOverview: Component = () => {
           <For each={displayProjects()}>
             {(project) => (
               <div class="relative group">
-                <ProjectCard project={project} />
+                <ProjectCard project={project} onAction={handleProjectAction} />
                 {/* Dismiss button */}
                 <button
                   class="absolute top-2 right-2 rounded p-1 text-gray-300 opacity-0 group-hover:opacity-100 hover:bg-gray-800 hover:text-gray-300 transition-all"
@@ -204,6 +232,54 @@ const ProjectOverview: Component = () => {
             Show fewer
           </button>
         </Show>
+      </Show>
+
+      {/* Delete confirmation dialog */}
+      <Show when={confirmDelete()}>
+        {(project) => (
+          <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div class="mx-4 max-w-md rounded-xl border border-red-900/50 bg-gray-950 p-6 shadow-2xl">
+              <div class="mb-4 flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-red-900/30">
+                  <svg class="h-5 w-5 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-100">
+                    Delete project permanently?
+                  </h3>
+                  <p class="text-xs text-gray-400">This cannot be undone</p>
+                </div>
+              </div>
+
+              <div class="mb-5 rounded-lg border border-gray-800 bg-gray-900 p-3">
+                <p class="text-sm font-medium text-gray-200">{project().name}</p>
+                <p class="mt-1 truncate font-mono text-[11px] text-red-300">
+                  {project().path}
+                </p>
+                <p class="mt-2 text-[11px] text-gray-500">
+                  All files at this path will be permanently deleted.
+                </p>
+              </div>
+
+              <div class="flex justify-end gap-2">
+                <button
+                  class="rounded-lg border border-gray-700 px-4 py-2 text-xs text-gray-300 transition-colors hover:bg-gray-800"
+                  onClick={() => setConfirmDelete(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  class="rounded-lg bg-red-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-red-500"
+                  onClick={confirmDeleteProject}
+                >
+                  Delete permanently
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </Show>
     </div>
   );

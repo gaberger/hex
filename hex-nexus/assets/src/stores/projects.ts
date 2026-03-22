@@ -12,6 +12,8 @@ export interface Project {
   id: string;
   name: string;
   path: string;
+  health?: "green" | "yellow" | "red";
+  lastActivity?: string;
 }
 
 // Reactive project list from SpacetimeDB subscription
@@ -33,6 +35,72 @@ export interface InitResult {
   name: string;
   path: string;
   created: string[];
+}
+
+/** Unregister a project from nexus (keeps all files). */
+export async function unregisterProject(id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      addToast("success", "Project unregistered");
+      return true;
+    }
+    const err = await res.json().catch(() => ({}));
+    addToast("error", `Unregister failed: ${err.error ?? res.statusText}`);
+    return false;
+  } catch (err: any) {
+    addToast("error", `Unregister failed: ${err.message}`);
+    return false;
+  }
+}
+
+/** Archive a project — unregister + remove .hex/ config, keep source files. */
+export async function archiveProject(
+  id: string,
+  removeClaude = false,
+): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/projects/${id}/archive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ removeClaude }),
+    });
+    if (res.ok) {
+      addToast("success", "Project archived — config removed, source files preserved");
+      return true;
+    }
+    // Fallback: if archive endpoint doesn't exist yet, just unregister
+    if (res.status === 404) {
+      return unregisterProject(id);
+    }
+    const err = await res.json().catch(() => ({}));
+    addToast("error", `Archive failed: ${err.error ?? res.statusText}`);
+    return false;
+  } catch (err: any) {
+    addToast("error", `Archive failed: ${err.message}`);
+    return false;
+  }
+}
+
+/** Delete a project — unregister + delete ALL files from disk. Requires confirmation. */
+export async function deleteProject(id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/projects/${id}/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    });
+    if (res.ok) {
+      addToast("success", "Project deleted permanently");
+      return true;
+    }
+    const err = await res.json().catch(() => ({}));
+    addToast("error", `Delete failed: ${err.error ?? res.statusText}`);
+    return false;
+  } catch (err: any) {
+    addToast("error", `Delete failed: ${err.message}`);
+    return false;
+  }
 }
 
 /** Scaffold project config, then register in SpacetimeDB. */
