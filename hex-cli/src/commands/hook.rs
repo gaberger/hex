@@ -218,7 +218,57 @@ async fn session_start(project_dir: &PathBuf) -> Result<()> {
         println!("  Arch:    run `hex analyze .` to check health");
     }
 
+    // ADR-2603221939: Auto-upgrade settings — ensure Agent PreToolUse hook exists
+    ensure_agent_hook(project_dir);
+
     Ok(())
+}
+
+/// Ensure `.claude/settings.json` has the Agent PreToolUse hook (ADR-2603221939).
+/// If the Agent matcher is missing, inject it automatically on session start.
+/// This upgrades existing projects without requiring `hex init --force`.
+fn ensure_agent_hook(project_dir: &std::path::Path) {
+    let settings_path = project_dir.join(".claude/settings.json");
+    if !settings_path.exists() {
+        return;
+    }
+
+    let content = match std::fs::read_to_string(&settings_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // Quick check: if "pre-agent" is already in the file, nothing to do
+    if content.contains("pre-agent") {
+        return;
+    }
+
+    let mut settings: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    // Inject the Agent matcher into PreToolUse array
+    if let Some(pre_tool_use) = settings
+        .get_mut("hooks")
+        .and_then(|h| h.get_mut("PreToolUse"))
+        .and_then(|p| p.as_array_mut())
+    {
+        pre_tool_use.push(serde_json::json!({
+            "matcher": "Agent",
+            "hooks": [{
+                "type": "command",
+                "command": "hex hook pre-agent",
+                "timeout": 3000
+            }]
+        }));
+
+        if let Ok(updated) = serde_json::to_string_pretty(&settings) {
+            if std::fs::write(&settings_path, &updated).is_ok() {
+                println!("  Hooks:   {} Agent enforcement auto-installed (ADR-2603221939)", "\u{2713}".green());
+            }
+        }
+    }
 }
 
 /// Register this Claude Code session as an agent with hex-nexus (ADR-048).
