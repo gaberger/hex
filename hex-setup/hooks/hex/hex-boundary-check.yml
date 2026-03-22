@@ -1,0 +1,115 @@
+# hex-boundary-check — Pre-commit hook for hexagonal architecture enforcement
+# Validates import boundaries before code reaches the repository
+
+name: hex-boundary-check
+type: pre-commit
+description: >
+  Enforces hexagonal architecture import rules at commit time. Catches boundary
+  violations before they reach the repository — domain importing adapters,
+  adapters importing other adapters, missing .js extensions, and ports importing
+  implementation details.
+
+trigger: pre-commit
+blocking: true  # Commit is rejected if violations found
+
+checks:
+  domain_isolation:
+    description: "domain/ must only import from domain/"
+    paths: ["src/core/domain/"]
+    rule: |
+      Scan all import/require statements in domain/ files.
+      ALLOW: imports from other domain/ files (relative paths within domain/)
+      DENY: imports from ports/, usecases/, adapters/, infrastructure/, node_modules
+      EXCEPTION: Type-only imports from standard lib (e.g., import type { Readable } from 'stream')
+
+  port_boundaries:
+    description: "ports/ may import from domain/ but nothing else"
+    paths: ["src/core/ports/"]
+    rule: |
+      Scan all import/require statements in ports/ files.
+      ALLOW: imports from domain/ (for value types used in port contracts)
+      DENY: imports from usecases/, adapters/, infrastructure/, node_modules
+      EXCEPTION: Type-only imports for generic types (Result, Option, etc.)
+
+  adapter_isolation:
+    description: "adapters must NEVER import other adapters"
+    paths: ["src/adapters/"]
+    rule: |
+      For each file in adapters/primary/ and adapters/secondary/:
+      ALLOW: imports from ports/ (the contracts they implement)
+      ALLOW: imports from domain/ (for value types)
+      ALLOW: imports from node_modules (external dependencies)
+      DENY: imports from other adapter directories
+      DENY: adapters/primary/X importing from adapters/primary/Y
+      DENY: adapters/primary/ importing from adapters/secondary/ (and vice versa)
+
+  usecase_boundaries:
+    description: "usecases/ may import from domain/ and ports/ only"
+    paths: ["src/core/usecases/"]
+    rule: |
+      ALLOW: imports from domain/ and ports/
+      DENY: imports from adapters/ (usecases must not know about implementations)
+      DENY: imports from infrastructure/
+
+  composition_root_exclusivity:
+    description: "Only composition-root.ts may import from adapters"
+    paths: ["src/"]
+    rule: |
+      Search for adapter imports outside composition-root.ts.
+      Any file other than composition-root.ts that imports from adapters/ is a violation.
+
+  js_extensions:
+    description: "All relative imports must use .js extensions"
+    paths: ["src/"]
+    rule: |
+      Scan all relative import paths (starting with ./ or ../).
+      Each must end with .js (NodeNext module resolution).
+      DENY: import { X } from './foo'  (missing .js)
+      ALLOW: import { X } from './foo.js'
+
+implementation:
+  # How this hook runs in practice
+  cli_command: "hex analyze . --boundaries-only --fail-on-violation"
+  fallback_script: |
+    # If hex CLI is not available, use grep-based checking
+    echo "Checking hexagonal boundaries..."
+
+    # Check domain isolation
+    violations=$(grep -rn "from ['\"].*adapters\|from ['\"].*ports\|from ['\"].*usecases" src/core/domain/ 2>/dev/null || true)
+    if [ -n "$violations" ]; then
+      echo "VIOLATION: domain/ imports from outside domain/"
+      echo "$violations"
+      exit 1
+    fi
+
+    # Check adapter cross-imports
+    for adapter_dir in src/adapters/primary/* src/adapters/secondary/*; do
+      if [ -d "$adapter_dir" ]; then
+        adapter_name=$(basename "$adapter_dir")
+        cross=$(grep -rn "from ['\"].*adapters/" "$adapter_dir" | grep -v "from ['\"].*/$adapter_name" || true)
+        if [ -n "$cross" ]; then
+          echo "VIOLATION: $adapter_name imports from another adapter"
+          echo "$cross"
+          exit 1
+        fi
+      fi
+    done
+
+    # Check .js extensions
+    missing_ext=$(grep -rn "from ['\"]\.\.*/[^'\"]*[^s]'" src/ | grep -v "\.js'" | grep -v "\.json'" | grep -v node_modules || true)
+    if [ -n "$missing_ext" ]; then
+      echo "VIOLATION: relative imports missing .js extension"
+      echo "$missing_ext"
+      exit 1
+    fi
+
+    echo "All boundary checks passed."
+
+output:
+  on_pass: "Hexagonal boundaries validated — no violations found"
+  on_fail: |
+    List each violation with:
+      - File path and line number
+      - The offending import statement
+      - Which boundary rule was violated
+      - Suggested fix (e.g., "Move this import to composition-root.ts")

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "hex": {
+      "command": "hex",
+      "args": ["mcp"],
+      "env": {},
+      "description": "hex AAIDE — architecture enforcement, swarm coordination, ADR management, workplan execution"
+    }
+  }
+}

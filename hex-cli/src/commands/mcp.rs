@@ -45,286 +45,73 @@ struct JsonRpcError {
 
 // ─── Tool Definitions ────────────────────────────────────
 
-/// Build the complete tool list. Each tool maps 1:1 to a CLI command
-/// or nexus endpoint — no phantom tools.
+/// Compiled-in fallback: the JSON is baked in at build time so the MCP server
+/// works even when `config/mcp-tools.json` is not on disk (e.g. installed binary).
+const BUILTIN_TOOLS_JSON: &str = include_str!("../../../config/mcp-tools.json");
+
+/// Load tool definitions from `config/mcp-tools.json` at runtime.
+/// Falls back to the compiled-in copy if the file is missing.
+///
+/// Resolution order:
+///   1. `$HEX_PROJECT_ROOT/config/mcp-tools.json`  (project-local override)
+///   2. `<exe_dir>/../config/mcp-tools.json`         (installed layout)
+///   3. Compiled-in fallback via `include_str!`
 fn build_tool_list() -> Value {
-    serde_json::json!({
-        "tools": [
-            // ── Analysis ──
-            {
-                "name": "hex_analyze",
-                "description": "Architecture health check: boundary violations, dead exports, circular deps",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "path": { "type": "string", "description": "Project root path to analyze" }
-                    },
-                    "required": ["path"]
-                }
-            },
-            {
-                "name": "hex_status",
-                "description": "Show project status and service health",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            // ── Swarm coordination ──
-            {
-                "name": "hex_hexflo_swarm_init",
-                "description": "Initialize a new swarm for coordinated multi-agent work",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "name": { "type": "string", "description": "Swarm name" },
-                        "project_id": { "type": "string", "description": "Project identifier" },
-                        "topology": { "type": "string", "description": "Topology: hierarchical, mesh, star" }
-                    },
-                    "required": ["name", "project_id"]
-                }
-            },
-            {
-                "name": "hex_hexflo_swarm_status",
-                "description": "Show active swarms and their status",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            // ── Task management ──
-            {
-                "name": "hex_hexflo_task_create",
-                "description": "Create a task in a swarm",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "swarm_id": { "type": "string", "description": "Swarm ID to add task to" },
-                        "title": { "type": "string", "description": "Task title/description" }
-                    },
-                    "required": ["swarm_id", "title"]
-                }
-            },
-            {
-                "name": "hex_hexflo_task_list",
-                "description": "List tasks in a swarm",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "swarm_id": { "type": "string", "description": "Swarm ID (omit for all)" }
-                    },
-                    "required": []
-                }
-            },
-            {
-                "name": "hex_hexflo_task_complete",
-                "description": "Mark a task as completed",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "task_id": { "type": "string", "description": "Task ID to complete" },
-                        "result": { "type": "string", "description": "Completion result/summary" }
-                    },
-                    "required": ["task_id"]
-                }
-            },
-            // ── Memory ──
-            {
-                "name": "hex_hexflo_memory_store",
-                "description": "Store a key-value pair in persistent memory",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "key": { "type": "string", "description": "Memory key" },
-                        "value": { "type": "string", "description": "Value to store" },
-                        "scope": { "type": "string", "description": "Scope: global, swarm, agent" }
-                    },
-                    "required": ["key", "value"]
-                }
-            },
-            {
-                "name": "hex_hexflo_memory_retrieve",
-                "description": "Retrieve a value by key from persistent memory",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "key": { "type": "string", "description": "Memory key to retrieve" }
-                    },
-                    "required": ["key"]
-                }
-            },
-            {
-                "name": "hex_hexflo_memory_search",
-                "description": "Search persistent memory by query",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "query": { "type": "string", "description": "Search query" }
-                    },
-                    "required": ["query"]
-                }
-            },
-            // ── ADR lifecycle ──
-            {
-                "name": "hex_adr_list",
-                "description": "List Architecture Decision Records",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "status": { "type": "string", "description": "Filter by status: proposed, accepted, deprecated, superseded" }
-                    },
-                    "required": []
-                }
-            },
-            {
-                "name": "hex_adr_search",
-                "description": "Search ADRs by keyword",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "query": { "type": "string", "description": "Search query" },
-                        "limit": { "type": "integer", "description": "Max results (default 10)" }
-                    },
-                    "required": ["query"]
-                }
-            },
-            {
-                "name": "hex_adr_status",
-                "description": "Show detailed status of a specific ADR",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "id": { "type": "string", "description": "ADR ID (e.g. ADR-027)" }
-                    },
-                    "required": ["id"]
-                }
-            },
-            {
-                "name": "hex_adr_abandoned",
-                "description": "Find stale/abandoned proposed ADRs",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "days": { "type": "integer", "description": "Days without update to consider abandoned (default 14)" }
-                    },
-                    "required": []
-                }
-            },
-            // ── Workplan management ──
-            {
-                "name": "hex_plan_list",
-                "description": "List existing workplans from docs/workplans/",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            {
-                "name": "hex_plan_status",
-                "description": "Show detailed status of a specific workplan",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "file": { "type": "string", "description": "Workplan filename (e.g. feat-secrets-plan-b.json)" }
-                    },
-                    "required": ["file"]
-                }
-            },
-            // ── Workplan execution & reporting (ADR-046) ──
-            {
-                "name": "hex_plan_execute",
-                "description": "Start executing a workplan from a JSON file path. Spawns agents per task, tracks progress in SpacetimeDB.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "file": { "type": "string", "description": "Path to workplan JSON file (e.g. docs/workplans/feat-auth.json)" }
-                    },
-                    "required": ["file"]
-                }
-            },
-            {
-                "name": "hex_plan_pause",
-                "description": "Pause the currently running workplan execution",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            {
-                "name": "hex_plan_resume",
-                "description": "Resume a paused workplan execution",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            {
-                "name": "hex_plan_report",
-                "description": "Get aggregate report for a workplan execution — phases, tasks, agents, gates, duration",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "id": { "type": "string", "description": "Workplan execution ID (UUID)" }
-                    },
-                    "required": ["id"]
-                }
-            },
-            {
-                "name": "hex_plan_history",
-                "description": "List all workplan executions (active + completed + failed) from SpacetimeDB",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            // ── Nexus daemon ──
-            {
-                "name": "hex_nexus_status",
-                "description": "Check hex-nexus daemon status",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            {
-                "name": "hex_nexus_start",
-                "description": "Start the hex-nexus daemon",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            // ── Secrets ──
-            {
-                "name": "hex_secrets_status",
-                "description": "Show secrets backend status",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            {
-                "name": "hex_secrets_has",
-                "description": "Check if a secret key exists",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "key": { "type": "string", "description": "Secret key to check" }
-                    },
-                    "required": ["key"]
-                }
+    let tools_json = load_tools_json();
+    let parsed: Value = serde_json::from_str(&tools_json)
+        .expect("mcp-tools.json is invalid JSON");
+
+    // Extract just the MCP-compatible fields (name, description, inputSchema)
+    let tools = parsed["tools"]
+        .as_array()
+        .expect("mcp-tools.json must have a 'tools' array");
+
+    let mcp_tools: Vec<Value> = tools
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "name": t["name"],
+                "description": t["description"],
+                "inputSchema": t["inputSchema"],
+            })
+        })
+        .collect();
+
+    serde_json::json!({ "tools": mcp_tools })
+}
+
+/// Resolve and read the tools JSON, with fallback chain.
+fn load_tools_json() -> String {
+    // 1. Project root from env
+    if let Ok(root) = std::env::var("HEX_PROJECT_ROOT") {
+        let path = std::path::Path::new(&root).join("config/mcp-tools.json");
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            eprintln!("[hex] Loaded tools from {}", path.display());
+            return content;
+        }
+    }
+
+    // 2. Relative to cwd (development layout)
+    let cwd_path = std::path::Path::new("config/mcp-tools.json");
+    if let Ok(content) = std::fs::read_to_string(cwd_path) {
+        eprintln!("[hex] Loaded tools from config/mcp-tools.json");
+        return content;
+    }
+
+    // 3. Relative to executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let path = dir.join("../config/mcp-tools.json");
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                eprintln!("[hex] Loaded tools from {}", path.display());
+                return content;
             }
-        ]
-    })
+        }
+    }
+
+    // 4. Compiled-in fallback
+    eprintln!("[hex] Using compiled-in tool definitions");
+    BUILTIN_TOOLS_JSON.to_string()
 }
 
 // ─── Tool Dispatch ───────────────────────────────────────
@@ -509,6 +296,36 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             nexus.get("/api/workplan/list").await.map_err(|e| e.to_string())
         }
 
+        // ── Agent lifecycle ──
+        "hex_agent_connect" => {
+            let hostname = gethostname::gethostname().to_string_lossy().to_string();
+            let project_dir = args.get("project_dir").and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default());
+            let host = args.get("host").and_then(|v| v.as_str())
+                .unwrap_or(&hostname);
+            let body = serde_json::json!({
+                "host": host,
+                "name": args.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                "project_dir": project_dir,
+                "model": args.get("model").and_then(|v| v.as_str()).unwrap_or(""),
+                "session_id": args.get("session_id").and_then(|v| v.as_str()).unwrap_or(""),
+            });
+            nexus.post("/api/agents/connect", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_agent_disconnect" => {
+            let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("");
+            let body = serde_json::json!({ "agentId": agent_id });
+            nexus.post("/api/agents/disconnect", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_agent_list" => {
+            nexus.get("/api/agents").await.map_err(|e| e.to_string())
+        }
+
         // ── Nexus daemon ──
         "hex_nexus_status" => {
             nexus.get("/api/version").await.map_err(|e| e.to_string())
@@ -536,6 +353,44 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             let key = args.get("key").and_then(|v| v.as_str()).unwrap_or("");
             let exists = std::env::var(key).is_ok();
             Ok(serde_json::json!({ "key": key, "exists": exists }))
+        }
+
+        // ── Inference ──
+        "hex_inference_add" => {
+            let body = serde_json::json!({
+                "id": args.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                "provider": args.get("provider_type").and_then(|v| v.as_str()).unwrap_or("ollama"),
+                "url": args.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+                "model": args.get("model").and_then(|v| v.as_str()).unwrap_or(""),
+                "requires_auth": args.get("key").is_some(),
+                "secret_key": args.get("key").and_then(|v| v.as_str()).unwrap_or(""),
+            });
+            nexus.post("/api/inference/register", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_inference_list" => {
+            nexus.get("/api/inference/endpoints").await.map_err(|e| e.to_string())
+        }
+
+        "hex_inference_test" => {
+            let target = args.get("target").and_then(|v| v.as_str()).unwrap_or("");
+            Ok(serde_json::json!({
+                "message": format!("Run 'hex inference test {}' from the terminal for full connectivity probe", target)
+            }))
+        }
+
+        "hex_inference_discover" => {
+            Ok(serde_json::json!({
+                "message": "Run 'hex inference discover' from the terminal for LAN scanning"
+            }))
+        }
+
+        "hex_inference_remove" => {
+            let provider_id = args.get("provider_id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.post(
+                &format!("/api/inference/providers/{}/remove", provider_id),
+                &serde_json::json!({}),
+            ).await.map_err(|e| e.to_string())
         }
 
         _ => Err(format!("Unknown tool: {}", name)),
