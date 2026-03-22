@@ -495,6 +495,17 @@ async fn post_edit(project_dir: &PathBuf) -> Result<()> {
                 // Push edit event to HexFlo memory (best-effort)
                 let _ = record_edit_event(&state, file_path).await;
             }
+
+            // ADR-055: Auto-sync README ADR table when an ADR file is edited
+            if file_path.contains("docs/adrs/") && file_path.ends_with(".md") {
+                let readme_path = project_dir.join("README.md");
+                let adr_dir = project_dir.join("docs/adrs");
+                if readme_path.exists() {
+                    if let Ok(true) = super::readme::sync_adr_section(&readme_path, &adr_dir) {
+                        tracing::debug!("ADR-055: README.md ADR summary auto-synced");
+                    }
+                }
+            }
         }
     }
     Ok(())

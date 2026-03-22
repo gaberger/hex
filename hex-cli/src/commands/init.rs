@@ -33,6 +33,10 @@ pub struct InitArgs {
     #[arg(long)]
     pub no_claude_md: bool,
 
+    /// Skip the project interview (generate bare scaffolding only)
+    #[arg(long)]
+    pub skip_interview: bool,
+
     /// Force overwrite existing .hex/ config
     #[arg(short, long)]
     pub force: bool,
@@ -62,6 +66,19 @@ pub async fn run(args: InitArgs) -> Result<()> {
         );
     }
 
+    // ── 0. Interview (empty directory only, ADR-055) ────────────
+    let interview = if super::interview::is_empty_project(&target) && !args.skip_interview {
+        match super::interview::run_interview(&project_name) {
+            Ok(iv) => Some(iv),
+            Err(e) => {
+                tracing::debug!("Interview skipped: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     println!(
         "{} Initializing hex in {}",
         "\u{2b21}".cyan(),
@@ -72,7 +89,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     create_project_json(&target, &project_name)?;
 
     // ── 1b. .hex/project.yaml (ADR-043 manifest) ───────────────
-    create_project_yaml(&target, &project_name)?;
+    create_project_yaml(&target, &project_name, interview.as_ref())?;
 
     // ── 2. .mcp.json ─────────────────────────────────────────────
     create_mcp_json(&target)?;
@@ -87,6 +104,16 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     // ── 5. docs/adrs/ ─────────────────────────────────────────────
     create_dir_if_missing(&target.join("docs/adrs"))?;
+
+    // ── 5b. README.md (ADR-055) ─────────────────────────────────
+    if let Some(ref iv) = interview {
+        let readme_path = target.join("README.md");
+        if !readme_path.exists() || args.force {
+            let content = super::readme::generate_readme(iv);
+            fs::write(&readme_path, content)
+                .context("Failed to write README.md")?;
+        }
+    }
 
     // ── 6. Scaffold (optional) ────────────────────────────────────
     if args.scaffold {
@@ -106,6 +133,9 @@ pub async fn run(args: InitArgs) -> Result<()> {
         println!("  {} CLAUDE.md", "\u{2713}".green());
     }
     println!("  {} docs/adrs/", "\u{2713}".green());
+    if interview.is_some() {
+        println!("  {} README.md (project specification)", "\u{2713}".green());
+    }
     if args.scaffold {
         println!("  {} src/ (hexagonal layers)", "\u{2713}".green());
     }
@@ -181,7 +211,11 @@ fn create_project_json(target: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn create_project_yaml(target: &Path, name: &str) -> Result<()> {
+fn create_project_yaml(
+    target: &Path,
+    name: &str,
+    interview: Option<&super::interview::ProjectInterview>,
+) -> Result<()> {
     let hex_dir = target.join(".hex");
     create_dir_if_missing(&hex_dir)?;
 
@@ -192,10 +226,17 @@ fn create_project_yaml(target: &Path, name: &str) -> Result<()> {
     }
 
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let description = interview
+        .map(|iv| iv.description.as_str())
+        .unwrap_or("");
+    let language = interview
+        .map(|iv| iv.language.to_string())
+        .unwrap_or_default();
     let content = format!(
         r#"---
 name: {name}
-description: ""
+description: "{description}"
+language: "{language}"
 version: "0.1.0"
 created: "{today}"
 
@@ -210,6 +251,8 @@ agent:
   project_dir: .
 "#,
         name = name,
+        description = description,
+        language = language,
         today = today,
     );
 

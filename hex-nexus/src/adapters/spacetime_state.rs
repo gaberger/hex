@@ -627,18 +627,47 @@ mod real {
         }
 
         async fn skill_list(&self) -> Result<Vec<SkillEntry>, StateError> {
-            // conn.db().skill().iter().map(...)
-            Err(Self::not_connected())
+            let rows = self.query_table("SELECT * FROM skill_registry").await?;
+            Ok(rows.iter().filter_map(|r| {
+                Some(SkillEntry {
+                    id: r.get("skill_id")?.as_str()?.to_string(),
+                    name: r.get("name")?.as_str()?.to_string(),
+                    description: r.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    triggers_json: r.get("trigger_cmd").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    body: String::new(),
+                    source: r.get("source_path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_at: r.get("synced_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    updated_at: r.get("synced_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                })
+            }).collect())
         }
 
-        async fn skill_get(&self, _id: &str) -> Result<Option<SkillEntry>, StateError> {
-            // conn.db().skill().id().find(id).map(...)
-            Err(Self::not_connected())
+        async fn skill_get(&self, id: &str) -> Result<Option<SkillEntry>, StateError> {
+            let rows = self.query_table(&format!(
+                "SELECT * FROM skill_registry WHERE skill_id = '{}'", id
+            )).await?;
+            Ok(rows.first().and_then(|r| {
+                Some(SkillEntry {
+                    id: r.get("skill_id")?.as_str()?.to_string(),
+                    name: r.get("name")?.as_str()?.to_string(),
+                    description: r.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    triggers_json: r.get("trigger_cmd").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    body: String::new(),
+                    source: r.get("source_path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_at: r.get("synced_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    updated_at: r.get("synced_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                })
+            }))
         }
 
-        async fn skill_search(&self, _trigger_type: &str, _query: &str) -> Result<Vec<SkillEntry>, StateError> {
-            // conn.db().skill_trigger_index().iter().filter(...)
-            Err(Self::not_connected())
+        async fn skill_search(&self, _trigger_type: &str, query: &str) -> Result<Vec<SkillEntry>, StateError> {
+            let all = self.skill_list().await?;
+            let q = query.to_lowercase();
+            Ok(all.into_iter().filter(|s| {
+                s.name.to_lowercase().contains(&q)
+                    || s.description.to_lowercase().contains(&q)
+                    || s.triggers_json.to_lowercase().contains(&q)
+            }).collect())
         }
 
         // ── Hook Registry ──────────────────────────────────

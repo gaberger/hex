@@ -284,6 +284,147 @@ pub fn mcp_tool_sync(
     Ok(())
 }
 
+// ─── Remote Agent Registry (ADR-040) ─────────────────────────────────────
+
+/// A remote agent connected via SSH tunnel + WebSocket.
+#[table(name = remote_agent, public)]
+#[derive(Clone, Debug)]
+pub struct RemoteAgent {
+    #[primary_key]
+    pub agent_id: String,
+    pub name: String,
+    pub host: String,
+    pub project_dir: String,
+    /// Status: "connecting", "online", "busy", "stale", "dead"
+    pub status: String,
+    /// JSON-encoded AgentCapabilities (models, tools, max_concurrent, gpu_vram_mb)
+    pub capabilities_json: String,
+    pub last_heartbeat: String,
+    pub connected_at: String,
+    pub tunnel_id: String,
+}
+
+/// Register or update a remote agent.
+#[reducer]
+pub fn register_remote_agent(
+    ctx: &ReducerContext,
+    agent_id: String,
+    name: String,
+    host: String,
+    project_dir: String,
+    capabilities_json: String,
+    tunnel_id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    if let Some(existing) = ctx.db.remote_agent().agent_id().find(&agent_id) {
+        ctx.db.remote_agent().agent_id().update(RemoteAgent {
+            name, host, project_dir, capabilities_json, tunnel_id,
+            status: "online".to_string(),
+            last_heartbeat: timestamp.clone(),
+            connected_at: timestamp,
+            ..existing
+        });
+    } else {
+        ctx.db.remote_agent().insert(RemoteAgent {
+            agent_id, name, host, project_dir, capabilities_json, tunnel_id,
+            status: "online".to_string(),
+            last_heartbeat: timestamp.clone(),
+            connected_at: timestamp,
+        });
+    }
+    Ok(())
+}
+
+/// Update a remote agent's heartbeat and optionally status.
+#[reducer]
+pub fn remote_agent_heartbeat(
+    ctx: &ReducerContext,
+    agent_id: String,
+    status: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let agent = ctx.db.remote_agent().agent_id().find(&agent_id)
+        .ok_or_else(|| format!("Remote agent '{}' not found", agent_id))?;
+    ctx.db.remote_agent().agent_id().update(RemoteAgent {
+        status,
+        last_heartbeat: timestamp,
+        ..agent
+    });
+    Ok(())
+}
+
+/// Remove a remote agent (on disconnect or death).
+#[reducer]
+pub fn remove_remote_agent(
+    ctx: &ReducerContext,
+    agent_id: String,
+) -> Result<(), String> {
+    if !ctx.db.remote_agent().agent_id().delete(&agent_id) {
+        return Err(format!("Remote agent '{}' not found", agent_id));
+    }
+    Ok(())
+}
+
+// ─── Inference Server Registry ───────────────────────────────────────────
+
+/// An inference server (Ollama, vLLM, OpenAI-compatible) available to agents.
+#[table(name = inference_server, public)]
+#[derive(Clone, Debug)]
+pub struct InferenceServer {
+    #[primary_key]
+    pub server_id: String,
+    pub name: String,
+    pub host: String,
+    pub provider: String,
+    /// JSON-encoded list of available models
+    pub models_json: String,
+    /// Status: "online", "offline", "degraded"
+    pub status: String,
+    pub last_health_check: String,
+    pub registered_at: String,
+}
+
+/// Register or update an inference server.
+#[reducer]
+pub fn register_inference_server(
+    ctx: &ReducerContext,
+    server_id: String,
+    name: String,
+    host: String,
+    provider: String,
+    models_json: String,
+    timestamp: String,
+) -> Result<(), String> {
+    if let Some(existing) = ctx.db.inference_server().server_id().find(&server_id) {
+        ctx.db.inference_server().server_id().update(InferenceServer {
+            name, host, provider, models_json,
+            status: "online".to_string(),
+            last_health_check: timestamp,
+            ..existing
+        });
+    } else {
+        ctx.db.inference_server().insert(InferenceServer {
+            server_id, name, host, provider, models_json,
+            status: "online".to_string(),
+            last_health_check: timestamp.clone(),
+            registered_at: timestamp,
+        });
+    }
+    Ok(())
+}
+
+/// Remove an inference server.
+#[reducer]
+pub fn remove_inference_server(
+    ctx: &ReducerContext,
+    server_id: String,
+) -> Result<(), String> {
+    if !ctx.db.inference_server().server_id().delete(&server_id) {
+        return Err(format!("Inference server '{}' not found", server_id));
+    }
+    Ok(())
+}
+
 // ============================================================
 //  Swarm Lifecycle Reducers
 // ============================================================

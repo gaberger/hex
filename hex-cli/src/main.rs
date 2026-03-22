@@ -14,6 +14,7 @@ use commands::{
     nexus::NexusAction,
     plan::PlanAction,
     project::ProjectAction,
+    readme::ReadmeAction,
     secrets::SecretsAction,
     skill::SkillAction,
     stdb::StdbAction,
@@ -107,6 +108,11 @@ enum Commands {
         #[command(subcommand)]
         action: commands::inference::InferenceAction,
     },
+    /// README specification management
+    Readme {
+        #[command(subcommand)]
+        action: ReadmeAction,
+    },
     /// Initialize hex in a project directory
     Init(InitArgs),
     /// Claude Code hook handler (called by .claude/settings.json hooks)
@@ -160,6 +166,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Plan { action } => commands::plan::run(action).await,
         Commands::Inference { action } => commands::inference::run(action).await,
+        Commands::Readme { action } => commands::readme::run(action).await,
         Commands::Init(args) => commands::init::run(args).await,
         Commands::Hook { event } => commands::hook::run(event).await,
         Commands::Mcp => commands::mcp::run_mcp_server().await,
