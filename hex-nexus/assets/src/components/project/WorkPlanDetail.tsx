@@ -53,18 +53,50 @@ const WorkPlanDetail: Component = () => {
   const projectId = () => (route() as any).projectId ?? "";
   const workplanId = () => (route() as any).workplanId ?? "";
 
-  // Fetch workplan data via REST (filesystem op)
+  // Fetch workplan JSON file from disk.
+  // workplanId is either "wp-xxx" or "feat-xxx" — map to docs/workplans/{id}.json
   const [workplan, { refetch }] = createResource(
     () => workplanId(),
     async (wpId) => {
       if (!wpId) return null;
-      try {
-        return await restClient.get<any>(
-          `/api/workplan/${encodeURIComponent(wpId)}`,
-        );
-      } catch {
-        return null;
+
+      // Try multiple file name patterns
+      const candidates = [
+        `docs/workplans/${wpId}.json`,
+        `docs/workplans/feat-${wpId}.json`,
+        `docs/workplans/${wpId.replace(/^wp-/, "feat-")}.json`,
+      ];
+
+      for (const filePath of candidates) {
+        try {
+          const res = await fetch(`/api/files?path=${encodeURIComponent(filePath)}`);
+          if (res.ok) {
+            const data = await res.json();
+            // /api/files may wrap content or return raw
+            const content = data.content ?? data;
+            return typeof content === "string" ? JSON.parse(content) : content;
+          }
+        } catch {
+          continue;
+        }
       }
+
+      // Fallback: search in /api/workplans list for matching entry
+      try {
+        const list = await restClient.get<any>("/api/workplans");
+        const match = (list.workplans ?? []).find(
+          (w: any) => (w.id ?? "").includes(wpId) || (w.file ?? "").includes(wpId),
+        );
+        if (match?.file) {
+          const res = await fetch(`/api/files?path=docs/workplans/${encodeURIComponent(match.file)}`);
+          if (res.ok) {
+            const data = await res.json();
+            return typeof data.content === "string" ? JSON.parse(data.content) : (data.content ?? data);
+          }
+        }
+      } catch {}
+
+      return null;
     },
   );
 
