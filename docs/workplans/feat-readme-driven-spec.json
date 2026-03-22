@@ -1,0 +1,300 @@
+{
+  "id": "wp-readme-driven-spec",
+  "feature": "README-Driven Project Specification (ADR-055)",
+  "description": "When hex init runs in an empty directory, conduct an interactive interview about project scope, language, and constraints, then generate README.md as the living project specification. Add hex readme subcommand with ADR summary sync. Auto-update README when ADRs are accepted.",
+  "adr": "ADR-055 (README-driven project specification), ADR-043 (project manifest)",
+  "created_at": "2026-03-22T00:00:00Z",
+  "created_by": "planner",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Empty directory detection + interview prompts",
+      "tier": 0,
+      "description": "Detect when hex init is run in an empty (or git-init-only) directory and collect project metadata via interactive prompts: name, description, language, project type, constraints, and external dependencies. Store answers in a ProjectInterview struct.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Add --skip-interview flag to InitArgs",
+          "layer": "primary",
+          "description": "Add a --skip-interview flag to the existing InitArgs struct in hex-cli/src/commands/init.rs. This allows developers to bypass the interview and get bare scaffolding.",
+          "deps": [],
+          "files": [
+            "hex-cli/src/commands/init.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.2",
+          "name": "Create ProjectInterview struct and is_empty_dir() detection",
+          "layer": "domain",
+          "description": "Create hex-cli/src/commands/interview.rs with: (1) ProjectInterview struct holding name, description, language (enum: Rust/Go/TypeScript/Python/Multi), project_type (enum: CLI/WebService/Library/FullStack/Infra/Other), constraints (Vec<String>), dependencies (Vec<(name, purpose)>). (2) is_empty_project(path) function that returns true if the directory has no source files (only .git/, .hex/, or is truly empty).",
+          "deps": [],
+          "files": [
+            "hex-cli/src/commands/interview.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.3",
+          "name": "Implement interactive terminal prompts",
+          "layer": "primary",
+          "description": "Add run_interview() function to interview.rs that uses dialoguer (already in hex-cli deps, or add it) to prompt for each field. Returns a populated ProjectInterview. The prompts should match the flow in ADR-055: name → description → language select → project type select → constraints (multi-line) → dependencies (key:value pairs). Use colored output consistent with hex's existing ⬡ branding.",
+          "deps": ["P0.2"],
+          "files": [
+            "hex-cli/src/commands/interview.rs",
+            "hex-cli/Cargo.toml"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.4",
+          "name": "Wire interview into hex init flow",
+          "layer": "primary",
+          "description": "In init.rs run(), after the guard check, call is_empty_project(). If true and --skip-interview is not set, call run_interview(). Pass the ProjectInterview to create_project_yaml() (to populate description and language fields) and to a new create_readme() function (P1). If the directory is not empty, skip interview (existing behavior).",
+          "deps": ["P0.1", "P0.3"],
+          "files": [
+            "hex-cli/src/commands/init.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "README.md generation from interview",
+      "tier": 1,
+      "description": "Generate a structured README.md from the ProjectInterview answers. This is the living specification — not a generic readme template.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Create README template engine",
+          "layer": "secondary",
+          "description": "Create hex-cli/src/commands/readme.rs with generate_readme(interview: &ProjectInterview) -> String. Uses format! to produce the README structure from ADR-055: title, project scope table (type, language, created, status), architecture section with constraints, dependencies table, ADR summary sentinel (<!-- hex:adr-summary --> ... <!-- /hex:adr-summary -->), and getting started section with language-appropriate commands (cargo for Rust, go for Go, bun for TypeScript, etc.).",
+          "deps": ["P0.2"],
+          "files": [
+            "hex-cli/src/commands/readme.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Wire README generation into hex init",
+          "layer": "primary",
+          "description": "In init.rs, after interview completes, call generate_readme() and write to target/README.md. Only write if README.md doesn't already exist (or if --force). Add README.md to the summary output with a ✓ checkmark. For non-empty directories with no README, offer to generate a basic one by inferring language from existing files.",
+          "deps": ["P0.4", "P1.1"],
+          "files": [
+            "hex-cli/src/commands/init.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "Feed interview answers into project.yaml",
+          "layer": "secondary",
+          "description": "Extend create_project_yaml() to accept an optional &ProjectInterview. When provided, populate the description field, add a language field, and include any inference/dependency hints. The YAML remains the machine config; README is the human spec.",
+          "deps": ["P0.4"],
+          "files": [
+            "hex-cli/src/commands/init.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.4",
+          "name": "Register mod interview and mod readme in commands",
+          "layer": "infrastructure",
+          "description": "Add pub mod interview; and pub mod readme; to hex-cli/src/commands/mod.rs. Ensure the new modules are accessible from the init command.",
+          "deps": ["P0.2", "P1.1"],
+          "files": [
+            "hex-cli/src/commands/mod.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "ADR summary sync engine",
+      "tier": 2,
+      "description": "Parse all ADR files and regenerate the ADR summary table between the sentinel comments in README.md. This is the core of the living specification — as decisions are made, the README reflects them.",
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-cli -- readme",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "ADR parser for summary extraction",
+          "layer": "domain",
+          "description": "Add parse_adr_summaries(adr_dir: &Path) -> Vec<AdrSummary> to readme.rs. AdrSummary holds { number, title, status, date }. Parse each ADR-*.md file: extract title from first H1, status from '**Status:**' line, number from filename. Sort by number ascending.",
+          "deps": ["P1.1"],
+          "files": [
+            "hex-cli/src/commands/readme.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Sentinel-based README section updater",
+          "layer": "secondary",
+          "description": "Add sync_adr_section(readme_path: &Path) -> Result<()> to readme.rs. Reads README.md, finds <!-- hex:adr-summary --> and <!-- /hex:adr-summary --> sentinels, replaces everything between them with a freshly generated Markdown table from parse_adr_summaries(). If sentinels are missing, appends the section at the end. Writes back to README.md.",
+          "deps": ["P2.1"],
+          "files": [
+            "hex-cli/src/commands/readme.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.3",
+          "name": "Unit tests for ADR parsing and sentinel replacement",
+          "layer": "domain",
+          "description": "Write tests in readme.rs: (1) parse_adr_summaries handles missing status, various title formats. (2) sync_adr_section correctly replaces content between sentinels without touching surrounding content. (3) sync_adr_section appends section when sentinels are missing. Use tempdir for file tests.",
+          "deps": ["P2.2"],
+          "files": [
+            "hex-cli/src/commands/readme.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "hex readme CLI subcommand",
+      "tier": 3,
+      "description": "Add 'hex readme' subcommand with sync-adrs, sync, and interview sub-subcommands.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Add ReadmeCmd to hex-cli command tree",
+          "layer": "primary",
+          "description": "Add a Readme variant to the hex-cli Subcommand enum in main.rs (or commands/mod.rs). Subcommands: SyncAdrs (regenerate ADR table), Sync (full sync — ADRs + status), Interview (re-run project interview, update scope sections of README). Wire to readme::run() dispatch function.",
+          "deps": ["P2.2"],
+          "files": [
+            "hex-cli/src/main.rs",
+            "hex-cli/src/commands/readme.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Implement hex readme sync-adrs",
+          "layer": "primary",
+          "description": "The sync-adrs subcommand calls sync_adr_section() on the project's README.md. Prints summary: '⬡ Updated ADR summary: N accepted, M proposed, K superseded'. If no README.md or no sentinels, print a helpful error suggesting hex init or manual sentinel addition.",
+          "deps": ["P3.1"],
+          "files": [
+            "hex-cli/src/commands/readme.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.3",
+          "name": "Implement hex readme interview",
+          "layer": "primary",
+          "description": "The interview subcommand re-runs run_interview(), then updates only the Project Scope and Architecture sections of README.md (not the ADR table or Getting Started). Uses sentinel comments <!-- hex:scope --> and <!-- /hex:scope --> to delineate the auto-managed scope section.",
+          "deps": ["P3.1", "P0.3"],
+          "files": [
+            "hex-cli/src/commands/readme.rs",
+            "hex-cli/src/commands/interview.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Post-ADR hook for automatic sync",
+      "tier": 4,
+      "description": "Wire hex readme sync-adrs into the ADR lifecycle so README updates automatically when ADRs are created or accepted.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Add post-adr-accept hook trigger in hex adr status",
+          "layer": "primary",
+          "description": "In the hex adr status command (when --set accepted is used), after updating the ADR file, call readme::sync_adr_section() to update README.md. Print '⬡ README.md ADR summary updated' on success. This is a direct function call, not a shell hook — simpler and more reliable.",
+          "deps": ["P2.2"],
+          "files": [
+            "hex-cli/src/commands/adr.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.2",
+          "name": "Add post-adr-create sync trigger",
+          "layer": "primary",
+          "description": "In hex adr create, after writing the new ADR file, call readme::sync_adr_section() to add the new ADR (status: Proposed) to the README table.",
+          "deps": ["P4.1"],
+          "files": [
+            "hex-cli/src/commands/adr.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.3",
+          "name": "Add hex readme sync-adrs to hex-setup hook template",
+          "layer": "infrastructure",
+          "description": "Add a PostToolUse or custom hook in hex-setup/hooks/ that triggers 'hex readme sync-adrs' after ADR-related MCP tool calls (hex_adr_create, hex_adr_status). This ensures README stays current even when ADRs are managed via MCP tools from Claude Code rather than the CLI.",
+          "deps": ["P4.1"],
+          "files": [
+            "hex-setup/hooks/post-adr-sync.sh"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Integration testing + dogfooding",
+      "tier": 5,
+      "description": "End-to-end validation: run hex init in a temp directory, verify README generation, create ADRs, verify sync, re-run interview.",
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-cli -- readme_integration",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Integration test: full hex init → ADR → sync cycle",
+          "layer": "integration",
+          "description": "Write an integration test that: (1) creates a temp dir, (2) runs hex init with mock interview answers, (3) verifies README.md has correct structure and sentinel comments, (4) creates 2 ADR files in docs/adrs/, (5) runs sync_adr_section(), (6) verifies the ADR table contains both entries. Use assert_cmd or direct function calls.",
+          "deps": ["P4.2"],
+          "files": [
+            "hex-cli/tests/readme_integration.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.2",
+          "name": "Dogfood: add ADR sentinels to hex-intf README.md",
+          "layer": "infrastructure",
+          "description": "Add <!-- hex:adr-summary --> sentinels to the hex-intf project's own README.md and run hex readme sync-adrs to populate the table with all 55 ADRs. This validates the feature on a real project with many ADRs.",
+          "deps": ["P5.1"],
+          "files": [
+            "README.md"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ]
+}
