@@ -1,8 +1,18 @@
 import { Component, createSignal, createResource, For, Show, createMemo } from 'solid-js';
-import { navigate, route } from '../../stores/router';
+import { navigate, route, activeProjectId } from '../../stores/router';
 import { MarkdownEditor } from '../editor';
 import { addToast } from '../../stores/toast';
 import { getHexfloConn } from '../../stores/connection';
+import { restClient } from '../../services/rest-client';
+
+interface WorkPlanListItem {
+  id: string;
+  name?: string;
+  title?: string;
+  adr?: string;
+  adrRef?: string;
+  status?: string;
+}
 
 interface ADRListItem {
   id: string;
@@ -32,10 +42,10 @@ function statusBadgeClasses(status: string): string {
 
 function statusColor(status: string): string {
   const s = status.toLowerCase();
-  if (s === 'proposed') return '#eab308';
-  if (s === 'accepted') return '#4ade80';
-  if (s === 'superseded') return '#f87149';
-  return '#6b7280';
+  if (s === 'proposed') return 'var(--status-warning)';
+  if (s === 'accepted') return 'var(--status-active)';
+  if (s === 'superseded') return 'var(--hex-primary)';
+  return 'var(--text-faint)';
 }
 
 interface ADRListResult {
@@ -48,10 +58,8 @@ async function fetchADRList(projectId?: string): Promise<ADRListResult> {
     const url = projectId
       ? `/api/projects/${encodeURIComponent(projectId)}/adrs`
       : '/api/adrs';
-    const res = await fetch(url);
-    if (res.ok) {
-      return { items: await res.json(), isFallback: false };
-    }
+    const items = await restClient.get<ADRListItem[]>(url);
+    return { items, isFallback: false };
   } catch {
     // API not available, fall through to fallback
   }
@@ -208,20 +216,14 @@ Adopt SpacetimeDB as the real-time state backend. Its WebSocket subscriptions pr
 async function fetchADRContent(adrId: string): Promise<string> {
   // Try dedicated ADR content endpoint
   try {
-    const res = await fetch(`/api/adrs/${adrId}/content`);
-    if (res.ok) {
-      const data = await res.json();
-      return data.content || data.body || '';
-    }
+    const data = await restClient.get<{ content?: string; body?: string }>(`/api/adrs/${adrId}/content`);
+    if (data.content || data.body) return data.content || data.body || '';
   } catch { /* fall through */ }
 
   // Try file read via projects API
   try {
-    const res = await fetch(`/api/projects/hex-intf/files?path=docs/adrs/adr-${adrId}*.md`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.content) return data.content;
-    }
+    const data = await restClient.get<{ content?: string }>(`/api/projects/hex-intf/files?path=docs/adrs/adr-${adrId}*.md`);
+    if (data.content) return data.content;
   } catch { /* fall through */ }
 
   // Use embedded fallback content
@@ -237,10 +239,7 @@ async function fetchADRDetail(id: string, projectId?: string): Promise<ADRDetail
     const url = projectId
       ? `/api/projects/${encodeURIComponent(projectId)}/adrs/${id}`
       : `/api/adrs/${id}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      return await res.json();
-    }
+    return await restClient.get<ADRDetail>(url);
   } catch {
     // API not available, fall through
   }
@@ -270,6 +269,34 @@ const ADRBrowser: Component = () => {
   const projectId = createMemo(() => {
     const r = route();
     return (r as { projectId?: string }).projectId;
+  });
+
+  // Fetch workplan list to cross-reference ADRs
+  const [workplanList] = createResource(
+    () => projectId(),
+    async () => {
+      try {
+        return await restClient.get<WorkPlanListItem[]>('/api/workplan/list');
+      } catch {
+        return [] as WorkPlanListItem[];
+      }
+    },
+  );
+
+  // Build a map: ADR number -> workplan count
+  const adrWorkplanMap = createMemo(() => {
+    const plans = workplanList() ?? [];
+    const map = new Map<string, number>();
+    for (const wp of plans) {
+      const adrRef = wp.adr ?? wp.adrRef ?? '';
+      // Normalize: "043", "ADR-043", "adr-043" all match ADR id "043"
+      const match = adrRef.match(/(\d{2,4})/);
+      if (match) {
+        const adrId = match[1].padStart(3, '0');
+        map.set(adrId, (map.get(adrId) ?? 0) + 1);
+      }
+    }
+    return map;
   });
 
   const fetchKey = createMemo(() => ({ pid: projectId(), retry: retryCount() }));
@@ -308,7 +335,7 @@ const ADRBrowser: Component = () => {
   );
 
   const selectedADR = createMemo(() => {
-    const list = adrList() ?? [];
+    const list = adrListResult()?.items ?? [];
     return list.find((a) => a.id === effectiveSelectedId()) ?? null;
   });
 
@@ -387,15 +414,16 @@ const ADRBrowser: Component = () => {
 
         {/* ADR List */}
         <div class="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
-          <Show when={adrList.loading}>
+          <Show when={adrListResult.loading}>
             <div class="px-3 py-4 text-sm text-gray-600">Loading ADRs...</div>
           </Show>
-          <Show when={!adrList.loading && filteredList().length === 0}>
+          <Show when={!adrListResult.loading && filteredList().length === 0}>
             <div class="px-3 py-4 text-sm text-gray-600">No ADRs found</div>
           </Show>
           <For each={filteredList()}>
             {(adr) => {
               const isSelected = () => effectiveSelectedId() === adr.id;
+              const wpCount = () => adrWorkplanMap().get(adr.id) ?? 0;
               return (
                 <button
                   class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors"
@@ -407,26 +435,41 @@ const ADRBrowser: Component = () => {
                 >
                   {/* ADR number */}
                   <span
-                    class="shrink-0 text-[13px] font-bold"
+                    class="shrink-0 text-[13px] font-bold font-[var(--font-mono)]"
                     classList={{
                       'text-amber-400': isSelected(),
                       'text-gray-500': !isSelected(),
                     }}
-                    style={{ 'font-family': "'JetBrains Mono', monospace" }}
                   >
                     {adr.id}
                   </span>
 
                   {/* Title */}
                   <span
-                    class="flex-1 truncate text-[13px]"
+                    class="flex-1 truncate text-[13px] text-hex-primary"
                     classList={{
                       'text-gray-200': isSelected(),
-                      'text-gray-400': !isSelected(),
                     }}
                   >
                     {adr.title}
                   </span>
+
+                  {/* WorkPlan badge */}
+                  <Show when={wpCount() > 0}>
+                    <span
+                      class="shrink-0 cursor-pointer rounded px-1.5 py-0.5 text-[10px] font-medium bg-purple-500/15 text-hex-ports border border-purple-500/30 hover:bg-purple-500/25 transition-colors"
+                      title={`${wpCount()} workplan${wpCount() > 1 ? 's' : ''} linked`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const pid = activeProjectId();
+                        if (pid) {
+                          navigate({ page: 'project-workplans', projectId: pid });
+                        }
+                      }}
+                    >
+                      WP {wpCount()}
+                    </span>
+                  </Show>
 
                   {/* Status badge */}
                   <span
@@ -482,19 +525,10 @@ const ADRBrowser: Component = () => {
                     const saveUrl = pid
                       ? `/api/projects/${encodeURIComponent(pid)}/adrs/${detail().id}`
                       : `/api/adrs/${detail().id}`;
-                    const res = await fetch(saveUrl, {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ content }),
-                    });
-                    if (res.ok) {
-                      addToast('success', `ADR-${detail().id} saved`);
-                    } else {
-                      const data = await res.json().catch(() => ({}));
-                      addToast('error', data.error || 'Save failed');
-                    }
-                  } catch {
-                    addToast('error', 'Save failed — is nexus running?');
+                    await restClient.put(saveUrl, { content });
+                    addToast('success', `ADR-${detail().id} saved`);
+                  } catch (err: any) {
+                    addToast('error', err.message || 'Save failed — is nexus running?');
                   }
                 }}
               />

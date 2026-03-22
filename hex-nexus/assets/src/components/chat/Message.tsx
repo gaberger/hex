@@ -55,33 +55,31 @@ const Message: Component<{ message: ChatMessage }> = (props) => {
 
   return (
     <div
-      class="rounded-[10px]"
-      style={{
-        padding: '12px 16px',
-        background: isUser() ? 'var(--bg-surface)' : 'transparent',
-        border: isUser() ? '1px solid rgba(30,58,95,0.25)' : 'none',
+      class="rounded-[10px] px-4 py-3"
+      classList={{
+        "bg-[var(--bg-surface)] border border-blue-900/25": isUser(),
+        "bg-transparent border-0": !isUser(),
       }}
     >
       {/* Role badge row */}
       <div class="flex items-center gap-2 mb-1.5">
         <span
           class="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-          style={{
-            background: isUser() ? 'rgba(59,130,246,0.2)' : 'rgba(74,222,128,0.2)',
-            color: isUser() ? '#60a5fa' : '#4ade80',
+          classList={{
+            "bg-blue-500/20 text-blue-400": isUser(),
+            "bg-green-500/20 text-green-400": !isUser(),
           }}
         >
           {props.message.role === 'user' ? 'User' : props.message.role === 'assistant' ? 'Discovery' : props.message.role}
         </span>
         <Show when={props.message.model}>
           <span
-            class="rounded px-1.5 py-0.5 text-[10px] font-mono"
-            style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}
+            class="rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--text-muted)]"
           >
             {props.message.model}
           </span>
         </Show>
-        <span class="ml-auto text-[10px]" style={{ color: 'var(--text-faint)' }}>
+        <span class="ml-auto text-[10px] text-[var(--text-faint)]">
           {relativeTime(props.message.timestamp)}
         </span>
       </div>
@@ -102,8 +100,7 @@ const Message: Component<{ message: ChatMessage }> = (props) => {
 
       <Show when={props.message.role === 'user'}>
         <div
-          class="whitespace-pre-wrap break-words text-[15px] leading-[1.5]"
-          style={{ color: 'var(--text-secondary)' }}
+          class="whitespace-pre-wrap break-words text-[15px] leading-[1.5] text-[var(--text-secondary)]"
         >
           {props.message.content}
         </div>
@@ -111,8 +108,7 @@ const Message: Component<{ message: ChatMessage }> = (props) => {
 
       <Show when={props.message.role === 'system'}>
         <div
-          class="whitespace-pre-wrap break-words text-[14px] leading-relaxed italic"
-          style={{ color: 'var(--text-muted)' }}
+          class="whitespace-pre-wrap break-words text-[14px] leading-relaxed italic text-[var(--text-muted)]"
         >
           {props.message.content}
         </div>

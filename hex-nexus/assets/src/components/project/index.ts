@@ -11,3 +11,4 @@ export { default as AgentList } from './AgentList';
 export { default as AgentDetail } from './AgentDetail';
 export { default as SwarmDetail } from './SwarmDetail';
 export { default as WorkPlanDetail } from './WorkPlanDetail';
+export { default as GovernanceTimeline } from './GovernanceTimeline';

@@ -21,16 +21,17 @@ const SHORTCUTS: ShortcutSection[] = [
       { keys: "Ctrl+P", desc: "Command palette" },
       { keys: "Ctrl+N", desc: "Spawn agent" },
       { keys: "Tab", desc: "Toggle Plan/Build mode" },
-      { keys: "Ctrl+?", desc: "Show this help" },
+      { keys: "Ctrl+Shift+?", desc: "Show this help" },
     ],
   },
   {
-    section: "Views",
+    section: "Project Quick Nav (when project active)",
     shortcuts: [
-      { keys: "Ctrl+1", desc: "Control Plane" },
+      { keys: "Ctrl+1", desc: "Overview" },
       { keys: "Ctrl+2", desc: "Agents" },
-      { keys: "Ctrl+3", desc: "ADRs" },
-      { keys: "Ctrl+4", desc: "Config" },
+      { keys: "Ctrl+3", desc: "Swarms" },
+      { keys: "Ctrl+4", desc: "ADRs" },
+      { keys: "Ctrl+5", desc: "Chat" },
     ],
   },
   {

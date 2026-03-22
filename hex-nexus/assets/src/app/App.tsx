@@ -122,6 +122,8 @@ const App: Component = () => {
     (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
   );
   const [moreMenuOpen, setMoreMenuOpen] = createSignal(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = createSignal(false);
 
   onMount(() => {
     initConnections();
@@ -173,6 +175,23 @@ const App: Component = () => {
       e.preventDefault();
       setShortcutsOpen(!shortcutsOpen());
     }
+
+    // Ctrl+1-5 -- project sub-page quick navigation (only when a project is active)
+    const pid = activeProjectId();
+    if (ctrl && pid && !e.shiftKey) {
+      const numShortcuts: Record<string, Route> = {
+        '1': { page: 'project', projectId: pid },
+        '2': { page: 'project-agents', projectId: pid },
+        '3': { page: 'project-swarms', projectId: pid },
+        '4': { page: 'project-adrs', projectId: pid },
+        '5': { page: 'project-chat', projectId: pid },
+      };
+      const target = numShortcuts[e.key];
+      if (target) {
+        e.preventDefault();
+        navigate(target);
+      }
+    }
   }
 
   onMount(() => {
@@ -187,6 +206,16 @@ const App: Component = () => {
       {/* TopBar */}
       <header class="flex h-12 shrink-0 items-center justify-between border-b border-gray-800 bg-gray-900 px-4">
         <div class="flex items-center gap-3">
+          {/* Mobile hamburger */}
+          <button
+            class="md:hidden rounded p-1.5 text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition-colors"
+            aria-label="Toggle navigation menu"
+            onClick={() => setMobileDrawerOpen((v) => !v)}
+          >
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
           <svg class="h-5 w-5" viewBox="0 0 64 64" fill="none">
             <defs>
               <linearGradient id="hex-lg" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -251,8 +280,24 @@ const App: Component = () => {
 
       {/* Main area */}
       <div class="flex flex-1 overflow-hidden">
-        {/* ── Left sidebar (w-68 = 272px per ADR-052) ── */}
-        <nav class="hidden md:flex w-[272px] shrink-0 flex-col border-r border-gray-800 bg-gray-950 overflow-y-auto">
+        {/* ── Mobile drawer backdrop ── */}
+        <Show when={mobileDrawerOpen()}>
+          <div class="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={() => setMobileDrawerOpen(false)} />
+        </Show>
+
+        {/* ── Left sidebar (collapsible on desktop, drawer on mobile) ── */}
+        <nav
+          role="navigation"
+          aria-label="Main navigation"
+          class="flex shrink-0 flex-col border-r border-gray-800 bg-gray-950 overflow-y-auto transition-all duration-200 ease-in-out"
+          classList={{
+            "w-12": sidebarCollapsed(),
+            "w-[272px]": !sidebarCollapsed(),
+            "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-[272px] max-md:shadow-2xl": true,
+            "max-md:-translate-x-full": !mobileDrawerOpen(),
+            "max-md:translate-x-0": mobileDrawerOpen(),
+          }}
+        >
 
           {/* Control Plane link */}
           <div class="px-3 pt-3 pb-1">
@@ -261,20 +306,25 @@ const App: Component = () => {
               classList={{
                 "bg-gray-900/50 text-gray-100 border-l-2 border-cyan-500": route().page === "control-plane",
                 "text-gray-400 hover:bg-gray-900/30 hover:text-gray-200": route().page !== "control-plane",
+                "justify-center px-0": sidebarCollapsed(),
               }}
-              onClick={() => navigate({ page: "control-plane" })}
+              aria-label="Control Plane"
+              aria-current={route().page === "control-plane" ? "page" : undefined}
+              onClick={() => { navigate({ page: "control-plane" }); setMobileDrawerOpen(false); }}
             >
-              <svg class="h-4 w-4 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="h-4 w-4 shrink-0 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
                 <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
               </svg>
-              Control Plane
+              <Show when={!sidebarCollapsed()}>Control Plane</Show>
             </button>
           </div>
 
           {/* Projects section */}
           <div class="px-3 pb-2 pt-2">
-            <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold px-3 mb-2">Projects</div>
+            <Show when={!sidebarCollapsed()}>
+              <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold px-3 mb-2">Projects</div>
+            </Show>
             <For each={projects()}>
               {(p) => (
                 <button
@@ -282,18 +332,21 @@ const App: Component = () => {
                   classList={{
                     "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100 font-medium": activeProjectId() === p.id,
                     "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": activeProjectId() !== p.id,
+                    "justify-center px-0": sidebarCollapsed(),
                   }}
-                  onClick={() => navigate({ page: "project", projectId: p.id })}
+                  aria-label={sidebarCollapsed() ? p.name : undefined}
+                  aria-current={activeProjectId() === p.id ? "page" : undefined}
+                  onClick={() => { navigate({ page: "project", projectId: p.id }); setMobileDrawerOpen(false); }}
                 >
                   <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                     classList={{ "text-cyan-400": activeProjectId() === p.id, "text-gray-600": activeProjectId() !== p.id }}>
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                   </svg>
-                  <span class="truncate">{p.name}</span>
+                  <Show when={!sidebarCollapsed()}><span class="truncate">{p.name}</span></Show>
                 </button>
               )}
             </For>
-            <Show when={projects().length === 0}>
+            <Show when={projects().length === 0 && !sidebarCollapsed()}>
               <p class="px-3 py-2 text-xs text-gray-600">No projects registered</p>
             </Show>
           </div>
@@ -301,7 +354,9 @@ const App: Component = () => {
           {/* Project sub-nav -- only visible when a project is active */}
           <Show when={activeProjectId()}>
             <div class="px-3 pb-2 border-t border-gray-800 pt-2">
-              <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold px-3 mb-2">Project</div>
+              <Show when={!sidebarCollapsed()}>
+                <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold px-3 mb-2">Project</div>
+              </Show>
               <For each={projectSubNav}>
                 {(item) => (
                   <button
@@ -309,14 +364,17 @@ const App: Component = () => {
                     classList={{
                       "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": isPageActive(item.page),
                       "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": !isPageActive(item.page),
+                      "justify-center px-0": sidebarCollapsed(),
                     }}
-                    onClick={() => navigate(item.routeFactory(activeProjectId()))}
+                    aria-label={sidebarCollapsed() ? item.label : undefined}
+                    aria-current={isPageActive(item.page) ? "page" : undefined}
+                    onClick={() => { navigate(item.routeFactory(activeProjectId())); setMobileDrawerOpen(false); }}
                   >
                     <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                       classList={{ "text-cyan-400": isPageActive(item.page) }}
                       innerHTML={item.icon}
                     />
-                    {item.label}
+                    <Show when={!sidebarCollapsed()}>{item.label}</Show>
                   </button>
                 )}
               </For>
@@ -325,22 +383,27 @@ const App: Component = () => {
 
           {/* Global section -- pinned to bottom */}
           <div class="px-3 pb-3 border-t border-gray-800 pt-2 mt-auto">
-            <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold px-3 mb-2">Global</div>
+            <Show when={!sidebarCollapsed()}>
+              <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold px-3 mb-2">Global</div>
+            </Show>
             {/* Inference */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{
                 "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "inference",
                 "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "inference",
+                "justify-center px-0": sidebarCollapsed(),
               }}
-              onClick={() => navigate({ page: "inference" })}
+              aria-label={sidebarCollapsed() ? "Inference" : undefined}
+              aria-current={route().page === "inference" ? "page" : undefined}
+              onClick={() => { navigate({ page: "inference" }); setMobileDrawerOpen(false); }}
             >
               <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                 classList={{ "text-cyan-400": route().page === "inference" }}>
                 <rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" />
                 <line x1="6" y1="6" x2="6.01" y2="6" /><line x1="6" y1="18" x2="6.01" y2="18" />
               </svg>
-              Inference
+              <Show when={!sidebarCollapsed()}>Inference</Show>
             </button>
             {/* Fleet Nodes */}
             <button
@@ -348,15 +411,31 @@ const App: Component = () => {
               classList={{
                 "border-l-2 border-cyan-500 bg-gray-900/50 text-gray-100": route().page === "fleet",
                 "text-gray-400 hover:text-gray-200 hover:bg-gray-900/30": route().page !== "fleet",
+                "justify-center px-0": sidebarCollapsed(),
               }}
-              onClick={() => navigate({ page: "fleet" })}
+              aria-label={sidebarCollapsed() ? "Fleet Nodes" : undefined}
+              aria-current={route().page === "fleet" ? "page" : undefined}
+              onClick={() => { navigate({ page: "fleet" }); setMobileDrawerOpen(false); }}
             >
               <svg class="h-3.5 w-3.5 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                 classList={{ "text-cyan-400": route().page === "fleet" }}>
                 <rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" />
                 <line x1="12" y1="17" x2="12" y2="21" />
               </svg>
-              Fleet Nodes
+              <Show when={!sidebarCollapsed()}>Fleet Nodes</Show>
+            </button>
+
+            {/* Collapse toggle (desktop only) */}
+            <button
+              class="hidden md:flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 hover:text-gray-300 hover:bg-gray-900/30 transition-colors mt-2 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+              classList={{ "justify-center px-0": sidebarCollapsed() }}
+              aria-label={sidebarCollapsed() ? "Expand sidebar" : "Collapse sidebar"}
+              onClick={() => setSidebarCollapsed((v) => !v)}
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 transition-transform duration-200" classList={{ "rotate-180": sidebarCollapsed() }} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              <Show when={!sidebarCollapsed()}>Collapse</Show>
             </button>
           </div>
         </nav>
@@ -397,6 +476,17 @@ const App: Component = () => {
         <Show when={moreMenuOpen()}>
           <div class="absolute bottom-full left-0 right-0 z-50 border-t border-gray-700 bg-gray-900 shadow-2xl transition-transform duration-200 ease-out animate-slide-up">
             <div class="grid grid-cols-2 gap-1 p-3">
+              {/* Global items */}
+              <button
+                class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+                classList={{ "bg-gray-800 text-cyan-400": route().page === "inference" }}
+                onClick={() => { navigate({ page: "inference" }); setMoreMenuOpen(false); }}
+              >
+                <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" />
+                </svg>
+                Inference
+              </button>
               <button
                 class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
                 classList={{ "bg-gray-800 text-cyan-400": route().page === "fleet" }}
@@ -408,7 +498,19 @@ const App: Component = () => {
                 </svg>
                 Fleet Nodes
               </button>
+              {/* Project-scoped items */}
               <Show when={activeProjectId()}>
+                <button
+                  class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+                  classList={{ "bg-gray-800 text-cyan-400": isPageActive("project-adrs") }}
+                  onClick={() => { navigate({ page: "project-adrs", projectId: activeProjectId() }); setMoreMenuOpen(false); }}
+                >
+                  <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  ADRs
+                </button>
                 <button
                   class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
                   classList={{ "bg-gray-800 text-cyan-400": isPageActive("project-workplans") }}
@@ -434,14 +536,23 @@ const App: Component = () => {
                 </button>
                 <button
                   class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
-                  classList={{ "bg-gray-800 text-cyan-400": isPageActive("project-adrs") }}
-                  onClick={() => { navigate({ page: "project-adrs", projectId: activeProjectId() }); setMoreMenuOpen(false); }}
+                  classList={{ "bg-gray-800 text-cyan-400": isPageActive("project-health") }}
+                  onClick={() => { navigate({ page: "project-health", projectId: activeProjectId() }); setMoreMenuOpen(false); }}
                 >
                   <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
                   </svg>
-                  ADRs
+                  Health
+                </button>
+                <button
+                  class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+                  classList={{ "bg-gray-800 text-cyan-400": isPageActive("project-files") }}
+                  onClick={() => { navigate({ page: "project-files", projectId: activeProjectId() }); setMoreMenuOpen(false); }}
+                >
+                  <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                  </svg>
+                  Files
                 </button>
               </Show>
             </div>
@@ -450,8 +561,10 @@ const App: Component = () => {
           <div class="fixed inset-0 z-40" onClick={() => setMoreMenuOpen(false)} />
         </Show>
 
+        {/* Tab 1: Projects (Control Plane) */}
         <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none rounded"
           classList={{ "text-cyan-400": route().page === "control-plane" }}
+          aria-label="Projects"
           onClick={() => { navigate({ page: "control-plane" }); setMoreMenuOpen(false); }}
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -460,8 +573,10 @@ const App: Component = () => {
           </svg>
           <span class="text-[10px]">Projects</span>
         </button>
+        {/* Tab 2: Agents */}
         <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none rounded"
           classList={{ "text-cyan-400": isPageActive("project-agents") }}
+          aria-label="Agents"
           onClick={() => {
             if (activeProjectId()) navigate({ page: "project-agents", projectId: activeProjectId() });
             setMoreMenuOpen(false);
@@ -472,17 +587,38 @@ const App: Component = () => {
           </svg>
           <span class="text-[10px]">Agents</span>
         </button>
+        {/* Tab 3: Swarms */}
         <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none rounded"
-          classList={{ "text-cyan-400": route().page === "inference" }}
-          onClick={() => { navigate({ page: "inference" }); setMoreMenuOpen(false); }}
+          classList={{ "text-cyan-400": isPageActive("project-swarms") }}
+          aria-label="Swarms"
+          onClick={() => {
+            if (activeProjectId()) navigate({ page: "project-swarms", projectId: activeProjectId() });
+            setMoreMenuOpen(false);
+          }}
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" />
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
           </svg>
-          <span class="text-[10px]">Inference</span>
+          <span class="text-[10px]">Swarms</span>
         </button>
+        {/* Tab 4: Chat */}
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none rounded"
+          classList={{ "text-cyan-400": isPageActive("project-chat") }}
+          aria-label="Chat"
+          onClick={() => {
+            if (activeProjectId()) navigate({ page: "project-chat", projectId: activeProjectId() });
+            setMoreMenuOpen(false);
+          }}
+        >
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <span class="text-[10px]">Chat</span>
+        </button>
+        {/* Tab 5: More */}
         <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none rounded"
           classList={{ "text-cyan-400": moreMenuOpen() }}
+          aria-label="More options"
           onClick={() => setMoreMenuOpen(!moreMenuOpen())}
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

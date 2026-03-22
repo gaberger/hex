@@ -4,6 +4,7 @@ import { skillRegistry, getHexfloConn, hexfloConnected } from '../../stores/conn
 import { route } from '../../stores/router';
 import { projects } from '../../stores/projects';
 import { MarkdownEditor } from '../editor';
+import { restClient } from '../../services/rest-client';
 
 interface Skill {
   skillId: string;
@@ -11,6 +12,7 @@ interface Skill {
   trigger: string;
   desc: string;
   path: string;
+  syncedAt: string;
 }
 
 type TabId = 'global' | 'project';
@@ -25,28 +27,22 @@ function isGlobalSkill(path: string): boolean {
 
 async function readSkillContent(path: string): Promise<string> {
   try {
-    const res = await fetch(`/api/files?path=${encodeURIComponent(path)}`);
-    if (!res.ok) return '';
-    const data = await res.json();
+    const data = await restClient.get(`/api/files?path=${encodeURIComponent(path)}`);
     return data.content ?? '';
   } catch { return ''; }
 }
 
 async function writeSkillContent(path: string, content: string): Promise<boolean> {
   try {
-    const res = await fetch('/api/files', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, content }),
-    });
-    return res.ok;
+    await restClient.post('/api/files', { path, content });
+    return true;
   } catch { return false; }
 }
 
 async function deleteSkillFile(path: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
-    return res.ok;
+    await restClient.delete(`/api/files?path=${encodeURIComponent(path)}`);
+    return true;
   } catch { return false; }
 }
 
@@ -75,6 +71,7 @@ const SkillsView: Component = () => {
         trigger: s.triggerCmd ?? s.trigger_cmd ?? s.trigger ?? '',
         desc: s.description ?? '',
         path: s.path ?? s.sourcePath ?? s.source_path ?? '',
+        syncedAt: s.syncedAt ?? s.synced_at ?? s.updatedAt ?? s.updated_at ?? '',
       }))
       .filter(s => s.desc !== '[DELETED]' && s.name.trim() !== '' && s.skillId.trim() !== '')
   );
@@ -193,24 +190,21 @@ const SkillsView: Component = () => {
     });
   }
 
-  const inputStyle = { "background-color": "var(--bg-input)", "border-color": "var(--border-subtle)" };
-
   return (
     <div class="flex-1 overflow-auto p-6">
       {/* Header */}
       <div class="flex items-center justify-between mb-4">
         <div>
-          <h2 class="text-lg font-bold" style={{ color: "var(--text-primary)" }}>Skills</h2>
-          <p class="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }}>
+          <h2 class="text-lg font-bold text-[var(--text-primary)]">Skills</h2>
+          <p class="mt-0.5 text-sm text-[var(--text-muted)]">
             {globalSkills().length} global, {projectSkills().length} project
             <Show when={hexfloConnected()}>
-              <span class="ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: "var(--accent-dim)", color: "var(--accent)" }}>SpacetimeDB</span>
+              <span class="ml-2 inline-flex items-center rounded-full bg-[var(--accent-dim)] px-2 py-0.5 text-[10px] font-medium text-[var(--accent)]">SpacetimeDB</span>
             </Show>
           </p>
         </div>
         <button
-          class="rounded-lg border px-3 py-1.5 text-sm transition-colors"
-          style={{ color: "var(--accent)", "border-color": "var(--border)" }}
+          class="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--accent)] transition-colors"
           onClick={() => setShowCreateForm(!showCreateForm())}
         >
           {showCreateForm() ? 'Cancel' : '+ New Skill'}
@@ -218,7 +212,7 @@ const SkillsView: Component = () => {
       </div>
 
       {/* Tabs */}
-      <div class="flex border-b mb-4" style={{ "border-color": "var(--border-subtle)" }}>
+      <div class="flex border-b border-[var(--border-subtle)] mb-4">
         <button
           class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
           style={{
@@ -243,27 +237,27 @@ const SkillsView: Component = () => {
 
       {/* Create form */}
       <Show when={showCreateForm()}>
-        <div class="mb-4 rounded-lg border p-4 space-y-3" style={{ background: "var(--bg-surface)", "border-color": "var(--border-subtle)" }}>
+        <div class="mb-4 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
           <div class="grid grid-cols-3 gap-3">
             <div>
-              <label class="block text-xs mb-1" style={{ color: "var(--text-faint)" }}>Name</label>
+              <label class="block text-xs text-[var(--text-faint)] mb-1">Name</label>
               <input type="text" placeholder="my-skill" value={newName()} onInput={(e) => setNewName(e.currentTarget.value)}
-                class="w-full rounded border px-3 py-2 text-sm outline-none focus:border-cyan-600" style={inputStyle} />
+                class="w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-input)] px-3 py-2 text-sm outline-none focus:border-cyan-600" />
             </div>
             <div>
-              <label class="block text-xs mb-1" style={{ color: "var(--text-faint)" }}>Trigger</label>
+              <label class="block text-xs text-[var(--text-faint)] mb-1">Trigger</label>
               <input type="text" placeholder="/my-skill" value={newTrigger()} onInput={(e) => setNewTrigger(e.currentTarget.value)}
-                class="w-full rounded border px-3 py-2 text-sm outline-none focus:border-cyan-600" style={inputStyle} />
+                class="w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-input)] px-3 py-2 text-sm outline-none focus:border-cyan-600" />
             </div>
             <div>
-              <label class="block text-xs mb-1" style={{ color: "var(--text-faint)" }}>Description</label>
+              <label class="block text-xs text-[var(--text-faint)] mb-1">Description</label>
               <input type="text" placeholder="What it does" value={newDesc()} onInput={(e) => setNewDesc(e.currentTarget.value)}
-                class="w-full rounded border px-3 py-2 text-sm outline-none focus:border-cyan-600" style={inputStyle} />
+                class="w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-input)] px-3 py-2 text-sm outline-none focus:border-cyan-600" />
             </div>
           </div>
           <div class="flex justify-end gap-2">
-            <button class="rounded border px-3 py-1.5 text-xs transition-colors" style={{ color: "var(--text-muted)", "border-color": "var(--border)" }} onClick={() => setShowCreateForm(false)}>Cancel</button>
-            <button class="rounded px-4 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-50" style={{ background: "var(--accent)" }}
+            <button class="rounded border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--text-muted)] transition-colors" onClick={() => setShowCreateForm(false)}>Cancel</button>
+            <button class="rounded bg-[var(--accent)] px-4 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-50"
               disabled={creating() || !newName().trim()} onClick={handleCreate}>{creating() ? 'Creating...' : 'Create'}</button>
           </div>
         </div>
@@ -271,8 +265,8 @@ const SkillsView: Component = () => {
 
       {/* Empty state */}
       <Show when={visibleSkills().length === 0}>
-        <div class="rounded-lg border border-dashed p-8 text-center" style={{ "border-color": "var(--border)" }}>
-          <p class="text-sm" style={{ color: "var(--text-faint)" }}>
+        <div class="rounded-lg border border-dashed border-[var(--border)] p-8 text-center">
+          <p class="text-sm text-[var(--text-faint)]">
             No {activeTab() === 'global' ? 'global' : 'project'} skills.{' '}
             {activeTab() === 'global'
               ? 'Run hex nexus start to sync from catalog.'
@@ -283,12 +277,12 @@ const SkillsView: Component = () => {
 
       {/* Skill table — clean rows, actions only when selected */}
       <Show when={visibleSkills().length > 0}>
-        <div class="rounded-lg border overflow-hidden" style={{ "border-color": "var(--border-subtle)" }}>
+        <div class="rounded-lg border border-[var(--border-subtle)] overflow-hidden">
           {/* Table header */}
           <div
             class="grid gap-4 px-4 py-2 text-[11px] font-semibold uppercase"
             style={{
-              "grid-template-columns": "24px 1fr 140px 2fr",
+              "grid-template-columns": "24px 1fr 140px 2fr 100px",
               color: "var(--text-dim)",
               background: "var(--bg-elevated)",
               "letter-spacing": "0.5px",
@@ -298,6 +292,7 @@ const SkillsView: Component = () => {
             <span>Name</span>
             <span>Trigger</span>
             <span>Description</span>
+            <span>Synced</span>
           </div>
 
           {/* Table rows */}
@@ -307,12 +302,12 @@ const SkillsView: Component = () => {
               const isConfirmingDelete = () => confirmDelete() === skill.skillId;
 
               return (
-                <div style={{ "border-top": "1px solid var(--border-subtle)" }}>
+                <div class="border-t border-[var(--border-subtle)]">
                   {/* Row */}
                   <button
                     class="grid w-full gap-4 px-4 py-2.5 text-left transition-colors"
                     style={{
-                      "grid-template-columns": "24px 1fr 140px 2fr",
+                      "grid-template-columns": "24px 1fr 140px 2fr 100px",
                       background: isSelected() ? "var(--accent-dim)" : "var(--bg-surface)",
                     }}
                     onClick={() => handleSelect(skill)}
@@ -323,14 +318,17 @@ const SkillsView: Component = () => {
                         style={{ background: isGlobalSkill(skill.path) ? '#60a5fa' : '#4ade80' }}
                       />
                     </span>
-                    <span class="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>
+                    <span class="text-sm font-medium truncate text-[var(--text-primary)]">
                       {skill.name}
                     </span>
-                    <span class="text-sm truncate" style={{ color: "var(--accent-hover)", "font-family": "var(--font-mono)" }}>
+                    <span class="font-mono text-sm truncate text-[var(--accent-hover)]">
                       {skill.trigger}
                     </span>
-                    <span class="text-sm truncate" style={{ color: "var(--text-muted)" }}>
+                    <span class="text-sm truncate text-[var(--text-muted)]">
                       {skill.desc}
+                    </span>
+                    <span class="text-[11px] truncate text-gray-500 font-mono" title={skill.syncedAt}>
+                      {skill.syncedAt ? new Date(skill.syncedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '\u2014'}
                     </span>
                   </button>
 
@@ -338,12 +336,30 @@ const SkillsView: Component = () => {
                   <Show when={isSelected()}>
                     {/* Action bar */}
                     <div
-                      class="flex items-center gap-2 px-4 py-2"
-                      style={{ background: "var(--bg-elevated)", "border-top": "1px solid var(--border-subtle)" }}
+                      class="flex items-center gap-2 border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-4 py-2"
                     >
-                      <span class="text-[11px] font-medium" style={{ color: "var(--text-faint)" }}>
+                      <span class="text-[11px] font-medium text-[var(--text-faint)] font-mono" title={`Source: ${skill.path}`}>
                         {skill.path}
                       </span>
+                      <Show when={skill.syncedAt}>
+                        <span class="text-[10px] text-gray-600" title={skill.syncedAt}>
+                          synced {new Date(skill.syncedAt).toLocaleString()}
+                        </span>
+                      </Show>
+                      <button
+                        class="rounded px-2 py-0.5 text-[11px] font-medium text-cyan-400 border border-gray-700 hover:border-cyan-600 hover:bg-cyan-900/20 transition-colors"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            await restClient.post('/api/config/sync');
+                            addToast('success', `Re-synced skill "${skill.name}"`);
+                          } catch {
+                            addToast('error', 'Resync failed');
+                          }
+                        }}
+                      >
+                        Resync
+                      </button>
                       <div class="flex-1" />
 
                       {/* Copy */}
@@ -379,12 +395,12 @@ const SkillsView: Component = () => {
 
                     {/* Content editor */}
                     <Show when={loadingContent()}>
-                      <div class="flex items-center justify-center py-8" style={{ background: "var(--bg-surface)" }}>
-                        <span class="text-sm" style={{ color: "var(--text-faint)" }}>Loading...</span>
+                      <div class="flex items-center justify-center bg-[var(--bg-surface)] py-8">
+                        <span class="text-sm text-[var(--text-faint)]">Loading...</span>
                       </div>
                     </Show>
                     <Show when={!loadingContent()}>
-                      <div style={{ height: "400px" }}>
+                      <div class="h-[400px]">
                         <MarkdownEditor
                           content={editorContent()}
                           filePath={skill.path}

@@ -3,6 +3,7 @@ import { addToast } from '../../stores/toast';
 import { setSpawnDialogOpen } from '../../stores/ui';
 import { agentDefinitions, getHexfloConn, hexfloConnected } from '../../stores/connection';
 import { CodeEditor } from '../editor';
+import { restClient } from '../../services/rest-client';
 
 interface AgentDef {
   agentId: string;
@@ -13,6 +14,7 @@ interface AgentDef {
   tools: string[];
   path: string;
   color: string;
+  syncedAt: string;
 }
 
 const ROLE_COLORS: Record<string, string> = {
@@ -43,9 +45,7 @@ function slugify(s: string): string {
 
 async function readAgentContent(path: string): Promise<string> {
   try {
-    const res = await fetch(`/api/files?path=${encodeURIComponent(path)}`);
-    if (!res.ok) return '';
-    const data = await res.json();
+    const data = await restClient.get(`/api/files?path=${encodeURIComponent(path)}`);
     return data.content ?? '';
   } catch {
     return '';
@@ -54,12 +54,8 @@ async function readAgentContent(path: string): Promise<string> {
 
 async function writeAgentContent(path: string, content: string): Promise<boolean> {
   try {
-    const res = await fetch('/api/files', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, content }),
-    });
-    return res.ok;
+    await restClient.post('/api/files', { path, content });
+    return true;
   } catch {
     return false;
   }
@@ -103,6 +99,7 @@ const AgentDefsView: Component = () => {
         tools,
         path: d.path ?? '',
         color: ROLE_COLORS[role] || '#6b7280',
+        syncedAt: d.syncedAt ?? d.synced_at ?? d.updatedAt ?? d.updated_at ?? '',
       };
     });
   });
@@ -239,8 +236,6 @@ const AgentDefsView: Component = () => {
 
   const inputClass = "w-full rounded-lg border px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-600";
   const selectClass = "w-full rounded-lg border px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-cyan-600 appearance-none";
-  const inputStyle = { "background-color": "var(--bg-input, var(--bg-elevated))", "border-color": "var(--border-subtle)" };
-
   return (
     <div class="flex-1 overflow-auto p-6">
       {/* Header */}
@@ -270,13 +265,13 @@ const AgentDefsView: Component = () => {
 
       {/* Create Agent Form */}
       <Show when={showCreateForm()}>
-        <div class="mb-6 rounded-xl border p-4 space-y-3" style={{ "background-color": "var(--bg-surface)", "border-color": "var(--border-subtle)" }}>
+        <div class="mb-6 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
           <h3 class="text-sm font-bold text-gray-200">Define New Agent</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
             <div>
               <label class="block text-xs text-gray-500 mb-1">Name</label>
               <input type="text" placeholder="my-agent" value={newName()} onInput={(e) => setNewName(e.currentTarget.value)}
-                class={inputClass} style={inputStyle} />
+                class={inputClass} class="bg-[var(--bg-input,var(--bg-elevated))] border-[var(--border-subtle)]" />
             </div>
             <div>
               <label class="block text-xs text-gray-500 mb-1">Role</label>
@@ -295,7 +290,7 @@ const AgentDefsView: Component = () => {
             <div>
               <label class="block text-xs text-gray-500 mb-1">Description</label>
               <input type="text" placeholder="What this agent does" value={newDesc()} onInput={(e) => setNewDesc(e.currentTarget.value)}
-                class={inputClass} style={inputStyle} />
+                class={inputClass} class="bg-[var(--bg-input,var(--bg-elevated))] border-[var(--border-subtle)]" />
             </div>
           </div>
           <div class="flex justify-end gap-2">
@@ -360,7 +355,33 @@ const AgentDefsView: Component = () => {
               </div>
 
               {/* Description */}
-              <p class="text-sm text-gray-400 mb-4">{agent.desc}</p>
+              <p class="text-sm text-gray-400 mb-3">{agent.desc}</p>
+
+              {/* Sync metadata */}
+              <div class="flex items-center gap-2 mb-3 text-[11px]">
+                <span class="font-mono text-gray-600 truncate" title={agent.path}>
+                  {agent.path || 'no source path'}
+                </span>
+                <Show when={agent.syncedAt}>
+                  <span class="text-gray-600">|</span>
+                  <span class="text-gray-500" title={agent.syncedAt}>
+                    synced {new Date(agent.syncedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </Show>
+                <button
+                  class="ml-auto rounded px-2 py-0.5 text-[11px] font-medium text-cyan-400 border border-gray-700 hover:border-cyan-600 hover:bg-cyan-900/20 transition-colors"
+                  onClick={async () => {
+                    try {
+                      await restClient.post('/api/config/sync');
+                      addToast('success', `Re-synced agent "${agent.name}"`);
+                    } catch {
+                      addToast('error', 'Resync failed');
+                    }
+                  }}
+                >
+                  Resync
+                </button>
+              </div>
 
               {/* Tool chips */}
               <div class="flex flex-wrap gap-1.5 mb-4">
@@ -391,7 +412,7 @@ const AgentDefsView: Component = () => {
 
               {/* YAML Content Editor */}
               <Show when={editorAgentId() === agent.agentId}>
-                <div class="mt-3 pt-3 border-t" style={{ "border-color": "var(--border-subtle)" }}>
+                <div class="mt-3 pt-3 border-t" class="border-[var(--border-subtle)]">
                   <Show when={loadingContent()}>
                     <div class="flex items-center justify-center py-8">
                       <span class="text-sm text-gray-500">Loading YAML...</span>
@@ -422,12 +443,12 @@ const AgentDefsView: Component = () => {
 
               {/* Inline metadata editor */}
               <Show when={editingAgent() === agent.agentId}>
-                <div class="mt-3 pt-3 border-t space-y-3" style={{ "border-color": "var(--border-subtle)" }}>
+                <div class="mt-3 pt-3 border-t space-y-3" class="border-[var(--border-subtle)]">
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label class="block text-xs text-gray-500 mb-1">Name</label>
                       <input type="text" value={editName()} onInput={(e) => setEditName(e.currentTarget.value)}
-                        class={inputClass} style={inputStyle} />
+                        class={inputClass} class="bg-[var(--bg-input,var(--bg-elevated))] border-[var(--border-subtle)]" />
                     </div>
                     <div>
                       <label class="block text-xs text-gray-500 mb-1">Role</label>
@@ -446,7 +467,7 @@ const AgentDefsView: Component = () => {
                     <div>
                       <label class="block text-xs text-gray-500 mb-1">Description</label>
                       <input type="text" value={editDesc()} onInput={(e) => setEditDesc(e.currentTarget.value)}
-                        class={inputClass} style={inputStyle} />
+                        class={inputClass} class="bg-[var(--bg-input,var(--bg-elevated))] border-[var(--border-subtle)]" />
                     </div>
                   </div>
                   <div class="flex justify-end gap-2">

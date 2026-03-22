@@ -200,6 +200,17 @@ input::placeholder, textarea::placeholder {
   animation: toast-in 0.2s ease-out;
 }
 
+/* ── Focus indicators (accessibility) ────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* ── Mobile More menu slide-up ───────────────────────────── */
 @keyframes slide-up {
   from { opacity: 0; transform: translateY(0.5rem); }
