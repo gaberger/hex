@@ -1,4 +1,4 @@
-# ADR-043: AIIDE — Hex Nexus as AI Integrated Development Environment
+# ADR-052: AIIDE — Hex Nexus as AI Integrated Development Environment
 
 **Status:** Accepted
 **Date:** 2026-03-21

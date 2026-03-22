@@ -23,10 +23,12 @@ import { swarms } from "./connection";
 import { navigate } from "./router";
 
 export type CommandCategory =
+  | "navigation"
   | "project"
   | "agent"
   | "swarm"
   | "inference"
+  | "analysis"
   | "session"
   | "view"
   | "settings";
@@ -41,6 +43,50 @@ export interface Command {
 
 /** All registered commands. */
 const commands: Command[] = [
+  // ── Navigation ──
+  {
+    id: "nav.projects",
+    label: "Navigate to Projects",
+    category: "navigation",
+    action: () => navigate({ page: "control-plane" }),
+  },
+  {
+    id: "nav.agents",
+    label: "Navigate to Agents",
+    category: "navigation",
+    action: () => navigate({ page: "agent-fleet" }),
+  },
+  {
+    id: "nav.swarms",
+    label: "Navigate to Swarms",
+    category: "navigation",
+    action: () => navigate({ page: "control-plane" }),
+  },
+  {
+    id: "nav.adrs",
+    label: "View ADRs",
+    category: "navigation",
+    action: () => navigate({ page: "adrs" }),
+  },
+  {
+    id: "nav.workplans",
+    label: "View Workplans",
+    category: "navigation",
+    action: () => navigate({ page: "workplans" }),
+  },
+  {
+    id: "nav.inference",
+    label: "Navigate to Inference",
+    category: "navigation",
+    action: () => navigate({ page: "inference" }),
+  },
+  {
+    id: "nav.fleet",
+    label: "Navigate to Fleet Nodes",
+    category: "navigation",
+    action: () => navigate({ page: "fleet-nodes" }),
+  },
+
   // ── View ──
   {
     id: "view.split-h",
@@ -178,6 +224,49 @@ const commands: Command[] = [
     label: "Initialize New Swarm",
     category: "swarm",
     action: () => setSwarmInitDialogOpen(true),
+  },
+
+  // ── Analysis ──
+  {
+    id: "analysis.run",
+    label: "Run Analysis",
+    category: "analysis",
+    action: async () => {
+      try {
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: "." }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          addToast("success", `Analysis complete — Score: ${data.health_score ?? "?"}/100`);
+        } else {
+          addToast("error", "Analysis failed");
+        }
+      } catch {
+        addToast("error", "Analysis request failed — is nexus running?");
+      }
+    },
+  },
+
+  // ── Config ──
+  {
+    id: "config.refresh",
+    label: "Refresh Config",
+    category: "settings",
+    action: async () => {
+      try {
+        const res = await fetch("/api/config/sync", { method: "POST" });
+        if (res.ok) {
+          addToast("success", "Config refreshed from repo");
+        } else {
+          addToast("error", "Config refresh failed");
+        }
+      } catch {
+        addToast("error", "Config refresh failed — is nexus running?");
+      }
+    },
   },
 
   // ── Settings / Help ──

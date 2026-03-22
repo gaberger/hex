@@ -106,16 +106,23 @@ async fn list() -> anyhow::Result<()> {
             .unwrap_or_default();
 
         let status_colored = match status {
-            "online" | "active" | "connected" => status.green().to_string(),
-            "idle" => status.yellow().to_string(),
-            "offline" | "disconnected" => status.red().to_string(),
-            "stale" => status.dimmed().to_string(),
+            "online" | "active" | "connected" | "running" => status.green().to_string(),
+            "idle" | "spawning" => status.yellow().to_string(),
+            "offline" | "disconnected" | "failed" => status.red().to_string(),
+            "stale" | "completed" => status.dimmed().to_string(),
             _ => status.to_string(),
+        };
+
+        // Show [local] tag for auto-spawned agents (ADR-037)
+        let name_display = if name.contains("(local)") {
+            format!("{} {}", name.replace(" (local)", ""), "[local]".dimmed())
+        } else {
+            name.to_string()
         };
 
         println!(
             "  {:<14} {:<16} {:<20} {:<19} {}",
-            id_short, name, host, status_colored, models,
+            id_short, name_display, host, status_colored, models,
         );
     }
 

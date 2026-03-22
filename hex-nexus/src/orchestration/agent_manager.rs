@@ -140,6 +140,18 @@ pub struct AgentManager {
     state_port: Arc<dyn IStatePort>,
     /// In-memory map of agent ID → process ID (port doesn't track PIDs)
     pid_map: Mutex<HashMap<String, u32>>,
+    /// Child process handles for locally-spawned agents (ADR-037).
+    /// These are killed on nexus shutdown via `stop_local_agents()`.
+    local_children: Mutex<Vec<LocalAgent>>,
+}
+
+/// A locally-spawned agent child process tracked for lifecycle management (ADR-037).
+#[derive(Debug)]
+pub struct LocalAgent {
+    pub id: String,
+    pub pid: u32,
+    pub child: std::process::Child,
+    pub project_dir: String,
 }
 
 impl AgentManager {
@@ -147,6 +159,7 @@ impl AgentManager {
         Self {
             state_port,
             pid_map: Mutex::new(HashMap::new()),
+            local_children: Mutex::new(Vec::new()),
         }
     }
 
@@ -308,6 +321,102 @@ impl AgentManager {
 
         tracing::info!(agent_id = %agent.id, pid = agent.process_id, "Terminated hex-agent");
         Ok(true)
+    }
+
+    /// Spawn a local hex-agent as a child process tied to this nexus instance (ADR-037).
+    ///
+    /// The agent connects back to nexus via `hub_url` and operates on `project_dir`.
+    /// The child process handle is stored for lifecycle management — killed on nexus shutdown.
+    ///
+    /// Returns the PID of the spawned process, or an error if the binary is not found.
+    pub async fn spawn_local_agent(
+        &self,
+        hub_url: &str,
+        project_dir: &std::path::Path,
+    ) -> Result<u32, String> {
+        let agent_bin = crate::find_agent_binary()
+            .ok_or_else(|| "hex-agent binary not found (checked sibling dir, ~/.hex/bin/, PATH, cargo target)".to_string())?;
+
+        let id = Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        let project_dir_str = project_dir.to_string_lossy().to_string();
+
+        let child = std::process::Command::new(&agent_bin)
+            .args([
+                "--hub-url", hub_url,
+                "--project-dir", &project_dir_str,
+                "--no-preflight",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to spawn hex-agent at {}: {}", agent_bin.display(), e))?;
+
+        let pid = child.id();
+
+        // Register via state port so `hex agent list` shows it
+        let info = AgentInfo {
+            id: id.clone(),
+            name: "hex-agent (local)".to_string(),
+            project_id: String::new(),
+            project_dir: project_dir_str.clone(),
+            model: "default".to_string(),
+            status: PortAgentStatus::Running,
+            started_at: now,
+        };
+        if let Err(e) = self.state_port.agent_register(info).await {
+            tracing::warn!("Failed to register local agent in state port: {}", e);
+        }
+
+        // Track PID
+        self.pid_map.lock().await.insert(id.clone(), pid);
+
+        // Store child handle for lifecycle management
+        self.local_children.lock().await.push(LocalAgent {
+            id,
+            pid,
+            child,
+            project_dir: project_dir_str,
+        });
+
+        Ok(pid)
+    }
+
+    /// Stop all locally-spawned child agents (called on nexus shutdown).
+    ///
+    /// Sends SIGTERM first, then SIGKILL after a brief wait if the process is still alive.
+    pub async fn stop_local_agents(&self) {
+        let mut children = self.local_children.lock().await;
+        for agent in children.iter_mut() {
+            tracing::info!(
+                pid = agent.pid,
+                id = %agent.id,
+                "Stopping local agent (PID {})",
+                agent.pid
+            );
+
+            // Try graceful kill first
+            let _ = agent.child.kill();
+            match agent.child.wait() {
+                Ok(status) => {
+                    tracing::info!(pid = agent.pid, "Local agent exited: {}", status);
+                }
+                Err(e) => {
+                    tracing::warn!(pid = agent.pid, "Error waiting for local agent: {}", e);
+                }
+            }
+
+            // Update state port
+            let _ = self
+                .state_port
+                .agent_update_status(&agent.id, PortAgentStatus::Completed, None)
+                .await;
+        }
+        let count = children.len();
+        children.clear();
+        if count > 0 {
+            tracing::info!("Stopped {} local agent(s)", count);
+        }
     }
 
     /// Check if tracked agents are still running (via PID). Mark dead ones as failed.

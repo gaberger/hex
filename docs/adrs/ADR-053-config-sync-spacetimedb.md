@@ -1,7 +1,10 @@
-# ADR-044: Framework Configuration Sync to SpacetimeDB
+# ADR-053: Framework Configuration Sync to SpacetimeDB
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted Date:** 2026-03-21
 **Date:** 2026-03-21
+
+> **Implementation Evidence:** `hex-nexus/src/config_sync.rs` implements the sync layer, wired into `lib.rs` startup and `routes/files.rs`. Reads repo config files on nexus startup and pushes to SpacetimeDB tables.
 **Drivers:** Dashboard needs reactive access to repo-defined configuration; ADR-042 (SpacetimeDB single state); ADR-043 (AIIDE five pillars)
 
 ## Context

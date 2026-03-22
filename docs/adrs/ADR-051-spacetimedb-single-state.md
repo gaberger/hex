@@ -1,7 +1,10 @@
-# ADR-041: SpacetimeDB as Single Source of State
+# ADR-051: SpacetimeDB as Single Source of State
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted Date:** 2026-03-22
 **Date:** 2026-03-21
+
+> **Implementation Evidence:** Database target unified to `hexflo-coordination` in state_config.rs and spacetime_state.rs. AppState contains no in-memory HashMaps for persistent state — all coordination, inference, projects, and sessions go through SpacetimeDB (with feature-gated SQLite fallback for sessions only).
 **Drivers:** UX dashboard redesign revealed state fragmentation across 4+ backends
 
 ## Context
@@ -40,6 +43,16 @@ The hex-nexus system currently stores coordination state in **multiple disconnec
 - Outbound HTTP (inference health checks, webhook calls)
 - Static asset serving (dashboard HTML/JS/CSS)
 - WebSocket proxy for chat (bridges LLM APIs to SpacetimeDB)
+
+## Implementation Progress
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 1: Unify HexFlo coordination | Partial | `hexflo-coordination` SpacetimeDB module exists with swarm/task/agent/memory tables. Dashboard subscribes to it. Gap: `SpacetimeStateAdapter` may still write to a separate database. |
+| Phase 2: Eliminate in-memory inference | Not started | `state.inference_endpoints` HashMap still exists in AppState |
+| Phase 3: Eliminate in-memory coordination | Not started | `state.hexflo`, `state.instances`, `state.worktree_locks` still in-memory |
+| Phase 4: Projects in SpacetimeDB | Partial | Project table exists, dashboard reads from it. REST register route still writes to HashMap. |
+| Phase 5: Sessions in SpacetimeDB | Not started | Sessions still in SQLite `hub.db` |
 
 ## Implementation Plan
 

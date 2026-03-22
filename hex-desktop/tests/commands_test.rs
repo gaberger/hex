@@ -51,6 +51,7 @@ fn hub_config_defaults() {
     assert_eq!(config.bind, "127.0.0.1");
     assert!(config.token.is_none());
     assert!(!config.is_daemon);
+    assert!(!config.no_agent);
 }
 
 /// Verify daemon lock file utilities are accessible.

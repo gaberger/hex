@@ -1,8 +1,9 @@
 # ADR-047: Internal Documentation System
 
-## Status
+**Status:** Accepted
+**Accepted Date:** 2026-03-22
 
-Proposed
+> **Implementation Evidence:** `docs/reference/glossary.md` (105 lines, 14+ canonical terms with NOT column) and `docs/reference/system-architecture.md` (418 lines, all 18 SpacetimeDB modules, data flow diagrams, deployment topologies) exist. Phases 1-2 of the ADR are complete. Remaining: WASM module READMEs (Phase 3), `hex docs check` CLI (Phase 4), ADR frontmatter migration (Phase 5).
 
 ## Context
 

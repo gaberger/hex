@@ -1,8 +1,6 @@
 # ADR-024: Hex-Hub Autonomous Nexus Architecture
 
-## Status
-
-Accepted
+**Status:** Accepted
 
 ## Context
 

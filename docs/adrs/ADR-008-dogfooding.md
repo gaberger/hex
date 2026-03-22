@@ -1,6 +1,6 @@
 # ADR-008: Dogfooding — hex Built with Hexagonal Architecture
 
-## Status: Accepted
+**Status:** Accepted
 ## Date: 2026-03-15
 
 ## Context

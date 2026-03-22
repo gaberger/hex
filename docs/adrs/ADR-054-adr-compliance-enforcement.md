@@ -1,6 +1,6 @@
-# ADR-045: ADR Compliance Enforcement — Preventing Architectural Drift
+# ADR-054: ADR Compliance Enforcement — Preventing Architectural Drift
 
-## Status: Proposed
+**Status:** Proposed
 ## Date: 2026-03-21
 
 ## Context
@@ -40,7 +40,7 @@ ADRs gain an optional `enforced_by` frontmatter field that names the analysis ru
 
 ```markdown
 # ADR-039: Nexus Agent Control Plane
-## Status: Accepted
+**Status:** Accepted
 ## Enforced-By: adr-039-no-rest-state, adr-039-spacetimedb-first
 ```
 

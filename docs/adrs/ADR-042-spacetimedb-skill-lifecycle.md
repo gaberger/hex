@@ -1,7 +1,10 @@
 # ADR-042: SpacetimeDB Skill Lifecycle — Ingest, Select, Serialize
 
-- **Status**: Proposed
-- **Date**: 2026-03-21
+**Status:** Accepted
+**Accepted Date:** 2026-03-22
+## Date: 2026-03-21
+
+> **Implementation Evidence:** Skill ingestion pipeline in `config_sync.rs` syncs skills from `skills/` and `.claude/skills/` to SpacetimeDB `skill_registry` module on nexus startup. CLI commands: `hex skill list|sync|show` in `hex-cli/src/commands/skill.rs`. SpacetimeDB `skill_registry` module with `sync_skill` reducer. Remaining gap: intelligent skill selection at inference time (P6.2 — SkillSelector with token budgeting).
 - **Informed by**: ADR-025 (SpacetimeDB), ADR-040 (remote agents), project-output skill pattern
 - **Authors**: Gary (architect), Claude (analysis)
 

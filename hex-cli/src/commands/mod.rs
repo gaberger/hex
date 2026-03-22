@@ -11,6 +11,7 @@ pub mod nexus;
 pub mod plan;
 pub mod project;
 pub mod secrets;
+pub mod skill;
 pub mod stdb;
 pub mod status;
 pub mod swarm;

@@ -1,6 +1,6 @@
 # ADR-001: Hexagonal Architecture as Foundational Pattern
 
-## Status: Accepted
+**Status:** Accepted
 ## Date: 2026-03-15
 
 ## Context

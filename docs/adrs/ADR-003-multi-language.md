@@ -1,6 +1,6 @@
 # ADR-003: Multi-Language Support — TypeScript, Go, Rust
 
-## Status: Accepted
+**Status:** Accepted
 ## Date: 2026-03-15
 
 ## Context

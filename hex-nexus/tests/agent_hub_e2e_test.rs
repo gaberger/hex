@@ -26,6 +26,7 @@ async fn start_hub() -> SocketAddr {
         bind: "127.0.0.1".to_string(),
         token: None,
         is_daemon: false,
+        no_agent: true,
     };
 
     let (router, _state) = hex_nexus::build_app(&config).await;

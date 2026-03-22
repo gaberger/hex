@@ -10,10 +10,12 @@ import { Component, For, Show, createSignal, createMemo, onMount, onCleanup } fr
 import { searchCommands, type Command, type CommandCategory } from "../../stores/commands";
 
 const CATEGORY_COLORS: Record<CommandCategory, string> = {
+  navigation: "text-teal-400",
   project: "text-green-400",
   agent: "text-cyan-400",
   swarm: "text-purple-400",
   inference: "text-yellow-400",
+  analysis: "text-rose-400",
   session: "text-blue-400",
   view: "text-gray-300",
   settings: "text-orange-400",

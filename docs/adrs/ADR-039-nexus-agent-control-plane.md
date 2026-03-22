@@ -1,7 +1,7 @@
 # ADR-039: Nexus Agent Control Plane — OpenCode-Inspired Multi-Project Interface
 
-- **Status**: Proposed
-- **Date**: 2026-03-20
+**Status:** Proposed
+## Date: 2026-03-20
 - **Informed by**: ADR-036 (sessions), ADR-037 (agent lifecycle), ADR-038 (Vite/Axum), OpenCode (anomalyco/opencode)
 - **Authors**: Gary (architect), Claude (analysis)
 - **Supersedes**: Current vanilla JS dashboard in `hex-nexus/assets/`
@@ -90,6 +90,19 @@ This means the browser can subscribe to `SELECT * FROM agents WHERE project_id =
 - `secret-grant`, `conflict-resolver`, `file-lock-manager`, `architecture-enforcer`
 
 Rust server-side bindings are generated for 8 modules. HTTP reducer calls work for RL, chat, and HexFlo. **What's missing: TypeScript browser bindings and the WebSocket subscription wiring.**
+
+## Implementation Progress
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| SolidJS dashboard rebuild | Done | `hex-nexus/assets/src/` with components/, stores/, hooks/, spacetimedb/ |
+| SpacetimeDB WebSocket subscriptions | Done | Dashboard subscribes to swarm, task, agent, project tables |
+| Multi-project views | Done | Project list, detail views, architecture health |
+| Agent fleet panel | Partial | Agent list exists, but no GUI-driven spawning |
+| Command palette (Ctrl+P) | Not started | No fuzzy-find command dispatch |
+| Split-pane agent views | Not started | No tmux-style multi-agent monitoring |
+| Code display (Shiki/Pierre) | Not started | No syntax-highlighted diffs in browser |
+| GUI-driven agent spawning | Not started | Orchestration still requires CLI/Claude Code |
 
 ## Decision
 

@@ -1,6 +1,6 @@
 # ADR-048: Claude Code Session Agent Registration
 
-## Status: Accepted
+**Status:** Accepted
 ## Date: 2026-03-21
 
 ## Context

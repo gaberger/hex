@@ -15,6 +15,7 @@ use commands::{
     plan::PlanAction,
     project::ProjectAction,
     secrets::SecretsAction,
+    skill::SkillAction,
     stdb::StdbAction,
     status,
     swarm::SwarmAction,
@@ -120,6 +121,11 @@ enum Commands {
         #[command(subcommand)]
         action: commands::test::TestAction,
     },
+    /// Manage skills (list, sync, show)
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
     /// Project status
     Status,
 }
@@ -158,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Hook { event } => commands::hook::run(event).await,
         Commands::Mcp => commands::mcp::run_mcp_server().await,
         Commands::Test { action } => commands::test::run(action).await,
+        Commands::Skill { action } => commands::skill::run(action).await,
         Commands::Status => status::run().await,
     }
 }

@@ -9,7 +9,7 @@
 //!
 //! Enabled via `.hex/state.json`:
 //! ```json
-//! { "backend": "spacetimedb", "spacetimedb": { "host": "localhost:3000", "database": "hex-nexus" } }
+//! { "backend": "spacetimedb", "spacetimedb": { "host": "localhost:3000", "database": "hexflo-coordination" } }
 //! ```
 
 use async_trait::async_trait;
@@ -29,7 +29,7 @@ impl Default for SpacetimeConfig {
     fn default() -> Self {
         Self {
             host: "http://localhost:3000".to_string(),
-            database: "hex-nexus".to_string(),
+            database: "hexflo-coordination".to_string(),
             auth_token: None,
         }
     }

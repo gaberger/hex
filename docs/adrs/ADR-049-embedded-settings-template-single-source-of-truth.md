@@ -1,6 +1,6 @@
 # ADR-049: Embedded Settings Template — Single Source of Truth
 
-## Status: Accepted
+**Status:** Accepted
 ## Date: 2026-03-21
 
 ## Context

@@ -1,7 +1,10 @@
 # ADR-040: Remote Agent Transport — WebSocket over SSH with SpacetimeDB Coordination
 
-- **Status**: Proposed
-- **Date**: 2026-03-21
+**Status:** Accepted
+**Accepted Date:** 2026-03-22
+## Date: 2026-03-21
+
+> **Implementation Evidence:** ISshTunnelPort trait (`ports/ssh_tunnel.rs`), SSH tunnel adapter (`adapters/ssh_tunnel.rs`), WebSocket transport adapter (`adapters/ws_transport.rs`), agent lifecycle adapter (`adapters/agent_lifecycle.rs`), agent transport port (`ports/agent_transport.rs`), remote agent orchestrator use case (`usecases/remote_agent_orchestrator.rs`). Remote SSH module at `remote/ssh.rs`. One-command `hex agent spawn-remote` not yet wired in CLI.
 - **Informed by**: ADR-025 (SpacetimeDB), ADR-037 (agent lifecycle), ADR-039 (control plane)
 - **Authors**: Gary (architect), Claude (analysis)
 

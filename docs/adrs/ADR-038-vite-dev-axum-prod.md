@@ -1,7 +1,10 @@
 # ADR-038: Vite for Development, Axum for Production
 
-- **Status**: Proposed
-- **Date**: 2026-03-20
+**Status:** Accepted
+**Accepted Date:** 2026-03-21
+## Date: 2026-03-20
+
+> **Implementation Evidence:** Dashboard rebuilt as SolidJS application in `hex-nexus/assets/src/` with full component model (components/, stores/, hooks/, spacetimedb/). Axum serves built assets via `rust-embed` in production. Vite dev server used for frontend iteration.
 - **Informed by**: ADR-036, current hex-chat implementation
 - **Authors**: Gary
 

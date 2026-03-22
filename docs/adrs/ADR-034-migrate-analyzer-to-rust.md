@@ -1,7 +1,10 @@
 # ADR-034: Migrate Hex Analyzer from TypeScript to Rust
 
-## Status
-Proposed — 2025-07-19
+**Status:** Accepted
+**Accepted Date:** 2026-03-21
+## Date: 2025-07-19
+
+> **Implementation Evidence:** All planned Rust modules exist in `hex-nexus/src/analysis/`: domain.rs, ports.rs, layer_classifier.rs, path_normalizer.rs, treesitter_adapter.rs, boundary_checker.rs, cycle_detector.rs, dead_export_finder.rs, analyzer.rs, adr_compliance.rs, mod.rs. The Rust analyzer is the primary analysis path used by `hex analyze`.
 
 ## Context
 

@@ -1,7 +1,10 @@
 # ADR-046: Workplan Lifecycle Management — Creation, Tracking, and Reporting
 
-## Status: Proposed
+**Status:** Accepted
+**Accepted Date:** 2026-03-22
 ## Date: 2026-03-21
+
+> **Implementation Evidence:** WorkplanExecutor in `hex-nexus/src/orchestration/workplan_executor.rs` executes phases sequentially, spawns agents per task, enforces phase gates (GateResult), blocks advancement on gate failure. CLI: `hex plan execute/status/pause/resume/report`. MCP tools: `hex_plan_execute/status/report`. REST endpoints wired. Remaining gaps: git commit_sha correlation per task, dashboard WorkplanProgress component.
 
 ## Context
 

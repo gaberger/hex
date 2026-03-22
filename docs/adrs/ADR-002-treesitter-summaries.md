@@ -1,6 +1,6 @@
 # ADR-002: Tree-Sitter for Token-Efficient LLM Communication
 
-## Status: Accepted
+**Status:** Accepted
 ## Date: 2026-03-15
 
 ## Context

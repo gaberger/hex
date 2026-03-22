@@ -1,7 +1,10 @@
 # ADR-043: Project Manifest + Auto-Registration via SpacetimeDB
 
-- **Status**: Proposed
-- **Date**: 2026-03-21
+**Status:** Accepted
+**Accepted Date:** 2026-03-22
+## Date: 2026-03-21
+
+> **Implementation Evidence:** `ProjectManifest` parser and `auto_register_project()` in `hex-nexus/src/config_sync.rs`. Wired into nexus startup in `lib.rs`. `.hex/project.yaml` scaffolded by `hex init` (`hex-cli/src/commands/init.rs`). SpacetimeDB `register_project` reducer exists in `hexflo-coordination` module. REST register route already delegates to SpacetimeDB.
 - **Informed by**: ADR-025 (SpacetimeDB), ADR-037 (agent lifecycle), ADR-040 (remote agents)
 - **Authors**: Gary (architect), Claude (analysis)
 
@@ -102,6 +105,17 @@ The `state.projects` HashMap becomes a read-through cache of SpacetimeDB:
 - Updated reactively when SpacetimeDB events arrive
 - Used for quick lookups in git routes (`resolve_project_path`)
 - Never written to directly by REST routes
+
+## Implementation Progress
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| SpacetimeDB project table | Done | `hexflo-coordination` module has project table with reducers |
+| REST register route | Done | `POST /api/projects/register` exists but writes to in-memory HashMap |
+| `.hex/project.yaml` manifest | Done | Parser in `config_sync.rs`, `hex init` scaffolds it |
+| Auto-registration on startup | Done | `auto_register_project()` called in `lib.rs` build_app() |
+| REST → SpacetimeDB migration | Done | Register route already calls SpacetimeDB reducer |
+| Dashboard project subscription | Done | Dashboard subscribes to SpacetimeDB project table |
 
 ## Consequences
 

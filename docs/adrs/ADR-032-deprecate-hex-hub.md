@@ -1,11 +1,9 @@
 # ADR-032: Deprecate hex-hub — Consolidate into hex-nexus and hex-agent
 
-| Field | Value |
-|-------|-------|
-| **Status** | Accepted |
-| **Date** | 2026-03-18 |
-| **Supersedes** | ADR-016 (Hub Binary Version Verification) |
-| **Affects** | ADR-011, ADR-015, ADR-024, ADR-025, ADR-026, ADR-027 |
+**Status:** Accepted
+**Date:** 2026-03-18
+**Supersedes:** ADR-016 (Hub Binary Version Verification)
+**Affects:** ADR-011, ADR-015, ADR-024, ADR-025, ADR-026, ADR-027
 | **Decision** | Deprecate `hex-hub/` crate; absorb its code into `hex-nexus` (binary target) and `hex-agent` |
 
 ---

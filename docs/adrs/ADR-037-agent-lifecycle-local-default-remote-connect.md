@@ -1,7 +1,10 @@
 # ADR-037: Agent Lifecycle — Local Default + Remote Connect
 
-- **Status**: Proposed
-- **Date**: 2026-03-19
+**Status:** Accepted
+**Accepted Date:** 2026-03-22
+## Date: 2026-03-19
+
+> **Implementation Evidence:** `AgentManager` in `hex-nexus/src/orchestration/agent_manager.rs` has `spawn_local_agent()` and `spawn_agent()` methods. `HubConfig.no_agent` flag added to `lib.rs` for opt-out. Agent lifecycle adapter at `adapters/agent_lifecycle.rs`. Agent transport port at `ports/agent_transport.rs`. CLI: `hex agent list|connect|disconnect`.
 - **Informed by**: ADR-024, ADR-035, VS Code Remote SSH model
 - **Authors**: Gary (architect), Claude (analysis)
 

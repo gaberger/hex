@@ -1,8 +1,6 @@
 # ADR-027: HexFlo — Replace Ruflo with Native Swarm Coordination
 
-## Status
-
-Accepted (all 5 phases implemented)
+**Status:** Accepted
 
 ## Context
 

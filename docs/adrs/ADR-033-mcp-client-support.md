@@ -1,8 +1,6 @@
 # ADR-033: MCP Client Support for hex-agent
 
-## Status
-
-Accepted
+**Status:** Accepted
 
 ## Context
 

@@ -1,7 +1,7 @@
 # ADR-022: Wire Coordination into Use Cases (Last-Mile Fix)
 
-**Status**: Accepted
-**Date**: 2026-03-17
+**Status:** Accepted
+## Date: 2026-03-17
 **Deciders**: Core Team
 **Related**: ADR-004 (Worktrees), ADR-011 (Coordination), ADR-020 (Feature UX)
 

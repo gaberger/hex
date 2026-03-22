@@ -1,7 +1,7 @@
 # ADR-036: hex-chat Session Architecture
 
-- **Status**: Accepted
-- **Date**: 2026-03-19
+**Status:** Accepted
+## Date: 2026-03-19
 - **Informed by**: OpenCode (anomalyco/opencode), ADR-035
 - **Authors**: Gary (architect), Claude (analysis)
 

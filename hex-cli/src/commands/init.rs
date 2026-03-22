@@ -68,8 +68,11 @@ pub async fn run(args: InitArgs) -> Result<()> {
         target.display().to_string().bold()
     );
 
-    // ── 1. .hex/project.json ──────────────────────────────────────
+    // ── 1a. .hex/project.json ─────────────────────────────────────
     create_project_json(&target, &project_name)?;
+
+    // ── 1b. .hex/project.yaml (ADR-043 manifest) ───────────────
+    create_project_yaml(&target, &project_name)?;
 
     // ── 2. .mcp.json ─────────────────────────────────────────────
     create_mcp_json(&target)?;
@@ -96,6 +99,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // ── Summary ───────────────────────────────────────────────────
     println!();
     println!("  {} .hex/project.json", "\u{2713}".green());
+    println!("  {} .hex/project.yaml (auto-register manifest)", "\u{2713}".green());
     println!("  {} .mcp.json", "\u{2713}".green());
     println!("  {} .claude/settings.json", "\u{2713}".green());
     if !args.no_claude_md {
@@ -177,6 +181,44 @@ fn create_project_json(target: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
+fn create_project_yaml(target: &Path, name: &str) -> Result<()> {
+    let hex_dir = target.join(".hex");
+    create_dir_if_missing(&hex_dir)?;
+
+    let yaml_path = hex_dir.join("project.yaml");
+    if yaml_path.exists() {
+        // Don't overwrite existing manifest
+        return Ok(());
+    }
+
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let content = format!(
+        r#"---
+name: {name}
+description: ""
+version: "0.1.0"
+created: "{today}"
+
+# When hex nexus starts in this directory, auto-register
+# this project in SpacetimeDB (ADR-043).
+auto_register: true
+
+# Default agent configuration
+agent:
+  provider: auto
+  model: claude-sonnet-4-20250514
+  project_dir: .
+"#,
+        name = name,
+        today = today,
+    );
+
+    fs::write(&yaml_path, content)
+        .context("Failed to write .hex/project.yaml")?;
+
+    Ok(())
+}
+
 fn create_mcp_json(target: &Path) -> Result<()> {
     let mcp_path = target.join(".mcp.json");
 
@@ -227,8 +269,8 @@ fn create_claude_settings(target: &Path) -> Result<()> {
     if let Some(hooks) = template.get("hooks") {
         settings["hooks"] = hooks.clone();
     }
-    if let Some(statusline) = template.get("statusline") {
-        settings["statusline"] = statusline.clone();
+    if let Some(status_line) = template.get("statusLine") {
+        settings["statusLine"] = status_line.clone();
     }
     if let Some(announcements) = template.get("companyAnnouncements") {
         settings["companyAnnouncements"] = announcements.clone();

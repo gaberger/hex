@@ -1,7 +1,10 @@
 # ADR-044: Nexus Git Integration — Project-Scoped Git Intelligence
 
-## Status: Proposed
+**Status:** Accepted
+**Accepted Date:** 2026-03-21
 ## Date: 2026-03-21
+
+> **Implementation Evidence:** `hex-nexus/src/git/` implements the full three-layer integration: status.rs, log.rs, diff.rs, worktree.rs, blame.rs (Layer 1), plus correlation.rs, timeline.rs, poller.rs (Layer 2/3 extras). REST endpoints and WebSocket events are wired.
 
 ## Context
 

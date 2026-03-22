@@ -1,8 +1,6 @@
 # ADR-025: SpacetimeDB as Distributed State Backend
 
-## Status
-
-Accepted
+**Status:** Accepted
 
 ## Context
 

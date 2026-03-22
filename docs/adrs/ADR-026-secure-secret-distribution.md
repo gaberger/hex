@@ -1,8 +1,6 @@
 # ADR-026: Secure Secret Distribution via SpacetimeDB Coordination
 
-## Status
-
-Accepted
+**Status:** Accepted
 
 ## Date
 

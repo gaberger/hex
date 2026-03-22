@@ -1,6 +1,6 @@
 # ADR-018: Multi-Language Build Enforcement (Go + Rust)
 
-## Status: Accepted
+**Status:** Accepted
 ## Date: 2026-03-17
 ## Deciders: Gary, Claude
 ## Supersedes: —

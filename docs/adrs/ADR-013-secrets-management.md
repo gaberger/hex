@@ -1,6 +1,6 @@
 # ADR-013: Secrets Management
 
-## Status: Accepted
+**Status:** Accepted
 ## Date
 
 2026-03-17

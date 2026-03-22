@@ -1,6 +1,6 @@
 # ADR-016: Hub Binary Version Verification
 
-## Status: Superseded by ADR-032
+**Status:** Superseded by ADR-032
 ## Date
 
 2026-03-17

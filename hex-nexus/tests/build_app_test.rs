@@ -16,6 +16,7 @@ async fn start_test_server() -> SocketAddr {
         bind: "127.0.0.1".to_string(),
         token: None,
         is_daemon: false,
+        no_agent: true,
     };
 
     let (router, _state) = hex_nexus::build_app(&config).await;
@@ -159,6 +160,7 @@ async fn auth_token_blocks_unauthenticated_posts() {
         bind: "127.0.0.1".to_string(),
         token: Some("secret-token-123".to_string()),
         is_daemon: false,
+        no_agent: true,
     };
 
     let (router, _state) = hex_nexus::build_app(&config).await;

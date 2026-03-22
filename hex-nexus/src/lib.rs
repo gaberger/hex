@@ -40,6 +40,9 @@ pub struct HubConfig {
     pub bind: String,
     pub token: Option<String>,
     pub is_daemon: bool,
+    /// Skip auto-spawning the default local hex-agent (ADR-037).
+    /// Set via `--no-agent` flag or `HEX_NO_AGENT=1` env var.
+    pub no_agent: bool,
 }
 
 impl Default for HubConfig {
@@ -49,6 +52,7 @@ impl Default for HubConfig {
             bind: "127.0.0.1".to_string(),
             token: None,
             is_daemon: false,
+            no_agent: false,
         }
     }
 }
@@ -153,13 +157,16 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
 
     }
 
-    // Sync project config files to SpacetimeDB (fire-and-forget)
+    // Auto-register project + sync config files to SpacetimeDB (fire-and-forget)
     if let Ok(cwd) = std::env::current_dir() {
         let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
             .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
         let stdb_db = std::env::var("HEX_SPACETIMEDB_DATABASE")
             .unwrap_or_else(|_| "hexflo-coordination".to_string());
         tokio::spawn(async move {
+            // ADR-043: Auto-register project from .hex/project.yaml
+            config_sync::auto_register_project(&cwd, &stdb_host, &stdb_db).await;
+            // ADR-053: Sync config files (blueprint, skills, agents, hooks, MCP tools)
             config_sync::sync_project_config(&cwd, &stdb_host, &stdb_db).await;
         });
     }
@@ -372,24 +379,44 @@ pub async fn start_server(config: HubConfig) {
         );
     }
 
-    // ADR-037: Spawn default local agent (opt-out with --no-agent)
-    let no_agent = std::env::args().any(|a| a == "--no-agent");
-    let agent_child = if !no_agent {
-        spawn_default_agent(config.port, &lock_token)
+    // ADR-037: Spawn default local agent (opt-out with --no-agent or HEX_NO_AGENT=1)
+    let no_agent = config.no_agent
+        || std::env::var("HEX_NO_AGENT").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+
+    if !no_agent {
+        if let Some(ref agent_mgr) = _state.agent_manager {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let hub_url = format!("http://127.0.0.1:{}", config.port);
+            match agent_mgr.spawn_local_agent(&hub_url, &cwd).await {
+                Ok(pid) => {
+                    tracing::info!(
+                        pid = pid,
+                        project = %cwd.display(),
+                        "hex-agent started (PID {}) — project: {}",
+                        pid,
+                        cwd.display()
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Could not auto-spawn local agent: {} — run with --no-agent to suppress", e);
+                }
+            }
+        } else {
+            // Fallback: spawn without AgentManager tracking
+            let _agent_child = spawn_default_agent(config.port, &lock_token);
+        }
     } else {
-        None
-    };
+        tracing::info!("Agent auto-spawn disabled (--no-agent or HEX_NO_AGENT=1)");
+    }
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown)
         .await
         .expect("Server error");
 
-    // Cleanup: kill the default agent on shutdown
-    if let Some(mut child) = agent_child {
-        tracing::info!("Stopping default agent (PID {})", child.id());
-        let _ = child.kill();
-        let _ = child.wait();
+    // ADR-037: Stop all locally-spawned agents on shutdown
+    if let Some(ref agent_mgr) = _state.agent_manager {
+        agent_mgr.stop_local_agents().await;
     }
 }
 
@@ -450,7 +477,15 @@ fn find_agent_binary() -> Option<std::path::PathBuf> {
         }
     }
 
-    // 2. In PATH
+    // 2. ~/.hex/bin/hex-agent
+    if let Ok(home) = std::env::var("HOME") {
+        let hex_bin = std::path::PathBuf::from(home).join(".hex").join("bin").join("hex-agent");
+        if hex_bin.exists() {
+            return Some(hex_bin);
+        }
+    }
+
+    // 3. In PATH
     if let Ok(output) = std::process::Command::new("which")
         .arg("hex-agent")
         .output()
@@ -463,7 +498,7 @@ fn find_agent_binary() -> Option<std::path::PathBuf> {
         }
     }
 
-    // 3. Cargo target directory (dev mode)
+    // 4. Cargo target directory (dev mode)
     if let Ok(exe) = std::env::current_exe() {
         // exe is in target/release/hex-nexus or target/debug/hex-nexus
         if let Some(target_dir) = exe.parent() {

@@ -27,6 +27,7 @@ async fn main() {
     }
 
     let is_daemon = args.iter().any(|a| a == "--daemon");
+    let no_agent = args.iter().any(|a| a == "--no-agent");
 
     let port = args
         .iter()
@@ -52,6 +53,7 @@ async fn main() {
         bind,
         token,
         is_daemon,
+        no_agent,
     })
     .await;
 }

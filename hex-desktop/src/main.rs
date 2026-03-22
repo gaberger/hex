@@ -50,6 +50,7 @@ fn main() {
                 bind: "127.0.0.1".to_string(),
                 token: token.clone(),
                 is_daemon: false,
+                no_agent: false,
             };
 
             let handle = app.handle().clone();

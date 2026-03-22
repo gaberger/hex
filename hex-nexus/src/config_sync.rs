@@ -1,9 +1,100 @@
 //! Config sync: reads repo config files and pushes to SpacetimeDB on startup.
 //!
+//! Also handles project auto-registration from `.hex/project.yaml` (ADR-043).
+//!
 //! TODO(T16): Add config change history tracking — store previous values with
 //! timestamps so the dashboard can show a diff/audit log of config changes.
 
 use std::path::Path;
+
+// ── Project Manifest (ADR-043) ──────────────────────────
+
+/// Parsed `.hex/project.yaml` manifest for auto-registration.
+#[derive(Debug, serde::Deserialize)]
+pub struct ProjectManifest {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub created: String,
+    #[serde(default)]
+    pub auto_register: bool,
+}
+
+/// Read and parse `.hex/project.yaml` from the given project root.
+pub fn read_project_manifest(project_root: &Path) -> Option<ProjectManifest> {
+    let manifest_path = project_root.join(".hex/project.yaml");
+    if !manifest_path.exists() {
+        return None;
+    }
+    match std::fs::read_to_string(&manifest_path) {
+        Ok(content) => match serde_yaml::from_str::<ProjectManifest>(&content) {
+            Ok(manifest) => {
+                tracing::debug!(name = %manifest.name, "Parsed project manifest");
+                Some(manifest)
+            }
+            Err(e) => {
+                tracing::warn!(path = %manifest_path.display(), "Failed to parse project.yaml: {}", e);
+                None
+            }
+        },
+        Err(e) => {
+            tracing::warn!(path = %manifest_path.display(), "Failed to read project.yaml: {}", e);
+            None
+        }
+    }
+}
+
+/// Auto-register the project in SpacetimeDB if `.hex/project.yaml` has `auto_register: true`.
+pub async fn auto_register_project(project_root: &Path, stdb_host: &str, stdb_db: &str) {
+    let manifest = match read_project_manifest(project_root) {
+        Some(m) => m,
+        None => return,
+    };
+
+    if !manifest.auto_register {
+        tracing::debug!(name = %manifest.name, "Project manifest found but auto_register is false");
+        return;
+    }
+
+    let root_path = project_root.to_string_lossy().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let project_id = crate::state::make_project_id(&root_path);
+
+    let client = reqwest::Client::new();
+    match call_reducer(
+        &client,
+        stdb_host,
+        stdb_db,
+        "register_project",
+        serde_json::json!([
+            project_id,
+            manifest.name,
+            manifest.description,
+            root_path,
+            now,
+        ]),
+    )
+    .await
+    {
+        Ok(()) => {
+            tracing::info!(
+                name = %manifest.name,
+                project_id = %project_id,
+                "Auto-registered project in SpacetimeDB (ADR-043)"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                name = %manifest.name,
+                "Failed to auto-register project: {} (SpacetimeDB may not be running)",
+                e
+            );
+        }
+    }
+}
 
 /// Sync project config files to SpacetimeDB.
 /// Called once during nexus startup after SpacetimeDB connection is established.

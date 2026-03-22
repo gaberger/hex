@@ -1,7 +1,10 @@
 # ADR-041: ADR Review Agent — Architectural Consistency Guardian
 
-- **Status**: Proposed
-- **Date**: 2026-03-21
+**Status:** Accepted
+**Accepted Date:** 2026-03-22
+## Date: 2026-03-21
+
+> **Implementation Evidence:** All 5 checks implemented in `hex-cli/src/commands/adr_review.rs`: scope conflict detection (keyword overlap), supersession chain validation, duplicate numbering, stale reference scanning (CLAUDE.md, skills, agents), metadata validation. CLI: `hex adr review [ADR-NNN] [--strict]`. LLM-powered semantic analysis deferred to future phase.
 - **Informed by**: ADR-040 (scope creep observed), ADR-035 (v2 architecture shift), ADR-032 (duplicate numbering incident)
 - **Authors**: Gary (architect), Claude (analysis)
 

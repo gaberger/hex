@@ -123,8 +123,8 @@ const App: Component = () => {
       e.preventDefault();
       toggleViewMode();
     }
-    // Ctrl+P — command palette
-    if (ctrl && e.key === 'p') {
+    // Ctrl+P or Ctrl+K — command palette
+    if (ctrl && (e.key === 'p' || e.key === 'k')) {
       e.preventDefault();
       setCommandPaletteOpen(!commandPaletteOpen());
     }
@@ -185,7 +185,7 @@ const App: Component = () => {
             <kbd class="rounded border border-gray-700 bg-gray-800 px-1 py-0.5 text-gray-300">Ctrl+\</kbd> split
             <kbd class="ml-2 rounded border border-gray-700 bg-gray-800 px-1 py-0.5 text-gray-300">Ctrl+W</kbd> close
           </span>
-          <kbd class="hidden md:inline rounded border border-gray-700 bg-gray-800 px-1.5 py-0.5 text-gray-300">Ctrl+P</kbd>
+          <kbd class="hidden md:inline rounded border border-gray-700 bg-gray-800 px-1.5 py-0.5 text-gray-300">Ctrl+K</kbd>
           <button
             class="rounded p-1.5 text-gray-300 hover:bg-gray-800 transition-colors"
             aria-label="Toggle theme"

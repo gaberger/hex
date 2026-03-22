@@ -1,7 +1,7 @@
 # ADR-035: Hex Architecture V2 — Rust-First, SpacetimeDB-Native, Pluggable Inference
 
-- **Status**: Accepted (in progress)
-- **Date**: 2026-03-19
+**Status:** Accepted
+## Date: 2026-03-19
 - **Supersedes**: Partial aspects of ADR-024, ADR-025, ADR-027, ADR-032, ADR-034
 - **Authors**: Gary (architect), Claude (adversarial analysis)
 
