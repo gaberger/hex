@@ -382,7 +382,7 @@ hex memory search <query>           # Search memory
 
 ### Heartbeat Protocol
 
-- Agents send heartbeat every 15 seconds
+- Agents send heartbeat on every `UserPromptSubmit` (via `hex hook route`)
 - Hub marks agents as `stale` after 45 seconds without heartbeat
 - Hub marks agents as `dead` after 120 seconds and reclaims their tasks
 
@@ -393,10 +393,10 @@ Agent tool: { subagent_type: "coder", mode: "bypassPermissions", run_in_backgrou
 
 ### Task State Synchronization (ADR-048)
 
-When spawning subagents for HexFlo swarm tasks, include `HEXFLO_TASK:{task_id}` in the agent prompt. The `SubagentStart` hook automatically:
-1. Extracts the task ID from the prompt
-2. Calls `task_assign` to set status → `in_progress` with the session's agent_id
-3. On `SubagentStop`, calls `task_complete` with the subagent's result
+When spawning subagents for HexFlo swarm tasks, include `HEXFLO_TASK:{task_id}` in the agent prompt. The hooks (`hex hook subagent-start` / `hex hook subagent-stop`) receive the prompt/result via **stdin** and automatically:
+1. `SubagentStart`: Extracts the task ID from stdin, calls PATCH `/api/hexflo/tasks/{task_id}` with `agent_id` → server sets status to `in_progress`
+2. `SubagentStop`: Reads `current_task_id` from session state, calls PATCH with `status: "completed"` and first 200 chars of subagent output as result
+3. Both hooks persist task tracking state in `~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json`
 
 ```bash
 # Example: spawn a coder agent with task tracking
@@ -408,7 +408,7 @@ Agent tool: {
 }
 ```
 
-The `agent_id` is auto-resolved from `~/.hex/sessions/agent-{sessionId}.json` (written by `hex hook session-start`). If not explicitly provided in `task_assign`, the MCP tool falls back to this file.
+The `agent_id` is auto-resolved from `~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json` (written by `hex hook session-start`). The MCP tool `hex_hexflo_task_assign` also auto-resolves agent_id from this file when not explicitly provided.
 
 ## Security
 
