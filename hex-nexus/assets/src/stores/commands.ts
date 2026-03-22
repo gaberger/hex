@@ -4,49 +4,49 @@
  * Each command has an id, label, category, optional shortcut, and action.
  * Commands are registered at app init. The palette fuzzy-searches this list.
  */
-import {
-  splitPane,
-  closePane,
-  toggleMaximize,
-  focusNextPane,
-  focusPrevPane,
-  replaceActivePane,
-  openPane,
-} from "./panes";
+import { navigate, activeProjectId } from "./router";
+import { toggleMode } from "./mode";
 import { setSpawnDialogOpen, setSwarmInitDialogOpen, setShortcutsOpen } from "./ui";
-import { toggleViewMode } from "./view";
-import { addToast } from "./toast";
 import { fetchHealth } from "./health";
-import { setPanelContent } from "./context-panel";
 import { projects } from "./projects";
 import { swarms } from "./connection";
-import { navigate } from "./router";
+import { addToast } from "./toast";
+import { restClient } from "../services/rest-client";
 
-export type CommandCategory =
-  | "navigation"
-  | "project"
-  | "agent"
-  | "swarm"
-  | "inference"
-  | "analysis"
-  | "session"
-  | "view"
-  | "settings";
+export type CommandCategory = "navigation" | "view" | "agent" | "swarm" | "project" | "inference" | "settings" | "session";
 
 export interface Command {
   id: string;
   label: string;
-  category: CommandCategory;
+  category: string;
   shortcut?: string;
   action: () => void | Promise<void>;
 }
 
-/** All registered commands. */
+/** Fuzzy search commands by label. */
+export function searchCommands(query: string): Command[] {
+  if (!query) return getAllCommandsWithEntities();
+  const q = query.toLowerCase();
+  return getAllCommandsWithEntities().filter(
+    (c) => c.label.toLowerCase().includes(q) || c.id.toLowerCase().includes(q)
+  );
+}
+
+/** Helper: navigate to a project-scoped page using activeProjectId */
+function navProject(page: string, extra?: Record<string, string>) {
+  const pid = activeProjectId();
+  if (!pid) {
+    addToast("error", "Select a project first");
+    return;
+  }
+  navigate({ page, projectId: pid, ...extra } as any);
+}
+
 const commands: Command[] = [
   // ── Navigation ──
   {
-    id: "nav.projects",
-    label: "Navigate to Projects",
+    id: "nav.control-plane",
+    label: "Navigate to Control Plane",
     category: "navigation",
     action: () => navigate({ page: "control-plane" }),
   },
@@ -54,25 +54,25 @@ const commands: Command[] = [
     id: "nav.agents",
     label: "Navigate to Agents",
     category: "navigation",
-    action: () => navigate({ page: "agent-fleet" }),
+    action: () => navProject("project-agents"),
   },
   {
     id: "nav.swarms",
     label: "Navigate to Swarms",
     category: "navigation",
-    action: () => navigate({ page: "agent-fleet" }),
+    action: () => navProject("project-swarms"),
   },
   {
     id: "nav.adrs",
     label: "View ADRs",
     category: "navigation",
-    action: () => navigate({ page: "adrs" }),
+    action: () => navProject("project-adrs"),
   },
   {
     id: "nav.workplans",
-    label: "View Workplans",
+    label: "View WorkPlans",
     category: "navigation",
-    action: () => navigate({ page: "workplans" }),
+    action: () => navProject("project-workplans"),
   },
   {
     id: "nav.inference",
@@ -84,70 +84,46 @@ const commands: Command[] = [
     id: "nav.fleet",
     label: "Navigate to Fleet Nodes",
     category: "navigation",
-    action: () => navigate({ page: "fleet-nodes" }),
+    action: () => navigate({ page: "fleet" }),
+  },
+  {
+    id: "nav.files",
+    label: "Browse Files",
+    category: "navigation",
+    action: () => navProject("project-files"),
+  },
+  {
+    id: "nav.chat",
+    label: "Open Chat",
+    category: "navigation",
+    action: () => navProject("project-chat"),
+  },
+  {
+    id: "nav.config",
+    label: "Open Configuration",
+    category: "navigation",
+    action: () => navProject("project-config", { section: "blueprint" }),
+  },
+  {
+    id: "nav.health",
+    label: "Show Architecture Health",
+    category: "navigation",
+    action: () => navProject("project-health"),
+  },
+  {
+    id: "nav.graph",
+    label: "Show Dependency Graph",
+    category: "navigation",
+    action: () => navProject("project-graph"),
   },
 
-  // ── View ──
+  // ── Mode ──
   {
-    id: "view.split-h",
-    label: "Split Pane Horizontal",
+    id: "mode.toggle",
+    label: "Toggle Plan / Build Mode",
     category: "view",
-    shortcut: "Ctrl+\\",
-    action: () => splitPane("horizontal"),
-  },
-  {
-    id: "view.split-v",
-    label: "Split Pane Vertical",
-    category: "view",
-    shortcut: "Ctrl+-",
-    action: () => splitPane("vertical"),
-  },
-  {
-    id: "view.close",
-    label: "Close Pane",
-    category: "view",
-    shortcut: "Ctrl+W",
-    action: () => closePane(),
-  },
-  {
-    id: "view.maximize",
-    label: "Toggle Maximize",
-    category: "view",
-    shortcut: "Ctrl+Shift+Enter",
-    action: () => toggleMaximize(),
-  },
-  {
-    id: "view.toggle",
-    label: "Toggle Chat / Panes View",
-    category: "view",
-    shortcut: "Ctrl+Shift+C",
-    action: () => toggleViewMode(),
-  },
-  {
-    id: "view.next-pane",
-    label: "Focus Next Pane",
-    category: "view",
-    shortcut: "Ctrl+]",
-    action: () => focusNextPane(),
-  },
-  {
-    id: "view.prev-pane",
-    label: "Focus Previous Pane",
-    category: "view",
-    shortcut: "Ctrl+[",
-    action: () => focusPrevPane(),
-  },
-  {
-    id: "view.projects",
-    label: "Show Project Overview",
-    category: "project",
-    action: () => replaceActivePane("project-overview", "Projects"),
-  },
-  {
-    id: "view.chat",
-    label: "Open Chat",
-    category: "session",
-    action: () => openPane("chat", "Chat"),
+    shortcut: "Tab",
+    action: () => toggleMode(),
   },
 
   // ── Agent ──
@@ -159,6 +135,14 @@ const commands: Command[] = [
     action: () => setSpawnDialogOpen(true),
   },
 
+  // ── Swarm ──
+  {
+    id: "swarm.init",
+    label: "Initialize New Swarm",
+    category: "swarm",
+    action: () => setSwarmInitDialogOpen(true),
+  },
+
   // ── Project ──
   {
     id: "project.analyze",
@@ -166,64 +150,12 @@ const commands: Command[] = [
     category: "project",
     action: async () => {
       try {
-        const res = await fetch("/api/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: "." }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          addToast("success", `Analysis complete — Score: ${data.health_score ?? "?"}/100`);
-        } else {
-          addToast("error", "Analysis failed");
-        }
+        const data = await restClient.post<any>("/api/analyze", { path: "." });
+        addToast("success", `Analysis complete — Score: ${data.health_score ?? "?"}/100`);
       } catch {
         addToast("error", "Analysis request failed — is nexus running?");
       }
     },
-  },
-
-  // ── Health ──
-  {
-    id: "project.health",
-    label: "Show Architecture Health",
-    category: "project",
-    action: async () => {
-      await fetchHealth();
-      setPanelContent({ type: "health-detail" });
-    },
-  },
-
-  // ── Dependency Graph ──
-  {
-    id: "view.dep-graph",
-    label: "Show Dependency Graph",
-    category: "view",
-    action: () => openPane("dep-graph", "Dependencies"),
-  },
-
-  // ── Inference ──
-  {
-    id: "inference.panel",
-    label: "Open Inference Panel",
-    category: "inference",
-    action: () => openPane("inference", "Inference"),
-  },
-
-  // ── Fleet ──
-  {
-    id: "fleet.view",
-    label: "Open Fleet View",
-    category: "view",
-    action: () => openPane("fleet-view", "Fleet"),
-  },
-
-  // ── Swarm ──
-  {
-    id: "swarm.init",
-    label: "Initialize New Swarm",
-    category: "swarm",
-    action: () => setSwarmInitDialogOpen(true),
   },
 
   // ── Config ──
@@ -233,12 +165,8 @@ const commands: Command[] = [
     category: "settings",
     action: async () => {
       try {
-        const res = await fetch("/api/config/sync", { method: "POST" });
-        if (res.ok) {
-          addToast("success", "Config refreshed from repo");
-        } else {
-          addToast("error", "Config refresh failed");
-        }
+        await restClient.post("/api/config/sync");
+        addToast("success", "Config refreshed from repo");
       } catch {
         addToast("error", "Config refresh failed — is nexus running?");
       }
@@ -269,63 +197,18 @@ export function getAllCommandsWithEntities(): Command[] {
     });
   }
 
-  // Add swarm navigation
+  // Add swarm navigation (project-scoped)
   for (const s of swarms()) {
     const name = s.name ?? s.swarm_name ?? "";
-    if (!name) continue;
+    const pid = s.project_id ?? activeProjectId();
+    if (!name || !pid) continue;
     cmds.push({
       id: `goto.swarm.${name}`,
       label: `Swarm: ${name}`,
       category: "swarm",
-      action: () => navigate({ page: "agent-fleet" }),
+      action: () => navigate({ page: "project-swarm-detail", projectId: pid, swarmId: s.id ?? name }),
     });
   }
 
   return cmds;
-}
-
-/** Simple fuzzy match: all query chars must appear in order in the target. */
-function fuzzyMatch(query: string, target: string): { match: boolean; score: number } {
-  const q = query.toLowerCase();
-  const t = target.toLowerCase();
-  if (q.length === 0) return { match: true, score: 1 };
-
-  let qi = 0;
-  let score = 0;
-  let prevMatch = false;
-
-  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-    if (t[ti] === q[qi]) {
-      score += prevMatch ? 2 : 1; // consecutive chars score higher
-      if (ti === 0 || t[ti - 1] === " " || t[ti - 1] === ".") score += 3; // word boundary
-      prevMatch = true;
-      qi++;
-    } else {
-      prevMatch = false;
-    }
-  }
-
-  return { match: qi === q.length, score };
-}
-
-/** Search commands by fuzzy query. Returns sorted by relevance. */
-export function searchCommands(query: string): Command[] {
-  const all = getAllCommandsWithEntities();
-  if (!query.trim()) return all;
-
-  return all
-    .map((cmd) => {
-      const labelMatch = fuzzyMatch(query, cmd.label);
-      const catMatch = fuzzyMatch(query, cmd.category);
-      const best = labelMatch.score >= catMatch.score ? labelMatch : catMatch;
-      return { cmd, ...best };
-    })
-    .filter((r) => r.match)
-    .sort((a, b) => b.score - a.score)
-    .map((r) => r.cmd);
-}
-
-/** Get all commands (unfiltered), including dynamic entity commands. */
-export function getAllCommands(): Command[] {
-  return getAllCommandsWithEntities();
 }

@@ -22,12 +22,12 @@ const tabs: NavTab[] = [
   },
   {
     label: "Files",
-    page: "file-tree",
+    page: "project-files",
     icon: "M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z",
   },
   {
     label: "ADRs",
-    page: "adrs",
+    page: "project-adrs",
     icon: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8",
   },
   {
@@ -47,7 +47,7 @@ const tabs: NavTab[] = [
   },
   {
     label: "Config",
-    page: "config",
+    page: "project-config",
     icon: "M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z M12 15a3 3 0 100-6 3 3 0 000 6z",
   },
 ];
@@ -59,8 +59,9 @@ const ProjectLayout: Component<{ children: JSX.Element }> = (props) => {
   const isActive = (tab: NavTab) => {
     const page = currentPage();
     if (tab.page === "project") return page === "project";
-    if (tab.page === "adrs") return page === "adrs" || page === "project-adr";
-    if (tab.page === "config") return page === "config";
+    if (tab.page === "project-adrs") return page === "project-adrs" || page === "project-adr-detail";
+    if (tab.page === "project-config") return page === "project-config";
+    if (tab.page === "project-files") return page === "project-files" || page === "project-file";
     return page === tab.page;
   };
 
@@ -70,8 +71,8 @@ const ProjectLayout: Component<{ children: JSX.Element }> = (props) => {
       case "project":
         navigate({ page: "project", projectId: pid });
         break;
-      case "adrs":
-        navigate({ page: "adrs", projectId: pid });
+      case "project-adrs":
+        navigate({ page: "project-adrs", projectId: pid });
         break;
       case "project-chat":
         navigate({ page: "project-chat", projectId: pid });
@@ -82,11 +83,11 @@ const ProjectLayout: Component<{ children: JSX.Element }> = (props) => {
       case "project-graph":
         navigate({ page: "project-graph", projectId: pid });
         break;
-      case "file-tree":
-        navigate({ page: "file-tree", projectId: pid });
+      case "project-files":
+        navigate({ page: "project-files", projectId: pid });
         break;
-      case "config":
-        navigate({ page: "config", section: "blueprint" });
+      case "project-config":
+        navigate({ page: "project-config", projectId: pid, section: "blueprint" });
         break;
     }
   };
@@ -94,22 +95,13 @@ const ProjectLayout: Component<{ children: JSX.Element }> = (props) => {
   return (
     <div class="flex flex-1 flex-col overflow-hidden">
       {/* Project nav tabs */}
-      <div
-        class="flex items-center gap-0 px-4 shrink-0"
-        style={{
-          background: "var(--bg-base)",
-          "border-bottom": "1px solid var(--border-subtle)",
-        }}
-      >
+      <div class="flex items-center gap-0 border-b border-gray-800 bg-gray-950 px-4 shrink-0">
         {tabs.map((tab) => (
           <button
-            class="flex items-center gap-1.5 px-3 py-2.5 text-[11px] font-medium transition-colors"
-            style={{
-              color: isActive(tab) ? "var(--accent-hover)" : "var(--text-faint)",
-              "border-bottom": isActive(tab)
-                ? "2px solid var(--accent)"
-                : "2px solid transparent",
-              "letter-spacing": "0.5px",
+            class="flex items-center gap-1.5 px-3 py-2.5 text-[11px] font-medium transition-colors tracking-wide"
+            classList={{
+              "text-cyan-400 border-b-2 border-cyan-500": isActive(tab),
+              "text-gray-500 border-b-2 border-transparent hover:text-gray-300": !isActive(tab),
             }}
             onClick={() => handleNav(tab)}
           >
