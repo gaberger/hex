@@ -79,18 +79,10 @@ const ControlPlane: Component = () => {
   const [registering, setRegistering] = createSignal(false);
   const [newPath, setNewPath] = createSignal("");
 
-  // Fetch worktree counts for all registered projects
+  // Fetch worktree counts for registered projects (SpacetimeDB is source of truth — no re-registration)
   onMount(() => {
-    projects().forEach(async (p) => {
-      // Ensure project is in REST registry (SpacetimeDB projects may not be)
-      if (p.path) {
-        await fetch("/api/projects/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rootPath: p.path, name: p.name }),
-        }).catch(() => {});
-      }
-
+    projects().forEach((p) => {
+      if (!p.id) return;
       fetch(`/api/${p.id}/git/worktrees`)
         .then((r) => r.ok ? r.json() : null)
         .then((json) => {

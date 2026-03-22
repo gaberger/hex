@@ -19,11 +19,13 @@ export interface Project {
 
 // Reactive project list from SpacetimeDB subscription
 export const projects = createMemo<Project[]>(() => {
-  return registeredProjects().map((p: any) => ({
-    id: p.projectId ?? p.project_id ?? p.id ?? "",
-    name: p.name ?? "unnamed",
-    path: p.path ?? "",
-  }));
+  return registeredProjects()
+    .map((p: any) => ({
+      id: p.projectId ?? p.project_id ?? p.id ?? "",
+      name: p.name ?? "unnamed",
+      path: p.path ?? "",
+    }))
+    .filter((p) => p.id !== ""); // Guard: never show projects with empty IDs
 });
 
 /** Return current projects from SpacetimeDB subscription. */
@@ -88,10 +90,12 @@ export async function unregisterProject(id: string): Promise<boolean> {
     return false;
   }
   try {
+    console.log("[projects] removeProject reducer call with id:", id);
     conn.reducers.removeProject(id);
     addToast("success", "Project unregistered");
     return true;
   } catch (err: any) {
+    console.error("[projects] removeProject failed:", err);
     addToast("error", `Unregister failed: ${err.message}`);
     return false;
   }
