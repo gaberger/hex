@@ -1222,6 +1222,72 @@ hex builds on the **Hexagonal Architecture** pattern (also known as **Ports and 
 
 <br/>
 
+
+## Architecture Decisions
+
+<!-- hex:adr-summary — auto-updated by hex -->
+| ADR | Title | Status |
+|-----|-------|--------|
+| 001 | Hexagonal Architecture as Foundational Pattern | Accepted |
+| 002 | Tree-Sitter for Token-Efficient LLM Communication | Accepted |
+| 003 | Multi-Language Support — TypeScript, Go, Rust | Accepted |
+| 004 | Git Worktrees for Parallel Agent Isolation | Accepted |
+| 005 | Compile-Lint-Test Feedback Loop with Quality Gates | Accepted |
+| 006 | Skills, Agent Definitions, and npm Packaging | Accepted |
+| 007 | Multi-Channel Notification System | Accepted |
+| 008 | Dogfooding — hex Built with Hexagonal Architecture | Accepted |
+| 009 | Ruflo (claude-flow) as Required Dependency | Superseded by ADR-027 (HexFlo) |
+| 010 | TypeScript-to-Rust Migration Cost and Risk Analysis | Accepted |
+| 011 | Coordination and Multi-Instance Locking | Accepted |
+| 012 | ADR Lifecycle Tracking | Accepted |
+| 013 | Secrets Management | Accepted |
+| 014 | Ban mock.module() — Use Dependency Injection for Test Isolation | Accepted |
+| 015 | SQLite Persistence for Hub Swarm State | Accepted |
+| 016 | Hub Binary Version Verification | Superseded by ADR-032 |
+| 017 | Unlink Binary Before Copy to Avoid macOS Inode-Based SIGKILL Cache | Accepted |
+| 018 | Multi-Language Build Enforcement (Go + Rust) | Accepted |
+| 019 | CLI–MCP Parity — Every Command Must Have an MCP Equivalent | Accepted |
+| 020 | Feature Development UX Improvement | Accepted |
+| 021 | Hex Initialization Memory Exhaustion in Existing Large Projects | Accepted |
+| 022 | Wire Coordination into Use Cases (Last-Mile Fix) | Accepted |
+| 023 | Dashboard Session Cleanup and State Synchronization | Accepted |
+| 024 | Hex-Hub Autonomous Nexus Architecture | Accepted |
+| 025 | SpacetimeDB as Distributed State Backend | Accepted |
+| 026 | Secure Secret Distribution via SpacetimeDB Coordination | Accepted |
+| 027 | HexFlo — Replace Ruflo with Native Swarm Coordination | Accepted |
+| 028 | API Optimization Layer | Accepted |
+| 029 | Haiku Preflight Checks & Automatic Context Compaction | Accepted |
+| 030 | Multi-Provider Inference Broker | Accepted |
+| 031 | RL-Driven Model Selection & Token Budget Management | Accepted (documenting existing implementation) |
+| 032 | Deprecate hex-hub — Consolidate into hex-nexus and hex-agent | Accepted |
+| 032b | Deprecate SQLite, Migrate HexFlo to SpacetimeDB | Accepted |
+| 033 | MCP Client Support for hex-agent | Accepted |
+| 034 | Migrate Hex Analyzer from TypeScript to Rust | Accepted |
+| 035 | Hex Architecture V2 — Rust-First, SpacetimeDB-Native, Pluggable Inference | Accepted |
+| 036 | hex-chat Session Architecture | Accepted |
+| 037 | Agent Lifecycle — Local Default + Remote Connect | Accepted |
+| 038 | Vite for Development, Axum for Production | Accepted |
+| 039 | Nexus Agent Control Plane — OpenCode-Inspired Multi-Project Interface | Proposed |
+| 040 | Remote Agent Transport — WebSocket over SSH with SpacetimeDB Coordination | Accepted |
+| 041 | ADR Review Agent — Architectural Consistency Guardian | Accepted |
+| 042 | SpacetimeDB Skill Lifecycle — Ingest, Select, Serialize | Accepted |
+| 043 | Project Manifest + Auto-Registration via SpacetimeDB | Accepted |
+| 044 | Nexus Git Integration — Project-Scoped Git Intelligence | Accepted |
+| 045 | Project-Scoped ADRs, Config Templates, and Embedded Chat | Accepted |
+| 046 | SpacetimeDB Single Authority for State Mutations | Accepted |
+| 046 | Workplan Lifecycle Management — Creation, Tracking, and Reporting | Accepted |
+| 047 | Internal Documentation System | Accepted |
+| 048 | Claude Code Session Agent Registration | Accepted |
+| 049 | Embedded Settings Template — Single Source of Truth | Accepted |
+| 050 | Hook-Enforced Agent Lifecycle Pipeline | Accepted |
+| 051 | SpacetimeDB as Single Source of State | Accepted |
+| 052 | AIIDE — Hex Nexus as AI Integrated Development Environment | Accepted |
+| 053 | Framework Configuration Sync to SpacetimeDB | Accepted |
+| 054 | ADR Compliance Enforcement — Preventing Architectural Drift | Proposed |
+| 055 | README-Driven Project Specification | Accepted |
+| 056 | Frontend Hexagonal Architecture — Preventing UI Species Drift | Proposed |
+<!-- /hex:adr-summary -->
+
 ---
 
 <br/>
