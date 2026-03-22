@@ -3,8 +3,8 @@ import ProjectHierarchy from "./ProjectHierarchy";
 // TODO: ProjectChatWidget for inline project chat
 import BranchPicker from "../project/BranchPicker";
 import DiffViewer from "../code/DiffViewer";
-import { route } from "../../stores/router";
-import { projects } from "../../stores/projects";
+import { route, navigate } from "../../stores/router";
+import { projects, unregisterProject, archiveProject, deleteProject } from "../../stores/projects";
 import { registryAgents } from "../../stores/connection";
 import { healthData } from "../../stores/health";
 import {
@@ -30,6 +30,33 @@ type DetailTab = "overview" | "changes";
 const ProjectDetail: Component = () => {
   // const [chatOpen, setChatOpen] = createSignal(false); // TODO: inline chat
   const [activeTab, setActiveTab] = createSignal<DetailTab>("overview");
+  const [menuOpen, setMenuOpen] = createSignal(false);
+  const [confirmDelete, setConfirmDelete] = createSignal(false);
+
+  async function handleUnregister() {
+    setMenuOpen(false);
+    const pid = projectId();
+    if (pid && await unregisterProject(pid)) {
+      navigate({ page: "control-plane" });
+    }
+  }
+
+  async function handleArchive() {
+    setMenuOpen(false);
+    const pid = projectId();
+    if (pid && await archiveProject(pid)) {
+      navigate({ page: "control-plane" });
+    }
+  }
+
+  async function handleDelete() {
+    setConfirmDelete(false);
+    setMenuOpen(false);
+    const pid = projectId();
+    if (pid && await deleteProject(pid)) {
+      navigate({ page: "control-plane" });
+    }
+  }
 
   const projectId = createMemo(() => {
     const r = route();
@@ -124,7 +151,89 @@ const ProjectDetail: Component = () => {
           >
             {grade().letter}
           </span>
+
+          {/* Project actions menu */}
+          <div class="relative">
+            <button
+              class="rounded-md p-2 transition-colors hover:bg-gray-800"
+              style={{ color: "var(--text-muted)" }}
+              onClick={() => setMenuOpen(!menuOpen())}
+              title="Project actions"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="12" cy="5" r="1.5" />
+                <circle cx="12" cy="12" r="1.5" />
+                <circle cx="12" cy="19" r="1.5" />
+              </svg>
+            </button>
+
+            <Show when={menuOpen()}>
+              <div class="absolute right-0 top-10 z-50 min-w-[180px] rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-xl">
+                <button
+                  class="flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors hover:bg-gray-800"
+                  onClick={handleUnregister}
+                >
+                  <span class="text-xs font-medium text-gray-200">Unregister</span>
+                  <span class="text-[10px] text-gray-500">Remove from nexus registry</span>
+                </button>
+                <div class="my-1 border-t border-gray-800" />
+                <button
+                  class="flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors hover:bg-gray-800"
+                  onClick={handleArchive}
+                >
+                  <span class="text-xs font-medium text-yellow-400">Archive</span>
+                  <span class="text-[10px] text-gray-500">Remove config, keep source files</span>
+                </button>
+                <button
+                  class="flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors hover:bg-gray-800"
+                  onClick={() => { setMenuOpen(false); setConfirmDelete(true); }}
+                >
+                  <span class="text-xs font-medium text-red-400">Delete from disk</span>
+                  <span class="text-[10px] text-gray-500">Permanently remove all files</span>
+                </button>
+              </div>
+              <div class="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+            </Show>
+          </div>
         </div>
+
+        {/* Delete confirmation dialog */}
+        <Show when={confirmDelete()}>
+          <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div class="mx-4 max-w-md rounded-xl border border-red-900/50 bg-gray-950 p-6 shadow-2xl">
+              <div class="mb-4 flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-red-900/30">
+                  <svg class="h-5 w-5 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-100">Delete project permanently?</h3>
+                  <p class="text-xs text-gray-400">This cannot be undone</p>
+                </div>
+              </div>
+              <div class="mb-5 rounded-lg border border-gray-800 bg-gray-900 p-3">
+                <p class="text-sm font-medium text-gray-200">{project()?.name}</p>
+                <p class="mt-1 truncate font-mono text-[11px] text-red-300">{project()?.path}</p>
+                <p class="mt-2 text-[11px] text-gray-500">All files at this path will be permanently deleted.</p>
+              </div>
+              <div class="flex justify-end gap-2">
+                <button
+                  class="rounded-lg border border-gray-700 px-4 py-2 text-xs text-gray-300 transition-colors hover:bg-gray-800"
+                  onClick={() => setConfirmDelete(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  class="rounded-lg bg-red-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-red-500"
+                  onClick={handleDelete}
+                >
+                  Delete permanently
+                </button>
+              </div>
+            </div>
+          </div>
+        </Show>
 
         {/* Tab bar: Overview | Changes */}
         <div class="mb-4 flex items-center gap-0 border-b" style={{ "border-color": "var(--border-subtle)" }}>
