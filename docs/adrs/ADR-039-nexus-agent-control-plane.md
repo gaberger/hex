@@ -1,6 +1,7 @@
 # ADR-039: Nexus Agent Control Plane — OpenCode-Inspired Multi-Project Interface
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted Date:** 2026-03-22
 ## Date: 2026-03-20
 - **Informed by**: ADR-036 (sessions), ADR-037 (agent lifecycle), ADR-038 (Vite/Axum), OpenCode (anomalyco/opencode)
 - **Authors**: Gary (architect), Claude (analysis)

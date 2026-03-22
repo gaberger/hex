@@ -1,11 +1,13 @@
 # ADR-036: hex-chat Session Architecture
 
-**Status:** Accepted
+**Status:** Deprecated — hex-chat removed (2026-03-22)
 ## Date: 2026-03-19
 - **Informed by**: OpenCode (anomalyco/opencode), ADR-035
 - **Authors**: Gary (architect), Claude (analysis)
 
 ## Context
+
+> **Deprecated**: hex-chat was removed in commit 8cb310e. Chat functionality is now served by the hex-nexus dashboard at :5555.
 
 hex-nexus has a working chat WebSocket (`/ws/chat`) with an LLM bridge and agent relay, but conversations are **ephemeral** — they live in an `Arc<Mutex<Vec<Value>>>` tied to a single WebSocket connection. When the connection drops, history is gone.
 

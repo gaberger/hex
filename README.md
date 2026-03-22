@@ -1264,10 +1264,10 @@ hex builds on the **Hexagonal Architecture** pattern (also known as **Ports and 
 | 033 | MCP Client Support for hex-agent | Accepted |
 | 034 | Migrate Hex Analyzer from TypeScript to Rust | Accepted |
 | 035 | Hex Architecture V2 — Rust-First, SpacetimeDB-Native, Pluggable Inference | Accepted |
-| 036 | hex-chat Session Architecture | Accepted |
+| 036 | hex-chat Session Architecture | Deprecated — hex-chat removed (2026-03-22) |
 | 037 | Agent Lifecycle — Local Default + Remote Connect | Accepted |
 | 038 | Vite for Development, Axum for Production | Accepted |
-| 039 | Nexus Agent Control Plane — OpenCode-Inspired Multi-Project Interface | Proposed |
+| 039 | Nexus Agent Control Plane — OpenCode-Inspired Multi-Project Interface | Accepted |
 | 040 | Remote Agent Transport — WebSocket over SSH with SpacetimeDB Coordination | Accepted |
 | 041 | ADR Review Agent — Architectural Consistency Guardian | Accepted |
 | 042 | SpacetimeDB Skill Lifecycle — Ingest, Select, Serialize | Accepted |
@@ -1286,6 +1286,7 @@ hex builds on the **Hexagonal Architecture** pattern (also known as **Ports and 
 | 054 | ADR Compliance Enforcement — Preventing Architectural Drift | Proposed |
 | 055 | README-Driven Project Specification | Accepted |
 | 056 | Frontend Hexagonal Architecture — Preventing UI Species Drift | Proposed |
+| 057 | Unified Test Harness & Linting Pipeline | Accepted |
 <!-- /hex:adr-summary -->
 
 ---
