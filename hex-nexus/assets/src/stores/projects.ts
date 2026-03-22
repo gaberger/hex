@@ -37,8 +37,22 @@ export interface InitResult {
   created: string[];
 }
 
+/** Remove project from SpacetimeDB directly so the subscription updates instantly. */
+function removeFromSpacetimeDB(id: string) {
+  const conn = getHexfloConn();
+  if (conn) {
+    try {
+      conn.reducers.removeProject(id);
+    } catch {
+      // Fallback: REST will handle it
+    }
+  }
+}
+
 /** Unregister a project from nexus (keeps all files). */
 export async function unregisterProject(id: string): Promise<boolean> {
+  // Remove from SpacetimeDB first for instant UI update
+  removeFromSpacetimeDB(id);
   try {
     const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
     if (res.ok) {
@@ -59,6 +73,7 @@ export async function archiveProject(
   id: string,
   removeClaude = false,
 ): Promise<boolean> {
+  removeFromSpacetimeDB(id);
   try {
     const res = await fetch(`/api/projects/${id}/archive`, {
       method: "POST",
@@ -84,6 +99,7 @@ export async function archiveProject(
 
 /** Delete a project — unregister + delete ALL files from disk. Requires confirmation. */
 export async function deleteProject(id: string): Promise<boolean> {
+  removeFromSpacetimeDB(id);
   try {
     const res = await fetch(`/api/projects/${id}/delete`, {
       method: "POST",
