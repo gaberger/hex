@@ -203,6 +203,7 @@ fn create_project_json(target: &Path, name: &str) -> Result<()> {
         "name": name,
         "createdAt": now,
         "hexVersion": env!("CARGO_PKG_VERSION"),
+        "lifecycle_enforcement": "mandatory",
     });
 
     fs::write(&project_json, serde_json::to_string_pretty(&content)?)

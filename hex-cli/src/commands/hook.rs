@@ -92,17 +92,19 @@ fn nexus_client(timeout_secs: u64) -> Result<reqwest::Client> {
         .build()?)
 }
 
-/// Check if lifecycle enforcement is mandatory for this project.
+/// Check lifecycle enforcement mode for this project.
+/// Default is "mandatory" — all hex projects enforce the ADR → workplan → code pipeline.
+/// Set "lifecycle_enforcement": "advisory" in .hex/project.json to downgrade to warnings only.
 fn enforcement_mode(project_dir: &PathBuf) -> &'static str {
     let project_json = project_dir.join(".hex/project.json");
     if let Ok(content) = std::fs::read_to_string(&project_json) {
         if let Ok(project) = serde_json::from_str::<serde_json::Value>(&content) {
-            if project["lifecycle_enforcement"].as_str() == Some("mandatory") {
-                return "mandatory";
+            if project["lifecycle_enforcement"].as_str() == Some("advisory") {
+                return "advisory";
             }
         }
     }
-    "advisory"
+    "mandatory"
 }
 
 #[derive(Subcommand)]
@@ -190,6 +192,9 @@ async fn session_start(project_dir: &PathBuf) -> Result<()> {
             if let Ok(evict_client) = nexus_client(3) {
                 let _ = evict_client.post(&nexus_url("/api/hex-agents/evict")).send().await;
             }
+
+            // ADR-060: Check for restart checkpoint from a previous session
+            let _ = recover_restart_checkpoint().await;
 
             // ADR-050: Load active workplan from HexFlo memory
             let _ = load_workplan_context(id).await;
@@ -557,8 +562,8 @@ async fn route(project_dir: &PathBuf) -> Result<()> {
     // ADR-050: Send heartbeat on every user interaction
     let _ = send_heartbeat().await;
 
-    // TODO(ADR-060): Check agent inbox for critical notifications
-    // let _ = check_inbox().await;
+    // ADR-060: Check agent inbox for critical notifications
+    let _ = check_inbox().await;
 
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
         if let Some(content) = input["content"].as_str() {
@@ -737,6 +742,9 @@ fn detect_hex_layer(rel_path: &str) -> Option<&'static str> {
 /// Check for unacknowledged critical notifications in the agent's inbox.
 /// Priority-2 messages are always shown. Priority 0-1 are shown once
 /// (tracked via session state `last_inbox_check` timestamp).
+///
+/// For `restart` notifications: automatically saves session state to HexFlo
+/// memory before prompting the user, so the next session can recover context.
 async fn check_inbox() -> Result<()> {
     let state = match SessionState::load() {
         Some(s) if !s.agent_id.is_empty() => s,
@@ -773,9 +781,15 @@ async fn check_inbox() -> Result<()> {
         return Ok(());
     }
 
+    // ADR-060 step 8: For restart notifications, save state BEFORE prompting
+    let has_restart = notifications.iter().any(|n| n["kind"].as_str() == Some("restart"));
+    if has_restart {
+        let _ = save_restart_checkpoint(&state, &client).await;
+    }
+
     // Print to stdout — this gets injected into Claude's context
     println!();
-    println!("⚠ CRITICAL NOTIFICATION(S) — action required:");
+    println!("\u{26a0} CRITICAL NOTIFICATION(S) \u{2014} action required:");
     for n in &notifications {
         let kind = n["kind"].as_str().unwrap_or("unknown");
         let payload = n["payload"].as_str().unwrap_or("{}");
@@ -783,9 +797,47 @@ async fn check_inbox() -> Result<()> {
         println!("  [{}] #{}: {}", kind, id, payload);
     }
     println!();
-    println!("To acknowledge: hex inbox ack <id>");
-    println!("If kind=restart: save your state and prepare for session restart.");
+
+    if has_restart {
+        println!("Session state has been saved automatically.");
+        println!("To acknowledge and restart: hex inbox ack <id>, then restart your session.");
+        println!("The next session will recover your workplan/task/swarm context.");
+    } else {
+        println!("To acknowledge: hex inbox ack <id>");
+    }
     println!();
+
+    Ok(())
+}
+
+/// Save a restart checkpoint to HexFlo memory (ADR-060 step 8).
+/// Stores current session state so the next session can recover context.
+async fn save_restart_checkpoint(state: &SessionState, client: &reqwest::Client) -> Result<()> {
+    let session_id = std::env::var("CLAUDE_SESSION_ID").unwrap_or_default();
+    let checkpoint = serde_json::json!({
+        "agent_id": state.agent_id,
+        "agent_name": state.name,
+        "project": state.project,
+        "workplan_id": state.workplan_id,
+        "swarm_id": state.swarm_id,
+        "current_task_id": state.current_task_id,
+        "phase": state.phase,
+        "edits": state.edits,
+        "session_id": session_id,
+        "saved_at": chrono::Utc::now().to_rfc3339(),
+    });
+
+    // Store under a well-known key so session_start can find it
+    let memory_key = format!("restart:checkpoint:{}", state.agent_id);
+    let _ = client
+        .post(&nexus_url("/api/hexflo/memory"))
+        .json(&serde_json::json!({
+            "key": memory_key,
+            "value": checkpoint.to_string(),
+            "scope": "project",
+        }))
+        .send()
+        .await;
 
     Ok(())
 }
@@ -813,6 +865,94 @@ async fn notify_nexus_edit(_project_dir: &PathBuf, file_path: &str) -> Result<()
 }
 
 // ── ADR-050: Lifecycle helpers ───────────────────────────────────────
+
+/// Recover context from a restart checkpoint saved by a previous session (ADR-060 step 8).
+/// If a checkpoint exists for this agent, inject the workplan/task/swarm context
+/// into the current session state and print a recovery banner.
+async fn recover_restart_checkpoint() -> Result<()> {
+    let state = match SessionState::load() {
+        Some(s) if !s.agent_id.is_empty() => s,
+        _ => return Ok(()),
+    };
+
+    let client = match nexus_client(2) {
+        Ok(c) => c,
+        Err(_) => return Ok(()),
+    };
+
+    let memory_key = format!("restart:checkpoint:{}", state.agent_id);
+    let encoded_key: String = memory_key
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c.to_string()
+            } else {
+                format!("%{:02X}", c as u32)
+            }
+        })
+        .collect();
+    let url = nexus_url(&format!("/api/hexflo/memory/{}", encoded_key));
+
+    let resp = match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Ok(()),
+    };
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(b) => b,
+        Err(_) => return Ok(()),
+    };
+
+    let checkpoint: serde_json::Value = match body["value"]
+        .as_str()
+        .and_then(|v| serde_json::from_str(v).ok())
+    {
+        Some(cp) => cp,
+        None => return Ok(()),
+    };
+
+    // Restore session state from checkpoint
+    let mut state = state;
+    if let Some(wp) = checkpoint["workplan_id"].as_str() {
+        state.workplan_id = Some(wp.to_string());
+    }
+    if let Some(sw) = checkpoint["swarm_id"].as_str() {
+        state.swarm_id = Some(sw.to_string());
+    }
+    if let Some(ph) = checkpoint["phase"].as_str() {
+        state.phase = Some(ph.to_string());
+    }
+    // Don't restore current_task_id — the task may have been reclaimed
+    let _ = state.save();
+
+    // Print recovery banner
+    let prev_session = checkpoint["session_id"].as_str().unwrap_or("unknown");
+    let saved_at = checkpoint["saved_at"].as_str().unwrap_or("unknown");
+    let prev_edits = checkpoint["edits"].as_u64().unwrap_or(0);
+
+    println!(
+        "  {} Recovered from restart checkpoint (prev session: {}, {} edits, saved {})",
+        "\u{21ba}".green(),
+        &prev_session[..8.min(prev_session.len())],
+        prev_edits,
+        saved_at,
+    );
+
+    if let Some(wp) = &state.workplan_id {
+        println!("  Restored: workplan={}", wp);
+    }
+    if let Some(sw) = &state.swarm_id {
+        println!("  Restored: swarm={}", sw);
+    }
+
+    // Clean up the checkpoint so it's not replayed on future sessions
+    let _ = client
+        .delete(&nexus_url(&format!("/api/hexflo/memory/{}", encoded_key)))
+        .send()
+        .await;
+
+    Ok(())
+}
 
 /// Load active workplan context from HexFlo memory into session state.
 async fn load_workplan_context(project_id: &str) -> Result<()> {
