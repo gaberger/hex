@@ -76,7 +76,7 @@ async fn list() -> anyhow::Result<()> {
 }
 
 async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
-    let resp = nexus.get("/api/agents").await?;
+    let resp = nexus.get("/api/hex-agents").await?;
     // Nexus returns { "agents": [...] } — unwrap the wrapper
     let agents = resp["agents"].as_array().cloned()
         .or_else(|| resp.as_array().cloned())
@@ -135,9 +135,9 @@ async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
     println!("  {}", "\u{2500}".repeat(80).dimmed());
 
     for agent in &agents {
-        // Support both camelCase (legacy) and snake_case (current API)
-        let id = agent["agentId"].as_str()
-            .or_else(|| agent["id"].as_str())
+        // ADR-058: hex_agent table uses `id` as primary key
+        let id = agent["id"].as_str()
+            .or_else(|| agent["agentId"].as_str())
             .unwrap_or("?");
         let id_short = if id.len() > 12 { &id[..12] } else { id };
 
@@ -307,12 +307,12 @@ async fn info(agent_id: &str) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    let path = format!("/api/agents/{}", agent_id);
+    let path = format!("/api/hex-agents/{}", agent_id);
     let agent = nexus.get(&path).await?;
 
     println!("{} Agent Details", "\u{2b21}".cyan());
     println!();
-    println!("  {:<16} {}", "ID:".bold(), agent["agentId"].as_str().unwrap_or("-"));
+    println!("  {:<16} {}", "ID:".bold(), agent["id"].as_str().unwrap_or("-"));
     println!("  {:<16} {}", "Name:".bold(), agent["name"].as_str().unwrap_or("-"));
     println!("  {:<16} {}", "Host:".bold(), agent["host"].as_str().unwrap_or("local"));
     println!("  {:<16} {}", "Status:".bold(), agent["status"].as_str().unwrap_or("-"));
@@ -365,7 +365,7 @@ async fn agent_status(agent_id: &str) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    let path = format!("/api/agents/{}", agent_id);
+    let path = format!("/api/hex-agents/{}", agent_id);
     let agent = nexus.get(&path).await?;
 
     let status = agent["status"].as_str().unwrap_or("unknown");
@@ -438,7 +438,8 @@ async fn connect(nexus_url: &str) -> anyhow::Result<()> {
         },
     });
 
-    let resp = nexus.post("/api/agents/connect", &body).await?;
+    // ADR-058: Use unified agent registry, not legacy orchestration endpoint
+    let resp = nexus.post("/api/hex-agents/connect", &body).await?;
 
     let agent_id = resp["agentId"].as_str().unwrap_or("-");
 

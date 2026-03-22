@@ -49,6 +49,9 @@ pub enum NexusAction {
         /// Port to listen on
         #[arg(short, long, default_value_t = DEFAULT_PORT)]
         port: u16,
+        /// Bind address (use 0.0.0.0 for remote agent access)
+        #[arg(short, long, default_value = "127.0.0.1")]
+        bind: String,
         /// Auth token for dashboard/chat access
         #[arg(short, long)]
         token: Option<String>,
@@ -183,14 +186,14 @@ fn try_start_spacetimedb(bin: &str, args: &[&str], stdout: &std::fs::File, stder
 
 pub async fn run(action: NexusAction) -> anyhow::Result<()> {
     match action {
-        NexusAction::Start { port, token, no_agent } => start(port, token.as_deref(), no_agent).await,
+        NexusAction::Start { port, bind, token, no_agent } => start(port, &bind, token.as_deref(), no_agent).await,
         NexusAction::Stop => stop().await,
         NexusAction::Status => status().await,
         NexusAction::Logs { lines, follow } => logs(lines, follow).await,
     }
 }
 
-async fn start(port: u16, token: Option<&str>, no_agent: bool) -> anyhow::Result<()> {
+async fn start(port: u16, bind: &str, token: Option<&str>, no_agent: bool) -> anyhow::Result<()> {
     let pid_path = pid_file();
 
     // Check if already running
@@ -266,7 +269,7 @@ async fn start(port: u16, token: Option<&str>, no_agent: bool) -> anyhow::Result
     );
 
     let mut cmd = std::process::Command::new(&nexus_bin);
-    cmd.args(["--port", &port.to_string(), "--daemon"]);
+    cmd.args(["--port", &port.to_string(), "--bind", bind, "--daemon"]);
     if let Some(t) = token {
         cmd.args(["--token", t]);
     }
@@ -404,12 +407,30 @@ async fn start(port: u16, token: Option<&str>, no_agent: bool) -> anyhow::Result
                     .spawn()
                 {
                     Ok(child) => {
+                        let agent_pid = child.id();
                         println!(
                             "{} hex-agent started (PID {}) \u{2014} project: {}",
                             "\u{2b21}".green(),
-                            child.id(),
+                            agent_pid,
                             project_dir
                         );
+
+                        // Register this agent in the unified hex_agent table (ADR-058)
+                        let hostname = gethostname::gethostname().to_string_lossy().to_string();
+                        let agent_name = format!("nexus-agent-{}", &hostname);
+                        let reg_body = serde_json::json!({
+                            "name": agent_name,
+                            "host": hostname,
+                            "project_dir": project_dir,
+                            "session_id": format!("nexus-{}", agent_pid),
+                        });
+                        let _ = agent_nexus.post("/api/hex-agents/connect", &reg_body).await
+                            .map(|_| {
+                                tracing::debug!("Nexus agent registered as {}", agent_name);
+                            })
+                            .map_err(|e| {
+                                tracing::debug!("Nexus agent registration failed (non-fatal): {e}");
+                            });
                     }
                     Err(e) => {
                         tracing::debug!("hex-agent failed to start: {e}");
