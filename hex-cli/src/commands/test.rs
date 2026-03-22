@@ -12,9 +12,12 @@
 //!   hex test --all        # Everything including service startup
 
 use std::process::Command;
+use std::time::Instant;
 
 use clap::Subcommand;
+use chrono::Utc;
 use colored::Colorize;
+use serde::Serialize;
 
 use crate::nexus_client::NexusClient;
 
@@ -38,32 +41,84 @@ pub enum TestAction {
     Full,
     /// Verify CLI-MCP parity (ADR-019)
     Parity,
+    /// Show recent test run history
+    History,
+    /// Show test pass rate trends
+    Trends,
+}
+
+/// A single test result entry with structured metadata.
+#[derive(Debug, Clone, Serialize)]
+struct TestResultEntry {
+    category: String,
+    name: String,
+    status: String,
+    duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_message: Option<String>,
 }
 
 struct TestResults {
     pass: u32,
     fail: u32,
     skip: u32,
+    results: Vec<TestResultEntry>,
+    session_start: Instant,
+    /// Tracks the current test category (set by section headers).
+    current_category: String,
 }
 
 impl TestResults {
     fn new() -> Self {
-        Self { pass: 0, fail: 0, skip: 0 }
+        Self {
+            pass: 0,
+            fail: 0,
+            skip: 0,
+            results: Vec::new(),
+            session_start: Instant::now(),
+            current_category: String::from("general"),
+        }
+    }
+
+    /// Set the current category for subsequent check/skip calls.
+    fn set_category(&mut self, category: &str) {
+        self.current_category = category.to_string();
     }
 
     fn check(&mut self, label: &str, ok: bool) {
         if ok {
             println!("  {} {}", "✓".green(), label);
             self.pass += 1;
+            self.results.push(TestResultEntry {
+                category: self.current_category.clone(),
+                name: label.to_string(),
+                status: "pass".to_string(),
+                duration_ms: 0,
+                error_message: None,
+            });
         } else {
             println!("  {} {}", "✗".red(), label);
             self.fail += 1;
+            self.results.push(TestResultEntry {
+                category: self.current_category.clone(),
+                name: label.to_string(),
+                status: "fail".to_string(),
+                duration_ms: 0,
+                error_message: Some(format!("{} failed", label)),
+            });
         }
     }
 
     fn skip(&mut self, label: &str) {
         println!("  {} {} (skipped)", "○".yellow(), label);
         self.skip += 1;
+        self.results.push(TestResultEntry {
+            category: self.current_category.clone(),
+            name: label.to_string(),
+            status: "skip".to_string(),
+            duration_ms: 0,
+            error_message: None,
+        });
     }
 
     fn summary(&self) -> bool {
@@ -89,6 +144,260 @@ impl TestResults {
                 total
             );
             false
+        }
+    }
+
+    /// Build a complete test session JSON object for persistence.
+    fn to_session_json(&self) -> serde_json::Value {
+        let duration_ms = self.session_start.elapsed().as_millis() as u64;
+        let total = self.pass + self.fail + self.skip;
+        let overall_status = if self.fail == 0 { "pass" } else { "fail" };
+
+        // Agent ID: try reading from session file
+        let agent_id = resolve_agent_id().unwrap_or_else(|| "unknown".to_string());
+
+        // Git metadata
+        let commit_hash = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let branch = Command::new("git")
+            .args(["branch", "--show-current"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let now = Utc::now();
+        let started_at = now - chrono::Duration::milliseconds(duration_ms as i64);
+
+        serde_json::json!({
+            "id": uuid::Uuid::new_v4().to_string(),
+            "agent_id": agent_id,
+            "commit_hash": commit_hash,
+            "branch": branch,
+            "started_at": started_at.to_rfc3339(),
+            "finished_at": now.to_rfc3339(),
+            "trigger": "manual",
+            "overall_status": overall_status,
+            "pass_count": self.pass,
+            "fail_count": self.fail,
+            "skip_count": self.skip,
+            "total_count": total,
+            "duration_ms": duration_ms,
+            "results": self.results,
+        })
+    }
+}
+
+/// Resolve the agent ID from ~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json
+fn resolve_agent_id() -> Option<String> {
+    let sessions_dir = dirs::home_dir()?.join(".hex/sessions");
+
+    // Try exact match via CLAUDE_SESSION_ID
+    if let Ok(session_id) = std::env::var("CLAUDE_SESSION_ID") {
+        if !session_id.is_empty() {
+            let path = sessions_dir.join(format!("agent-{}.json", session_id));
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(id) = val["agentId"].as_str().or(val["agent_id"].as_str()) {
+                        if !id.is_empty() {
+                            return Some(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Persist test session results: POST to nexus, fallback to local JSONL file.
+async fn persist_test_session(session_json: &serde_json::Value) {
+    // Try POST to nexus with a short timeout
+    let nexus_url = nexus_base_url();
+    let http = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => {
+            persist_to_local_file(session_json);
+            return;
+        }
+    };
+
+    match http
+        .post(format!("{}/api/test-sessions", nexus_url))
+        .json(session_json)
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            // Successfully posted to nexus
+        }
+        _ => {
+            // Nexus unreachable or error — fall back to local file
+            persist_to_local_file(session_json);
+        }
+    }
+}
+
+/// Append a test session JSON to ~/.hex/test-sessions/{YYYY-MM-DD}.jsonl
+fn persist_to_local_file(session_json: &serde_json::Value) {
+    let Some(home) = dirs::home_dir() else { return };
+    let dir = home.join(".hex/test-sessions");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let date = Utc::now().format("%Y-%m-%d").to_string();
+    let file_path = dir.join(format!("{}.jsonl", date));
+    let line = match serde_json::to_string(session_json) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file_path)
+    {
+        let _ = writeln!(f, "{}", line);
+    }
+}
+
+/// Compare current test results against the previous session on the same branch.
+/// Prints a warning block if any tests regressed (were PASS but are now FAIL).
+/// Purely informational — never changes exit code.
+async fn check_regressions(current_session: &serde_json::Value) {
+    let branch = current_session["branch"].as_str().unwrap_or("unknown");
+    if branch == "unknown" {
+        return;
+    }
+
+    let nexus_url = nexus_base_url();
+    let http = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // Fetch last 2 sessions on this branch (current one we just persisted + previous)
+    let url = format!("{}/api/test-sessions", nexus_url);
+
+    let resp = match http
+        .get(&url)
+        .query(&[("limit", "2"), ("branch", branch)])
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return,
+    };
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let sessions = match body["sessions"].as_array() {
+        Some(s) if s.len() >= 2 => s,
+        _ => return,
+    };
+
+    // sessions[0] = most recent (current), sessions[1] = previous
+    let current_id = current_session["id"].as_str().unwrap_or("");
+    let (current_summary, previous_summary) = if sessions[0]["id"].as_str() == Some(current_id) {
+        (&sessions[0], &sessions[1])
+    } else {
+        // If for some reason the order differs, use index 0 as previous
+        (&sessions[1], &sessions[0])
+    };
+
+    // We need full session details (with results) for the previous session
+    let prev_id = match previous_summary["id"].as_str() {
+        Some(id) => id,
+        None => return,
+    };
+
+    let prev_url = format!("{}/api/test-sessions/{}", nexus_url, prev_id);
+    let prev_resp = match http.get(&prev_url).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return,
+    };
+
+    let prev_body: serde_json::Value = match prev_resp.json().await {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let prev_results = match prev_body["session"]["results"].as_array() {
+        Some(r) => r,
+        None => return,
+    };
+
+    // Build set of tests that passed in the previous session
+    let mut prev_passed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for result in prev_results {
+        let status = result["status"].as_str().unwrap_or("");
+        if status == "pass" || status == "passed" {
+            let cat = result["category"].as_str().unwrap_or("general");
+            let name = result["name"].as_str().unwrap_or("");
+            prev_passed.insert(format!("{}::{}", cat, name));
+        }
+    }
+
+    // Find regressions: tests that passed before but fail now
+    let current_results = match current_session["results"].as_array() {
+        Some(r) => r,
+        None => return,
+    };
+
+    let mut regressions: Vec<(String, String)> = Vec::new();
+    for result in current_results {
+        let status = result["status"].as_str().unwrap_or("");
+        if status == "fail" || status == "failed" {
+            let cat = result["category"].as_str().unwrap_or("general");
+            let name = result["name"].as_str().unwrap_or("");
+            let key = format!("{}::{}", cat, name);
+            if prev_passed.contains(&key) {
+                regressions.push((cat.to_string(), name.to_string()));
+            }
+        }
+    }
+
+    if !regressions.is_empty() {
+        println!();
+        println!(
+            "  {} {}",
+            "⚠".yellow().bold(),
+            "REGRESSIONS DETECTED (vs previous run):".yellow().bold()
+        );
+        for (cat, name) in &regressions {
+            println!(
+                "    {} {}: {} — was PASS, now FAIL",
+                "–".yellow(),
+                cat,
+                name
+            );
         }
     }
 }
@@ -133,6 +442,12 @@ pub async fn run(action: TestAction) -> anyhow::Result<()> {
         TestAction::Parity => {
             run_parity_tests(&mut results).await;
         }
+        TestAction::History => {
+            return run_history().await;
+        }
+        TestAction::Trends => {
+            return run_trends().await;
+        }
         TestAction::Full => {
             run_unit_tests(&mut results);
             println!();
@@ -156,6 +471,13 @@ pub async fn run(action: TestAction) -> anyhow::Result<()> {
     let ok = results.summary();
     println!("{}", "══════════════════════════════════════════".cyan());
 
+    // Fire-and-forget: persist test session results
+    let session_json = results.to_session_json();
+    persist_test_session(&session_json).await;
+
+    // Regression check: compare with previous session on same branch
+    check_regressions(&session_json).await;
+
     if ok {
         Ok(())
     } else {
@@ -167,6 +489,7 @@ pub async fn run(action: TestAction) -> anyhow::Result<()> {
 
 fn run_unit_tests(r: &mut TestResults) {
     println!("{}", "── Unit Tests ──".cyan());
+    r.set_category("unit");
 
     // Main workspace crates
     for crate_name in &["hex-core", "hex-agent"] {
@@ -184,11 +507,13 @@ fn run_unit_tests(r: &mut TestResults) {
     // Dashboard store tests (Vitest)
     println!();
     println!("{}", "── Dashboard Tests ──".cyan());
+    r.set_category("dashboard");
     run_dashboard_tests(r);
 
     // SpacetimeDB modules (different workspace)
     println!();
     println!("{}", "── SpacetimeDB Module Tests ──".cyan());
+    r.set_category("spacetimedb");
 
     for module in &[
         "file-lock-manager",
@@ -207,6 +532,7 @@ fn run_unit_tests(r: &mut TestResults) {
 
 async fn run_arch_checks(r: &mut TestResults) {
     println!("{}", "── Architecture Health ──".cyan());
+    r.set_category("architecture");
 
     // Try multiple ways to run hex analyze
     let output = find_and_run_hex_analyze();
@@ -285,6 +611,7 @@ fn find_and_run_hex_analyze() -> Option<String> {
 
 async fn run_service_tests(r: &mut TestResults) -> bool {
     println!("{}", "── Service Health ──".cyan());
+    r.set_category("services");
 
     let client = NexusClient::from_env();
 
@@ -325,6 +652,7 @@ async fn run_service_tests(r: &mut TestResults) -> bool {
 
 async fn run_inference_tests(r: &mut TestResults) {
     println!("{}", "── Inference Providers ──".cyan());
+    r.set_category("inference");
 
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -415,6 +743,7 @@ fn nexus_base_url() -> String {
 
 async fn run_integration_tests(r: &mut TestResults, services_ok: bool) {
     println!("{}", "── Integration Tests ──".cyan());
+    r.set_category("integration");
 
     if !services_ok {
         r.skip("Swarm lifecycle (services not healthy)");
@@ -586,6 +915,7 @@ async fn register_test_agent(http: &reqwest::Client, base: &str) -> Option<Strin
 
 fn run_lint_checks(r: &mut TestResults) {
     println!("{}", "── Lint ──".cyan());
+    r.set_category("lint");
 
     // Rust workspace clippy
     let clippy_ok = Command::new("cargo")
@@ -627,6 +957,7 @@ fn run_lint_checks(r: &mut TestResults) {
 
 async fn run_e2e_tests(r: &mut TestResults) {
     println!("{}", "── E2E Browser Tests ──".cyan());
+    r.set_category("e2e");
 
     // Check agent-browser is installed
     let ab_installed = Command::new("agent-browser")
@@ -734,6 +1065,7 @@ fn run_dashboard_tests(r: &mut TestResults) {
 
 async fn run_parity_tests(r: &mut TestResults) {
     println!("{}", "── CLI-MCP Parity (ADR-019) ──".cyan());
+    r.set_category("parity");
 
     // Define the expected parity mapping: (CLI subcommand, MCP tool name)
     let parity_map: Vec<(&str, &str)> = vec![

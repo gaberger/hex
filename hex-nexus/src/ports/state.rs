@@ -602,6 +602,15 @@ pub trait IStatePort: Send + Sync {
     // ── Coordination Cleanup (ADR-042) ───────────────
     async fn coordination_cleanup_stale(&self, stale_threshold_secs: u64) -> Result<CoordinationCleanupReport, StateError>;
 
+    // ── Unified Agent Registry (ADR-058) ─────────────
+    async fn hex_agent_connect(&self, id: &str, name: &str, host: &str, project_id: &str, project_dir: &str, model: &str, session_id: &str, capabilities_json: &str) -> Result<(), StateError>;
+    async fn hex_agent_disconnect(&self, id: &str) -> Result<(), StateError>;
+    async fn hex_agent_heartbeat(&self, id: &str) -> Result<(), StateError>;
+    async fn hex_agent_list(&self) -> Result<Vec<serde_json::Value>, StateError>;
+    async fn hex_agent_get(&self, id: &str) -> Result<Option<serde_json::Value>, StateError>;
+    async fn hex_agent_evict_dead(&self) -> Result<(), StateError>;
+    async fn hex_agent_mark_inactive(&self) -> Result<(), StateError>;
+
     // ── Subscriptions (real-time sync) ──────────────
     fn subscribe(&self) -> broadcast::Receiver<StateEvent>;
 }

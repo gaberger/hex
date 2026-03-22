@@ -1023,6 +1023,48 @@ mod real {
             Ok(CoordinationCleanupReport { instances_removed: 0, locks_released: 0, claims_released: 0, unstaged_removed: 0 })
         }
 
+        // ── Unified Agent Registry (ADR-058) ─────────────
+
+        async fn hex_agent_connect(&self, id: &str, name: &str, host: &str, project_id: &str, project_dir: &str, model: &str, session_id: &str, capabilities_json: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("agent_connect", serde_json::json!([id, name, host, project_id, project_dir, model, session_id, capabilities_json, now])).await?;
+            Ok(())
+        }
+
+        async fn hex_agent_disconnect(&self, id: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("agent_disconnect", serde_json::json!([id, now])).await?;
+            Ok(())
+        }
+
+        async fn hex_agent_heartbeat(&self, id: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("agent_heartbeat_update", serde_json::json!([id, now])).await?;
+            Ok(())
+        }
+
+        async fn hex_agent_list(&self) -> Result<Vec<serde_json::Value>, StateError> {
+            self.query_table("SELECT * FROM hex_agent ORDER BY last_heartbeat DESC").await
+        }
+
+        async fn hex_agent_get(&self, id: &str) -> Result<Option<serde_json::Value>, StateError> {
+            let rows = self.query_table(&format!("SELECT * FROM hex_agent WHERE id = '{}'", id)).await?;
+            Ok(rows.into_iter().next())
+        }
+
+        async fn hex_agent_evict_dead(&self) -> Result<(), StateError> {
+            let threshold = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+            self.call_reducer("agent_evict_dead", serde_json::json!([threshold])).await?;
+            Ok(())
+        }
+
+        async fn hex_agent_mark_inactive(&self) -> Result<(), StateError> {
+            let stale = (chrono::Utc::now() - chrono::Duration::minutes(2)).to_rfc3339();
+            let dead = (chrono::Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
+            self.call_reducer("agent_mark_inactive", serde_json::json!([stale, dead])).await?;
+            Ok(())
+        }
+
         // ── Subscriptions ───────────────────────────────
         // SpacetimeDB forwards table change callbacks through this channel
 
@@ -1146,6 +1188,14 @@ mod stub {
         async fn unstaged_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         // ── Coordination Cleanup (ADR-042) ──────────────
         async fn coordination_cleanup_stale(&self, _: u64) -> Result<CoordinationCleanupReport, StateError> { Err(Self::err()) }
+        // ── Unified Agent Registry (ADR-058) ─────────────
+        async fn hex_agent_connect(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn hex_agent_disconnect(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn hex_agent_heartbeat(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn hex_agent_list(&self) -> Result<Vec<serde_json::Value>, StateError> { Err(Self::err()) }
+        async fn hex_agent_get(&self, _: &str) -> Result<Option<serde_json::Value>, StateError> { Err(Self::err()) }
+        async fn hex_agent_evict_dead(&self) -> Result<(), StateError> { Err(Self::err()) }
+        async fn hex_agent_mark_inactive(&self) -> Result<(), StateError> { Err(Self::err()) }
         fn subscribe(&self) -> broadcast::Receiver<StateEvent> { self.event_tx.subscribe() }
     }
 }

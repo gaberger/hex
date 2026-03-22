@@ -24,6 +24,7 @@ import {
 import { navigate } from "../../stores/router";
 import { setSwarmInitDialogOpen } from "../../stores/ui";
 import { addToast } from "../../stores/toast";
+import { entityBelongsToProject } from "../../utils/project-match";
 
 // ---------------------------------------------------------------------------
 // Connection Status Banner
@@ -206,18 +207,15 @@ const ControlPlane: Component = () => {
       const pid = p.id;
       const ppath = (p as any).rootPath || (p as any).path || "";
 
-      // Count swarms: match by project_id, or show unscoped swarms on all projects
-      const projectSwarms = swarms().filter((s: any) => {
-        const sid = s.project_id ?? s.projectId ?? "";
-        return sid === pid || sid === ppath;
-      });
+      // Count swarms: use shared project matching utility
+      const projectSwarms = swarms().filter((s: any) =>
+        entityBelongsToProject(s, pid),
+      );
 
-      // Count agents: match by project_id, projectDir, or swarm membership
-      const projectAgents = registryAgents().filter((a: any) => {
-        const apid = a.project_id ?? a.projectId ?? "";
-        const adir = a.project_dir ?? a.projectDir ?? "";
-        return apid === pid || adir === ppath || adir.includes(p.name);
-      });
+      // Count agents: use shared project matching utility
+      const projectAgents = registryAgents().filter((a: any) =>
+        entityBelongsToProject(a, pid),
+      );
 
       // Count swarm agents too
       const swarmAgentCount = swarmAgents().filter((sa: any) => {

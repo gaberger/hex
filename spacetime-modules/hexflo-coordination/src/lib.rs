@@ -55,6 +55,169 @@ pub struct SwarmAgent {
     pub last_heartbeat: String,
 }
 
+// ─── Unified Agent Registry (ADR-058) ────────────────────────────────────
+
+/// A hex agent — unified identity for all agent types (local Claude Code
+/// sessions, remote agents, swarm participants). Single source of truth
+/// replacing the fragmented agent-registry + orchestration + swarm_agent systems.
+#[table(name = hex_agent, public)]
+#[derive(Clone, Debug)]
+pub struct HexAgent {
+    #[primary_key]
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    pub project_id: String,
+    pub project_dir: String,
+    pub model: String,
+    pub session_id: String,
+    /// Status: "online", "idle", "stale", "dead", "completed"
+    pub status: String,
+    /// Current swarm assignment (empty if unassigned).
+    pub swarm_id: String,
+    /// Role within swarm: "coder", "planner", "reviewer", etc.
+    pub role: String,
+    pub worktree_path: String,
+    pub registered_at: String,
+    pub last_heartbeat: String,
+    /// JSON-encoded capabilities (models, tools, GPU, etc.)
+    pub capabilities_json: String,
+}
+
+/// Register or re-register an agent (upsert by ID).
+/// Called by hex hook session-start via /api/hex-agents/connect.
+#[reducer]
+pub fn agent_connect(
+    ctx: &ReducerContext,
+    id: String,
+    name: String,
+    host: String,
+    project_id: String,
+    project_dir: String,
+    model: String,
+    session_id: String,
+    capabilities_json: String,
+    timestamp: String,
+) -> Result<(), String> {
+    if let Some(existing) = ctx.db.hex_agent().id().find(&id) {
+        ctx.db.hex_agent().id().update(HexAgent {
+            name, host, project_id, project_dir, model, session_id,
+            capabilities_json,
+            status: "online".to_string(),
+            last_heartbeat: timestamp.clone(),
+            registered_at: existing.registered_at, // keep original
+            ..existing
+        });
+    } else {
+        ctx.db.hex_agent().insert(HexAgent {
+            id, name, host, project_id, project_dir, model, session_id,
+            status: "online".to_string(),
+            swarm_id: String::new(),
+            role: String::new(),
+            worktree_path: String::new(),
+            registered_at: timestamp.clone(),
+            last_heartbeat: timestamp,
+            capabilities_json,
+        });
+    }
+    Ok(())
+}
+
+/// Disconnect an agent (set status to completed).
+#[reducer]
+pub fn agent_disconnect(
+    ctx: &ReducerContext,
+    id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let agent = ctx.db.hex_agent().id().find(&id)
+        .ok_or_else(|| format!("Agent '{}' not found", id))?;
+    ctx.db.hex_agent().id().update(HexAgent {
+        status: "completed".to_string(),
+        last_heartbeat: timestamp,
+        ..agent
+    });
+    Ok(())
+}
+
+/// Update agent heartbeat — keeps status=online.
+#[reducer]
+pub fn agent_heartbeat_update(
+    ctx: &ReducerContext,
+    id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let agent = ctx.db.hex_agent().id().find(&id)
+        .ok_or_else(|| format!("Agent '{}' not found", id))?;
+    ctx.db.hex_agent().id().update(HexAgent {
+        status: "online".to_string(),
+        last_heartbeat: timestamp,
+        ..agent
+    });
+    Ok(())
+}
+
+/// Assign agent to a swarm with a role.
+#[reducer]
+pub fn agent_assign_swarm(
+    ctx: &ReducerContext,
+    id: String,
+    swarm_id: String,
+    role: String,
+) -> Result<(), String> {
+    let agent = ctx.db.hex_agent().id().find(&id)
+        .ok_or_else(|| format!("Agent '{}' not found", id))?;
+    ctx.db.hex_agent().id().update(HexAgent {
+        swarm_id, role, ..agent
+    });
+    Ok(())
+}
+
+/// Evict dead agents — delete agents with status "dead" whose heartbeat
+/// is older than the given threshold timestamp.
+#[reducer]
+pub fn agent_evict_dead(
+    ctx: &ReducerContext,
+    threshold_timestamp: String,
+) -> Result<(), String> {
+    let to_remove: Vec<String> = ctx.db.hex_agent().iter()
+        .filter(|a| a.status == "dead" && a.last_heartbeat < threshold_timestamp)
+        .map(|a| a.id.clone())
+        .collect();
+    for id in to_remove {
+        ctx.db.hex_agent().id().delete(&id);
+    }
+    Ok(())
+}
+
+/// Mark agents as stale/dead based on heartbeat age.
+/// stale_threshold: agents without heartbeat since this time become "stale"
+/// dead_threshold: agents without heartbeat since this time become "dead"
+#[reducer]
+pub fn agent_mark_inactive(
+    ctx: &ReducerContext,
+    stale_threshold: String,
+    dead_threshold: String,
+) -> Result<(), String> {
+    let agents: Vec<HexAgent> = ctx.db.hex_agent().iter()
+        .filter(|a| a.status == "online" || a.status == "idle" || a.status == "stale")
+        .collect();
+    for agent in agents {
+        if agent.last_heartbeat < dead_threshold && agent.status != "dead" {
+            ctx.db.hex_agent().id().update(HexAgent {
+                status: "dead".to_string(),
+                ..agent
+            });
+        } else if agent.last_heartbeat < stale_threshold && agent.status == "online" {
+            ctx.db.hex_agent().id().update(HexAgent {
+                status: "stale".to_string(),
+                ..agent
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Key-value memory store scoped to global, swarm, or agent level.
 #[table(name = hexflo_memory, public)]
 #[derive(Clone, Debug)]

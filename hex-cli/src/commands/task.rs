@@ -174,8 +174,7 @@ async fn complete(id: &str, result: Option<&str>) -> anyhow::Result<()> {
     // Search active swarms for this task.
     let swarms_resp = nexus.get("/api/swarms/active").await?;
     let swarms = swarms_resp
-        .get("swarms")
-        .and_then(|s| s.as_array())
+        .as_array()
         .cloned()
         .unwrap_or_default();
 

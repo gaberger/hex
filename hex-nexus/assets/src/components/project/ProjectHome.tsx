@@ -25,6 +25,8 @@ import { healthData, healthLoading, fetchHealth } from "../../stores/health";
 import { navigate } from "../../stores/router";
 import { restClient } from "../../services/rest-client";
 import GovernancePipeline from "./GovernancePipeline";
+import { entityBelongsToProject } from "../../utils/project-match";
+import { route } from "../../stores/router";
 
 interface ProjectHomeProps {
   projectId: string;
@@ -77,6 +79,8 @@ function truncate(str: string, max: number): string {
 // ---------------------------------------------------------------------------
 
 const ProjectHome: Component<ProjectHomeProps> = (props) => {
+  const pid = () => props.projectId || (route() as any).projectId || "";
+
   // Fetch health data on mount
   onMount(() => {
     fetchHealth();
@@ -85,7 +89,7 @@ const ProjectHome: Component<ProjectHomeProps> = (props) => {
   // ---- Top-right: Active Swarms ----
   const projectSwarms = createMemo(() =>
     swarms().filter(
-      (s: any) => (s.project ?? s.project_id ?? "") === props.projectId,
+      (s: any) => entityBelongsToProject(s, pid()),
     ),
   );
 
@@ -117,7 +121,7 @@ const ProjectHome: Component<ProjectHomeProps> = (props) => {
   // ---- Bottom-left: Recent Agents ----
   const projectAgents = createMemo(() =>
     swarmAgents().filter(
-      (a: any) => (a.project ?? a.project_id ?? "") === props.projectId,
+      (a: any) => entityBelongsToProject(a, pid()),
     ),
   );
 

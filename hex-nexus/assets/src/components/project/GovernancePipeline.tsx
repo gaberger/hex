@@ -8,6 +8,7 @@ import { Component, createResource, createMemo } from "solid-js";
 import { swarms, swarmTasks } from "../../stores/connection";
 import { navigate } from "../../stores/router";
 import { restClient } from "../../services/rest-client";
+import { entityBelongsToProject } from "../../utils/project-match";
 
 interface GovernancePipelineProps {
   projectId: string;
@@ -51,7 +52,7 @@ const GovernancePipeline: Component<GovernancePipelineProps> = (props) => {
   // Swarm data from SpacetimeDB subscription
   const projectSwarms = createMemo(() =>
     swarms().filter(
-      (s: any) => (s.project ?? s.project_id ?? "") === props.projectId,
+      (s: any) => entityBelongsToProject(s, props.projectId),
     ),
   );
 

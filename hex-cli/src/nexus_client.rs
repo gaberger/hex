@@ -188,15 +188,68 @@ fn read_persisted_token() -> Option<String> {
 
 /// Read the agent ID from the current session's state file.
 /// Used to inject `X-Hex-Agent-Id` header for agent-guarded endpoints.
+///
+/// Resolution order:
+/// 1. `CLAUDE_SESSION_ID` env → exact session file
+/// 2. Fallback: most recently modified session file in ~/.hex/sessions/
+///
+/// This ensures MCP tools work even when CLAUDE_SESSION_ID isn't set
+/// (e.g., nexus was offline at session start and the SessionStart hook
+/// couldn't register the agent).
 fn read_session_agent_id() -> Option<String> {
-    let session_id = std::env::var("CLAUDE_SESSION_ID").ok()?;
-    let path = dirs::home_dir()?
-        .join(".hex/sessions")
-        .join(format!("agent-{}.json", session_id));
+    let sessions_dir = dirs::home_dir()?.join(".hex/sessions");
+
+    // Strategy 1: exact match via CLAUDE_SESSION_ID
+    if let Ok(session_id) = std::env::var("CLAUDE_SESSION_ID") {
+        if !session_id.is_empty() {
+            let path = sessions_dir.join(format!("agent-{}.json", session_id));
+            if let Some(id) = read_agent_id_from_file(&path) {
+                return Some(id);
+            }
+        }
+    }
+
+    // Strategy 2: most recently modified session file (within last 2 hours)
+    if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
+        let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if !name_str.starts_with("agent-") || !name_str.ends_with(".json") {
+                continue;
+            }
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    // Only consider files modified in the last 2 hours
+                    let age = std::time::SystemTime::now()
+                        .duration_since(modified)
+                        .unwrap_or_default();
+                    if age.as_secs() > 7200 {
+                        continue;
+                    }
+                    if best.as_ref().map_or(true, |(t, _)| modified > *t) {
+                        best = Some((modified, entry.path()));
+                    }
+                }
+            }
+        }
+        if let Some((_, path)) = best {
+            if let Some(id) = read_agent_id_from_file(&path) {
+                return Some(id);
+            }
+        }
+    }
+
+    None
+}
+
+/// Extract agentId from a session JSON file.
+fn read_agent_id_from_file(path: &std::path::Path) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
     let val: Value = serde_json::from_str(&content).ok()?;
     val["agentId"]
         .as_str()
+        .or_else(|| val["agent_id"].as_str())
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
 }

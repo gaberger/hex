@@ -11,6 +11,7 @@ import { setSpawnDialogOpen } from "../../stores/ui";
 import { openPane } from "../../stores/panes";
 import { addToast } from "../../stores/toast";
 import { restClient } from "../../services/rest-client";
+import { matchesProject, getEntityProjectRef, getAgentProjectDir } from "../../utils/project-match";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -79,10 +80,13 @@ const AgentFleet: Component = () => {
   });
 
   function agentProject(agent: any): string {
-    const pid = agent.projectId ?? agent.project_id ?? agent.project ?? "";
-    if (!pid) return "--";
-    const proj = projects().find((p) => p.id === pid);
-    return proj?.name ?? pid;
+    const ref = getEntityProjectRef(agent);
+    const dir = getAgentProjectDir(agent);
+    if (!ref && !dir) return "--";
+    const proj = projects().find((p) =>
+      matchesProject(ref, p.id) || (dir && matchesProject(dir, p.id)),
+    );
+    return proj?.name ?? (ref || dir || "--");
   }
 
   function agentTask(agent: any): string | null {

@@ -13,6 +13,7 @@ import {
   agentHeartbeats,
 } from "../../stores/connection";
 import { navigate, route } from "../../stores/router";
+import { entityBelongsToProject } from "../../utils/project-match";
 
 function relativeTime(timestamp: string | undefined): string {
   if (!timestamp) return "--";
@@ -46,7 +47,7 @@ const AgentList: Component = () => {
   // Find swarms belonging to this project
   const projectSwarms = createMemo(() =>
     swarms().filter(
-      (s: any) => (s.project_id ?? s.projectId ?? "") === projectId(),
+      (s: any) => entityBelongsToProject(s, projectId()),
     ),
   );
 
@@ -64,7 +65,7 @@ const AgentList: Component = () => {
   // Global registry agents tied to this project (if any)
   const projectRegistryAgents = createMemo(() =>
     registryAgents().filter(
-      (a: any) => (a.project ?? a.project_id ?? "") === projectId(),
+      (a: any) => entityBelongsToProject(a, projectId()),
     ),
   );
 
