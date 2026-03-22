@@ -52,7 +52,9 @@ const ProjectOverview: Component = () => {
     const project = projects().find((p) => p.id === id);
     if (!project) return;
 
-    if (action === "unregister") {
+    if (action === "hide") {
+      dismissProject(id);
+    } else if (action === "unregister") {
       await unregisterProject(id);
     } else if (action === "archive") {
       await archiveProject(id);
@@ -174,20 +176,6 @@ const ProjectOverview: Component = () => {
             {(project) => (
               <div class="relative group">
                 <ProjectCard project={project} onAction={handleProjectAction} />
-                {/* Dismiss button */}
-                <button
-                  class="absolute top-2 right-2 rounded p-1 text-gray-300 opacity-0 group-hover:opacity-100 hover:bg-gray-800 hover:text-gray-300 transition-all"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    dismissProject(project.id);
-                  }}
-                  title="Dismiss project"
-                >
-                  <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
 
                 {/* Restore indicator for dismissed projects shown in "show all" mode */}
                 <Show when={dismissed().has(project.id)}>

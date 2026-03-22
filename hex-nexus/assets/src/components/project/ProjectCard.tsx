@@ -16,7 +16,7 @@ export interface ProjectInfo {
   lastActivity?: string;
 }
 
-export type ProjectAction = "unregister" | "archive" | "delete";
+export type ProjectAction = "hide" | "unregister" | "archive" | "delete";
 
 const healthColors = {
   green: "bg-green-500",
@@ -126,20 +126,25 @@ const ProjectCard: Component<{
             onClick={(e) => e.stopPropagation()}
           >
             <MenuItem
-              label="Unregister"
-              description="Remove from nexus"
-              onClick={() => fireAction("unregister")}
+              label="Hide"
+              description="Hide from dashboard view"
+              onClick={() => fireAction("hide")}
             />
             <MenuItem
-              label="Archive"
-              description="Remove config, keep files"
-              onClick={() => fireAction("archive")}
-              class="text-yellow-400"
+              label="Unregister"
+              description="Remove from nexus registry"
+              onClick={() => fireAction("unregister")}
             />
             <div class="my-1 border-t border-gray-800" />
             <MenuItem
-              label="Delete files"
-              description="Remove everything from disk"
+              label="Archive"
+              description="Remove config, keep source files"
+              onClick={() => fireAction("archive")}
+              class="text-yellow-400"
+            />
+            <MenuItem
+              label="Delete from disk"
+              description="Permanently remove all files"
               onClick={() => fireAction("delete")}
               class="text-red-400"
             />
