@@ -90,6 +90,9 @@ pub async fn run(args: InitArgs) -> Result<()> {
         create_scaffold(&target)?;
     }
 
+    // ── 7. Pull embedded templates from hex-nexus (skills, agents, hooks) ──
+    let nexus_result = pull_templates_from_nexus(&target, &project_name).await;
+
     // ── Summary ───────────────────────────────────────────────────
     println!();
     println!("  {} .hex/project.json", "\u{2713}".green());
@@ -103,6 +106,32 @@ pub async fn run(args: InitArgs) -> Result<()> {
         println!("  {} src/ (hexagonal layers)", "\u{2713}".green());
     }
 
+    match &nexus_result {
+        Ok(created) => {
+            let skills = created.iter().filter(|f| f.contains("/skills/")).count();
+            let agents = created.iter().filter(|f| f.contains("/agents/")).count();
+            let hooks = created.iter().filter(|f| f.contains("/hooks/")).count();
+            if skills + agents + hooks > 0 {
+                println!("  {} .claude/skills/ ({} skills)", "\u{2713}".green(), skills);
+                println!("  {} .claude/agents/ ({} agents)", "\u{2713}".green(), agents);
+                if hooks > 0 {
+                    println!("  {} .claude/hooks/ ({} hooks)", "\u{2713}".green(), hooks);
+                }
+            }
+        }
+        Err(e) => {
+            println!(
+                "  {} skills/agents: nexus unavailable ({})",
+                "\u{2717}".yellow(),
+                e
+            );
+            println!(
+                "    {} Start nexus first, then re-run: hex init --force",
+                "\u{2022}".dimmed()
+            );
+        }
+    }
+
     println!();
     println!(
         "{} Project {} is now hex-aware",
@@ -111,6 +140,10 @@ pub async fn run(args: InitArgs) -> Result<()> {
     );
     println!();
     println!("  Next steps:");
+    if nexus_result.is_err() {
+        println!("    {} Start hex-nexus:      hex nexus start", "\u{2022}".dimmed());
+        println!("    {} Install templates:    hex init --force", "\u{2022}".dimmed());
+    }
     println!("    {} Register with nexus:  hex project register {}", "\u{2022}".dimmed(), target.display());
     println!("    {} Check architecture:   hex analyze .", "\u{2022}".dimmed());
     println!("    {} Start the dashboard:  hex nexus start", "\u{2022}".dimmed());
@@ -381,4 +414,32 @@ fn create_dir_if_missing(path: &Path) -> Result<()> {
             .with_context(|| format!("Failed to create directory: {}", path.display()))?;
     }
     Ok(())
+}
+
+/// Pull embedded skills, agents, and hooks from hex-nexus via its REST API.
+///
+/// Returns the list of files created by nexus, or an error if nexus is unreachable.
+async fn pull_templates_from_nexus(target: &Path, name: &str) -> Result<Vec<String>> {
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    let body = serde_json::json!({
+        "path": target.to_string_lossy(),
+        "name": name,
+    });
+
+    let resp = nexus.post("/api/projects/init", &body).await?;
+
+    // The nexus endpoint returns { "created": ["file1", "file2", ...] }
+    let created: Vec<String> = resp
+        .get("created")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(created)
 }
