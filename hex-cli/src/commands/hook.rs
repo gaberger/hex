@@ -330,11 +330,25 @@ async fn subagent_start() -> Result<()> {
         .send()
         .await;
 
+    // P4: Capture HEXFLO_WORKPLAN:{id} if present in subagent prompt
+    if let Some(wp_id) = extract_prefixed_value(&stdin, "HEXFLO_WORKPLAN:") {
+        state.workplan_id = Some(wp_id);
+    }
+
     // Track the mapping so SubagentStop can complete it
     state.current_task_id = Some(task_id);
     state.save()?;
 
     Ok(())
+}
+
+/// Extract a value after a PREFIX: marker (e.g. HEXFLO_WORKPLAN:wp-foo → "wp-foo").
+fn extract_prefixed_value(text: &str, prefix: &str) -> Option<String> {
+    let start = text.find(prefix)?;
+    let after = &text[start + prefix.len()..];
+    // Take chars until whitespace or newline
+    let value: String = after.chars().take_while(|c| !c.is_whitespace()).collect();
+    if value.is_empty() { None } else { Some(value) }
 }
 
 /// SubagentStop — auto-complete the task if one was assigned on start.
@@ -615,6 +629,13 @@ async fn pre_agent() -> Result<()> {
             "{} Agent spawned without HEXFLO_TASK — work won't be tracked in HexFlo",
             "\u{26a0}\u{fe0f}"
         );
+    }
+
+    // P4: Propagate workplan context — output HEXFLO_WORKPLAN so subagent inherits it
+    if let Some(state) = SessionState::load() {
+        if let Some(ref wp_id) = state.workplan_id {
+            println!("HEXFLO_WORKPLAN:{}", wp_id);
+        }
     }
 
     // If task present, validate it exists in an active swarm (best-effort)

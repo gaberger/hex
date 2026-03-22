@@ -49,6 +49,8 @@ pub enum AgentAction {
     },
     /// Show fleet capacity summary
     Fleet,
+    /// Audit recent commits against HexFlo task tracking (ADR-2603221939)
+    Audit,
 }
 
 pub async fn run(action: AgentAction) -> anyhow::Result<()> {
@@ -65,6 +67,7 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
         } => spawn_remote(&target, project_dir, source_dir).await,
         AgentAction::Disconnect { agent_id } => disconnect(&agent_id).await,
         AgentAction::Fleet => fleet().await,
+        AgentAction::Audit => audit().await,
     }
 }
 
@@ -799,6 +802,95 @@ async fn fleet() -> anyhow::Result<()> {
                 println!("    - {} ({} agent{})", name, count, if count == 1 { "" } else { "s" });
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Audit recent commits against HexFlo task completions (ADR-2603221939 P5).
+///
+/// Cross-references `git log` with completed HexFlo tasks to find "dark agents" —
+/// commits produced by AI agents that were not tracked in any swarm.
+async fn audit() -> anyhow::Result<()> {
+    use std::process::Command;
+
+    println!("{} Agent Audit — tracking compliance", "\u{2b21}".cyan());
+    println!();
+
+    // 1. Get recent Co-Authored-By commits (AI-produced)
+    let git_output = Command::new("git")
+        .args(["log", "--oneline", "-20", "--grep=Co-Authored-By"])
+        .output()?;
+    let git_log = String::from_utf8_lossy(&git_output.stdout);
+
+    let commits: Vec<(&str, &str)> = git_log
+        .lines()
+        .filter_map(|line| {
+            let (hash, msg) = line.split_once(' ')?;
+            Some((hash, msg))
+        })
+        .collect();
+
+    if commits.is_empty() {
+        println!("  {} No AI-authored commits found in last 20 commits", "\u{25cb}".dimmed());
+        return Ok(());
+    }
+
+    // 2. Get completed tasks from HexFlo
+    let nexus = NexusClient::from_env();
+    let task_results: Vec<String> = if nexus.ensure_running().await.is_ok() {
+        match nexus.get("/api/hexflo/tasks").await {
+            Ok(data) => {
+                data["tasks"]
+                    .as_array()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .filter(|t| t["status"].as_str() == Some("completed"))
+                    .filter_map(|t| t["result"].as_str().map(String::from))
+                    .collect()
+            }
+            Err(_) => Vec::new(),
+        }
+    } else {
+        println!("  {} nexus unreachable — comparing against local task data only", "\u{26a0}".yellow());
+        Vec::new()
+    };
+
+    // 3. Cross-reference: is each commit's hash or message mentioned in any task result?
+    let mut tracked = 0u32;
+    let mut untracked = 0u32;
+
+    for (hash, msg) in &commits {
+        let is_tracked = task_results.iter().any(|result| {
+            result.contains(hash) || msg.split_whitespace().take(5).any(|word| {
+                word.len() > 4 && result.to_lowercase().contains(&word.to_lowercase())
+            })
+        });
+
+        if is_tracked {
+            println!("  {} {} {}", "\u{2713}".green(), hash.yellow(), msg);
+            tracked += 1;
+        } else {
+            println!("  {} {} {} {}", "\u{2717}".red(), hash.yellow(), msg, "(untracked)".red());
+            untracked += 1;
+        }
+    }
+
+    println!();
+    println!(
+        "  {} tracked, {} untracked (of {} AI commits)",
+        tracked.to_string().green(),
+        if untracked > 0 { untracked.to_string().red().to_string() } else { "0".to_string() },
+        commits.len()
+    );
+
+    if untracked > 0 {
+        println!();
+        println!(
+            "  {} Untracked commits indicate agents that bypassed HexFlo swarm tracking.",
+            "\u{26a0}".yellow()
+        );
+        println!("    Ensure all background agents include HEXFLO_TASK:{{uuid}} in their prompt.");
     }
 
     Ok(())
