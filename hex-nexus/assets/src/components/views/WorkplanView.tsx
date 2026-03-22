@@ -5,6 +5,7 @@
  * Data source: hex-nexus REST API via workplan store.
  */
 import { Component, For, Show, createSignal, createMemo, createResource, onMount, onCleanup } from "solid-js";
+import { navigate, route } from "../../stores/router";
 import {
   workplans,
   activeWorkplan,
@@ -43,7 +44,14 @@ interface WorkplanFilesResponse {
 }
 
 async function fetchWorkplanFiles(): Promise<WorkplanFilesResponse> {
-  return restClient.get<WorkplanFilesResponse>("/api/workplans");
+  try {
+    return await restClient.get<WorkplanFilesResponse>("/api/workplans");
+  } catch {
+    // Fallback: direct fetch in case restClient has issues
+    const res = await fetch("/api/workplans");
+    if (!res.ok) return { ok: false as any, count: 0, workplans: [] };
+    return res.json();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -501,7 +509,16 @@ const WorkplanView: Component = () => {
 
             <For each={workplanFiles()!.workplans}>
               {(wp) => (
-                <div class="grid grid-cols-[1fr_80px] md:grid-cols-[1fr_90px_70px_70px_150px_120px_80px] gap-2 border-b border-gray-800/50 px-4 py-3 text-sm transition-colors hover:bg-gray-900/30">
+                <div
+                  class="grid grid-cols-[1fr_80px] md:grid-cols-[1fr_90px_70px_70px_150px_120px_80px] gap-2 border-b border-gray-800/50 px-4 py-3 text-sm transition-colors hover:bg-gray-900/30 cursor-pointer"
+                  onClick={() => {
+                    const pid = (route() as any).projectId ?? "";
+                    const wpId = wp.id || wp.file.replace(/\.json$/, "");
+                    if (pid) {
+                      navigate({ page: "project-workplan-detail", projectId: pid, workplanId: wpId });
+                    }
+                  }}
+                >
                   {/* File name */}
                   <div class="flex items-center gap-2">
                     <span class="h-2 w-2 shrink-0 rounded-full bg-gray-600" />
