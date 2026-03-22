@@ -123,6 +123,9 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // ── 7. Pull embedded templates from hex-nexus (skills, agents, hooks) ──
     let nexus_result = pull_templates_from_nexus(&target, &project_name).await;
 
+    // ── 8. Register project in SpacetimeDB (ADR-065 P4) ─────────
+    let register_result: Result<String> = register_project_in_nexus(&target, &project_name).await;
+
     // ── Summary ───────────────────────────────────────────────────
     println!();
     println!("  {} .hex/project.json", "\u{2713}".green());
@@ -166,6 +169,12 @@ pub async fn run(args: InitArgs) -> Result<()> {
         }
     }
 
+    // ADR-065 P4: show project registration status
+    match &register_result {
+        Ok(pid) => println!("  {} SpacetimeDB project registered ({})", "\u{2713}".green(), &pid[..8.min(pid.len())]),
+        Err(_) => println!("  {} SpacetimeDB: project will register on first agent connect", "\u{2022}".dimmed()),
+    }
+
     println!();
     println!(
         "{} Project {} is now hex-aware",
@@ -178,7 +187,6 @@ pub async fn run(args: InitArgs) -> Result<()> {
         println!("    {} Start hex-nexus:      hex nexus start", "\u{2022}".dimmed());
         println!("    {} Install templates:    hex init --force", "\u{2022}".dimmed());
     }
-    println!("    {} Register with nexus:  hex project register {}", "\u{2022}".dimmed(), target.display());
     println!("    {} Check architecture:   hex analyze .", "\u{2022}".dimmed());
     println!("    {} Start the dashboard:  hex nexus start", "\u{2022}".dimmed());
     if !args.scaffold {
@@ -453,6 +461,33 @@ fn create_dir_if_missing(path: &Path) -> Result<()> {
             .with_context(|| format!("Failed to create directory: {}", path.display()))?;
     }
     Ok(())
+}
+
+/// ADR-065 P4: Register project in SpacetimeDB via nexus so it appears in the
+/// dashboard immediately. If nexus is offline, silently skip — the project will
+/// be registered on first agent connect (ADR-065 P1).
+async fn register_project_in_nexus(target: &Path, name: &str) -> Result<String> {
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    // Read project ID from the .hex/project.json we just created
+    let project_json_path = target.join(".hex/project.json");
+    let project_id = if project_json_path.exists() {
+        let content = fs::read_to_string(&project_json_path)?;
+        let parsed: serde_json::Value = serde_json::from_str(&content)?;
+        parsed["id"].as_str().unwrap_or_default().to_string()
+    } else {
+        Uuid::new_v4().to_string()
+    };
+
+    let body = serde_json::json!({
+        "id": project_id,
+        "name": name,
+        "root_path": target.to_string_lossy(),
+    });
+
+    nexus.post("/api/projects", &body).await?;
+    Ok(project_id)
 }
 
 /// Pull embedded skills, agents, and hooks from hex-nexus via its REST API.

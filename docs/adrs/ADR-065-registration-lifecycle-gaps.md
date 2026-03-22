@@ -126,9 +126,10 @@ The `SessionState` struct gains a `claude_pid: Option<u32>` field. The session-s
 | P3d | `hex agent list` shows full UUIDs + `◀ you` marker for current agent | Done |
 | P3e | `hex agent disconnect` uses unified `/api/hex-agents/` endpoint (was `/api/agents/`) | Done |
 | P3f | `resolve_agent_id_detailed()` returns resolution method, session file, parsed data | Done |
-| P4 | `hex init` calls `register_project` reducer | Pending |
-| P5 | Deprecate `POST /api/agents/connect` with redirect | Pending |
-| P6 | `agent_connect` reducer accepts client-provided `agent_id` for identity persistence | Pending |
+| P4 | `hex init` registers project in SpacetimeDB via POST /api/projects | Done |
+| P5 | Deprecate `POST /api/agents/connect` — forwards to /api/hex-agents/connect with Deprecation + Sunset headers | Done |
+| P6 | REST handler accepts client-provided `agent_id` for identity persistence across nexus restarts | Done |
+| P6a | Project auto-registration on agent connect (project_find → project_register) | Done |
 
 ## References
 

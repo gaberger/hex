@@ -77,6 +77,27 @@ async fn openapi_docs_redirect() -> Redirect {
     Redirect::temporary("https://petstore.swagger.io/?url=http://localhost:5555/api/openapi.json")
 }
 
+/// DEPRECATED(ADR-065): /api/agents/connect → /api/hex-agents/connect
+/// Forwards the request body to the unified endpoint. Returns Deprecation + Sunset headers.
+async fn deprecated_agents_connect(
+    state: axum::extract::State<crate::state::SharedState>,
+    body: Json<hex_agents::ConnectRequest>,
+) -> impl IntoResponse {
+    tracing::warn!("DEPRECATED: /api/agents/connect called — use /api/hex-agents/connect instead");
+    match hex_agents::connect_agent(state, body).await {
+        Ok((status, json)) => (
+            status,
+            [
+                ("Deprecation", "true"),
+                ("Sunset", "2026-04-30"),
+                ("Link", "</api/hex-agents/connect>; rel=\"successor-version\""),
+            ],
+            json,
+        ).into_response(),
+        Err((status, json)) => (status, json).into_response(),
+    }
+}
+
 async fn get_version() -> Json<serde_json::Value> {
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
@@ -437,8 +458,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/agents", get(orchestration::list_agents))
         .route("/api/agents/{id}", get(orchestration::get_agent)
             .delete(orchestration::terminate_agent))
-        // Remote agent connect/disconnect (ADR-040)
-        .route("/api/agents/connect", post(orchestration::connect_agent))
+        // DEPRECATED(ADR-065): redirect to unified /api/hex-agents/connect
+        .route("/api/agents/connect", post(deprecated_agents_connect))
         .route("/api/agents/disconnect", post(orchestration::disconnect_agent)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         // Workplan execution
