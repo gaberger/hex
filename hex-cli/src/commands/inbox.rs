@@ -184,41 +184,13 @@ async fn expire() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Resolve the current agent ID from the session file.
+/// Resolve the current agent ID using the canonical 4-strategy priority chain (ADR-065).
+/// Delegates to nexus_client::read_session_agent_id() — the single source of truth.
 fn resolve_agent_id() -> anyhow::Result<String> {
-    // Try session file first
-    let sessions_dir = std::env::var("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
-        .join(".hex/sessions");
-
-    if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
-        // Find the most recently modified session file
-        let mut newest: Option<(std::path::PathBuf, std::time::SystemTime)> = None;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            if let Ok(meta) = path.metadata() {
-                if let Ok(modified) = meta.modified() {
-                    if newest.as_ref().map_or(true, |(_, t)| modified > *t) {
-                        newest = Some((path, modified));
-                    }
-                }
-            }
-        }
-
-        if let Some((path, _)) = newest {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(id) = parsed["agentId"].as_str() {
-                        return Ok(id.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    anyhow::bail!("Could not resolve agent ID from ~/.hex/sessions/. Is hex-nexus running?")
+    crate::nexus_client::read_session_agent_id().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Could not resolve agent ID. Try: hex agent connect <nexus-url>, \
+             or set HEX_AGENT_ID env var. See: hex agent id"
+        )
+    })
 }

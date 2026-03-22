@@ -189,14 +189,16 @@ fn read_persisted_token() -> Option<String> {
 /// Read the agent ID from the current session's state file.
 /// Used to inject `X-Hex-Agent-Id` header for agent-guarded endpoints.
 ///
-/// Resolution order:
+/// Resolution order (ADR-065 §4):
 /// 1. `CLAUDE_SESSION_ID` env → exact session file
-/// 2. Fallback: most recently modified session file in ~/.hex/sessions/
+/// 2. `HEX_AGENT_ID` env → use directly (for scripts/CI)
+/// 3. `claude_pid` match — walk PPID chain to find the `claude` process,
+///    then match session files whose `claude_pid` field equals that PID
+/// 4. Fallback: most recently modified session file in ~/.hex/sessions/
 ///
-/// This ensures MCP tools work even when CLAUDE_SESSION_ID isn't set
-/// (e.g., nexus was offline at session start and the SessionStart hook
-/// couldn't register the agent).
-fn read_session_agent_id() -> Option<String> {
+/// This is the **canonical** resolution function — all call sites should
+/// delegate here rather than reimplementing.
+pub fn read_session_agent_id() -> Option<String> {
     let sessions_dir = dirs::home_dir()?.join(".hex/sessions");
 
     // Strategy 1: exact match via CLAUDE_SESSION_ID
@@ -209,37 +211,129 @@ fn read_session_agent_id() -> Option<String> {
         }
     }
 
-    // Strategy 2: most recently modified session file (within last 2 hours)
-    if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
-        let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if !name_str.starts_with("agent-") || !name_str.ends_with(".json") {
-                continue;
-            }
-            if let Ok(meta) = entry.metadata() {
-                if let Ok(modified) = meta.modified() {
-                    // Only consider files modified in the last 2 hours
-                    let age = std::time::SystemTime::now()
-                        .duration_since(modified)
-                        .unwrap_or_default();
-                    if age.as_secs() > 7200 {
-                        continue;
-                    }
-                    if best.as_ref().map_or(true, |(t, _)| modified > *t) {
-                        best = Some((modified, entry.path()));
+    // Strategy 2: HEX_AGENT_ID env (for scripts/CI)
+    if let Ok(agent_id) = std::env::var("HEX_AGENT_ID") {
+        if !agent_id.is_empty() {
+            return Some(agent_id);
+        }
+    }
+
+    // Strategy 3: match by claude_pid via PPID chain
+    if let Some(id) = resolve_by_claude_pid(&sessions_dir) {
+        return Some(id);
+    }
+
+    // Strategy 4: most recently modified session file (within last 2 hours)
+    if let Some(id) = resolve_by_newest(&sessions_dir) {
+        return Some(id);
+    }
+
+    None
+}
+
+/// Walk the PPID chain from the current process to find the `claude` process PID,
+/// then match session files whose `claude_pid` field equals that PID.
+fn resolve_by_claude_pid(sessions_dir: &std::path::Path) -> Option<String> {
+    let ancestor_pids = collect_ancestor_pids();
+    if ancestor_pids.is_empty() {
+        return None;
+    }
+
+    let entries = std::fs::read_dir(sessions_dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("agent-") || !name_str.ends_with(".json") {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+            if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                if let Some(pid) = val["claude_pid"].as_u64() {
+                    let pid32 = pid as u32;
+                    if ancestor_pids.contains(&pid32) {
+                        if let Some(id) = extract_agent_id(&val) {
+                            return Some(id);
+                        }
                     }
                 }
             }
         }
-        if let Some((_, path)) = best {
-            if let Some(id) = read_agent_id_from_file(&path) {
-                return Some(id);
+    }
+    None
+}
+
+/// Collect PIDs of ancestor processes up to init.
+fn collect_ancestor_pids() -> Vec<u32> {
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+        // Use ps to get PPID of our PID, then walk up
+        let output = Command::new("ps")
+            .args(["-o", "pid=,ppid=", "-ax"])
+            .output()
+            .ok();
+        let output = match output {
+            Some(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => return vec![],
+        };
+
+        let mut proc_map: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        for line in output.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                if let (Ok(pid), Ok(ppid)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
+                    proc_map.insert(pid, ppid);
+                }
+            }
+        }
+
+        let mut pids = Vec::new();
+        let mut cur = std::process::id();
+        for _ in 0..10 {
+            if cur <= 1 {
+                break;
+            }
+            pids.push(cur);
+            match proc_map.get(&cur) {
+                Some(&ppid) => cur = ppid,
+                None => break,
+            }
+        }
+        pids
+    }
+    #[cfg(not(unix))]
+    {
+        vec![]
+    }
+}
+
+/// Fallback: most recently modified session file (within last 2 hours).
+fn resolve_by_newest(sessions_dir: &std::path::Path) -> Option<String> {
+    let entries = std::fs::read_dir(sessions_dir).ok()?;
+    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("agent-") || !name_str.ends_with(".json") {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata() {
+            if let Ok(modified) = meta.modified() {
+                let age = std::time::SystemTime::now()
+                    .duration_since(modified)
+                    .unwrap_or_default();
+                if age.as_secs() > 7200 {
+                    continue;
+                }
+                if best.as_ref().map_or(true, |(t, _)| modified > *t) {
+                    best = Some((modified, entry.path()));
+                }
             }
         }
     }
-
+    if let Some((_, path)) = best {
+        return read_agent_id_from_file(&path);
+    }
     None
 }
 
@@ -247,9 +341,178 @@ fn read_session_agent_id() -> Option<String> {
 fn read_agent_id_from_file(path: &std::path::Path) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
     let val: Value = serde_json::from_str(&content).ok()?;
+    extract_agent_id(&val)
+}
+
+/// Extract agentId from a parsed session JSON value.
+fn extract_agent_id(val: &Value) -> Option<String> {
     val["agentId"]
         .as_str()
         .or_else(|| val["agent_id"].as_str())
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// Resolution method used to find the agent ID.
+#[derive(Debug)]
+pub enum ResolutionMethod {
+    /// Matched via CLAUDE_SESSION_ID env var
+    ClaudeSessionId(String),
+    /// Matched via HEX_AGENT_ID env var
+    HexAgentIdEnv,
+    /// Matched via claude_pid PPID chain walk
+    ClaudePid(u32),
+    /// Fallback: newest session file within 2 hours
+    NewestFile(std::path::PathBuf),
+}
+
+impl std::fmt::Display for ResolutionMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ClaudeSessionId(sid) => write!(f, "CLAUDE_SESSION_ID={}", sid),
+            Self::HexAgentIdEnv => write!(f, "HEX_AGENT_ID env"),
+            Self::ClaudePid(pid) => write!(f, "claude_pid match (PID {})", pid),
+            Self::NewestFile(path) => write!(f, "newest session file ({})", path.display()),
+        }
+    }
+}
+
+/// Resolved agent identity with metadata about how it was found.
+pub struct ResolvedAgent {
+    pub agent_id: String,
+    pub method: ResolutionMethod,
+    pub session_file: Option<std::path::PathBuf>,
+    pub session_data: Option<Value>,
+}
+
+/// Like `read_session_agent_id()` but returns resolution metadata.
+/// Used by `hex agent id` to show how the ID was resolved.
+pub fn resolve_agent_id_detailed() -> Option<ResolvedAgent> {
+    let sessions_dir = dirs::home_dir()?.join(".hex/sessions");
+
+    // Strategy 1: exact match via CLAUDE_SESSION_ID
+    if let Ok(session_id) = std::env::var("CLAUDE_SESSION_ID") {
+        if !session_id.is_empty() {
+            let path = sessions_dir.join(format!("agent-{}.json", session_id));
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                    if let Some(id) = extract_agent_id(&val) {
+                        return Some(ResolvedAgent {
+                            agent_id: id,
+                            method: ResolutionMethod::ClaudeSessionId(session_id),
+                            session_file: Some(path),
+                            session_data: Some(val),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Strategy 2: HEX_AGENT_ID env (for scripts/CI)
+    if let Ok(agent_id) = std::env::var("HEX_AGENT_ID") {
+        if !agent_id.is_empty() {
+            return Some(ResolvedAgent {
+                agent_id,
+                method: ResolutionMethod::HexAgentIdEnv,
+                session_file: None,
+                session_data: None,
+            });
+        }
+    }
+
+    // Strategy 3: match by claude_pid via PPID chain
+    if let Some(resolved) = resolve_by_claude_pid_detailed(&sessions_dir) {
+        return Some(resolved);
+    }
+
+    // Strategy 4: most recently modified session file (within last 2 hours)
+    if let Some(resolved) = resolve_by_newest_detailed(&sessions_dir) {
+        return Some(resolved);
+    }
+
+    None
+}
+
+fn resolve_by_claude_pid_detailed(sessions_dir: &std::path::Path) -> Option<ResolvedAgent> {
+    let ancestor_pids = collect_ancestor_pids();
+    if ancestor_pids.is_empty() {
+        return None;
+    }
+
+    let entries = std::fs::read_dir(sessions_dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("agent-") || !name_str.ends_with(".json") {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+            if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                if let Some(pid) = val["claude_pid"].as_u64() {
+                    let pid32 = pid as u32;
+                    if ancestor_pids.contains(&pid32) {
+                        if let Some(id) = extract_agent_id(&val) {
+                            return Some(ResolvedAgent {
+                                agent_id: id,
+                                method: ResolutionMethod::ClaudePid(pid32),
+                                session_file: Some(entry.path()),
+                                session_data: Some(val),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn resolve_by_newest_detailed(sessions_dir: &std::path::Path) -> Option<ResolvedAgent> {
+    let entries = std::fs::read_dir(sessions_dir).ok()?;
+    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("agent-") || !name_str.ends_with(".json") {
+            continue;
+        }
+        // ADR-065: skip nexus-agent session files
+        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+            if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                let agent_name = val["name"].as_str().unwrap_or("");
+                if agent_name.starts_with("nexus-agent") {
+                    continue;
+                }
+            }
+        }
+        if let Ok(meta) = entry.metadata() {
+            if let Ok(modified) = meta.modified() {
+                let age = std::time::SystemTime::now()
+                    .duration_since(modified)
+                    .unwrap_or_default();
+                if age.as_secs() > 7200 {
+                    continue;
+                }
+                if best.as_ref().map_or(true, |(t, _)| modified > *t) {
+                    best = Some((modified, entry.path()));
+                }
+            }
+        }
+    }
+    if let Some((_, path)) = best {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                if let Some(id) = extract_agent_id(&val) {
+                    return Some(ResolvedAgent {
+                        agent_id: id,
+                        method: ResolutionMethod::NewestFile(path.clone()),
+                        session_file: Some(path),
+                        session_data: Some(val),
+                    });
+                }
+            }
+        }
+    }
+    None
 }

@@ -12,6 +12,8 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub enum AgentAction {
+    /// Show the current agent's ID (who am I?)
+    Id,
     /// List all agents (local + remote)
     List,
     /// Show detailed info for a specific agent
@@ -51,6 +53,7 @@ pub enum AgentAction {
 
 pub async fn run(action: AgentAction) -> anyhow::Result<()> {
     match action {
+        AgentAction::Id => show_agent_id().await,
         AgentAction::List => list().await,
         AgentAction::Info { agent_id } => info(&agent_id).await,
         AgentAction::Status { agent_id } => agent_status(&agent_id).await,
@@ -63,6 +66,166 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
         AgentAction::Disconnect { agent_id } => disconnect(&agent_id).await,
         AgentAction::Fleet => fleet().await,
     }
+}
+
+async fn show_agent_id() -> anyhow::Result<()> {
+    use crate::nexus_client::resolve_agent_id_detailed;
+
+    match resolve_agent_id_detailed() {
+        Some(resolved) => {
+            let short_id = if resolved.agent_id.len() >= 8 {
+                &resolved.agent_id[..8]
+            } else {
+                &resolved.agent_id
+            };
+
+            println!("{} Agent Identity", "\u{2b21}".cyan());
+            println!();
+            println!("  {:<18} {}", "Agent ID:".bold(), resolved.agent_id);
+            println!("  {:<18} {}", "Short ID:".bold(), short_id);
+            println!("  {:<18} {}", "Resolved via:".bold(), resolved.method);
+
+            if let Some(ref path) = resolved.session_file {
+                println!("  {:<18} {}", "Session file:".bold(), path.display());
+            }
+
+            // Show session data if available
+            if let Some(ref data) = resolved.session_data {
+                if let Some(name) = data["name"].as_str() {
+                    println!("  {:<18} {}", "Name:".bold(), name);
+                }
+                if let Some(project) = data["project"].as_str().filter(|s| !s.is_empty()) {
+                    println!("  {:<18} {}", "Project:".bold(), project);
+                }
+                if let Some(pid) = data["claude_pid"].as_u64() {
+                    println!("  {:<18} {}", "Claude PID:".bold(), pid);
+                }
+                if let Some(heartbeat) = data["last_heartbeat"]
+                    .as_str()
+                    .or_else(|| data["registered_at"].as_str())
+                    .or_else(|| data["registeredAt"].as_str())
+                {
+                    println!("  {:<18} {}", "Last seen:".bold(), heartbeat);
+                }
+            }
+
+            // Fetch live status from nexus if available
+            let nexus = NexusClient::from_env();
+            if nexus.ensure_running().await.is_ok() {
+                let path = format!("/api/hex-agents/{}", resolved.agent_id);
+                match nexus.get(&path).await {
+                    Ok(agent) => {
+                        let status = agent["status"].as_str().unwrap_or("unknown");
+                        let status_colored = match status {
+                            "online" | "active" | "connected" => status.green().to_string(),
+                            "stale" | "idle" => status.yellow().to_string(),
+                            "dead" | "offline" => status.red().to_string(),
+                            _ => status.to_string(),
+                        };
+                        println!();
+                        println!("  {:<18} {} {}", "Nexus status:".bold(), status_colored, "(live)".dimmed());
+                    }
+                    Err(_) => {
+                        // ADR-065: auto-reconnect — re-register with nexus using session data
+                        println!();
+                        println!(
+                            "  {:<18} {} {}",
+                            "Nexus status:".bold(),
+                            "unregistered".yellow(),
+                            "(reconnecting...)".dimmed()
+                        );
+
+                        let hostname = resolved.session_data.as_ref()
+                            .and_then(|d| d["name"].as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let project_dir = resolved.session_data.as_ref()
+                            .and_then(|d| d["project_dir"].as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        // Use CWD if session didn't have project_dir
+                        let project_dir = if project_dir.is_empty() {
+                            std::env::current_dir()
+                                .map(|p| p.to_string_lossy().to_string())
+                                .unwrap_or_default()
+                        } else {
+                            project_dir
+                        };
+
+                        let reconnect_body = serde_json::json!({
+                            "host": hostname,
+                            "project_dir": project_dir,
+                            "agent_id": resolved.agent_id,
+                            "capabilities": {
+                                "models": [],
+                                "maxConcurrent": 4,
+                            },
+                        });
+
+                        match nexus.post("/api/hex-agents/connect", &reconnect_body).await {
+                            Ok(resp) => {
+                                let new_id = resp["agentId"].as_str().unwrap_or(&resolved.agent_id);
+                                let id_changed = new_id != resolved.agent_id;
+                                println!(
+                                    "  {:<18} {} {}",
+                                    "".bold(),
+                                    "reconnected".green(),
+                                    "(re-registered with nexus)".dimmed()
+                                );
+                                if id_changed {
+                                    println!(
+                                        "  {:<18} {} → {}",
+                                        "New Agent ID:".bold(),
+                                        new_id,
+                                        "(updated session file)".dimmed()
+                                    );
+                                }
+                                // Update session file with server-assigned ID + new data
+                                if let Some(ref file_path) = resolved.session_file {
+                                    if let Some(mut data) = resolved.session_data.clone() {
+                                        let now = chrono::Utc::now().to_rfc3339();
+                                        data["agentId"] = serde_json::Value::String(new_id.to_string());
+                                        data["last_heartbeat"] = serde_json::Value::String(now);
+                                        if let Some(pid) = resp["projectId"].as_str() {
+                                            data["project"] = serde_json::Value::String(pid.to_string());
+                                        }
+                                        let _ = std::fs::write(
+                                            file_path,
+                                            serde_json::to_string_pretty(&data).unwrap_or_default(),
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!(
+                                    "  {:<18} {} {}",
+                                    "".bold(),
+                                    "failed".red(),
+                                    format!("({})", e).dimmed()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None => {
+            eprintln!("{} Cannot resolve agent ID", "\u{2b21}".red());
+            eprintln!();
+            eprintln!("  No agent identity found. Resolution tried:");
+            eprintln!("    1. CLAUDE_SESSION_ID env var  {}", "(not set)".dimmed());
+            eprintln!("    2. HEX_AGENT_ID env var       {}", "(not set)".dimmed());
+            eprintln!("    3. claude_pid PPID chain       {}", "(no match)".dimmed());
+            eprintln!("    4. Newest session file         {}", "(none within 2h)".dimmed());
+            eprintln!();
+            eprintln!("  To fix, try one of:");
+            eprintln!("    {} Connect to nexus", "hex agent connect <nexus-url>".bold());
+            eprintln!("    {} Set manually", "export HEX_AGENT_ID=<uuid>".bold());
+            anyhow::bail!("Agent ID resolution failed");
+        }
+    }
+
+    Ok(())
 }
 
 async fn list() -> anyhow::Result<()> {
@@ -122,24 +285,26 @@ async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
         }
     }
 
+    // Resolve our own agent ID to mark it in the list
+    let my_id = crate::nexus_client::read_session_agent_id();
+
     println!("{} Agents ({})", "\u{2b21}".cyan(), agents.len());
     println!();
     println!(
-        "  {:<14} {:<16} {:<10} {:<18} {}",
+        "  {:<38} {:<16} {:<10} {:<18} {}",
         "ID".bold(),
         "NAME".bold(),
         "STATUS".bold(),
         "SWARM".bold(),
         "TASKS".bold(),
     );
-    println!("  {}", "\u{2500}".repeat(80).dimmed());
+    println!("  {}", "\u{2500}".repeat(100).dimmed());
 
     for agent in &agents {
         // ADR-058: hex_agent table uses `id` as primary key
         let id = agent["id"].as_str()
             .or_else(|| agent["agentId"].as_str())
             .unwrap_or("?");
-        let id_short = if id.len() > 12 { &id[..12] } else { id };
 
         let name = agent["name"].as_str().unwrap_or("?");
         let status = agent["status"].as_str().unwrap_or("?");
@@ -159,6 +324,14 @@ async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
             name.to_string()
         };
 
+        // Mark our own agent with an arrow
+        let is_me = my_id.as_deref() == Some(id);
+        let id_display = if is_me {
+            format!("{} {}", id, "\u{25c0} you".cyan())
+        } else {
+            id.to_string()
+        };
+
         // Agent→swarm cross-reference
         let (swarm_display, task_display) = if let Some((swarm_name, _pending, completed, total)) =
             agent_swarm_map.get(id)
@@ -175,8 +348,8 @@ async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
         };
 
         println!(
-            "  {:<14} {:<16} {:<19} {:<18} {}",
-            id_short, name_display, status_colored, swarm_display, task_display,
+            "  {:<50} {:<16} {:<19} {:<18} {}",
+            id_display, name_display, status_colored, swarm_display, task_display,
         );
     }
 
@@ -430,8 +603,22 @@ async fn connect(nexus_url: &str) -> anyhow::Result<()> {
         .to_string_lossy()
         .to_string();
 
+    // ADR-065: send project_dir (CWD) and generated session_id
+    let project_dir = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let session_id = format!(
+        "connect-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    );
+
     let body = json!({
         "host": hostname,
+        "project_dir": project_dir,
+        "session_id": session_id,
         "capabilities": {
             "models": [],
             "maxConcurrent": 4,
@@ -442,11 +629,45 @@ async fn connect(nexus_url: &str) -> anyhow::Result<()> {
     let resp = nexus.post("/api/hex-agents/connect", &body).await?;
 
     let agent_id = resp["agentId"].as_str().unwrap_or("-");
+    let project_id = resp["projectId"].as_str().unwrap_or("");
+    let project_name = if !project_dir.is_empty() {
+        std::path::Path::new(&project_dir)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // ADR-065 P1: Write session file so subsequent CLI commands can resolve agent ID
+    let sessions_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".hex/sessions");
+    std::fs::create_dir_all(&sessions_dir)?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let session_data = json!({
+        "agentId": agent_id,
+        "name": format!("claude-{}", hostname),
+        "project": if project_id.is_empty() { &project_name } else { project_id },
+        "project_dir": project_dir,
+        "registered_at": now,
+        "last_heartbeat": now,
+        "session_id": session_id,
+        "nexus_url": nexus_url,
+    });
+
+    let session_file = sessions_dir.join(format!("agent-{}.json", session_id));
+    let tmp_file = sessions_dir.join(format!(".agent-{}.json.tmp", session_id));
+    std::fs::write(&tmp_file, serde_json::to_string_pretty(&session_data)?)?;
+    std::fs::rename(&tmp_file, &session_file)?;
 
     println!("{} Connected to nexus", "\u{2b21}".green());
-    println!("  Nexus URL: {}", nexus_url);
-    println!("  Agent ID:  {}", agent_id);
-    println!("  Host:      {}", hostname);
+    println!("  Nexus URL:     {}", nexus_url);
+    println!("  Agent ID:      {}", agent_id);
+    println!("  Host:          {}", hostname);
+    println!("  Project:       {}", if project_name.is_empty() { "-" } else { &project_name });
+    println!("  Session file:  {}", session_file.display());
 
     Ok(())
 }
@@ -527,7 +748,8 @@ async fn disconnect(agent_id: &str) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    let path = format!("/api/agents/{}", agent_id);
+    // ADR-058: use unified agent registry endpoint
+    let path = format!("/api/hex-agents/{}", agent_id);
     nexus.delete(&path).await?;
 
     println!("{} Agent disconnected", "\u{2b21}".green());

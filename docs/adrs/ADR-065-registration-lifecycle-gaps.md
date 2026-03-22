@@ -70,10 +70,19 @@ All agent registration MUST go through `POST /api/hex-agents/connect` (the ADR-0
 `resolve_agent_id()` must use this priority order:
 1. `CLAUDE_SESSION_ID` env var → look up `agent-{session_id}.json` (exact match)
 2. `HEX_AGENT_ID` env var → use directly (for scripts/CI)
-3. Newest session file with `status != "completed"` (skip nexus agent files)
-4. Error: "Cannot resolve agent ID"
+3. `claude_pid` match — walk the PPID chain to find the `claude` process PID, then match session files by `claude_pid` field (supports multiple concurrent Claude instances in the same project directory)
+4. Newest session file with `status != "completed"` (skip nexus agent files)
+5. Error: "Cannot resolve agent ID"
 
 Filter out nexus auto-registered agents by checking `name.starts_with("nexus-agent")`.
+
+### 4a. `claude_pid` — Multi-Instance Disambiguation
+
+The `SessionState` struct gains a `claude_pid: Option<u32>` field. The session-start hook sets it to `std::os::unix::process::parent_id()` — the PID of the `claude` binary that spawned the hook process. This PID is stable for the Claude session's lifetime and unique per instance.
+
+**Statusline resolution**: The statusline script walks its own PPID chain (via `ps`) to find the `claude` process PID, then matches session files by `claude_pid`. This ensures each concurrent Claude instance sees only its own agent identity on the status bar.
+
+**Display format**: Agent identity on the statusline uses `{name}:{shortId}` format (e.g., `claude-jaco2.lan:d9c3b1c0`) to provide both context (hostname) and uniqueness (8-char UUID prefix).
 
 ### 5. Project Scoping for Broadcasts
 
@@ -108,12 +117,18 @@ Filter out nexus auto-registered agents by checking `name.starts_with("nexus-age
 
 | Phase | Description | Status |
 |-------|------------|--------|
-| P1 | `hex agent connect` writes session file on remote host | Pending |
-| P2 | `hex agent connect` auto-registers project via `/api/hex-agents/connect` | Pending |
-| P3 | `resolve_agent_id()` priority order (CLAUDE_SESSION_ID → HEX_AGENT_ID → filtered newest) | Pending |
+| P1 | `hex agent connect` writes session file on remote host + sends project_dir | Done |
+| P2 | `hex agent connect` auto-registers project via `/api/hex-agents/connect` | Done (client sends project_dir; server-side auto-register pending P6) |
+| P3 | `resolve_agent_id()` priority order (CLAUDE_SESSION_ID → HEX_AGENT_ID → claude_pid → filtered newest) | Done |
+| P3a | `claude_pid` field in SessionState + statusline PPID-chain matching | Done |
+| P3b | `hex agent id` CLI subcommand for self-discovery | Done |
+| P3c | Auto-reconnect: `hex agent id` re-registers with nexus when agent unknown | Done |
+| P3d | `hex agent list` shows full UUIDs + `◀ you` marker for current agent | Done |
+| P3e | `hex agent disconnect` uses unified `/api/hex-agents/` endpoint (was `/api/agents/`) | Done |
+| P3f | `resolve_agent_id_detailed()` returns resolution method, session file, parsed data | Done |
 | P4 | `hex init` calls `register_project` reducer | Pending |
 | P5 | Deprecate `POST /api/agents/connect` with redirect | Pending |
-| P6 | `agent_connect` reducer derives project_id from project_dir when empty | Pending |
+| P6 | `agent_connect` reducer accepts client-provided `agent_id` for identity persistence | Pending |
 
 ## References
 
