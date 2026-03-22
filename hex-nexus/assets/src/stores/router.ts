@@ -44,7 +44,7 @@ export const breadcrumbs = createMemo<Breadcrumb[]>(() => {
 
   if (r.page.startsWith("project")) {
     const pid = (r as Extract<Route, { projectId: string }>).projectId ?? "";
-    const projectName = projects().find((p) => p.id === pid)?.name ?? pid || "Project";
+    const projectName = (projects().find((p) => p.id === pid)?.name ?? pid) || "Project";
     crumbs.push({
       label: projectName,
       icon: "folder",
