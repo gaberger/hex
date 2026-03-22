@@ -1,0 +1,156 @@
+{
+  "id": "wp-canonical-project-identity",
+  "feature": "ADR-059 Canonical Project Identity — End-to-End Enforcement",
+  "description": "Implement the canonical project identity contract across all producers (CLI, nexus, SpacetimeDB reducers) so that the dashboard shows real data. Currently the frontend matching utility handles mismatches, but the root cause is that agents, swarms, and tasks are created with wrong/missing project IDs.",
+  "adr": "ADR-059",
+  "created_at": "2026-03-22T20:00:00Z",
+  "created_by": "planner",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "SpacetimeDB Reducer Validation",
+      "tier": 0,
+      "description": "SpacetimeDB reducers must validate project_id exists in the project table before accepting swarm_init, task_create, agent_register. Reject with error if project not found.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build --target wasm32-unknown-unknown -p hexflo-coordination",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add project_id validation to swarm_init reducer",
+          "layer": "domain",
+          "description": "In hexflo-coordination/src/lib.rs swarm_init reducer: if project_id is non-empty, verify it exists in the project table. If not found, try to match by name prefix (project.name starts with the given ID). Log warning if no match found but still accept (for backward compat during transition).",
+          "deps": [],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Add project_id resolution to agent_register reducer",
+          "layer": "domain",
+          "description": "In agent_register: accept project_id or project_dir. If project_dir is given, resolve to canonical project_id by searching the project table for matching path. Store the resolved canonical ID.",
+          "deps": [],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "CLI Project ID Resolution",
+      "tier": 1,
+      "description": "All hex CLI commands that accept a project reference must resolve it to the canonical ID before calling reducers or REST endpoints.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add project resolver to hex-cli",
+          "layer": "secondary",
+          "description": "Create a shared resolve_project_id() function in hex-cli that: (1) if input looks like a canonical ID (name-suffix), use directly, (2) if input is a name, query /api/projects to find matching project, (3) if input is a path, query by rootPath. Used by hex swarm init, hex task create, hex agent commands.",
+          "deps": ["P1.1"],
+          "files": ["hex-cli/src/commands/mod.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Wire project resolver into swarm and agent commands",
+          "layer": "secondary",
+          "description": "Update hex swarm init --project, hex task create, hex agent connect to use resolve_project_id() before passing to REST/reducers. The --project flag should accept name, path, or full ID.",
+          "deps": ["P2.1"],
+          "files": ["hex-cli/src/commands/mod.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Nexus Config Sync — Auto-Register on Startup",
+      "tier": 2,
+      "description": "hex-nexus config sync must register the current project in SpacetimeDB on startup, using the canonical ID format. This is the most impactful fix — it ensures the project exists in SpacetimeDB for all subscriptions.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Fix auto_register_project to use canonical ID",
+          "layer": "secondary",
+          "description": "In hex-nexus/src/config_sync.rs auto_register_project: generate canonical ID as name-{random7} if not already registered. Call the register_project reducer with full canonical ID, name, and path. Verify the reducer succeeds before proceeding with config sync.",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/src/config_sync.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Register hex-agent with canonical project ID",
+          "layer": "secondary",
+          "description": "When hex-agent starts (spawned by nexus), it registers in the agent-registry module. Ensure it uses the canonical project ID (from the project table), not just the directory name. The agent's project_id and projectDir must both be set correctly.",
+          "deps": ["P3.1"],
+          "files": ["hex-nexus/src/orchestration/mod.rs", "hex-agent/src/lib.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "MCP Tool Resolution",
+      "tier": 3,
+      "description": "MCP tools (hex_hexflo_swarm_init, hex_hexflo_task_create) must resolve project references to canonical IDs before calling reducers.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Wire project resolver into MCP tool handlers",
+          "layer": "primary",
+          "description": "MCP tools accept project_id parameter. Before calling the reducer, resolve it using the same resolve_project_id() logic from P2.1. This ensures Claude Code subagents creating swarms get the right project ID.",
+          "deps": ["P2.1"],
+          "files": ["hex-cli/src/commands/mod.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Dashboard Verification",
+      "tier": 4,
+      "description": "Verify the dashboard shows real data end-to-end after backend fixes. Use agent-browser CLI for testing.",
+      "gate": {
+        "type": "test",
+        "command": "agent-browser open http://127.0.0.1:5173 && agent-browser snapshot",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Verify project home shows real data",
+          "layer": "primary",
+          "description": "After restarting nexus with P3 fixes: (1) Project appears in sidebar with correct name, (2) Governance pipeline shows ADR count, workplan count, (3) Health ring shows real score, (4) Recent commits load from git, (5) Agents with heartbeats appear. Use agent-browser to screenshot and verify.",
+          "deps": ["P3.2"],
+          "files": [],
+          "agent": "integrator"
+        },
+        {
+          "id": "P5.2",
+          "name": "Verify swarm creation uses canonical ID",
+          "layer": "primary",
+          "description": "Create a test swarm via CLI: hex swarm init test-swarm --project hex-intf. Verify in dashboard that the swarm appears on the hex-intf project page (not globally). Verify the swarm's project_id matches the canonical project ID.",
+          "deps": ["P5.1"],
+          "files": [],
+          "agent": "integrator"
+        }
+      ]
+    }
+  ]
+}
