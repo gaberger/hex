@@ -234,6 +234,9 @@ fn create_claude_settings(target: &Path) -> Result<()> {
         }]
     });
 
+    // Set statusline — hex status bar in Claude Code
+    settings["statusline"] = serde_json::json!("node scripts/hex-statusline.cjs");
+
     // Set permissions — allow hex MCP tools, deny .env reads
     if settings.get("permissions").is_none() {
         settings["permissions"] = serde_json::json!({
