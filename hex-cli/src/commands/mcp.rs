@@ -168,8 +168,20 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
         "hex_hexflo_task_list" => {
             match args.get("swarm_id").and_then(|v| v.as_str()) {
                 Some(id) => nexus.get(&format!("/api/swarms/{}", id)).await.map_err(|e| e.to_string()),
-                None => nexus.get("/api/swarms").await.map_err(|e| e.to_string()),
+                None => nexus.get("/api/swarms/active").await.map_err(|e| e.to_string()),
             }
+        }
+
+        "hex_hexflo_task_assign" => {
+            let task_id = args.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
+            let agent_id = args.get("agent_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| resolve_session_agent_id().unwrap_or_default());
+            let path = format!("/api/hexflo/tasks/{}", task_id);
+            nexus.patch(&path, &serde_json::json!({
+                "agent_id": agent_id,
+            })).await.map_err(|e| e.to_string())
         }
 
         "hex_hexflo_task_complete" => {
@@ -529,4 +541,16 @@ fn write_response(out: &mut impl Write, resp: &JsonRpcResponse) -> anyhow::Resul
     writeln!(out, "{}", json)?;
     out.flush()?;
     Ok(())
+}
+
+/// Resolve the current session's agent_id from the persisted session state file.
+/// Returns None if no session is registered (nexus down, first run, etc.).
+fn resolve_session_agent_id() -> Option<String> {
+    let session_id = std::env::var("CLAUDE_SESSION_ID").ok()?;
+    let state_file = dirs::home_dir()?
+        .join(".hex/sessions")
+        .join(format!("agent-{}.json", session_id));
+    let content = std::fs::read_to_string(state_file).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
+    parsed["agentId"].as_str().map(|s| s.to_string())
 }

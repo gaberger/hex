@@ -71,17 +71,23 @@ const idleAgents     = statusData ? (statusData.idleAgents || 0) : 0;
 const totalTasks     = statusData ? (statusData.tasks || 0) : 0;
 const completedTasks = statusData ? (statusData.completedTasks || 0) : 0;
 
-// Check if hex-hub daemon is running (lock file, status.json, or TCP port probe)
+// Check if hex-nexus daemon is running (lock file, status.json, or TCP port probe)
 const hubLockPath = path.join(require('os').homedir(), '.hex', 'daemon', 'hub.lock');
 const hubLock = safe(() => JSON.parse(fs.readFileSync(hubLockPath, 'utf8')), null);
 const hubPidAlive = !!(hubLock && hubLock.pid && safe(() => { process.kill(hubLock.pid, 0); return true; }, false));
-// Also check if anything is listening on port 5555 (covers Node hub or Rust hub without lock file)
-const { execFileSync: execSync2 } = require('child_process');
-const hubPortOpen = safe(() => {
-  execSync2('lsof', ['-iTCP:5555', '-sTCP:LISTEN', '-t'], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().length > 0;
-  return true;
+// Probe hex-nexus API health endpoint (confirms it's actually hex-nexus, not another service)
+const nexusAlive = safe(() => {
+  const out = execFileSync('node', ['-e', `
+    const http = require('http');
+    const req = http.get('http://127.0.0.1:5555/api/health', {timeout: 1000}, (res) => {
+      process.stdout.write(String(res.statusCode));
+    });
+    req.on('error', () => process.stdout.write('0'));
+    req.on('timeout', () => { req.destroy(); process.stdout.write('0'); });
+  `], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 1500 });
+  return parseInt(out, 10) >= 200 && parseInt(out, 10) < 500;
 }, false);
-const hubRunning = hubPidAlive || hubPortOpen;
+const hubRunning = hubPidAlive || nexusAlive;
 
 const cfMetrics = path.join(require('os').homedir(), '.claude-flow', 'metrics');
 const cfAlive = safe(() =>
@@ -170,15 +176,15 @@ if (agt > 0 || nSwarms > 0) {
 const svcDot = (on, label) => on ? `${P.on}◉${label}` : `${P.off}○${label}`;
 parts.push(svcDot(dbShow, 'db'));
 
-// Dashboard — show clickable host:port when running
-const hubActive = hubRunning || !!dashUrl;
-const hubPort = (hubLock && hubLock.port) || 5555;
-const hubHash = dashProjectId ? `#/project/${dashProjectId}` : '';
-const hubLink = `http://localhost:${hubPort}/${hubHash}`;
-if (hubActive) {
-  parts.push(`${P.on}◉${ESC}]8;;${hubLink}${ESC}\\localhost:${hubPort}${ESC}]8;;${ESC}\\`);
+// Nexus daemon — show clickable host:port when running, clear "offline" when not
+const nexusActive = hubRunning || !!dashUrl;
+const nexusPort = (hubLock && hubLock.port) || 5555;
+const nexusHash = dashProjectId ? `#/project/${dashProjectId}` : '';
+const nexusLink = `http://localhost:${nexusPort}/${nexusHash}`;
+if (nexusActive) {
+  parts.push(`${P.on}◉nexus ${ESC}]8;;${nexusLink}${ESC}\\:${nexusPort}${ESC}]8;;${ESC}\\`);
 } else {
-  parts.push(`${P.off}○hub`);
+  parts.push(`${P.off}○nexus${P.dim} offline`);
 }
 
 parts.push(svcDot(hexMcp, 'mcp'));

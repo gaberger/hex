@@ -67,6 +67,7 @@ tools:
     - mcp__hex__hex_hexflo_swarm_init
     - mcp__hex__hex_hexflo_swarm_status
     - mcp__hex__hex_hexflo_task_create
+    - mcp__hex__hex_hexflo_task_assign
     - mcp__hex__hex_hexflo_task_list
     - mcp__hex__hex_hexflo_task_complete
     - mcp__hex__hex_hexflo_memory_store
@@ -164,6 +165,7 @@ workflow:
             mode: bypassPermissions
             run_in_background: true
             prompt: |
+              HEXFLO_TASK:{{task.id}}
               You are a hex-coder agent working on adapter: {{task.adapter}}
               Port interface: {{task.port}}
               Language: {{language}}

@@ -18,6 +18,12 @@ pub struct SkillTemplates;
 #[prefix = "hooks/"]
 pub struct HookTemplates;
 
+/// Helper scripts (CJS files from hex-setup/helpers/)
+#[derive(Embed)]
+#[folder = "../hex-setup/helpers/"]
+#[prefix = "helpers/"]
+pub struct HelperTemplates;
+
 /// MCP config templates (JSON files from hex-setup/mcp/)
 #[derive(Embed)]
 #[folder = "../hex-setup/mcp/"]

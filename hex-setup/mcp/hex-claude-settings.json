@@ -1,7 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Claude Code settings template installed by `hex init`. Configures hooks, permissions, statusline, and announcements for hex-aware projects.",
-  "statusline": "node scripts/hex-statusline.cjs",
+  "statusLine": {
+    "type": "command",
+    "command": "node scripts/hex-statusline.cjs"
+  },
   "hooks": {
     "SessionStart": [{
       "hooks": [{
@@ -45,6 +48,20 @@
         }]
       }
     ],
+    "SubagentStart": [{
+      "hooks": [{
+        "type": "command",
+        "command": "hex hook subagent-start",
+        "timeout": 3000
+      }]
+    }],
+    "SubagentStop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "hex hook subagent-stop",
+        "timeout": 3000
+      }]
+    }],
     "UserPromptSubmit": [{
       "hooks": [{
         "type": "command",

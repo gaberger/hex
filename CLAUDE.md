@@ -391,6 +391,25 @@ hex memory search <query>           # Search memory
 Agent tool: { subagent_type: "coder", mode: "bypassPermissions", run_in_background: true }
 ```
 
+### Task State Synchronization (ADR-048)
+
+When spawning subagents for HexFlo swarm tasks, include `HEXFLO_TASK:{task_id}` in the agent prompt. The `SubagentStart` hook automatically:
+1. Extracts the task ID from the prompt
+2. Calls `task_assign` to set status → `in_progress` with the session's agent_id
+3. On `SubagentStop`, calls `task_complete` with the subagent's result
+
+```bash
+# Example: spawn a coder agent with task tracking
+Agent tool: {
+  prompt: "HEXFLO_TASK:88bb424c-591a-482e-ac4f-55969549b7cf\nImplement the port interface for...",
+  subagent_type: "coder",
+  mode: "bypassPermissions",
+  run_in_background: true
+}
+```
+
+The `agent_id` is auto-resolved from `~/.hex/sessions/agent-{sessionId}.json` (written by `hex hook session-start`). If not explicitly provided in `task_assign`, the MCP tool falls back to this file.
+
 ## Security
 
 - `FileSystemAdapter` has path traversal protection via `safePath()`

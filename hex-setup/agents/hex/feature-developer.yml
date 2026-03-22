@@ -62,6 +62,7 @@ constraints:
   - Each adapter task maps to exactly one worktree
   - Maximum 8 concurrent worktrees
   - All background agents must use mode=bypassPermissions
+  - When spawning subagents for HexFlo tasks, include HEXFLO_TASK:{task_id} in the prompt. This enables automatic task assignment and completion tracking via SubagentStart/SubagentStop hooks.
   - Validation-judge verdict is a BLOCKING gate — FAIL means iterate
   - Merge worktrees in dependency order (domain → ports → secondary → primary → integration)
   - Always clean up worktrees after merge
@@ -77,6 +78,7 @@ tools:
     - mcp__hex__hex_hexflo_swarm_init
     - mcp__hex__hex_hexflo_swarm_status
     - mcp__hex__hex_hexflo_task_create
+    - mcp__hex__hex_hexflo_task_assign
     - mcp__hex__hex_hexflo_task_list
     - mcp__hex__hex_hexflo_task_complete
     - mcp__hex__hex_hexflo_memory_store

@@ -109,6 +109,10 @@ pub enum HookEvent {
     PreBash,
     /// User submitted a prompt — route/classify
     Route,
+    /// Subagent spawned — auto-assign task if HEXFLO_TASK in prompt
+    SubagentStart,
+    /// Subagent completed — auto-complete task
+    SubagentStop,
 }
 
 pub async fn run(event: HookEvent) -> Result<()> {
@@ -123,6 +127,8 @@ pub async fn run(event: HookEvent) -> Result<()> {
         HookEvent::PostEdit => post_edit(&project_dir).await,
         HookEvent::PreBash => pre_bash().await,
         HookEvent::Route => route(&project_dir).await,
+        HookEvent::SubagentStart => subagent_start().await,
+        HookEvent::SubagentStop => subagent_stop().await,
     }
 }
 
@@ -242,6 +248,101 @@ async fn register_session_agent(project_dir: &PathBuf, project_name: &str) -> Re
     }
 
     Ok(())
+}
+
+/// SubagentStart — read stdin for HEXFLO_TASK:{uuid}, auto-assign the task.
+async fn subagent_start() -> Result<()> {
+    let stdin = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
+
+    // Look for HEXFLO_TASK:{uuid} pattern in the subagent prompt
+    let task_id = extract_hexflo_task(&stdin);
+    if task_id.is_none() {
+        return Ok(()); // No task reference — nothing to sync
+    }
+    let task_id = task_id.unwrap();
+
+    // Resolve agent_id from session state
+    let state = match SessionState::load() {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+
+    // Assign the task via nexus REST API
+    let client = nexus_client(2)?;
+    let url = nexus_url(&format!("/api/hexflo/tasks/{}", task_id));
+    let _ = client
+        .patch(&url)
+        .json(&serde_json::json!({ "agent_id": state.agent_id }))
+        .send()
+        .await;
+
+    // Track the mapping so SubagentStop can complete it
+    let mut state = state;
+    state.current_task_id = Some(task_id);
+    state.save()?;
+
+    Ok(())
+}
+
+/// SubagentStop — auto-complete the task if one was assigned on start.
+async fn subagent_stop() -> Result<()> {
+    let stdin = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
+
+    let state = match SessionState::load() {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+
+    let task_id = match &state.current_task_id {
+        Some(id) => id.clone(),
+        None => return Ok(()), // No task was assigned — nothing to complete
+    };
+
+    // Use the first 200 chars of subagent output as the result summary
+    let result = if stdin.len() > 200 {
+        format!("{}...", &stdin[..200])
+    } else if stdin.is_empty() {
+        "completed".to_string()
+    } else {
+        stdin.trim().to_string()
+    };
+
+    // Complete the task via nexus REST API
+    let client = nexus_client(2)?;
+    let url = nexus_url(&format!("/api/hexflo/tasks/{}", task_id));
+    let _ = client
+        .patch(&url)
+        .json(&serde_json::json!({
+            "status": "completed",
+            "result": result,
+        }))
+        .send()
+        .await;
+
+    // Clear the current task from session state
+    let mut state = state;
+    state.current_task_id = None;
+    state.save()?;
+
+    Ok(())
+}
+
+/// Extract HEXFLO_TASK:{uuid} from text. Returns the UUID if found.
+fn extract_hexflo_task(text: &str) -> Option<String> {
+    let prefix = "HEXFLO_TASK:";
+    let start = text.find(prefix)?;
+    let after = &text[start + prefix.len()..];
+    // UUID is 36 chars (8-4-4-4-12)
+    if after.len() >= 36 {
+        let candidate = &after[..36];
+        // Basic validation: contains hyphens at right positions
+        if candidate.chars().nth(8) == Some('-')
+            && candidate.chars().nth(13) == Some('-')
+        {
+            return Some(candidate.to_string());
+        }
+    }
+    None
 }
 
 async fn session_end(_project_dir: &PathBuf) -> Result<()> {

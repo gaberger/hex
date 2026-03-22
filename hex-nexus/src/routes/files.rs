@@ -266,6 +266,24 @@ pub async fn init_project(
             }
         }
 
+        // Copy embedded helper scripts into .claude/helpers/ (idempotent)
+        let helpers_dir = root.join(".claude/helpers");
+        let _ = std::fs::create_dir_all(&helpers_dir);
+        for file_name in crate::templates::HelperTemplates::iter() {
+            let file_name_str = file_name.as_ref();
+            if let Some(content) = crate::templates::HelperTemplates::get(file_name_str) {
+                let dest_name = file_name_str.strip_prefix("helpers/").unwrap_or(file_name_str);
+                let dest = helpers_dir.join(dest_name);
+                if !dest.exists() {
+                    if let Some(parent) = dest.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&dest, content.data.as_ref());
+                    created.push(format!(".claude/helpers/{}", dest_name));
+                }
+            }
+        }
+
         // Copy embedded skill templates into .claude/skills/ (idempotent)
         let skills_dir = root.join(".claude/skills");
         let _ = std::fs::create_dir_all(&skills_dir);

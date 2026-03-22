@@ -122,6 +122,21 @@
       }
     },
     {
+      "name": "hex_hexflo_task_assign",
+      "category": "task",
+      "cli": "hex task assign <task-id> <agent-id>",
+      "description": "Assign a task to an agent. Sets status to 'in_progress' and records the agent_id. Only works on tasks with 'pending' status.",
+      "route": { "method": "PATCH", "path": "/api/hexflo/tasks/{task_id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task_id": { "type": "string", "description": "Task ID to assign" },
+          "agent_id": { "type": "string", "description": "Agent ID claiming this task (from hex_agent_connect registration)" }
+        },
+        "required": ["task_id", "agent_id"]
+      }
+    },
+    {
       "name": "hex_hexflo_task_complete",
       "category": "task",
       "cli": "hex task complete <task-id> [result]",
