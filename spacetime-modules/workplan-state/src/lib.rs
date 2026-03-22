@@ -10,6 +10,10 @@ pub struct WorkplanExecution {
     pub current_phase: String,
     pub started_at: String,
     pub updated_at: String,
+    /// When status is "superseded", the path of the absorbing workplan.
+    pub superseded_by: String,
+    /// Human-readable reason for supersession.
+    pub supersession_reason: String,
 }
 
 #[table(name = workplan_task, public)]
@@ -38,7 +42,47 @@ pub fn start_workplan(
         current_phase: "init".to_string(),
         started_at: String::new(),
         updated_at: String::new(),
+        superseded_by: String::new(),
+        supersession_reason: String::new(),
     });
+    Ok(())
+}
+
+#[reducer]
+pub fn supersede_workplan(
+    ctx: &ReducerContext,
+    workplan_id: String,
+    superseded_by: String,
+    reason: String,
+) -> Result<(), String> {
+    let existing = ctx.db.workplan_execution().id().find(&workplan_id);
+    match existing {
+        Some(old) => {
+            let superseded_by_ref = superseded_by.clone();
+            let updated = WorkplanExecution {
+                status: "superseded".to_string(),
+                superseded_by,
+                supersession_reason: reason,
+                ..old
+            };
+            ctx.db.workplan_execution().id().update(updated);
+            // Mark all pending tasks as completed-by-supersession
+            let tasks: Vec<_> = ctx.db.workplan_task().iter()
+                .filter(|t| t.workplan_id == workplan_id && t.status == "pending")
+                .collect();
+            for task in tasks {
+                let updated_task = WorkplanTask {
+                    status: "completed".to_string(),
+                    result: format!("Superseded by {}", superseded_by_ref),
+                    ..task
+                };
+                ctx.db.workplan_task().id().update(updated_task);
+            }
+        }
+        None => {
+            return Err(format!("Workplan '{}' not found", workplan_id));
+        }
+    }
     Ok(())
 }
 

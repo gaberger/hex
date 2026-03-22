@@ -15,7 +15,7 @@ A workplan is a JSON document in `docs/workplans/` that decomposes a feature int
   "feature": "Human-readable feature name",
   "adr": "ADR-NNN",
   "created": "YYYY-MM-DD",
-  "status": "planned | in_progress | complete",
+  "status": "planned | in_progress | complete | failed | superseded",
   "topology": "hierarchical | mesh | adaptive",
   "budget": "~NNNNN tokens",
   "phases": 5,
@@ -64,7 +64,13 @@ A workplan is a JSON document in `docs/workplans/` that decomposes a feature int
 
   "successCriteria": [
     "Observable outcome that proves the feature works"
-  ]
+  ],
+
+  "supersession": {
+    "superseded_by": "feat-other-workplan.json (path to absorbing workplan)",
+    "reason": "Why this workplan was absorbed",
+    "recorded_at": "ISO 8601 date"
+  }
 }
 ```
 
@@ -147,6 +153,50 @@ todo → in_progress → done
 ```
 
 A step is `blocked` when its dependsOn tier has incomplete steps.
+
+## Workplan Supersession
+
+When a workplan's scope is fully absorbed by another (larger) workplan, mark it as superseded:
+
+```json
+{
+  "status": "superseded",
+  "supersession": {
+    "superseded_by": "feat-adr039-control-plane.json",
+    "reason": "All 6 tasks completed as part of ADR-039 implementation",
+    "recorded_at": "2026-03-21"
+  }
+}
+```
+
+Individual tasks in a superseded workplan should have `completed_by` traceability:
+
+```json
+{
+  "id": "1",
+  "status": "done",
+  "completed_by": "ADR-039 T1-8"
+}
+```
+
+This creates an audit trail showing *why* tasks were closed without re-investigation.
+
+### When to Supersede
+
+- A larger workplan explicitly includes the same scope
+- All tasks can be traced to work done elsewhere
+- The original workplan would otherwise appear as abandoned
+
+### Pipeline Enforcement (ADR-050)
+
+Workplans require an ADR reference. The lifecycle pipeline is:
+
+```
+ADR → Workplan → HexFlo Memory → Swarm → Agent Work → Completion
+```
+
+Use `hex plan create <name> --adr ADR-NNN` to create a workplan.
+Use `--no-adr` only for exploratory or emergency work.
 
 ## Creating a Workplan
 

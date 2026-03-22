@@ -2,7 +2,7 @@
   "feature": "ADR-039 Nexus Agent Control Plane",
   "adr": "ADR-039",
   "created": "2026-03-20",
-  "status": "in_progress",
+  "status": "done",
   "swarmId": "93435a6c-da48-48c3-9da5-0353d1aa9cb2",
   "topology": "hierarchical",
   "budget": "~102400 tokens",

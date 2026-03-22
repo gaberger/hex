@@ -24,6 +24,14 @@ pub enum PlanAction {
         /// Target language
         #[arg(long, default_value = "typescript")]
         lang: String,
+
+        /// ADR reference (e.g. ADR-050). Required unless --no-adr is set.
+        #[arg(long)]
+        adr: Option<String>,
+
+        /// Allow creating a workplan without an ADR reference
+        #[arg(long, default_value_t = false)]
+        no_adr: bool,
     },
     /// List existing workplans
     List,
@@ -71,7 +79,7 @@ struct Workplan {
 
 pub async fn run(action: PlanAction) -> anyhow::Result<()> {
     match action {
-        PlanAction::Create { requirements, lang } => create_plan(&requirements, &lang).await,
+        PlanAction::Create { requirements, lang, adr, no_adr } => create_plan(&requirements, &lang, adr.as_deref(), no_adr).await,
         PlanAction::List => list_plans().await,
         PlanAction::Status { file } => show_plan_status(&file).await,
         PlanAction::Active => show_active_executions().await,
@@ -81,7 +89,39 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
 }
 
 /// Decompose requirements into hex-bounded tasks by tier.
-async fn create_plan(requirements: &[String], lang: &str) -> anyhow::Result<()> {
+async fn create_plan(requirements: &[String], lang: &str, adr: Option<&str>, no_adr: bool) -> anyhow::Result<()> {
+    // ADR-050: Validate ADR reference exists before creating workplan
+    if !no_adr {
+        match adr {
+            None => {
+                anyhow::bail!(
+                    "Workplan requires an ADR reference. Use --adr ADR-NNN or --no-adr to skip.\n\
+                     Pipeline: ADR → Workplan → HexFlo Memory → Swarm"
+                );
+            }
+            Some(adr_ref) => {
+                let adr_dir = Path::new("docs/adrs");
+                if adr_dir.is_dir() {
+                    let adr_slug = adr_ref.to_uppercase().replace(' ', "-");
+                    let found = std::fs::read_dir(adr_dir)?
+                        .filter_map(|e| e.ok())
+                        .any(|e| {
+                            let name = e.file_name().to_string_lossy().to_uppercase();
+                            name.contains(&adr_slug)
+                        });
+                    if !found {
+                        anyhow::bail!(
+                            "ADR '{}' not found in docs/adrs/. Create the ADR first.\n\
+                             Pipeline: ADR → Workplan → HexFlo Memory → Swarm",
+                            adr_ref
+                        );
+                    }
+                    println!("  {} ADR {} verified", "\u{2713}".green(), adr_ref);
+                }
+            }
+        }
+    }
+
     println!(
         "{} Creating workplan ({} requirement(s), language: {})",
         "\u{2b21}".cyan(),
