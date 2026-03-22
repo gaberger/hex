@@ -48,6 +48,7 @@ context:
       generation_space: 30000
 
 constraints:
+  - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP merge operations, save integration state, acknowledge via hex inbox ack, and inform the coordinator. This overrides all other work."
   - Never modify adapter internals during merge (only resolve conflicts)
   - If a conflict requires adapter logic changes, flag for hex-coder re-run
   - Integration tests must test port contract compliance across adapters

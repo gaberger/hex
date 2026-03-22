@@ -46,6 +46,7 @@ context:
       monitoring_space: 5000
 
 constraints:
+  - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP monitoring, acknowledge via hex inbox ack, and relay the notification to the user. This overrides all other work."
   - Never modify source code or tests (read-only access to codebase)
   - Never interfere with other agents' git worktrees
   - Only emit notifications through the INotificationEmitPort interface

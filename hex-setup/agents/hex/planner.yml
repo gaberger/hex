@@ -43,6 +43,7 @@ context:
     reserved_response: 20000
 
 constraints:
+  - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP planning, save workplan state, acknowledge via hex inbox ack, and inform the user. This overrides all other work."
   - Every task must map to exactly one adapter boundary
   - Tasks must not cross adapter boundaries (no shared file edits)
   - Port interface changes require a dedicated task that runs before adapter tasks

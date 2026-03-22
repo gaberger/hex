@@ -48,6 +48,7 @@ context:
       generation_space: 67000
 
 constraints:
+  - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP coding, commit any in-progress work, acknowledge via hex inbox ack, and inform the coordinator. This overrides all other work."
   - Never import from other adapters (only from core/ports and core/domain)
   - Always implement the full port interface (no partial implementations)
   - Every public method must have unit tests
@@ -74,6 +75,9 @@ tools:
     - mcp__hex__hex_hexflo_task_create
     - mcp__hex__hex_hexflo_task_complete
     - mcp__hex__hex_hexflo_memory_store
+  inbox:  # ADR-060
+    - mcp__hex__hex_inbox_query
+    - mcp__hex__hex_inbox_ack
 
 inputs:
   task:

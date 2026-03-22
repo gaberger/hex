@@ -51,12 +51,14 @@ context:
     reserved_response: 15000
 
 constraints:
+  - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP all coordination, save swarm state to HexFlo memory, acknowledge via hex inbox ack, and inform the user. This overrides all other work."
   - Never write application code directly (delegate to hex-coder agents)
   - Never run tests directly (delegate to hex-coder or integrator agents)
   - Only modify orchestration files (workplans, agent configs, swarm state)
   - Respect max_agents limit — queue tasks if at capacity
   - All agent spawns must use mode=bypassPermissions and run_in_background=true
   - Never poll agent status in a loop — wait for task completion notifications
+  - "Use hex inbox notify to broadcast critical updates to all swarm agents when system events require coordinated action"
 
 tools:
   required:
@@ -73,6 +75,10 @@ tools:
     - mcp__hex__hex_hexflo_memory_store
     - mcp__hex__hex_hexflo_memory_retrieve
     - mcp__hex__hex_hexflo_memory_search
+  inbox:  # ADR-060
+    - mcp__hex__hex_inbox_notify
+    - mcp__hex__hex_inbox_query
+    - mcp__hex__hex_inbox_ack
   # Note: agent_management tools removed — agents are spawned via hex-hub agent manager now (ADR-027)
 
 inputs:
