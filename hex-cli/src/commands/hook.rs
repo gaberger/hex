@@ -607,6 +607,34 @@ async fn pre_agent() -> Result<()> {
         return Ok(());
     }
 
+    // ADR-2603221939: Check workplan requirement for code-writing agents
+    if is_background {
+        let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+        let mode = enforcement_mode(&project_dir);
+        let has_workplan = SessionState::load()
+            .and_then(|s| s.workplan_id)
+            .is_some();
+
+        if !has_workplan {
+            if mode == "mandatory" {
+                println!(
+                    "{} Background agent blocked — no active workplan (ADR-2603221939)",
+                    "\u{26d4}"
+                );
+                println!("  Pipeline: ADR → Workplan → Swarm → Agent");
+                println!("  Create a workplan first: hex plan create <requirements> --adr <ADR-ID>");
+                std::process::exit(2);
+            } else {
+                println!(
+                    "{} Agent spawned without active workplan — work may not be tracked",
+                    "\u{26a0}\u{fe0f}"
+                );
+            }
+        }
+    }
+
     // Check for HEXFLO_TASK:{uuid} in prompt
     let has_task = extract_hexflo_task(prompt).is_some();
 
