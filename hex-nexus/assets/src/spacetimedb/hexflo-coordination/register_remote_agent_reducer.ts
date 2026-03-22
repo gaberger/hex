@@ -11,10 +11,11 @@ import {
 } from "spacetimedb";
 
 export default {
-  id: __t.string(),
+  agentId: __t.string(),
   name: __t.string(),
-  topology: __t.string(),
-  projectId: __t.string(),
-  createdBy: __t.string(),
+  host: __t.string(),
+  projectDir: __t.string(),
+  capabilitiesJson: __t.string(),
+  tunnelId: __t.string(),
   timestamp: __t.string(),
 };

@@ -13,6 +13,7 @@ import {
 export default {
   projectId: __t.string(),
   name: __t.string(),
+  description: __t.string(),
   path: __t.string(),
   registeredAt: __t.string(),
 };

@@ -16,6 +16,7 @@ export default __t.row({
   name: __t.string(),
   topology: __t.string(),
   status: __t.string(),
+  createdBy: __t.string().name("created_by"),
   createdAt: __t.string().name("created_at"),
   updatedAt: __t.string().name("updated_at"),
 });

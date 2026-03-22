@@ -10,11 +10,13 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default {
-  id: __t.string(),
-  name: __t.string(),
-  topology: __t.string(),
-  projectId: __t.string(),
-  createdBy: __t.string(),
-  timestamp: __t.string(),
-};
+export default __t.row({
+  name: __t.string().primaryKey(),
+  category: __t.string(),
+  description: __t.string(),
+  routeMethod: __t.string().name("route_method"),
+  routePath: __t.string().name("route_path"),
+  inputSchema: __t.string().name("input_schema"),
+  version: __t.string(),
+  syncedAt: __t.string().name("synced_at"),
+});

@@ -23,6 +23,36 @@ export const AgentDef = __t.object("AgentDef", {
 });
 export type AgentDef = __Infer<typeof AgentDef>;
 
+export const AgentInbox = __t.object("AgentInbox", {
+  id: __t.u64(),
+  agentId: __t.string(),
+  priority: __t.u8(),
+  kind: __t.string(),
+  payload: __t.string(),
+  createdAt: __t.string(),
+  acknowledgedAt: __t.string(),
+  expiredAt: __t.string(),
+});
+export type AgentInbox = __Infer<typeof AgentInbox>;
+
+export const HexAgent = __t.object("HexAgent", {
+  id: __t.string(),
+  name: __t.string(),
+  host: __t.string(),
+  projectId: __t.string(),
+  projectDir: __t.string(),
+  model: __t.string(),
+  sessionId: __t.string(),
+  status: __t.string(),
+  swarmId: __t.string(),
+  role: __t.string(),
+  worktreePath: __t.string(),
+  registeredAt: __t.string(),
+  lastHeartbeat: __t.string(),
+  capabilitiesJson: __t.string(),
+});
+export type HexAgent = __Infer<typeof HexAgent>;
+
 export const HexFloMemory = __t.object("HexFloMemory", {
   key: __t.string(),
   value: __t.string(),
@@ -31,9 +61,34 @@ export const HexFloMemory = __t.object("HexFloMemory", {
 });
 export type HexFloMemory = __Infer<typeof HexFloMemory>;
 
+export const InferenceServer = __t.object("InferenceServer", {
+  serverId: __t.string(),
+  name: __t.string(),
+  host: __t.string(),
+  provider: __t.string(),
+  modelsJson: __t.string(),
+  status: __t.string(),
+  lastHealthCheck: __t.string(),
+  registeredAt: __t.string(),
+});
+export type InferenceServer = __Infer<typeof InferenceServer>;
+
+export const McpTool = __t.object("McpTool", {
+  name: __t.string(),
+  category: __t.string(),
+  description: __t.string(),
+  routeMethod: __t.string(),
+  routePath: __t.string(),
+  inputSchema: __t.string(),
+  version: __t.string(),
+  syncedAt: __t.string(),
+});
+export type McpTool = __Infer<typeof McpTool>;
+
 export const Project = __t.object("Project", {
   projectId: __t.string(),
   name: __t.string(),
+  description: __t.string(),
   path: __t.string(),
   registeredAt: __t.string(),
 });
@@ -47,6 +102,19 @@ export const ProjectConfig = __t.object("ProjectConfig", {
   syncedAt: __t.string(),
 });
 export type ProjectConfig = __Infer<typeof ProjectConfig>;
+
+export const RemoteAgent = __t.object("RemoteAgent", {
+  agentId: __t.string(),
+  name: __t.string(),
+  host: __t.string(),
+  projectDir: __t.string(),
+  status: __t.string(),
+  capabilitiesJson: __t.string(),
+  lastHeartbeat: __t.string(),
+  connectedAt: __t.string(),
+  tunnelId: __t.string(),
+});
+export type RemoteAgent = __Infer<typeof RemoteAgent>;
 
 export const SkillEntry = __t.object("SkillEntry", {
   skillId: __t.string(),
@@ -65,6 +133,7 @@ export const Swarm = __t.object("Swarm", {
   name: __t.string(),
   topology: __t.string(),
   status: __t.string(),
+  createdBy: __t.string(),
   createdAt: __t.string(),
   updatedAt: __t.string(),
 });

@@ -11,10 +11,7 @@ import {
 } from "spacetimedb";
 
 export default {
-  id: __t.string(),
-  name: __t.string(),
-  topology: __t.string(),
-  projectId: __t.string(),
-  createdBy: __t.string(),
+  agentId: __t.string(),
+  status: __t.string(),
   timestamp: __t.string(),
 };

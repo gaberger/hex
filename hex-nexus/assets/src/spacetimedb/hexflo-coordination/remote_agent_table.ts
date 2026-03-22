@@ -11,9 +11,13 @@ import {
 } from "spacetimedb";
 
 export default __t.row({
-  projectId: __t.string().primaryKey().name("project_id"),
+  agentId: __t.string().primaryKey().name("agent_id"),
   name: __t.string(),
-  description: __t.string(),
-  path: __t.string(),
-  registeredAt: __t.string().name("registered_at"),
+  host: __t.string(),
+  projectDir: __t.string().name("project_dir"),
+  status: __t.string(),
+  capabilitiesJson: __t.string().name("capabilities_json"),
+  lastHeartbeat: __t.string().name("last_heartbeat"),
+  connectedAt: __t.string().name("connected_at"),
+  tunnelId: __t.string().name("tunnel_id"),
 });

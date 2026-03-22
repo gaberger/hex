@@ -34,16 +34,32 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import AcknowledgeNotificationReducer from "./acknowledge_notification_reducer";
+import AgentAssignSwarmReducer from "./agent_assign_swarm_reducer";
+import AgentConnectReducer from "./agent_connect_reducer";
+import AgentDisconnectReducer from "./agent_disconnect_reducer";
+import AgentEvictDeadReducer from "./agent_evict_dead_reducer";
 import AgentHeartbeatReducer from "./agent_heartbeat_reducer";
+import AgentHeartbeatUpdateReducer from "./agent_heartbeat_update_reducer";
 import AgentMarkDeadReducer from "./agent_mark_dead_reducer";
+import AgentMarkInactiveReducer from "./agent_mark_inactive_reducer";
 import AgentMarkStaleReducer from "./agent_mark_stale_reducer";
 import AgentRegisterReducer from "./agent_register_reducer";
 import AgentRemoveReducer from "./agent_remove_reducer";
+import ExpireStaleNotificationsReducer from "./expire_stale_notifications_reducer";
+import McpToolSyncReducer from "./mcp_tool_sync_reducer";
 import MemoryClearScopeReducer from "./memory_clear_scope_reducer";
 import MemoryDeleteReducer from "./memory_delete_reducer";
 import MemoryStoreReducer from "./memory_store_reducer";
+import NotifyAgentReducer from "./notify_agent_reducer";
+import NotifyAllAgentsReducer from "./notify_all_agents_reducer";
+import RegisterInferenceServerReducer from "./register_inference_server_reducer";
 import RegisterProjectReducer from "./register_project_reducer";
+import RegisterRemoteAgentReducer from "./register_remote_agent_reducer";
+import RemoteAgentHeartbeatReducer from "./remote_agent_heartbeat_reducer";
+import RemoveInferenceServerReducer from "./remove_inference_server_reducer";
 import RemoveProjectReducer from "./remove_project_reducer";
+import RemoveRemoteAgentReducer from "./remove_remote_agent_reducer";
 import SwarmCompleteReducer from "./swarm_complete_reducer";
 import SwarmFailReducer from "./swarm_fail_reducer";
 import SwarmInitReducer from "./swarm_init_reducer";
@@ -60,9 +76,14 @@ import TaskReclaimReducer from "./task_reclaim_reducer";
 
 // Import all table schema definitions
 import AgentDefinitionRow from "./agent_definition_table";
+import AgentInboxRow from "./agent_inbox_table";
+import HexAgentRow from "./hex_agent_table";
 import HexfloMemoryRow from "./hexflo_memory_table";
+import InferenceServerRow from "./inference_server_table";
+import McpToolRow from "./mcp_tool_table";
 import ProjectRow from "./project_table";
 import ProjectConfigRow from "./project_config_table";
+import RemoteAgentRow from "./remote_agent_table";
 import SkillRegistryRow from "./skill_registry_table";
 import SwarmRow from "./swarm_table";
 import SwarmAgentRow from "./swarm_agent_table";
@@ -83,6 +104,28 @@ const tablesSchema = __schema({
       { name: 'agent_definition_agent_def_id_key', constraint: 'unique', columns: ['agentDefId'] },
     ],
   }, AgentDefinitionRow),
+  agent_inbox: __table({
+    name: 'agent_inbox',
+    indexes: [
+      { accessor: 'id', name: 'agent_inbox_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'agent_inbox_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, AgentInboxRow),
+  hex_agent: __table({
+    name: 'hex_agent',
+    indexes: [
+      { accessor: 'id', name: 'hex_agent_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'hex_agent_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, HexAgentRow),
   hexflo_memory: __table({
     name: 'hexflo_memory',
     indexes: [
@@ -94,6 +137,28 @@ const tablesSchema = __schema({
       { name: 'hexflo_memory_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, HexfloMemoryRow),
+  inference_server: __table({
+    name: 'inference_server',
+    indexes: [
+      { accessor: 'server_id', name: 'inference_server_server_id_idx_btree', algorithm: 'btree', columns: [
+        'serverId',
+      ] },
+    ],
+    constraints: [
+      { name: 'inference_server_server_id_key', constraint: 'unique', columns: ['serverId'] },
+    ],
+  }, InferenceServerRow),
+  mcp_tool: __table({
+    name: 'mcp_tool',
+    indexes: [
+      { accessor: 'name', name: 'mcp_tool_name_idx_btree', algorithm: 'btree', columns: [
+        'name',
+      ] },
+    ],
+    constraints: [
+      { name: 'mcp_tool_name_key', constraint: 'unique', columns: ['name'] },
+    ],
+  }, McpToolRow),
   project: __table({
     name: 'project',
     indexes: [
@@ -116,6 +181,17 @@ const tablesSchema = __schema({
       { name: 'project_config_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, ProjectConfigRow),
+  remote_agent: __table({
+    name: 'remote_agent',
+    indexes: [
+      { accessor: 'agent_id', name: 'remote_agent_agent_id_idx_btree', algorithm: 'btree', columns: [
+        'agentId',
+      ] },
+    ],
+    constraints: [
+      { name: 'remote_agent_agent_id_key', constraint: 'unique', columns: ['agentId'] },
+    ],
+  }, RemoteAgentRow),
   skill_registry: __table({
     name: 'skill_registry',
     indexes: [
@@ -164,16 +240,32 @@ const tablesSchema = __schema({
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("acknowledge_notification", AcknowledgeNotificationReducer),
+  __reducerSchema("agent_assign_swarm", AgentAssignSwarmReducer),
+  __reducerSchema("agent_connect", AgentConnectReducer),
+  __reducerSchema("agent_disconnect", AgentDisconnectReducer),
+  __reducerSchema("agent_evict_dead", AgentEvictDeadReducer),
   __reducerSchema("agent_heartbeat", AgentHeartbeatReducer),
+  __reducerSchema("agent_heartbeat_update", AgentHeartbeatUpdateReducer),
   __reducerSchema("agent_mark_dead", AgentMarkDeadReducer),
+  __reducerSchema("agent_mark_inactive", AgentMarkInactiveReducer),
   __reducerSchema("agent_mark_stale", AgentMarkStaleReducer),
   __reducerSchema("agent_register", AgentRegisterReducer),
   __reducerSchema("agent_remove", AgentRemoveReducer),
+  __reducerSchema("expire_stale_notifications", ExpireStaleNotificationsReducer),
+  __reducerSchema("mcp_tool_sync", McpToolSyncReducer),
   __reducerSchema("memory_clear_scope", MemoryClearScopeReducer),
   __reducerSchema("memory_delete", MemoryDeleteReducer),
   __reducerSchema("memory_store", MemoryStoreReducer),
+  __reducerSchema("notify_agent", NotifyAgentReducer),
+  __reducerSchema("notify_all_agents", NotifyAllAgentsReducer),
+  __reducerSchema("register_inference_server", RegisterInferenceServerReducer),
   __reducerSchema("register_project", RegisterProjectReducer),
+  __reducerSchema("register_remote_agent", RegisterRemoteAgentReducer),
+  __reducerSchema("remote_agent_heartbeat", RemoteAgentHeartbeatReducer),
+  __reducerSchema("remove_inference_server", RemoveInferenceServerReducer),
   __reducerSchema("remove_project", RemoveProjectReducer),
+  __reducerSchema("remove_remote_agent", RemoveRemoteAgentReducer),
   __reducerSchema("swarm_complete", SwarmCompleteReducer),
   __reducerSchema("swarm_fail", SwarmFailReducer),
   __reducerSchema("swarm_init", SwarmInitReducer),

@@ -11,10 +11,12 @@ import {
 } from "spacetimedb";
 
 export default {
-  id: __t.string(),
   name: __t.string(),
-  topology: __t.string(),
-  projectId: __t.string(),
-  createdBy: __t.string(),
-  timestamp: __t.string(),
+  category: __t.string(),
+  description: __t.string(),
+  routeMethod: __t.string(),
+  routePath: __t.string(),
+  inputSchema: __t.string(),
+  version: __t.string(),
+  syncedAt: __t.string(),
 };

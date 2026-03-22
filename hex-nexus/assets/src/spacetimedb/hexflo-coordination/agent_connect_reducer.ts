@@ -13,8 +13,11 @@ import {
 export default {
   id: __t.string(),
   name: __t.string(),
-  topology: __t.string(),
+  host: __t.string(),
   projectId: __t.string(),
-  createdBy: __t.string(),
+  projectDir: __t.string(),
+  model: __t.string(),
+  sessionId: __t.string(),
+  capabilitiesJson: __t.string(),
   timestamp: __t.string(),
 };

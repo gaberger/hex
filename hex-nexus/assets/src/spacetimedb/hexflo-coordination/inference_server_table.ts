@@ -10,11 +10,13 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default {
-  id: __t.string(),
+export default __t.row({
+  serverId: __t.string().primaryKey().name("server_id"),
   name: __t.string(),
-  topology: __t.string(),
-  projectId: __t.string(),
-  createdBy: __t.string(),
-  timestamp: __t.string(),
-};
+  host: __t.string(),
+  provider: __t.string(),
+  modelsJson: __t.string().name("models_json"),
+  status: __t.string(),
+  lastHealthCheck: __t.string().name("last_health_check"),
+  registeredAt: __t.string().name("registered_at"),
+});
