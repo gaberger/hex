@@ -197,3 +197,51 @@ pub fn run_interview(default_name: &str) -> Result<ProjectInterview> {
         dependencies,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn empty_dir_is_empty_project() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(is_empty_project(dir.path()));
+    }
+
+    #[test]
+    fn git_only_is_empty_project() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        assert!(is_empty_project(dir.path()));
+    }
+
+    #[test]
+    fn git_and_hex_is_empty_project() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        fs::create_dir(dir.path().join(".hex")).unwrap();
+        assert!(is_empty_project(dir.path()));
+    }
+
+    #[test]
+    fn dir_with_source_is_not_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
+        assert!(!is_empty_project(dir.path()));
+    }
+
+    #[test]
+    fn dir_with_subdir_is_not_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+        assert!(!is_empty_project(dir.path()));
+    }
+
+    #[test]
+    fn gitignore_does_not_count_as_content() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".gitignore"), "target/\n").unwrap();
+        assert!(is_empty_project(dir.path()));
+    }
+}

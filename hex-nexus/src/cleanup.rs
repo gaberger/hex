@@ -65,6 +65,8 @@ pub async fn cleanup_stale_sessions(state: &SharedState) -> Result<usize, Box<dy
 
 #[cfg(test)]
 mod tests {
+    use super::is_pid_alive;
+
     #[test]
     fn test_is_pid_alive_current_process() {
         // Current process should always be alive

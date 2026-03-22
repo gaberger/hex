@@ -77,8 +77,18 @@ fn nexus_url(path: &str) -> String {
 }
 
 fn nexus_client(timeout_secs: u64) -> Result<reqwest::Client> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    // Inject agent ID for agent-guarded endpoints (hexflo, swarms)
+    if let Some(state) = SessionState::load() {
+        if !state.agent_id.is_empty() {
+            if let Ok(val) = reqwest::header::HeaderValue::from_str(&state.agent_id) {
+                headers.insert("x-hex-agent-id", val);
+            }
+        }
+    }
     Ok(reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
+        .default_headers(headers)
         .build()?)
 }
 
@@ -792,8 +802,13 @@ async fn send_heartbeat() -> Result<()> {
         None => return Ok(()),
     };
 
+    // Lazy registration: if this session was never registered with nexus
+    // (e.g. nexus was offline at session start), try now.
     if state.agent_id.is_empty() {
-        return Ok(());
+        let _ = try_lazy_register(&mut state).await;
+        if state.agent_id.is_empty() {
+            return Ok(()); // Still can't register — nexus likely still offline
+        }
     }
 
     let client = nexus_client(2)?;
@@ -817,6 +832,65 @@ async fn send_heartbeat() -> Result<()> {
 }
 
 /// Record an edit event in HexFlo memory (ADR-050).
+/// Attempt to register this session with nexus if it wasn't registered at startup.
+/// This handles the case where nexus was offline when the Claude Code session started
+/// but came online later. Runs silently — errors are swallowed.
+async fn try_lazy_register(state: &mut SessionState) -> Result<()> {
+    let session_id = std::env::var("CLAUDE_SESSION_ID").unwrap_or_default();
+    let model = std::env::var("CLAUDE_MODEL").unwrap_or_else(|_| "unknown".to_string());
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR").unwrap_or_default();
+    let hostname = gethostname::gethostname()
+        .to_string_lossy()
+        .to_string();
+
+    let agent_name = if session_id.is_empty() {
+        format!("claude-{}", &hostname)
+    } else {
+        format!("claude-{}", &session_id[..8.min(session_id.len())])
+    };
+
+    // Derive project name from dir
+    let project_name = std::path::Path::new(&project_dir)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let client = nexus_client(2)?;
+    let url = nexus_url("/api/agents/connect");
+
+    let resp = client
+        .post(&url)
+        .json(&serde_json::json!({
+            "host": hostname,
+            "name": agent_name,
+            "project_dir": project_dir,
+            "model": model,
+            "session_id": session_id,
+        }))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let body: serde_json::Value = resp.json().await?;
+    let agent_id = body["agentId"].as_str().unwrap_or("");
+
+    if !agent_id.is_empty() {
+        let now = chrono::Utc::now().to_rfc3339();
+        state.agent_id = agent_id.to_string();
+        state.name = agent_name;
+        state.project = project_name;
+        state.registered_at = now.clone();
+        state.last_heartbeat = Some(now);
+        state.save()?;
+
+        // Notify Claude that registration happened (appears in hook output)
+        eprintln!("  Agent:   {} (late registration)", "registered".to_string());
+    }
+
+    Ok(())
+}
+
 async fn record_edit_event(state: &SessionState, file_path: &str) -> Result<()> {
     if state.agent_id.is_empty() {
         return Ok(());

@@ -29,6 +29,7 @@ use http::{HeaderValue, Method};
 use serde_json::json;
 use utoipa::OpenApi;
 use crate::state::SharedState;
+use crate::middleware::agent_guard::agent_guard;
 use crate::middleware::auth::auth_layer;
 use crate::middleware::deprecation::deprecation_layer;
 use crate::embed::{serve_index, serve_chat, serve_legacy_dashboard, serve_static};
@@ -79,6 +80,19 @@ async fn get_version() -> Json<serde_json::Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "buildHash": env!("HEX_HUB_BUILD_HASH"),
         "name": "hex-hub",
+    }))
+}
+
+/// GET /api/health — lightweight health check for hooks and CLI.
+/// Returns nexus status and SpacetimeDB connectivity.
+async fn get_health(
+    axum::extract::State(state): axum::extract::State<SharedState>,
+) -> Json<serde_json::Value> {
+    let stdb_connected = state.agent_manager.is_some();
+    Json(json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "spacetimedb": stdb_connected,
     }))
 }
 
@@ -135,6 +149,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/dashboard", get(serve_legacy_dashboard))
         .route("/assets/{*path}", get(serve_static))
         .route("/api/version", get(get_version))
+        .route("/api/health", get(get_health))
         // Project management
         .route("/api/projects", get(projects::list_projects))
         .route("/api/projects/register", post(projects::register)
@@ -196,7 +211,7 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/stdb/health", get(stdb::health))
 
-        // Swarm persistence (WRITE routes kept — they call SpacetimeDB reducers)
+        // Swarm + HexFlo routes — guarded: only registered agents can mutate
         .route("/api/swarms", post(swarms::create_swarm)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/swarms/active", get(swarms::list_active_swarms))
@@ -372,6 +387,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/ws/chat", get(chat::chat_ws_handler))
         // Middleware
         .layer(axum::middleware::from_fn(deprecation_layer))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), agent_guard))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth_layer))
         .layer(cors)
         .with_state(state)

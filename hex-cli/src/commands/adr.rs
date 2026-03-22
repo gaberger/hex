@@ -304,3 +304,51 @@ async fn abandoned() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_status_accepted() {
+        assert_eq!(parse_adr_status("---\nstatus: Accepted\n---\n"), "accepted");
+    }
+
+    #[test]
+    fn parse_status_proposed() {
+        assert_eq!(parse_adr_status("---\nstatus: Proposed\n---\n"), "proposed");
+    }
+
+    #[test]
+    fn parse_status_missing() {
+        assert_eq!(parse_adr_status("# ADR-001: No status here\n\nJust text.\n"), "unknown");
+    }
+
+    #[test]
+    fn parse_status_case_insensitive() {
+        assert_eq!(parse_adr_status("---\nstatus: ACCEPTED\n---\n"), "accepted");
+    }
+
+    #[test]
+    fn extract_title_from_heading() {
+        let path = std::path::Path::new("ADR-001-test.md");
+        assert_eq!(extract_title(path, "# ADR-001: My Title\n"), "ADR-001: My Title");
+    }
+
+    #[test]
+    fn extract_title_fallback_to_filename() {
+        let path = std::path::Path::new("ADR-001-test.md");
+        assert_eq!(extract_title(path, "No heading here\n"), "ADR-001-test");
+    }
+
+    #[test]
+    fn parse_enforced_by_heading() {
+        let content = "# ADR\n\n## Enforced-By: hex analyze\n";
+        assert_eq!(parse_enforced_by(content), Some("hex analyze".to_string()));
+    }
+
+    #[test]
+    fn parse_enforced_by_missing() {
+        assert_eq!(parse_enforced_by("# ADR\n\nNo enforcement.\n"), None);
+    }
+}

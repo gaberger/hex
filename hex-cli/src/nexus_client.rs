@@ -19,6 +19,7 @@ pub struct NexusClient {
     base_url: String,
     http: reqwest::Client,
     auth_token: Option<String>,
+    agent_id: Option<String>,
 }
 
 impl NexusClient {
@@ -49,7 +50,8 @@ impl NexusClient {
             .timeout(Duration::from_secs(10))
             .build()
             .expect("failed to build HTTP client");
-        Self { base_url, http, auth_token }
+        let agent_id = read_session_agent_id();
+        Self { base_url, http, auth_token, agent_id }
     }
 
     /// Check if nexus is reachable. Returns Ok(()) or a user-friendly error.
@@ -96,6 +98,9 @@ impl NexusClient {
         if let Some(ref token) = self.auth_token {
             req = req.header("Authorization", format!("Bearer {}", token));
         }
+        if let Some(ref id) = self.agent_id {
+            req = req.header("x-hex-agent-id", id.as_str());
+        }
         let resp = req
             .send()
             .await
@@ -117,6 +122,9 @@ impl NexusClient {
         if let Some(ref token) = self.auth_token {
             req = req.header("Authorization", format!("Bearer {}", token));
         }
+        if let Some(ref id) = self.agent_id {
+            req = req.header("x-hex-agent-id", id.as_str());
+        }
         let resp = req
             .send()
             .await
@@ -137,6 +145,9 @@ impl NexusClient {
         let mut req = self.http.delete(&url);
         if let Some(ref token) = self.auth_token {
             req = req.header("Authorization", format!("Bearer {}", token));
+        }
+        if let Some(ref id) = self.agent_id {
+            req = req.header("x-hex-agent-id", id.as_str());
         }
         let resp = req
             .send()
@@ -172,5 +183,20 @@ fn read_persisted_token() -> Option<String> {
     std::fs::read_to_string(path)
         .ok()
         .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Read the agent ID from the current session's state file.
+/// Used to inject `X-Hex-Agent-Id` header for agent-guarded endpoints.
+fn read_session_agent_id() -> Option<String> {
+    let session_id = std::env::var("CLAUDE_SESSION_ID").ok()?;
+    let path = dirs::home_dir()?
+        .join(".hex/sessions")
+        .join(format!("agent-{}.json", session_id));
+    let content = std::fs::read_to_string(path).ok()?;
+    let val: Value = serde_json::from_str(&content).ok()?;
+    val["agentId"]
+        .as_str()
+        .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
 }

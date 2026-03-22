@@ -67,6 +67,7 @@ hex interfaces with external inference through SpacetimeDB procedures and reduce
 
 ## Behavioral Rules
 
+- **Workplans are autonomous**: When executing a workplan, complete ALL phases without asking. Do not pause between phases to ask "want me to continue?" — just keep going until done. Use HexFlo swarm tracking and background agents to parallelize where possible.
 - Do what has been asked; nothing more, nothing less
 - ALWAYS read a file before editing it
 - NEVER save files to the root folder — use the directories below

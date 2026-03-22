@@ -1,0 +1,171 @@
+name: hex test pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  lint:
+    name: Lint (clippy + tsc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-lint-
+
+      - name: Clippy (workspace)
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Clippy (spacetime-modules)
+        run: cd spacetime-modules && cargo clippy --workspace -- -D warnings
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: TypeScript type check
+        run: bun run check
+
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-test-
+
+      - name: Rust workspace tests
+        run: cargo test --workspace
+
+      - name: SpacetimeDB module tests
+        run: cd spacetime-modules && cargo test --workspace
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: TypeScript tests
+        run: bun test
+
+      - name: Install dashboard deps
+        run: cd hex-nexus/assets && npm ci --ignore-scripts
+        continue-on-error: true
+
+      - name: Dashboard store tests (Vitest)
+        run: cd hex-nexus/assets && npx vitest run
+        continue-on-error: true
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [lint, unit]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnoy/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-integ-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-integ-
+
+      - name: Build hex-nexus
+        run: cargo build -p hex-nexus --release
+
+      - name: Build hex-cli
+        run: cargo build -p hex-cli --release
+
+      - name: Start hex-nexus (SQLite fallback — no SpacetimeDB in CI)
+        run: |
+          ./target/release/hex-nexus &
+          sleep 3
+        env:
+          HEX_STATE_BACKEND: sqlite
+
+      - name: Service health tests
+        run: ./target/release/hex test services
+
+      - name: Architecture checks
+        run: ./target/release/hex test arch
+        continue-on-error: true
+
+      - name: Stop hex-nexus
+        if: always()
+        run: pkill hex-nexus || true
+
+  e2e:
+    name: E2E Browser Tests
+    runs-on: ubuntu-latest
+    needs: [integration]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-e2e-
+
+      - name: Install agent-browser
+        run: npm install -g @anthropic/agent-browser
+        continue-on-error: true
+
+      - name: Build and run E2E
+        run: |
+          cargo build -p hex-nexus --release
+          cargo build -p hex-cli --release
+          chmod +x scripts/e2e-test.sh
+          ./scripts/e2e-test.sh
+        continue-on-error: true
+        env:
+          HEX_STATE_BACKEND: sqlite
+
+      - name: Upload E2E screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: tests/e2e/*.png
+          if-no-files-found: ignore

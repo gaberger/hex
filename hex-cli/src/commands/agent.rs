@@ -8,6 +8,8 @@ use serde_json::json;
 
 use crate::nexus_client::NexusClient;
 
+use std::path::PathBuf;
+
 #[derive(Subcommand)]
 pub enum AgentAction {
     /// List all agents (local + remote)
@@ -65,10 +67,20 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
 
 async fn list() -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
 
+    // Try nexus first; fall back to local session files if offline
+    match nexus.ensure_running().await {
+        Ok(()) => list_from_nexus(&nexus).await,
+        Err(_) => list_from_local_sessions().await,
+    }
+}
+
+async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
     let resp = nexus.get("/api/agents").await?;
-    let agents = resp.as_array().cloned().unwrap_or_default();
+    // Nexus returns { "agents": [...] } — unwrap the wrapper
+    let agents = resp["agents"].as_array().cloned()
+        .or_else(|| resp.as_array().cloned())
+        .unwrap_or_default();
 
     if agents.is_empty() {
         println!("{} No agents connected.", "\u{2b21}".dimmed());
@@ -88,11 +100,16 @@ async fn list() -> anyhow::Result<()> {
     println!("  {}", "\u{2500}".repeat(80).dimmed());
 
     for agent in &agents {
-        let id = agent["agentId"].as_str().unwrap_or("?");
+        // Support both camelCase (legacy) and snake_case (current API)
+        let id = agent["agentId"].as_str()
+            .or_else(|| agent["id"].as_str())
+            .unwrap_or("?");
         let id_short = if id.len() > 12 { &id[..12] } else { id };
 
         let name = agent["name"].as_str().unwrap_or("?");
-        let host = agent["host"].as_str().unwrap_or("local");
+        let host = agent["host"].as_str()
+            .or_else(|| agent["project_dir"].as_str())
+            .unwrap_or("local");
         let status = agent["status"].as_str().unwrap_or("?");
 
         let models = agent["capabilities"]["models"]
@@ -103,7 +120,7 @@ async fn list() -> anyhow::Result<()> {
                     .collect::<Vec<_>>()
                     .join(", ")
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| agent["model"].as_str().unwrap_or("").to_string());
 
         let status_colored = match status {
             "online" | "active" | "connected" | "running" => status.green().to_string(),
@@ -125,6 +142,126 @@ async fn list() -> anyhow::Result<()> {
             id_short, name_display, host, status_colored, models,
         );
     }
+
+    Ok(())
+}
+
+/// Fallback: read local session files when nexus is offline.
+/// Provides visibility into Claude Code sessions even without the daemon.
+async fn list_from_local_sessions() -> anyhow::Result<()> {
+    let sessions_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".hex/sessions");
+
+    if !sessions_dir.exists() {
+        println!("{} No agents connected.", "\u{2b21}".dimmed());
+        println!(
+            "  {} nexus is offline — no local session files found either",
+            "\u{26a0}".yellow()
+        );
+        return Ok(());
+    }
+
+    let mut sessions: Vec<serde_json::Value> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            if !name.starts_with("agent-") || !name.ends_with(".json") {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    sessions.push(val);
+                }
+            }
+        }
+    }
+
+    if sessions.is_empty() {
+        println!("{} No agents connected.", "\u{2b21}".dimmed());
+        return Ok(());
+    }
+
+    // Sort by registeredAt descending (most recent first)
+    sessions.sort_by(|a, b| {
+        let ta = a["registeredAt"].as_str().unwrap_or("");
+        let tb = b["registeredAt"].as_str().unwrap_or("");
+        tb.cmp(ta)
+    });
+
+    println!(
+        "{} Agents — {} (nexus offline, showing local sessions)",
+        "\u{2b21}".cyan(),
+        format!("{} sessions", sessions.len()).yellow(),
+    );
+    println!();
+    println!(
+        "  {:<14} {:<24} {:<12} {}",
+        "ID".bold(),
+        "SESSION".bold(),
+        "STATUS".bold(),
+        "REGISTERED".bold(),
+    );
+    println!("  {}", "\u{2500}".repeat(70).dimmed());
+
+    for session in &sessions {
+        let id = session["agentId"].as_str().unwrap_or("?");
+        let id_short = if id.len() > 12 { &id[..12] } else { id };
+
+        let session_id = session["sessionId"].as_str().unwrap_or("?");
+
+        let registered = session["registeredAt"]
+            .as_str()
+            .unwrap_or("?");
+
+        // Show a compact timestamp (strip date if today, keep time)
+        let time_display = if registered.len() >= 16 {
+            &registered[11..16] // HH:MM
+        } else {
+            registered
+        };
+
+        // Infer liveness: check if session file was modified recently (within 2 min)
+        let status = {
+            let session_file = sessions_dir.join(format!(
+                "agent-{}.json",
+                session_id
+            ));
+            match std::fs::metadata(&session_file) {
+                Ok(meta) => {
+                    if let Ok(modified) = meta.modified() {
+                        let age = std::time::SystemTime::now()
+                            .duration_since(modified)
+                            .unwrap_or_default();
+                        if age.as_secs() < 120 {
+                            "recent".green().to_string()
+                        } else if age.as_secs() < 3600 {
+                            "stale".yellow().to_string()
+                        } else {
+                            "old".dimmed().to_string()
+                        }
+                    } else {
+                        "unknown".dimmed().to_string()
+                    }
+                }
+                Err(_) => "unknown".dimmed().to_string(),
+            }
+        };
+
+        println!(
+            "  {:<14} {:<24} {:<21} {}",
+            id_short, session_id, status, time_display,
+        );
+    }
+
+    println!();
+    println!(
+        "  {} Start nexus for live agent tracking: {}",
+        "\u{2139}\u{fe0f}".dimmed(),
+        "hex nexus start".bold()
+    );
 
     Ok(())
 }

@@ -318,3 +318,95 @@ pub async fn run(action: ReadmeAction) -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn parse_adr_summaries_extracts_title_and_status() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("ADR-001-test.md"), "# ADR-001: Test Decision\n\n**Status:** Accepted\n").unwrap();
+        fs::write(dir.path().join("ADR-002-another.md"), "# ADR-002: Another One\n\n**Status:** Proposed\n").unwrap();
+
+        let summaries = parse_adr_summaries(dir.path()).unwrap();
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].number, "001");
+        assert_eq!(summaries[0].title, "Test Decision");
+        assert!(summaries[0].status.contains("Accepted"));
+        assert_eq!(summaries[1].number, "002");
+        assert!(summaries[1].status.contains("Proposed"));
+    }
+
+    #[test]
+    fn parse_adr_summaries_handles_missing_status() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("ADR-010-no-status.md"), "# ADR-010: No Status Line\n\nJust content.\n").unwrap();
+
+        let summaries = parse_adr_summaries(dir.path()).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].status, "Unknown");
+    }
+
+    #[test]
+    fn parse_adr_summaries_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let summaries = parse_adr_summaries(dir.path()).unwrap();
+        assert!(summaries.is_empty());
+    }
+
+    #[test]
+    fn sync_adr_section_replaces_between_sentinels() {
+        let dir = tempfile::tempdir().unwrap();
+        let readme = dir.path().join("README.md");
+        let adr_dir = dir.path().join("adrs");
+        fs::create_dir(&adr_dir).unwrap();
+
+        fs::write(&readme, "# Project\n\n<!-- hex:adr-summary — auto-updated by hex -->\nOLD CONTENT\n<!-- /hex:adr-summary -->\n\nFooter\n").unwrap();
+        fs::write(adr_dir.join("ADR-001-foo.md"), "# ADR-001: Foo\n\n**Status:** Accepted\n").unwrap();
+
+        let updated = sync_adr_section(&readme, &adr_dir).unwrap();
+        assert!(updated);
+
+        let content = fs::read_to_string(&readme).unwrap();
+        assert!(content.contains("| 001 | Foo | Accepted |"));
+        assert!(!content.contains("OLD CONTENT"));
+        assert!(content.contains("Footer"));
+    }
+
+    #[test]
+    fn sync_adr_section_appends_when_no_sentinels() {
+        let dir = tempfile::tempdir().unwrap();
+        let readme = dir.path().join("README.md");
+        let adr_dir = dir.path().join("adrs");
+        fs::create_dir(&adr_dir).unwrap();
+
+        fs::write(&readme, "# Project\n\nSome content.\n").unwrap();
+        fs::write(adr_dir.join("ADR-001-bar.md"), "# ADR-001: Bar\n\n**Status:** Proposed\n").unwrap();
+
+        let updated = sync_adr_section(&readme, &adr_dir).unwrap();
+        assert!(updated);
+
+        let content = fs::read_to_string(&readme).unwrap();
+        assert!(content.contains("hex:adr-summary"));
+        assert!(content.contains("| 001 | Bar | Proposed |"));
+    }
+
+    #[test]
+    fn generate_readme_includes_language_specific_commands() {
+        let iv = super::super::interview::ProjectInterview {
+            name: "test-proj".to_string(),
+            description: "A test project".to_string(),
+            language: super::super::interview::ProjectLanguage::Rust,
+            project_type: super::super::interview::ProjectType::Cli,
+            constraints: vec!["Must be fast".to_string()],
+            dependencies: vec![],
+        };
+        let readme = generate_readme(&iv);
+        assert!(readme.contains("cargo build"));
+        assert!(readme.contains("test-proj"));
+        assert!(readme.contains("Must be fast"));
+        assert!(readme.contains("hex:adr-summary"));
+    }
+}

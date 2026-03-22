@@ -1,13 +1,14 @@
 //! `hex test` — Full-stack integration testing from the CLI.
 //!
 //! Runs unit tests, architecture checks, service health, API integration,
-//! and swarm coordination tests — all from a single command.
+//! swarm coordination tests, and E2E browser tests — all from a single command.
 //!
 //! Usage:
 //!   hex test              # Full stack (requires running nexus)
 //!   hex test --unit       # Unit tests only
 //!   hex test --arch       # Architecture checks only
 //!   hex test --services   # Service health checks only
+//!   hex test --e2e        # E2E browser tests via agent-browser
 //!   hex test --all        # Everything including service startup
 
 use std::process::Command;
@@ -27,8 +28,14 @@ pub enum TestAction {
     Services,
     /// Test self-hosted inference providers (Ollama, vLLM)
     Inference,
+    /// Run all linters (clippy + tsc)
+    Lint,
     /// Run full integration tests (unit + arch + services + inference + swarm)
     All,
+    /// Run E2E browser tests via agent-browser (requires running nexus)
+    E2e,
+    /// Run everything including E2E
+    Full,
 }
 
 struct TestResults {
@@ -100,8 +107,13 @@ pub async fn run(action: TestAction) -> anyhow::Result<()> {
         TestAction::Inference => {
             run_inference_tests(&mut results).await;
         }
+        TestAction::Lint => {
+            run_lint_checks(&mut results);
+        }
         TestAction::All => {
             run_unit_tests(&mut results);
+            println!();
+            run_lint_checks(&mut results);
             println!();
             run_arch_checks(&mut results).await;
             println!();
@@ -110,6 +122,24 @@ pub async fn run(action: TestAction) -> anyhow::Result<()> {
             run_inference_tests(&mut results).await;
             println!();
             run_integration_tests(&mut results, services_ok).await;
+        }
+        TestAction::E2e => {
+            run_e2e_tests(&mut results).await;
+        }
+        TestAction::Full => {
+            run_unit_tests(&mut results);
+            println!();
+            run_lint_checks(&mut results);
+            println!();
+            run_arch_checks(&mut results).await;
+            println!();
+            let services_ok = run_service_tests(&mut results).await;
+            println!();
+            run_inference_tests(&mut results).await;
+            println!();
+            run_integration_tests(&mut results, services_ok).await;
+            println!();
+            run_e2e_tests(&mut results).await;
         }
     }
 
@@ -141,6 +171,11 @@ fn run_unit_tests(r: &mut TestResults) {
         let ok = cargo_check(crate_name);
         r.check(&format!("{} compiles", crate_name), ok);
     }
+
+    // Dashboard store tests (Vitest)
+    println!();
+    println!("{}", "── Dashboard Tests ──".cyan());
+    run_dashboard_tests(r);
 
     // SpacetimeDB modules (different workspace)
     println!();
@@ -388,9 +423,19 @@ async fn run_integration_tests(r: &mut TestResults, services_ok: bool) {
         .build()
         .unwrap();
 
+    // Register a test agent so guarded endpoints accept our requests
+    let agent_id = register_test_agent(&http, &base).await;
+    let agent_header = agent_id.as_deref().unwrap_or("");
+    if agent_id.is_none() {
+        r.skip("Test agent registration (connect endpoint failed)");
+    } else {
+        r.check("Test agent registration", true);
+    }
+
     // Swarm lifecycle: create → status → complete
     let swarm_resp = http
         .post(format!("{}/api/swarms", base))
+        .header("x-hex-agent-id", agent_header)
         .json(&serde_json::json!({ "name": "hex-test-swarm", "topology": "mesh" }))
         .send()
         .await;
@@ -412,9 +457,10 @@ async fn run_integration_tests(r: &mut TestResults, services_ok: bool) {
     }
     r.check("Create swarm via API", true);
 
+    let mut swarm_id: Option<String> = None;
     if swarm_ok {
         // Try to parse swarm ID from response
-        let swarm_id = swarm_resp
+        swarm_id = swarm_resp
             .unwrap()
             .json::<serde_json::Value>()
             .await
@@ -454,6 +500,7 @@ async fn run_integration_tests(r: &mut TestResults, services_ok: bool) {
     // HexFlo memory: store → retrieve → search
     let store_ok = http
         .post(format!("{}/api/hexflo/memory", base))
+        .header("x-hex-agent-id", agent_header)
         .json(&serde_json::json!({ "key": "hex-test-key", "value": "hex-test-value" }))
         .send()
         .await
@@ -479,6 +526,198 @@ async fn run_integration_tests(r: &mut TestResults, services_ok: bool) {
     } else {
         r.skip("HexFlo memory retrieve (store failed)");
         r.skip("HexFlo memory search (store failed)");
+    }
+
+    // ── Teardown: clean up test state ────────────────────
+    // Complete the test swarm so it doesn't pollute SpacetimeDB
+    if let Some(ref id) = swarm_id {
+        let _ = http
+            .patch(format!("{}/api/swarms/{}", base, id))
+            .header("x-hex-agent-id", agent_header)
+            .send()
+            .await;
+    }
+
+    // Deregister the test agent
+    if let Some(ref id) = agent_id {
+        let _ = http
+            .delete(format!("{}/api/agents/{}", base, id))
+            .header("x-hex-agent-id", agent_header)
+            .send()
+            .await;
+    }
+}
+
+// ── Agent Guard Helpers ─────────────────────────────
+
+/// Register a temporary test agent and return its ID.
+async fn register_test_agent(http: &reqwest::Client, base: &str) -> Option<String> {
+    let resp = http
+        .post(format!("{}/api/agents/connect", base))
+        .json(&serde_json::json!({
+            "host": "hex-test",
+            "name": "hex-test-agent",
+            "project_dir": "/tmp/hex-test",
+            "model": "test",
+            "session_id": format!("test-{}", std::process::id()),
+        }))
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    let body: serde_json::Value = resp.json().await.ok()?;
+    body["agentId"].as_str().map(|s| s.to_string())
+}
+
+// ── Lint Checks ────────────────────────────────────
+
+fn run_lint_checks(r: &mut TestResults) {
+    println!("{}", "── Lint ──".cyan());
+
+    // Rust workspace clippy
+    let clippy_ok = Command::new("cargo")
+        .args(["clippy", "--workspace", "--", "-D", "warnings"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    r.check("cargo clippy (workspace)", clippy_ok);
+
+    // SpacetimeDB modules clippy
+    let stdb_clippy_ok = Command::new("cargo")
+        .args(["clippy", "--workspace", "--", "-D", "warnings"])
+        .current_dir("spacetime-modules")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    r.check("cargo clippy (spacetime-modules)", stdb_clippy_ok);
+
+    // TypeScript type check (if bun available)
+    let tsc_ok = Command::new("bun")
+        .args(["run", "check"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if tsc_ok {
+        r.check("bun run check (TypeScript)", true);
+    } else {
+        // bun may not be installed — skip rather than fail
+        let bun_exists = Command::new("bun").arg("--version").output().is_ok();
+        if bun_exists {
+            r.check("bun run check (TypeScript)", false);
+        } else {
+            r.skip("bun run check (bun not installed)");
+        }
+    }
+}
+
+// ── E2E Browser Tests ──────────────────────────────
+
+async fn run_e2e_tests(r: &mut TestResults) {
+    println!("{}", "── E2E Browser Tests ──".cyan());
+
+    // Check agent-browser is installed
+    let ab_installed = Command::new("agent-browser")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !ab_installed {
+        r.skip("agent-browser not installed (npm i -g @anthropic/agent-browser)");
+        return;
+    }
+
+    // Check nexus is running
+    let client = NexusClient::from_env();
+    if client.ensure_running().await.is_err() {
+        r.skip("E2E tests require running nexus (hex nexus start)");
+        return;
+    }
+
+    let base = nexus_base_url();
+
+    // Open dashboard
+    let open_ok = Command::new("agent-browser")
+        .args(["open", &base])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    r.check("Dashboard loads in browser", open_ok);
+
+    if !open_ok {
+        r.skip("Snapshot (browser not open)");
+        r.skip("Screenshot (browser not open)");
+        let _ = Command::new("agent-browser").arg("close").output();
+        return;
+    }
+
+    // Wait for SPA to render
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    // Take accessibility snapshot
+    let snapshot = Command::new("agent-browser")
+        .args(["snapshot", "-i"])
+        .output();
+
+    let snapshot_ok = snapshot
+        .as_ref()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false);
+    r.check("Accessibility snapshot captured", snapshot_ok);
+
+    if snapshot_ok {
+        let snapshot_output = snapshot.unwrap();
+        let stdout = String::from_utf8_lossy(&snapshot_output.stdout);
+        // Verify key dashboard elements exist in snapshot
+        let has_nav = stdout.contains("nav")
+            || stdout.contains("sidebar")
+            || stdout.contains("menu");
+        r.check("Dashboard navigation elements present", has_nav);
+    }
+
+    // Take screenshot for visual evidence
+    let screenshot_dir = std::path::Path::new("tests/e2e");
+    let _ = std::fs::create_dir_all(screenshot_dir);
+    let screenshot_ok = Command::new("agent-browser")
+        .args(["screenshot", "tests/e2e/dashboard.png"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    r.check("Screenshot saved to tests/e2e/dashboard.png", screenshot_ok);
+
+    // Cleanup
+    let _ = Command::new("agent-browser").arg("close").output();
+}
+
+// ── Dashboard Tests ─────────────────────────────────
+
+fn run_dashboard_tests(r: &mut TestResults) {
+    let assets_dir = std::path::Path::new("hex-nexus/assets");
+    if !assets_dir.join("package.json").exists() {
+        r.skip("Dashboard tests (no package.json)");
+        return;
+    }
+
+    let ok = Command::new("npx")
+        .args(["vitest", "run", "--reporter=verbose"])
+        .current_dir("hex-nexus/assets")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if ok {
+        r.check("Dashboard store tests pass", true);
+    } else {
+        let has_vitest = assets_dir.join("node_modules/.bin/vitest").exists();
+        if has_vitest {
+            r.check("Dashboard store tests pass", false);
+        } else {
+            r.skip("Dashboard tests (run npm install in hex-nexus/assets)");
+        }
     }
 }
 
