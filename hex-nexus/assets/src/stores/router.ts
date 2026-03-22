@@ -1,152 +1,230 @@
-import { createSignal, createMemo, createEffect } from "solid-js";
+/**
+ * router.ts — Project-centric hash routing (ADR-052, ADR-056).
+ *
+ * Every page has a unique URL via hash routing. Browser back/forward works.
+ * Project is THE root entity — all views are scoped under a project.
+ * Global views (inference, fleet) aggregate across projects.
+ */
+import { createSignal, createMemo } from "solid-js";
 import { projects } from "./projects";
 
+// ── Route types ─────────────────────────────────────────────────────────────
+
 export type Route =
+  // Global
   | { page: "control-plane" }
+  | { page: "inference" }
+  | { page: "fleet" }
+  // Project-scoped
   | { page: "project"; projectId: string }
-  | { page: "project-chat"; projectId: string; sessionId?: string }
-  | { page: "project-adr"; projectId: string; adrId: string }
+  | { page: "project-agents"; projectId: string }
+  | { page: "project-agent-detail"; projectId: string; agentId: string }
+  | { page: "project-swarms"; projectId: string }
+  | { page: "project-swarm-detail"; projectId: string; swarmId: string }
+  | { page: "project-swarm-task"; projectId: string; swarmId: string; taskId: string }
+  | { page: "project-adrs"; projectId: string }
+  | { page: "project-adr-detail"; projectId: string; adrId: string }
+  | { page: "project-workplans"; projectId: string }
+  | { page: "project-workplan-detail"; projectId: string; workplanId: string }
   | { page: "project-health"; projectId: string }
   | { page: "project-graph"; projectId: string }
-  | { page: "agent-fleet" }
-  | { page: "config"; section: string; projectId?: string }
-  | { page: "adrs"; projectId?: string }
-  | { page: "inference" }
-  | { page: "fleet-nodes" }
-  | { page: "file-viewer"; filePath: string; projectId?: string }
-  | { page: "file-tree"; projectId?: string }
-  | { page: "workplans" };
+  | { page: "project-files"; projectId: string }
+  | { page: "project-file"; projectId: string; filePath: string }
+  | { page: "project-chat"; projectId: string; sessionId?: string }
+  | { page: "project-config"; projectId: string; section: string };
+
+// ── State ───────────────────────────────────────────────────────────────────
 
 const [route, setRoute] = createSignal<Route>({ page: "control-plane" });
 export { route };
 
-/** Active project — persists across route changes. Set when navigating to any project-scoped page. */
-const [activeProjectId, setActiveProjectId] = createSignal<string>("");
-export { activeProjectId, setActiveProjectId };
+/** Active project — derived from route. */
+export const activeProjectId = createMemo(() => {
+  const r = route();
+  return (r as any).projectId ?? "";
+});
+
+// ── Breadcrumbs ─────────────────────────────────────────────────────────────
 
 export interface Breadcrumb {
   label: string;
-  icon: string; // lucide icon name
-  route?: Route; // if clickable
+  icon: string;
+  route?: Route;
+}
+
+function projectName(pid: string): string {
+  return (projects().find((p) => p.id === pid)?.name ?? pid) || "Project";
 }
 
 export const breadcrumbs = createMemo<Breadcrumb[]>(() => {
   const r = route();
   const crumbs: Breadcrumb[] = [
-    {
-      label: "Control Plane",
-      icon: "hexagon",
-      route: { page: "control-plane" },
-    },
+    { label: "Control Plane", icon: "hexagon", route: { page: "control-plane" } },
   ];
 
   if (r.page === "control-plane") return crumbs;
 
-  if (r.page.startsWith("project")) {
-    const pid = (r as Extract<Route, { projectId: string }>).projectId ?? "";
-    const projectName = (projects().find((p) => p.id === pid)?.name ?? pid) || "Project";
-    crumbs.push({
-      label: projectName,
-      icon: "folder",
-      route: { page: "project", projectId: pid },
-    });
+  // Global pages
+  if (r.page === "inference") {
+    crumbs.push({ label: "Inference", icon: "server" });
+    return crumbs;
+  }
+  if (r.page === "fleet") {
+    crumbs.push({ label: "Fleet Nodes", icon: "monitor" });
+    return crumbs;
+  }
 
-    if (r.page === "project-chat") {
-      const sessionId = (r as Extract<Route, { page: "project-chat" }>)
-        .sessionId;
-      crumbs.push({ label: sessionId || "Chat", icon: "message-square" });
-    } else if (r.page === "project-adr") {
-      const adrId = (r as Extract<Route, { page: "project-adr" }>).adrId;
-      crumbs.push({ label: `ADR-${adrId}`, icon: "file-text" });
-    } else if (r.page === "project-health") {
+  // All remaining pages are project-scoped
+  const pid = (r as any).projectId as string;
+  if (!pid) return crumbs;
+
+  crumbs.push({
+    label: projectName(pid),
+    icon: "folder",
+    route: { page: "project", projectId: pid },
+  });
+
+  switch (r.page) {
+    case "project":
+      break;
+
+    case "project-agents":
+      crumbs.push({ label: "Agents", icon: "bot", route: { page: "project-agents", projectId: pid } });
+      break;
+
+    case "project-agent-detail":
+      crumbs.push({ label: "Agents", icon: "bot", route: { page: "project-agents", projectId: pid } });
+      crumbs.push({ label: r.agentId, icon: "bot" });
+      break;
+
+    case "project-swarms":
+      crumbs.push({ label: "Swarms", icon: "zap", route: { page: "project-swarms", projectId: pid } });
+      break;
+
+    case "project-swarm-detail":
+      crumbs.push({ label: "Swarms", icon: "zap", route: { page: "project-swarms", projectId: pid } });
+      crumbs.push({ label: r.swarmId, icon: "zap" });
+      break;
+
+    case "project-swarm-task":
+      crumbs.push({ label: "Swarms", icon: "zap", route: { page: "project-swarms", projectId: pid } });
+      crumbs.push({ label: r.swarmId, icon: "zap", route: { page: "project-swarm-detail", projectId: pid, swarmId: r.swarmId } });
+      crumbs.push({ label: `Task ${r.taskId}`, icon: "check-square" });
+      break;
+
+    case "project-adrs":
+      crumbs.push({ label: "ADRs", icon: "file-text", route: { page: "project-adrs", projectId: pid } });
+      break;
+
+    case "project-adr-detail":
+      crumbs.push({ label: "ADRs", icon: "file-text", route: { page: "project-adrs", projectId: pid } });
+      crumbs.push({ label: `ADR-${r.adrId}`, icon: "file-text" });
+      break;
+
+    case "project-workplans":
+      crumbs.push({ label: "WorkPlans", icon: "clipboard-list", route: { page: "project-workplans", projectId: pid } });
+      break;
+
+    case "project-workplan-detail":
+      crumbs.push({ label: "WorkPlans", icon: "clipboard-list", route: { page: "project-workplans", projectId: pid } });
+      crumbs.push({ label: r.workplanId, icon: "clipboard-list" });
+      break;
+
+    case "project-health":
       crumbs.push({ label: "Health", icon: "activity" });
-    } else if (r.page === "project-graph") {
+      break;
+
+    case "project-graph":
       crumbs.push({ label: "Dependencies", icon: "share-2" });
+      break;
+
+    case "project-files":
+      crumbs.push({ label: "Files", icon: "folder" });
+      break;
+
+    case "project-file": {
+      crumbs.push({ label: "Files", icon: "folder", route: { page: "project-files", projectId: pid } });
+      const filename = r.filePath.split("/").pop() || r.filePath;
+      crumbs.push({ label: filename, icon: "file" });
+      break;
     }
-  } else if (r.page === "agent-fleet") {
-    crumbs.push({ label: "Agent Fleet", icon: "bot" });
-  } else if (r.page === "config") {
-    const configPid = (r as any).projectId;
-    if (configPid) {
-      const configProjectName = projects().find((p) => p.id === configPid)?.name ?? configPid;
-      crumbs.push({ label: configProjectName, icon: "folder", route: { page: "project", projectId: configPid } });
-    }
-    crumbs.push({
-      label: "Configuration",
-      icon: "settings",
-      route: { page: "config", section: "blueprint", projectId: configPid },
-    });
-    const section = (r as Extract<Route, { page: "config" }>).section;
-    if (section && section !== "blueprint") {
-      const labels: Record<string, string> = {
-        blueprint: "Architecture Blueprint",
+
+    case "project-chat":
+      crumbs.push({ label: r.sessionId || "Chat", icon: "message-square" });
+      break;
+
+    case "project-config": {
+      const sectionLabels: Record<string, string> = {
+        blueprint: "Blueprint",
         tools: "MCP Tools",
         hooks: "Hooks",
         skills: "Skills",
-        context: "Context (CLAUDE.md)",
+        context: "Context",
         agents: "Agent Definitions",
         spacetimedb: "SpacetimeDB",
       };
-      crumbs.push({ label: labels[section] || section, icon: "settings" });
+      crumbs.push({ label: "Config", icon: "settings", route: { page: "project-config", projectId: pid, section: "blueprint" } });
+      if (r.section !== "blueprint") {
+        crumbs.push({ label: sectionLabels[r.section] || r.section, icon: "settings" });
+      }
+      break;
     }
-  } else if (r.page === "adrs") {
-    crumbs.push({ label: "ADRs", icon: "file-text" });
-  } else if (r.page === "inference") {
-    crumbs.push({ label: "Inference", icon: "server" });
-  } else if (r.page === "fleet-nodes") {
-    crumbs.push({ label: "Fleet Nodes", icon: "monitor" });
-  } else if (r.page === "workplans") {
-    crumbs.push({ label: "Workplans", icon: "clipboard-list" });
-  } else if (r.page === "file-tree") {
-    crumbs.push({ label: "Files", icon: "folder" });
-  } else if (r.page === "file-viewer") {
-    const fp = (r as Extract<Route, { page: "file-viewer" }>).filePath ?? "";
-    const filename = fp.split("/").pop() || fp;
-    crumbs.push({ label: filename, icon: "file-text" });
   }
 
   return crumbs;
 });
 
+// ── Navigation ──────────────────────────────────────────────────────────────
+
 export function navigate(newRoute: Route) {
   setRoute(newRoute);
-  // Track active project across route changes
-  const pid = (newRoute as any).projectId;
-  if (pid) setActiveProjectId(pid);
-  const hash = routeToHash(newRoute);
-  window.location.hash = hash;
+  window.location.hash = routeToHash(newRoute);
 }
+
+// ── Hash ↔ Route conversion ─────────────────────────────────────────────────
 
 function routeToHash(r: Route): string {
   switch (r.page) {
     case "control-plane":
       return "#/";
+    case "inference":
+      return "#/inference";
+    case "fleet":
+      return "#/fleet";
     case "project":
       return `#/project/${r.projectId}`;
-    case "project-chat":
-      return `#/project/${r.projectId}/chat`;
-    case "project-adr":
-      return `#/project/${r.projectId}/adr/${r.adrId}`;
+    case "project-agents":
+      return `#/project/${r.projectId}/agents`;
+    case "project-agent-detail":
+      return `#/project/${r.projectId}/agents/${r.agentId}`;
+    case "project-swarms":
+      return `#/project/${r.projectId}/swarms`;
+    case "project-swarm-detail":
+      return `#/project/${r.projectId}/swarms/${r.swarmId}`;
+    case "project-swarm-task":
+      return `#/project/${r.projectId}/swarms/${r.swarmId}/tasks/${r.taskId}`;
+    case "project-adrs":
+      return `#/project/${r.projectId}/adrs`;
+    case "project-adr-detail":
+      return `#/project/${r.projectId}/adrs/${r.adrId}`;
+    case "project-workplans":
+      return `#/project/${r.projectId}/workplans`;
+    case "project-workplan-detail":
+      return `#/project/${r.projectId}/workplans/${r.workplanId}`;
     case "project-health":
       return `#/project/${r.projectId}/health`;
     case "project-graph":
       return `#/project/${r.projectId}/graph`;
-    case "adrs":
-      return r.projectId ? `#/project/${r.projectId}/adrs` : "#/adrs";
-    case "agent-fleet":
-      return "#/agents";
-    case "config":
-      return r.projectId ? `#/project/${r.projectId}/config/${r.section}` : `#/config/${r.section}`;
-    case "inference":
-      return "#/inference";
-    case "fleet-nodes":
-      return "#/fleet";
-    case "file-tree":
-      return "#/files";
-    case "workplans":
-      return "#/workplans";
-    case "file-viewer":
-      return `#/file/${encodeURIComponent(r.filePath)}`;
+    case "project-files":
+      return `#/project/${r.projectId}/files`;
+    case "project-file":
+      return `#/project/${r.projectId}/files/${encodeURIComponent(r.filePath)}`;
+    case "project-chat":
+      return r.sessionId
+        ? `#/project/${r.projectId}/chat/${r.sessionId}`
+        : `#/project/${r.projectId}/chat`;
+    case "project-config":
+      return `#/project/${r.projectId}/config/${r.section}`;
     default:
       return "#/";
   }
@@ -156,49 +234,72 @@ function hashToRoute(hash: string): Route {
   const path = hash.replace("#", "") || "/";
   const parts = path.split("/").filter(Boolean);
 
+  // Global routes
+  if (parts[0] === "inference") return { page: "inference" };
+  if (parts[0] === "fleet") return { page: "fleet" };
+
+  // Project-scoped routes: /project/:id/...
   if (parts[0] === "project" && parts[1]) {
     const projectId = decodeURIComponent(parts[1]);
-    if (parts[2] === "chat")
-      return { page: "project-chat", projectId };
-    if (parts[2] === "adrs")
-      return { page: "adrs", projectId };
-    if (parts[2] === "adr" && parts[3])
-      return { page: "project-adr", projectId, adrId: decodeURIComponent(parts[3]) };
-    if (parts[2] === "health")
-      return { page: "project-health", projectId };
-    if (parts[2] === "graph")
-      return { page: "project-graph", projectId };
-    if (parts[2] === "config")
-      return { page: "config", section: parts[3] || "blueprint", projectId };
-    return { page: "project", projectId };
+    const sub = parts[2];
+
+    if (!sub) return { page: "project", projectId };
+
+    switch (sub) {
+      case "agents":
+        if (parts[3]) return { page: "project-agent-detail", projectId, agentId: decodeURIComponent(parts[3]) };
+        return { page: "project-agents", projectId };
+
+      case "swarms":
+        if (parts[3] && parts[4] === "tasks" && parts[5]) {
+          return { page: "project-swarm-task", projectId, swarmId: decodeURIComponent(parts[3]), taskId: decodeURIComponent(parts[5]) };
+        }
+        if (parts[3]) return { page: "project-swarm-detail", projectId, swarmId: decodeURIComponent(parts[3]) };
+        return { page: "project-swarms", projectId };
+
+      case "adrs":
+        if (parts[3]) return { page: "project-adr-detail", projectId, adrId: decodeURIComponent(parts[3]) };
+        return { page: "project-adrs", projectId };
+
+      case "workplans":
+        if (parts[3]) return { page: "project-workplan-detail", projectId, workplanId: decodeURIComponent(parts[3]) };
+        return { page: "project-workplans", projectId };
+
+      case "health":
+        return { page: "project-health", projectId };
+
+      case "graph":
+        return { page: "project-graph", projectId };
+
+      case "files":
+        if (parts[3]) {
+          const filePath = decodeURIComponent(parts.slice(3).join("/"));
+          return { page: "project-file", projectId, filePath };
+        }
+        return { page: "project-files", projectId };
+
+      case "chat":
+        return { page: "project-chat", projectId, sessionId: parts[3] };
+
+      case "config":
+        return { page: "project-config", projectId, section: parts[3] || "blueprint" };
+
+      default:
+        return { page: "project", projectId };
+    }
   }
-  if (parts[0] === "adrs") return { page: "adrs" };
-  if (parts[0] === "files") return { page: "file-tree" };
-  if (parts[0] === "file" && parts[1]) {
-    const filePath = decodeURIComponent(parts.slice(1).join("/"));
-    return { page: "file-viewer", filePath };
-  }
-  if (parts[0] === "agents") return { page: "agent-fleet" };
-  if (parts[0] === "config")
-    return { page: "config", section: parts[1] || "blueprint" };
-  if (parts[0] === "inference") return { page: "inference" };
-  if (parts[0] === "fleet") return { page: "fleet-nodes" };
-  if (parts[0] === "workplans") return { page: "workplans" };
 
   return { page: "control-plane" };
 }
+
+// ── Initialization ──────────────────────────────────────────────────────────
 
 /** Initialize router — call once at app startup */
 export function initRouter() {
   const initial = hashToRoute(window.location.hash);
   setRoute(initial);
-  const pid = (initial as any).projectId;
-  if (pid) setActiveProjectId(pid);
 
   window.addEventListener("hashchange", () => {
-    const r = hashToRoute(window.location.hash);
-    setRoute(r);
-    const p = (r as any).projectId;
-    if (p) setActiveProjectId(p);
+    setRoute(hashToRoute(window.location.hash));
   });
 }

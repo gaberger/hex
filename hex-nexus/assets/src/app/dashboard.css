@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+/* ── Tailwind v4 theme tokens (generates utility classes) ──── */
+@theme {
+  --color-hex-domain:     #58a6ff;
+  --color-hex-ports:      #bc8cff;
+  --color-hex-usecases:   #3fb950;
+  --color-hex-primary:    #f0883e;
+  --color-hex-secondary:  #d29922;
+
+  --color-status-active:  #3fb950;
+  --color-status-progress:#58a6ff;
+  --color-status-warning: #d29922;
+  --color-status-error:   #f85149;
+  --color-status-idle:    #8b949e;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Hex Nexus — Unified Theme System
    Dark mode default. Light mode via [data-theme="light"].
