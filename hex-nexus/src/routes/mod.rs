@@ -1,6 +1,7 @@
 pub mod adrs;
 pub mod agents;
 pub mod files;
+pub mod stdb;
 pub mod analysis;
 pub mod chat;
 pub mod commands;
@@ -185,6 +186,11 @@ pub fn build_router(state: SharedState) -> Router {
         // These routes add X-Deprecated headers via deprecation_layer.
         // Will be gated behind `--legacy` flag in a future release.
         // ═══════════════════════════════════════════════════════════
+
+        // SpacetimeDB hydration + health
+        .route("/api/stdb/hydrate", post(stdb::hydrate)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/stdb/health", get(stdb::health))
 
         // Swarm persistence (WRITE routes kept — they call SpacetimeDB reducers)
         .route("/api/swarms", post(swarms::create_swarm)
