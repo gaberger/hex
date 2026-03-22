@@ -27,6 +27,10 @@ struct SessionState {
     name: String,
     project: String,
     registered_at: String,
+    /// PID of the parent `claude` process — used by the statusline to match
+    /// this session file to the correct Claude instance.
+    #[serde(default)]
+    claude_pid: Option<u32>,
     #[serde(default)]
     workplan_id: Option<String>,
     #[serde(default)]
@@ -121,6 +125,8 @@ pub enum HookEvent {
     PreBash,
     /// User submitted a prompt — route/classify
     Route,
+    /// Before an Agent tool call — enforce HEXFLO_TASK for background agents
+    PreAgent,
     /// Subagent spawned — auto-assign task if HEXFLO_TASK in prompt
     SubagentStart,
     /// Subagent completed — auto-complete task
@@ -138,6 +144,7 @@ pub async fn run(event: HookEvent) -> Result<()> {
         HookEvent::PreEdit => pre_edit(&project_dir).await,
         HookEvent::PostEdit => post_edit(&project_dir).await,
         HookEvent::PreBash => pre_bash().await,
+        HookEvent::PreAgent => pre_agent().await,
         HookEvent::Route => route(&project_dir).await,
         HookEvent::SubagentStart => subagent_start().await,
         HookEvent::SubagentStop => subagent_stop().await,
@@ -250,11 +257,15 @@ async fn register_session_agent(project_dir: &PathBuf, project_name: &str) -> Re
 
     if !agent_id.is_empty() {
         let now = chrono::Utc::now().to_rfc3339();
+        // Walk PPID chain to find the `claude` process — our immediate parent
+        // may be a transient shell spawned by Claude Code to run hooks.
+        let claude_pid = find_ancestor_claude_pid();
         let state = SessionState {
             agent_id: agent_id.to_string(),
             name: agent_name.clone(),
             project: project_name.to_string(),
             registered_at: now.clone(),
+            claude_pid,
             last_heartbeat: Some(now),
             edits: 0,
             workplan_id: None,
@@ -271,8 +282,12 @@ async fn register_session_agent(project_dir: &PathBuf, project_name: &str) -> Re
 }
 
 /// SubagentStart — read stdin for HEXFLO_TASK:{uuid}, auto-assign the task.
+/// ADR-2603221939 P2: Hardened with heartbeat, lazy connect, and ownership validation.
 async fn subagent_start() -> Result<()> {
     let stdin = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
+
+    // P2.3: Send heartbeat so parent agent doesn't go stale during subagent work
+    let _ = send_heartbeat().await;
 
     // Look for HEXFLO_TASK:{uuid} pattern in the subagent prompt
     let task_id = extract_hexflo_task(&stdin);
@@ -282,10 +297,29 @@ async fn subagent_start() -> Result<()> {
     let task_id = task_id.unwrap();
 
     // Resolve agent_id from session state
-    let state = match SessionState::load() {
+    let mut state = match SessionState::load() {
         Some(s) => s,
         None => return Ok(()),
     };
+
+    // P2.2: Lazy agent connect if session has no agent_id yet
+    if state.agent_id.is_empty() {
+        if let Ok(client) = nexus_client(2) {
+            let project_dir = std::env::var("CLAUDE_PROJECT_DIR").unwrap_or_default();
+            let body = serde_json::json!({
+                "name": format!("agent-{}", std::env::var("CLAUDE_SESSION_ID").unwrap_or_default()),
+                "project_dir": project_dir,
+            });
+            if let Ok(resp) = client.post(nexus_url("/api/hex-agents/connect")).json(&body).send().await {
+                if let Ok(data) = resp.json::<serde_json::Value>().await {
+                    if let Some(id) = data["agent_id"].as_str() {
+                        state.agent_id = id.to_string();
+                        let _ = state.save();
+                    }
+                }
+            }
+        }
+    }
 
     // Assign the task via nexus REST API
     let client = nexus_client(2)?;
@@ -297,7 +331,6 @@ async fn subagent_start() -> Result<()> {
         .await;
 
     // Track the mapping so SubagentStop can complete it
-    let mut state = state;
     state.current_task_id = Some(task_id);
     state.save()?;
 
@@ -531,6 +564,84 @@ async fn post_edit(project_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// PreAgent — enforce HEXFLO_TASK tracking for background agents (ADR-2603221939).
+///
+/// Background agents (`run_in_background: true`) MUST include `HEXFLO_TASK:{uuid}`
+/// in their prompt. Without it, the agent is invisible to HexFlo tracking, the
+/// dashboard, and session continuity.
+///
+/// Exempt agent types (read-only, no code changes): Explore, Plan, claude-code-guide.
+///
+/// Exit codes:
+///   0 = allow (foreground agent, or exempt type, or has task)
+///   2 = block (background agent without HEXFLO_TASK)
+async fn pre_agent() -> Result<()> {
+    let tool_input = std::env::var("TOOL_INPUT").unwrap_or_default();
+
+    let input: serde_json::Value = match serde_json::from_str(&tool_input) {
+        Ok(v) => v,
+        Err(_) => return Ok(()), // Can't parse — allow (fail-open)
+    };
+
+    let prompt = input["prompt"].as_str().unwrap_or("");
+    let subagent_type = input["subagent_type"].as_str().unwrap_or("");
+    let is_background = input["run_in_background"].as_bool().unwrap_or(false);
+
+    // Exempt agent types — read-only, no code changes
+    let exempt_types = ["Explore", "Plan", "claude-code-guide", "code-explorer"];
+    if exempt_types.iter().any(|t| subagent_type.eq_ignore_ascii_case(t)) {
+        return Ok(());
+    }
+
+    // Check for HEXFLO_TASK:{uuid} in prompt
+    let has_task = extract_hexflo_task(prompt).is_some();
+
+    if is_background && !has_task {
+        // BLOCK: background agent without task tracking
+        println!(
+            "{} Background agent blocked — missing HEXFLO_TASK:{{uuid}} in prompt (ADR-2603221939)",
+            "\u{26d4}"
+        );
+        println!("  Create a swarm and task first:");
+        println!("    hex swarm init <name>");
+        println!("    hex task create <swarm_id> <title>");
+        println!("  Then include HEXFLO_TASK:{{task_id}} as the first line of the agent prompt.");
+        std::process::exit(2);
+    }
+
+    if !is_background && !has_task {
+        // ADVISORY: foreground agent without tracking — warn but allow
+        println!(
+            "{} Agent spawned without HEXFLO_TASK — work won't be tracked in HexFlo",
+            "\u{26a0}\u{fe0f}"
+        );
+    }
+
+    // If task present, validate it exists in an active swarm (best-effort)
+    if let Some(task_id) = extract_hexflo_task(prompt) {
+        if let Ok(client) = nexus_client(2) {
+            let url = nexus_url(&format!("/api/hexflo/tasks/{}", task_id));
+            match client.get(&url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    // Task exists — all good
+                }
+                Ok(resp) if resp.status().as_u16() == 404 => {
+                    println!(
+                        "{} HEXFLO_TASK:{} not found — create the task first",
+                        "\u{26d4}", &task_id[..8.min(task_id.len())]
+                    );
+                    std::process::exit(2);
+                }
+                _ => {
+                    // Nexus unreachable — degrade to advisory (don't block offline work)
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn pre_bash() -> Result<()> {
     let tool_input = std::env::var("TOOL_INPUT").unwrap_or_default();
 
@@ -542,7 +653,8 @@ async fn pre_bash() -> Result<()> {
                 if let Some(state) = SessionState::load() {
                     let in_ship_phase = state.phase.as_deref() == Some("SHIP");
                     if !in_ship_phase && state.workplan_id.is_some() {
-                        eprintln!(
+                        // ADR-2603221939 P3: use println not eprintln so Claude sees the warning
+                        println!(
                             "{} Destructive command outside SHIP phase: `{}`",
                             "\u{26a0}".yellow(),
                             truncate_cmd(command, 60)
@@ -1087,6 +1199,7 @@ async fn try_lazy_register(state: &mut SessionState) -> Result<()> {
         state.name = agent_name;
         state.project = project_name;
         state.registered_at = now.clone();
+        state.claude_pid = find_ancestor_claude_pid();
         state.last_heartbeat = Some(now);
         state.save()?;
 
@@ -1191,4 +1304,52 @@ fn classify_prompt(prompt: &str) -> Vec<&'static str> {
     }
 
     hints
+}
+
+/// Walk the PPID chain from this process to find the ancestor `claude` process PID.
+/// Returns None if no `claude` process is found (e.g., running outside Claude Code).
+fn find_ancestor_claude_pid() -> Option<u32> {
+    use std::process::Command;
+    let output = Command::new("ps")
+        .args(["-o", "pid=,ppid=,comm=", "-ax"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+
+    // Build pid → (ppid, comm) map
+    let mut proc_map: std::collections::HashMap<u32, (u32, String)> =
+        std::collections::HashMap::new();
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 {
+            if let (Ok(pid), Ok(ppid)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
+                let comm = parts[2..].join(" ");
+                proc_map.insert(pid, (ppid, comm));
+            }
+        }
+    }
+
+    // Walk up from our PID looking for a process named "claude"
+    let mut cur = std::process::id();
+    for _ in 0..10 {
+        if cur <= 1 {
+            break;
+        }
+        if let Some((ppid, comm)) = proc_map.get(&cur) {
+            // Match "claude" binary (may appear as "claude" or full path ending in /claude)
+            let base = comm.rsplit('/').next().unwrap_or(comm);
+            if base == "claude" {
+                return Some(cur);
+            }
+            cur = *ppid;
+        } else {
+            break;
+        }
+    }
+
+    // Fallback: immediate parent (best effort)
+    Some(std::os::unix::process::parent_id())
 }

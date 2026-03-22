@@ -36,6 +36,14 @@
           "command": "hex hook pre-bash",
           "timeout": 3000
         }]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [{
+          "type": "command",
+          "command": "hex hook pre-agent",
+          "timeout": 3000
+        }]
       }
     ],
     "PostToolUse": [
