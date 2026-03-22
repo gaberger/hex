@@ -1174,6 +1174,381 @@ async fn run_parity_tests(r: &mut TestResults) {
     }
 }
 
+// ── History ─────────────────────────────────────────
+
+/// Represents a single test session for display purposes.
+#[derive(Debug, serde::Deserialize)]
+struct TestSessionRecord {
+    #[serde(default)]
+    commit_hash: String,
+    #[serde(default)]
+    branch: String,
+    #[serde(default)]
+    overall_status: String,
+    #[serde(default)]
+    pass_count: u32,
+    #[serde(default)]
+    fail_count: u32,
+    #[serde(default)]
+    skip_count: u32,
+    #[serde(default)]
+    duration_ms: u64,
+}
+
+async fn run_history() -> anyhow::Result<()> {
+    println!("{}", "── Test Run History ──".cyan());
+    println!();
+
+    // Try nexus first
+    let sessions = fetch_sessions_from_nexus(10)
+        .await
+        .or_else(|| load_sessions_from_local(10));
+
+    let sessions = match sessions {
+        Some(s) if !s.is_empty() => s,
+        _ => {
+            println!("  No test history found.");
+            return Ok(());
+        }
+    };
+
+    // Print table header
+    println!(
+        "  {:<9} {:<12} {:<8} {:>4}  {:>4}  {:>4}  {:>8}",
+        "COMMIT", "BRANCH", "STATUS", "PASS", "FAIL", "SKIP", "DURATION"
+    );
+    println!("  {}", "─".repeat(58));
+
+    for s in &sessions {
+        let short_commit = if s.commit_hash.len() >= 7 {
+            &s.commit_hash[..7]
+        } else {
+            &s.commit_hash
+        };
+        let short_branch = if s.branch.len() > 12 {
+            format!("{}…", &s.branch[..11])
+        } else {
+            s.branch.clone()
+        };
+        let status_display = match s.overall_status.as_str() {
+            "pass" => "PASS".green().to_string(),
+            "fail" => "FAIL".red().to_string(),
+            _ => "PARTIAL".yellow().to_string(),
+        };
+        let duration = format_duration(s.duration_ms);
+
+        println!(
+            "  {:<9} {:<12} {:<8} {:>4}  {:>4}  {:>4}  {:>8}",
+            short_commit,
+            short_branch,
+            status_display,
+            s.pass_count,
+            s.fail_count,
+            s.skip_count,
+            duration,
+        );
+    }
+    println!();
+    Ok(())
+}
+
+async fn fetch_sessions_from_nexus(limit: usize) -> Option<Vec<TestSessionRecord>> {
+    let base = nexus_base_url();
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .ok()?;
+
+    let resp = http
+        .get(format!("{}/api/test-sessions?limit={}", base, limit))
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    resp.json::<Vec<TestSessionRecord>>().await.ok()
+}
+
+fn load_sessions_from_local(limit: usize) -> Option<Vec<TestSessionRecord>> {
+    let home = dirs::home_dir()?;
+    let dir = home.join(".hex/test-sessions");
+    if !dir.exists() {
+        return None;
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "jsonl")
+                .unwrap_or(false)
+        })
+        .collect();
+
+    // Sort by filename descending (YYYY-MM-DD.jsonl — newest first)
+    entries.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+
+    let mut sessions = Vec::new();
+    for entry in entries {
+        if sessions.len() >= limit {
+            break;
+        }
+        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+            let mut file_sessions: Vec<TestSessionRecord> = content
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .filter_map(|l| serde_json::from_str::<TestSessionRecord>(l).ok())
+                .collect();
+            file_sessions.reverse();
+            for s in file_sessions {
+                if sessions.len() >= limit {
+                    break;
+                }
+                sessions.push(s);
+            }
+        }
+    }
+    if sessions.is_empty() {
+        None
+    } else {
+        Some(sessions)
+    }
+}
+
+fn format_duration(ms: u64) -> String {
+    if ms < 1000 {
+        format!("{}ms", ms)
+    } else if ms < 60_000 {
+        format!("{}s", ms / 1000)
+    } else {
+        format!("{}m{}s", ms / 60_000, (ms % 60_000) / 1000)
+    }
+}
+
+// ── Trends ──────────────────────────────────────────
+
+/// Per-category trend data.
+struct CategoryTrend {
+    category: String,
+    /// true = pass, false = fail for each of the last N runs.
+    results: Vec<bool>,
+}
+
+async fn run_trends() -> anyhow::Result<()> {
+    println!("{}", "── Test Pass Rate Trends ──".cyan());
+    println!();
+
+    let runs = 10usize;
+
+    // Try nexus first, fall back to local
+    let trends = fetch_trends_from_nexus(runs)
+        .await
+        .or_else(|| compute_trends_from_local(runs));
+
+    let trends = match trends {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            println!("  No trend data found.");
+            return Ok(());
+        }
+    };
+
+    // Print table header
+    println!(
+        "  {:<16} {:<22} {:>9}",
+        "Category",
+        &format!("Last {} runs", runs),
+        "Pass rate"
+    );
+    println!("  {}", "─".repeat(50));
+
+    for trend in &trends {
+        let pass_count = trend.results.iter().filter(|&&b| b).count();
+        let total = trend.results.len();
+        let rate = if total > 0 {
+            (pass_count as f64 / total as f64 * 100.0) as u32
+        } else {
+            0
+        };
+
+        // Build bar: green block for pass, red block for fail
+        let mut bar = String::new();
+        for (i, &passed) in trend.results.iter().enumerate() {
+            if i >= runs {
+                break;
+            }
+            if passed {
+                bar.push_str(&"█".green().to_string());
+            } else {
+                bar.push_str(&"░".red().to_string());
+            }
+        }
+        // Pad if fewer results than `runs`
+        for _ in trend.results.len()..runs {
+            bar.push(' ');
+        }
+
+        let rate_display = if rate == 100 {
+            format!("{}%", rate).green().to_string()
+        } else if rate >= 80 {
+            format!("{}%", rate).yellow().to_string()
+        } else {
+            format!("{}%", rate).red().to_string()
+        };
+
+        println!(
+            "  {:<16} {:<22} {:>9}",
+            trend.category, bar, rate_display,
+        );
+    }
+    println!();
+    Ok(())
+}
+
+async fn fetch_trends_from_nexus(runs: usize) -> Option<Vec<CategoryTrend>> {
+    let base = nexus_base_url();
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .ok()?;
+
+    let resp = http
+        .get(format!("{}/api/test-sessions/trends?runs={}", base, runs))
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    // Expect: { "categories": { "unit": [true, true, false, ...], ... } }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    let categories = body.get("categories")?.as_object()?;
+
+    let mut trends: Vec<CategoryTrend> = categories
+        .iter()
+        .map(|(cat, runs_val)| {
+            let results = runs_val
+                .as_array()
+                .map(|arr| arr.iter().map(|v| v.as_bool().unwrap_or(false)).collect())
+                .unwrap_or_default();
+            CategoryTrend {
+                category: cat.clone(),
+                results,
+            }
+        })
+        .collect();
+    trends.sort_by(|a, b| a.category.cmp(&b.category));
+    Some(trends)
+}
+
+fn compute_trends_from_local(runs: usize) -> Option<Vec<CategoryTrend>> {
+    let sessions = load_sessions_with_results(runs)?;
+    if sessions.is_empty() {
+        return None;
+    }
+
+    // Aggregate per category across sessions
+    let mut category_runs: std::collections::BTreeMap<String, Vec<bool>> =
+        std::collections::BTreeMap::new();
+
+    for session in &sessions {
+        let mut cat_pass: std::collections::HashMap<String, bool> =
+            std::collections::HashMap::new();
+        for result in &session.results {
+            let cat = result.category.clone();
+            let passed = result.status == "pass" || result.status == "skip";
+            // A category fails if ANY test in it fails
+            let entry = cat_pass.entry(cat).or_insert(true);
+            if !passed {
+                *entry = false;
+            }
+        }
+        for (cat, passed) in cat_pass {
+            category_runs.entry(cat).or_default().push(passed);
+        }
+    }
+
+    let trends: Vec<CategoryTrend> = category_runs
+        .into_iter()
+        .map(|(category, results)| CategoryTrend { category, results })
+        .collect();
+
+    if trends.is_empty() {
+        None
+    } else {
+        Some(trends)
+    }
+}
+
+/// A session with full result entries, for trend computation.
+#[derive(Debug, serde::Deserialize)]
+struct TestSessionWithResults {
+    #[serde(default)]
+    results: Vec<TestResultEntryDeser>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TestResultEntryDeser {
+    #[serde(default)]
+    category: String,
+    #[serde(default)]
+    status: String,
+}
+
+fn load_sessions_with_results(limit: usize) -> Option<Vec<TestSessionWithResults>> {
+    let home = dirs::home_dir()?;
+    let dir = home.join(".hex/test-sessions");
+    if !dir.exists() {
+        return None;
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "jsonl")
+                .unwrap_or(false)
+        })
+        .collect();
+
+    entries.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+
+    let mut sessions = Vec::new();
+    for entry in entries {
+        if sessions.len() >= limit {
+            break;
+        }
+        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+            let mut file_sessions: Vec<TestSessionWithResults> = content
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .filter_map(|l| serde_json::from_str::<TestSessionWithResults>(l).ok())
+                .collect();
+            file_sessions.reverse();
+            for s in file_sessions {
+                if sessions.len() >= limit {
+                    break;
+                }
+                sessions.push(s);
+            }
+        }
+    }
+    if sessions.is_empty() {
+        None
+    } else {
+        Some(sessions)
+    }
+}
+
 // ── Helpers ─────────────────────────────────────────
 
 fn cargo_test(crate_name: &str, extra: Option<&str>) -> bool {

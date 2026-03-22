@@ -9,6 +9,7 @@ pub mod coordination;
 pub mod decisions;
 pub mod fleet;
 pub mod git;
+pub mod hex_agents;
 pub mod hexflo;
 pub mod inference;
 pub mod orchestration;
@@ -19,6 +20,7 @@ pub mod rl;
 pub mod secrets;
 pub mod sessions;
 pub mod swarms;
+pub mod test_sessions;
 pub mod openapi;
 pub mod ws;
 
@@ -448,7 +450,25 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/hexflo/memory/search", get(hexflo::memory_search))
         .route("/api/hexflo/memory/{key}", get(hexflo::memory_retrieve)
             .delete(hexflo::memory_delete))
-        .route("/api/hexflo/cleanup", post(hexflo::cleanup));
+        .route("/api/hexflo/cleanup", post(hexflo::cleanup))
+
+        // Unified Agent Registry (ADR-058) — hex_agent table
+        // NOTE: /connect and /evict must be registered BEFORE /{id} to avoid path conflicts
+        .route("/api/hex-agents/connect", post(hex_agents::connect_agent)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/hex-agents/evict", post(hex_agents::evict_dead))
+        .route("/api/hex-agents", get(hex_agents::list_agents))
+        .route("/api/hex-agents/{id}", get(hex_agents::get_agent)
+            .delete(hex_agents::disconnect_agent))
+        .route("/api/hex-agents/{id}/heartbeat", post(hex_agents::heartbeat))
+
+        // Test sessions (test-results module fallback)
+        .route("/api/test-sessions", post(test_sessions::record)
+            .get(test_sessions::list)
+            .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
+        .route("/api/test-sessions/trends", get(test_sessions::trends))
+        .route("/api/test-sessions/flaky", get(test_sessions::flaky))
+        .route("/api/test-sessions/{id}", get(test_sessions::get_session));
 
     // Session persistence (ADR-036 / ADR-042 P2.5) — SpacetimeDB primary, SQLite fallback
     let router = router
