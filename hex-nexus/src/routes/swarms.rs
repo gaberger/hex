@@ -62,13 +62,18 @@ fn state_err(e: impl std::fmt::Display) -> (StatusCode, Json<Value>) {
 /// POST /api/swarms — create a new swarm
 pub async fn create_swarm(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<CreateSwarmRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let port = state_port(&state)?;
     let id = uuid::Uuid::new_v4().to_string();
     let topology = body.topology.as_deref().unwrap_or("hierarchical");
+    let created_by = headers
+        .get("x-hex-agent-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
 
-    port.swarm_init(&id, &body.name, topology, &body.project_id)
+    port.swarm_init(&id, &body.name, topology, &body.project_id, created_by)
         .await
         .map_err(|e| state_err(e))?;
 
@@ -80,6 +85,7 @@ pub async fn create_swarm(
         "name": body.name,
         "topology": topology,
         "status": "active",
+        "createdBy": created_by,
         "createdAt": now,
         "updatedAt": now,
     });

@@ -135,7 +135,7 @@ pub async fn hydrate(
     let hexflo = state.hexflo.as_ref();
 
     let swarm_id = if let Some(hf) = hexflo {
-        match hf.swarm_init("hex-hydrate", "stdb-hydrate", Some("pipeline".to_string())).await {
+        match hf.swarm_init("hex-hydrate", "stdb-hydrate", Some("pipeline".to_string()), Some("hex-nexus")).await {
             Ok(s) => s.id,
             Err(_) => String::new(),
         }

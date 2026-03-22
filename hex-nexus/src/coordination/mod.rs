@@ -64,12 +64,14 @@ impl HexFlo {
         project_id: &str,
         name: &str,
         topology: Option<String>,
+        created_by: Option<&str>,
     ) -> Result<SwarmInfo, String> {
         let id = uuid::Uuid::new_v4().to_string();
         let topo = topology.unwrap_or_else(|| "mesh".to_string());
+        let agent_id = created_by.unwrap_or("");
 
         self.state
-            .swarm_init(&id, name, &topo, project_id)
+            .swarm_init(&id, name, &topo, project_id, agent_id)
             .await
             .map_err(|e| e.to_string())?;
 

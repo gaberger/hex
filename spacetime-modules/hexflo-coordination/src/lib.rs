@@ -16,6 +16,8 @@ pub struct Swarm {
     pub topology: String,
     /// Status: "active", "completed", "failed"
     pub status: String,
+    /// Agent ID that created this swarm (for ownership tracking).
+    pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -437,6 +439,7 @@ pub fn swarm_init(
     name: String,
     topology: String,
     project_id: String,
+    created_by: String,
     timestamp: String,
 ) -> Result<(), String> {
     // Prevent duplicate swarm IDs
@@ -450,6 +453,7 @@ pub fn swarm_init(
         name,
         topology,
         status: "active".to_string(),
+        created_by,
         created_at: timestamp.clone(),
         updated_at: timestamp,
     });

@@ -746,9 +746,9 @@ mod real {
         // ── HexFlo Coordination (via SpacetimeDB HTTP API) ──
         // Calls hexflo-coordination module reducers directly.
 
-        async fn swarm_init(&self, id: &str, name: &str, topology: &str, project_id: &str) -> Result<(), StateError> {
+        async fn swarm_init(&self, id: &str, name: &str, topology: &str, project_id: &str, created_by: &str) -> Result<(), StateError> {
             let now = chrono::Utc::now().to_rfc3339();
-            self.call_reducer("swarm_init", serde_json::json!([id, name, topology, project_id, now])).await?;
+            self.call_reducer("swarm_init", serde_json::json!([id, name, topology, project_id, created_by, now])).await?;
             Ok(())
         }
 
@@ -1100,7 +1100,7 @@ mod stub {
         async fn agent_def_list(&self) -> Result<Vec<AgentDefinitionEntry>, StateError> { Err(Self::err()) }
         async fn agent_def_get_by_name(&self, _: &str) -> Result<Option<AgentDefinitionEntry>, StateError> { Err(Self::err()) }
         async fn agent_def_versions(&self, _: &str) -> Result<Vec<AgentDefinitionVersionEntry>, StateError> { Err(Self::err()) }
-        async fn swarm_init(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_init(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_complete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError> { Err(Self::err()) }
