@@ -3,6 +3,7 @@ pub mod adr_review;
 pub mod agent;
 pub mod analyze;
 pub mod hook;
+pub mod inbox;
 pub mod inference;
 pub mod init;
 pub mod interview;

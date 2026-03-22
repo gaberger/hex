@@ -4,6 +4,7 @@
 //! IStatePort as the persistence backend.
 
 pub mod cleanup;
+pub mod inbox;
 pub mod memory;
 
 use std::sync::Arc;

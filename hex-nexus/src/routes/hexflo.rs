@@ -130,6 +130,115 @@ pub async fn memory_delete(
     }
 }
 
+// ── Inbox endpoints (ADR-060) ─────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct NotifyRequest {
+    pub agent_id: Option<String>,
+    pub project_id: Option<String>,
+    pub priority: u8,
+    pub kind: String,
+    pub payload: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InboxQueryParams {
+    pub min_priority: Option<u8>,
+    pub unacked_only: Option<bool>,
+}
+
+/// POST /api/hexflo/inbox/notify — send a notification to an agent or broadcast to a project
+pub async fn inbox_notify(
+    State(state): State<SharedState>,
+    Json(body): Json<NotifyRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let port = match &state.state_port {
+        Some(p) => p,
+        None => return no_state_port(),
+    };
+
+    let payload = body.payload.unwrap_or_else(|| "{}".to_string());
+
+    if let Some(agent_id) = &body.agent_id {
+        match port.inbox_notify(agent_id, body.priority, &body.kind, &payload).await {
+            Ok(()) => (StatusCode::CREATED, Json(json!({ "ok": true, "target": "agent", "agentId": agent_id }))),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        }
+    } else if let Some(project_id) = &body.project_id {
+        match port.inbox_notify_all(project_id, body.priority, &body.kind, &payload).await {
+            Ok(()) => (StatusCode::CREATED, Json(json!({ "ok": true, "target": "project", "projectId": project_id }))),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        }
+    } else {
+        (StatusCode::BAD_REQUEST, Json(json!({ "error": "Either agent_id or project_id is required" })))
+    }
+}
+
+/// GET /api/hexflo/inbox/:agent_id — query an agent's inbox
+pub async fn inbox_query(
+    State(state): State<SharedState>,
+    Path(agent_id): Path<String>,
+    Query(params): Query<InboxQueryParams>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let port = match &state.state_port {
+        Some(p) => p,
+        None => return no_state_port(),
+    };
+
+    let unacked = params.unacked_only.unwrap_or(true);
+    match port.inbox_query(&agent_id, params.min_priority, unacked).await {
+        Ok(notifications) => (StatusCode::OK, Json(json!({ "notifications": notifications, "count": notifications.len() }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AckRequest {
+    pub agent_id: String,
+}
+
+/// PATCH /api/hexflo/inbox/:id/ack — acknowledge a notification
+pub async fn inbox_acknowledge(
+    State(state): State<SharedState>,
+    Path(notification_id): Path<u64>,
+    Json(body): Json<AckRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let port = match &state.state_port {
+        Some(p) => p,
+        None => return no_state_port(),
+    };
+
+    match port.inbox_acknowledge(notification_id, &body.agent_id).await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true, "acknowledged": notification_id }))),
+        Err(e) => {
+            let status = if e.to_string().contains("not the target") {
+                StatusCode::FORBIDDEN
+            } else if e.to_string().contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(json!({ "error": e.to_string() })))
+        }
+    }
+}
+
+/// POST /api/hexflo/inbox/expire — expire stale notifications
+pub async fn inbox_expire(
+    State(state): State<SharedState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let port = match &state.state_port {
+        Some(p) => p,
+        None => return no_state_port(),
+    };
+
+    // Default: expire notifications older than 24 hours
+    match port.inbox_expire(86400).await {
+        Ok(count) => (StatusCode::OK, Json(json!({ "ok": true, "expiredCount": count }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+    }
+}
+
 // ── Cleanup endpoint ───────────────────────────────────
 
 /// Thresholds for agent staleness (mirrored from coordination/cleanup.rs).

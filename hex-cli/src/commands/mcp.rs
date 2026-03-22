@@ -405,6 +405,40 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             ).await.map_err(|e| e.to_string())
         }
 
+        // ── Agent Notification Inbox (ADR-060) ──
+        "hex_inbox_notify" => {
+            let mut body = serde_json::json!({
+                "priority": args.get("priority").and_then(|v| v.as_u64()).unwrap_or(1),
+                "kind": args.get("kind").and_then(|v| v.as_str()).unwrap_or("info"),
+                "payload": args.get("payload").and_then(|v| v.as_str()).unwrap_or("{}"),
+            });
+            if let Some(aid) = args.get("agent_id").and_then(|v| v.as_str()) {
+                body["agent_id"] = serde_json::json!(aid);
+            }
+            if let Some(pid) = args.get("project_id").and_then(|v| v.as_str()) {
+                body["project_id"] = serde_json::json!(pid);
+            }
+            nexus.post("/api/hexflo/inbox/notify", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_inbox_query" => {
+            let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("");
+            let min_p = args.get("min_priority").and_then(|v| v.as_u64()).unwrap_or(0);
+            let unacked = args.get("unacked_only").and_then(|v| v.as_bool()).unwrap_or(true);
+            let path = format!(
+                "/api/hexflo/inbox/{}?min_priority={}&unacked_only={}",
+                agent_id, min_p, unacked
+            );
+            nexus.get(&path).await.map_err(|e| e.to_string())
+        }
+
+        "hex_inbox_ack" => {
+            let id = args.get("notification_id").and_then(|v| v.as_u64()).unwrap_or(0);
+            let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("");
+            let path = format!("/api/hexflo/inbox/{}/ack", id);
+            nexus.patch(&path, &serde_json::json!({ "agent_id": agent_id })).await.map_err(|e| e.to_string())
+        }
+
         _ => Err(format!("Unknown tool: {}", name)),
     };
 

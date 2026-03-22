@@ -535,6 +535,13 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/hexflo/memory/{key}", get(hexflo::memory_retrieve)
             .delete(hexflo::memory_delete))
         .route("/api/hexflo/cleanup", post(hexflo::cleanup))
+        // Agent Notification Inbox (ADR-060)
+        .route("/api/hexflo/inbox/notify", post(hexflo::inbox_notify)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/hexflo/inbox/expire", post(hexflo::inbox_expire))
+        .route("/api/hexflo/inbox/{agent_id}", get(hexflo::inbox_query))
+        .route("/api/hexflo/inbox/{id}/ack", patch(hexflo::inbox_acknowledge)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
 
         // Unified Agent Registry (ADR-058) — hex_agent table
         // NOTE: /connect and /evict must be registered BEFORE /{id} to avoid path conflicts

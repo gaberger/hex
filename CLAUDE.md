@@ -68,6 +68,7 @@ hex interfaces with external inference through SpacetimeDB procedures and reduce
 ## Behavioral Rules
 
 - **Workplans are autonomous**: When executing a workplan, complete ALL phases without asking. Do not pause between phases to ask "want me to continue?" — just keep going until done. Use HexFlo swarm tracking and background agents to parallelize where possible.
+- **Inbox notifications are priority** (ADR-060): When a critical notification (priority 2) appears in hook output, STOP current work, save state (session file + hex memory store), acknowledge the notification (`hex inbox ack <id>`), and inform the user. This takes precedence over all other work. The `route` hook checks the inbox on every user interaction.
 - Do what has been asked; nothing more, nothing less
 - ALWAYS read a file before editing it
 - NEVER save files to the root folder — use the directories below
@@ -178,6 +179,9 @@ hex adr abandoned    # Detect stale/abandoned ADRs
 hex swarm init       # Initialize a swarm
 hex task list        # List tasks
 hex memory store     # Store key-value
+hex inbox list       # Check agent notification inbox (ADR-060)
+hex inbox notify     # Send notification to agent/project
+hex inbox ack <id>   # Acknowledge a notification
 hex status           # Project status overview
 ```
 
@@ -355,6 +359,9 @@ mcp__hex__hex_task_complete    → hex task complete
 mcp__hex__hex_memory_store     → hex memory store
 mcp__hex__hex_memory_retrieve  → hex memory get
 mcp__hex__hex_memory_search    → hex memory search
+mcp__hex__hex_inbox_notify     → hex inbox notify (ADR-060)
+mcp__hex__hex_inbox_query      → hex inbox list (ADR-060)
+mcp__hex__hex_inbox_ack        → hex inbox ack (ADR-060)
 mcp__hex__hex_adr_list         → hex adr list
 mcp__hex__hex_adr_search       → hex adr search
 mcp__hex__hex_adr_status       → hex adr status

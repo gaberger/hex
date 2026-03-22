@@ -1,6 +1,6 @@
 # ADR-060: Agent Notification Inbox
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-22
 **Drivers:** No mechanism exists to notify a running Claude Code agent of critical system events (hex-nexus update, hex-agent restart, config change). Agents operate in a closed process loop — external systems cannot push messages into an active session. This creates risk of agents working against stale binaries or missing coordinated restarts.
 
@@ -148,10 +148,10 @@ Agents waiting for user input don't fire hooks. Two mitigations:
 
 | Phase | Description | Status |
 |-------|------------|--------|
-| P1 | Add `agent_inbox` table + reducers to `hexflo-coordination` module | Pending |
-| P2 | hex-nexus REST endpoints + notification producers (update detection, config sync) | Pending |
-| P3 | PreToolUse hook integration — inbox check + context injection | Pending |
-| P4 | State preservation protocol — save/restore on restart notifications | Pending |
+| P1 | Add `agent_inbox` table + reducers to `hexflo-coordination` module | Done |
+| P2 | hex-nexus REST endpoints + notification producers (update detection, config sync) | Done |
+| P3 | PreToolUse hook integration — inbox check + context injection | Done |
+| P4 | CLI commands (`hex inbox`) + MCP tools (`hex_inbox_*`) | Done |
 | P5 | Idle agent coverage — hex-nexus escalation for unacked criticals | Pending |
 
 ## References

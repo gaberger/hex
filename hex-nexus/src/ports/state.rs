@@ -238,6 +238,21 @@ pub struct CleanupReport {
     pub reclaimed_tasks: u32,
 }
 
+// ── Agent Notification Inbox Types (ADR-060) ─────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxNotification {
+    pub id: u64,
+    pub agent_id: String,
+    pub priority: u8,
+    pub kind: String,
+    pub payload: String,
+    pub created_at: String,
+    pub acknowledged_at: Option<String>,
+    pub expired_at: Option<String>,
+}
+
 // ── Project Registry Types (ADR-042) ─────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -610,6 +625,13 @@ pub trait IStatePort: Send + Sync {
     async fn hex_agent_get(&self, id: &str) -> Result<Option<serde_json::Value>, StateError>;
     async fn hex_agent_evict_dead(&self) -> Result<(), StateError>;
     async fn hex_agent_mark_inactive(&self) -> Result<(), StateError>;
+
+    // ── Agent Notification Inbox (ADR-060) ─────────
+    async fn inbox_notify(&self, agent_id: &str, priority: u8, kind: &str, payload: &str) -> Result<(), StateError>;
+    async fn inbox_notify_all(&self, project_id: &str, priority: u8, kind: &str, payload: &str) -> Result<(), StateError>;
+    async fn inbox_query(&self, agent_id: &str, min_priority: Option<u8>, unacked_only: bool) -> Result<Vec<InboxNotification>, StateError>;
+    async fn inbox_acknowledge(&self, notification_id: u64, agent_id: &str) -> Result<(), StateError>;
+    async fn inbox_expire(&self, max_age_secs: u64) -> Result<u32, StateError>;
 
     // ── Subscriptions (real-time sync) ──────────────
     fn subscribe(&self) -> broadcast::Receiver<StateEvent>;

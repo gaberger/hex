@@ -28,9 +28,16 @@ impl CleanupService {
         let mut interval = time::interval(self.interval);
         info!("Cleanup service started (interval: {}s)", self.interval.as_secs());
 
+        // Snapshot own binary mtime at startup for update detection (ADR-060)
+        let binary_path = std::env::current_exe().ok();
+        let mut last_binary_mtime = binary_path.as_ref()
+            .and_then(|p| p.metadata().ok())
+            .and_then(|m| m.modified().ok());
+
         loop {
             interval.tick().await;
 
+            // ── Stale session cleanup ───────────────────────
             match cleanup_stale_sessions(&self.state).await {
                 Ok(removed) if removed > 0 => {
                     info!("Cleaned up {} stale sessions", removed);
@@ -40,6 +47,39 @@ impl CleanupService {
                 }
                 Err(e) => {
                     error!("Cleanup failed: {}", e);
+                }
+            }
+
+            // ── Inbox expiry (ADR-060) ──────────────────────
+            if let Some(sp) = &self.state.state_port {
+                if let Err(e) = sp.inbox_expire(86400).await {
+                    debug!("Inbox expiry failed: {}", e);
+                }
+            }
+
+            // ── Binary update detection (ADR-060) ───────────
+            if let Some(ref bp) = binary_path {
+                if let Ok(meta) = bp.metadata() {
+                    if let Ok(current_mtime) = meta.modified() {
+                        if let Some(prev_mtime) = last_binary_mtime {
+                            if current_mtime != prev_mtime {
+                                info!("Binary update detected — notifying all agents");
+                                last_binary_mtime = Some(current_mtime);
+                                if let Some(sp) = &self.state.state_port {
+                                    let project_id = std::env::var("HEX_PROJECT_ID").unwrap_or_default();
+                                    let payload = serde_json::json!({
+                                        "reason": "hex-nexus binary updated",
+                                        "binary": bp.to_string_lossy(),
+                                    }).to_string();
+                                    if let Err(e) = sp.inbox_notify_all(&project_id, 2, "restart", &payload).await {
+                                        error!("Failed to notify agents of binary update: {}", e);
+                                    }
+                                }
+                            }
+                        } else {
+                            last_binary_mtime = Some(current_mtime);
+                        }
+                    }
                 }
             }
         }

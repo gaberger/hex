@@ -183,8 +183,13 @@ async fn session_start(project_dir: &PathBuf) -> Result<()> {
                 println!("  StDB:    {} (nexus using SQLite fallback)", "offline".yellow());
             }
 
-            // Register this Claude Code session as an agent (ADR-048)
+            // Register this Claude Code session as an agent (ADR-048, ADR-058)
             let _ = register_session_agent(project_dir, name).await;
+
+            // Evict dead agents from previous sessions (ADR-058)
+            if let Ok(evict_client) = nexus_client(3) {
+                let _ = evict_client.post(&nexus_url("/api/hex-agents/evict")).send().await;
+            }
 
             // ADR-050: Load active workplan from HexFlo memory
             let _ = load_workplan_context(id).await;
@@ -214,7 +219,7 @@ async fn register_session_agent(project_dir: &PathBuf, project_name: &str) -> Re
         .to_string();
 
     let client = nexus_client(3)?;
-    let url = nexus_url("/api/agents/connect");
+    let url = nexus_url("/api/hex-agents/connect");
 
     let agent_name = if session_id.is_empty() {
         format!("claude-{}", &hostname)
@@ -552,6 +557,9 @@ async fn route(project_dir: &PathBuf) -> Result<()> {
     // ADR-050: Send heartbeat on every user interaction
     let _ = send_heartbeat().await;
 
+    // TODO(ADR-060): Check agent inbox for critical notifications
+    // let _ = check_inbox().await;
+
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
         if let Some(content) = input["content"].as_str() {
             let lower = content.to_lowercase();
@@ -722,6 +730,64 @@ fn detect_hex_layer(rel_path: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+// ── Agent Notification Inbox (ADR-060) ───────────────────────────────
+
+/// Check for unacknowledged critical notifications in the agent's inbox.
+/// Priority-2 messages are always shown. Priority 0-1 are shown once
+/// (tracked via session state `last_inbox_check` timestamp).
+async fn check_inbox() -> Result<()> {
+    let state = match SessionState::load() {
+        Some(s) if !s.agent_id.is_empty() => s,
+        _ => return Ok(()),
+    };
+
+    let client = match nexus_client(2) {
+        Ok(c) => c,
+        Err(_) => return Ok(()),
+    };
+
+    // Only check critical (priority 2) — always re-delivered until acked
+    let url = nexus_url(&format!(
+        "/api/hexflo/inbox/{}?min_priority=2&unacked_only=true",
+        state.agent_id
+    ));
+
+    let resp = match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Ok(()),
+    };
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(b) => b,
+        Err(_) => return Ok(()),
+    };
+
+    let notifications = body["notifications"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    if notifications.is_empty() {
+        return Ok(());
+    }
+
+    // Print to stdout — this gets injected into Claude's context
+    println!();
+    println!("⚠ CRITICAL NOTIFICATION(S) — action required:");
+    for n in &notifications {
+        let kind = n["kind"].as_str().unwrap_or("unknown");
+        let payload = n["payload"].as_str().unwrap_or("{}");
+        let id = n["id"].as_u64().unwrap_or(0);
+        println!("  [{}] #{}: {}", kind, id, payload);
+    }
+    println!();
+    println!("To acknowledge: hex inbox ack <id>");
+    println!("If kind=restart: save your state and prepare for session restart.");
+    println!();
+
+    Ok(())
 }
 
 // ── Nexus communication ──────────────────────────────────────────────

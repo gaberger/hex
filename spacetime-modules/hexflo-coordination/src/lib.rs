@@ -590,6 +590,150 @@ pub fn remove_inference_server(
     Ok(())
 }
 
+// ─── Agent Notification Inbox (ADR-060) ──────────────────────────────────
+
+/// A notification message addressed to a specific agent.
+/// Used for system events (restart, update, config change) that agents
+/// must acknowledge before they can be dismissed.
+#[table(name = agent_inbox, public)]
+#[derive(Clone, Debug)]
+pub struct AgentInbox {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub agent_id: String,
+    /// Priority: 0=info, 1=warning, 2=critical
+    pub priority: u8,
+    /// Kind: "restart", "update", "shutdown", "config_change", "info"
+    pub kind: String,
+    /// JSON payload with event-specific data
+    pub payload: String,
+    pub created_at: String,
+    /// Set when the target agent acknowledges the notification.
+    pub acknowledged_at: String,
+    /// Set when the notification expires (cleanup).
+    pub expired_at: String,
+}
+
+/// Send a notification to a specific agent. Validates agent exists.
+#[reducer]
+pub fn notify_agent(
+    ctx: &ReducerContext,
+    agent_id: String,
+    priority: u8,
+    kind: String,
+    payload: String,
+    timestamp: String,
+) -> Result<(), String> {
+    // Validate agent exists in hex_agent table
+    if ctx.db.hex_agent().id().find(&agent_id).is_none() {
+        return Err(format!("Agent '{}' not found", agent_id));
+    }
+    if priority > 2 {
+        return Err("Priority must be 0 (info), 1 (warning), or 2 (critical)".to_string());
+    }
+
+    ctx.db.agent_inbox().insert(AgentInbox {
+        id: 0, // auto_inc
+        agent_id,
+        priority,
+        kind,
+        payload,
+        created_at: timestamp,
+        acknowledged_at: String::new(),
+        expired_at: String::new(),
+    });
+
+    Ok(())
+}
+
+/// Broadcast a notification to all agents in a project.
+#[reducer]
+pub fn notify_all_agents(
+    ctx: &ReducerContext,
+    project_id: String,
+    priority: u8,
+    kind: String,
+    payload: String,
+    timestamp: String,
+) -> Result<(), String> {
+    if priority > 2 {
+        return Err("Priority must be 0 (info), 1 (warning), or 2 (critical)".to_string());
+    }
+
+    let agents: Vec<String> = ctx.db.hex_agent().iter()
+        .filter(|a| a.project_id == project_id && (a.status == "online" || a.status == "idle"))
+        .map(|a| a.id.clone())
+        .collect();
+
+    for aid in agents {
+        ctx.db.agent_inbox().insert(AgentInbox {
+            id: 0,
+            agent_id: aid,
+            priority,
+            kind: kind.clone(),
+            payload: payload.clone(),
+            created_at: timestamp.clone(),
+            acknowledged_at: String::new(),
+            expired_at: String::new(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Acknowledge a notification. Only the target agent can ack.
+#[reducer]
+pub fn acknowledge_notification(
+    ctx: &ReducerContext,
+    notification_id: u64,
+    agent_id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let notif = ctx.db.agent_inbox().id().find(notification_id)
+        .ok_or_else(|| format!("Notification '{}' not found", notification_id))?;
+
+    if notif.agent_id != agent_id {
+        return Err(format!("Agent '{}' is not the target of notification '{}'", agent_id, notification_id));
+    }
+
+    if !notif.acknowledged_at.is_empty() {
+        return Ok(()); // Already acked — idempotent
+    }
+
+    ctx.db.agent_inbox().id().update(AgentInbox {
+        acknowledged_at: timestamp,
+        ..notif
+    });
+
+    Ok(())
+}
+
+/// Expire notifications older than max_age_secs that were never acknowledged.
+#[reducer]
+pub fn expire_stale_notifications(
+    ctx: &ReducerContext,
+    threshold_timestamp: String,
+) -> Result<(), String> {
+    let expired: Vec<AgentInbox> = ctx.db.agent_inbox().iter()
+        .filter(|n| {
+            n.acknowledged_at.is_empty()
+                && n.expired_at.is_empty()
+                && n.created_at < threshold_timestamp
+        })
+        .collect();
+
+    let now = threshold_timestamp;
+    for notif in expired {
+        ctx.db.agent_inbox().id().update(AgentInbox {
+            expired_at: now.clone(),
+            ..notif
+        });
+    }
+
+    Ok(())
+}
+
 // ============================================================
 //  Swarm Lifecycle Reducers
 // ============================================================

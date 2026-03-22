@@ -395,6 +395,242 @@ async fn memory_search_empty_returns_empty_array() {
 }
 
 // ══════════════════════════════════════════════════════════
+// Agent Notification Inbox (ADR-060)
+// ══════════════════════════════════════════════════════════
+
+/// Helper: register a test agent and return its ID.
+async fn register_test_agent(addr: SocketAddr, name: &str) -> String {
+    let (status, body) = api_post(
+        addr,
+        "/api/hex-agents/connect",
+        json!({ "name": name, "host": "test", "model": "test", "session_id": name }),
+    )
+    .await;
+    assert!(status == 200 || status == 201, "agent register: {:?}", body);
+    body["agentId"].as_str().unwrap().to_string()
+}
+
+/// POST with X-Hex-Agent-Id header (for guarded /api/hexflo routes).
+async fn api_post_guarded(addr: SocketAddr, path: &str, body: Value, agent_id: &str) -> (u16, Value) {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{}{}", addr, path))
+        .header("x-hex-agent-id", agent_id)
+        .json(&body)
+        .send()
+        .await
+        .expect("POST request");
+    let status = resp.status().as_u16();
+    let body: Value = resp.json().await.unwrap_or(json!(null));
+    (status, body)
+}
+
+/// PATCH with X-Hex-Agent-Id header (for guarded /api/hexflo routes).
+async fn api_patch_guarded(addr: SocketAddr, path: &str, body: Value, agent_id: &str) -> (u16, Value) {
+    let client = reqwest::Client::new();
+    let resp = client
+        .patch(format!("http://{}{}", addr, path))
+        .header("x-hex-agent-id", agent_id)
+        .json(&body)
+        .send()
+        .await
+        .expect("PATCH request");
+    let status = resp.status().as_u16();
+    let body: Value = resp.json().await.unwrap_or(json!(null));
+    (status, body)
+}
+
+#[tokio::test]
+async fn inbox_notify_and_query() {
+    let addr = start_hub().await;
+    let agent_id = register_test_agent(addr, "inbox-test-1").await;
+
+    // Send a notification (guarded route — needs agent header)
+    let (status, body) = api_post_guarded(
+        addr,
+        "/api/hexflo/inbox/notify",
+        json!({
+            "agent_id": agent_id,
+            "priority": 2,
+            "kind": "restart",
+            "payload": "{\"reason\":\"test\"}"
+        }),
+        &agent_id,
+    )
+    .await;
+    assert_eq!(status, 201, "notify should succeed: {:?}", body);
+    assert_eq!(body["ok"], true);
+
+    // Query inbox (GET — not guarded)
+    let (status, body) = api_get(
+        addr,
+        &format!("/api/hexflo/inbox/{}?min_priority=0&unacked_only=true", agent_id),
+    )
+    .await;
+    assert_eq!(status, 200, "query inbox: {:?}", body);
+    let notifications = body["notifications"].as_array().expect("should be array");
+    assert!(!notifications.is_empty(), "should have at least 1 notification");
+
+    let n = &notifications[0];
+    assert_eq!(n["kind"], "restart");
+    assert_eq!(n["priority"], 2);
+    assert_eq!(n["agentId"], agent_id);
+}
+
+#[tokio::test]
+async fn inbox_acknowledge_removes_from_unacked() {
+    let addr = start_hub().await;
+    let agent_id = register_test_agent(addr, "inbox-ack-1").await;
+
+    // Send notification
+    api_post_guarded(
+        addr,
+        "/api/hexflo/inbox/notify",
+        json!({
+            "agent_id": agent_id,
+            "priority": 1,
+            "kind": "config_change",
+            "payload": "{}"
+        }),
+        &agent_id,
+    )
+    .await;
+
+    // Get the notification ID
+    let (_, body) = api_get(
+        addr,
+        &format!("/api/hexflo/inbox/{}?unacked_only=true", agent_id),
+    )
+    .await;
+    let notifications = body["notifications"].as_array().unwrap();
+    assert!(!notifications.is_empty());
+    let notif_id = notifications[0]["id"].as_u64().unwrap();
+
+    // Acknowledge it
+    let (status, body) = api_patch_guarded(
+        addr,
+        &format!("/api/hexflo/inbox/{}/ack", notif_id),
+        json!({ "agent_id": agent_id }),
+        &agent_id,
+    )
+    .await;
+    assert_eq!(status, 200, "ack should succeed: {:?}", body);
+    assert_eq!(body["ok"], true);
+
+    // Query unacked — should be empty now
+    let (_, body) = api_get(
+        addr,
+        &format!("/api/hexflo/inbox/{}?unacked_only=true", agent_id),
+    )
+    .await;
+    let notifications = body["notifications"].as_array().unwrap();
+    assert!(notifications.is_empty(), "acked notification should not appear in unacked query");
+}
+
+#[tokio::test]
+async fn inbox_wrong_agent_cannot_ack() {
+    let addr = start_hub().await;
+    let agent_a = register_test_agent(addr, "inbox-wrong-1").await;
+    let agent_b = register_test_agent(addr, "inbox-wrong-2").await;
+
+    // Send to agent A
+    api_post_guarded(
+        addr,
+        "/api/hexflo/inbox/notify",
+        json!({
+            "agent_id": agent_a,
+            "priority": 2,
+            "kind": "restart",
+            "payload": "{}"
+        }),
+        &agent_a,
+    )
+    .await;
+
+    // Get notification ID
+    let (_, body) = api_get(
+        addr,
+        &format!("/api/hexflo/inbox/{}?unacked_only=true", agent_a),
+    )
+    .await;
+    let notif_id = body["notifications"][0]["id"].as_u64().unwrap();
+
+    // Agent B tries to ack — should be rejected
+    let (status, body) = api_patch_guarded(
+        addr,
+        &format!("/api/hexflo/inbox/{}/ack", notif_id),
+        json!({ "agent_id": agent_b }),
+        &agent_b,
+    )
+    .await;
+    assert_eq!(status, 403, "wrong agent ack should be forbidden: {:?}", body);
+}
+
+#[tokio::test]
+async fn inbox_priority_filter() {
+    let addr = start_hub().await;
+    let agent_id = register_test_agent(addr, "inbox-filter-1").await;
+
+    // Send notifications at different priorities
+    api_post_guarded(addr, "/api/hexflo/inbox/notify", json!({
+        "agent_id": agent_id, "priority": 0, "kind": "info", "payload": "{}"
+    }), &agent_id).await;
+    api_post_guarded(addr, "/api/hexflo/inbox/notify", json!({
+        "agent_id": agent_id, "priority": 1, "kind": "config_change", "payload": "{}"
+    }), &agent_id).await;
+    api_post_guarded(addr, "/api/hexflo/inbox/notify", json!({
+        "agent_id": agent_id, "priority": 2, "kind": "restart", "payload": "{}"
+    }), &agent_id).await;
+
+    // Query with min_priority=2 — should only get the critical one
+    let (_, body) = api_get(
+        addr,
+        &format!("/api/hexflo/inbox/{}?min_priority=2&unacked_only=true", agent_id),
+    )
+    .await;
+    let notifications = body["notifications"].as_array().unwrap();
+    assert_eq!(notifications.len(), 1, "only critical should pass filter");
+    assert_eq!(notifications[0]["kind"], "restart");
+
+    // Query with min_priority=0 — should get all 3
+    let (_, body) = api_get(
+        addr,
+        &format!("/api/hexflo/inbox/{}?min_priority=0&unacked_only=true", agent_id),
+    )
+    .await;
+    let notifications = body["notifications"].as_array().unwrap();
+    assert_eq!(notifications.len(), 3, "all priorities should appear: {:?}", notifications);
+}
+
+#[tokio::test]
+async fn inbox_expire_cleans_old_notifications() {
+    let addr = start_hub().await;
+    let agent_id = register_test_agent(addr, "inbox-expire-1").await;
+
+    // Expire endpoint should work even with no notifications
+    let (status, body) = api_post_guarded(addr, "/api/hexflo/inbox/expire", json!({}), &agent_id).await;
+    assert_eq!(status, 200, "expire: {:?}", body);
+    assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn inbox_notify_requires_target() {
+    let addr = start_hub().await;
+    let agent_id = register_test_agent(addr, "inbox-notarget-1").await;
+
+    // Neither agent_id nor project_id — should get 400
+    let (status, body) = api_post_guarded(
+        addr,
+        "/api/hexflo/inbox/notify",
+        json!({ "priority": 1, "kind": "info" }),
+        &agent_id,
+    )
+    .await;
+    assert_eq!(status, 400, "should require target: {:?}", body);
+    assert!(body["error"].as_str().unwrap().contains("agent_id or project_id"));
+}
+
+// ══════════════════════════════════════════════════════════
 // WebSocket Event Broadcasting
 // ══════════════════════════════════════════════════════════
 

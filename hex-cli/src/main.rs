@@ -9,6 +9,7 @@ use commands::{
     agent::AgentAction,
     analyze,
     hook::HookEvent,
+    inbox::InboxAction,
     init::InitArgs,
     memory::MemoryAction,
     nexus::NexusAction,
@@ -70,6 +71,11 @@ enum Commands {
     Task {
         #[command(subcommand)]
         action: TaskAction,
+    },
+    /// Agent notification inbox (ADR-060)
+    Inbox {
+        #[command(subcommand)]
+        action: InboxAction,
     },
     /// Persistent memory
     Memory {
@@ -158,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Stdb { action } => commands::stdb::run(action).await,
         Commands::Swarm { action } => commands::swarm::run(action).await,
         Commands::Task { action } => commands::task::run(action).await,
+        Commands::Inbox { action } => commands::inbox::run(action).await,
         Commands::Memory { action } => commands::memory::run(action).await,
         Commands::Adr { action } => commands::adr::run(action).await,
         Commands::Project { action } => commands::project::run(action).await,

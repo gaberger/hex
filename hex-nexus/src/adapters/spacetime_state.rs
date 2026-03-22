@@ -1044,7 +1044,7 @@ mod real {
         }
 
         async fn hex_agent_list(&self) -> Result<Vec<serde_json::Value>, StateError> {
-            self.query_table("SELECT * FROM hex_agent ORDER BY last_heartbeat DESC").await
+            self.query_table("SELECT * FROM hex_agent").await
         }
 
         async fn hex_agent_get(&self, id: &str) -> Result<Option<serde_json::Value>, StateError> {
@@ -1056,6 +1056,55 @@ mod real {
             let threshold = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
             self.call_reducer("agent_evict_dead", serde_json::json!([threshold])).await?;
             Ok(())
+        }
+
+        // ── Agent Notification Inbox (ADR-060) ─────────────
+
+        async fn inbox_notify(&self, agent_id: &str, priority: u8, kind: &str, payload: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("notify_agent", serde_json::json!([agent_id, priority, kind, payload, now])).await?;
+            Ok(())
+        }
+
+        async fn inbox_notify_all(&self, project_id: &str, priority: u8, kind: &str, payload: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("notify_all_agents", serde_json::json!([project_id, priority, kind, payload, now])).await?;
+            Ok(())
+        }
+
+        async fn inbox_query(&self, agent_id: &str, min_priority: Option<u8>, unacked_only: bool) -> Result<Vec<InboxNotification>, StateError> {
+            let mut sql = format!("SELECT * FROM agent_inbox WHERE agent_id = '{}' AND expired_at = ''", agent_id);
+            if unacked_only {
+                sql.push_str(" AND acknowledged_at = ''");
+            }
+            if let Some(min_p) = min_priority {
+                sql.push_str(&format!(" AND priority >= {}", min_p));
+            }
+            let rows = self.query_table(&sql).await?;
+            Ok(rows.into_iter().filter_map(|r| {
+                Some(InboxNotification {
+                    id: r.get("id")?.as_u64()?,
+                    agent_id: r.get("agent_id")?.as_str()?.to_string(),
+                    priority: r.get("priority")?.as_u64()? as u8,
+                    kind: r.get("kind")?.as_str()?.to_string(),
+                    payload: r.get("payload")?.as_str()?.to_string(),
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    acknowledged_at: r.get("acknowledged_at").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(String::from),
+                    expired_at: r.get("expired_at").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(String::from),
+                })
+            }).collect())
+        }
+
+        async fn inbox_acknowledge(&self, notification_id: u64, agent_id: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("acknowledge_notification", serde_json::json!([notification_id, agent_id, now])).await?;
+            Ok(())
+        }
+
+        async fn inbox_expire(&self, max_age_secs: u64) -> Result<u32, StateError> {
+            let threshold = (chrono::Utc::now() - chrono::Duration::seconds(max_age_secs as i64)).to_rfc3339();
+            self.call_reducer("expire_stale_notifications", serde_json::json!([threshold])).await?;
+            Ok(0) // SpacetimeDB reducers don't return counts
         }
 
         async fn hex_agent_mark_inactive(&self) -> Result<(), StateError> {
@@ -1196,6 +1245,12 @@ mod stub {
         async fn hex_agent_get(&self, _: &str) -> Result<Option<serde_json::Value>, StateError> { Err(Self::err()) }
         async fn hex_agent_evict_dead(&self) -> Result<(), StateError> { Err(Self::err()) }
         async fn hex_agent_mark_inactive(&self) -> Result<(), StateError> { Err(Self::err()) }
+        // ── Agent Notification Inbox (ADR-060) ──────────────
+        async fn inbox_notify(&self, _: &str, _: u8, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn inbox_notify_all(&self, _: &str, _: u8, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn inbox_query(&self, _: &str, _: Option<u8>, _: bool) -> Result<Vec<InboxNotification>, StateError> { Err(Self::err()) }
+        async fn inbox_acknowledge(&self, _: u64, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn inbox_expire(&self, _: u64) -> Result<u32, StateError> { Err(Self::err()) }
         fn subscribe(&self) -> broadcast::Receiver<StateEvent> { self.event_tx.subscribe() }
     }
 }
