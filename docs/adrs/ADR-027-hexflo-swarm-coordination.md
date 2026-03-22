@@ -52,6 +52,7 @@ hex-nexus/src/
 | `ruflo memory store` | `HexFlo::memory_store(key, value)` | IStatePort |
 | `ruflo memory retrieve` | `HexFlo::memory_retrieve(key)` | IStatePort query |
 | `ruflo swarm status` | `HexFlo::swarm_status()` | IStatePort + heartbeats |
+| *(no ruflo equivalent)* | `HexFlo::swarm_complete(id)` | IStatePort + broadcast |
 
 ### Access Patterns
 
@@ -63,15 +64,15 @@ hex-nexus/src/
 ### REST API Endpoints
 
 ```
-POST   /api/swarm/init          { name, topology }
-GET    /api/swarm/status
-DELETE /api/swarm/teardown
+POST   /api/swarms              { name, topology }
+GET    /api/swarms/active
+PATCH  /api/swarms/:id          (mark swarm completed)
+GET    /api/swarms/:id          (swarm detail with tasks)
 
-POST   /api/tasks               { type, description, priority }
-GET    /api/tasks               ?status=pending&limit=20
-GET    /api/tasks/:id
-PATCH  /api/tasks/:id           { status, result, commit_hash }
-DELETE /api/tasks/:id
+POST   /api/swarms/:id/tasks    { title }
+PATCH  /api/swarms/:id/tasks/:taskId  { status, result, agentId }
+PATCH  /api/hexflo/tasks/:taskId      (convenience — no swarm ID needed)
+GET    /api/work-items/incomplete
 
 POST   /api/agents/register     { agent_id, agent_name, project_dir }
 GET    /api/agents

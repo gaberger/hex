@@ -136,6 +136,23 @@ pub async fn get_swarm(
     Ok(Json(val))
 }
 
+/// PATCH /api/swarms/:id — mark a swarm as completed
+pub async fn complete_swarm(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+    port.swarm_complete(&id).await.map_err(|e| state_err(e))?;
+
+    let _ = state.ws_tx.send(crate::state::WsEnvelope {
+        topic: "hexflo".into(),
+        event: "swarm_completed".into(),
+        data: json!({ "id": id }),
+    });
+
+    Ok(Json(json!({ "ok": true, "id": id })))
+}
+
 /// POST /api/swarms/:id/tasks — create a new task in a swarm
 pub async fn create_task(
     State(state): State<SharedState>,
