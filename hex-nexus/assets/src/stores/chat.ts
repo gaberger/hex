@@ -15,6 +15,7 @@ const [streamingText, setStreamingText] = createSignal('');
 const [isStreaming, setIsStreaming] = createSignal(false);
 const [chatConnected, setChatConnected] = createSignal(false);
 const [loadingHistory, setLoadingHistory] = createSignal(false);
+const [selectedModel, setSelectedModel] = createSignal<string>('');
 
 // ── Internal state ───────────────────────────────────────────────────────────
 
@@ -278,49 +279,51 @@ function handleToolResult(msg: any) {
   const resultText = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
   const toolUseId = msg.tool_use_id;
   const isError = !!msg.is_error;
+  const toolName = msg.tool_name || '';
 
-  if (toolUseId) {
-    // Try to find and update the matching tool_call message
-    setChatMessages((prev) => {
-      const idx = prev.findIndex((m) => m.toolUseId === toolUseId);
-      if (idx >= 0) {
-        const updated = [...prev];
-        updated[idx] = {
-          ...updated[idx],
-          toolResult: resultText,
-          isError,
-          content: `${updated[idx].toolName}: ${updated[idx].toolInput}\n\u2192 ${resultText}`,
-        };
-        return updated;
+  setChatMessages((prev) => {
+    // Strategy 1: exact match by toolUseId
+    let idx = toolUseId
+      ? prev.findIndex((m) => m.toolUseId === toolUseId)
+      : -1;
+
+    // Strategy 2: fallback — find most recent unmatched tool call with same name prefix
+    if (idx < 0 && toolName) {
+      for (let i = prev.length - 1; i >= 0; i--) {
+        const m = prev[i];
+        if (m.role === 'tool' && !m.toolResult && m.toolName &&
+            (m.toolName === toolName || m.toolName.startsWith(toolName) || toolName.startsWith(m.toolName))) {
+          idx = i;
+          break;
+        }
       }
-      // No matching call found — add as new message
-      return [
-        ...prev,
-        {
-          id: makeId(),
-          role: 'tool' as const,
-          content: resultText,
-          toolName: msg.tool_name || 'result',
-          toolResult: resultText,
-          isError,
-          timestamp: nowISO(),
-        },
-      ];
-    });
-  } else {
-    // No tool_use_id — just append
-    setChatMessages((prev) => [
+    }
+
+    if (idx >= 0) {
+      const updated = [...prev];
+      updated[idx] = {
+        ...updated[idx],
+        toolResult: resultText,
+        isError,
+        content: `${updated[idx].toolName}: ${updated[idx].toolInput}\n\u2192 ${resultText}`,
+      };
+      return updated;
+    }
+
+    // No match at all — append as standalone result
+    return [
       ...prev,
       {
         id: makeId(),
         role: 'tool' as const,
         content: resultText,
+        toolName: toolName || 'result',
         toolResult: resultText,
         isError,
         timestamp: nowISO(),
       },
-    ]);
-  }
+    ];
+  });
 }
 
 function formatHexFloEvent(msg: any): string {
@@ -351,6 +354,12 @@ function sendMessage(text: string) {
 
   // Build payload matching vanilla JS protocol
   const payload: Record<string, string> = { type: 'chat_message', content: text };
+
+  // Include model selection if set
+  const model = selectedModel();
+  if (model) {
+    payload.model = model;
+  }
 
   // @agent routing
   const atMatch = text.match(/^@(\S+)\s+([\s\S]*)$/);
@@ -398,4 +407,7 @@ export {
   sendMessage,
   clearMessages,
   loadChatHistory,
+  // Model selection
+  selectedModel,
+  setSelectedModel,
 };

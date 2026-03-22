@@ -12,7 +12,8 @@ pub async fn serve_index() -> Response {
 }
 
 pub async fn serve_legacy_dashboard() -> Response {
-    serve_asset("index.legacy.html").await
+    // Legacy dashboard removed — redirect to SolidJS SPA
+    serve_asset("index.html").await
 }
 
 pub async fn serve_chat() -> Response {
