@@ -185,6 +185,87 @@ async fn workplan_files() -> Json<serde_json::Value> {
     Json(json!({ "ok": false, "count": 0, "workplans": [], "error": "docs/workplans/ not found" }))
 }
 
+/// GET /api/adr/next — return the next available ADR number (atomic read).
+async fn adr_next_number() -> Json<serde_json::Value> {
+    let number = scan_next_adr_number().await;
+    Json(json!({ "next_number": number }))
+}
+
+/// POST /api/adr/reserve — atomically reserve the next ADR number.
+/// Writes a placeholder file to prevent collisions between concurrent agents.
+async fn adr_reserve_number(
+    Json(body): Json<serde_json::Value>,
+) -> (http::StatusCode, Json<serde_json::Value>) {
+    let requested = body["number"].as_u64().unwrap_or(0) as u32;
+    let next = scan_next_adr_number().await;
+
+    // Use the higher of requested or scanned to avoid collisions
+    let number = std::cmp::max(requested, next);
+
+    // Write a placeholder to reserve the number
+    let roots = [
+        std::env::current_dir().ok(),
+        std::env::var("HEX_PROJECT_ROOT").ok().map(std::path::PathBuf::from),
+    ];
+
+    for root in roots.iter().flatten() {
+        let dir = root.join("docs/adrs");
+        if !dir.is_dir() {
+            continue;
+        }
+        let placeholder = dir.join(format!("ADR-{:03}-reserved.md", number));
+        if !placeholder.exists() {
+            let content = format!(
+                "# ADR-{:03}: Reserved\n\n**Status:** Proposed\n**Date:** {}\n**Reserved-By:** hex-agent\n\nThis number has been reserved. Replace this file with the actual ADR.\n",
+                number,
+                chrono::Utc::now().format("%Y-%m-%d"),
+            );
+            let _ = std::fs::write(&placeholder, content);
+        }
+        return (
+            http::StatusCode::OK,
+            Json(json!({ "ok": true, "reserved_number": number, "placeholder": placeholder.to_string_lossy() })),
+        );
+    }
+
+    (
+        http::StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "ok": false, "error": "docs/adrs/ not found" })),
+    )
+}
+
+/// Scan docs/adrs/ to find the highest ADR number and return next.
+async fn scan_next_adr_number() -> u32 {
+    let roots = [
+        std::env::current_dir().ok(),
+        std::env::var("HEX_PROJECT_ROOT").ok().map(std::path::PathBuf::from),
+    ];
+
+    let mut max_num: u32 = 0;
+    for root in roots.iter().flatten() {
+        let dir = root.join("docs/adrs");
+        if !dir.is_dir() {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if let Some(rest) = name.strip_prefix("ADR-").or_else(|| name.strip_prefix("adr-")) {
+                    if let Some(num_str) = rest.split('-').next() {
+                        if let Ok(num) = num_str.parse::<u32>() {
+                            if num > max_num {
+                                max_num = num;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        break; // Use first found directory
+    }
+    max_num + 1
+}
+
 /// GET /api/tools — serve MCP tool definitions from config/mcp-tools.json.
 /// Falls back to an empty list if the file is not found.
 async fn tools_registry() -> Json<serde_json::Value> {
@@ -280,6 +361,9 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/analyze/adr-compliance", post(analysis::analyze_adr_compliance)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/{project_id}/analyze/adr-compliance", get(analysis::analyze_project_adr_compliance))
+        // ADR number reservation (atomic next-number for multi-agent coordination)
+        .route("/api/adr/reserve", post(adr_reserve_number))
+        .route("/api/adr/next", get(adr_next_number))
         // Commands (browser/MCP → hub → project, bidirectional)
         .route("/api/{project_id}/command", post(commands::send_command)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))

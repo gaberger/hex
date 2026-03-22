@@ -24,6 +24,8 @@ pub enum AdrAction {
         #[arg(long)]
         strict: bool,
     },
+    /// Show the ADR schema, template, and next available number
+    Schema,
 }
 
 pub async fn run(action: AdrAction) -> anyhow::Result<()> {
@@ -33,6 +35,7 @@ pub async fn run(action: AdrAction) -> anyhow::Result<()> {
         AdrAction::Search { query } => search(&query).await,
         AdrAction::Abandoned => abandoned().await,
         AdrAction::Review { adr_id, strict } => super::adr_review::run(adr_id, strict).await,
+        AdrAction::Schema => schema().await,
     }
 }
 
@@ -268,6 +271,107 @@ async fn search(query: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn schema() -> anyhow::Result<()> {
+    let adr_dir = find_adr_dir().ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
+
+    // Determine next available number by scanning existing ADRs
+    let next_number = find_next_adr_number(&adr_dir).await;
+
+    // Try to reserve in SpacetimeDB via nexus
+    let reserved = reserve_adr_number(next_number).await;
+    let number_source = if reserved { "reserved in SpacetimeDB" } else { "from filesystem scan" };
+
+    println!("{} ADR Schema (for inference engines)", "\u{2b21}".cyan());
+    println!();
+    println!("  {:<20} {}", "Next number:".bold(), format!("ADR-{:03}", next_number).green());
+    println!("  {:<20} {}", "Source:".bold(), number_source.dimmed());
+    println!("  {:<20} {}", "Directory:".bold(), adr_dir.display());
+    println!("  {:<20} {}", "Filename pattern:".bold(), "ADR-{NNN}-{kebab-slug}.md");
+    println!();
+
+    println!("{}", "── Valid statuses ──".bold());
+    println!("  Proposed | Accepted | Deprecated | Superseded | Abandoned");
+    println!();
+
+    println!("{}", "── Required sections ──".bold());
+    println!("  # ADR-{{NNN}}: {{Title}}");
+    println!("  **Status:** {{status}}");
+    println!("  **Date:** {{YYYY-MM-DD}}");
+    println!("  **Drivers:** {{what triggered this}}");
+    println!("  ## Context");
+    println!("  ## Decision");
+    println!("  ## Consequences");
+    println!("  ## Implementation");
+    println!("  ## References");
+    println!();
+
+    println!("{}", "── Template ──".bold());
+    // Read and display the template
+    let template_path = adr_dir.join("TEMPLATE.md");
+    if template_path.exists() {
+        let template = tokio::fs::read_to_string(&template_path).await?;
+        // Replace the placeholder number with the actual next number
+        let filled = template.replace("{NNN}", &format!("{:03}", next_number));
+        println!("{}", filled);
+    } else {
+        println!("  {} TEMPLATE.md not found", "\u{26a0}".yellow());
+    }
+
+    // Output machine-readable JSON for inference engines
+    println!("{}", "── Machine-readable (JSON) ──".bold());
+    let schema_json = serde_json::json!({
+        "next_number": next_number,
+        "number_source": number_source,
+        "directory": adr_dir.to_string_lossy(),
+        "filename_pattern": "ADR-{NNN}-{kebab-slug}.md",
+        "valid_statuses": ["Proposed", "Accepted", "Deprecated", "Superseded", "Abandoned"],
+        "required_sections": ["Context", "Decision", "Consequences", "Implementation", "References"],
+        "frontmatter_fields": {
+            "Status": "required — one of valid_statuses",
+            "Date": "required — YYYY-MM-DD",
+            "Drivers": "required — what triggered this decision",
+            "Supersedes": "optional — ADR-NNN if replacing an earlier decision"
+        }
+    });
+    println!("{}", serde_json::to_string_pretty(&schema_json)?);
+
+    Ok(())
+}
+
+/// Find the next available ADR number by scanning existing files.
+async fn find_next_adr_number(adr_dir: &Path) -> u32 {
+    let mut max_num: u32 = 0;
+    if let Ok(mut entries) = tokio::fs::read_dir(adr_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            // Match ADR-NNN or adr-NNN patterns
+            if let Some(rest) = name.strip_prefix("ADR-").or_else(|| name.strip_prefix("adr-")) {
+                if let Some(num_str) = rest.split('-').next() {
+                    if let Ok(num) = num_str.parse::<u32>() {
+                        if num > max_num {
+                            max_num = num;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    max_num + 1
+}
+
+/// Try to reserve the next ADR number in SpacetimeDB via nexus.
+/// Returns true if reservation succeeded, false if nexus unavailable.
+async fn reserve_adr_number(number: u32) -> bool {
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    match nexus.post(
+        "/api/adr/reserve",
+        &serde_json::json!({ "number": number }),
+    ).await {
+        Ok(_) => true,
+        Err(_) => false,
+    }
 }
 
 async fn abandoned() -> anyhow::Result<()> {
