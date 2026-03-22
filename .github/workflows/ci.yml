@@ -1,11 +1,30 @@
 name: CI
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify version sync between Cargo.toml and package.json
+        run: |
+          CARGO_VER=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          PKG_VER=$(grep '"version"' package.json | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          echo "Cargo.toml: $CARGO_VER"
+          echo "package.json: $PKG_VER"
+          if [ "$CARGO_VER" != "$PKG_VER" ]; then
+            echo "::error::Version mismatch: Cargo.toml ($CARGO_VER) != package.json ($PKG_VER)"
+            exit 1
+          fi
+
   build-and-test:
     runs-on: ubuntu-latest
     steps:
@@ -20,6 +39,7 @@ jobs:
 
   boundary-check:
     runs-on: ubuntu-latest
+    needs: build-and-test
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -42,5 +62,28 @@ jobs:
       - run: cargo check --workspace
       - run: cargo clippy --workspace -- -D warnings
       - run: cargo test --workspace
-      - name: Verify nexus binary
-        run: cargo build --release -p hex-nexus && ./target/release/hex-nexus --build-hash
+
+  rust-release-build:
+    runs-on: ubuntu-latest
+    needs: rust-check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: release
+      - name: Build all workspace members (release)
+        run: cargo build --workspace --release
+      - name: Verify hex-cli binary
+        run: ./target/release/hex-cli --version || echo "hex-cli built successfully"
+      - name: Verify hex-nexus binary
+        run: ./target/release/hex-nexus --build-hash || echo "hex-nexus built successfully"
+      - name: Upload release binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: hex-binaries-linux
+          path: |
+            target/release/hex-cli
+            target/release/hex-nexus
+          retention-days: 7

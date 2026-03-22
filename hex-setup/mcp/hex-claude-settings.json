@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Claude Code settings template installed by `hex init`. Configures hooks, permissions, and announcements for hex-aware projects.",
+  "description": "Claude Code settings template installed by `hex init`. Configures hooks, permissions, statusline, and announcements for hex-aware projects.",
+  "statusline": "node scripts/hex-statusline.cjs",
   "hooks": {
     "SessionStart": [{
       "hooks": [{
