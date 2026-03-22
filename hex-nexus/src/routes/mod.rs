@@ -22,7 +22,7 @@ pub mod swarms;
 pub mod openapi;
 pub mod ws;
 
-use axum::{Router, Json, routing::{get, post, put, patch, delete}, extract::DefaultBodyLimit};
+use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
 use tower_http::cors::{CorsLayer, AllowOrigin};
 use http::{HeaderValue, Method};

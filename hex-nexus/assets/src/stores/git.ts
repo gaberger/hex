@@ -8,6 +8,7 @@
  * project paths from SpacetimeDB and passes them to nexus REST for git operations.
  */
 import { createSignal } from "solid-js";
+import { addToast } from "./toast";
 
 // ── Types ─────────────────────────────────────────────
 
@@ -86,14 +87,20 @@ const [gitLog, setGitLog] = createSignal<LogResult | null>(null);
 const [gitBranches, setGitBranches] = createSignal<BranchInfo[]>([]);
 const [gitDiff, setGitDiff] = createSignal<DiffResult | null>(null);
 const [gitLoading, setGitLoading] = createSignal(false);
+const [gitError, setGitError] = createSignal<string | null>(null);
 
-export { gitStatus, gitWorktrees, gitLog, gitBranches, gitDiff, gitLoading };
+export { gitStatus, gitWorktrees, gitLog, gitBranches, gitDiff, gitLoading, gitError };
 
 // ── Helpers ───────────────────────────────────────────
+
+/** Cache of project IDs that have been registered this session. */
+const _registeredProjects = new Set<string>();
 
 /** Build git API URL. Ensures project is registered for filesystem access. */
 async function ensureRegistered(projectId: string, projectPath?: string): Promise<void> {
   if (!projectPath) return;
+  // Skip if already registered this session
+  if (_registeredProjects.has(projectId)) return;
   // Lightweight: POST /api/projects/register is idempotent.
   // This tells nexus "I need filesystem access to this path" — not business logic.
   await fetch("/api/projects/register", {
@@ -101,6 +108,7 @@ async function ensureRegistered(projectId: string, projectPath?: string): Promis
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ rootPath: projectPath, name: projectId }),
   }).catch(() => {});
+  _registeredProjects.add(projectId);
 }
 
 // ── Fetchers ──────────────────────────────────────────
@@ -117,11 +125,15 @@ export async function fetchGitStatus(projectId: string, projectPath?: string): P
       const json = await res.json();
       if (json.ok) {
         setGitStatus(json.data);
+        setGitError(null);
         return json.data;
       }
     }
-  } catch {
-    // Errors handled by fetchAllGitData backoff
+    setGitError(`Git status fetch failed (HTTP ${res.status})`);
+  } catch (e: any) {
+    const msg = e?.message ?? "Git status fetch failed";
+    setGitError(msg);
+    addToast("error", `Git error: ${msg}`);
   } finally {
     _statusInFlight = false;
   }
@@ -141,11 +153,14 @@ export async function fetchGitWorktrees(projectId: string, projectPath?: string)
       if (json.ok) {
         const wts = json.data.worktrees ?? [];
         setGitWorktrees(wts);
+        setGitError(null);
         return wts;
       }
     }
-  } catch {
-    // Errors handled by fetchAllGitData backoff
+    setGitError(`Git worktrees fetch failed (HTTP ${res.status})`);
+  } catch (e: any) {
+    const msg = e?.message ?? "Git worktrees fetch failed";
+    setGitError(msg);
   } finally {
     _worktreesInFlight = false;
   }
@@ -176,11 +191,14 @@ export async function fetchGitLog(
       const json = await res.json();
       if (json.ok) {
         setGitLog(json.data);
+        setGitError(null);
         return json.data;
       }
     }
-  } catch {
-    // Errors handled by fetchAllGitData backoff
+    setGitError(`Git log fetch failed (HTTP ${res.status})`);
+  } catch (e: any) {
+    const msg = e?.message ?? "Git log fetch failed";
+    setGitError(msg);
   } finally {
     _logInFlight = false;
   }

@@ -146,6 +146,7 @@ const FileTreeView: Component = () => {
   const [fileContent, setFileContent] = createSignal('');
   const [loading, setLoading] = createSignal(false);
   const [treeLoading, setTreeLoading] = createSignal(true);
+  const [treePanelOpen, setTreePanelOpen] = createSignal(true);
 
   // Resolve project root path from route → projects store
   const projectRoot = createMemo(() => {
@@ -216,6 +217,7 @@ const FileTreeView: Component = () => {
 
   async function handleSelect(node: TreeNode) {
     setSelectedFile(node.path);
+    if (window.innerWidth < 768) setTreePanelOpen(false);
     setLoading(true);
     const content = await fetchFileContent(node.path);
     setFileContent(content);
@@ -223,14 +225,30 @@ const FileTreeView: Component = () => {
   }
 
   return (
-    <div class="flex flex-1 overflow-hidden" style={{ background: 'var(--bg-base)' }}>
+    <div class="flex flex-1 overflow-hidden relative" style={{ background: 'var(--bg-base)' }}>
+      {/* Mobile tree panel toggle */}
+      <button
+        class="md:hidden absolute top-2 left-2 z-20 rounded-lg p-1.5 transition-colors"
+        style={{ border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-muted)' }}
+        onClick={() => setTreePanelOpen((v) => !v)}
+        title={treePanelOpen() ? 'Hide file tree' : 'Show file tree'}
+      >
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <Show when={treePanelOpen()} fallback={<><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></>}>
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </Show>
+        </svg>
+      </button>
+
       {/* Left panel: directory tree */}
       <div
-        class="flex flex-col border-r overflow-hidden"
+        class="flex flex-col border-r overflow-hidden w-56 md:w-72 shrink-0 transition-all duration-200"
+        classList={{
+          'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-10 max-md:shadow-2xl': true,
+          'max-md:-translate-x-full': !treePanelOpen(),
+          'max-md:translate-x-0': treePanelOpen(),
+        }}
         style={{
-          width: '280px',
-          "min-width": '220px',
-          "max-width": '400px',
           "border-color": 'var(--border-subtle)',
           background: 'var(--bg-base)',
         }}

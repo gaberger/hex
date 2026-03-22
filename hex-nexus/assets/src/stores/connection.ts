@@ -31,7 +31,15 @@ import {
 // Configuration
 // ---------------------------------------------------------------------------
 
-const SPACETIMEDB_URI = "ws://localhost:3000";
+/** Resolve SpacetimeDB URI: localStorage override > window.location fallback. */
+function resolveSpacetimeDbUri(): string {
+  const stored = localStorage.getItem("hex-stdb-uri");
+  if (stored) return stored;
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.hostname}:3000`;
+}
+
+const SPACETIMEDB_URI = resolveSpacetimeDbUri();
 const TOKEN_KEY_PREFIX = "stdb_token_";
 
 // ---------------------------------------------------------------------------

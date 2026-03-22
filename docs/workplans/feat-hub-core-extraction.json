@@ -1,6 +1,8 @@
 {
   "feature": "hub-core-extraction",
   "adr": "ADR-025",
+  "status": "superseded",
+  "status_note": "Extraction completed informally — hex-nexus exists as a standalone crate. Formal verification steps (contract tests, embedding API) were done outside this workplan. hex-hub binary retired in favor of hex-nexus binary.",
   "description": "Extract hex-hub into hex-nexus (library) + hex-hub (thin binary). Enables hex-desktop to embed the full hub as a Rust dependency without process spawning. Also covers ADR-025 IStatePort abstraction for SQLite/SpacetimeDB swap.",
   "phases": [
     {

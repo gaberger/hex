@@ -2,6 +2,8 @@
 
 **Baseline:** Commit 167c651
 **Date:** 2026-03-21
+**Status:** in_progress
+**Status note:** P0 partially done (hex init exists, config_sync.rs implemented per ADR-044). P1 SpacetimeDB config tables partially done. P2-P3 not started. Overlaps with feat-adr-gap-closure P6 (skill lifecycle) and outstanding-adrs-workplan P3-P4.
 **Depends on:** ADR-044 (Config Sync to SpacetimeDB)
 **Previous:** `aiide-remaining.md` (P0-P3 complete)
 

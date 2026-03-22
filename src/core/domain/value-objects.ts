@@ -216,11 +216,21 @@ export interface Message {
 export interface ProjectRegistration {
   id: string;
   name: string;
+  description?: string;
   rootPath: string;
   port: number;
   status: 'active' | 'inactive' | 'error';
   createdAt: number;
   lastSeenAt: number;
+}
+
+/** Parsed `.hex/project.yaml` manifest (mirrors Rust ProjectManifest in config_sync.rs). */
+export interface ProjectManifest {
+  name: string;
+  description?: string;
+  version?: string;
+  created?: string;
+  autoRegister?: boolean;
 }
 
 export interface ProjectRegistry {

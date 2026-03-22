@@ -771,6 +771,11 @@ pub(crate) fn truncate_str(s: &str, max: usize) -> &str {
     if s.len() <= max {
         s
     } else {
-        &s[..max]
+        // Find the last char boundary at or before `max` to avoid panicking on multi-byte UTF-8
+        let mut end = max;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        &s[..end]
     }
 }

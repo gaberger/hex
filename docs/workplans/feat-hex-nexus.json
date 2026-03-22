@@ -1,6 +1,9 @@
 {
   "feature": "hex-nexus",
   "adr": "ADR-024",
+  "status": "superseded",
+  "superseded_by": "feat-hex-nexus-remaining.json",
+  "status_note": "Phases P1-P7.2 completed. Architecture evolved significantly (hex-hub → hex-nexus, RL deprioritized). Remaining E2E tests tracked in feat-hex-nexus-remaining.json.",
   "description": "Promote hex-hub to autonomous orchestration nexus with hex-agent Rust binary, AgentDB RL, chat UI, and SSH remote compute",
   "phases": [
     {

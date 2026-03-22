@@ -1,6 +1,8 @@
 {
   "feature": "hex-nexus-remaining",
   "adr": "ADR-024",
+  "status": "in_progress",
+  "status_note": "R1 (commits) likely done — hex-nexus and hex-agent are tracked in git. R2 (build verify) needs recheck after architecture evolution. R3 (E2E tests) not started. Some tasks may be obsolete (RL engine deprioritized, hex-hub retired).",
   "description": "Remaining work from the original hex-nexus workplan — E2E integration tests and uncommitted stabilization",
   "parent_workplan": "feat-hex-nexus.json",
   "completed_phases": ["P1", "P2", "P3", "P4", "P5", "P6", "P7.1", "P7.2"],

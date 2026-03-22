@@ -245,6 +245,8 @@ pub struct CleanupReport {
 pub struct ProjectRegistration {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub description: String,
     pub root_path: String,
     pub ast_is_stub: bool,
 }

@@ -39,9 +39,10 @@ const WorkplanView = lazy(() => import('../components/views/WorkplanView'));
 
 const App: Component = () => {
   const [theme, setTheme] = createSignal(
-    localStorage.getItem('theme') || 
+    localStorage.getItem('theme') ||
     (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
   );
+  const [moreMenuOpen, setMoreMenuOpen] = createSignal(false);
 
   onMount(() => {
     initConnections();
@@ -158,12 +159,12 @@ const App: Component = () => {
             <polygon points="32,16 46,24 46,40 32,48 18,40 18,24" fill="url(#hex-lg)" opacity=".25" stroke="url(#hex-lg)" stroke-width="1.5" />
             <polygon points="32,27 37,30 37,34 32,37 27,34 27,30" fill="url(#hex-lg)" opacity=".8" />
           </svg>
-          <button class="text-sm font-semibold tracking-wide text-gray-100 hover:text-cyan-300 transition-colors" onClick={() => navigate({ page: "control-plane" })}>
+          <button class="text-sm font-semibold tracking-wide text-gray-100 hover:text-cyan-300 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none rounded" onClick={() => navigate({ page: "control-plane" })}>
             HEX NEXUS
           </button>
           {/* Plan/Build mode */}
           <button
-            class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ml-3"
+            class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ml-3 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
             classList={{
               "bg-blue-900/30 text-blue-400 hover:bg-blue-900/50": mode() === "plan",
               "bg-green-900/30 text-green-400 hover:bg-green-900/50": mode() === "build",
@@ -187,7 +188,7 @@ const App: Component = () => {
           </span>
           <kbd class="hidden md:inline rounded border border-gray-700 bg-gray-800 px-1.5 py-0.5 text-gray-300">Ctrl+K</kbd>
           <button
-            class="rounded p-1.5 text-gray-300 hover:bg-gray-800 transition-colors"
+            class="rounded p-1.5 text-gray-300 hover:bg-gray-800 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
             aria-label="Toggle theme"
             onClick={toggleTheme}
             title={theme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -220,7 +221,7 @@ const App: Component = () => {
           {/* Control Plane / All Projects */}
           <div class="px-3 pt-3 pb-1">
             <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors"
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{
                 "bg-gray-800 text-gray-100": route().page === "control-plane",
                 "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "control-plane",
@@ -241,7 +242,7 @@ const App: Component = () => {
             <For each={projects()}>
               {(p) => (
                 <button
-                  class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                  class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
                   classList={{
                     "bg-cyan-900/20 text-cyan-300 font-medium": activeProjectId() === p.id,
                     "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": activeProjectId() !== p.id,
@@ -267,7 +268,7 @@ const App: Component = () => {
               <div class="text-[10px] font-bold uppercase tracking-wider text-gray-600 px-3 mb-2">Project</div>
               {/* Config (project-scoped) */}
               <button
-                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
                 classList={{
                   "bg-gray-800 text-gray-100": route().page === "config" && !!(route() as any).projectId,
                   "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "config" || !(route() as any).projectId,
@@ -282,7 +283,7 @@ const App: Component = () => {
               </button>
               {/* ADRs */}
               <button
-                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
                 classList={{
                   "bg-gray-800 text-gray-100": route().page === "adrs" || route().page === "project-adr",
                   "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "adrs" && route().page !== "project-adr",
@@ -297,7 +298,7 @@ const App: Component = () => {
               </button>
               {/* Files */}
               <button
-                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
                 classList={{
                   "bg-gray-800 text-gray-100": route().page === "file-tree",
                   "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "file-tree",
@@ -311,7 +312,7 @@ const App: Component = () => {
               </button>
               {/* Chat */}
               <button
-                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
                 classList={{
                   "bg-gray-800 text-gray-100": route().page === "project-chat",
                   "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "project-chat",
@@ -325,7 +326,7 @@ const App: Component = () => {
               </button>
               {/* Health */}
               <button
-                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
                 classList={{
                   "bg-gray-800 text-gray-100": route().page === "project-health",
                   "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "project-health",
@@ -339,7 +340,7 @@ const App: Component = () => {
               </button>
               {/* Dependencies */}
               <button
-                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
                 classList={{
                   "bg-gray-800 text-gray-100": route().page === "project-graph",
                   "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "project-graph",
@@ -360,7 +361,7 @@ const App: Component = () => {
             <div class="text-[10px] font-bold uppercase tracking-wider text-gray-600 px-3 mb-2">System</div>
             {/* Agents */}
             <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{
                 "bg-gray-800 text-gray-100": route().page === "agent-fleet",
                 "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "agent-fleet",
@@ -375,7 +376,7 @@ const App: Component = () => {
             </button>
             {/* Inference */}
             <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{
                 "bg-gray-800 text-gray-100": route().page === "inference",
                 "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "inference",
@@ -390,7 +391,7 @@ const App: Component = () => {
             </button>
             {/* Fleet */}
             <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{
                 "bg-gray-800 text-gray-100": route().page === "fleet-nodes",
                 "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "fleet-nodes",
@@ -405,7 +406,7 @@ const App: Component = () => {
             </button>
             {/* Workplans */}
             <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{
                 "bg-gray-800 text-gray-100": route().page === "workplans",
                 "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "workplans",
@@ -421,7 +422,7 @@ const App: Component = () => {
             </button>
             {/* Global Config */}
             <button
-              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
               classList={{
                 "bg-gray-800 text-gray-100": route().page === "config" && !(route() as any).projectId,
                 "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "config" || !!(route() as any).projectId,
@@ -483,6 +484,9 @@ const App: Component = () => {
             <Match when={route().page === "file-tree"}>
               <FileTreeView />
             </Match>
+            <Match when={route().page === "file-viewer"}>
+              <FileTreeView />
+            </Match>
             <Match when={route().page === "workplans"}>
               <WorkplanView />
             </Match>
@@ -494,10 +498,65 @@ const App: Component = () => {
       </div>
 
       {/* Mobile bottom tabs — only shown on small screens */}
-      <div class="flex md:hidden items-center justify-around border-t border-gray-800 bg-gray-900 py-2">
-        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1"
+      <div class="relative flex md:hidden items-center justify-around border-t border-gray-800 bg-gray-900 py-2">
+        {/* More menu slide-up overlay */}
+        <Show when={moreMenuOpen()}>
+          <div class="absolute bottom-full left-0 right-0 z-50 border-t border-gray-700 bg-gray-900 shadow-2xl transition-transform duration-200 ease-out animate-slide-up">
+            <div class="grid grid-cols-2 gap-1 p-3">
+              <button
+                class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+                classList={{ "bg-gray-800 text-cyan-400": route().page === "fleet-nodes" }}
+                onClick={() => { navigate({ page: "fleet-nodes" }); setMoreMenuOpen(false); }}
+              >
+                <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" />
+                  <line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+                Fleet Nodes
+              </button>
+              <button
+                class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+                classList={{ "bg-gray-800 text-cyan-400": route().page === "workplans" }}
+                onClick={() => { navigate({ page: "workplans" }); setMoreMenuOpen(false); }}
+              >
+                <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+                  <rect x="9" y="3" width="6" height="4" rx="1" />
+                  <path d="M9 14l2 2 4-4" />
+                </svg>
+                Workplans
+              </button>
+              <button
+                class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+                classList={{ "bg-gray-800 text-cyan-400": route().page === "config" }}
+                onClick={() => { navigate({ page: "config", section: "blueprint" }); setMoreMenuOpen(false); }}
+              >
+                <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+                Config
+              </button>
+              <button
+                class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none"
+                classList={{ "bg-gray-800 text-cyan-400": route().page === "adrs" }}
+                onClick={() => { navigate({ page: "adrs" }); setMoreMenuOpen(false); }}
+              >
+                <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                ADRs
+              </button>
+            </div>
+          </div>
+          {/* Backdrop to close */}
+          <div class="fixed inset-0 z-40" onClick={() => setMoreMenuOpen(false)} />
+        </Show>
+
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none rounded"
           classList={{ "text-cyan-400": route().page === "control-plane" }}
-          onClick={() => navigate({ page: "control-plane" })}
+          onClick={() => { navigate({ page: "control-plane" }); setMoreMenuOpen(false); }}
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
@@ -505,23 +564,32 @@ const App: Component = () => {
           </svg>
           <span class="text-[10px]">Projects</span>
         </button>
-        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1"
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none rounded"
           classList={{ "text-cyan-400": route().page === "agent-fleet" }}
-          onClick={() => navigate({ page: "agent-fleet" })}
+          onClick={() => { navigate({ page: "agent-fleet" }); setMoreMenuOpen(false); }}
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
           </svg>
           <span class="text-[10px]">Agents</span>
         </button>
-        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1"
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none rounded"
           classList={{ "text-cyan-400": route().page === "inference" }}
-          onClick={() => navigate({ page: "inference" })}
+          onClick={() => { navigate({ page: "inference" }); setMoreMenuOpen(false); }}
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" />
           </svg>
           <span class="text-[10px]">Inference</span>
+        </button>
+        <button class="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-200 px-3 py-1 focus-visible:ring-2 focus-visible:ring-cyan-500/40 focus-visible:outline-none rounded"
+          classList={{ "text-cyan-400": moreMenuOpen() }}
+          onClick={() => setMoreMenuOpen(!moreMenuOpen())}
+        >
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="5" r="1.5" fill="currentColor" /><circle cx="12" cy="12" r="1.5" fill="currentColor" /><circle cx="12" cy="19" r="1.5" fill="currentColor" />
+          </svg>
+          <span class="text-[10px]">More</span>
         </button>
       </div>
 

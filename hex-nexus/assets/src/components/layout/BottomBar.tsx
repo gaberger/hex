@@ -131,24 +131,16 @@ const BottomBar: Component = () => {
       {/* Status row — mode pill + connection (Pencil: gap 8) */}
       <div class="flex items-center" style={{ gap: '8px' }}>
         <button
-          class="flex items-center text-[10px] font-semibold select-none transition-colors"
-          style={{
-            gap: '6px',
-            "border-radius": '6px',
-            padding: '3px 8px',
-            background: mode() === 'plan' ? 'rgba(30,58,95,0.3)' : 'rgba(22,163,74,0.15)',
-            color: mode() === 'plan' ? '#60a5fa' : '#4ade80',
-          }}
+          class={`flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[10px] font-semibold select-none transition-colors ${mode() === 'plan' ? 'bg-blue-900/30 text-blue-400' : 'bg-green-900/15 text-green-400'}`}
           onClick={toggleMode}
           title="Toggle Plan/Build mode (Tab)"
         >
           <span
-            class="h-1.5 w-1.5 rounded-full"
-            style={{ background: mode() === 'plan' ? '#60a5fa' : '#4ade80' }}
+            class={`h-1.5 w-1.5 rounded-full ${mode() === 'plan' ? 'bg-blue-400' : 'bg-green-400'}`}
           />
           {mode() === 'plan' ? 'Plan' : 'Build'}
         </button>
-        <span class="h-1.5 w-1.5 rounded-full" style={{ background: chatConnected() ? '#4ade80' : '#ef4444' }} />
+        <span class={`h-1.5 w-1.5 rounded-full ${chatConnected() ? 'bg-green-400' : 'bg-red-500'}`} />
         <span class="text-[10px]" style={{ color: 'var(--text-dim)' }}>
           {chatConnected() ? 'connected' : 'disconnected'}
         </span>
@@ -198,12 +190,9 @@ const BottomBar: Component = () => {
         <button
           onClick={handleSubmit}
           disabled={isStreaming() || !value().trim()}
-          class="flex shrink-0 items-center justify-center transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+          class={`flex shrink-0 items-center justify-center rounded-lg h-8 w-8 transition-colors disabled:opacity-20 disabled:cursor-not-allowed ${value().trim() ? 'bg-green-600' : ''}`}
           style={{
-            width: '32px',
-            height: '32px',
-            "border-radius": '8px',
-            background: value().trim() ? '#16a34a' : 'var(--bg-elevated)',
+            ...(!value().trim() ? { background: 'var(--bg-elevated)' } : {}),
           }}
           title="Send (Enter)"
         >

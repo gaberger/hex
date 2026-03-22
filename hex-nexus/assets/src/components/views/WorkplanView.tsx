@@ -12,6 +12,9 @@ import {
   workplanError,
   fetchWorkplans,
   fetchReport,
+  executeWorkplan,
+  pauseWorkplan,
+  resumeWorkplan,
   startWorkplanPoll,
   stopWorkplanPoll,
   type WorkplanExecution,
@@ -32,6 +35,8 @@ function statusColor(status: string): string {
       return "bg-green-900/30 text-green-400";
     case "failed":
       return "bg-red-900/30 text-red-400";
+    case "paused":
+      return "bg-blue-900/30 text-blue-400";
     case "cancelled":
     case "skipped":
       return "bg-gray-800 text-gray-400";
@@ -50,6 +55,8 @@ function statusDotColor(status: string): string {
       return "bg-green-500";
     case "failed":
       return "bg-red-500";
+    case "paused":
+      return "bg-blue-400";
     case "cancelled":
     case "skipped":
       return "bg-gray-500";
@@ -115,6 +122,55 @@ const WorkplanView: Component = () => {
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [report, setReport] = createSignal<WorkplanReport | null>(null);
   const [reportLoading, setReportLoading] = createSignal(false);
+  const [showExecuteModal, setShowExecuteModal] = createSignal(false);
+  const [executePath, setExecutePath] = createSignal("");
+  const [actionLoading, setActionLoading] = createSignal(false);
+  const [toast, setToast] = createSignal<{ message: string; type: "success" | "error" } | null>(null);
+
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function showToast(message: string, type: "success" | "error") {
+    if (toastTimer) clearTimeout(toastTimer);
+    setToast({ message, type });
+    toastTimer = setTimeout(() => setToast(null), 4000);
+  }
+
+  async function handleExecute() {
+    const path = executePath().trim();
+    if (!path) return;
+    setActionLoading(true);
+    const result = await executeWorkplan(path);
+    setActionLoading(false);
+    setShowExecuteModal(false);
+    setExecutePath("");
+    if (result.ok) {
+      showToast("Workplan execution started", "success");
+    } else {
+      showToast(`Execute failed: ${result.error}`, "error");
+    }
+  }
+
+  async function handlePause() {
+    setActionLoading(true);
+    const result = await pauseWorkplan();
+    setActionLoading(false);
+    if (result.ok) {
+      showToast("Workplan paused", "success");
+    } else {
+      showToast(`Pause failed: ${result.error}`, "error");
+    }
+  }
+
+  async function handleResume() {
+    setActionLoading(true);
+    const result = await resumeWorkplan();
+    setActionLoading(false);
+    if (result.ok) {
+      showToast("Workplan resumed", "success");
+    } else {
+      showToast(`Resume failed: ${result.error}`, "error");
+    }
+  }
 
   onMount(() => {
     startWorkplanPoll();
@@ -122,6 +178,7 @@ const WorkplanView: Component = () => {
 
   onCleanup(() => {
     stopWorkplanPoll();
+    if (toastTimer) clearTimeout(toastTimer);
   });
 
   const sortedWorkplans = createMemo(() => {
@@ -149,6 +206,56 @@ const WorkplanView: Component = () => {
 
   return (
     <div class="flex h-full flex-col overflow-auto bg-gray-950 p-6">
+      {/* Toast notification */}
+      <Show when={toast()}>
+        {(t) => (
+          <div
+            class="fixed right-6 top-6 z-50 rounded-lg border px-4 py-3 text-sm shadow-lg transition-all"
+            classList={{
+              "border-green-800/50 bg-green-950/90 text-green-300": t().type === "success",
+              "border-red-800/50 bg-red-950/90 text-red-300": t().type === "error",
+            }}
+          >
+            {t().message}
+          </div>
+        )}
+      </Show>
+
+      {/* Execute modal */}
+      <Show when={showExecuteModal()}>
+        <div class="fixed inset-0 z-40 flex items-center justify-center bg-black/60">
+          <div class="w-full max-w-md rounded-xl border border-gray-700 bg-gray-900 p-6 shadow-2xl">
+            <h3 class="mb-4 text-base font-semibold text-gray-100">Execute Workplan</h3>
+            <label class="mb-1.5 block text-xs font-medium text-gray-400">
+              Workplan JSON path
+            </label>
+            <input
+              type="text"
+              class="mb-4 w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-cyan-600 focus:outline-none focus:ring-1 focus:ring-cyan-600"
+              placeholder="docs/workplans/feat-my-feature.json"
+              value={executePath()}
+              onInput={(e) => setExecutePath(e.currentTarget.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleExecute(); }}
+            />
+            <div class="flex justify-end gap-2">
+              <button
+                class="rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-600 hover:text-gray-100"
+                onClick={() => { setShowExecuteModal(false); setExecutePath(""); }}
+              >
+                Cancel
+              </button>
+              <button
+                class="rounded-lg border border-green-700 bg-green-900/60 px-3 py-1.5 text-xs font-medium text-green-300 transition-colors hover:border-green-600 hover:bg-green-900/80 disabled:opacity-50"
+                disabled={actionLoading() || !executePath().trim()}
+                onClick={handleExecute}
+              >
+                {actionLoading() ? "Starting..." : "Execute"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
+
       {/* Header */}
       <div class="mb-6 flex items-center justify-between">
         <div>
@@ -157,12 +264,46 @@ const WorkplanView: Component = () => {
             {workplans().length} execution{workplans().length !== 1 ? "s" : ""}
           </p>
         </div>
-        <button
-          class="rounded-lg border border-gray-700 bg-gray-900 px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-600 hover:text-gray-100"
-          onClick={() => fetchWorkplans()}
-        >
-          Refresh
-        </button>
+        <div class="flex items-center gap-2">
+          {/* Execute — show when no active/running workplan */}
+          <Show when={!activeWorkplan() || activeWorkplan()?.status === "pending"}>
+            <button
+              class="rounded-lg border border-green-700 bg-green-900/40 px-3 py-1.5 text-xs font-medium text-green-300 transition-colors hover:border-green-600 hover:bg-green-900/60"
+              onClick={() => setShowExecuteModal(true)}
+            >
+              Execute
+            </button>
+          </Show>
+
+          {/* Pause — show when workplan is active/running */}
+          <Show when={activeWorkplan()?.status === "active"}>
+            <button
+              class="rounded-lg border border-yellow-700 bg-yellow-900/40 px-3 py-1.5 text-xs font-medium text-yellow-300 transition-colors hover:border-yellow-600 hover:bg-yellow-900/60 disabled:opacity-50"
+              disabled={actionLoading()}
+              onClick={handlePause}
+            >
+              {actionLoading() ? "Pausing..." : "Pause"}
+            </button>
+          </Show>
+
+          {/* Resume — show when workplan is paused */}
+          <Show when={activeWorkplan()?.status === "paused"}>
+            <button
+              class="rounded-lg border border-blue-700 bg-blue-900/40 px-3 py-1.5 text-xs font-medium text-blue-300 transition-colors hover:border-blue-600 hover:bg-blue-900/60 disabled:opacity-50"
+              disabled={actionLoading()}
+              onClick={handleResume}
+            >
+              {actionLoading() ? "Resuming..." : "Resume"}
+            </button>
+          </Show>
+
+          <button
+            class="rounded-lg border border-gray-700 bg-gray-900 px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-600 hover:text-gray-100"
+            onClick={() => fetchWorkplans()}
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Active execution banner */}
@@ -209,12 +350,12 @@ const WorkplanView: Component = () => {
 
           <div class="overflow-hidden rounded-xl border border-gray-800">
             {/* Table header */}
-            <div class="grid grid-cols-[1fr_140px_100px_120px_80px] gap-2 border-b border-gray-800 bg-gray-900/60 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+            <div class="grid grid-cols-[1fr_100px] md:grid-cols-[1fr_140px_100px_120px_80px] gap-2 border-b border-gray-800 bg-gray-900/60 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
               <span>Feature</span>
               <span>Status</span>
-              <span>Phases</span>
-              <span>Duration</span>
-              <span>Agents</span>
+              <span class="hidden md:inline">Phases</span>
+              <span class="hidden md:inline">Duration</span>
+              <span class="hidden md:inline">Agents</span>
             </div>
 
             {/* Table rows */}
@@ -222,7 +363,7 @@ const WorkplanView: Component = () => {
               {(execution) => (
                 <>
                   <button
-                    class="grid w-full grid-cols-[1fr_140px_100px_120px_80px] gap-2 border-b border-gray-800/50 px-4 py-3 text-left text-sm transition-colors hover:bg-gray-900/50 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-cyan-500/30"
+                    class="grid w-full grid-cols-[1fr_100px] md:grid-cols-[1fr_140px_100px_120px_80px] gap-2 border-b border-gray-800/50 px-4 py-3 text-left text-sm transition-colors hover:bg-gray-900/50 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-cyan-500/30"
                     classList={{
                       "bg-gray-900/40": selectedId() === execution.id,
                     }}
@@ -251,7 +392,7 @@ const WorkplanView: Component = () => {
                     </div>
 
                     {/* Phases progress */}
-                    <div class="flex items-center gap-2">
+                    <div class="hidden md:flex items-center gap-2">
                       <span class="text-xs text-gray-300">
                         {completedPhases(execution.phases)}/{execution.phases.length}
                       </span>
@@ -259,12 +400,12 @@ const WorkplanView: Component = () => {
                     </div>
 
                     {/* Duration */}
-                    <span class="text-xs text-gray-400">
+                    <span class="hidden md:inline text-xs text-gray-400">
                       {formatDuration(execution.startedAt, execution.completedAt)}
                     </span>
 
                     {/* Agent count */}
-                    <span class="text-xs text-gray-400">
+                    <span class="hidden md:inline text-xs text-gray-400">
                       {execution.agents.length}
                     </span>
                   </button>
@@ -497,7 +638,7 @@ const DetailPanel: Component<{
       </Show>
 
       {/* Execution metadata */}
-      <div class="mt-4 flex gap-6 border-t border-gray-800/50 pt-3 text-[11px] text-gray-500">
+      <div class="mt-4 flex flex-wrap gap-x-6 gap-y-1 border-t border-gray-800/50 pt-3 text-[11px] text-gray-500">
         <span>ID: <code class="font-mono text-gray-400">{props.execution.id}</code></span>
         <span>Topology: {props.execution.topology}</span>
         <span>Created: {formatTime(props.execution.createdAt)}</span>

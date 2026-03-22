@@ -238,22 +238,18 @@ const ProjectDetail: Component = () => {
         {/* Tab bar: Overview | Changes */}
         <div class="mb-4 flex items-center gap-0 border-b" style={{ "border-color": "var(--border-subtle)" }}>
           <button
-            class="px-4 py-2 text-[11px] font-semibold uppercase transition-colors"
+            class={`px-4 py-2 text-[11px] font-semibold uppercase tracking-wide transition-colors border-b-2 ${activeTab() === "overview" ? "border-cyan-700" : "border-transparent"}`}
             style={{
               color: activeTab() === "overview" ? "var(--accent-hover)" : "var(--text-faint)",
-              "border-bottom": activeTab() === "overview" ? "2px solid #0E7490" : "2px solid transparent",
-              "letter-spacing": "1px",
             }}
             onClick={() => setActiveTab("overview")}
           >
             Overview
           </button>
           <button
-            class="px-4 py-2 text-[11px] font-semibold uppercase transition-colors"
+            class={`px-4 py-2 text-[11px] font-semibold uppercase tracking-wide transition-colors border-b-2 ${activeTab() === "changes" ? "border-cyan-700" : "border-transparent"}`}
             style={{
               color: activeTab() === "changes" ? "var(--accent-hover)" : "var(--text-faint)",
-              "border-bottom": activeTab() === "changes" ? "2px solid #0E7490" : "2px solid transparent",
-              "letter-spacing": "1px",
             }}
             onClick={() => setActiveTab("changes")}
           >

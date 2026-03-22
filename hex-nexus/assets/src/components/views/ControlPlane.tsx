@@ -22,22 +22,24 @@ const [worktreeCounts, setWorktreeCounts] = createSignal<Record<string, number>>
 // Helpers
 // ---------------------------------------------------------------------------
 
-function healthScore(projectId: string): number {
+function healthScore(projectId: string): number | null {
   const agents = registryAgents().filter(
     (a: any) => (a.project ?? a.project_id ?? "") === projectId,
   );
   const tasks = swarmTasks().filter(
     (t: any) => (t.project ?? t.project_id ?? "") === projectId,
   );
+  // No agents and no tasks means no analysis data — return null
+  if (agents.length === 0 && tasks.length === 0) return null;
+  if (tasks.length === 0) return null;
   const completed = tasks.filter(
     (t: any) => t.status === "completed" || t.status === "done",
   );
-  if (agents.length === 0 && tasks.length === 0) return 100;
-  if (tasks.length === 0) return 85;
-  return Math.round((completed.length / tasks.length) * 100) || 50;
+  return Math.round((completed.length / tasks.length) * 100);
 }
 
-function healthBadge(score: number): { bg: string; text: string } {
+function healthBadge(score: number | null): { bg: string; text: string } {
+  if (score === null) return { bg: "#374151", text: "#9ca3af" };
   if (score >= 80) return { bg: "#16532580", text: "#4ade80" };
   if (score >= 60) return { bg: "#eab30820", text: "#eab308" };
   return { bg: "#dc262620", text: "#f87171" };
@@ -193,64 +195,30 @@ const ControlPlane: Component = () => {
   }
 
   return (
-    <div
-      class="flex h-full flex-col overflow-auto"
-      style={{ background: "var(--bg-base)" }}
-    >
+    <div class="flex h-full flex-col overflow-auto bg-[var(--bg-base)]">
       {/* Padding container */}
       <div class="flex flex-col gap-6 p-6">
         {/* Header: Title + action buttons */}
         <div>
           <div class="flex items-start justify-between">
             <div>
-              <h2
-                style={{
-                  "font-size": "22px",
-                  "font-weight": "700",
-                  color: "var(--text-body)",
-                  "line-height": "1.3",
-                }}
-              >
+              <h2 class="text-[22px] font-bold leading-tight text-[var(--text-body)]">
                 Control Plane
               </h2>
-              <p
-                style={{
-                  "font-size": "13px",
-                  color: "var(--text-faint)",
-                  "margin-top": "4px",
-                }}
-              >
+              <p class="mt-1 text-[13px] text-[var(--text-faint)]">
                 {subtitle()}
               </p>
             </div>
 
             <div class="flex items-center gap-3">
               <button
-                style={{
-                  background: "color-mix(in srgb, var(--accent) 30%, transparent)",
-                  color: "var(--accent-hover)",
-                  border: "none",
-                  "border-radius": "8px",
-                  padding: "6px 14px",
-                  "font-size": "13px",
-                  "font-weight": "600",
-                  cursor: "pointer",
-                }}
+                class="rounded-lg border-none bg-[color-mix(in_srgb,var(--accent)_30%,transparent)] px-3.5 py-1.5 text-[13px] font-semibold text-[var(--accent-hover)] cursor-pointer"
                 onClick={() => setShowRegisterForm(true)}
               >
                 + Add Project
               </button>
               <button
-                style={{
-                  background: "transparent",
-                  color: "var(--text-body)",
-                  border: "1px solid var(--border)",
-                  "border-radius": "8px",
-                  padding: "6px 14px",
-                  "font-size": "13px",
-                  "font-weight": "600",
-                  cursor: "pointer",
-                }}
+                class="rounded-lg border border-[var(--border)] bg-transparent px-3.5 py-1.5 text-[13px] font-semibold text-[var(--text-body)] cursor-pointer"
                 onClick={() => setSwarmInitDialogOpen(true)}
               >
                 New Swarm
@@ -271,19 +239,7 @@ const ControlPlane: Component = () => {
               value={newPath()}
               onInput={(e) => setNewPath(e.currentTarget.value)}
               autofocus
-              style={{
-                flex: "1",
-                background: "var(--bg-surface)",
-                border: "1px solid var(--border)",
-                "border-radius": "8px",
-                padding: "8px 12px",
-                "font-size": "13px",
-                color: "var(--text-body)",
-                outline: "none",
-              }}
-              onFocus={(e) =>
-                (e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent-hover) 50%, transparent)")
-              }
+              class="flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2 text-[13px] text-[var(--text-body)] outline-none focus:border-[color-mix(in_srgb,var(--accent-hover)_50%,transparent)]"
               onBlur={(e) =>
                 (e.currentTarget.style.borderColor = "var(--border)")
               }
@@ -291,31 +247,13 @@ const ControlPlane: Component = () => {
             <button
               type="submit"
               disabled={registering() || !newPath().trim()}
-              style={{
-                background: "color-mix(in srgb, var(--accent) 30%, transparent)",
-                color: "var(--accent-hover)",
-                border: "none",
-                "border-radius": "8px",
-                padding: "8px 16px",
-                "font-size": "13px",
-                "font-weight": "600",
-                cursor: "pointer",
-                opacity: registering() || !newPath().trim() ? "0.5" : "1",
-              }}
+              class="rounded-lg border-none bg-[color-mix(in_srgb,var(--accent)_30%,transparent)] px-4 py-2 text-[13px] font-semibold text-[var(--accent-hover)] cursor-pointer disabled:opacity-50"
             >
               {registering() ? "Registering..." : "Register"}
             </button>
             <button
               type="button"
-              style={{
-                background: "transparent",
-                color: "var(--text-faint)",
-                border: "1px solid var(--border)",
-                "border-radius": "8px",
-                padding: "8px 12px",
-                "font-size": "13px",
-                cursor: "pointer",
-              }}
+              class="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-[13px] text-[var(--text-faint)] cursor-pointer"
               onClick={() => {
                 setShowRegisterForm(false);
                 setNewPath("");
@@ -346,23 +284,9 @@ const ControlPlane: Component = () => {
                 const hasSwarms = () => project.swarmCount > 0;
                 return (
                   <button
-                    class="group flex flex-col text-left transition-all"
-                    style={{
-                      background: "var(--bg-surface)",
-                      border: hasSwarms()
-                        ? "1px solid color-mix(in srgb, var(--accent-hover) 25%, transparent)"
-                        : "1px solid var(--border-subtle)",
-                      "border-radius": "12px",
-                      padding: "16px",
-                      cursor: "pointer",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent-hover) 40%, transparent)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = hasSwarms()
-                        ? "color-mix(in srgb, var(--accent) 25%, transparent)"
-                        : "var(--border-subtle)";
+                    class="group flex flex-col rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 text-left cursor-pointer transition-all hover:border-[color-mix(in_srgb,var(--accent-hover)_40%,transparent)]"
+                    classList={{
+                      "border-[color-mix(in_srgb,var(--accent-hover)_25%,transparent)]": hasSwarms(),
                     }}
                     onClick={() =>
                       navigate({ page: "project", projectId: project.id })
@@ -372,45 +296,28 @@ const ControlPlane: Component = () => {
                     <div class="flex w-full items-center justify-between">
                       <div class="flex items-center gap-2.5 overflow-hidden">
                         <FolderIcon active={hasSwarms()} />
-                        <span
-                          style={{
-                            "font-size": "16px",
-                            "font-weight": "700",
-                            color: "var(--text-body)",
-                            "white-space": "nowrap",
-                            overflow: "hidden",
-                            "text-overflow": "ellipsis",
-                          }}
-                        >
+                        <span class="truncate text-[16px] font-bold text-[var(--text-body)]">
                           {project.name}
                         </span>
                       </div>
                       <span
+                        class="ml-2 shrink-0 rounded-full px-2 py-0.5 text-[12px] font-bold"
                         style={{
                           background: badge().bg,
                           color: badge().text,
-                          "font-size": "12px",
-                          "font-weight": "700",
-                          "border-radius": "9999px",
-                          padding: "2px 8px",
-                          "flex-shrink": "0",
-                          "margin-left": "8px",
                         }}
                       >
-                        {project.score}
+                        {project.score !== null ? project.score : "--"}
                       </span>
                     </div>
 
                     {/* Stats row */}
-                    <div
-                      class="mt-2 flex items-center gap-3"
-                      style={{ "font-size": "12px" }}
-                    >
-                      <span style={{ color: "var(--text-faint)" }}>
+                    <div class="mt-2 flex items-center gap-3 text-[12px]">
+                      <span class="text-[var(--text-faint)]">
                         {project.worktreeCount} worktree
                         {project.worktreeCount !== 1 ? "s" : ""}
                       </span>
-                      <span style={{ color: "var(--accent-hover)" }}>
+                      <span class="text-[var(--accent-hover)]">
                         {project.swarmCount} swarm
                         {project.swarmCount !== 1 ? "s" : ""}
                       </span>
@@ -418,40 +325,25 @@ const ControlPlane: Component = () => {
 
                     {/* Agent count */}
                     <Show when={project.agentCount > 0}>
-                      <div
-                        class="mt-1"
-                        style={{ "font-size": "12px", color: "var(--text-muted)" }}
-                      >
+                      <div class="mt-1 text-[12px] text-[var(--text-muted)]">
                         {project.agentCount} agent
                         {project.agentCount !== 1 ? "s" : ""}
                       </div>
                     </Show>
 
                     {/* Health bar */}
-                    <div
-                      class="mt-3 w-full overflow-hidden"
-                      style={{
-                        height: "6px",
-                        "border-radius": "6px",
-                        background: "var(--bg-elevated)",
-                      }}
-                    >
+                    <div class="mt-3 h-1.5 w-full overflow-hidden rounded-md bg-[var(--bg-elevated)]">
                       <div
+                        class="h-full rounded-md transition-[width] duration-500 ease-in-out"
                         style={{
-                          height: "100%",
-                          width: `${project.score}%`,
-                          "border-radius": "6px",
+                          width: `${project.score ?? 0}%`,
                           background: badge().text,
-                          transition: "width 500ms ease",
                         }}
                       />
                     </div>
 
                     {/* Last activity */}
-                    <div
-                      class="mt-2"
-                      style={{ "font-size": "11px", color: "var(--text-dim)" }}
-                    >
+                    <div class="mt-2 text-[11px] text-[var(--text-dim)]">
                       Last: {timeAgo((project as any).lastActivity)}
                     </div>
                   </button>
@@ -463,16 +355,7 @@ const ControlPlane: Component = () => {
           {/* Active Swarms section */}
           <Show when={activeSwarms().length > 0}>
             <div class="mt-2">
-              <h3
-                style={{
-                  "font-size": "14px",
-                  "font-weight": "700",
-                  color: "var(--text-body)",
-                  "margin-bottom": "12px",
-                  "text-transform": "uppercase",
-                  "letter-spacing": "0.05em",
-                }}
-              >
+              <h3 class="mb-3 text-[14px] font-bold uppercase tracking-wide text-[var(--text-body)]">
                 Active Swarms
               </h3>
               <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -491,20 +374,7 @@ const ControlPlane: Component = () => {
                     };
                     return (
                       <button
-                        class="flex flex-col text-left transition-all"
-                        style={{
-                          background: "var(--bg-surface)",
-                          border: "1px solid var(--border-subtle)",
-                          "border-radius": "12px",
-                          padding: "16px",
-                          cursor: "pointer",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.borderColor = "var(--accent)";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.borderColor = "var(--border-subtle)";
-                        }}
+                        class="flex flex-col rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 text-left cursor-pointer transition-all hover:border-[var(--accent)]"
                         onClick={() => {
                           const pid = swarmProjectId(swarm);
                           if (pid) {
@@ -514,68 +384,30 @@ const ControlPlane: Component = () => {
                       >
                         {/* Swarm name + progress% + topology */}
                         <div class="flex w-full items-center justify-between">
-                          <span
-                            style={{
-                              "font-family": "'JetBrains Mono', monospace",
-                              "font-size": "14px",
-                              "font-weight": "700",
-                              color: "var(--text-body)",
-                              "white-space": "nowrap",
-                              overflow: "hidden",
-                              "text-overflow": "ellipsis",
-                            }}
-                          >
+                          <span class="truncate font-mono text-[14px] font-bold text-[var(--text-body)]">
                             {swarm.name ?? swarm.swarm_name ?? "unnamed"}
                           </span>
                           <div class="flex items-center gap-2">
-                            <span
-                              style={{
-                                "font-size": "12px",
-                                "font-weight": "600",
-                                color: "var(--accent-hover)",
-                              }}
-                            >
+                            <span class="text-[12px] font-semibold text-[var(--accent-hover)]">
                               {prog().percent}%
                             </span>
-                            <span
-                              style={{
-                                "font-size": "11px",
-                                color: "var(--text-faint)",
-                                "font-family":
-                                  "'JetBrains Mono', monospace",
-                              }}
-                            >
+                            <span class="font-mono text-[11px] text-[var(--text-faint)]">
                               {topoShort()}
                             </span>
                           </div>
                         </div>
 
                         {/* Project name + task count */}
-                        <div
-                          class="mt-1"
-                          style={{ "font-size": "12px", color: "var(--text-faint)" }}
-                        >
+                        <div class="mt-1 text-[12px] text-[var(--text-faint)]">
                           {swarmProjectName(swarm)} &middot;{" "}
                           {prog().done}/{prog().total} tasks
                         </div>
 
                         {/* Progress bar */}
-                        <div
-                          class="mt-3 w-full overflow-hidden"
-                          style={{
-                            height: "6px",
-                            "border-radius": "6px",
-                            background: "var(--bg-elevated)",
-                          }}
-                        >
+                        <div class="mt-3 h-1.5 w-full overflow-hidden rounded-md bg-[var(--bg-elevated)]">
                           <div
-                            style={{
-                              height: "100%",
-                              width: `${prog().percent}%`,
-                              "border-radius": "6px",
-                              background: "var(--accent-hover)",
-                              transition: "width 500ms ease",
-                            }}
+                            class="h-full rounded-md bg-[var(--accent-hover)] transition-[width] duration-500 ease-in-out"
+                            style={{ width: `${prog().percent}%` }}
                           />
                         </div>
                       </button>
@@ -602,14 +434,7 @@ const EmptyState: Component<{
   registering: () => boolean;
 }> = (props) => (
   <div class="flex flex-1 flex-col items-center justify-center gap-6 text-center">
-    <div
-      style={{
-        "border-radius": "9999px",
-        border: "1px solid var(--border-subtle)",
-        background: "var(--bg-surface)",
-        padding: "16px",
-      }}
-    >
+    <div class="rounded-full border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
       <svg
         width="32"
         height="32"
@@ -622,25 +447,10 @@ const EmptyState: Component<{
       </svg>
     </div>
     <div>
-      <p
-        style={{
-          "font-size": "18px",
-          "font-weight": "700",
-          color: "var(--text-body)",
-        }}
-      >
+      <p class="text-[18px] font-bold text-[var(--text-body)]">
         No projects registered
       </p>
-      <p
-        style={{
-          "font-size": "13px",
-          color: "var(--text-faint)",
-          "margin-top": "8px",
-          "max-width": "28rem",
-          "margin-left": "auto",
-          "margin-right": "auto",
-        }}
-      >
+      <p class="mx-auto mt-2 max-w-md text-[13px] text-[var(--text-faint)]">
         Register a project directory to start tracking its architecture,
         agents, and swarms.
       </p>
@@ -654,19 +464,7 @@ const EmptyState: Component<{
         placeholder="/path/to/project"
         value={props.path()}
         onInput={(e) => props.setPath(e.currentTarget.value)}
-        style={{
-          flex: "1",
-          background: "var(--bg-surface)",
-          border: "1px solid var(--border)",
-          "border-radius": "8px",
-          padding: "10px 14px",
-          "font-size": "13px",
-          color: "var(--text-body)",
-          outline: "none",
-        }}
-        onFocus={(e) =>
-          (e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent-hover) 50%, transparent)")
-        }
+        class="flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3.5 py-2.5 text-[13px] text-[var(--text-body)] outline-none focus:border-[color-mix(in_srgb,var(--accent-hover)_50%,transparent)]"
         onBlur={(e) =>
           (e.currentTarget.style.borderColor = "var(--border)")
         }
@@ -674,18 +472,7 @@ const EmptyState: Component<{
       <button
         type="submit"
         disabled={props.registering() || !props.path().trim()}
-        style={{
-          background: "color-mix(in srgb, var(--accent) 30%, transparent)",
-          color: "var(--accent-hover)",
-          border: "none",
-          "border-radius": "8px",
-          padding: "10px 20px",
-          "font-size": "13px",
-          "font-weight": "600",
-          cursor: "pointer",
-          opacity:
-            props.registering() || !props.path().trim() ? "0.5" : "1",
-        }}
+        class="rounded-lg border-none bg-[color-mix(in_srgb,var(--accent)_30%,transparent)] px-5 py-2.5 text-[13px] font-semibold text-[var(--accent-hover)] cursor-pointer disabled:opacity-50"
       >
         {props.registering() ? "Registering..." : "Register"}
       </button>

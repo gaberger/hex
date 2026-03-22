@@ -14,6 +14,7 @@ const [chatMessages, setChatMessages] = createSignal<ChatMessage[]>([]);
 const [streamingText, setStreamingText] = createSignal('');
 const [isStreaming, setIsStreaming] = createSignal(false);
 const [chatConnected, setChatConnected] = createSignal(false);
+const [loadingHistory, setLoadingHistory] = createSignal(false);
 
 // ── Internal state ───────────────────────────────────────────────────────────
 
@@ -33,15 +34,84 @@ function nowISO(): string {
 }
 
 function getAuthToken(): string | null {
-  const h = location.hash.slice(1);
-  if (h) return h;
+  const stored = localStorage.getItem('hex-auth-token');
+  if (stored) return stored;
   const params = new URLSearchParams(location.search);
   const t = params.get('token');
   if (t) {
-    location.hash = t;
+    localStorage.setItem('hex-auth-token', t);
     return t;
   }
   return null;
+}
+
+// ── History loading ──────────────────────────────────────────────────────────
+
+/** Map a backend MessagePart to a flat ChatMessage. */
+function backendMessageToChatMessage(msg: any): ChatMessage | null {
+  const parts: any[] = msg.parts ?? [];
+  if (parts.length === 0) return null;
+
+  // Find the primary text part (if any)
+  const textPart = parts.find((p: any) => p.type === 'Text' || p.content !== undefined && !p.call_id);
+  const toolCallPart = parts.find((p: any) => p.type === 'ToolCall' || p.tool_name !== undefined);
+  const toolResultPart = parts.find((p: any) => p.type === 'ToolResult' || (p.call_id !== undefined && p.is_error !== undefined));
+
+  const role = (msg.role ?? 'user').toLowerCase() as ChatMessage['role'];
+  const base = {
+    id: msg.id ?? crypto.randomUUID(),
+    role,
+    timestamp: msg.created_at ?? new Date().toISOString(),
+    model: msg.model ?? undefined,
+  };
+
+  if (toolCallPart) {
+    const toolName = toolCallPart.tool_name ?? toolCallPart.name ?? 'tool';
+    const args = toolCallPart.arguments ?? '';
+    const toolInput = typeof args === 'string' ? args : JSON.stringify(args, null, 2);
+    return {
+      ...base,
+      role: 'tool',
+      content: `${toolName}: ${toolInput}`,
+      toolName,
+      toolInput,
+      toolUseId: toolCallPart.call_id,
+      toolResult: toolResultPart?.content,
+      isError: toolResultPart?.is_error,
+    };
+  }
+
+  const content = textPart?.content ?? parts[0]?.content ?? '';
+  return { ...base, content };
+}
+
+/**
+ * Fetch persisted messages for a session and populate the chatMessages signal.
+ * Called on WebSocket connect and when switching sessions.
+ */
+async function loadChatHistory(sessionId?: string): Promise<void> {
+  const sid = sessionId ?? localStorage.getItem('hex-active-session') ?? '';
+  if (!sid) return;
+
+  setLoadingHistory(true);
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sid)}/messages`);
+    if (!res.ok) {
+      console.warn(`[chat store] failed to load history: HTTP ${res.status}`);
+      return;
+    }
+    const raw: any[] = await res.json();
+    const messages: ChatMessage[] = [];
+    for (const m of raw) {
+      const mapped = backendMessageToChatMessage(m);
+      if (mapped) messages.push(mapped);
+    }
+    setChatMessages(messages);
+  } catch (err) {
+    console.warn('[chat store] failed to load history:', err);
+  } finally {
+    setLoadingHistory(false);
+  }
 }
 
 // ── WebSocket lifecycle ──────────────────────────────────────────────────────
@@ -59,6 +129,8 @@ function connect() {
   ws.onopen = () => {
     setChatConnected(true);
     reconnectDelay = 1000;
+    // Load persisted chat history for the active session
+    loadChatHistory();
   };
 
   ws.onclose = () => {
@@ -321,7 +393,9 @@ export {
   chatMessages,
   streamingText,
   isStreaming,
+  loadingHistory,
   // Actions
   sendMessage,
   clearMessages,
+  loadChatHistory,
 };

@@ -73,6 +73,7 @@ pub struct Project {
     #[primary_key]
     pub project_id: String,
     pub name: String,
+    pub description: String,
     pub path: String,
     pub registered_at: String,
 }
@@ -83,6 +84,7 @@ pub fn register_project(
     ctx: &ReducerContext,
     project_id: String,
     name: String,
+    description: String,
     path: String,
     registered_at: String,
 ) -> Result<(), String> {
@@ -92,6 +94,7 @@ pub fn register_project(
     if let Some(existing) = ctx.db.project().project_id().find(&project_id) {
         ctx.db.project().project_id().update(Project {
             name,
+            description,
             path,
             registered_at,
             ..existing
@@ -100,6 +103,7 @@ pub fn register_project(
         ctx.db.project().insert(Project {
             project_id,
             name,
+            description,
             path,
             registered_at,
         });

@@ -2,9 +2,9 @@
  * ToastContainer.tsx — Fixed overlay showing toast notifications.
  *
  * Renders in the bottom-right corner. Toasts auto-dismiss after 4s
- * and can be manually closed.
+ * and can be manually closed. Exit animation via fade-out class.
  */
-import { Component, For } from "solid-js";
+import { Component, For, createSignal, onCleanup } from "solid-js";
 import { toasts, removeToast, type Toast } from "../../stores/toast";
 
 function iconForType(type: Toast["type"]) {
@@ -40,27 +40,39 @@ function styleForType(type: Toast["type"]): string {
   return "bg-gray-800/90 border-gray-700 text-gray-200";
 }
 
+/** Wrapper that adds exit animation before actual removal. */
+const ToastItem: Component<{ toast: Toast }> = (props) => {
+  const [exiting, setExiting] = createSignal(false);
+
+  function dismiss() {
+    setExiting(true);
+    setTimeout(() => removeToast(props.toast.id), 300);
+  }
+
+  return (
+    <div
+      class={`rounded-lg border px-4 py-3 text-sm shadow-lg flex items-center gap-3 min-w-[280px] max-w-[400px] transition-all duration-300 ${styleForType(props.toast.type)} ${exiting() ? "opacity-0 translate-x-4" : "animate-toast-in opacity-100"}`}
+    >
+      {iconForType(props.toast.type)}
+      <span class="flex-1">{props.toast.message}</span>
+      <button
+        class="shrink-0 rounded p-0.5 opacity-60 hover:opacity-100 transition-opacity"
+        onClick={dismiss}
+      >
+        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+    </div>
+  );
+};
+
 const ToastContainer: Component = () => {
   return (
     <div class="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
       <For each={toasts()}>
-        {(toast) => (
-          <div
-            class={`rounded-lg border px-4 py-3 text-sm shadow-lg flex items-center gap-3 min-w-[280px] max-w-[400px] animate-toast-in ${styleForType(toast.type)}`}
-          >
-            {iconForType(toast.type)}
-            <span class="flex-1">{toast.message}</span>
-            <button
-              class="shrink-0 rounded p-0.5 opacity-60 hover:opacity-100 transition-opacity"
-              onClick={() => removeToast(toast.id)}
-            >
-              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-        )}
+        {(toast) => <ToastItem toast={toast} />}
       </For>
     </div>
   );

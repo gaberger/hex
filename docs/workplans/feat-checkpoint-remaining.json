@@ -1,6 +1,8 @@
 {
   "feature": "checkpoint-remaining",
   "parent_workplan": "feat-stateful-project-tracking.json",
+  "status": "in_progress",
+  "status_note": "All 3 integration tests not yet written. Low priority — checkpoint round-trip working in unit tests.",
   "description": "Remaining work for stateful project tracking — integration tests only. Steps 1-5 are complete.",
   "completed_steps": {
     "step-1": "Checkpoint domain types — src/core/domain/checkpoint-types.ts",
@@ -21,6 +23,7 @@
       "dependencies": [],
       "tier": 0,
       "files": ["tests/integration/checkpoint-lifecycle.test.ts"],
+      "status": "todo",
       "done_condition": "bun test tests/integration/checkpoint-lifecycle.test.ts passes"
     },
     {
@@ -30,6 +33,7 @@
       "dependencies": [],
       "tier": 0,
       "files": ["tests/integration/checkpoint-lifecycle.test.ts"],
+      "status": "todo",
       "done_condition": "prune test case passes"
     },
     {
@@ -39,6 +43,7 @@
       "dependencies": [],
       "tier": 0,
       "files": ["tests/integration/checkpoint-lifecycle.test.ts"],
+      "status": "todo",
       "done_condition": "crash simulation test case passes"
     }
   ],

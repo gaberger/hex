@@ -33,12 +33,15 @@ const [healthLoading, setHealthLoading] = createSignal(false);
 export { healthData, healthLoading };
 
 import { fetchProjects } from "./projects";
+import { activeProjectId } from "./router";
 
 /** Resolve the best project path to analyze. */
 async function resolveProjectPath(): Promise<string> {
   const projs = await fetchProjects();
   if (projs.length > 0) {
-    return projs[0].path || ".";
+    const active = activeProjectId();
+    const match = active ? projs.find((p: any) => p.id === active || p.name === active) : null;
+    return (match?.path || projs[0].path) || ".";
   }
   // Fallback: try the nexus status endpoint for project info
   try {

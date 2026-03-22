@@ -6,7 +6,7 @@
  * 2. Slash commands in chat input (handled by BottomBar)
  * 3. Direct keyboard shortcuts (handled by App.tsx)
  */
-import { Component, For, Show, createSignal, createMemo, onMount, onCleanup } from "solid-js";
+import { Component, For, Show, createSignal, createMemo, createEffect, onMount, onCleanup } from "solid-js";
 import { searchCommands, type Command, type CommandCategory } from "../../stores/commands";
 
 const CATEGORY_COLORS: Record<CommandCategory, string> = {
@@ -35,7 +35,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
 
   // Reset on open
   const prevOpen = { value: false };
-  createMemo(() => {
+  createEffect(() => {
     if (props.open && !prevOpen.value) {
       setQuery("");
       setSelectedIndex(0);
@@ -67,7 +67,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
   }
 
   // Clamp selection when results change
-  createMemo(() => {
+  createEffect(() => {
     const len = results().length;
     if (selectedIndex() >= len) setSelectedIndex(Math.max(0, len - 1));
   });

@@ -1,4 +1,5 @@
 import { createSignal, createMemo, createEffect } from "solid-js";
+import { projects } from "./projects";
 
 export type Route =
   | { page: "control-plane" }
@@ -43,8 +44,9 @@ export const breadcrumbs = createMemo<Breadcrumb[]>(() => {
 
   if (r.page.startsWith("project")) {
     const pid = (r as Extract<Route, { projectId: string }>).projectId ?? "";
+    const projectName = projects().find((p) => p.id === pid)?.name ?? pid || "Project";
     crumbs.push({
-      label: pid || "Project",
+      label: projectName,
       icon: "folder",
       route: { page: "project", projectId: pid },
     });
@@ -66,7 +68,8 @@ export const breadcrumbs = createMemo<Breadcrumb[]>(() => {
   } else if (r.page === "config") {
     const configPid = (r as any).projectId;
     if (configPid) {
-      crumbs.push({ label: configPid, icon: "folder", route: { page: "project", projectId: configPid } });
+      const configProjectName = projects().find((p) => p.id === configPid)?.name ?? configPid;
+      crumbs.push({ label: configProjectName, icon: "folder", route: { page: "project", projectId: configPid } });
     }
     crumbs.push({
       label: "Configuration",

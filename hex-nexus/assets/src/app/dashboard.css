@@ -84,23 +84,6 @@ body {
   line-height: 1.5;
 }
 
-/* ── Global font size floor for developer readability ─────── */
-/* Bump all Tailwind text-[Npx] classes that are too small */
-.text-\[9px\]  { font-size: 11px !important; }
-.text-\[10px\] { font-size: 12px !important; }
-.text-\[11px\] { font-size: 13px !important; }
-.text-\[12px\] { font-size: 14px !important; }
-.text-\[13px\] { font-size: 15px !important; }
-.text-\[22px\] { font-size: 24px !important; }
-
-/* Named Tailwind sizes */
-.text-xs  { font-size: 13px !important; line-height: 1.4 !important; }
-.text-sm  { font-size: 14px !important; line-height: 1.5 !important; }
-.text-base { font-size: 15px !important; }
-.text-lg  { font-size: 18px !important; }
-.text-xl  { font-size: 20px !important; }
-.text-2xl { font-size: 24px !important; }
-
 /* ── Override Tailwind gray utilities with theme vars ──────── */
 /* Backgrounds */
 .bg-gray-950 { background-color: var(--bg-base) !important; }
@@ -169,32 +152,6 @@ input::placeholder, textarea::placeholder {
   border-color: var(--accent) !important;
 }
 
-/* ── Inline style overrides for hardcoded dark colors ─────── */
-[data-theme="light"] [style*="background-color: #111827"],
-[data-theme="light"] [style*="background: #111827"] {
-  background-color: var(--bg-surface) !important;
-  background: var(--bg-surface) !important;
-}
-[data-theme="light"] [style*="background-color: #0D1526"],
-[data-theme="light"] [style*="background: #0D1526"],
-[data-theme="light"] [style*="background: #0B1120"],
-[data-theme="light"] [style*="background-color: #0B1120"] {
-  background-color: var(--bg-surface) !important;
-  background: var(--bg-surface) !important;
-}
-[data-theme="light"] [style*="border-color: #1E293B"],
-[data-theme="light"] [style*="border-bottom: 1px solid #1E293B"],
-[data-theme="light"] [style*="border-bottom: 2px solid #0E7490"] {
-  border-color: var(--border-subtle) !important;
-}
-[data-theme="light"] [style*="color: #6B7280"] { color: var(--text-faint) !important; }
-[data-theme="light"] [style*="color: #9CA3AF"] { color: var(--text-muted) !important; }
-[data-theme="light"] [style*="color: #E5E7EB"] { color: var(--text-body) !important; }
-[data-theme="light"] [style*="color: #F3F4F6"] { color: var(--text-primary) !important; }
-[data-theme="light"] [style*="color: #D1D5DB"] { color: var(--text-secondary) !important; }
-[data-theme="light"] [style*="color: #67E8F9"] { color: var(--accent) !important; }
-[data-theme="light"] [style*="color: #1E293B"] { color: var(--text-body) !important; }
-
 /* ── Custom scrollbar ─────────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;
@@ -218,4 +175,13 @@ input::placeholder, textarea::placeholder {
 }
 .animate-toast-in {
   animation: toast-in 0.2s ease-out;
+}
+
+/* ── Mobile More menu slide-up ───────────────────────────── */
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-up {
+  animation: slide-up 0.15s ease-out;
 }

@@ -25,7 +25,7 @@ export interface WorkplanPhase {
 export interface WorkplanExecution {
   id: string;
   feature: string;
-  status: "pending" | "active" | "completed" | "failed" | "cancelled";
+  status: "pending" | "active" | "paused" | "completed" | "failed" | "cancelled";
   topology: string;
   createdAt: string;
   startedAt: string | null;
@@ -68,9 +68,9 @@ export async function fetchWorkplans(): Promise<WorkplanExecution[]> {
       setWorkplans(list);
       setWorkplanError(null);
 
-      // Detect active execution
+      // Detect active execution (including paused — still needs monitoring)
       const active = list.find(
-        (w) => w.status === "active" || w.status === "pending"
+        (w) => w.status === "active" || w.status === "pending" || w.status === "paused"
       );
       setActiveWorkplan(active ?? null);
 
@@ -110,6 +110,54 @@ export async function fetchReport(id: string): Promise<WorkplanReport | null> {
     _reportInFlight = false;
   }
   return null;
+}
+
+// ── Actions ──────────────────────────────────────────
+
+export async function executeWorkplan(path: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch("/api/workplan/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    if (res.ok) {
+      await fetchWorkplans();
+      return { ok: true };
+    }
+    const text = await res.text();
+    return { ok: false, error: text || `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, error: "Network error" };
+  }
+}
+
+export async function pauseWorkplan(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch("/api/workplan/pause", { method: "POST" });
+    if (res.ok) {
+      await fetchWorkplans();
+      return { ok: true };
+    }
+    const text = await res.text();
+    return { ok: false, error: text || `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, error: "Network error" };
+  }
+}
+
+export async function resumeWorkplan(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch("/api/workplan/resume", { method: "POST" });
+    if (res.ok) {
+      await fetchWorkplans();
+      return { ok: true };
+    }
+    const text = await res.text();
+    return { ok: false, error: text || `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, error: "Network error" };
+  }
 }
 
 // ── Polling ───────────────────────────────────────────

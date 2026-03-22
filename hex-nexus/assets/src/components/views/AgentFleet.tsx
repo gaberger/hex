@@ -4,7 +4,7 @@
  *
  * Data sources: SpacetimeDB subscriptions via connection stores.
  */
-import { Component, For, Show, createMemo } from "solid-js";
+import { Component, For, Show, createMemo, createSignal } from "solid-js";
 import { registryAgents, swarmAgents, agentHeartbeats, swarmTasks } from "../../stores/connection";
 import { projects } from "../../stores/projects";
 import { setSpawnDialogOpen } from "../../stores/ui";
@@ -221,7 +221,7 @@ const AgentFleet: Component = () => {
                     {/* Top row */}
                     <div class="flex items-center justify-between">
                       <div class="flex items-center gap-2">
-                        <span class={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDotColor(status())}`} />
+                        <span class={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDotColor(status())}`} role="img" aria-label={status()} /><span class="sr-only">{status()}</span>
                         <span class="truncate font-mono text-xs font-semibold text-gray-100">
                           {name()}
                         </span>
@@ -269,25 +269,64 @@ const AgentCard: Component<{
   const model = () => agent.model ?? "--";
   const uptime = () => formatUptime(agent.startedAt ?? agent.started_at ?? agent.created_at ?? agent.connectedAt ?? agent.connected_at);
   const task = () => props.agentTask(agent);
+  const [confirming, setConfirming] = createSignal(false);
+
+  async function handleTerminate(e: MouseEvent) {
+    e.stopPropagation();
+    const agentId = agent.id ?? agent.agent_id;
+    if (!confirming()) {
+      setConfirming(true);
+      setTimeout(() => setConfirming(false), 3000);
+      return;
+    }
+    setConfirming(false);
+    try {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}`, { method: "DELETE" });
+      if (res.ok) {
+        addToast("success", `Agent "${name()}" terminated`);
+      } else {
+        const body = await res.text();
+        addToast("error", `Failed to terminate agent: ${body || res.statusText}`);
+      }
+    } catch (err: any) {
+      addToast("error", `Failed to terminate agent: ${err.message ?? err}`);
+    }
+  }
 
   return (
     <button
       class="group flex flex-col gap-2.5 rounded-xl border border-gray-800 bg-gray-900 p-4 text-left transition-all hover:border-gray-700 hover:bg-[#111827] focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
       onClick={() => props.onClick(agent)}
     >
-      {/* Top row: dot + name + status badge */}
+      {/* Top row: dot + name + status badge + kill button */}
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <span class={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDotColor(status())}`} />
+          <span class={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDotColor(status())}`} role="img" aria-label={status()} /><span class="sr-only">{status()}</span>
           <span class="truncate font-mono text-xs font-semibold text-gray-100">
             {name()}
           </span>
         </div>
-        <span
-          class={`rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadgeBg(status())}`}
-        >
-          {status()}
-        </span>
+        <div class="flex items-center gap-1.5">
+          <span
+            class={`rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadgeBg(status())}`}
+          >
+            {status()}
+          </span>
+          <span
+            role="button"
+            title={confirming() ? "Click again to confirm" : "Terminate agent"}
+            class={`flex h-5 w-5 items-center justify-center rounded transition-colors ${
+              confirming()
+                ? "bg-red-600 text-white"
+                : "text-gray-600 opacity-0 hover:bg-red-900/40 hover:text-red-400 group-hover:opacity-100"
+            }`}
+            onClick={handleTerminate}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="h-3 w-3">
+              <path d="M5.28 4.22a.75.75 0 0 0-1.06 1.06L6.94 8l-2.72 2.72a.75.75 0 1 0 1.06 1.06L8 9.06l2.72 2.72a.75.75 0 1 0 1.06-1.06L9.06 8l2.72-2.72a.75.75 0 0 0-1.06-1.06L8 6.94 5.28 4.22Z" />
+            </svg>
+          </span>
+        </div>
       </div>
 
       {/* Details grid */}

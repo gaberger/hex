@@ -38,21 +38,26 @@ function statusColor(status: string): string {
   return '#6b7280';
 }
 
-async function fetchADRList(projectId?: string): Promise<ADRListItem[]> {
+interface ADRListResult {
+  items: ADRListItem[];
+  isFallback: boolean;
+}
+
+async function fetchADRList(projectId?: string): Promise<ADRListResult> {
   try {
     const url = projectId
       ? `/api/projects/${encodeURIComponent(projectId)}/adrs`
       : '/api/adrs';
     const res = await fetch(url);
     if (res.ok) {
-      return await res.json();
+      return { items: await res.json(), isFallback: false };
     }
   } catch {
     // API not available, fall through to fallback
   }
 
   // Fallback data for known ADRs when API is unavailable
-  return [
+  return { isFallback: true, items: [
     { id: '043', title: 'AIIDE - Hex Nexus as AI IDE', status: 'Accepted', date: '2026-03-21' },
     { id: '042', title: 'SpacetimeDB Single Source of State', status: 'Proposed', date: '2026-03-21' },
     { id: '041', title: 'ADR Review Agent', status: 'Proposed', date: '2026-03-21' },
@@ -63,7 +68,7 @@ async function fetchADRList(projectId?: string): Promise<ADRListItem[]> {
     { id: '025', title: 'SpacetimeDB Integration', status: 'Accepted', date: '2026-02-10' },
     { id: '014', title: 'Deps Pattern (No Mocks)', status: 'Superseded', date: '2025-12-01' },
     { id: '011', title: 'Multi-Instance Coordination', status: 'Accepted', date: '2025-11-15' },
-  ];
+  ] };
 }
 
 // Fallback markdown content for key ADRs (embedded from docs/adrs/)
@@ -258,6 +263,8 @@ async function fetchADRDetail(id: string, projectId?: string): Promise<ADRDetail
 const ADRBrowser: Component = () => {
   const [searchQuery, setSearchQuery] = createSignal('');
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
+  const [retryCount, setRetryCount] = createSignal(0);
+  const [sidebarOpen, setSidebarOpen] = createSignal(true);
 
   // Extract projectId from route when available
   const projectId = createMemo(() => {
@@ -265,10 +272,13 @@ const ADRBrowser: Component = () => {
     return (r as { projectId?: string }).projectId;
   });
 
-  const [adrList] = createResource(projectId, (pid) => fetchADRList(pid));
+  const fetchKey = createMemo(() => ({ pid: projectId(), retry: retryCount() }));
+  const [adrListResult, { refetch: refetchList }] = createResource(fetchKey, (key) => fetchADRList(key.pid));
+
+  const isFallback = createMemo(() => adrListResult()?.isFallback ?? false);
 
   const filteredList = createMemo(() => {
-    const list = adrList() ?? [];
+    const list = adrListResult()?.items ?? [];
     const q = searchQuery().toLowerCase().trim();
     if (!q) return list;
     return list.filter(
@@ -303,11 +313,28 @@ const ADRBrowser: Component = () => {
   });
 
   return (
-    <div class="flex flex-1 overflow-hidden">
+    <div class="flex flex-1 overflow-hidden relative">
+      {/* Mobile sidebar toggle */}
+      <button
+        class="md:hidden absolute top-3 left-3 z-20 rounded-lg border border-gray-700 bg-gray-900 p-1.5 text-gray-400 hover:text-gray-200 hover:border-gray-600 transition-colors"
+        onClick={() => setSidebarOpen((v) => !v)}
+        title={sidebarOpen() ? 'Hide ADR list' : 'Show ADR list'}
+      >
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <Show when={sidebarOpen()} fallback={<><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></>}>
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </Show>
+        </svg>
+      </button>
+
       {/* LEFT SIDEBAR — ADR List (inside center content area) */}
       <div
-        class="flex flex-col border-r border-gray-800 bg-gray-900 overflow-hidden"
-        style={{ width: '280px', 'min-width': '280px' }}
+        class="flex flex-col border-r border-gray-800 bg-gray-900 overflow-hidden w-64 md:w-72 shrink-0 transition-all duration-200"
+        classList={{
+          'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-10 max-md:shadow-2xl': true,
+          'max-md:-translate-x-full': !sidebarOpen(),
+          'max-md:translate-x-0': sidebarOpen(),
+        }}
       >
         {/* Header */}
         <div class="flex items-center justify-between px-4 pt-4 pb-2">
@@ -333,12 +360,30 @@ const ADRBrowser: Component = () => {
             <input
               type="text"
               placeholder="Search ADRs..."
-              class="w-full rounded-lg border border-gray-700 bg-[#0a0e14] py-2 pl-9 pr-3 text-sm text-gray-300 placeholder-gray-600 outline-none focus:border-gray-500 transition-colors"
+              class="w-full rounded-lg border border-gray-700 bg-gray-950 py-2 pl-9 pr-3 text-sm text-gray-300 placeholder-gray-600 outline-none focus:border-gray-500 transition-colors"
               value={searchQuery()}
               onInput={(e) => setSearchQuery(e.currentTarget.value)}
             />
           </div>
         </div>
+
+        {/* Offline fallback banner */}
+        <Show when={isFallback()}>
+          <div class="mx-3 mb-2 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+            <svg class="h-4 w-4 shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <span class="flex-1 text-xs text-amber-300">Offline — showing cached data</span>
+            <button
+              class="shrink-0 rounded border border-amber-500/30 px-2 py-0.5 text-xs text-amber-400 hover:bg-amber-500/20 transition-colors"
+              onClick={() => { setRetryCount((c) => c + 1); refetchList(); }}
+            >
+              Retry
+            </button>
+          </div>
+        </Show>
 
         {/* ADR List */}
         <div class="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
@@ -355,17 +400,17 @@ const ADRBrowser: Component = () => {
                 <button
                   class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors"
                   classList={{
-                    'bg-[#1f2937]': isSelected(),
+                    'bg-gray-800': isSelected(),
                     'hover:bg-gray-800/50': !isSelected(),
                   }}
-                  onClick={() => setSelectedId(adr.id)}
+                  onClick={() => { setSelectedId(adr.id); if (window.innerWidth < 768) setSidebarOpen(false); }}
                 >
                   {/* ADR number */}
                   <span
                     class="shrink-0 text-[13px] font-bold"
                     classList={{
-                      'text-[#f0883e]': isSelected(),
-                      'text-[#6b7280]': !isSelected(),
+                      'text-amber-400': isSelected(),
+                      'text-gray-500': !isSelected(),
                     }}
                     style={{ 'font-family': "'JetBrains Mono', monospace" }}
                   >
@@ -376,8 +421,8 @@ const ADRBrowser: Component = () => {
                   <span
                     class="flex-1 truncate text-[13px]"
                     classList={{
-                      'text-[#e5e7eb]': isSelected(),
-                      'text-[#9ca3af]': !isSelected(),
+                      'text-gray-200': isSelected(),
+                      'text-gray-400': !isSelected(),
                     }}
                   >
                     {adr.title}

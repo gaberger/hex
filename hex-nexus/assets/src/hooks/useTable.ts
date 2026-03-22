@@ -63,12 +63,21 @@ export function useTable<Row>(
 
   const [rows, setRows] = createSignal<Row[]>([], { equals: false });
 
+  // Generation counter: incremented each time the effect re-runs (e.g. on
+  // reconnect). Callbacks captured in a previous generation become no-ops,
+  // preventing duplicate signal updates and memory leaks (UAT-F04).
+  let generation = 0;
+
   createEffect(() => {
     const table = tableAccessor();
     if (!table) {
       setRows([]);
       return;
     }
+
+    // Bump generation so any previously-registered callbacks become stale.
+    const currentGen = ++generation;
+    const isActive = () => currentGen === generation;
 
     // Seed with current cached rows
     const initial: Row[] = [];
@@ -79,6 +88,7 @@ export function useTable<Row>(
 
     // ------ onInsert ------
     table.onInsert((_ctx: any, row: Row) => {
+      if (!isActive()) return;
       const key = getKey(row);
       setRows((prev) => {
         // Deduplicate: if row with same key already exists, replace it
@@ -90,14 +100,28 @@ export function useTable<Row>(
 
     // ------ onUpdate ------
     table.onUpdate((_ctx: any, oldRow: Row, newRow: Row) => {
+      if (!isActive()) return;
       const oldKey = getKey(oldRow);
       setRows((prev) => prev.map((r) => (getKey(r) === oldKey ? newRow : r)));
     });
 
     // ------ onDelete ------
     table.onDelete((_ctx: any, row: Row) => {
+      if (!isActive()) return;
       const key = getKey(row);
       setRows((prev) => prev.filter((r) => getKey(r) !== key));
+    });
+
+    // When the effect re-runs (new table handle on reconnect) or the
+    // component is destroyed, invalidate this generation so stale
+    // callbacks from the old connection become no-ops.
+    onCleanup(() => {
+      // Setting generation to a value !== currentGen makes isActive() false
+      // for all callbacks captured in this run. The next effect run will
+      // bump generation again, so this only matters for component teardown.
+      if (generation === currentGen) {
+        generation++;
+      }
     });
   });
 

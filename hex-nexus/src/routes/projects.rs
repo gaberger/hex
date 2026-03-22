@@ -17,6 +17,7 @@ pub async fn register(
         None => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "Missing rootPath" }))),
     };
     let name_field = body.get("name").and_then(|v| v.as_str()).map(String::from);
+    let description = body.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let ast_is_stub = body.get("astIsStub").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let id = make_project_id(&root_path);
@@ -41,6 +42,7 @@ pub async fn register(
     if let Err(e) = sp.project_register(ProjectRegistration {
         id: id.clone(),
         name: name.clone(),
+        description: description.clone(),
         root_path: root_path.clone(),
         ast_is_stub,
     }).await {

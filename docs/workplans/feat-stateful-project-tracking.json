@@ -1,6 +1,9 @@
 {
   "id": "feat-stateful-project-tracking",
   "title": "Feature: Stateful Project Tracking Service",
+  "status": "superseded",
+  "superseded_by": "feat-checkpoint-remaining.json",
+  "status_note": "Steps 1-5 completed. Only integration tests remain — tracked in feat-checkpoint-remaining.json.",
   "description": "Crash-resilient persistence for task state, feature progress, and agent lifecycle. When Claude Code crashes or restarts, sessions can pick up where they left off.",
   "specs": "docs/specs/stateful-project-tracking.json",
   "steps": [

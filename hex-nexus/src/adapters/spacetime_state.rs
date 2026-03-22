@@ -856,7 +856,7 @@ mod real {
         async fn project_register(&self, project: ProjectRegistration) -> Result<(), StateError> {
             let registered_at = chrono::Utc::now().to_rfc3339();
             self.call_reducer("register_project", serde_json::json!([
-                project.id, project.name, project.root_path, registered_at
+                project.id, project.name, project.description, project.root_path, registered_at
             ])).await?;
             Ok(())
         }

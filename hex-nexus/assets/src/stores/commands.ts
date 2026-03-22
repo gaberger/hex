@@ -60,7 +60,7 @@ const commands: Command[] = [
     id: "nav.swarms",
     label: "Navigate to Swarms",
     category: "navigation",
-    action: () => navigate({ page: "control-plane" }),
+    action: () => navigate({ page: "agent-fleet" }),
   },
   {
     id: "nav.adrs",
@@ -226,30 +226,6 @@ const commands: Command[] = [
     action: () => setSwarmInitDialogOpen(true),
   },
 
-  // ── Analysis ──
-  {
-    id: "analysis.run",
-    label: "Run Analysis",
-    category: "analysis",
-    action: async () => {
-      try {
-        const res = await fetch("/api/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: "." }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          addToast("success", `Analysis complete — Score: ${data.health_score ?? "?"}/100`);
-        } else {
-          addToast("error", "Analysis failed");
-        }
-      } catch {
-        addToast("error", "Analysis request failed — is nexus running?");
-      }
-    },
-  },
-
   // ── Config ──
   {
     id: "config.refresh",
@@ -301,7 +277,7 @@ export function getAllCommandsWithEntities(): Command[] {
       id: `goto.swarm.${name}`,
       label: `Swarm: ${name}`,
       category: "swarm",
-      action: () => navigate({ page: "control-plane" }),
+      action: () => navigate({ page: "agent-fleet" }),
     });
   }
 
