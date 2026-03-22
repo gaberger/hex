@@ -72,11 +72,27 @@ async fn session_start(project_dir: &PathBuf) -> Result<()> {
     println!("  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
     println!("  Project: {} ({})", name, &id[..8]);
 
-    // Check if nexus is reachable
+    // Check if nexus is reachable and register as agent (ADR-048)
     let nexus_status = check_nexus_health().await;
     match nexus_status {
-        Ok(_) => println!("  Nexus:   {}", "connected".green()),
-        Err(_) => println!("  Nexus:   {} (run `hex nexus start`)", "offline".yellow()),
+        Ok(health) => {
+            println!("  Nexus:   {}", "connected".green());
+
+            // Report SpacetimeDB status from health response
+            let stdb_ok = health["spacetimedb"].as_bool().unwrap_or(false);
+            if stdb_ok {
+                println!("  StDB:    {}", "connected".green());
+            } else {
+                println!("  StDB:    {} (nexus using SQLite fallback)", "offline".yellow());
+            }
+
+            // Register this Claude Code session as an agent
+            let _ = register_session_agent(project_dir, name).await;
+        }
+        Err(_) => {
+            println!("  Nexus:   {} (run `hex nexus start`)", "offline".yellow());
+            println!("  StDB:    {} (requires nexus)", "offline".dimmed());
+        }
     }
 
     // Check for architecture violations
@@ -88,8 +104,127 @@ async fn session_start(project_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// Register this Claude Code session as an agent with hex-nexus (ADR-048).
+///
+/// Persists the returned agentId to ~/.hex/sessions/ so session_end can
+/// deregister without relying on in-process memory.
+async fn register_session_agent(project_dir: &PathBuf, project_name: &str) -> Result<()> {
+    let session_id = std::env::var("CLAUDE_SESSION_ID").unwrap_or_default();
+    let model = std::env::var("CLAUDE_MODEL").unwrap_or_else(|_| "unknown".to_string());
+    let hostname = gethostname::gethostname()
+        .to_string_lossy()
+        .to_string();
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()?;
+
+    let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
+    let url = format!("http://localhost:{}/api/agents/connect", port);
+
+    let agent_name = if session_id.is_empty() {
+        format!("claude-{}", &hostname)
+    } else {
+        format!("claude-{}", &session_id[..8.min(session_id.len())])
+    };
+
+    let resp = client
+        .post(&url)
+        .json(&serde_json::json!({
+            "host": hostname,
+            "name": agent_name,
+            "project_dir": project_dir.to_string_lossy(),
+            "model": model,
+            "session_id": session_id,
+        }))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let body: serde_json::Value = resp.json().await?;
+    let agent_id = body["agentId"].as_str().unwrap_or("");
+
+    if !agent_id.is_empty() {
+        // Persist agentId to disk for session_end deregistration
+        let sessions_dir = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join(".hex/sessions");
+        std::fs::create_dir_all(&sessions_dir)?;
+
+        let state_key = if session_id.is_empty() {
+            format!("agent-{}.json", std::process::id())
+        } else {
+            format!("agent-{}.json", &session_id)
+        };
+
+        let state_file = sessions_dir.join(state_key);
+        std::fs::write(
+            &state_file,
+            serde_json::json!({
+                "agentId": agent_id,
+                "name": agent_name,
+                "project": project_name,
+                "registered_at": chrono::Utc::now().to_rfc3339(),
+            })
+            .to_string(),
+        )?;
+
+        println!("  Agent:   {} ({})", "registered".green(), agent_name);
+    }
+
+    Ok(())
+}
+
 async fn session_end(_project_dir: &PathBuf) -> Result<()> {
-    // Lightweight cleanup — future: flush pending memory, deregister agent
+    // Deregister this session's agent from hex-nexus (ADR-048)
+    let _ = deregister_session_agent().await;
+    Ok(())
+}
+
+/// Deregister this Claude Code session from hex-nexus.
+///
+/// Reads the agentId from the persisted state file written by session_start,
+/// calls POST /api/agents/disconnect, then cleans up the state file.
+async fn deregister_session_agent() -> Result<()> {
+    let session_id = std::env::var("CLAUDE_SESSION_ID").unwrap_or_default();
+    let sessions_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".hex/sessions");
+
+    let state_key = if session_id.is_empty() {
+        format!("agent-{}.json", std::process::id())
+    } else {
+        format!("agent-{}.json", &session_id)
+    };
+
+    let state_file = sessions_dir.join(&state_key);
+    if !state_file.exists() {
+        return Ok(()); // No registration to undo
+    }
+
+    let content = std::fs::read_to_string(&state_file)?;
+    let state: serde_json::Value = serde_json::from_str(&content)?;
+    let agent_id = state["agentId"].as_str().unwrap_or("");
+
+    if !agent_id.is_empty() {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()?;
+
+        let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
+        let url = format!("http://localhost:{}/api/agents/disconnect", port);
+
+        // Fire-and-forget — don't block session teardown
+        let _ = client
+            .post(&url)
+            .json(&serde_json::json!({ "agentId": agent_id }))
+            .send()
+            .await;
+    }
+
+    // Clean up state file regardless of disconnect success
+    let _ = std::fs::remove_file(&state_file);
+
     Ok(())
 }
 
@@ -165,7 +300,7 @@ fn validate_boundary_edit(project_dir: &PathBuf, file_path: &str) -> Result<()> 
 
 // ── Nexus communication ──────────────────────────────────────────────
 
-async fn check_nexus_health() -> Result<()> {
+async fn check_nexus_health() -> Result<serde_json::Value> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()?;
@@ -173,8 +308,9 @@ async fn check_nexus_health() -> Result<()> {
     let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
     let url = format!("http://localhost:{}/api/health", port);
 
-    client.get(&url).send().await?.error_for_status()?;
-    Ok(())
+    let resp = client.get(&url).send().await?.error_for_status()?;
+    let body: serde_json::Value = resp.json().await?;
+    Ok(body)
 }
 
 async fn notify_nexus_edit(_project_dir: &PathBuf, _file_path: &str) -> Result<()> {

@@ -200,13 +200,22 @@ fn create_mcp_json(target: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Embedded settings template from hex-setup/ — single source of truth.
+/// This file is baked into the binary at compile time via include_str!.
+const SETTINGS_TEMPLATE: &str =
+    include_str!("../../../hex-setup/mcp/hex-claude-settings.json");
+
 fn create_claude_settings(target: &Path) -> Result<()> {
     let claude_dir = target.join(".claude");
     create_dir_if_missing(&claude_dir)?;
 
     let settings_path = claude_dir.join("settings.json");
 
-    // If settings.json exists, merge hooks in rather than overwriting
+    // Parse the embedded template (skip $schema — it's for editor hints only)
+    let template: serde_json::Value = serde_json::from_str(SETTINGS_TEMPLATE)
+        .context("Failed to parse embedded hex-claude-settings.json template")?;
+
+    // If settings.json exists, merge template fields in rather than overwriting
     let mut settings: serde_json::Value = if settings_path.exists() {
         let existing = fs::read_to_string(&settings_path)?;
         serde_json::from_str(&existing).unwrap_or_else(|_| serde_json::json!({}))
@@ -214,79 +223,23 @@ fn create_claude_settings(target: &Path) -> Result<()> {
         serde_json::json!({})
     };
 
-    // Set hooks that delegate to `hex hook <event>`
-    settings["hooks"] = serde_json::json!({
-        "SessionStart": [{
-            "hooks": [{
-                "type": "command",
-                "command": "hex hook session-start",
-                "timeout": 10000
-            }]
-        }],
-        "SessionEnd": [{
-            "hooks": [{
-                "type": "command",
-                "command": "hex hook session-end",
-                "timeout": 5000
-            }]
-        }],
-        "PreToolUse": [
-            {
-                "matcher": "Write|Edit|MultiEdit",
-                "hooks": [{
-                    "type": "command",
-                    "command": "hex hook pre-edit",
-                    "timeout": 5000
-                }]
-            },
-            {
-                "matcher": "Bash",
-                "hooks": [{
-                    "type": "command",
-                    "command": "hex hook pre-bash",
-                    "timeout": 3000
-                }]
-            }
-        ],
-        "PostToolUse": [
-            {
-                "matcher": "Write|Edit|MultiEdit",
-                "hooks": [{
-                    "type": "command",
-                    "command": "hex hook post-edit",
-                    "timeout": 5000
-                }]
-            }
-        ],
-        "UserPromptSubmit": [{
-            "hooks": [{
-                "type": "command",
-                "command": "hex hook route",
-                "timeout": 8000
-            }]
-        }]
-    });
-
-    // Set statusline — hex status bar in Claude Code
-    settings["statusline"] = serde_json::json!("node scripts/hex-statusline.cjs");
-
-    // Set permissions — allow hex MCP tools, deny .env reads
-    if settings.get("permissions").is_none() {
-        settings["permissions"] = serde_json::json!({
-            "allow": [
-                "mcp__hex__hex_*"
-            ],
-            "deny": [
-                "Read(./.env)",
-                "Read(./.env.*)"
-            ]
-        });
+    // Overwrite hooks, statusline, announcements from template
+    if let Some(hooks) = template.get("hooks") {
+        settings["hooks"] = hooks.clone();
+    }
+    if let Some(statusline) = template.get("statusline") {
+        settings["statusline"] = statusline.clone();
+    }
+    if let Some(announcements) = template.get("companyAnnouncements") {
+        settings["companyAnnouncements"] = announcements.clone();
     }
 
-    // Set hex announcement
-    settings["companyAnnouncements"] = serde_json::json!([
-        "hex \u{2014} Hexagonal Architecture Framework\nRun `hex analyze .` for architecture health | `hex status` for overview"
-    ]);
+    // Set permissions only if not already configured (don't clobber user customization)
+    if settings.get("permissions").is_none() {
+        if let Some(perms) = template.get("permissions") {
+            settings["permissions"] = perms.clone();
+        }
+    }
 
     fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)
         .context("Failed to write .claude/settings.json")?;
