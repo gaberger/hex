@@ -1,0 +1,375 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "description": "hex MCP tool definitions — single source of truth for CLI, MCP server, and SpacetimeDB sync",
+  "tools": [
+    {
+      "name": "hex_analyze",
+      "category": "analysis",
+      "description": "Architecture health check: boundary violations, dead exports, circular deps",
+      "route": { "method": "POST", "path": "/api/analyze" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Project root path to analyze" }
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "hex_analyze_json",
+      "category": "analysis",
+      "description": "Architecture health check returning raw JSON (for programmatic use)",
+      "route": { "method": "POST", "path": "/api/analyze" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Project root path to analyze" }
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "hex_status",
+      "category": "analysis",
+      "description": "Show project status and service health",
+      "route": { "method": "GET", "path": "/api/version" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_hexflo_swarm_init",
+      "category": "swarm",
+      "description": "Initialize a new swarm for coordinated multi-agent work",
+      "route": { "method": "POST", "path": "/api/swarms" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Swarm name" },
+          "project_id": { "type": "string", "description": "Project identifier" },
+          "topology": { "type": "string", "description": "Topology: hierarchical, mesh, star" }
+        },
+        "required": ["name", "project_id"]
+      }
+    },
+    {
+      "name": "hex_hexflo_swarm_status",
+      "category": "swarm",
+      "description": "Get status of all active swarms with tasks and agents",
+      "route": { "method": "GET", "path": "/api/swarms/active" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_hexflo_task_create",
+      "category": "task",
+      "description": "Create a task in a swarm",
+      "route": { "method": "POST", "path": "/api/swarms/{swarm_id}/tasks" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "swarm_id": { "type": "string", "description": "Swarm ID to add task to" },
+          "title": { "type": "string", "description": "Task title/description" }
+        },
+        "required": ["swarm_id", "title"]
+      }
+    },
+    {
+      "name": "hex_hexflo_task_list",
+      "category": "task",
+      "description": "List tasks in a swarm",
+      "route": { "method": "GET", "path": "/api/swarms/{swarm_id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "swarm_id": { "type": "string", "description": "Swarm ID (omit for all)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_hexflo_task_complete",
+      "category": "task",
+      "description": "Mark a task as completed",
+      "route": { "method": "PATCH", "path": "/api/hexflo/tasks/{task_id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task_id": { "type": "string", "description": "Task ID to complete" },
+          "result": { "type": "string", "description": "Completion result/summary" }
+        },
+        "required": ["task_id"]
+      }
+    },
+    {
+      "name": "hex_hexflo_memory_store",
+      "category": "memory",
+      "description": "Store a key-value pair in persistent memory",
+      "route": { "method": "POST", "path": "/api/hexflo/memory" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "description": "Memory key" },
+          "value": { "type": "string", "description": "Value to store" },
+          "scope": { "type": "string", "description": "Scope: global, swarm, agent" }
+        },
+        "required": ["key", "value"]
+      }
+    },
+    {
+      "name": "hex_hexflo_memory_retrieve",
+      "category": "memory",
+      "description": "Retrieve a value by key from persistent memory",
+      "route": { "method": "GET", "path": "/api/hexflo/memory/{key}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "description": "Memory key to retrieve" }
+        },
+        "required": ["key"]
+      }
+    },
+    {
+      "name": "hex_hexflo_memory_search",
+      "category": "memory",
+      "description": "Search persistent memory by query",
+      "route": { "method": "GET", "path": "/api/hexflo/memory/search" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Search query" }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "hex_adr_list",
+      "category": "adr",
+      "description": "List Architecture Decision Records",
+      "route": { "method": "GET", "path": "/api/adrs" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "description": "Filter by status: proposed, accepted, deprecated, superseded" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_adr_search",
+      "category": "adr",
+      "description": "Search ADRs by keyword",
+      "route": { "method": "GET", "path": "/api/adrs/search" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Search query" },
+          "limit": { "type": "integer", "description": "Max results (default 10)" }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "hex_adr_status",
+      "category": "adr",
+      "description": "Show detailed status of a specific ADR",
+      "route": { "method": "GET", "path": "/api/adrs/{id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "ADR ID (e.g. ADR-027)" }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "name": "hex_adr_abandoned",
+      "category": "adr",
+      "description": "Find stale/abandoned proposed ADRs",
+      "route": { "method": "GET", "path": "/api/adrs/abandoned" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "days": { "type": "integer", "description": "Days without update to consider abandoned (default 14)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_plan_list",
+      "category": "workplan",
+      "description": "List existing workplans from docs/workplans/",
+      "route": { "method": "LOCAL", "path": "docs/workplans/" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_plan_status",
+      "category": "workplan",
+      "description": "Show detailed status of a specific workplan",
+      "route": { "method": "LOCAL", "path": "docs/workplans/{file}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string", "description": "Workplan filename (e.g. feat-secrets-plan-b.json)" }
+        },
+        "required": ["file"]
+      }
+    },
+    {
+      "name": "hex_plan_execute",
+      "category": "workplan",
+      "description": "Start executing a workplan from a JSON file path. Spawns agents per task, tracks progress in SpacetimeDB.",
+      "route": { "method": "POST", "path": "/api/workplan/execute" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string", "description": "Path to workplan JSON file (e.g. docs/workplans/feat-auth.json)" }
+        },
+        "required": ["file"]
+      }
+    },
+    {
+      "name": "hex_plan_pause",
+      "category": "workplan",
+      "description": "Pause the currently running workplan execution",
+      "route": { "method": "POST", "path": "/api/workplan/pause" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_plan_resume",
+      "category": "workplan",
+      "description": "Resume a paused workplan execution",
+      "route": { "method": "POST", "path": "/api/workplan/resume" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_plan_report",
+      "category": "workplan",
+      "description": "Get aggregate report for a workplan execution — phases, tasks, agents, gates, duration",
+      "route": { "method": "GET", "path": "/api/workplan/{id}/report" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Workplan execution ID (UUID)" }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "name": "hex_plan_history",
+      "category": "workplan",
+      "description": "List all workplan executions (active + completed + failed) from SpacetimeDB",
+      "route": { "method": "GET", "path": "/api/workplan/list" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_agent_connect",
+      "category": "agent",
+      "description": "Register this Claude Code session (or any agent) with hex-nexus. Returns an agentId for heartbeats and task assignment.",
+      "route": { "method": "POST", "path": "/api/agents/connect" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name":        { "type": "string", "description": "Agent display name (default: auto-generated from host)" },
+          "host":        { "type": "string", "description": "Hostname (default: current machine)" },
+          "project_dir": { "type": "string", "description": "Project root path (default: cwd)" },
+          "model":       { "type": "string", "description": "LLM model identifier (e.g. claude-opus-4-6)" },
+          "session_id":  { "type": "string", "description": "Claude Code session ID (stored in metadata)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_agent_disconnect",
+      "category": "agent",
+      "description": "Deregister an agent from hex-nexus by its agentId",
+      "route": { "method": "POST", "path": "/api/agents/disconnect" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "description": "Agent ID returned from hex_agent_connect" }
+        },
+        "required": ["agent_id"]
+      }
+    },
+    {
+      "name": "hex_agent_list",
+      "category": "agent",
+      "description": "List all agents currently registered with hex-nexus (local + remote)",
+      "route": { "method": "GET", "path": "/api/agents" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_nexus_status",
+      "category": "nexus",
+      "description": "Check hex-nexus daemon status",
+      "route": { "method": "GET", "path": "/api/version" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_nexus_start",
+      "category": "nexus",
+      "description": "Start the hex-nexus daemon",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_secrets_status",
+      "category": "secrets",
+      "description": "Show secrets backend status",
+      "route": { "method": "GET", "path": "/api/secrets/status" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_secrets_has",
+      "category": "secrets",
+      "description": "Check if a secret key exists",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "description": "Secret key to check" }
+        },
+        "required": ["key"]
+      }
+    }
+  ]
+}

@@ -235,6 +235,51 @@ pub fn sync_agent_def(
     Ok(())
 }
 
+// ─── MCP Tool Registry ──────────────────────────────────────────────────────
+
+/// Registered MCP tool — synced from config/mcp-tools.json on nexus startup.
+/// Dashboard and external clients subscribe to this table to discover available tools.
+#[table(name = mcp_tool, public)]
+#[derive(Clone, Debug)]
+pub struct McpTool {
+    #[primary_key]
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    pub route_method: String,
+    pub route_path: String,
+    /// JSON-encoded inputSchema for the tool.
+    pub input_schema: String,
+    pub version: String,
+    pub synced_at: String,
+}
+
+/// Upsert an MCP tool definition (called by config sync on nexus startup).
+#[reducer]
+pub fn mcp_tool_sync(
+    ctx: &ReducerContext,
+    name: String,
+    category: String,
+    description: String,
+    route_method: String,
+    route_path: String,
+    input_schema: String,
+    version: String,
+    synced_at: String,
+) -> Result<(), String> {
+    if let Some(existing) = ctx.db.mcp_tool().name().find(&name) {
+        ctx.db.mcp_tool().name().update(McpTool {
+            category, description, route_method, route_path, input_schema, version, synced_at,
+            ..existing
+        });
+    } else {
+        ctx.db.mcp_tool().insert(McpTool {
+            name, category, description, route_method, route_path, input_schema, version, synced_at,
+        });
+    }
+    Ok(())
+}
+
 // ============================================================
 //  Swarm Lifecycle Reducers
 // ============================================================

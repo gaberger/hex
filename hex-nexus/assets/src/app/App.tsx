@@ -35,6 +35,7 @@ const AgentFleet = lazy(() => import('../components/views/AgentFleet'));
 const ADRBrowser = lazy(() => import('../components/views/ADRBrowser'));
 const ConfigPage = lazy(() => import('../components/views/ConfigPage'));
 const FileTreeView = lazy(() => import('../components/views/FileTreeView'));
+const WorkplanView = lazy(() => import('../components/views/WorkplanView'));
 
 const App: Component = () => {
   const [theme, setTheme] = createSignal(
@@ -402,6 +403,22 @@ const App: Component = () => {
               </svg>
               Fleet Nodes
             </button>
+            {/* Workplans */}
+            <button
+              class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
+              classList={{
+                "bg-gray-800 text-gray-100": route().page === "workplans",
+                "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200": route().page !== "workplans",
+              }}
+              onClick={() => navigate({ page: "workplans" })}
+            >
+              <svg class="h-4 w-4 shrink-0 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+                <rect x="9" y="3" width="6" height="4" rx="1" />
+                <path d="M9 14l2 2 4-4" />
+              </svg>
+              Workplans
+            </button>
             {/* Global Config */}
             <button
               class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors mb-0.5"
@@ -465,6 +482,9 @@ const App: Component = () => {
             </Match>
             <Match when={route().page === "file-tree"}>
               <FileTreeView />
+            </Match>
+            <Match when={route().page === "workplans"}>
+              <WorkplanView />
             </Match>
           </Switch>
           {/* BottomBar — inside center content so it doesn't span under sidebar */}

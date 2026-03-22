@@ -1,6 +1,6 @@
-import { Component, For, Show, createResource, createMemo } from 'solid-js';
+import { Component, For, Show, createMemo, createSignal } from 'solid-js';
 import { addToast } from '../../stores/toast';
-import { projectConfigs, hexfloConnected } from '../../stores/connection';
+import { projectConfigs, hexfloConnected, getHexfloConn } from '../../stores/connection';
 
 interface MCPServer {
   name: string;
@@ -11,71 +11,172 @@ interface MCPServer {
   totalTools: number;
 }
 
-const HARDCODED_SERVERS: MCPServer[] = [
-  { name: 'hex',          status: 'connected', tools: ['hex_analyze', 'hex_swarm_init', 'hex_task_create', 'hex_memory_store'], totalTools: 32 },
-  { name: 'pencil',       status: 'connected', tools: ['batch_design', 'get_screenshot', 'batch_get'], totalTools: 12 },
-  { name: 'context-mode', status: 'connected', tools: ['ctx_execute', 'ctx_search', 'ctx_batch_execute'], totalTools: 6 },
-];
-
 const MAX_VISIBLE_TOOLS = 4;
 
-async function discoverServers(): Promise<MCPServer[]> {
-  const allServers: Record<string, any> = {};
+/* ------------------------------------------------------------------ */
+/*  SpacetimeDB helpers                                                */
+/* ------------------------------------------------------------------ */
 
-  // Try both settings files
-  for (const file of ['.claude/settings.json', '.claude/settings.local.json']) {
-    try {
-      const res = await fetch(`/api/files?path=${encodeURIComponent(file)}`);
-      if (res.ok) {
-        const data = await res.json();
-        const parsed = JSON.parse(data.content || '{}');
-        const mcpServers = parsed.mcpServers || {};
-        // Merge — local overrides global
-        Object.assign(allServers, mcpServers);
-      }
-    } catch {
-      // ignore
-    }
+function getServerMap(): Record<string, any> {
+  const configs = projectConfigs();
+  const mcpConfig = configs.find((c: any) => (c.key ?? c.configKey) === 'mcp_servers');
+  if (!mcpConfig) return {};
+  try {
+    return JSON.parse(mcpConfig.valueJson ?? mcpConfig.value_json ?? '{}');
+  } catch {
+    return {};
   }
-
-  const entries = Object.entries(allServers);
-  if (entries.length === 0) return HARDCODED_SERVERS;
-
-  return entries.map(([name, config]: [string, any]) => ({
-    name,
-    status: 'configured' as const,
-    command: config.command || '',
-    args: config.args || [],
-    tools: [],
-    totalTools: 0,
-  }));
 }
 
-const MCPToolsView: Component = () => {
-  const [servers] = createResource(discoverServers);
+function saveServerMap(map: Record<string, any>) {
+  const conn = getHexfloConn();
+  if (!conn) {
+    addToast('error', 'SpacetimeDB not connected.');
+    return false;
+  }
+  conn.reducers.syncConfig(
+    'mcp_servers',
+    'hex-intf',
+    JSON.stringify(map),
+    '.claude/settings.json',
+    new Date().toISOString(),
+  );
+  return true;
+}
 
-  // Primary: SpacetimeDB subscription
-  const stdbServers = createMemo((): MCPServer[] | null => {
-    const configs = projectConfigs();
-    const mcpConfig = configs.find((c: any) => (c.key ?? c.configKey) === 'mcp_servers');
-    if (mcpConfig) {
-      try {
-        const parsed = JSON.parse(mcpConfig.valueJson ?? mcpConfig.value_json ?? '{}');
-        return Object.entries(parsed).map(([name, config]: [string, any]) => ({
-          name,
-          status: 'configured' as const,
-          command: config.command || '',
-          args: config.args || [],
-          tools: [],
-          totalTools: 0,
-        }));
-      } catch { /* fall through */ }
+/* ------------------------------------------------------------------ */
+/*  Inline form for adding / editing an MCP server                    */
+/* ------------------------------------------------------------------ */
+
+interface ServerFormProps {
+  initial?: { name: string; command: string; args: string };
+  onSave: (name: string, command: string, args: string[]) => void;
+  onCancel: () => void;
+  submitLabel: string;
+  nameDisabled?: boolean;
+}
+
+const ServerForm: Component<ServerFormProps> = (props) => {
+  const [name, setName] = createSignal(props.initial?.name ?? '');
+  const [command, setCommand] = createSignal(props.initial?.command ?? '');
+  const [args, setArgs] = createSignal(props.initial?.args ?? '');
+
+  const handleSubmit = (e: Event) => {
+    e.preventDefault();
+    const n = name().trim();
+    const c = command().trim();
+    if (!n || !c) {
+      addToast('error', 'Name and command are required.');
+      return;
     }
-    return null;
+    const parsedArgs = args().trim() ? args().split(',').map(a => a.trim()).filter(Boolean) : [];
+    props.onSave(n, c, parsedArgs);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} class="rounded-lg border p-4 space-y-3 mt-2" style={{ "background-color": "var(--bg-elevated)", "border-color": "var(--border-subtle)" }}>
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-1" style={{ "font-size": "13px" }}>Name</label>
+          <input
+            type="text"
+            value={name()}
+            onInput={(e) => setName(e.currentTarget.value)}
+            disabled={props.nameDisabled}
+            placeholder="my-server"
+            class="w-full rounded-md border px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-[var(--accent)]"
+            style={{ "background-color": "var(--bg-input)", "border-color": "var(--border-subtle)", "font-size": "14px" }}
+          />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-1" style={{ "font-size": "13px" }}>Command</label>
+          <input
+            type="text"
+            value={command()}
+            onInput={(e) => setCommand(e.currentTarget.value)}
+            placeholder="npx -y @my/server"
+            class="w-full rounded-md border px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-[var(--accent)]"
+            style={{ "background-color": "var(--bg-input)", "border-color": "var(--border-subtle)", "font-size": "14px" }}
+          />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-1" style={{ "font-size": "13px" }}>Args (comma-separated)</label>
+          <input
+            type="text"
+            value={args()}
+            onInput={(e) => setArgs(e.currentTarget.value)}
+            placeholder="--port, 3000"
+            class="w-full rounded-md border px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-[var(--accent)]"
+            style={{ "background-color": "var(--bg-input)", "border-color": "var(--border-subtle)", "font-size": "14px" }}
+          />
+        </div>
+      </div>
+      <div class="flex items-center gap-2 justify-end">
+        <button type="button" onClick={props.onCancel}
+          class="rounded-md px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-gray-200 transition-colors">
+          Cancel
+        </button>
+        <button type="submit"
+          class="rounded-md px-4 py-1.5 text-xs font-medium text-white transition-colors"
+          style={{ "background-color": "var(--accent)" }}>
+          {props.submitLabel}
+        </button>
+      </div>
+    </form>
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/*  Main view                                                         */
+/* ------------------------------------------------------------------ */
+
+const MCPToolsView: Component = () => {
+  const [showAddForm, setShowAddForm] = createSignal(false);
+  const [editingServer, setEditingServer] = createSignal<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = createSignal<string | null>(null);
+
+  const serverList = createMemo((): MCPServer[] => {
+    const map = getServerMap();
+    const entries = Object.entries(map);
+    if (entries.length === 0) return [];
+    return entries.map(([name, config]: [string, any]) => ({
+      name,
+      status: 'configured' as const,
+      command: config.command || '',
+      args: config.args || [],
+      tools: [],
+      totalTools: 0,
+    }));
   });
 
-  const dataSource = createMemo(() => stdbServers() !== null ? 'stdb' as const : 'rest' as const);
-  const serverList = () => stdbServers() ?? servers() ?? HARDCODED_SERVERS;
+  /* -- Mutations --------------------------------------------------- */
+
+  const handleAdd = (name: string, command: string, args: string[]) => {
+    const map = { ...getServerMap() };
+    map[name] = { command, args };
+    if (saveServerMap(map)) {
+      addToast('success', `Server "${name}" added.`);
+      setShowAddForm(false);
+    }
+  };
+
+  const handleEdit = (name: string, command: string, args: string[]) => {
+    const map = { ...getServerMap() };
+    map[name] = { command, args };
+    if (saveServerMap(map)) {
+      addToast('success', `Server "${name}" updated.`);
+      setEditingServer(null);
+    }
+  };
+
+  const handleRemove = (name: string) => {
+    const map = { ...getServerMap() };
+    delete map[name];
+    if (saveServerMap(map)) {
+      addToast('success', `Server "${name}" removed.`);
+      setConfirmRemove(null);
+    }
+  };
 
   return (
     <div class="flex-1 overflow-auto p-6">
@@ -84,17 +185,35 @@ const MCPToolsView: Component = () => {
         <div>
           <h2 class="text-xl font-bold text-gray-100">MCP Tool Servers</h2>
           <p class="mt-1 text-sm text-gray-400">
-            {servers.loading ? 'Discovering MCP servers...' : `${serverList().length} MCP servers from settings.`}
-            <Show when={dataSource() === 'stdb'}>
-              <span class="ml-2 inline-flex items-center rounded-full bg-cyan-900/30 px-2 py-0.5 text-[10px] font-medium text-cyan-400">SpacetimeDB</span>
-            </Show>
+            {hexfloConnected()
+              ? `${serverList().length} MCP servers from SpacetimeDB.`
+              : 'Connecting to SpacetimeDB...'}
+            <span class="ml-2 inline-flex items-center rounded-full bg-cyan-900/30 px-2 py-0.5 text-[10px] font-medium text-cyan-400">SpacetimeDB</span>
           </p>
         </div>
         <button class="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors border border-gray-700"
-          onClick={() => addToast("info", "Add MCP servers in .claude/settings.json under mcpServers")}>
-          Add Server
+          onClick={() => setShowAddForm(!showAddForm())}>
+          {showAddForm() ? 'Cancel' : 'Add Server'}
         </button>
       </div>
+
+      {/* Add server form */}
+      <Show when={showAddForm()}>
+        <ServerForm
+          onSave={handleAdd}
+          onCancel={() => setShowAddForm(false)}
+          submitLabel="Add Server"
+        />
+        <div class="mb-4" />
+      </Show>
+
+      {/* Empty state */}
+      <Show when={serverList().length === 0}>
+        <div class="rounded-lg border px-6 py-10 text-center" style={{ "background-color": "var(--bg-surface)", "border-color": "var(--border-subtle)" }}>
+          <p class="text-sm text-gray-400">No MCP servers configured.</p>
+          <p class="text-xs text-gray-600 mt-1">Run <code class="text-cyan-400">hex nexus start</code> to sync from repo.</p>
+        </div>
+      </Show>
 
       {/* Server cards */}
       <div class="space-y-4">
@@ -102,6 +221,8 @@ const MCPToolsView: Component = () => {
           {(server) => {
             const visibleTools = server.tools.slice(0, MAX_VISIBLE_TOOLS);
             const remaining = server.totalTools - visibleTools.length;
+            const isEditing = () => editingServer() === server.name;
+            const isConfirming = () => confirmRemove() === server.name;
 
             return (
               <div class="rounded-lg border border-gray-700/50 p-4" style={{ "background-color": "var(--bg-surface)" }}>
@@ -134,34 +255,88 @@ const MCPToolsView: Component = () => {
                       {server.totalTools} tools
                     </span>
                   </Show>
+
+                  {/* Action buttons */}
+                  <div class="ml-auto flex items-center gap-2">
+                    <Show when={!isEditing() && !isConfirming()}>
+                      <button
+                        class="rounded-md px-2.5 py-1 text-xs text-gray-500 hover:text-gray-200 hover:bg-gray-700/50 transition-colors"
+                        onClick={() => { setEditingServer(server.name); setConfirmRemove(null); }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        class="rounded-md px-2.5 py-1 text-xs text-gray-500 hover:text-red-400 hover:bg-red-900/20 transition-colors"
+                        onClick={() => { setConfirmRemove(server.name); setEditingServer(null); }}
+                      >
+                        Remove
+                      </button>
+                    </Show>
+                  </div>
                 </div>
 
+                {/* Confirm remove */}
+                <Show when={isConfirming()}>
+                  <div class="flex items-center gap-3 rounded-md border px-3 py-2 mb-3" style={{ "background-color": "var(--bg-elevated)", "border-color": "var(--border-subtle)" }}>
+                    <span class="text-xs text-gray-300">Remove "{server.name}"?</span>
+                    <button
+                      class="rounded-md px-3 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-500 transition-colors"
+                      onClick={() => handleRemove(server.name)}
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      class="rounded-md px-3 py-1 text-xs text-gray-400 hover:text-gray-200 transition-colors"
+                      onClick={() => setConfirmRemove(null)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </Show>
+
+                {/* Inline edit form */}
+                <Show when={isEditing()}>
+                  <ServerForm
+                    initial={{
+                      name: server.name,
+                      command: server.command || '',
+                      args: (server.args || []).join(', '),
+                    }}
+                    nameDisabled={true}
+                    onSave={handleEdit}
+                    onCancel={() => setEditingServer(null)}
+                    submitLabel="Save Changes"
+                  />
+                </Show>
+
                 {/* Command info for discovered servers */}
-                <Show when={server.command}>
+                <Show when={server.command && !isEditing()}>
                   <div class="mb-2 text-xs text-gray-500 truncate" style={{ "font-family": "'JetBrains Mono', monospace" }}>
                     {server.command} {(server.args || []).join(' ')}
                   </div>
                 </Show>
 
                 {/* Tool badges */}
-                <div class="flex flex-wrap items-center gap-2">
-                  <For each={visibleTools}>
-                    {(tool) => (
-                      <span
-                        class="rounded-md bg-gray-800 px-2.5 py-1 text-xs text-gray-400 border border-gray-700/50"
-                        style={{ "font-family": "'JetBrains Mono', monospace" }}
-                      >
-                        {tool}
-                      </span>
-                    )}
-                  </For>
-                  <Show when={remaining > 0}>
-                    <span class="text-xs text-gray-600">+{remaining} more</span>
-                  </Show>
-                  <Show when={visibleTools.length === 0 && server.status === 'configured'}>
-                    <span class="text-xs text-gray-600 italic">Tools available after MCP connection</span>
-                  </Show>
-                </div>
+                <Show when={!isEditing()}>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <For each={visibleTools}>
+                      {(tool) => (
+                        <span
+                          class="rounded-md bg-gray-800 px-2.5 py-1 text-xs text-gray-400 border border-gray-700/50"
+                          style={{ "font-family": "'JetBrains Mono', monospace" }}
+                        >
+                          {tool}
+                        </span>
+                      )}
+                    </For>
+                    <Show when={remaining > 0}>
+                      <span class="text-xs text-gray-600">+{remaining} more</span>
+                    </Show>
+                    <Show when={visibleTools.length === 0 && server.status === 'configured'}>
+                      <span class="text-xs text-gray-600 italic">Tools available after MCP connection</span>
+                    </Show>
+                  </div>
+                </Show>
               </div>
             );
           }}

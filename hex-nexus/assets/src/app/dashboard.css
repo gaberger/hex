@@ -80,7 +80,26 @@
 body {
   background-color: var(--bg-base);
   color: var(--text-body);
+  font-size: 15px;    /* Bumped from browser default 16px base — all rem/em scale from this */
+  line-height: 1.5;
 }
+
+/* ── Global font size floor for developer readability ─────── */
+/* Bump all Tailwind text-[Npx] classes that are too small */
+.text-\[9px\]  { font-size: 11px !important; }
+.text-\[10px\] { font-size: 12px !important; }
+.text-\[11px\] { font-size: 13px !important; }
+.text-\[12px\] { font-size: 14px !important; }
+.text-\[13px\] { font-size: 15px !important; }
+.text-\[22px\] { font-size: 24px !important; }
+
+/* Named Tailwind sizes */
+.text-xs  { font-size: 13px !important; line-height: 1.4 !important; }
+.text-sm  { font-size: 14px !important; line-height: 1.5 !important; }
+.text-base { font-size: 15px !important; }
+.text-lg  { font-size: 18px !important; }
+.text-xl  { font-size: 20px !important; }
+.text-2xl { font-size: 24px !important; }
 
 /* ── Override Tailwind gray utilities with theme vars ──────── */
 /* Backgrounds */

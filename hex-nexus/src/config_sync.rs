@@ -87,18 +87,17 @@ pub async fn sync_project_config(project_root: &Path, stdb_host: &str, stdb_db: 
         }
     }
 
-    // 3. Sync skills from .claude/skills/*.md
-    let skills_dir = project_root.join(".claude/skills");
-    if skills_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+    // 3a. Sync global skills from skills/*/SKILL.md (repo catalog)
+    let global_skills_dir = project_root.join("skills");
+    if global_skills_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&global_skills_dir) {
             for entry in entries.flatten() {
-                let filename = entry.file_name().to_string_lossy().to_string();
-                if !filename.ends_with(".md") {
-                    continue;
-                }
-                if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                    let (name, trigger, desc) = parse_skill_frontmatter(&content, &filename);
-                    let skill_id = filename.trim_end_matches(".md").to_string();
+                if !entry.path().is_dir() { continue; }
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                let skill_md = entry.path().join("SKILL.md");
+                if !skill_md.exists() { continue; }
+                if let Ok(content) = std::fs::read_to_string(&skill_md) {
+                    let (name, trigger, desc) = parse_skill_frontmatter(&content, &dir_name);
                     let project_id = project_root
                         .file_name()
                         .unwrap_or_default()
@@ -111,23 +110,138 @@ pub async fn sync_project_config(project_root: &Path, stdb_host: &str, stdb_db: 
                         stdb_db,
                         "sync_skill",
                         serde_json::json!([
-                            skill_id,
+                            &dir_name,
                             project_id,
                             name,
                             trigger,
                             desc,
-                            format!(".claude/skills/{}", filename),
+                            format!("skills/{}/SKILL.md", dir_name),
                             &now,
                         ]),
                     )
                     .await;
                 }
             }
-            tracing::info!("Synced skills");
+            tracing::info!("Synced global skills catalog");
         }
     }
 
-    // 4. Sync agent definitions from .claude/agents/*.yml
+    // 3b. Sync project skills from .claude/skills/*/SKILL.md and .claude/skills/*.md
+    let project_skills_dir = project_root.join(".claude/skills");
+    if project_skills_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&project_skills_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let filename = entry.file_name().to_string_lossy().to_string();
+                let project_id = project_root
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+
+                if path.is_dir() {
+                    // Subdirectory with SKILL.md inside
+                    let skill_md = path.join("SKILL.md");
+                    if !skill_md.exists() { continue; }
+                    if let Ok(content) = std::fs::read_to_string(&skill_md) {
+                        let (name, trigger, desc) = parse_skill_frontmatter(&content, &filename);
+                        let skill_id = format!("{}-project", filename);
+                        let _ = call_reducer(
+                            &client,
+                            stdb_host,
+                            stdb_db,
+                            "sync_skill",
+                            serde_json::json!([
+                                skill_id,
+                                project_id,
+                                name,
+                                trigger,
+                                desc,
+                                format!(".claude/skills/{}/SKILL.md", filename),
+                                &now,
+                            ]),
+                        )
+                        .await;
+                    }
+                } else if filename.ends_with(".md") {
+                    // Standalone .md file
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        let (name, trigger, desc) = parse_skill_frontmatter(&content, &filename);
+                        let skill_id = format!("{}-project", filename.trim_end_matches(".md"));
+                        let _ = call_reducer(
+                            &client,
+                            stdb_host,
+                            stdb_db,
+                            "sync_skill",
+                            serde_json::json!([
+                                skill_id,
+                                project_id,
+                                name,
+                                trigger,
+                                desc,
+                                format!(".claude/skills/{}", filename),
+                                &now,
+                            ]),
+                        )
+                        .await;
+                    }
+                }
+            }
+            tracing::info!("Synced project skills");
+        }
+    }
+
+    // 4. Sync MCP tool definitions from config/mcp-tools.json
+    let tools_path = project_root.join("config/mcp-tools.json");
+    if tools_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&tools_path) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                let version = parsed
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("0.0.0")
+                    .to_string();
+
+                if let Some(tools) = parsed.get("tools").and_then(|t| t.as_array()) {
+                    for tool in tools {
+                        let name = tool["name"].as_str().unwrap_or_default().to_string();
+                        if name.is_empty() {
+                            continue;
+                        }
+                        let category = tool["category"].as_str().unwrap_or("").to_string();
+                        let description = tool["description"].as_str().unwrap_or("").to_string();
+                        let route_method = tool["route"]["method"].as_str().unwrap_or("").to_string();
+                        let route_path = tool["route"]["path"].as_str().unwrap_or("").to_string();
+                        let input_schema = tool
+                            .get("inputSchema")
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "{}".to_string());
+
+                        let _ = call_reducer(
+                            &client,
+                            stdb_host,
+                            stdb_db,
+                            "mcp_tool_sync",
+                            serde_json::json!([
+                                name,
+                                category,
+                                description,
+                                route_method,
+                                route_path,
+                                input_schema,
+                                &version,
+                                &now,
+                            ]),
+                        )
+                        .await;
+                    }
+                    tracing::info!("Synced {} MCP tool definitions", tools.len());
+                }
+            }
+        }
+    }
+
+    // 5. Sync agent definitions from .claude/agents/*.yml
     let agents_dir = project_root.join(".claude/agents");
     if agents_dir.is_dir() {
         if let Ok(entries) = std::fs::read_dir(&agents_dir) {

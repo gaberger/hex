@@ -81,6 +81,33 @@ async fn get_version() -> Json<serde_json::Value> {
     }))
 }
 
+/// GET /api/tools — serve MCP tool definitions from config/mcp-tools.json.
+/// Falls back to an empty list if the file is not found.
+async fn tools_registry() -> Json<serde_json::Value> {
+    // Try cwd first, then HEX_PROJECT_ROOT
+    let paths = [
+        std::path::PathBuf::from("config/mcp-tools.json"),
+        std::env::var("HEX_PROJECT_ROOT")
+            .map(|r| std::path::PathBuf::from(r).join("config/mcp-tools.json"))
+            .unwrap_or_default(),
+    ];
+
+    for path in &paths {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                return Json(json!({
+                    "ok": true,
+                    "version": parsed.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0"),
+                    "tools": parsed.get("tools").cloned().unwrap_or(json!([])),
+                    "count": parsed.get("tools").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(0),
+                }));
+            }
+        }
+    }
+
+    Json(json!({ "ok": false, "tools": [], "count": 0, "error": "config/mcp-tools.json not found" }))
+}
+
 const PUSH_BODY_LIMIT: usize = 256 * 1024;  // 256KB for /api/push
 const EVENT_BODY_LIMIT: usize = 16 * 1024;  // 16KB for /api/event
 const SMALL_BODY_LIMIT: usize = 4 * 1024;   // 4KB for register/decisions
@@ -225,6 +252,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/workplan/list", get(orchestration::list_workplans))
         .route("/api/workplan/{id}", get(orchestration::get_workplan))
         .route("/api/workplan/{id}/report", get(orchestration::workplan_report))
+        // MCP tool registry — serves config/mcp-tools.json for dashboard discovery
+        .route("/api/tools", get(tools_registry))
         // Fleet (remote compute)
         .route("/api/fleet", get(fleet::list_nodes))
         .route("/api/fleet/register", post(fleet::register_node)

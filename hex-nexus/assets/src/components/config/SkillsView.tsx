@@ -1,219 +1,419 @@
-import { Component, For, Show, createResource, createMemo } from 'solid-js';
+import { Component, For, Show, createMemo, createSignal } from 'solid-js';
 import { addToast } from '../../stores/toast';
-import { skillRegistry } from '../../stores/connection';
+import { skillRegistry, getHexfloConn, hexfloConnected } from '../../stores/connection';
+import { route } from '../../stores/router';
+import { projects } from '../../stores/projects';
+import { MarkdownEditor } from '../editor';
 
 interface Skill {
+  skillId: string;
   name: string;
   trigger: string;
   desc: string;
-  source: string;
+  path: string;
 }
 
-interface SkillCategory {
-  name: string;
-  skills: Skill[];
+type TabId = 'global' | 'project';
+
+function slugify(s: string): string {
+  return s.trim().replace(/\s+/g, '-').toLowerCase();
 }
 
-const HARDCODED_CATEGORIES: SkillCategory[] = [
-  {
-    name: "Architecture & Analysis",
-    skills: [
-      { name: "hex-scaffold", trigger: "/hex-scaffold", desc: "Scaffold a new hexagonal architecture project", source: ".claude/skills/" },
-      { name: "hex-generate", trigger: "/hex-generate", desc: "Generate code within an adapter boundary", source: ".claude/skills/" },
-      { name: "hex-analyze-arch", trigger: "/hex-analyze-arch", desc: "Check architecture health, find violations, dead exports", source: ".claude/skills/" },
-      { name: "hex-analyze-deps", trigger: "/hex-analyze-deps", desc: "Analyze dependencies and recommend tech stack", source: ".claude/skills/" },
-      { name: "hex-validate", trigger: "/hex-validate", desc: "Post-build semantic validation with behavioral specs", source: ".claude/skills/" },
-    ],
-  },
-  {
-    name: "ADR Management",
-    skills: [
-      { name: "hex-adr-create", trigger: "/hex-adr-create", desc: "Create a new ADR from TEMPLATE.md with auto-numbering", source: ".claude/skills/" },
-      { name: "hex-adr-review", trigger: "/hex-adr-review", desc: "Review code changes against existing ADR decisions", source: ".claude/skills/" },
-      { name: "hex-adr-search", trigger: "/hex-adr-search", desc: "Search ADRs by keyword, status, or date range", source: ".claude/skills/" },
-      { name: "hex-adr-status", trigger: "/hex-adr-status", desc: "Check ADR lifecycle — find stale, abandoned, or conflicting ADRs", source: ".claude/skills/" },
-    ],
-  },
-  {
-    name: "Development Workflow",
-    skills: [
-      { name: "hex-feature-dev", trigger: "/hex-feature-dev", desc: "Start feature development with hex decomposition and worktree isolation", source: ".claude/skills/" },
-      { name: "hex-summarize", trigger: "/hex-summarize", desc: "Generate token-efficient AST summaries of source files", source: ".claude/skills/" },
-      { name: "hex-dashboard", trigger: "/hex-dashboard", desc: "Start the hex monitoring dashboard", source: ".claude/skills/" },
-    ],
-  },
-  {
-    name: "Git & Review",
-    skills: [
-      { name: "commit", trigger: "/commit", desc: "Create a git commit with conventional message", source: "built-in" },
-      { name: "review-pr", trigger: "/review-pr", desc: "Comprehensive PR review with specialized agents", source: "built-in" },
-      { name: "commit-push-pr", trigger: "/commit-push-pr", desc: "Commit, push, and open a pull request", source: "built-in" },
-    ],
-  },
-  {
-    name: "Swarm & Orchestration",
-    skills: [
-      { name: "sparc", trigger: "/sparc", desc: "SPARC methodology — Specification, Pseudocode, Architecture, Refinement, Completion", source: ".claude/skills/" },
-      { name: "pair-programming", trigger: "/pair-programming", desc: "AI pair programming with driver/navigator modes", source: "built-in" },
-    ],
-  },
-];
-
-/** Category assignment by name prefix. */
-function categorizeSkill(name: string): string {
-  if (name.startsWith('hex-adr')) return 'ADR Management';
-  if (name.startsWith('hex-analyze') || name.startsWith('hex-scaffold') || name.startsWith('hex-generate') || name.startsWith('hex-validate')) return 'Architecture & Analysis';
-  if (name.startsWith('hex-feature') || name.startsWith('hex-summarize') || name.startsWith('hex-dashboard')) return 'Development Workflow';
-  if (name.startsWith('sparc') || name.startsWith('pair-')) return 'Swarm & Orchestration';
-  return 'Discovered';
+function isGlobalSkill(path: string): boolean {
+  return path.startsWith('skills/') && !path.startsWith('.claude/');
 }
 
-async function discoverSkills(): Promise<Skill[] | null> {
+async function readSkillContent(path: string): Promise<string> {
   try {
-    const res = await fetch('/api/files?path=.claude/skills&list=true');
-    if (!res.ok) return null;
+    const res = await fetch(`/api/files?path=${encodeURIComponent(path)}`);
+    if (!res.ok) return '';
     const data = await res.json();
-    const files: string[] = data.files || [];
+    return data.content ?? '';
+  } catch { return ''; }
+}
 
-    const mdFiles = files.filter((f: string) => f.endsWith('.md'));
-    if (mdFiles.length === 0) return null;
+async function writeSkillContent(path: string, content: string): Promise<boolean> {
+  try {
+    const res = await fetch('/api/files', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, content }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
 
-    const skills: Skill[] = [];
-    for (const file of mdFiles) {
-      try {
-        const fRes = await fetch(`/api/files?path=${encodeURIComponent('.claude/skills/' + file)}`);
-        if (!fRes.ok) continue;
-        const fData = await fRes.json();
-        const content: string = fData.content || '';
-
-        // Parse YAML frontmatter
-        const match = content.match(/^---\n([\s\S]*?)\n---/);
-        if (match) {
-          const fm = match[1];
-          const name = fm.match(/name:\s*(.+)/)?.[1]?.trim() || file.replace('.md', '');
-          const trigger = fm.match(/trigger:\s*(.+)/)?.[1]?.trim() || `/${name}`;
-          const desc = fm.match(/description:\s*(.+)/)?.[1]?.trim() || '';
-          skills.push({ name, trigger, desc, source: '.claude/skills/' });
-        } else {
-          // No frontmatter — use filename
-          const name = file.replace('.md', '');
-          skills.push({ name, trigger: `/${name}`, desc: '', source: '.claude/skills/' });
-        }
-      } catch {
-        // skip individual file errors
-      }
-    }
-
-    return skills.length > 0 ? skills : null;
-  } catch {
-    return null;
-  }
+async function deleteSkillFile(path: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+    return res.ok;
+  } catch { return false; }
 }
 
 const SkillsView: Component = () => {
-  const [discoveredSkills] = createResource(discoverSkills);
+  const projectId = createMemo(() => (route() as any).projectId ?? '');
+  const project = createMemo(() => projects().find(p => p.id === projectId()));
 
-  // Primary: SpacetimeDB subscription
-  const stdbSkills = createMemo((): Skill[] | null => {
-    const skills = skillRegistry();
-    if (skills.length === 0) return null;
-    return skills.map((s: any) => ({
-      name: s.name ?? s.skillName ?? '',
-      trigger: s.triggerCmd ?? s.trigger_cmd ?? s.trigger ?? '',
-      desc: s.description ?? '',
-      source: s.sourcePath ?? s.source_path ?? '.claude/skills/',
-    }));
-  });
+  const [activeTab, setActiveTab] = createSignal<TabId>('global');
+  const [selectedId, setSelectedId] = createSignal<string | null>(null);
+  const [editorContent, setEditorContent] = createSignal('');
+  const [editorPath, setEditorPath] = createSignal('');
+  const [loadingContent, setLoadingContent] = createSignal(false);
+  const [showCreateForm, setShowCreateForm] = createSignal(false);
+  const [newName, setNewName] = createSignal('');
+  const [newDesc, setNewDesc] = createSignal('');
+  const [newTrigger, setNewTrigger] = createSignal('');
+  const [creating, setCreating] = createSignal(false);
+  const [actionLoading, setActionLoading] = createSignal<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = createSignal<string | null>(null);
 
-  const dataSource = createMemo(() => stdbSkills() !== null ? 'stdb' as const : 'rest' as const);
+  const allSkills = createMemo((): Skill[] =>
+    skillRegistry()
+      .map((s: any) => ({
+        skillId: s.skillId ?? s.skill_id ?? '',
+        name: s.name ?? '',
+        trigger: s.triggerCmd ?? s.trigger_cmd ?? s.trigger ?? '',
+        desc: s.description ?? '',
+        path: s.path ?? s.sourcePath ?? s.source_path ?? '',
+      }))
+      .filter(s => s.desc !== '[DELETED]' && s.name.trim() !== '' && s.skillId.trim() !== '')
+  );
 
-  const categories = createMemo((): SkillCategory[] => {
-    const discovered = stdbSkills() ?? discoveredSkills();
-    if (!discovered) return HARDCODED_CATEGORIES;
+  const globalSkills = createMemo(() => allSkills().filter(s => isGlobalSkill(s.path)));
+  const projectSkills = createMemo(() => allSkills().filter(s => !isGlobalSkill(s.path)));
+  const visibleSkills = createMemo(() =>
+    activeTab() === 'global' ? globalSkills() : projectSkills()
+  );
 
-    // Build category map from hardcoded as base
-    const catMap = new Map<string, Skill[]>();
-    for (const cat of HARDCODED_CATEGORIES) {
-      catMap.set(cat.name, [...cat.skills]);
+  const selectedSkill = createMemo(() =>
+    visibleSkills().find(s => s.skillId === selectedId())
+  );
+
+  async function handleSelect(skill: Skill) {
+    if (selectedId() === skill.skillId) {
+      setSelectedId(null);
+      return;
     }
+    setSelectedId(skill.skillId);
+    setEditorPath(skill.path);
+    setLoadingContent(true);
+    const content = await readSkillContent(skill.path);
+    setEditorContent(content);
+    setLoadingContent(false);
+  }
 
-    // Merge discovered skills — replace matching names, add new ones
-    const existingNames = new Set(HARDCODED_CATEGORIES.flatMap(c => c.skills.map(s => s.name)));
-    for (const skill of discovered) {
-      if (existingNames.has(skill.name)) {
-        // Update existing skill's description if discovered has one
-        for (const [, skills] of catMap) {
-          const idx = skills.findIndex(s => s.name === skill.name);
-          if (idx >= 0 && skill.desc) {
-            skills[idx] = { ...skills[idx], desc: skill.desc };
-          }
+  async function handleCopy(skill: Skill) {
+    setActionLoading(skill.skillId);
+    const isGlobal = isGlobalSkill(skill.path);
+    const destPath = isGlobal
+      ? `.claude/skills/${slugify(skill.name)}/SKILL.md`
+      : `skills/${slugify(skill.name)}/SKILL.md`;
+    const content = await readSkillContent(skill.path);
+    if (!content) {
+      addToast('error', `Could not read ${skill.path}`);
+      setActionLoading(null);
+      return;
+    }
+    const ok = await writeSkillContent(destPath, content);
+    if (!ok) {
+      addToast('error', `Failed to write ${destPath}`);
+      setActionLoading(null);
+      return;
+    }
+    const conn = getHexfloConn();
+    if (conn) {
+      try {
+        conn.reducers.syncSkill(
+          `${slugify(skill.name)}-${isGlobal ? 'project' : 'global'}`,
+          projectId() || 'hex-intf',
+          skill.name, skill.trigger, skill.desc,
+          destPath, new Date().toISOString(),
+        );
+      } catch { /* best effort */ }
+    }
+    addToast('success', `Copied "${skill.name}" to ${isGlobal ? 'project' : 'global'}`);
+    setActionLoading(null);
+  }
+
+  function handleDelete(skill: Skill) {
+    if (confirmDelete() !== skill.skillId) {
+      setConfirmDelete(skill.skillId);
+      return;
+    }
+    setConfirmDelete(null);
+    setActionLoading(skill.skillId);
+
+    // Remove file
+    deleteSkillFile(skill.path).then((ok) => {
+      if (!ok) addToast('info', `File removal may require manual cleanup: ${skill.path}`);
+    });
+
+    // Remove from SpacetimeDB — mark as deleted if no delete reducer
+    const conn = getHexfloConn();
+    if (conn) {
+      try {
+        if (typeof (conn.reducers as any).removeSkill === 'function') {
+          (conn.reducers as any).removeSkill(skill.skillId);
+        } else {
+          conn.reducers.syncSkill(
+            skill.skillId, projectId() || 'hex-intf',
+            skill.name, skill.trigger, '[DELETED]',
+            skill.path, new Date().toISOString(),
+          );
         }
-      } else {
-        // New skill — categorize and add
-        const catName = categorizeSkill(skill.name);
-        if (!catMap.has(catName)) catMap.set(catName, []);
-        catMap.get(catName)!.push(skill);
-      }
+      } catch { /* ignore */ }
     }
+    addToast('success', `Deleted "${skill.name}"`);
+    if (selectedId() === skill.skillId) setSelectedId(null);
+    setActionLoading(null);
+  }
 
-    return Array.from(catMap.entries()).map(([name, skills]) => ({ name, skills }));
-  });
+  function handleCreate() {
+    const name = slugify(newName());
+    if (!name) { addToast('error', 'Name is required'); return; }
+    const conn = getHexfloConn();
+    if (!conn) { addToast('error', 'SpacetimeDB not connected'); return; }
+    const trigger = newTrigger().trim() || `/${name}`;
+    const desc = newDesc().trim() || 'A custom skill';
+    const isGlobal = activeTab() === 'global';
+    const path = isGlobal ? `skills/${name}/SKILL.md` : `.claude/skills/${name}/SKILL.md`;
+    const template = `---\nname: ${name}\ndescription: ${desc}\ntrigger: ${trigger}\n---\n\n# ${name}\n\n${desc}\n\n## Instructions\n\n[Add skill instructions here]\n`;
 
-  const totalSkills = () => categories().reduce((sum, cat) => sum + cat.skills.length, 0);
+    setCreating(true);
+    writeSkillContent(path, template).then((ok) => {
+      if (ok) {
+        conn.reducers.syncSkill(name, projectId() || 'hex-intf', name, trigger, desc, path, new Date().toISOString());
+        addToast('success', `Created "${name}"`);
+        setShowCreateForm(false);
+        setNewName(''); setNewDesc(''); setNewTrigger('');
+      } else {
+        addToast('error', 'Failed to create skill file');
+      }
+      setCreating(false);
+    });
+  }
+
+  const inputStyle = { "background-color": "var(--bg-input)", "border-color": "var(--border-subtle)" };
 
   return (
     <div class="flex-1 overflow-auto p-6">
       {/* Header */}
-      <div class="flex items-center justify-between mb-6">
+      <div class="flex items-center justify-between mb-4">
         <div>
-          <h2 class="text-xl font-bold text-gray-100">Skills</h2>
-          <p class="mt-1 text-sm text-gray-400">
-            {discoveredSkills.loading ? 'Discovering skills...' : `${totalSkills()} slash commands across ${categories().length} categories`}
-            <Show when={dataSource() === 'stdb'}>
-              <span class="ml-2 inline-flex items-center rounded-full bg-cyan-900/30 px-2 py-0.5 text-[10px] font-medium text-cyan-400">SpacetimeDB</span>
+          <h2 class="text-lg font-bold" style={{ color: "var(--text-primary)" }}>Skills</h2>
+          <p class="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }}>
+            {globalSkills().length} global, {projectSkills().length} project
+            <Show when={hexfloConnected()}>
+              <span class="ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: "var(--accent-dim)", color: "var(--accent)" }}>SpacetimeDB</span>
             </Show>
           </p>
         </div>
-        <button class="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-400 hover:border-cyan-600 hover:text-cyan-300 transition-colors"
-          onClick={() => addToast("info", "Create skills in .claude/skills/ — see /skill-creator for templates")}>
-          + New Skill
+        <button
+          class="rounded-lg border px-3 py-1.5 text-sm transition-colors"
+          style={{ color: "var(--accent)", "border-color": "var(--border)" }}
+          onClick={() => setShowCreateForm(!showCreateForm())}
+        >
+          {showCreateForm() ? 'Cancel' : '+ New Skill'}
         </button>
       </div>
 
-      {/* Categorized skills */}
-      <div class="space-y-6">
-        <For each={categories()}>
-          {(category) => (
-            <div>
-              <h3 class="mb-3 text-xs font-bold uppercase tracking-wider text-gray-500">{category.name}</h3>
-              <div class="space-y-1.5">
-                <For each={category.skills}>
-                  {(skill) => (
-                    <div
-                      class="flex items-center gap-4 rounded-lg border border-gray-800/50 px-4 py-3 hover:border-gray-700 transition-colors cursor-pointer"
-                      style={{ "background-color": "var(--bg-surface)" }}
-                    >
-                      <span class="text-sm font-bold text-gray-200 min-w-[150px]">{skill.name}</span>
-                      <span class="text-xs min-w-[160px]" style={{ "font-family": "'JetBrains Mono', monospace", color: "var(--accent-hover)" }}>
-                        {skill.trigger}
-                      </span>
-                      <span class="text-sm text-gray-400 flex-1">{skill.desc}</span>
-                      <span class="shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium"
-                        classList={{
-                          "bg-cyan-900/30 text-cyan-400": skill.source !== "built-in",
-                          "bg-gray-800 text-gray-500": skill.source === "built-in",
-                        }}
-                      >
-                        {skill.source === "built-in" ? "built-in" : "custom"}
-                      </span>
-                    </div>
-                  )}
-                </For>
-              </div>
-            </div>
-          )}
-        </For>
+      {/* Tabs */}
+      <div class="flex border-b mb-4" style={{ "border-color": "var(--border-subtle)" }}>
+        <button
+          class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+          style={{
+            color: activeTab() === 'global' ? "var(--accent-hover)" : "var(--text-faint)",
+            "border-color": activeTab() === 'global' ? "var(--accent)" : "transparent",
+          }}
+          onClick={() => { setActiveTab('global'); setSelectedId(null); }}
+        >
+          Global Catalog ({globalSkills().length})
+        </button>
+        <button
+          class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+          style={{
+            color: activeTab() === 'project' ? "var(--accent-hover)" : "var(--text-faint)",
+            "border-color": activeTab() === 'project' ? "var(--accent)" : "transparent",
+          }}
+          onClick={() => { setActiveTab('project'); setSelectedId(null); }}
+        >
+          Project Skills ({projectSkills().length})
+        </button>
       </div>
+
+      {/* Create form */}
+      <Show when={showCreateForm()}>
+        <div class="mb-4 rounded-lg border p-4 space-y-3" style={{ background: "var(--bg-surface)", "border-color": "var(--border-subtle)" }}>
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <label class="block text-xs mb-1" style={{ color: "var(--text-faint)" }}>Name</label>
+              <input type="text" placeholder="my-skill" value={newName()} onInput={(e) => setNewName(e.currentTarget.value)}
+                class="w-full rounded border px-3 py-2 text-sm outline-none focus:border-cyan-600" style={inputStyle} />
+            </div>
+            <div>
+              <label class="block text-xs mb-1" style={{ color: "var(--text-faint)" }}>Trigger</label>
+              <input type="text" placeholder="/my-skill" value={newTrigger()} onInput={(e) => setNewTrigger(e.currentTarget.value)}
+                class="w-full rounded border px-3 py-2 text-sm outline-none focus:border-cyan-600" style={inputStyle} />
+            </div>
+            <div>
+              <label class="block text-xs mb-1" style={{ color: "var(--text-faint)" }}>Description</label>
+              <input type="text" placeholder="What it does" value={newDesc()} onInput={(e) => setNewDesc(e.currentTarget.value)}
+                class="w-full rounded border px-3 py-2 text-sm outline-none focus:border-cyan-600" style={inputStyle} />
+            </div>
+          </div>
+          <div class="flex justify-end gap-2">
+            <button class="rounded border px-3 py-1.5 text-xs transition-colors" style={{ color: "var(--text-muted)", "border-color": "var(--border)" }} onClick={() => setShowCreateForm(false)}>Cancel</button>
+            <button class="rounded px-4 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-50" style={{ background: "var(--accent)" }}
+              disabled={creating() || !newName().trim()} onClick={handleCreate}>{creating() ? 'Creating...' : 'Create'}</button>
+          </div>
+        </div>
+      </Show>
+
+      {/* Empty state */}
+      <Show when={visibleSkills().length === 0}>
+        <div class="rounded-lg border border-dashed p-8 text-center" style={{ "border-color": "var(--border)" }}>
+          <p class="text-sm" style={{ color: "var(--text-faint)" }}>
+            No {activeTab() === 'global' ? 'global' : 'project'} skills.{' '}
+            {activeTab() === 'global'
+              ? 'Run hex nexus start to sync from catalog.'
+              : 'Copy from Global Catalog or create a new one.'}
+          </p>
+        </div>
+      </Show>
+
+      {/* Skill table — clean rows, actions only when selected */}
+      <Show when={visibleSkills().length > 0}>
+        <div class="rounded-lg border overflow-hidden" style={{ "border-color": "var(--border-subtle)" }}>
+          {/* Table header */}
+          <div
+            class="grid gap-4 px-4 py-2 text-[11px] font-semibold uppercase"
+            style={{
+              "grid-template-columns": "24px 1fr 140px 2fr",
+              color: "var(--text-dim)",
+              background: "var(--bg-elevated)",
+              "letter-spacing": "0.5px",
+            }}
+          >
+            <span />
+            <span>Name</span>
+            <span>Trigger</span>
+            <span>Description</span>
+          </div>
+
+          {/* Table rows */}
+          <For each={visibleSkills()}>
+            {(skill) => {
+              const isSelected = () => selectedId() === skill.skillId;
+              const isConfirmingDelete = () => confirmDelete() === skill.skillId;
+
+              return (
+                <div style={{ "border-top": "1px solid var(--border-subtle)" }}>
+                  {/* Row */}
+                  <button
+                    class="grid w-full gap-4 px-4 py-2.5 text-left transition-colors"
+                    style={{
+                      "grid-template-columns": "24px 1fr 140px 2fr",
+                      background: isSelected() ? "var(--accent-dim)" : "var(--bg-surface)",
+                    }}
+                    onClick={() => handleSelect(skill)}
+                  >
+                    <span class="flex items-center justify-center">
+                      <span
+                        class="h-2 w-2 rounded-full"
+                        style={{ background: isGlobalSkill(skill.path) ? '#60a5fa' : '#4ade80' }}
+                      />
+                    </span>
+                    <span class="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>
+                      {skill.name}
+                    </span>
+                    <span class="text-sm truncate" style={{ color: "var(--accent-hover)", "font-family": "var(--font-mono)" }}>
+                      {skill.trigger}
+                    </span>
+                    <span class="text-sm truncate" style={{ color: "var(--text-muted)" }}>
+                      {skill.desc}
+                    </span>
+                  </button>
+
+                  {/* Expanded: action bar + editor */}
+                  <Show when={isSelected()}>
+                    {/* Action bar */}
+                    <div
+                      class="flex items-center gap-2 px-4 py-2"
+                      style={{ background: "var(--bg-elevated)", "border-top": "1px solid var(--border-subtle)" }}
+                    >
+                      <span class="text-[11px] font-medium" style={{ color: "var(--text-faint)" }}>
+                        {skill.path}
+                      </span>
+                      <div class="flex-1" />
+
+                      {/* Copy */}
+                      <button
+                        class="rounded px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50"
+                        style={{
+                          color: activeTab() === 'global' ? '#4ade80' : '#60a5fa',
+                          border: "1px solid var(--border)",
+                        }}
+                        disabled={actionLoading() === skill.skillId}
+                        onClick={(e) => { e.stopPropagation(); handleCopy(skill); }}
+                      >
+                        {actionLoading() === skill.skillId
+                          ? 'Copying...'
+                          : activeTab() === 'global' ? 'Copy to Project' : 'Copy to Global'}
+                      </button>
+
+                      {/* Delete (project only) */}
+                      <Show when={activeTab() === 'project'}>
+                        <button
+                          class="rounded px-2.5 py-1 text-[11px] font-medium transition-colors"
+                          style={{
+                            color: isConfirmingDelete() ? '#FFFFFF' : '#F87171',
+                            background: isConfirmingDelete() ? '#991B1B' : 'transparent',
+                            border: "1px solid var(--border)",
+                          }}
+                          onClick={(e) => { e.stopPropagation(); handleDelete(skill); }}
+                        >
+                          {isConfirmingDelete() ? 'Confirm Delete' : 'Delete'}
+                        </button>
+                      </Show>
+                    </div>
+
+                    {/* Content editor */}
+                    <Show when={loadingContent()}>
+                      <div class="flex items-center justify-center py-8" style={{ background: "var(--bg-surface)" }}>
+                        <span class="text-sm" style={{ color: "var(--text-faint)" }}>Loading...</span>
+                      </div>
+                    </Show>
+                    <Show when={!loadingContent()}>
+                      <div style={{ height: "400px" }}>
+                        <MarkdownEditor
+                          content={editorContent()}
+                          filePath={skill.path}
+                          title={skill.name}
+                          initialMode="view"
+                          editable={true}
+                          onSave={async (newContent) => {
+                            const ok = await writeSkillContent(editorPath(), newContent);
+                            if (ok) {
+                              setEditorContent(newContent);
+                              addToast('success', `Saved ${editorPath()}`);
+                            } else {
+                              addToast('error', `Failed to save ${editorPath()}`);
+                            }
+                          }}
+                          metadata={[
+                            { label: "Trigger", value: skill.trigger, color: "#22d3ee" },
+                            { label: "Scope", value: isGlobalSkill(skill.path) ? "Global" : "Project", color: isGlobalSkill(skill.path) ? "#60a5fa" : "#4ade80" },
+                          ]}
+                        />
+                      </div>
+                    </Show>
+                  </Show>
+                </div>
+              );
+            }}
+          </For>
+        </div>
+      </Show>
     </div>
   );
 };
