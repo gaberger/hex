@@ -196,12 +196,8 @@ export const inferenceProviders: Accessor<any[]> = useTable(
 export const inferenceRequests: Accessor<any[]> = useTable(
   () => inferenceConn()?.db.inference_request as SpacetimeDBTableHandle<any> | undefined,
 );
-export const inferenceResponses: Accessor<any[]> = useTable(
-  () => inferenceConn()?.db.inference_response as SpacetimeDBTableHandle<any> | undefined,
-);
-export const agentBudgets: Accessor<any[]> = useTable(
-  () => inferenceConn()?.db.agent_budget as SpacetimeDBTableHandle<any> | undefined,
-);
+// NOTE: inference_response and agent_budget tables are NOT subscribed.
+// Add subscriptions here when InferenceDetail view is built.
 
 // fleet-state tables
 export const fleetNodes: Accessor<any[]> = useTable(
@@ -210,9 +206,6 @@ export const fleetNodes: Accessor<any[]> = useTable(
 
 // Aggregated connection status
 export { hexfloConnected, agentRegistryConnected, inferenceConnected, fleetConnected };
-
-export const allConnected: Accessor<boolean> = () =>
-  hexfloConnected() && agentRegistryConnected() && inferenceConnected() && fleetConnected();
 
 export const anyConnected: Accessor<boolean> = () =>
   hexfloConnected() || agentRegistryConnected() || inferenceConnected() || fleetConnected();
@@ -284,8 +277,6 @@ export function initConnections() {
     subscribeQueries: [
       "SELECT * FROM inference_provider",
       "SELECT * FROM inference_request",
-      "SELECT * FROM inference_response",
-      "SELECT * FROM agent_budget",
     ],
   });
 
