@@ -18,6 +18,13 @@ export function startHexFloMonitor() {
   createEffect(on(swarmTasks, (tasks) => {
     if (!initialized) {
       prevTaskMap = new Map(tasks.map((t: any) => [t.id ?? t.task_id ?? '', t.status ?? 'pending']));
+      // Seed completedSwarms from swarms already marked done in SpacetimeDB
+      for (const s of swarms()) {
+        const status = s.status ?? s.swarm_status ?? 'active';
+        if (status === 'completed' || status === 'done') {
+          completedSwarms.add(s.id ?? s.swarm_id ?? '');
+        }
+      }
       initialized = true;
       return;
     }
@@ -52,6 +59,10 @@ export function startHexFloMonitor() {
       if (counts.total > 0 && counts.completed === counts.total && !completedSwarms.has(swarmId)) {
         completedSwarms.add(swarmId);
         const swarm = swarms().find((s: any) => (s.id ?? s.swarm_id ?? '') === swarmId);
+        // Don't toast for swarms already marked completed in SpacetimeDB —
+        // they fire on subscription re-delivery after reconnect (ADR-055 fix)
+        const swarmStatus = swarm?.status ?? swarm?.swarm_status ?? 'active';
+        if (swarmStatus === 'completed' || swarmStatus === 'done') continue;
         const name = swarm?.name ?? swarm?.swarm_name ?? swarmId;
         addToast("success", `Swarm "${name}" completed — all ${counts.total} tasks done`);
       }
