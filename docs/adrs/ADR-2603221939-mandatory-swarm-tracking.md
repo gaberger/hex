@@ -1,6 +1,6 @@
 # ADR-2603221939: Mandatory Swarm Tracking for Background Agents
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-22
 **Drivers:** Background agents spawned without `HEXFLO_TASK:` prefix bypass HexFlo tracking entirely. The `Agent` tool is the only tool without a `PreToolUse` hook gate. Discovered when ADR-056 style conversion agents ran invisibly — no swarm status, no dashboard visibility, no session continuity.
 
@@ -127,11 +127,11 @@ Add a `hex agent audit` command that:
 
 | Phase | Description | Status |
 |-------|------------|--------|
-| P1 | Add PreToolUse hook on Agent tool with HEXFLO_TASK enforcement | Pending |
-| P2 | Harden SubagentStart — ownership validation, lazy connect, heartbeat | Pending |
-| P3 | Fix stderr → stdout for pre_bash warnings | Pending |
-| P4 | Workplan context propagation to subagents | Pending |
-| P5 | `hex agent audit` command for retroactive tracking | Pending |
+| P1 | Add PreToolUse hook on Agent tool with HEXFLO_TASK enforcement | Done |
+| P2 | Harden SubagentStart — ownership validation, lazy connect, heartbeat | Done |
+| P3 | Fix stderr → stdout for pre_bash warnings | Done |
+| P4 | Workplan context propagation to subagents | Done |
+| P5 | `hex agent audit` command for retroactive tracking | Done |
 
 ## References
 
