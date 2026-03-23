@@ -703,7 +703,7 @@ mod tests {
     fn encrypt_decrypt_roundtrip() {
         let client = SpacetimeSecretClient {
             cache: Arc::new(RwLock::new(HashMap::new())),
-            host: "http://localhost:3000".into(),
+            host: "http://localhost:3033".into(),
             database: "hex".into(),
             hub_id: "test-hub".into(),
             connected: Arc::new(RwLock::new(false)),
@@ -725,7 +725,7 @@ mod tests {
     fn decrypt_plaintext_passthrough() {
         let client = SpacetimeSecretClient {
             cache: Arc::new(RwLock::new(HashMap::new())),
-            host: "http://localhost:3000".into(),
+            host: "http://localhost:3033".into(),
             database: "hex".into(),
             hub_id: "test-hub".into(),
             connected: Arc::new(RwLock::new(false)),
@@ -743,7 +743,7 @@ mod tests {
     fn no_key_stores_plaintext() {
         let client = SpacetimeSecretClient {
             cache: Arc::new(RwLock::new(HashMap::new())),
-            host: "http://localhost:3000".into(),
+            host: "http://localhost:3033".into(),
             database: "hex".into(),
             hub_id: "test-hub".into(),
             connected: Arc::new(RwLock::new(false)),

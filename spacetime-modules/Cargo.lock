@@ -345,9 +345,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hexflo-cleanup"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "spacetimedb",
+]
+
+[[package]]
 name = "hexflo-coordination"
 version = "0.1.0"
 dependencies = [
+ "spacetimedb",
+]
+
+[[package]]
+name = "hexflo-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "log",
  "spacetimedb",
 ]
 
@@ -390,6 +406,14 @@ dependencies = [
  "hashbrown 0.16.1",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "inference-bridge"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "spacetimedb",
 ]
 
 [[package]]

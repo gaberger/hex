@@ -9,7 +9,7 @@
 //!
 //! Enabled via `.hex/state.json`:
 //! ```json
-//! { "backend": "spacetimedb", "spacetimedb": { "host": "localhost:3000", "database": "hexflo-coordination" } }
+//! { "backend": "spacetimedb", "spacetimedb": { "host": "localhost:3033", "database": "hexflo-coordination" } }
 //! ```
 
 use async_trait::async_trait;
@@ -28,7 +28,7 @@ pub struct SpacetimeConfig {
 impl Default for SpacetimeConfig {
     fn default() -> Self {
         Self {
-            host: "http://localhost:3000".to_string(),
+            host: "http://localhost:3033".to_string(),
             database: "hexflo-coordination".to_string(),
             auth_token: None,
         }

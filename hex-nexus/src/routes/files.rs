@@ -211,7 +211,7 @@ pub async fn init_project(
 
         // Write state.json pointing to SpacetimeDB
         let state = json!({
-            "host": "http://127.0.0.1:3000",
+            "host": "http://127.0.0.1:3033",
             "database": "hexflo-coordination"
         });
         let _ = std::fs::write(
@@ -361,7 +361,7 @@ pub async fn init_project(
 pub async fn resync_config() -> (StatusCode, Json<serde_json::Value>) {
     if let Ok(cwd) = std::env::current_dir() {
         let host = std::env::var("HEX_SPACETIMEDB_HOST")
-            .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+            .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
         let db = std::env::var("HEX_SPACETIMEDB_DATABASE")
             .unwrap_or_else(|_| "hexflo-coordination".to_string());
         crate::config_sync::sync_project_config(&cwd, &host, &db).await;

@@ -23,10 +23,12 @@ pub mod rules;
 /// Canonical SpacetimeDB health-check endpoint path.
 /// All code that pings SpacetimeDB MUST use this constant — never hardcode the path.
 /// See ADR rule `adr-039-no-stale-ping` for enforcement.
-pub const SPACETIMEDB_PING_PATH: &str = "/database/ping";
+/// Updated for SpacetimeDB v2.0.5+ which moved /database/ping → /v1/ping.
+pub const SPACETIMEDB_PING_PATH: &str = "/v1/ping";
 
 /// Default SpacetimeDB host URL.
-pub const SPACETIMEDB_DEFAULT_HOST: &str = "http://127.0.0.1:3000";
+/// Port 3033 chosen to avoid conflicts with common dev servers (Next.js, Rails on 3000).
+pub const SPACETIMEDB_DEFAULT_HOST: &str = "http://127.0.0.1:3033";
 
 /// Re-export commonly used types at the crate root.
 pub use domain::agents::{AgentConstraints, AgentDefinition, AgentMetrics};

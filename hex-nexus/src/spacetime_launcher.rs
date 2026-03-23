@@ -39,7 +39,7 @@ impl Default for SpacetimeConfig {
     fn default() -> Self {
         Self {
             host: "127.0.0.1".to_string(),
-            port: 3000,
+            port: 3033,
             database: "hex".to_string(),
             data_dir: PathBuf::from(".hex/spacetimedb"),
             binary_path: None,
@@ -848,7 +848,7 @@ mod tests {
     #[test]
     fn connection_uri_format() {
         let launcher = SpacetimeLauncher::new(SpacetimeConfig::default());
-        assert_eq!(launcher.connection_uri(), "http://127.0.0.1:3000");
+        assert_eq!(launcher.connection_uri(), "http://127.0.0.1:3033");
     }
 
     #[test]

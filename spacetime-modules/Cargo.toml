@@ -14,6 +14,9 @@ members = [
     "architecture-enforcer",
     "conflict-resolver",
     "inference-gateway",
+    "inference-bridge",
+    "hexflo-lifecycle",
+    "hexflo-cleanup",
     "test-results",
 ]
 resolver = "2"

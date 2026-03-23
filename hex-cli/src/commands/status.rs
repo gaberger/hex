@@ -72,7 +72,7 @@ pub async fn run() -> anyhow::Result<()> {
 
             // SpacetimeDB status
             let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
-                .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+                .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(2))
                 .build()

@@ -105,9 +105,10 @@ fn read_port() -> u16 {
 }
 
 /// Ensure SpacetimeDB is running. Starts it as a subprocess if not.
-async fn ensure_spacetimedb() {
+/// Returns `true` if SpacetimeDB is confirmed reachable after this call.
+async fn ensure_spacetimedb() -> bool {
     let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
-        .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
 
     // Check if already running
     let http = reqwest::Client::builder()
@@ -117,7 +118,7 @@ async fn ensure_spacetimedb() {
 
     if is_spacetimedb_reachable(&http, &stdb_host).await {
         println!("{} SpacetimeDB already running at {}", "\u{2b21}".green(), stdb_host);
-        return;
+        return true;
     }
 
     // Something might be on port 3000 that isn't SpacetimeDB
@@ -127,19 +128,21 @@ async fn ensure_spacetimedb() {
         .map(|r| r.status().is_success())
         .unwrap_or(false)
     {
+        // Extract port from stdb_host for the diagnostic message
+        let port_str = stdb_host.rsplit(':').next().unwrap_or("3033");
         println!(
-            "  {} Port 3000 is in use by another service (not SpacetimeDB)",
-            "!".yellow()
+            "  {} Port {} is in use by another service (not SpacetimeDB)",
+            "!".yellow(), port_str
         );
         println!(
-            "  {} Find it: lsof -i :3000",
-            "\u{2192}".dimmed()
+            "  {} Find it: lsof -i :{}",
+            "\u{2192}".dimmed(), port_str
         );
         println!(
             "  {} Set HEX_SPACETIMEDB_HOST to use a different port",
             "\u{2192}".dimmed()
         );
-        return;
+        return false;
     }
 
     // Try to start SpacetimeDB
@@ -151,20 +154,27 @@ async fn ensure_spacetimedb() {
         Err(e) => {
             println!("  {} Could not open log file: {}", "!".yellow(), e);
             println!("  {} SpacetimeDB may need to be started manually: spacetime start", "\u{2192}".dimmed());
-            return;
+            return false;
         }
     };
     let log_err = log.try_clone().unwrap();
 
-    // Try `spacetime start` or `spacetimedb start`
-    let started = try_start_spacetimedb("spacetime", &["start"], &log, &log_err)
-        || try_start_spacetimedb("spacetimedb", &["start"], &log, &log_err);
+    // Extract listen address from stdb_host for the --listen-addr flag
+    let listen_addr = stdb_host
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
+    // Replace 127.0.0.1 with 0.0.0.0 for SpacetimeDB bind (it needs a bind address, not a connect address)
+    let bind_addr = listen_addr.replace("127.0.0.1", "0.0.0.0");
+
+    // Try `spacetime start` or `spacetimedb start` with custom listen address
+    let started = try_start_spacetimedb("spacetime", &["start", "--listen-addr", &bind_addr], &log, &log_err)
+        || try_start_spacetimedb("spacetimedb", &["start", "--listen-addr", &bind_addr], &log, &log_err);
 
     if !started {
         println!("  {} SpacetimeDB binary not found", "!".yellow());
         println!("  {} Install: https://spacetimedb.com/docs/getting-started", "\u{2192}".dimmed());
         println!("  {} Or start manually: spacetime start", "\u{2192}".dimmed());
-        return;
+        return false;
     }
 
     // Wait for SpacetimeDB to become responsive
@@ -172,12 +182,13 @@ async fn ensure_spacetimedb() {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         if is_spacetimedb_reachable(&http, &stdb_host).await {
             println!("{} SpacetimeDB ready at {} ({}ms)", "\u{2b21}".green(), stdb_host, (i + 1) * 500);
-            return;
+            return true;
         }
     }
 
     println!("  {} SpacetimeDB started but not responsive after 7.5s", "!".yellow());
     println!("  {} Check logs: {}", "\u{2192}".dimmed(), stdb_log.display());
+    false
 }
 
 /// Verify that SpacetimeDB is actually running on the given host.
@@ -242,12 +253,25 @@ async fn start(port: u16, bind: &str, token: Option<&str>, no_agent: bool) -> an
                         // Fall through to normal start path below
                     } else {
                         // Nexus is running and up-to-date — ensure SpacetimeDB is up
-                        ensure_spacetimedb().await;
+                        let stdb_up = ensure_spacetimedb().await;
                         println!(
                             "{} hex-nexus is already running (PID {})",
                             "\u{2b21}".cyan(),
                             pid
                         );
+
+                        // Retry auto-registration in case it failed on initial start
+                        if stdb_up {
+                            let project_dir = std::env::current_dir()
+                                .map(|p| p.to_string_lossy().to_string())
+                                .unwrap_or_else(|_| ".".to_string());
+                            let nexus_port = read_port();
+                            let nexus = crate::nexus_client::NexusClient::new(
+                                format!("http://127.0.0.1:{}", nexus_port),
+                            );
+                            auto_register_project(&nexus, &project_dir).await;
+                        }
+
                         return Ok(());
                     }
                 }
@@ -299,7 +323,7 @@ async fn start(port: u16, bind: &str, token: Option<&str>, no_agent: bool) -> an
     }
 
     // ── Start SpacetimeDB if not running ────────────────
-    ensure_spacetimedb().await;
+    let _stdb_available = ensure_spacetimedb().await;
 
     // Find the hex-nexus binary
     let nexus_bin = find_nexus_binary();
@@ -424,6 +448,9 @@ async fn start(port: u16, bind: &str, token: Option<&str>, no_agent: bool) -> an
             .unwrap_or_else(|_| ".".to_string());
         let nexus_url = format!("http://127.0.0.1:{}", port);
         let nexus = crate::nexus_client::NexusClient::new(nexus_url.clone());
+        // Always attempt registration — SpacetimeDB may have finished starting
+        // by the time nexus is responsive (module replay can take >7.5s).
+        // auto_register_project has its own 2s wait + retry logic.
         auto_register_project(&nexus, &project_dir).await;
 
         // Auto-start default hex-agent (ADR-037)
@@ -663,24 +690,30 @@ async fn status() -> anyhow::Result<()> {
                 }
             }
 
-            // Check SpacetimeDB connectivity
+            // Check SpacetimeDB connectivity (must verify it's actually SpacetimeDB, not
+            // another service on the same port — e.g. Next.js also defaults to :3000)
             let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
-                .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+                .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(2))
                 .build()
                 .ok();
             if let Some(ref client) = client {
-                let stdb_ok = client
-                    .get(format!("{}{}", stdb_host, hex_core::SPACETIMEDB_PING_PATH))
-                    .send()
-                    .await
-                    .map(|r| r.status().is_success())
-                    .unwrap_or(false);
-                if stdb_ok {
+                if is_spacetimedb_reachable(client, &stdb_host).await {
                     println!("  SpacetimeDB: {} ({})", "connected".green(), stdb_host);
                 } else {
-                    println!("  SpacetimeDB: {} ({})", "unavailable".yellow(), stdb_host);
+                    // Distinguish "port occupied by other service" from "nothing running"
+                    let port_alive = client
+                        .get(format!("{}{}", stdb_host, hex_core::SPACETIMEDB_PING_PATH))
+                        .send()
+                        .await
+                        .map(|r| r.status().is_success())
+                        .unwrap_or(false);
+                    if port_alive {
+                        println!("  SpacetimeDB: {} (port in use by another service)", "not connected".red());
+                    } else {
+                        println!("  SpacetimeDB: {} ({})", "unavailable".yellow(), stdb_host);
+                    }
                 }
             }
 
@@ -800,10 +833,6 @@ async fn logs(lines: usize, follow: bool) -> anyhow::Result<()> {
 /// If none exists, registers via `POST /api/projects/register`.
 /// Failures are non-fatal — logged and swallowed so nexus startup isn't blocked.
 async fn auto_register_project(nexus: &crate::nexus_client::NexusClient, project_dir: &str) {
-    // Give SpacetimeDB state port time to initialize after daemon starts.
-    // The version endpoint responds before the state port is fully connected.
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
     // Derive project name from directory basename
     let name = project_dir
         .rsplit('/')
@@ -816,8 +845,12 @@ async fn auto_register_project(nexus: &crate::nexus_client::NexusClient, project
         "name": name,
     });
 
-    // Try registration up to 2 times — first attempt may hit state port not ready
-    for attempt in 0..2 {
+    // Try registration up to 4 times with increasing delays.
+    // SpacetimeDB module replay can take >7.5s on cold start, and the nexus
+    // state port needs time to connect after that. Total wait budget: ~12s.
+    let delays = [2, 3, 4, 3]; // seconds between attempts
+    for attempt in 0..4 {
+        tokio::time::sleep(std::time::Duration::from_secs(delays[attempt])).await;
         // Check if already registered
         if let Ok(resp) = nexus.get("/api/projects").await {
             if let Some(projects) = resp.get("projects").and_then(|v| v.as_array()) {
@@ -844,16 +877,15 @@ async fn auto_register_project(nexus: &crate::nexus_client::NexusClient, project
                 return;
             }
             Err(e) => {
-                if attempt == 0 {
-                    // Retry after a short delay — state port may still be connecting
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                } else {
+                if attempt == 3 {
+                    // Final attempt failed — report it
                     println!(
                         "  {} Auto-register project failed: {}",
                         "!".yellow(),
                         e
                     );
                 }
+                // Earlier attempts just fall through to next retry (delay is at top of loop)
             }
         }
     }

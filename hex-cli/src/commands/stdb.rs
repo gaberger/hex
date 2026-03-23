@@ -27,7 +27,7 @@ pub enum StdbAction {
         #[arg(short, long, default_value = "spacetime-modules")]
         modules: String,
         /// SpacetimeDB host
-        #[arg(long, default_value = "http://127.0.0.1:3000")]
+        #[arg(long, default_value = "http://127.0.0.1:3033")]
         host: String,
         /// Database name
         #[arg(long, default_value = "hex")]
@@ -36,7 +36,7 @@ pub enum StdbAction {
     /// Hydrate SpacetimeDB with all WASM module schemas (no application data)
     Hydrate {
         /// SpacetimeDB host
-        #[arg(long, default_value = "http://127.0.0.1:3000")]
+        #[arg(long, default_value = "http://127.0.0.1:3033")]
         host: String,
         /// Database name
         #[arg(long, default_value = "hex")]
@@ -54,7 +54,7 @@ pub enum StdbAction {
         #[arg(short, long, default_value = "hex-nexus/src/spacetime_bindings")]
         out: String,
         /// SpacetimeDB host
-        #[arg(long, default_value = "http://127.0.0.1:3000")]
+        #[arg(long, default_value = "http://127.0.0.1:3033")]
         host: String,
         /// Database name
         #[arg(long, default_value = "hex")]
@@ -152,7 +152,7 @@ async fn status() -> anyhow::Result<()> {
 
     // Check if running (try ping)
     let host = std::env::var("HEX_SPACETIMEDB_HOST")
-        .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
@@ -283,7 +283,7 @@ async fn start(port: u16) -> anyhow::Result<()> {
 
 async fn stop() -> anyhow::Result<()> {
     let host = std::env::var("HEX_SPACETIMEDB_HOST")
-        .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
 
     // SpacetimeDB doesn't have a clean stop endpoint in all versions,
     // so we find and kill the process.

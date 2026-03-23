@@ -2,7 +2,7 @@
 //!
 //! SpacetimeDB is the only backend. SQLite has been removed.
 //!
-//! Priority: `HEX_STATE_BACKEND` env var > `.hex/state.json` file > default (SpacetimeDB localhost:3000, database hexflo-coordination).
+//! Priority: `HEX_STATE_BACKEND` env var > `.hex/state.json` file > default (SpacetimeDB localhost:3033, database hexflo-coordination).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,7 +34,7 @@ impl Default for StateBackendConfig {
 }
 
 fn default_stdb_host() -> String {
-    "http://localhost:3000".to_string()
+    "http://localhost:3033".to_string()
 }
 
 fn default_stdb_database() -> String {
@@ -48,7 +48,7 @@ fn default_stdb_database() -> String {
 /// Priority:
 /// 1. `HEX_STDB_HOST` / `HEX_STDB_DATABASE` / `HEX_STDB_AUTH_TOKEN` env vars
 /// 2. `.hex/state.json` in the current working directory or `~/.hex/state.json`
-/// 3. Default: SpacetimeDB at `http://localhost:3000` database `hexflo-coordination`
+/// 3. Default: SpacetimeDB at `http://localhost:3033` database `hexflo-coordination`
 pub fn resolve_config() -> StateBackendConfig {
     // 1. Environment variables
     let has_env = std::env::var("HEX_STDB_HOST").is_ok()

@@ -12,7 +12,7 @@ mod config_tests {
     #[test]
     fn test_default_config_is_spacetimedb() {
         let config = StateBackendConfig::default();
-        assert_eq!(config.host, "http://localhost:3000");
+        assert_eq!(config.host, "http://localhost:3033");
         assert_eq!(config.database, "hexflo-coordination");
         assert!(config.auth_token.is_none());
     }
@@ -57,7 +57,7 @@ mod config_tests {
     fn test_config_defaults_in_json() {
         let json = r#"{}"#;
         let config: StateBackendConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.host, "http://localhost:3000");
+        assert_eq!(config.host, "http://localhost:3033");
         assert_eq!(config.database, "hexflo-coordination");
         assert!(config.auth_token.is_none());
     }
@@ -146,7 +146,7 @@ mod spacetime_adapter_tests {
     #[test]
     fn test_connection_uri_format() {
         let config = SpacetimeConfig {
-            host: "http://localhost:3000".to_string(),
+            host: "http://localhost:3033".to_string(),
             database: "hex-nexus".to_string(),
             auth_token: None,
         };
@@ -157,7 +157,7 @@ mod spacetime_adapter_tests {
     #[test]
     fn test_spacetime_config_default() {
         let config = SpacetimeConfig::default();
-        assert_eq!(config.host, "http://localhost:3000");
+        assert_eq!(config.host, "http://localhost:3033");
         assert_eq!(config.database, "hexflo-coordination");
         assert!(config.auth_token.is_none());
     }
@@ -258,7 +258,7 @@ mod contract_tests {
 
         let config = SpacetimeConfig {
             host: std::env::var("HEX_STDB_HOST")
-                .unwrap_or_else(|_| "http://localhost:3000".into()),
+                .unwrap_or_else(|_| "http://localhost:3033".into()),
             database: std::env::var("HEX_STDB_DATABASE")
                 .unwrap_or_else(|_| "hex-nexus".into()),
             auth_token: std::env::var("HEX_STDB_AUTH_TOKEN").ok(),
