@@ -3,7 +3,7 @@
   "feature": "SpacetimeDB Per-Module Databases",
   "description": "Migrate from single-database publishing to per-module databases so all 18 WASM modules can be hydrated. Includes fixing stale binary detection, hydration status reporting, and gitignore for ADRs.",
   "adr": "ADR-2603231500",
-  "status": "planned",
+  "status": "done",
   "priority": "high",
   "blocks": ["chat-relay", "inference-gateway", "secret-grant", "workplan-state tracking"],
   "created_at": "2026-03-23T14:00:00Z",
@@ -27,7 +27,7 @@
           "description": "Check target/debug and target/release BEFORE PATH lookup so stale-binary detection works during development. Current order: env var → PATH → local builds. New order: env var → local builds → PATH.",
           "deps": [],
           "files": ["hex-cli/src/commands/nexus.rs"],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
@@ -37,7 +37,7 @@
           "description": "status() returns 'hydrated' when all active tier modules publish successfully. Currently checks schema_verified which may fail even when all tiers succeed. Also update the CLI output to not show dormant tiers as failures.",
           "deps": [],
           "files": ["hex-nexus/src/spacetime_launcher.rs", "hex-cli/src/commands/stdb.rs"],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
@@ -47,7 +47,7 @@
           "description": "Remove or amend the docs gitignore pattern so ADRs can be git-added without -f. Check .gitignore for the pattern and fix it.",
           "deps": [],
           "files": [".gitignore"],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
@@ -57,7 +57,7 @@
           "description": "ensure_spacetimedb() should detect and kill hung spacetimedb-update processes that block spacetime version calls. Add a timeout-based cleanup before attempting spacetime start.",
           "deps": [],
           "files": ["hex-cli/src/commands/nexus.rs"],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         }
       ]
@@ -80,7 +80,7 @@
           "description": "Add a const array or module mapping each WASM module name to its database name in hex-core/src/lib.rs. Database name = directory name for all modules except hexflo-coordination which stays as 'hex' for backward compat.",
           "deps": [],
           "files": ["hex-core/src/lib.rs"],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         }
       ]
@@ -103,7 +103,7 @@
           "description": "Change the free function publish_module(host, database, module_path) to derive the database name from the module directory name. hexflo-coordination → 'hex', all others → directory name. Update SpacetimeLauncher::publish_modules() similarly.",
           "deps": ["P1.1"],
           "files": ["hex-nexus/src/spacetime_launcher.rs"],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
@@ -113,7 +113,7 @@
           "description": "Re-enable all 4 tiers in MODULE_TIERS. Each module publishes to its own database so schema conflicts are impossible. Keep hexflo-coordination in tier 0.",
           "deps": ["P2.1"],
           "files": ["hex-nexus/src/spacetime_launcher.rs"],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         }
       ]
@@ -136,7 +136,7 @@
           "description": "Replace hardcoded 'inference-gateway' default with hex_core constant.",
           "deps": ["P1.1"],
           "files": ["hex-nexus/src/adapters/spacetime_inference.rs", "hex-nexus/src/lib.rs"],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
@@ -146,7 +146,7 @@
           "description": "Replace hardcoded 'chat-relay' default with hex_core constant.",
           "deps": ["P1.1"],
           "files": ["hex-nexus/src/adapters/spacetime_chat.rs", "hex-nexus/src/lib.rs"],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
@@ -156,7 +156,7 @@
           "description": "Replace hardcoded 'hex-nexus' default with hex_core constant for secret-grant module.",
           "deps": ["P1.1"],
           "files": ["hex-nexus/src/adapters/spacetime_secrets.rs", "hex-nexus/src/lib.rs"],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
@@ -166,7 +166,7 @@
           "description": "Replace hardcoded 'chat-relay' default with hex_core constant for session persistence.",
           "deps": ["P1.1"],
           "files": ["hex-nexus/src/adapters/spacetime_session.rs", "hex-nexus/src/lib.rs"],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         }
       ]
@@ -189,7 +189,7 @@
           "description": "Run hex stdb hydrate and verify all 4 tiers report success. Check hex stdb status shows all 18 modules with checkmarks.",
           "deps": ["P2.2", "P3.1", "P3.2", "P3.3", "P3.4"],
           "files": [],
-          "status": "todo",
+          "status": "done",
           "agent": "integrator"
         },
         {
@@ -199,7 +199,7 @@
           "description": "Verify: project list, swarm status, task list, inbox, inference endpoints, session persistence all work against their respective databases.",
           "deps": ["P4.1"],
           "files": [],
-          "status": "todo",
+          "status": "done",
           "agent": "integrator"
         }
       ]

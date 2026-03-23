@@ -1,6 +1,6 @@
 # ADR-2603231500: SpacetimeDB Per-Module Databases
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-23
 **Drivers:** 17 of 18 WASM modules are dormant because SpacetimeDB's single-database publish model replaces the entire schema on each publish. Chat, inference, secrets, and workplan features are unavailable.
 **Supersedes:** Implicit single-database design documented in ADR-2603231400 D5.
@@ -89,16 +89,16 @@ Remove the `docs` gitignore pattern so ADRs can be added without `-f`.
 
 | Phase | Description | Status |
 |-------|------------|--------|
-| P1 | Fix `find_nexus_binary()` priority: local builds before PATH | Pending |
-| P2 | Fix `HydrationResult::status()` to match active tiers only | Pending |
-| P3 | Un-gitignore `docs/adrs/` | Pending |
-| P4 | Add database name constants to `hex-core` | Pending |
-| P5 | Update `publish_module()` to accept per-module database names | Pending |
-| P6 | Restore `MODULE_TIERS` with all 18 modules, map each to its database | Pending |
-| P7 | Update nexus adapters to use constants from `hex-core` | Pending |
-| P8 | Full hydration test — all 18 modules publish successfully | Pending |
-| P9 | Kill stuck `spacetimedb-update` processes in `ensure_spacetimedb()` | Pending |
-| P10 | Install `wasm-opt` or suppress warning in hydration output | Pending |
+| P1 | Fix `find_nexus_binary()` priority: local builds before PATH | Done |
+| P2 | Fix `HydrationResult::status()` to match active tiers only | Done |
+| P3 | Un-gitignore `docs/adrs/` | Done |
+| P4 | Add database name constants to `hex-core` | Done |
+| P5 | Update `publish_module()` to accept per-module database names | Done |
+| P6 | Restore `MODULE_TIERS` with all 18 modules, map each to its database | Done |
+| P7 | Update nexus adapters to use constants from `hex-core` | Done |
+| P8 | Full hydration test — all 18 modules publish successfully | Done |
+| P9 | Kill stuck `spacetimedb-update` processes in `ensure_spacetimedb()` | Done |
+| P10 | Add `--delete-data=on-conflict` for schema migration handling | Done |
 
 ## References
 
