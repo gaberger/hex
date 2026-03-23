@@ -84,6 +84,7 @@ let skillRegistry: Accessor<any[]> = () => [];
 let agentDefinitions: Accessor<any[]> = () => [];
 let registryAgents: Accessor<any[]> = () => [];
 let agentHeartbeats: Accessor<any[]> = () => [];
+let agentInbox: Accessor<any[]> = () => [];
 
 // inference-gateway tables
 let inferenceProviders: Accessor<any[]> = () => [];
@@ -101,7 +102,7 @@ export {
   anyConnected,
   swarms, swarmTasks, swarmAgents, hexfloMemory,
   registeredProjects, projectConfigs, skillRegistry, agentDefinitions,
-  registryAgents, agentHeartbeats,
+  registryAgents, agentHeartbeats, agentInbox,
   inferenceProviders, inferenceRequests,
   fleetNodes,
 };
@@ -244,6 +245,7 @@ export function initConnectionStore() {
     agentDefinitions = useTable(() => _hexfloConn()?.db.agent_definition as SpacetimeDBTableHandle<any> | undefined);
     registryAgents = useTable(() => _hexfloConn()?.db.hex_agent as SpacetimeDBTableHandle<any> | undefined);
     agentHeartbeats = () => []; // Heartbeat data inline on hex_agent.lastHeartbeat (ADR-058)
+    agentInbox = useTable(() => _hexfloConn()?.db.agent_inbox as SpacetimeDBTableHandle<any> | undefined);
 
     // inference-gateway tables
     inferenceProviders = useTable(() => _inferenceConn()?.db.inference_provider as SpacetimeDBTableHandle<any> | undefined);
@@ -297,6 +299,7 @@ export function initConnections() {
       "SELECT * FROM skill_registry",
       "SELECT * FROM agent_definition",
       "SELECT * FROM hex_agent",
+      "SELECT * FROM agent_inbox",
     ],
   });
 

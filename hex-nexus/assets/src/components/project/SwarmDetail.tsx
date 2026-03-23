@@ -4,14 +4,17 @@
  * Shows swarm metadata, task list with status badges, agent roster,
  * and an overall progress bar. Data from SpacetimeDB subscriptions.
  */
-import { Component, For, Show, createMemo } from "solid-js";
+import { Component, For, Show, createMemo, createSignal } from "solid-js";
 import {
   swarms,
   swarmTasks,
   swarmAgents,
   agentHeartbeats,
+  registryAgents,
+  getHexfloConn,
 } from "../../stores/connection";
 import { navigate, route } from "../../stores/router";
+import { addToast } from "../../stores/toast";
 
 function relativeTime(timestamp: string | undefined): string {
   if (!timestamp) return "--";
@@ -205,6 +208,9 @@ const SwarmDetail: Component = () => {
                 </div>
               </div>
 
+              {/* Task Create Form */}
+              <TaskCreateForm swarmId={swarmId()} />
+
               {/* Task List */}
               <SectionHeader title="Tasks" count={totalCount()} />
               <Show
@@ -219,46 +225,64 @@ const SwarmDetail: Component = () => {
                   <For each={tasks()}>
                     {(task) => {
                       const tid = task.id ?? task.task_id ?? "";
-                      const assignee =
-                        task.assigned_to ?? task.agent_id ?? "";
+                      const assignee = task.assigned_to ?? task.agent_id ?? "";
                       const taskStatus = task.status ?? "pending";
                       const result = task.result ?? "";
+                      const assignedAgent = () => {
+                        if (!assignee) return null;
+                        return registryAgents().find((a: any) => (a.agent_id ?? a.id ?? "") === assignee)
+                          ?? swarmAgents().find((a: any) => (a.id ?? a.agent_id ?? "") === assignee);
+                      };
+                      const worktreePath = () => assignedAgent()?.worktree_path ?? assignedAgent()?.worktree ?? "";
+                      const commitHash = () => {
+                        const match = (result ?? "").match(/\b([0-9a-f]{7,40})\b/);
+                        return match ? match[1] : "";
+                      };
 
                       return (
-                        <button
-                          class="flex w-full items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/50 px-3 py-2 text-left text-xs transition-colors hover:border-gray-600"
-                          onClick={() => handleTaskClick(tid)}
-                        >
-                          <span class="flex-1 truncate text-gray-100">
-                            {task.title ?? "Untitled"}
-                          </span>
-                          <Show when={assignee}>
-                            <button
-                              class="shrink-0 text-[10px] text-cyan-400 hover:underline"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleAgentClick(assignee);
-                              }}
-                            >
-                              {agentName(assignee)}
-                            </button>
-                          </Show>
-                          <span
-                            class={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${taskStatusClass(taskStatus)}`}
+                        <div class="rounded-lg border border-gray-800 bg-gray-900/50 transition-colors hover:border-gray-600">
+                          <button
+                            class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs"
+                            onClick={() => handleTaskClick(tid)}
                           >
-                            {taskStatus}
-                          </span>
-                          <Show
-                            when={taskStatus === "completed" && result}
-                          >
-                            <span
-                              class="max-w-[120px] shrink-0 truncate text-[10px] text-gray-500"
-                              title={result}
-                            >
-                              {result}
+                            <span class="flex-1 truncate text-gray-100">{task.title ?? "Untitled"}</span>
+                            <Show when={assignee}>
+                              <button
+                                class="shrink-0 text-[10px] text-cyan-400 hover:underline"
+                                onClick={(e) => { e.stopPropagation(); handleAgentClick(assignee); }}
+                              >
+                                {agentName(assignee)}
+                              </button>
+                            </Show>
+                            <span class={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${taskStatusClass(taskStatus)}`}>
+                              {taskStatus}
                             </span>
+                          </button>
+                          <Show when={worktreePath() || (taskStatus === "completed" && result)}>
+                            <div class="flex items-center gap-3 border-t border-gray-800/50 px-3 py-1.5 text-[10px]">
+                              <Show when={worktreePath()}>
+                                <span class="flex items-center gap-1 text-gray-500">
+                                  <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M6 3v12" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" />
+                                    <path d="M18 9a9 9 0 0 1-9 9" />
+                                  </svg>
+                                  <span class="max-w-[250px] truncate font-mono" title={worktreePath()}>{worktreePath()}</span>
+                                </span>
+                              </Show>
+                              <Show when={commitHash()}>
+                                <span class="flex items-center gap-1 text-green-400/70">
+                                  <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="4" /><line x1="1.05" y1="12" x2="7" y2="12" /><line x1="17.01" y1="12" x2="22.96" y2="12" />
+                                  </svg>
+                                  <span class="font-mono">{commitHash().slice(0, 7)}</span>
+                                </span>
+                              </Show>
+                              <Show when={taskStatus === "completed" && result && !commitHash()}>
+                                <span class="max-w-[200px] truncate text-gray-500" title={result}>{result}</span>
+                              </Show>
+                            </div>
                           </Show>
-                        </button>
+                        </div>
                       );
                     }}
                   </For>
@@ -337,5 +361,49 @@ const SectionHeader: Component<{ title: string; count: number }> = (
     </span>
   </div>
 );
+
+/** Inline task creation form — calls SpacetimeDB taskCreate reducer. */
+const TaskCreateForm: Component<{ swarmId: string }> = (props) => {
+  const [title, setTitle] = createSignal("");
+  const [submitting, setSubmitting] = createSignal(false);
+
+  async function handleSubmit(e: Event) {
+    e.preventDefault();
+    const t = title().trim();
+    if (!t) return;
+    const conn = getHexfloConn();
+    if (!conn) { addToast("error", "SpacetimeDB not connected"); return; }
+    setSubmitting(true);
+    try {
+      conn.reducers.taskCreate(crypto.randomUUID(), props.swarmId, t, new Date().toISOString());
+      addToast("success", `Task created: ${t}`);
+      setTitle("");
+    } catch (err: any) {
+      addToast("error", `Failed: ${err.message}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form class="mb-4 flex items-center gap-2" onSubmit={handleSubmit}>
+      <input
+        type="text"
+        placeholder="New task title..."
+        value={title()}
+        onInput={(e) => setTitle(e.currentTarget.value)}
+        class="flex-1 rounded-lg border border-gray-700 bg-gray-900 px-3 py-1.5 text-xs text-gray-200 placeholder-gray-500 outline-none focus:border-cyan-600 transition-colors"
+        disabled={submitting()}
+      />
+      <button
+        type="submit"
+        class="shrink-0 rounded-lg border border-cyan-700 bg-cyan-900/30 px-3 py-1.5 text-xs font-medium text-cyan-400 transition-colors hover:bg-cyan-800/40 disabled:opacity-50"
+        disabled={submitting() || !title().trim()}
+      >
+        {submitting() ? "Creating..." : "Add Task"}
+      </button>
+    </form>
+  );
+};
 
 export default SwarmDetail;

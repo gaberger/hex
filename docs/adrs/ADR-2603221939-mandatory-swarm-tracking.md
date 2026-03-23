@@ -140,3 +140,4 @@ Add a `hex agent audit` command that:
 - ADR-027: HexFlo Swarm Coordination
 - ADR-065: Registration Lifecycle Gaps
 - Incident: ADR-056 style agents ran without swarm tracking (2026-03-22)
+- ADR-2603232000: Swarm-Gate Enforcement at Pre-Agent Hook (extends this ADR with swarm existence validation)

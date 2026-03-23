@@ -269,6 +269,44 @@ pub async fn update_task_by_id(
     update_task(state, Path(("_".to_string(), task_id)), body).await
 }
 
+/// GET /api/hexflo/tasks/:taskId — get task with parent swarm status
+/// Used by pre-agent hooks to validate task + swarm in one call.
+pub async fn get_task_by_id(
+    State(state): State<SharedState>,
+    Path(task_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+
+    // Get all tasks (no filter) and find the one we want
+    let tasks = port.swarm_task_list(None).await.map_err(state_err)?;
+    let task = tasks.into_iter().find(|t| t.id == task_id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "Task not found" })),
+        )
+    })?;
+
+    // Look up parent swarm to get its status
+    let swarms = port.swarm_list_active().await.map_err(state_err)?;
+    let swarm_status = swarms
+        .iter()
+        .find(|s| s.id == task.swarm_id)
+        .map(|s| s.status.as_str())
+        .unwrap_or("unknown");
+
+    Ok(Json(json!({
+        "id": task.id,
+        "swarmId": task.swarm_id,
+        "title": task.title,
+        "status": task.status,
+        "agentId": task.agent_id,
+        "result": task.result,
+        "createdAt": task.created_at,
+        "completedAt": task.completed_at,
+        "swarmStatus": swarm_status,
+    })))
+}
+
 /// GET /api/work-items/incomplete — all in-flight work across all swarms
 pub async fn get_incomplete_work(
     State(state): State<SharedState>,

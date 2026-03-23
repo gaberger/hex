@@ -36,6 +36,11 @@ const EXCLUDE_PATTERNS: &[&str] = &[
     ".test.rs",
     "tests/",
     "target/",
+    "hex-core/",
+    "hex-cli/",
+    "hex-nexus/",
+    "hex-agent/",
+    "hex-desktop/",
 ];
 
 fn matches_exclude(file_path: &str, patterns: &[&str]) -> bool {

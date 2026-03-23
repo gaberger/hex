@@ -669,12 +669,13 @@ async fn pre_agent() -> Result<()> {
         return Ok(());
     }
 
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+    let mode = enforcement_mode(&project_dir);
+
     // ADR-2603221939: Check workplan requirement for code-writing agents
     if is_background {
-        let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
-        let mode = enforcement_mode(&project_dir);
         let has_workplan = SessionState::load()
             .and_then(|s| s.workplan_id)
             .is_some();
@@ -690,6 +691,28 @@ async fn pre_agent() -> Result<()> {
             } else {
                 println!(
                     "\u{26a0}\u{fe0f} Agent spawned without active workplan — work may not be tracked"
+                );
+            }
+        }
+    }
+
+    // ADR-2603232000: Check active swarm exists for background agents
+    if is_background {
+        let has_swarm = SessionState::load()
+            .and_then(|s| s.swarm_id)
+            .is_some();
+
+        if !has_swarm {
+            if mode == "mandatory" {
+                println!(
+                    "\u{26d4} Background agent blocked — no active HexFlo swarm (ADR-2603232000)"
+                );
+                println!("  Pipeline: ADR → Workplan → Swarm → Task → Agent");
+                println!("  Create a swarm first: hex swarm init <name>");
+                std::process::exit(2);
+            } else {
+                println!(
+                    "\u{26a0}\u{fe0f} Agent spawned without active swarm — coordination disabled"
                 );
             }
         }
@@ -730,7 +753,26 @@ async fn pre_agent() -> Result<()> {
             let url = nexus_url(&format!("/api/hexflo/tasks/{}", task_id));
             match client.get(&url).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    // Task exists — all good
+                    // ADR-2603232000: Validate parent swarm is active
+                    if let Ok(body) = resp.json::<serde_json::Value>().await {
+                        let swarm_status = body["swarmStatus"].as_str().unwrap_or("unknown");
+                        if swarm_status != "active" {
+                            if mode == "mandatory" {
+                                println!(
+                                    "\u{26d4} HEXFLO_TASK:{} belongs to {} swarm — cannot proceed (ADR-2603232000)",
+                                    &task_id[..8.min(task_id.len())],
+                                    swarm_status
+                                );
+                                std::process::exit(2);
+                            } else {
+                                println!(
+                                    "\u{26a0}\u{fe0f} HEXFLO_TASK:{} belongs to {} swarm — proceeding in advisory mode",
+                                    &task_id[..8.min(task_id.len())],
+                                    swarm_status
+                                );
+                            }
+                        }
+                    }
                 }
                 Ok(resp) if resp.status().as_u16() == 404 => {
                     println!(

@@ -364,54 +364,10 @@ const handlers = {
     console.log(`[OK] Agent started (active: ${s.activeAgents})`);
   },
 
-  'pre-task': async () => {
+  'pre-task': () => {
     if (session && session.metric) {
       try { session.metric('tasks'); } catch (e) { /* no active session */ }
     }
-
-    // ADR-2603232000: Validate HEXFLO_TASK and swarm status via nexus
-    let taskId = null;
-
-    // Check session state for current task
-    const sessionId = process.env.CLAUDE_SESSION_ID || '';
-    const sessionFile = path.join(require('os').homedir(), '.hex', 'sessions', `agent-${sessionId}.json`);
-    try {
-      if (fs.existsSync(sessionFile)) {
-        const sessionData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
-        if (sessionData.currentTask && sessionData.currentTask.taskId) {
-          taskId = sessionData.currentTask.taskId;
-        }
-      }
-    } catch { /* no session file */ }
-
-    // Also check if prompt contains HEXFLO_TASK marker (ADR-048)
-    if (!taskId && prompt && prompt.includes('HEXFLO_TASK:')) {
-      const match = prompt.match(/HEXFLO_TASK:([a-f0-9-]+)/);
-      if (match) {
-        taskId = match[1];
-      }
-    }
-
-    // Validate task + swarm via nexus REST call
-    if (taskId) {
-      try {
-        const resp = await fetch(`http://localhost:5555/api/hexflo/tasks/${taskId}`);
-        if (!resp.ok) {
-          console.error(`[BLOCKED] HEXFLO_TASK:${taskId.slice(0, 8)} not found in nexus`);
-          process.exit(1);
-        }
-        const task = await resp.json();
-        if (task.swarmStatus && task.swarmStatus !== 'active') {
-          console.error(`[BLOCKED] Task belongs to ${task.swarmStatus} swarm — cannot proceed (ADR-2603232000)`);
-          process.exit(1);
-        }
-        console.log(`[HEXFLO] Task ${taskId.slice(0, 8)} validated — swarm ${task.swarmStatus || 'active'}`);
-      } catch {
-        // Nexus unreachable — degrade to advisory (don't block offline work)
-        console.warn('[WARN] Could not validate swarm — nexus unreachable');
-      }
-    }
-
     // Route the task if router is available
     if (router && router.routeTask && prompt) {
       const result = router.routeTask(prompt);
@@ -475,7 +431,7 @@ const handlers = {
   // Execute the handler
   if (command && handlers[command]) {
     try {
-      await handlers[command]();
+      handlers[command]();
     } catch (e) {
       // Hooks should never crash Claude Code - fail silently
       console.log(`[WARN] Hook ${command} encountered an error: ${e.message}`);
