@@ -26,6 +26,13 @@ pub enum TaskAction {
         /// Completion result/summary
         result: Option<String>,
     },
+    /// Assign a task to an agent
+    Assign {
+        /// Task ID
+        task_id: String,
+        /// Agent ID (auto-resolved from session state if omitted)
+        agent_id: Option<String>,
+    },
 }
 
 pub async fn run(action: TaskAction) -> anyhow::Result<()> {
@@ -33,6 +40,7 @@ pub async fn run(action: TaskAction) -> anyhow::Result<()> {
         TaskAction::Create { swarm_id, title } => create(&swarm_id, &title).await,
         TaskAction::List => list().await,
         TaskAction::Complete { id, result } => complete(&id, result.as_deref()).await,
+        TaskAction::Assign { task_id, agent_id } => assign(&task_id, agent_id).await,
     }
 }
 
@@ -206,6 +214,31 @@ async fn complete(id: &str, result: Option<&str>) -> anyhow::Result<()> {
     if let Some(r) = result {
         println!("  Result: {}", r);
     }
+
+    Ok(())
+}
+
+async fn assign(task_id: &str, agent_id: Option<String>) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    let resolved_agent_id = match agent_id {
+        Some(id) => id,
+        None => crate::nexus_client::read_session_agent_id()
+            .ok_or_else(|| anyhow::anyhow!(
+                "No agent_id provided and could not auto-resolve from session state.\n\
+                 Provide an explicit agent_id or ensure a session is active."
+            ))?,
+    };
+
+    let path = format!("/api/hexflo/tasks/{}", task_id);
+    nexus.patch(&path, &json!({
+        "agent_id": resolved_agent_id,
+    })).await?;
+
+    println!("{} Task assigned", "\u{2b21}".green());
+    println!("  Task:  {}", task_id);
+    println!("  Agent: {}", resolved_agent_id.bold());
 
     Ok(())
 }

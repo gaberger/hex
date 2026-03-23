@@ -386,6 +386,71 @@
       }
     },
     {
+      "name": "hex_inference_add",
+      "category": "inference",
+      "description": "Register an inference endpoint (Ollama, OpenAI, Anthropic, etc.) with hex-nexus",
+      "route": { "method": "POST", "path": "/api/inference/register" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Unique identifier for this endpoint" },
+          "provider_type": { "type": "string", "description": "Provider type: ollama, openai, anthropic, etc.", "default": "ollama" },
+          "url": { "type": "string", "description": "Endpoint URL (e.g. http://localhost:11434)" },
+          "model": { "type": "string", "description": "Model name (e.g. llama3, gpt-4o)" },
+          "key": { "type": "string", "description": "API key secret name (omit for keyless providers like local Ollama)" }
+        },
+        "required": ["id", "url", "model"]
+      }
+    },
+    {
+      "name": "hex_inference_list",
+      "category": "inference",
+      "description": "List all registered inference endpoints and their status",
+      "route": { "method": "GET", "path": "/api/inference/endpoints" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_inference_test",
+      "category": "inference",
+      "description": "Test connectivity to a registered inference endpoint",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": { "type": "string", "description": "Endpoint ID or URL to test" }
+        },
+        "required": ["target"]
+      }
+    },
+    {
+      "name": "hex_inference_discover",
+      "category": "inference",
+      "description": "Discover inference endpoints on the local network (LAN scan)",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_inference_remove",
+      "category": "inference",
+      "description": "Remove a registered inference endpoint",
+      "route": { "method": "POST", "path": "/api/inference/providers/{provider_id}/remove" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "provider_id": { "type": "string", "description": "Provider ID to remove" }
+        },
+        "required": ["provider_id"]
+      }
+    },
+    {
       "name": "hex_inbox_notify",
       "category": "inbox",
       "description": "Send a notification to an agent or broadcast to all agents in a project (ADR-060)",

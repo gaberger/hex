@@ -125,7 +125,7 @@ use hex_core::ports::enforcement::{EnforcementContext, EnforcementMode, Enforcem
 
 /// Tools that are read-only — no enforcement needed.
 const READ_ONLY_TOOLS: &[&str] = &[
-    "hex_analyze", "hex_status", "hex_hexflo_swarm_status", "hex_hexflo_task_list",
+    "hex_analyze", "hex_analyze_json", "hex_status", "hex_hexflo_swarm_status", "hex_hexflo_task_list",
     "hex_hexflo_memory_retrieve", "hex_hexflo_memory_search",
     "hex_adr_list", "hex_adr_search", "hex_adr_status", "hex_adr_abandoned",
     "hex_plan_list", "hex_plan_status", "hex_plan_history", "hex_plan_report",
@@ -229,6 +229,20 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                     ))
                 }
             }
+        }
+
+        "hex_analyze_json" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            return match nexus.post("/api/analyze", &serde_json::json!({ "path": path })).await {
+                Ok(data) => serde_json::json!({
+                    "content": [{ "type": "text", "text": data.to_string() }],
+                    "isError": false
+                }),
+                Err(e) => serde_json::json!({
+                    "content": [{ "type": "text", "text": format!("{{\"error\": \"{}\"}}", e) }],
+                    "isError": true
+                }),
+            };
         }
 
         "hex_status" => {
