@@ -42,6 +42,7 @@ The session state file (`~/.hex/sessions/agent-{sessionId}.json`) is extended to
   "name": "claude-abc12345",
   "project": "hex-intf",
   "registered_at": "2026-03-22T...",
+  "claude_pid": 16601,
   "workplan_id": "feat-lifecycle-hooks",
   "swarm_id": "swarm-uuid-or-null",
   "current_task_id": "task-uuid-or-null",

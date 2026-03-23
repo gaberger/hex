@@ -2,7 +2,7 @@
   "feature": "One-Command Remote Agent Deploy (hex agent spawn-remote)",
   "adr": "ADR-040 §8",
   "created": "2026-03-21",
-  "status": "stale",
+  "status": "superseded",
   "status_note": "Blocked on feat-remote-agent-transport.json (not started). Scope absorbed into feat-remote-agent-remaining.json which covers all remote agent work.",
   "superseded_by": "feat-remote-agent-remaining.json",
   "topology": "hierarchical",

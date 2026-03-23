@@ -60,7 +60,7 @@ impl ConfigMigrator {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "md") {
+            if path.extension().is_some_and(|e| e == "md") {
                 let content = std::fs::read_to_string(&path)
                     .map_err(|e| MigrationError(format!("Cannot read {}: {}", path.display(), e)))?;
 
@@ -114,7 +114,7 @@ impl ConfigMigrator {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "yml" || e == "yaml") {
+            if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
                 let content = std::fs::read_to_string(&path)
                     .map_err(|e| MigrationError(format!("Cannot read {}: {}", path.display(), e)))?;
 

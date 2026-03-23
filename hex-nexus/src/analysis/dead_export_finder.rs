@@ -196,8 +196,8 @@ pub fn find_dead_exports(
         let transitive = transitive_usage.get(&normalized);
 
         // If any consumer uses `*`, ALL exports are alive
-        if direct.map_or(false, |n| n.contains("*"))
-            || transitive.map_or(false, |n| n.contains("*"))
+        if direct.is_some_and(|n| n.contains("*"))
+            || transitive.is_some_and(|n| n.contains("*"))
         {
             continue;
         }
@@ -209,8 +209,8 @@ pub fn find_dead_exports(
             if entry_exports.contains(exp.name.as_str()) {
                 continue;
             }
-            let is_directly_used = direct.map_or(false, |n| n.contains(&exp.name));
-            let is_transitively_used = transitive.map_or(false, |n| n.contains(&exp.name));
+            let is_directly_used = direct.is_some_and(|n| n.contains(&exp.name));
+            let is_transitively_used = transitive.is_some_and(|n| n.contains(&exp.name));
 
             if !is_directly_used && !is_transitively_used {
                 dead.push(DeadExport {

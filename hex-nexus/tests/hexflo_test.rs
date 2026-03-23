@@ -630,6 +630,55 @@ async fn inbox_notify_requires_target() {
     assert!(body["error"].as_str().unwrap().contains("agent_id or project_id"));
 }
 
+// ── Inbox: Broadcast to multiple agents ───────────────────
+
+#[tokio::test]
+async fn inbox_broadcast_reaches_multiple_agents() {
+    let addr = start_hub().await;
+    let agent_a = register_test_agent(addr, "inbox-bcast-a").await;
+    let agent_b = register_test_agent(addr, "inbox-bcast-b").await;
+
+    // Broadcast via project_id — should deliver to all agents
+    let (status, body) = api_post_guarded(
+        addr,
+        "/api/hexflo/inbox/notify",
+        json!({
+            "project_id": "test-project",
+            "priority": 1,
+            "kind": "config_change",
+            "payload": "{\"synced\": 3}"
+        }),
+        &agent_a,
+    )
+    .await;
+    assert_eq!(status, 201, "broadcast should succeed: {:?}", body);
+
+    // Both agents should see the notification
+    let (_, body_a) = api_get(
+        addr,
+        &format!("/api/hexflo/inbox/{}?unacked_only=true", agent_a),
+    )
+    .await;
+    let (_, body_b) = api_get(
+        addr,
+        &format!("/api/hexflo/inbox/{}?unacked_only=true", agent_b),
+    )
+    .await;
+
+    let notifs_a = body_a["notifications"].as_array().unwrap();
+    let notifs_b = body_b["notifications"].as_array().unwrap();
+    assert!(
+        notifs_a.iter().any(|n| n["kind"] == "config_change"),
+        "agent A should receive broadcast: {:?}",
+        notifs_a
+    );
+    assert!(
+        notifs_b.iter().any(|n| n["kind"] == "config_change"),
+        "agent B should receive broadcast: {:?}",
+        notifs_b
+    );
+}
+
 // ══════════════════════════════════════════════════════════
 // WebSocket Event Broadcasting
 // ══════════════════════════════════════════════════════════

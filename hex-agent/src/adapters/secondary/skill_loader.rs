@@ -18,6 +18,12 @@ use std::path::Path;
 /// ```
 pub struct SkillLoaderAdapter;
 
+impl Default for SkillLoaderAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SkillLoaderAdapter {
     pub fn new() -> Self {
         Self

@@ -214,8 +214,8 @@ fn strip_suffix_pattern(path: &str) -> String {
         return path[..idx].to_string();
     }
     // Remove ::* suffix
-    if path.ends_with("::*") {
-        return path[..path.len() - 3].to_string();
+    if let Some(stripped) = path.strip_suffix("::*") {
+        return stripped.to_string();
     }
     path.to_string()
 }

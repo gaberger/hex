@@ -5,6 +5,12 @@ use std::path::Path;
 /// Loads agent definitions from YAML files.
 pub struct AgentLoaderAdapter;
 
+impl Default for AgentLoaderAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgentLoaderAdapter {
     pub fn new() -> Self {
         Self

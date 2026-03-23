@@ -64,7 +64,7 @@ pub async fn git_status(
     })
     .await
     .map_err(|e| git_error(format!("Task join error: {}", e)))?
-    .map_err(|e| git_error(e))?;
+    .map_err(git_error)?;
 
     Ok(Json(json!({ "ok": true, "data": result })))
 }
@@ -96,7 +96,7 @@ pub async fn git_log(
     })
     .await
     .map_err(|e| git_error(format!("Task join error: {}", e)))?
-    .map_err(|e| git_error(e))?;
+    .map_err(git_error)?;
 
     Ok(Json(json!({ "ok": true, "data": result })))
 }
@@ -121,7 +121,7 @@ pub async fn git_diff(
     })
     .await
     .map_err(|e| git_error(format!("Task join error: {}", e)))?
-    .map_err(|e| git_error(e))?;
+    .map_err(git_error)?;
 
     Ok(Json(json!({ "ok": true, "data": result })))
 }
@@ -150,7 +150,7 @@ pub async fn git_diff_refs(
     })
     .await
     .map_err(|e| git_error(format!("Task join error: {}", e)))?
-    .map_err(|e| git_error(e))?;
+    .map_err(git_error)?;
 
     Ok(Json(json!({ "ok": true, "data": result })))
 }
@@ -168,7 +168,7 @@ pub async fn git_branches(
     })
     .await
     .map_err(|e| git_error(format!("Task join error: {}", e)))?
-    .map_err(|e| git_error(e))?;
+    .map_err(git_error)?;
 
     Ok(Json(json!({ "ok": true, "data": result })))
 }
@@ -227,7 +227,7 @@ pub async fn git_worktrees(
     })
     .await
     .map_err(|e| git_error(format!("Task join error: {}", e)))?
-    .map_err(|e| git_error(e))?;
+    .map_err(git_error)?;
 
     // Enrich non-main worktrees with commit count ahead of main
     let root_for_count = root_clone;
@@ -285,7 +285,7 @@ pub async fn git_worktree_create(
     })
     .await
     .map_err(|e| git_error(format!("Task join error: {}", e)))?
-    .map_err(|e| git_error(e))?;
+    .map_err(git_error)?;
 
     // Broadcast worktree creation via WebSocket
     let _ = ws_tx.send(WsEnvelope {
@@ -347,7 +347,7 @@ pub async fn git_worktree_delete(
     })
     .await
     .map_err(|e| git_error(format!("Task join error: {}", e)))?
-    .map_err(|e| git_error(e))?;
+    .map_err(git_error)?;
 
     // Broadcast worktree removal via WebSocket
     let _ = ws_tx.send(WsEnvelope {
@@ -409,7 +409,7 @@ pub async fn git_commit_detail(
     })
     .await
     .map_err(|e| git_error(format!("Task join error: {}", e)))?
-    .map_err(|e| git_error(e))?;
+    .map_err(git_error)?;
 
     Ok(Json(json!({ "ok": true, "data": result })))
 }
@@ -439,7 +439,7 @@ pub async fn git_task_commits(
     })
     .await
     .map_err(|e| git_error(format!("Task join error: {}", e)))?
-    .map_err(|e| git_error(e))?;
+    .map_err(git_error)?;
 
     Ok(Json(json!({ "ok": true, "data": { "links": result } })))
 }
@@ -519,7 +519,7 @@ pub async fn git_timeline(
     })
     .await
     .map_err(|e| git_error(format!("Task join error: {}", e)))?
-    .map_err(|e| git_error(e))?;
+    .map_err(git_error)?;
 
     Ok(Json(json!({ "ok": true, "data": { "entries": result } })))
 }

@@ -647,6 +647,45 @@ fn extract_yaml_field(content: &str, field: &str) -> Option<String> {
     None
 }
 
+/// After config sync completes, notify all project agents if config changed (ADR-060).
+/// This allows running agents to pick up config changes (new skills, hooks, MCP tools)
+/// without restarting their session.
+pub async fn notify_config_change(
+    state_port: &dyn crate::ports::state::IStatePort,
+    project_id: &str,
+    report: &SyncReport,
+) {
+    if report.synced == 0 {
+        return; // Nothing changed — no notification needed
+    }
+
+    let changed_categories: Vec<&str> = report
+        .items
+        .iter()
+        .filter(|i| i.status == "ok")
+        .map(|i| i.category.as_str())
+        .collect();
+
+    let payload = serde_json::json!({
+        "reason": "config_sync",
+        "changed": changed_categories,
+        "synced_count": report.synced,
+    })
+    .to_string();
+
+    if let Err(e) = state_port
+        .inbox_notify_all(project_id, 1, "config_change", &payload)
+        .await
+    {
+        tracing::warn!("Failed to notify agents of config change: {}", e);
+    } else {
+        tracing::info!(
+            "Notified project agents of config change ({} items synced)",
+            report.synced
+        );
+    }
+}
+
 async fn call_reducer(
     client: &reqwest::Client,
     host: &str,

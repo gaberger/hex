@@ -17,9 +17,7 @@ import { useTable, type SpacetimeDBTableHandle } from "../hooks/useTable";
 import {
   DbConnection as HexfloDbConnection,
 } from "../spacetimedb/hexflo-coordination/index";
-import {
-  DbConnection as AgentRegistryDbConnection,
-} from "../spacetimedb/agent-registry/index";
+// agent-registry module no longer used — ADR-058 moved agents to hexflo-coordination (hex_agent table)
 import {
   DbConnection as InferenceGatewayDbConnection,
 } from "../spacetimedb/inference-gateway/index";
@@ -50,9 +48,8 @@ const TOKEN_KEY_PREFIX = "stdb_token_";
 const [hexfloConn, setHexfloConn] = createSignal<any | null>(null);
 const [hexfloConnected, setHexfloConnected] = createSignal(false);
 
-// agent-registry
-const [agentRegistryConn, setAgentRegistryConn] = createSignal<any | null>(null);
-const [agentRegistryConnected, setAgentRegistryConnected] = createSignal(false);
+// agent-registry — retired (ADR-058), kept as stubs for backwards compat
+const agentRegistryConnected = hexfloConnected; // delegate to hexflo
 
 // inference-gateway
 const [inferenceConn, setInferenceConn] = createSignal<any | null>(null);
@@ -181,13 +178,13 @@ export const agentDefinitions: Accessor<any[]> = useTable(
   () => hexfloConn()?.db.agent_definition as SpacetimeDBTableHandle<any> | undefined,
 );
 
-// agent-registry tables
+// ADR-058: unified agent registry lives in hexflo-coordination (hex_agent table)
 export const registryAgents: Accessor<any[]> = useTable(
-  () => agentRegistryConn()?.db.agent as SpacetimeDBTableHandle<any> | undefined,
+  () => hexfloConn()?.db.hex_agent as SpacetimeDBTableHandle<any> | undefined,
 );
-export const agentHeartbeats: Accessor<any[]> = useTable(
-  () => agentRegistryConn()?.db.agent_heartbeat as SpacetimeDBTableHandle<any> | undefined,
-);
+// Heartbeat data is inline on hex_agent.lastHeartbeat — no separate table needed.
+// Keep agentHeartbeats as an empty signal for backwards compat with components.
+export const agentHeartbeats: Accessor<any[]> = () => [];
 
 // inference-gateway tables
 export const inferenceProviders: Accessor<any[]> = useTable(
@@ -253,18 +250,7 @@ export function initConnections() {
       "SELECT * FROM project_config",
       "SELECT * FROM skill_registry",
       "SELECT * FROM agent_definition",
-    ],
-  });
-
-  // agent-registry: agents, heartbeats
-  connectModule({
-    module: "agent-registry",
-    builder: AgentRegistryDbConnection,
-    setConn: setAgentRegistryConn,
-    setConnected: setAgentRegistryConnected,
-    subscribeQueries: [
-      "SELECT * FROM agent",
-      "SELECT * FROM agent_heartbeat",
+      "SELECT * FROM hex_agent",
     ],
   });
 
@@ -298,8 +284,8 @@ export function initConnections() {
 
 /** Get the hexflo-coordination connection for calling reducers. */
 export function getHexfloConn() { return hexfloConn(); }
-/** Get the agent-registry connection for calling reducers. */
-export function getAgentRegistryConn() { return agentRegistryConn(); }
+/** Get the agent-registry connection for calling reducers (delegates to hexflo — ADR-058). */
+export function getAgentRegistryConn() { return hexfloConn(); }
 /** Get the inference-gateway connection for calling reducers. */
 export function getInferenceConn() { return inferenceConn(); }
 /** Get the fleet-state connection for calling reducers. */

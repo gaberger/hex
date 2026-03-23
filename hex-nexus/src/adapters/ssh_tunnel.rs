@@ -50,6 +50,12 @@ pub struct SshTunnelAdapter {
     tunnels: Arc<RwLock<HashMap<String, ActiveTunnel>>>,
 }
 
+impl Default for SshTunnelAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SshTunnelAdapter {
     pub fn new() -> Self {
         Self {

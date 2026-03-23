@@ -311,7 +311,7 @@ async fn schema() -> anyhow::Result<()> {
     println!("  {:<20} {}", "Readable:".bold(), human_readable.dimmed());
     println!("  {:<20} {}", "Format:".bold(), "YYMMDDHHMM (timestamp, no reservation needed)".dimmed());
     println!("  {:<20} {}", "Directory:".bold(), adr_dir.display());
-    println!("  {:<20} {}", "Filename pattern:".bold(), "ADR-{YYMMDDHHMM}-{kebab-slug}.md");
+    println!("  {:<20} ADR-{{YYMMDDHHMM}}-{{kebab-slug}}.md", "Filename pattern:".bold());
     println!();
 
     println!("{}", "── Valid statuses ──".bold());

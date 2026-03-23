@@ -15,6 +15,12 @@ use crate::ports::secret_broker::{SecretBrokerPort, SecretError, SecretResult};
 /// the child process before it starts.
 pub struct EnvSecretsAdapter;
 
+impl Default for EnvSecretsAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EnvSecretsAdapter {
     pub fn new() -> Self {
         Self

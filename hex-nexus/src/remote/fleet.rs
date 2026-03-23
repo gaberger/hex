@@ -34,6 +34,12 @@ pub enum NodeStatus {
     Offline,
 }
 
+impl Default for FleetManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FleetManager {
     pub fn new() -> Self {
         Self {

@@ -75,7 +75,7 @@ pub async fn create_swarm(
 
     port.swarm_init(&id, &body.name, topology, &body.project_id, created_by)
         .await
-        .map_err(|e| state_err(e))?;
+        .map_err(state_err)?;
 
     // Build the response value matching the old Swarm shape
     let now = chrono::Utc::now().to_rfc3339();
@@ -107,7 +107,7 @@ pub async fn list_active_swarms(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let port = state_port(&state)?;
 
-    let swarms = port.swarm_list_active().await.map_err(|e| state_err(e))?;
+    let swarms = port.swarm_list_active().await.map_err(state_err)?;
 
     // Enrich each swarm with its tasks so CLI can show counts + agent assignments
     let mut enriched = Vec::with_capacity(swarms.len());
@@ -133,7 +133,7 @@ pub async fn get_swarm(
     let port = state_port(&state)?;
 
     // Find the swarm among active swarms
-    let swarms = port.swarm_list_active().await.map_err(|e| state_err(e))?;
+    let swarms = port.swarm_list_active().await.map_err(state_err)?;
     let swarm = swarms.into_iter().find(|s| s.id == id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
@@ -145,7 +145,7 @@ pub async fn get_swarm(
     let tasks = port
         .swarm_task_list(Some(&id))
         .await
-        .map_err(|e| state_err(e))?;
+        .map_err(state_err)?;
 
     let val = json!({
         "swarm": swarm,
@@ -161,7 +161,7 @@ pub async fn complete_swarm(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let port = state_port(&state)?;
-    port.swarm_complete(&id).await.map_err(|e| state_err(e))?;
+    port.swarm_complete(&id).await.map_err(state_err)?;
 
     let _ = state.ws_tx.send(crate::state::WsEnvelope {
         topic: "hexflo".into(),
@@ -183,7 +183,7 @@ pub async fn create_task(
 
     port.swarm_task_create(&id, &swarm_id, &body.title)
         .await
-        .map_err(|e| state_err(e))?;
+        .map_err(state_err)?;
 
     let now = chrono::Utc::now().to_rfc3339();
     let val = json!({
@@ -218,7 +218,7 @@ pub async fn update_task(
     if let Some(ref agent_id) = body.agent_id {
         port.swarm_task_assign(&task_id, agent_id)
             .await
-            .map_err(|e| state_err(e))?;
+            .map_err(state_err)?;
     }
 
     // Apply status change
@@ -228,13 +228,13 @@ pub async fn update_task(
                 let result = body.result.as_deref().unwrap_or("");
                 port.swarm_task_complete(&task_id, result)
                     .await
-                    .map_err(|e| state_err(e))?;
+                    .map_err(state_err)?;
             }
             "failed" => {
                 let reason = body.result.as_deref().unwrap_or("unknown failure");
                 port.swarm_task_fail(&task_id, reason)
                     .await
-                    .map_err(|e| state_err(e))?;
+                    .map_err(state_err)?;
             }
             _ => {
                 // For other status values (e.g. "in_progress"), assign is
@@ -279,7 +279,7 @@ pub async fn get_incomplete_work(
     let all_tasks = port
         .swarm_task_list(None)
         .await
-        .map_err(|e| state_err(e))?;
+        .map_err(state_err)?;
 
     // Filter to incomplete tasks only
     let incomplete: Vec<_> = all_tasks

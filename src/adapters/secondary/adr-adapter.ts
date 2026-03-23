@@ -121,10 +121,15 @@ export class ADRAdapter implements IADRPort {
       }
     }
 
-    // Sort by ID numerically
+    // Sort by ID numerically — legacy 3-digit IDs (001-066) sort before
+    // timestamp 10-digit IDs (2603221500+), which is chronologically correct.
     entries.sort((a, b) => {
       const numA = parseInt(a.id.replace('ADR-', ''), 10);
       const numB = parseInt(b.id.replace('ADR-', ''), 10);
+      // Group by format: legacy (< 10000) before timestamp (>= 10000)
+      const isLegacyA = numA < 10000;
+      const isLegacyB = numB < 10000;
+      if (isLegacyA !== isLegacyB) return isLegacyA ? -1 : 1;
       return numA - numB;
     });
 

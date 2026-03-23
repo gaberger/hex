@@ -197,7 +197,7 @@ async fn session_start(project_dir: &PathBuf) -> Result<()> {
 
             // Evict dead agents from previous sessions (ADR-058)
             if let Ok(evict_client) = nexus_client(3) {
-                let _ = evict_client.post(&nexus_url("/api/hex-agents/evict")).send().await;
+                let _ = evict_client.post(nexus_url("/api/hex-agents/evict")).send().await;
             }
 
             // ADR-060: Check for restart checkpoint from a previous session
@@ -496,7 +496,7 @@ async fn flush_session_progress() -> Result<()> {
     });
 
     let _ = client
-        .post(&nexus_url("/api/hexflo/memory"))
+        .post(nexus_url("/api/hexflo/memory"))
         .json(&serde_json::json!({
             "key": memory_key,
             "value": summary.to_string(),
@@ -508,7 +508,7 @@ async fn flush_session_progress() -> Result<()> {
     // If there's an active swarm task, update its status
     if let Some(task_id) = &state.current_task_id {
         let _ = client
-            .patch(&nexus_url(&format!("/api/swarms/tasks/{}", task_id)))
+            .patch(nexus_url(&format!("/api/swarms/tasks/{}", task_id)))
             .json(&serde_json::json!({
                 "status": "paused",
                 "result": format!("Session ended after {} edits", state.edits),
@@ -532,7 +532,7 @@ async fn deregister_session_agent() -> Result<()> {
 
         // Fire-and-forget — don't block session teardown
         let _ = client
-            .post(&nexus_url("/api/agents/disconnect"))
+            .post(nexus_url("/api/agents/disconnect"))
             .json(&serde_json::json!({ "agentId": state.agent_id }))
             .send()
             .await;
@@ -670,16 +670,14 @@ async fn pre_agent() -> Result<()> {
         if !has_workplan {
             if mode == "mandatory" {
                 println!(
-                    "{} Background agent blocked — no active workplan (ADR-2603221939)",
-                    "\u{26d4}"
+                    "\u{26d4} Background agent blocked — no active workplan (ADR-2603221939)"
                 );
                 println!("  Pipeline: ADR → Workplan → Swarm → Agent");
                 println!("  Create a workplan first: hex plan create <requirements> --adr <ADR-ID>");
                 std::process::exit(2);
             } else {
                 println!(
-                    "{} Agent spawned without active workplan — work may not be tracked",
-                    "\u{26a0}\u{fe0f}"
+                    "\u{26a0}\u{fe0f} Agent spawned without active workplan — work may not be tracked"
                 );
             }
         }
@@ -691,8 +689,7 @@ async fn pre_agent() -> Result<()> {
     if is_background && !has_task {
         // BLOCK: background agent without task tracking
         println!(
-            "{} Background agent blocked — missing HEXFLO_TASK:{{uuid}} in prompt (ADR-2603221939)",
-            "\u{26d4}"
+            "\u{26d4} Background agent blocked — missing HEXFLO_TASK:{{uuid}} in prompt (ADR-2603221939)"
         );
         println!("  Create a swarm and task first:");
         println!("    hex swarm init <name>");
@@ -704,8 +701,7 @@ async fn pre_agent() -> Result<()> {
     if !is_background && !has_task {
         // ADVISORY: foreground agent without tracking — warn but allow
         println!(
-            "{} Agent spawned without HEXFLO_TASK — work won't be tracked in HexFlo",
-            "\u{26a0}\u{fe0f}"
+            "\u{26a0}\u{fe0f} Agent spawned without HEXFLO_TASK — work won't be tracked in HexFlo"
         );
     }
 
@@ -726,8 +722,7 @@ async fn pre_agent() -> Result<()> {
                 }
                 Ok(resp) if resp.status().as_u16() == 404 => {
                     println!(
-                        "{} HEXFLO_TASK:{} not found — create the task first",
-                        "\u{26d4}", &task_id[..8.min(task_id.len())]
+                        "\u{26d4} HEXFLO_TASK:{} not found — create the task first", &task_id[..8.min(task_id.len())]
                     );
                     std::process::exit(2);
                 }
@@ -834,7 +829,7 @@ async fn route(project_dir: &PathBuf) -> Result<()> {
 
 fn validate_boundary_edit(project_dir: &PathBuf, file_path: &str) -> Result<()> {
     let rel = file_path
-        .strip_prefix(&project_dir.to_string_lossy().as_ref())
+        .strip_prefix(project_dir.to_string_lossy().as_ref())
         .unwrap_or(file_path)
         .trim_start_matches('/');
 
@@ -855,7 +850,7 @@ fn validate_boundary_edit(project_dir: &PathBuf, file_path: &str) -> Result<()> 
 /// if the edit target isn't in any task's file list.
 fn validate_workplan_boundary(project_dir: &PathBuf, file_path: &str, workplan_id: &str) -> Result<()> {
     let rel = file_path
-        .strip_prefix(&project_dir.to_string_lossy().as_ref())
+        .strip_prefix(project_dir.to_string_lossy().as_ref())
         .unwrap_or(file_path)
         .trim_start_matches('/');
 
@@ -1041,7 +1036,7 @@ async fn save_restart_checkpoint(state: &SessionState, client: &reqwest::Client)
     // Store under a well-known key so session_start can find it
     let memory_key = format!("restart:checkpoint:{}", state.agent_id);
     let _ = client
-        .post(&nexus_url("/api/hexflo/memory"))
+        .post(nexus_url("/api/hexflo/memory"))
         .json(&serde_json::json!({
             "key": memory_key,
             "value": checkpoint.to_string(),
@@ -1057,7 +1052,7 @@ async fn save_restart_checkpoint(state: &SessionState, client: &reqwest::Client)
 
 async fn check_nexus_health() -> Result<serde_json::Value> {
     let client = nexus_client(2)?;
-    let resp = client.get(&nexus_url("/api/health")).send().await?.error_for_status()?;
+    let resp = client.get(nexus_url("/api/health")).send().await?.error_for_status()?;
     let body: serde_json::Value = resp.json().await?;
     Ok(body)
 }
@@ -1065,7 +1060,7 @@ async fn check_nexus_health() -> Result<serde_json::Value> {
 async fn notify_nexus_edit(_project_dir: &PathBuf, file_path: &str) -> Result<()> {
     let client = nexus_client(1)?;
     let _ = client
-        .post(&nexus_url("/api/events"))
+        .post(nexus_url("/api/events"))
         .json(&serde_json::json!({
             "type": "file_edit",
             "path": file_path,
@@ -1158,7 +1153,7 @@ async fn recover_restart_checkpoint() -> Result<()> {
 
     // Clean up the checkpoint so it's not replayed on future sessions
     let _ = client
-        .delete(&nexus_url(&format!("/api/hexflo/memory/{}", encoded_key)))
+        .delete(nexus_url(&format!("/api/hexflo/memory/{}", encoded_key)))
         .send()
         .await;
 
@@ -1203,7 +1198,7 @@ async fn load_workplan_context(project_id: &str) -> Result<()> {
                         state.workplan_id = Some(wp_id.clone());
                         let _ = state.save();
                     }
-                    println!("  Plan:    {} ({})", wp_id.green(), "active");
+                    println!("  Plan:    {} (active)", wp_id.green());
                 }
             }
         }
@@ -1303,7 +1298,7 @@ async fn try_lazy_register(state: &mut SessionState) -> Result<()> {
         state.save()?;
 
         // Notify Claude that registration happened (appears in hook output)
-        eprintln!("  Agent:   {} (late registration)", "registered".to_string());
+        eprintln!("  Agent:   registered (late registration)");
     }
 
     Ok(())
@@ -1318,7 +1313,7 @@ async fn record_edit_event(state: &SessionState, file_path: &str) -> Result<()> 
     let memory_key = format!("agent:{}:last_edit", state.agent_id);
 
     let _ = client
-        .post(&nexus_url("/api/hexflo/memory"))
+        .post(nexus_url("/api/hexflo/memory"))
         .json(&serde_json::json!({
             "key": memory_key,
             "value": serde_json::json!({
@@ -1378,7 +1373,7 @@ fn is_confirmatory_response(prompt: &str) -> bool {
         "approved", "let's go", "sounds good", "go for it", "make it so",
         "do that", "yes please", "please do", "please", "correct",
     ];
-    confirmations.iter().any(|c| trimmed == *c)
+    confirmations.contains(&trimmed)
 }
 
 // ── Prompt classification ────────────────────────────────────────────

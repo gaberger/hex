@@ -556,18 +556,15 @@ async fn status() -> anyhow::Result<()> {
             println!("  API:  {}", nexus.url().green());
 
             // SpacetimeDB status
-            match nexus.get("/secrets/grants").await {
-                Ok(resp) => {
-                    if let Some(grants) = resp.get("grants").and_then(|g| g.as_array()) {
-                        let active = grants.iter().filter(|g| !g["claimed"].as_bool().unwrap_or(true)).count();
-                        println!(
-                            "  Grants: {} total ({} active)",
-                            grants.len(),
-                            active.to_string().green()
-                        );
-                    }
+            if let Ok(resp) = nexus.get("/secrets/grants").await {
+                if let Some(grants) = resp.get("grants").and_then(|g| g.as_array()) {
+                    let active = grants.iter().filter(|g| !g["claimed"].as_bool().unwrap_or(true)).count();
+                    println!(
+                        "  Grants: {} total ({} active)",
+                        grants.len(),
+                        active.to_string().green()
+                    );
                 }
-                Err(_) => {}
             }
 
             // Check SpacetimeDB connectivity
@@ -592,64 +589,55 @@ async fn status() -> anyhow::Result<()> {
             }
 
             // Inference providers
-            match nexus.get("/api/inference/endpoints").await {
-                Ok(data) => {
-                    let endpoints = data.get("endpoints").and_then(|v| v.as_array());
-                    if let Some(eps) = endpoints {
-                        if eps.is_empty() {
-                            println!("  Inference: {} (hex inference add to register)", "none".dimmed());
-                        } else {
-                            println!("  Inference: {} provider(s)", eps.len().to_string().green());
-                            for ep in eps {
-                                let provider = ep.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
-                                let model = ep.get("model").and_then(|v| v.as_str()).unwrap_or("default");
-                                let url = ep.get("url").and_then(|v| v.as_str()).unwrap_or("?");
-                                let status = ep.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                let icon = if status == "healthy" || status == "ok" { "\u{25cf}".green() } else { "\u{25cb}".yellow() };
-                                println!("    {} {} {} ({})", icon, provider, model, url);
-                            }
+            if let Ok(data) = nexus.get("/api/inference/endpoints").await {
+                let endpoints = data.get("endpoints").and_then(|v| v.as_array());
+                if let Some(eps) = endpoints {
+                    if eps.is_empty() {
+                        println!("  Inference: {} (hex inference add to register)", "none".dimmed());
+                    } else {
+                        println!("  Inference: {} provider(s)", eps.len().to_string().green());
+                        for ep in eps {
+                            let provider = ep.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
+                            let model = ep.get("model").and_then(|v| v.as_str()).unwrap_or("default");
+                            let url = ep.get("url").and_then(|v| v.as_str()).unwrap_or("?");
+                            let status = ep.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+                            let icon = if status == "healthy" || status == "ok" { "\u{25cf}".green() } else { "\u{25cb}".yellow() };
+                            println!("    {} {} {} ({})", icon, provider, model, url);
                         }
                     }
                 }
-                Err(_) => {}
             }
 
             // Agents
-            match nexus.get("/api/agents").await {
-                Ok(agents) => {
-                    if let Some(arr) = agents.as_array() {
-                        if arr.is_empty() {
-                            println!("  Agents: {}", "none".dimmed());
-                        } else {
-                            println!("  Agents: {}", arr.len().to_string().green());
-                            for a in arr {
-                                let name = a.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                                let status = a.get("status").and_then(|v| v.as_str()).unwrap_or("?");
-                                let icon = if status == "running" { "\u{25cf}".green() } else { "\u{25cb}".dimmed() };
-                                println!("    {} {} ({})", icon, name, status);
-                            }
+            if let Ok(agents) = nexus.get("/api/agents").await {
+                if let Some(arr) = agents.as_array() {
+                    if arr.is_empty() {
+                        println!("  Agents: {}", "none".dimmed());
+                    } else {
+                        println!("  Agents: {}", arr.len().to_string().green());
+                        for a in arr {
+                            let name = a.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                            let status = a.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+                            let icon = if status == "running" { "\u{25cf}".green() } else { "\u{25cb}".dimmed() };
+                            println!("    {} {} ({})", icon, name, status);
                         }
                     }
                 }
-                Err(_) => {}
             }
 
             // Swarms
-            match nexus.get("/api/swarms/active").await {
-                Ok(swarms) => {
-                    if let Some(arr) = swarms.as_array() {
-                        if arr.is_empty() {
-                            println!("  Swarms: {}", "none".dimmed());
-                        } else {
-                            println!("  Swarms: {} active", arr.len().to_string().green());
-                            for s in arr {
-                                let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                                println!("    \u{2b21} {}", name);
-                            }
+            if let Ok(swarms) = nexus.get("/api/swarms/active").await {
+                if let Some(arr) = swarms.as_array() {
+                    if arr.is_empty() {
+                        println!("  Swarms: {}", "none".dimmed());
+                    } else {
+                        println!("  Swarms: {} active", arr.len().to_string().green());
+                        for s in arr {
+                            let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                            println!("    \u{2b21} {}", name);
                         }
                     }
                 }
-                Err(_) => {}
             }
 
             // Sessions

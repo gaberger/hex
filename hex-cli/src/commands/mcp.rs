@@ -194,7 +194,7 @@ fn get_enforcement_mode() -> EnforcementMode {
 /// Returns MCP-formatted content result.
 async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
     // ADR-2603221959 P2: Enforce rules before mutating tools
-    if !READ_ONLY_TOOLS.iter().any(|t| *t == name) {
+    if !READ_ONLY_TOOLS.contains(&name) {
         let ctx = build_enforcement_ctx(name, args);
         let enforcer = DefaultEnforcer::new(get_enforcement_mode());
         match enforcer.check(&ctx) {

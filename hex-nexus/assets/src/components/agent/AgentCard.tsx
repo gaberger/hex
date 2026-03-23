@@ -80,6 +80,9 @@ const AgentCard: Component<{ agent: AgentInfo }> = (props) => {
           <span class="truncate text-xs font-semibold text-gray-100">
             {props.agent.name}
           </span>
+          <span class="font-mono text-[9px] text-gray-500" title={props.agent.id}>
+            {props.agent.id.slice(0, 8)}
+          </span>
           <Show when={props.agent.agentType}>
             <span class="rounded bg-gray-800 px-1.5 py-0.5 text-[9px] uppercase text-gray-300">
               {props.agent.agentType}

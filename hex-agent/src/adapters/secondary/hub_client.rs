@@ -30,6 +30,12 @@ pub struct HubClientAdapter {
     last_token: Mutex<Option<String>>,
 }
 
+impl Default for HubClientAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HubClientAdapter {
     pub fn new() -> Self {
         Self {
@@ -83,7 +89,7 @@ impl HubClientPort for HubClientAdapter {
         let mut guard = self.sink.lock().await;
         let sink = guard.as_mut().ok_or(HubError::NotConnected)?;
 
-        sink.send(WsMessage::Text(json.into()))
+        sink.send(WsMessage::Text(json))
             .await
             .map_err(|e| {
                 self.connected.store(false, Ordering::SeqCst);

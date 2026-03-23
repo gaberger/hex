@@ -15,7 +15,6 @@ import {
   swarmAgents,
   swarmTasks,
   registryAgents,
-  agentHeartbeats,
 } from "../../stores/connection";
 import { navigate, route } from "../../stores/router";
 import { entityBelongsToProject } from "../../utils/project-match";
@@ -123,7 +122,10 @@ const AgentList: Component = () => {
       if (!id || seen.has(id)) continue;
       seen.add(id);
 
-      const hb = agentHeartbeats().find((h: any) => (h.agent_id ?? "") === id);
+      // ADR-058: heartbeat is inline on hex_agent.lastHeartbeat
+      const hb = a.lastHeartbeat || a.last_heartbeat
+        ? { last_seen: a.lastHeartbeat ?? a.last_heartbeat }
+        : null;
       const liveStatus = computeLiveStatus(a, hb);
 
       result.push({

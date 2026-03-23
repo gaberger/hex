@@ -309,7 +309,7 @@ pub async fn get_activities(
     let list: Vec<_> = activities
         .iter()
         .rev()
-        .filter(|a| q.project_id.as_ref().map_or(true, |pid| &a.project_id == pid))
+        .filter(|a| q.project_id.as_ref().is_none_or(|pid| &a.project_id == pid))
         .take(limit)
         .cloned()
         .collect();

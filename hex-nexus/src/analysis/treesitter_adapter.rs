@@ -38,6 +38,12 @@ fn parse_source(source: &str, lang: Language) -> Result<Tree, AnalysisError> {
 /// Native tree-sitter implementation of `AstPort`.
 pub struct TreeSitterAdapter;
 
+impl Default for TreeSitterAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TreeSitterAdapter {
     pub fn new() -> Self {
         Self
@@ -144,33 +150,30 @@ fn extract_ts_import_names(node: &tree_sitter::Node, source: &str) -> Vec<String
     let mut names = Vec::new();
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        match child.kind() {
-            "import_clause" => {
-                let mut ic = child.walk();
-                for part in child.children(&mut ic) {
-                    match part.kind() {
-                        "identifier" => {
-                            // default import: import Foo from '...'
-                            names.push("default".to_string());
-                        }
-                        "named_imports" => {
-                            let mut nc = part.walk();
-                            for spec in part.children(&mut nc) {
-                                if spec.kind() == "import_specifier" {
-                                    if let Some(name) = spec.child_by_field_name("name") {
-                                        names.push(node_text(name, source));
-                                    }
+        if child.kind() == "import_clause" {
+            let mut ic = child.walk();
+            for part in child.children(&mut ic) {
+                match part.kind() {
+                    "identifier" => {
+                        // default import: import Foo from '...'
+                        names.push("default".to_string());
+                    }
+                    "named_imports" => {
+                        let mut nc = part.walk();
+                        for spec in part.children(&mut nc) {
+                            if spec.kind() == "import_specifier" {
+                                if let Some(name) = spec.child_by_field_name("name") {
+                                    names.push(node_text(name, source));
                                 }
                             }
                         }
-                        "namespace_import" => {
-                            names.push("*".to_string());
-                        }
-                        _ => {}
                     }
+                    "namespace_import" => {
+                        names.push("*".to_string());
+                    }
+                    _ => {}
                 }
             }
-            _ => {}
         }
     }
     names

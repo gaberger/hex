@@ -586,7 +586,7 @@ async fn show_execution_history() -> anyhow::Result<()> {
         let label = if feature.is_empty() {
             id[..8.min(id.len())].to_string()
         } else {
-            format!("{}", feature)
+            feature.to_string()
         };
 
         println!(

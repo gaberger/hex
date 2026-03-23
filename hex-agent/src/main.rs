@@ -350,18 +350,14 @@ async fn main() -> anyhow::Result<()> {
             let skill_loader = SkillLoaderAdapter::new();
             let agent_loader = AgentLoaderAdapter::new();
 
-            let skill_dirs = vec![
-                format!("{}/.claude/skills", project_dir.display()),
-                format!("{}/skills", project_dir.display()),
-            ];
+            let skill_dirs = [format!("{}/.claude/skills", project_dir.display()),
+                format!("{}/skills", project_dir.display())];
             let skill_dir_refs: Vec<&str> = skill_dirs.iter().map(|s| s.as_str()).collect();
             let skills = skill_loader.load(&skill_dir_refs).await.unwrap_or_default();
 
             let agent_def = if let Some(agent_name) = &args.agent {
-                let agent_dirs = vec![
-                    format!("{}/.claude/agents", project_dir.display()),
-                    format!("{}/agents", project_dir.display()),
-                ];
+                let agent_dirs = [format!("{}/.claude/agents", project_dir.display()),
+                    format!("{}/agents", project_dir.display())];
                 let agent_dir_refs: Vec<&str> = agent_dirs.iter().map(|s| s.as_str()).collect();
                 match agent_loader.load_by_name(&agent_dir_refs, agent_name).await {
                     Ok(def) => {
@@ -391,18 +387,14 @@ async fn main() -> anyhow::Result<()> {
         let skill_loader = SkillLoaderAdapter::new();
         let agent_loader = AgentLoaderAdapter::new();
 
-        let skill_dirs = vec![
-            format!("{}/.claude/skills", project_dir.display()),
-            format!("{}/skills", project_dir.display()),
-        ];
+        let skill_dirs = [format!("{}/.claude/skills", project_dir.display()),
+            format!("{}/skills", project_dir.display())];
         let skill_dir_refs: Vec<&str> = skill_dirs.iter().map(|s| s.as_str()).collect();
         let skills = skill_loader.load(&skill_dir_refs).await.unwrap_or_default();
 
         let agent_def = if let Some(agent_name) = &args.agent {
-            let agent_dirs = vec![
-                format!("{}/.claude/agents", project_dir.display()),
-                format!("{}/agents", project_dir.display()),
-            ];
+            let agent_dirs = [format!("{}/.claude/agents", project_dir.display()),
+                format!("{}/agents", project_dir.display())];
             let agent_dir_refs: Vec<&str> = agent_dirs.iter().map(|s| s.as_str()).collect();
             match agent_loader.load_by_name(&agent_dir_refs, agent_name).await {
                 Ok(def) => {

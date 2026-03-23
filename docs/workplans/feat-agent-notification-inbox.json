@@ -4,7 +4,8 @@
   "specs": "docs/specs/agent-notification-inbox.json",
   "adr": "ADR-060",
   "created": "2026-03-22",
-  "status": "planned",
+  "status": "done",
+  "status_note": "Steps 1-4, 6-7 delivered in 480c7a5. Steps 5, 8-10 completed in subsequent session. Binary update detection + config sync notification (step 5), state preservation on restart (step 8), idle agent escalation (step 9), broadcast integration test (step 10) all implemented.",
   "topology": "pipeline",
   "budget": "~45000 tokens",
   "steps": [

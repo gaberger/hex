@@ -119,11 +119,32 @@ const HealthPane: Component = () => {
       <Show when={data()}>
         {(d) => {
           const score = () => d().health_score;
+          const isStub = () => {
+            const raw = d() as any;
+            // Detect stub: score is exactly 100 with 0 files, or astIsStub flag
+            return raw.ast_is_stub || raw.astIsStub || (score() === 100 && (raw.file_count ?? 0) === 0);
+          };
           const dashOffset = () =>
-            RING_CIRCUMFERENCE - (RING_CIRCUMFERENCE * score()) / 100;
+            RING_CIRCUMFERENCE - (RING_CIRCUMFERENCE * (isStub() ? 0 : score())) / 100;
 
           return (
             <>
+              {/* Stub warning banner */}
+              <Show when={isStub()}>
+                <div class="flex items-center gap-2 rounded-lg border border-yellow-800 bg-yellow-900/20 px-3 py-2">
+                  <svg class="h-4 w-4 shrink-0 text-yellow-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
+                    <path d="M12 15.75h.007v.008H12v-.008z" />
+                  </svg>
+                  <div class="text-xs">
+                    <span class="font-semibold text-yellow-300">No analysis data</span>
+                    <span class="text-yellow-400/70"> — run </span>
+                    <code class="rounded bg-yellow-900/40 px-1 py-0.5 font-mono text-[10px] text-yellow-300">hex analyze .</code>
+                    <span class="text-yellow-400/70"> to get a real score</span>
+                  </div>
+                </div>
+              </Show>
+
               {/* Ring chart + score */}
               <div class="flex items-center gap-6">
                 <div class="relative flex-shrink-0">
@@ -143,7 +164,7 @@ const HealthPane: Component = () => {
                       cy="60"
                       r={RING_RADIUS}
                       fill="none"
-                      stroke={scoreColor(score())}
+                      stroke={isStub() ? "#6b7280" : scoreColor(score())}
                       stroke-width="8"
                       stroke-linecap="round"
                       stroke-dasharray={RING_CIRCUMFERENCE}
@@ -154,12 +175,16 @@ const HealthPane: Component = () => {
                   </svg>
                   {/* Center text */}
                   <div class="absolute inset-0 flex flex-col items-center justify-center">
-                    <span
-                      class={`text-2xl font-bold font-mono ${scoreTextColor(score())}`}
-                    >
-                      {score()}
-                    </span>
-                    <span class="text-[10px] text-gray-500">/ 100</span>
+                    <Show when={!isStub()} fallback={
+                      <span class="text-lg font-bold font-mono text-gray-500">--</span>
+                    }>
+                      <span
+                        class={`text-2xl font-bold font-mono ${scoreTextColor(score())}`}
+                      >
+                        {score()}
+                      </span>
+                      <span class="text-[10px] text-gray-500">/ 100</span>
+                    </Show>
                   </div>
                 </div>
 

@@ -97,6 +97,55 @@ const settingsLocal = safe(() =>
   JSON.parse(fs.readFileSync(path.join(cwd, '.claude', 'settings.local.json'), 'utf8')), null);
 const hexMcpConfigured = !!(settingsLocal && settingsLocal.mcpServers && settingsLocal.mcpServers.hex);
 
+// Agent identity — match THIS Claude instance by walking PPID chain
+const sessDir = path.join(require('os').homedir(), '.hex', 'sessions');
+
+// Collect ancestor PIDs up to init (walk PPID chain via `ps`)
+const ancestorPids = safe(() => {
+  const out = execFileSync('ps', ['-o', 'pid=,ppid=,comm=', '-ax'],
+    { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  const procs = new Map();
+  for (const line of out.trim().split('\n')) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length >= 3) procs.set(parts[0], { ppid: parts[1], comm: parts.slice(2).join(' ') });
+  }
+  // Walk from our PID up to find the `claude` process
+  const pids = [];
+  let cur = String(process.pid);
+  for (let i = 0; i < 10 && cur && cur !== '0' && cur !== '1'; i++) {
+    const p = procs.get(cur);
+    if (!p) break;
+    pids.push(cur);
+    cur = p.ppid;
+  }
+  return pids;
+}, []);
+
+const agentSession = safe(() => {
+  const files = fs.readdirSync(sessDir)
+    .filter(f => f.startsWith('agent-') && !f.includes('nexus') && f.endsWith('.json'))
+    .map(f => {
+      const data = JSON.parse(fs.readFileSync(path.join(sessDir, f), 'utf8'));
+      return { name: f, data, mtime: fs.statSync(path.join(sessDir, f)).mtimeMs };
+    });
+  if (files.length === 0) return null;
+
+  // Strategy 1: match by claude_pid in ancestor chain (unique per instance)
+  if (ancestorPids.length > 0) {
+    const match = files.find(f =>
+      f.data.claude_pid && ancestorPids.includes(String(f.data.claude_pid))
+    );
+    if (match) return match.data;
+  }
+
+  // Strategy 2: fallback to newest (legacy session files without claude_pid)
+  files.sort((a, b) => b.mtime - a.mtime);
+  return files[0].data;
+}, null);
+const agentId = agentSession ? agentSession.agentId : null;
+const agentName = agentSession ? agentSession.name : null;
+const agentIdShort = agentId ? agentId.slice(0, 8) : null;
+
 // HexFlo live status — fetch from hex-nexus REST API if daemon is running
 let hexfloSwarms = 0, hexfloTasks = 0, hexfloTasksDone = 0, hexfloAgents = 0;
 if (hubRunning) {
@@ -149,6 +198,12 @@ parts.push(`${P.brand}⬡ hex`);
 
 // Project
 parts.push(`${P.project}${projectName}`);
+
+// Agent identity — always show short ID for uniqueness across multiple agents
+if (agentIdShort) {
+  const label = agentName ? `${agentName}:${agentIdShort}` : agentIdShort;
+  parts.push(`${P.dim}⚙ ${label}`);
+}
 
 // Git
 const mark = isDirty ? `${P.dirty}✱` : `${P.clean}✓`;

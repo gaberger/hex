@@ -30,6 +30,12 @@ pub struct McpStdioClient {
     timeout: std::time::Duration,
 }
 
+impl Default for McpStdioClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl McpStdioClient {
     pub fn new() -> Self {
         Self {

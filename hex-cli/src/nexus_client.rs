@@ -325,7 +325,7 @@ fn resolve_by_newest(sessions_dir: &std::path::Path) -> Option<String> {
                 if age.as_secs() > 7200 {
                     continue;
                 }
-                if best.as_ref().map_or(true, |(t, _)| modified > *t) {
+                if best.as_ref().is_none_or(|(t, _)| modified > *t) {
                     best = Some((modified, entry.path()));
                 }
             }
@@ -494,7 +494,7 @@ fn resolve_by_newest_detailed(sessions_dir: &std::path::Path) -> Option<Resolved
                 if age.as_secs() > 7200 {
                     continue;
                 }
-                if best.as_ref().map_or(true, |(t, _)| modified > *t) {
+                if best.as_ref().is_none_or(|(t, _)| modified > *t) {
                     best = Some((modified, entry.path()));
                 }
             }

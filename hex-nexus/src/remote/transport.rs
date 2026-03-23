@@ -217,21 +217,13 @@ pub struct CodeGenResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct InferenceParams {
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
     pub stop_sequences: Vec<String>,
 }
 
-impl Default for InferenceParams {
-    fn default() -> Self {
-        Self {
-            temperature: None,
-            max_tokens: None,
-            stop_sequences: Vec::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

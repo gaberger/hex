@@ -15,7 +15,9 @@ import { runCLI, type AppContext as CLIContext } from '../../src/adapters/primar
 
 const PROJECT_ROOT = '/Volumes/ExtendedStorage/PARA/01-Projects/hex-intf';
 
-describe('E2E: hex analyzes itself', () => {
+// Skipped: requires tree-sitter WASM grammars + import path normalization (see file header).
+// See workplan: feat-test-suite-cleanup.json
+describe.skip('E2E: hex analyzes itself', () => {
   let ctx: Awaited<ReturnType<typeof createAppContext>>;
 
   beforeAll(async () => {

@@ -1,9 +1,11 @@
-# ADR-{NNN}: {Title}
+# ADR-{YYMMDDHHMM}: {Title}
 
 **Status:** {Proposed | Accepted | Deprecated | Superseded}
 **Date:** {YYYY-MM-DD}
 **Drivers:** {What triggered this decision — a bug, a requirement, a constraint}
-**Supersedes:** {ADR-NNN if replacing an earlier decision}
+**Supersedes:** {ADR-YYMMDDHHMM if replacing an earlier decision}
+
+<!-- ID format: YYMMDDHHMM — use your local time. Example: 2603221500 = 2026-03-22 15:00 -->
 
 ## Context
 

@@ -205,27 +205,9 @@ impl TestResults {
     }
 }
 
-/// Resolve the agent ID from ~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json
+/// Resolve the agent ID — delegates to the canonical resolution in nexus_client (ADR-065 §4).
 fn resolve_agent_id() -> Option<String> {
-    let sessions_dir = dirs::home_dir()?.join(".hex/sessions");
-
-    // Try exact match via CLAUDE_SESSION_ID
-    if let Ok(session_id) = std::env::var("CLAUDE_SESSION_ID") {
-        if !session_id.is_empty() {
-            let path = sessions_dir.join(format!("agent-{}.json", session_id));
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(id) = val["agentId"].as_str().or(val["agent_id"].as_str()) {
-                        if !id.is_empty() {
-                            return Some(id.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    None
+    crate::nexus_client::read_session_agent_id()
 }
 
 /// Persist test session results: POST to nexus, fallback to local JSONL file.
@@ -325,7 +307,7 @@ async fn check_regressions(current_session: &serde_json::Value) {
 
     // sessions[0] = most recent (current), sessions[1] = previous
     let current_id = current_session["id"].as_str().unwrap_or("");
-    let (current_summary, previous_summary) = if sessions[0]["id"].as_str() == Some(current_id) {
+    let (_current_summary, previous_summary) = if sessions[0]["id"].as_str() == Some(current_id) {
         (&sessions[0], &sessions[1])
     } else {
         // If for some reason the order differs, use index 0 as previous
@@ -499,7 +481,8 @@ fn run_unit_tests(r: &mut TestResults) {
 
     r.check("hex-nexus lib tests pass", cargo_test("hex-nexus", Some("--lib")));
 
-    for crate_name in &["hex-cli"] {
+    {
+        let crate_name = &"hex-cli";
         let ok = cargo_check(crate_name);
         r.check(&format!("{} compiles", crate_name), ok);
     }

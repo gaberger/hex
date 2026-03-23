@@ -27,10 +27,12 @@ fn default_model() -> String {
 
 /// Model selection derived from an RL action — which LLM to route to.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ModelSelection {
     /// claude-opus — highest quality
     Opus,
     /// claude-sonnet — balanced (default)
+    #[default]
     Sonnet,
     /// claude-haiku — fast/cheap
     Haiku,
@@ -42,11 +44,6 @@ pub enum ModelSelection {
     Local,
 }
 
-impl Default for ModelSelection {
-    fn default() -> Self {
-        Self::Sonnet
-    }
-}
 
 impl ModelSelection {
     /// Parse a model directive from the RL action string segment.
@@ -134,20 +131,17 @@ impl RlAction {
 
 /// Context packing strategy derived from an RL action.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ContextStrategy {
     /// Aggressive: maximize context usage, evict less, larger tool results
     Aggressive,
     /// Balanced: default partition ratios
+    #[default]
     Balanced,
     /// Conservative: smaller windows, summarize early, preserve token budget
     Conservative,
 }
 
-impl Default for ContextStrategy {
-    fn default() -> Self {
-        Self::Balanced
-    }
-}
 
 impl ContextStrategy {
     pub fn from_action(action: &str) -> Self {

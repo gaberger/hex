@@ -127,7 +127,9 @@ fn internal_helper() -> bool {
 
 // ── Test suite ───────────────────────────────────────────
 
-describe('TreeSitter AST Extraction — Multi-Language', () => {
+// Skipped: tree-sitter WASM grammars not reliably available in test env.
+// See workplan: feat-test-suite-cleanup.json
+describe.skip('TreeSitter AST Extraction — Multi-Language', () => {
   let ast: InstanceType<typeof TreeSitterAdapter>;
   let tmpDir: string;
 

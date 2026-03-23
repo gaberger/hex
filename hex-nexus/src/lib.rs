@@ -1,3 +1,16 @@
+// Pre-existing clippy lints — tracked for cleanup in ADR-2603222050
+#![allow(
+    clippy::literal_string_with_formatting_args,
+    clippy::too_many_arguments,
+    clippy::doc_overindented_list_items,
+    clippy::type_complexity,
+    clippy::manual_strip,
+    clippy::vec_init_then_push,
+    clippy::collapsible_match,
+    clippy::single_match,
+    clippy::explicit_counter_loop,
+    clippy::should_implement_trait
+)]
 // Re-export hex-core so downstream crates can access shared types and port traits
 pub use hex_core;
 
@@ -253,11 +266,18 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
         let stdb_db = std::env::var("HEX_SPACETIMEDB_DATABASE")
             .unwrap_or_else(|_| "hexflo-coordination".to_string());
+        let sp_for_sync = app_state.state_port.clone();
         tokio::spawn(async move {
             // ADR-043: Auto-register project from .hex/project.yaml
             config_sync::auto_register_project(&cwd, &stdb_host, &stdb_db).await;
-            // ADR-053: Sync config files (blueprint, skills, agents, hooks, MCP tools)
-            config_sync::sync_project_config(&cwd, &stdb_host, &stdb_db).await;
+            // ADR-053: Sync config files with reporting (blueprint, skills, agents, hooks, MCP tools)
+            let report = config_sync::sync_project_config_with_report(&cwd, &stdb_host, &stdb_db).await;
+            tracing::info!("Config sync: {} synced, {} failed", report.synced, report.failed);
+            // ADR-060: Notify agents of config changes
+            if let Some(ref sp) = sp_for_sync {
+                let project_id = std::env::var("HEX_PROJECT_ID").unwrap_or_default();
+                config_sync::notify_config_change(sp.as_ref(), &project_id, &report).await;
+            }
         });
     }
 
@@ -332,11 +352,10 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         );
     }
 
-    // ADR-039 Phase 10: Stale session cleanup is now handled by SpacetimeDB
-    // scheduled reducer (hexflo-cleanup module, 30s interval). The CleanupService
-    // background task is no longer needed when SpacetimeDB is the state backend.
-    // Kept as fallback for SQLite-only deployments.
-    if state.state_port.is_none() {
+    // Background cleanup: hex_agent mark_inactive + evict_dead (ADR-058),
+    // swarm_agent stale/dead cleanup, session cleanup, inbox expiry (ADR-060).
+    // Always runs — SpacetimeDB scheduled reducers don't cover hex_agent lifecycle.
+    {
         let cleanup_state = state.clone();
         cleanup::CleanupService::spawn(cleanup_state);
     }
@@ -402,7 +421,7 @@ pub async fn start_server(config: HubConfig) {
     let lock_token = config
         .token
         .clone()
-        .unwrap_or_else(|| daemon::generate_token());
+        .unwrap_or_else(daemon::generate_token);
 
     // Setup graceful shutdown
     let ctrl_c = async {

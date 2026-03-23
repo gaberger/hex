@@ -56,10 +56,7 @@ fn is_safe_path(relative: &str) -> bool {
 
     // Reject any component that is `..`
     for component in path.components() {
-        match component {
-            std::path::Component::ParentDir => return false,
-            _ => {}
-        }
+        if component == std::path::Component::ParentDir { return false }
     }
 
     true
@@ -309,10 +306,8 @@ pub async fn init_project(
         let _ = std::fs::create_dir_all(&adrs_dir);
         created.push("docs/adrs/".to_string());
 
-        let readme = format!(
-            "# Architecture Decision Records\n\n\
-             See the [ADR guide](https://github.com/hex-intf/hex/blob/main/docs/adrs/README.md) for conventions.\n"
-        );
+        let readme = "# Architecture Decision Records\n\n\
+             See the [ADR guide](https://github.com/hex-intf/hex/blob/main/docs/adrs/README.md) for conventions.\n".to_string();
         let _ = std::fs::write(adrs_dir.join("README.md"), readme);
 
         let template = "# ADR-{NNN}: {Title}\n\n\

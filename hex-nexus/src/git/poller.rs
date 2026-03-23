@@ -63,15 +63,15 @@ pub fn spawn_git_poller(state: SharedState, interval_secs: u64) {
 
                 let changed = snapshots
                     .get(project_id)
-                    .map_or(true, |old| *old != new_snapshot);
+                    .is_none_or(|old| *old != new_snapshot);
 
                 if changed {
                     let prev = snapshots.insert(project_id.clone(), new_snapshot);
 
                     // Determine event type
-                    let event = if prev.as_ref().map_or(false, |p| p.head_sha != status.head_sha) {
+                    let event = if prev.as_ref().is_some_and(|p| p.head_sha != status.head_sha) {
                         "commit-pushed"
-                    } else if prev.as_ref().map_or(false, |p| p.branch != status.branch) {
+                    } else if prev.as_ref().is_some_and(|p| p.branch != status.branch) {
                         "branch-switched"
                     } else {
                         "status-changed"
@@ -79,7 +79,7 @@ pub fn spawn_git_poller(state: SharedState, interval_secs: u64) {
 
                     broadcast_git_event(
                         &state.ws_tx,
-                        &project_id,
+                        project_id,
                         event,
                         serde_json::json!({
                             "branch": status.branch,

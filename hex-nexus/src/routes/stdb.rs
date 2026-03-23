@@ -275,7 +275,7 @@ fn find_modules_dir() -> Option<PathBuf> {
         if let Some(parent) = exe.parent() {
             let candidate = parent.join("../../spacetime-modules");
             if candidate.is_dir() {
-                return Some(candidate.canonicalize().ok()?);
+                return candidate.canonicalize().ok();
             }
         }
     }

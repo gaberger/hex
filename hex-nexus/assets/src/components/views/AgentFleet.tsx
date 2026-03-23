@@ -5,13 +5,14 @@
  * Data sources: SpacetimeDB subscriptions via connection stores.
  */
 import { Component, For, Show, createMemo, createSignal } from "solid-js";
-import { registryAgents, swarmAgents, agentHeartbeats, swarmTasks } from "../../stores/connection";
+import { registryAgents, swarmAgents, swarmTasks } from "../../stores/connection";
 import { projects } from "../../stores/projects";
 import { setSpawnDialogOpen } from "../../stores/ui";
 import { openPane } from "../../stores/panes";
 import { addToast } from "../../stores/toast";
 import { restClient } from "../../services/rest-client";
 import { matchesProject, getEntityProjectRef, getAgentProjectDir } from "../../utils/project-match";
+import { activeProjectId } from "../../stores/router";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -99,11 +100,10 @@ const AgentFleet: Component = () => {
   }
 
   function agentHeartbeatAge(agent: any): string | null {
-    const hb = agentHeartbeats().find(
-      (h: any) => (h.agent_id ?? "") === (agent.id ?? agent.agent_id ?? "")
-    );
-    if (!hb?.timestamp) return null;
-    const diff = Date.now() - new Date(hb.timestamp).getTime();
+    // ADR-058: heartbeat is inline on hex_agent.lastHeartbeat
+    const ts = agent.lastHeartbeat ?? agent.last_heartbeat;
+    if (!ts) return null;
+    const diff = Date.now() - new Date(ts).getTime();
     if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
     if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
     return `${Math.floor(diff / 3_600_000)}h ago`;

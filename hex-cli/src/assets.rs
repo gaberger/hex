@@ -31,8 +31,7 @@ impl Assets {
     pub fn extract_to(prefix: &str, target: &std::path::Path) -> std::io::Result<Vec<String>> {
         let mut extracted = Vec::new();
         for path in Self::iter() {
-            if path.starts_with(prefix) {
-                let relative = &path[prefix.len()..];
+            if let Some(relative) = path.strip_prefix(prefix) {
                 // Skip .tmpl extension in output path
                 let dest_name = relative.strip_suffix(".tmpl").unwrap_or(relative);
                 let dest = target.join(dest_name);

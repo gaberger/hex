@@ -19,6 +19,12 @@ pub struct RemoteRegistryAdapter {
     servers: Arc<RwLock<HashMap<String, InferenceServer>>>,
 }
 
+impl Default for RemoteRegistryAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RemoteRegistryAdapter {
     pub fn new() -> Self {
         Self {

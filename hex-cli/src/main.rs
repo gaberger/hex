@@ -1,3 +1,10 @@
+// Pre-existing clippy lints — tracked for cleanup in ADR-2603222050
+#![allow(
+    clippy::manual_strip,
+    clippy::ptr_arg,
+    clippy::unnecessary_sort_by,
+    clippy::literal_string_with_formatting_args
+)]
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 

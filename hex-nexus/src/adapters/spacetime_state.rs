@@ -1053,8 +1053,7 @@ mod real {
         }
 
         async fn hex_agent_evict_dead(&self) -> Result<(), StateError> {
-            let threshold = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-            self.call_reducer("agent_evict_dead", serde_json::json!([threshold])).await?;
+            self.call_reducer("agent_evict_dead", serde_json::json!([])).await?;
             Ok(())
         }
 

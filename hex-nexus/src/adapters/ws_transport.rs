@@ -39,6 +39,12 @@ pub struct WsTransportAdapter {
     connections: Arc<RwLock<HashMap<String, AgentConnection>>>,
 }
 
+impl Default for WsTransportAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WsTransportAdapter {
     pub fn new() -> Self {
         Self {

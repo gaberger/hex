@@ -9,6 +9,12 @@ use async_trait::async_trait;
 /// that are referenced by subsequent assistant messages.
 pub struct ContextManagerAdapter;
 
+impl Default for ContextManagerAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ContextManagerAdapter {
     pub fn new() -> Self {
         Self

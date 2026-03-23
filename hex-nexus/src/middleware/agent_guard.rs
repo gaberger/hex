@@ -23,7 +23,7 @@ pub const AGENT_ID_HEADER: &str = "x-hex-agent-id";
 const GUARDED_PREFIXES: &[&str] = &["/api/swarms", "/api/hexflo"];
 
 pub async fn agent_guard(
-    State(state): State<SharedState>,
+    State(_state): State<SharedState>,
     req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
