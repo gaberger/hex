@@ -38,7 +38,7 @@ function resolveSpacetimeDbUri(): string {
   const stored = localStorage.getItem("hex-stdb-uri");
   if (stored) return stored;
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.hostname}:3000`;
+  return `${proto}//${window.location.hostname}:3033`;
 }
 
 const SPACETIMEDB_URI = resolveSpacetimeDbUri();

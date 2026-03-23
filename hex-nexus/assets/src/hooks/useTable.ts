@@ -136,6 +136,8 @@ function defaultGetKey(row: any): string {
   if (row && typeof row === "object") {
     // Most SpacetimeDB tables have an `id` field
     if ("id" in row) return String(row.id);
+    // project table keys on projectId
+    if ("projectId" in row) return String(row.projectId);
     // agent-registry heartbeat table keys on agentId
     if ("agentId" in row) return String(row.agentId);
     // inference-gateway provider table keys on providerId

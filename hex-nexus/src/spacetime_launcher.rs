@@ -530,37 +530,29 @@ pub async fn generate_bindings(
 }
 
 /// Module publish order — tiered by cross-module dependency.
-/// Tier 0 has no deps; each subsequent tier depends on all prior tiers.
+///
+/// IMPORTANT: All modules publish to a single SpacetimeDB database (`hex`).
+/// SpacetimeDB treats each publish as a full schema replacement — publishing
+/// module B after module A would DROP module A's tables. Therefore only
+/// `hexflo-coordination` (the mega-module containing all core tables) is
+/// published. The other modules are listed here for documentation but are
+/// NOT included in the active tiers.
+///
+/// Future: give each module its own database, or merge remaining tables
+/// into hexflo-coordination.
 pub const MODULE_TIERS: &[&[&str]] = &[
-    // Tier 0: Foundation — no cross-module dependencies
+    // Tier 0: The mega-module — contains all core tables (15 tables, 40+ reducers)
     &[
         "hexflo-coordination",
-        "agent-registry",
-        "fleet-state",
-        "file-lock-manager",
     ],
-    // Tier 1: Services — reference agent/project IDs from tier 0
-    &[
-        "inference-gateway",
-        "inference-bridge",
-        "secret-grant",
-        "architecture-enforcer",
-    ],
-    // Tier 2: Workflows — reference agents, inference, secrets
-    &[
-        "workplan-state",
-        "skill-registry",
-        "hook-registry",
-        "agent-definition-registry",
-    ],
-    // Tier 3: Coordination — reference everything above
-    &[
-        "chat-relay",
-        "rl-engine",
-        "hexflo-lifecycle",
-        "hexflo-cleanup",
-        "conflict-resolver",
-    ],
+    // Future tiers: these modules have their own tables but cannot be published
+    // to the same `hex` database without wiping hexflo-coordination's schema.
+    // When each gets its own database, re-enable them here.
+    //
+    // Tier 1 (dormant): agent-registry, fleet-state, file-lock-manager
+    // Tier 2 (dormant): inference-gateway, inference-bridge, secret-grant, architecture-enforcer
+    // Tier 3 (dormant): workplan-state, skill-registry, hook-registry, agent-definition-registry
+    // Tier 4 (dormant): chat-relay, rl-engine, hexflo-lifecycle, hexflo-cleanup, conflict-resolver
 ];
 
 /// Result of publishing a single module.
