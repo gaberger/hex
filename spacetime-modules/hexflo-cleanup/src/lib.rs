@@ -14,12 +14,13 @@
 //! of the relevant tables. In production, these would be in the same module
 //! or use cross-module references when SpacetimeDB supports them.
 
-use spacetimedb::{table, reducer, schedule, ReducerContext, Table, Timestamp};
+use spacetimedb::{table, reducer, ReducerContext, ScheduleAt, Table, Timestamp};
 
 // ── Tables ──────────────────────────────────────────────
 
 /// Agent record with heartbeat tracking.
 #[table(name = agent_health, public)]
+#[derive(Clone)]
 pub struct AgentHealth {
     #[primary_key]
     pub agent_id: String,
@@ -59,7 +60,7 @@ pub struct CleanupLog {
 pub struct CleanupSchedule {
     #[primary_key]
     pub id: u64,
-    pub scheduled_id: schedule::ScheduleAt,
+    pub scheduled_id: ScheduleAt,
     pub interval_secs: u64,
 }
 
@@ -108,7 +109,7 @@ pub fn register_agent_health(
 #[reducer(init)]
 pub fn init(ctx: &ReducerContext) {
     // Schedule cleanup to run every 30 seconds
-    let schedule_at = schedule::ScheduleAt::Interval(std::time::Duration::from_secs(30).into());
+    let schedule_at = ScheduleAt::Interval(std::time::Duration::from_secs(30).into());
     ctx.db.cleanup_schedule().insert(CleanupSchedule {
         id: 1,
         scheduled_id: schedule_at,

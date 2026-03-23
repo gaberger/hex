@@ -175,10 +175,11 @@ pub fn complete_inference(
     if let Some(mut req) = ctx.db.inference_queue().request_id().find(&request_id) {
         req.status = "completed".to_string();
         req.completed_at = now;
+        let agent_id = req.agent_id.clone();
         ctx.db.inference_queue().request_id().update(req);
 
         // Update agent budget
-        if let Some(mut budget) = ctx.db.agent_token_budget().agent_id().find(&req.agent_id) {
+        if let Some(mut budget) = ctx.db.agent_token_budget().agent_id().find(&agent_id) {
             budget.used_tokens += (input_tokens + output_tokens) as u64;
             budget.used_cost_usd += cost_estimate;
             ctx.db.agent_token_budget().agent_id().update(budget);
