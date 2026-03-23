@@ -3,9 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="#installation"><img src="https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen?style=flat-square&logo=node.js&logoColor=white" alt="Node >= 20"/></a>
-  <a href="https://www.npmjs.com/package/@anthropic-hex/hex"><img src="https://img.shields.io/badge/npm-%40anthropic--hex%2Fhex-cb3837?style=flat-square&logo=npm&logoColor=white" alt="npm"/></a>
-  <a href="#"><img src="https://img.shields.io/badge/bun-runtime-f9f1e1?style=flat-square&logo=bun&logoColor=black" alt="Bun"/></a>
+  <a href="#installation"><img src="https://img.shields.io/badge/rust-stable-orange?style=flat-square&logo=rust&logoColor=white" alt="Rust stable"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License"/></a>
   <a href="#multi-language-support"><img src="https://img.shields.io/badge/languages-TS%20%7C%20Go%20%7C%20Rust-informational?style=flat-square" alt="Languages"/></a>
   <a href="#multi-agent-swarm-coordination"><img src="https://img.shields.io/badge/swarm-HexFlo%20powered-blueviolet?style=flat-square" alt="Swarm"/></a>
@@ -1103,8 +1101,8 @@ tests/
   unit/                  # London-school mock-first tests
   integration/           # Real adapter tests
 examples/                # Reference apps (flappy-bird, weather, rust-api, todo-app, etc.)
-agents/                  # Agent definitions (14 YAML files, shipped in npm package)
-skills/                  # Skill definitions (6 Markdown files, shipped in npm package)
+agents/                  # Agent definitions (14 YAML files, embedded via rust-embed)
+skills/                  # Skill definitions (6 Markdown files, embedded via rust-embed)
 .claude/
   skills/                # Claude Code skills (slash commands for IDE integration)
   agents/                # Claude Code agent definitions
@@ -1200,7 +1198,7 @@ spacetime publish hex-nexus               # Deploy to SpacetimeDB instance
 | **`hex_build` single entry point** | Users describe what to build; hex handles plan → orchestrate → analyze → validate internally |
 | **Pluggable secrets chain** | `ISecretsPort` adapters stack: Infisical → LocalVault → env-var; composition root selects |
 | **Dashboard auto-start** | Dashboard HTTP server launches on project load; port conflicts and stale locks self-heal |
-| **Rust hub over Node hub** | 1.5MB binary vs Node.js process; zero runtime deps; system-wide daemon serves all projects |
+| **Rust-native daemon** | 1.5MB binary; zero runtime deps; system-wide daemon serves all projects |
 | **WebSocket over SSE** | Unified bidirectional channel for events, commands, and chat; 25s keepalive pings detect dead connections |
 | **`run-claude` hub command** | Invoke Claude CLI from dashboard chat; enables browser-based agent interaction without terminal |
 
@@ -1282,7 +1280,7 @@ hex builds on the **Hexagonal Architecture** pattern (also known as **Ports and 
 | 003 | Multi-Language Support — TypeScript, Go, Rust | Accepted |
 | 004 | Git Worktrees for Parallel Agent Isolation | Accepted |
 | 005 | Compile-Lint-Test Feedback Loop with Quality Gates | Accepted |
-| 006 | Skills, Agent Definitions, and npm Packaging | Accepted |
+| 006 | Skills, Agent Definitions, and Packaging | Accepted |
 | 007 | Multi-Channel Notification System | Accepted |
 | 008 | Dogfooding — hex Built with Hexagonal Architecture | Accepted |
 | 009 | Ruflo (claude-flow) as Required Dependency | Superseded by ADR-027 (HexFlo) |
