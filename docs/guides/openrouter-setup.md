@@ -149,6 +149,58 @@ OpenRouter costs appear in:
 - **SpacetimeDB** → `inference_response` table (`openrouter_cost_usd` field)
 - **RL engine** → reward signal for model selection optimization
 
+## Using OpenRouter with `hex dev`
+
+`hex dev` is the self-sufficient development pipeline that uses OpenRouter to generate ADRs, workplans, and code — no external AI tools needed.
+
+### Quick start
+
+```bash
+# Full pipeline (interactive TUI with approval gates)
+hex dev start "add response caching to inference endpoints"
+
+# Fully autonomous (no gates, for CI or batch)
+hex dev start "add response caching" --auto --budget 2.00
+
+# Quick fix (skip ADR + workplan, just code)
+hex dev start "fix typo in header" --quick
+
+# Cost estimation without running
+hex dev start "new feature" --dry-run
+```
+
+### Per-phase model selection
+
+By default, `hex dev` picks the best OpenRouter model for each phase:
+
+| Phase | Model | Why |
+|-------|-------|-----|
+| ADR | `deepseek/deepseek-r1` | Reasoning model — good at architecture decisions |
+| Workplan | `meta-llama/llama-4-maverick` | Fast structured output — decomposes into steps |
+| Code | `meta-llama/llama-4-maverick` | Fast code generation — writes files per step |
+| Fix violations | `deepseek/deepseek-r1` | Reasoning — needs to understand architecture rules |
+
+Override for all phases: `hex dev start "feature" --model deepseek/deepseek-r1`
+
+### Cost example
+
+A typical `hex dev --auto` session:
+
+```
+ADR:       deepseek-r1      45s   $0.004
+Workplan:  llama-4-maverick 18s   $0.001
+Code (7):  llama-4-maverick 45s   $0.003
+Total:                      ~2m   $0.008
+```
+
+### Session management
+
+```bash
+hex dev list      # Show all sessions with status
+hex dev resume    # Resume most recent paused session
+hex dev clean     # Remove completed sessions
+```
+
 ## Dashboard
 
 The Inference panel at `http://localhost:5555` shows OpenRouter providers with an indigo badge. When a request uses OpenRouter, the cost column displays the actual cost reported by OpenRouter rather than an estimate.
@@ -161,9 +213,12 @@ The Inference panel at `http://localhost:5555` shows OpenRouter providers with a
 # Check if it's in the vault
 hex secrets status
 
-# Re-set it
+# Re-set it, then re-discover to update all providers
 hex secrets set OPENROUTER_API_KEY sk-or-v1-...
+hex inference discover --provider openrouter
 ```
+
+**Important**: After setting the key, always re-run `hex inference discover` to re-register all providers with the key reference. Providers registered before the key was set will not have it.
 
 ### Discovery finds 0 models
 
@@ -177,8 +232,15 @@ Your OpenRouter account needs credits. Add credits at [openrouter.ai/credits](ht
 
 ### Model returns 429 (Rate Limited)
 
-OpenRouter rate limits depend on the upstream provider. The adapter handles retries with exponential backoff automatically. For batch workloads, the `route: "fallback"` setting enables automatic provider rotation.
+OpenRouter rate limits depend on the upstream provider. `hex dev` automatically retries once after 5 seconds on rate limit errors. For sustained workloads, use `--budget` to pace spending.
+
+### Inference timeout
+
+Reasoning models (DeepSeek R1) can take 30-60 seconds. The default timeout is 120 seconds. If you see timeout errors:
+- Check your OpenRouter account tier (free tier has lower priority)
+- Try a faster model: `hex dev start "feature" --model meta-llama/llama-4-maverick`
+- Check hex-nexus logs: `tail -20 ~/.hex/nexus.log`
 
 ### High latency
 
-OpenRouter adds ~50-100ms of routing overhead. For latency-sensitive interactive work, the fallback chain prefers direct Anthropic/MiniMax. OpenRouter is best for batch/analysis workloads where the model diversity matters more than raw latency.
+OpenRouter adds ~50-100ms of routing overhead. For `hex dev`, this is negligible compared to model inference time. If latency matters, use a local model: `hex dev start "feature" --model ollama-qwen3-32b`

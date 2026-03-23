@@ -1,13 +1,36 @@
 # hex Development Workflow Guide
 
-This guide walks through the full hex development pipeline: from writing an ADR to shipping code via swarm-coordinated agents. It covers both the CLI commands and the AI agent integration (Claude Code / opencode).
+This guide walks through the full hex development pipeline: from writing an ADR to shipping code. hex can drive the entire pipeline autonomously using `hex dev` with OpenRouter inference — no external AI tools needed.
+
+## Two Ways to Work
+
+### 1. `hex dev` — Automated (Recommended)
+
+One command drives the full pipeline:
+
+```bash
+# Interactive TUI with approval gates
+hex dev start "add response caching to inference endpoints"
+
+# Fully autonomous (CI/batch)
+hex dev start "add response caching" --auto --budget 2.00
+
+# Quick fix (skip ADR + workplan)
+hex dev start "fix typo in header" --quick
+```
+
+hex-agent generates the ADR, decomposes into a workplan, creates a swarm, writes code per step, and validates — all using OpenRouter models. See [OpenRouter Setup Guide](./openrouter-setup.md) for configuration.
+
+### 2. Manual — Step by Step
+
+Use individual CLI commands for full control over each phase.
 
 ## The Pipeline
 
 hex enforces a strict development pipeline:
 
 ```
-ADR → Workplan → Swarm → Tasks → Agents → Code → Validate
+ADR → Workplan → Swarm → Tasks → Code → Validate
 ```
 
 Each step must complete before the next can begin. In mandatory enforcement mode, hooks will block agents that skip steps.
