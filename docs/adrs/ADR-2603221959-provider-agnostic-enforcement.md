@@ -1,6 +1,6 @@
 # ADR-2603221959: Provider-Agnostic Enforcement via MCP Tool Guards
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-22
 **Drivers:** hex enforcement (swarm tracking, workplan gates, boundary validation) is currently tied to Claude Code's hook system (`.claude/settings.json`). Open models (Ollama, vLLM, Qwen, Llama) and alternative frontends (Continue, Cursor, custom harnesses) have no hook infrastructure — all enforcement is bypassed. hex must enforce architecture rules regardless of which LLM provider drives the agents.
 
@@ -222,12 +222,12 @@ This is defense-in-depth — the server-side guards catch violations even if the
 
 | Phase | Description | Status |
 |-------|------------|--------|
-| P1 | `IEnforcementPort` trait in hex-core with `EnforcementContext` and rules engine | Pending |
-| P2 | MCP tool guards — check enforcement before executing mutating tools | Pending |
-| P3 | Nexus API guards — axum middleware for REST endpoint enforcement | Pending |
-| P4 | MCP lifecycle tools — session_start, heartbeat, task_start, task_complete | Pending |
-| P5 | Enforcement rules in SpacetimeDB — sync from .hex/adr-rules.toml | Pending |
-| P6 | System prompt injection for non-MCP models | Pending |
+| P1 | `IEnforcementPort` trait in hex-core with `EnforcementContext` and rules engine | Done |
+| P2 | MCP tool guards — check enforcement before executing mutating tools | Done |
+| P3 | MCP lifecycle tools — session_start, heartbeat, workplan_activate | Done |
+| P4 | Nexus API guards — axum middleware for REST endpoint enforcement | Done |
+| P5 | Enforcement rules in SpacetimeDB — sync from .hex/adr-rules.toml + `hex enforce` CLI | Done |
+| P6 | System prompt injection for non-MCP models — `hex enforce prompt` | Done |
 
 ## References
 
