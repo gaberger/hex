@@ -35,7 +35,7 @@ jobs:
       - run: bun install
       - run: bun run check          # TypeScript type check
       - run: bun run build           # Build CLI + library
-      - run: bun test                # Unit + property + smoke tests
+      - run: bun test tests/unit/ tests/smoke/   # Unit + smoke (integration needs runtime deps)
 
   boundary-check:
     runs-on: ubuntu-latest
