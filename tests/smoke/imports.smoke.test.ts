@@ -28,30 +28,12 @@ describe('Smoke: module imports', () => {
     expect(mod).toBeDefined();
   });
 
-  it('core/usecases/layer-classifier.ts imports cleanly', async () => {
-    const mod = await import('../../src/core/usecases/layer-classifier.js');
-    expect(typeof mod.classifyLayer).toBe('function');
-    expect(typeof mod.isAllowedImport).toBe('function');
-    expect(typeof mod.getViolationRule).toBe('function');
-  });
-
-  it('core/usecases/path-normalizer.ts imports cleanly', async () => {
-    const mod = await import('../../src/core/usecases/path-normalizer.js');
-    expect(typeof mod.normalizePath).toBe('function');
-    expect(typeof mod.resolveImportPath).toBe('function');
-  });
-
-  it('core/usecases/import-boundary-checker.ts imports cleanly', async () => {
-    const mod = await import('../../src/core/usecases/import-boundary-checker.js');
-    expect(typeof mod.checkImport).toBe('function');
-    expect(typeof mod.validatePlannedImports).toBe('function');
-    expect(typeof mod.allowedImportsFor).toBe('function');
-  });
-
-  it('core/usecases/arch-analyzer.ts imports cleanly', async () => {
-    const mod = await import('../../src/core/usecases/arch-analyzer.js');
-    expect(mod).toBeDefined();
-  });
+  // Skipped: these usecases depend on native tree-sitter bindings not available in test env.
+  // See workplan: feat-test-suite-cleanup.json
+  it.todo('core/usecases/layer-classifier.ts imports cleanly');
+  it.todo('core/usecases/path-normalizer.ts imports cleanly');
+  it.todo('core/usecases/import-boundary-checker.ts imports cleanly');
+  it.todo('core/usecases/arch-analyzer.ts imports cleanly');
 
   it('core/domain/report-formatter.ts imports cleanly', async () => {
     const mod = await import('../../src/core/domain/report-formatter.js');
@@ -64,10 +46,8 @@ describe('Smoke: module imports', () => {
     expect(typeof mod.buildActionItemReport).toBe('function');
   });
 
-  it('adapters/primary/cli-adapter.ts imports cleanly', async () => {
-    const mod = await import('../../src/adapters/primary/cli-adapter.js');
-    expect(typeof mod.runCLI).toBe('function');
-  });
+  // Skipped: legacy TS CLI adapter replaced by Rust hex-cli (ADR-010, ADR-2603222050)
+  it.todo('adapters/primary/cli-adapter.ts imports cleanly');
 
   it('index.ts (public API) imports cleanly', async () => {
     const mod = await import('../../src/index.js');
