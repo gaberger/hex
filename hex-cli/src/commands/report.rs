@@ -69,11 +69,14 @@ async fn list_sessions() -> Result<()> {
 }
 
 async fn show_latest(json: bool) -> Result<()> {
-    let sessions = DevSession::list_all()?;
+    let mut sessions = DevSession::list_all()?;
+    // Sort by updated_at descending, prefer sessions with actual work (cost > 0)
+    sessions.sort_by(|a, b| b.total_cost_usd.partial_cmp(&a.total_cost_usd).unwrap_or(std::cmp::Ordering::Equal));
     let latest = sessions
         .iter()
-        .filter(|s| matches!(s.status, SessionStatus::Completed))
-        .last();
+        .filter(|s| matches!(s.status, SessionStatus::Completed) && s.total_cost_usd > 0.0)
+        .next()
+        .or_else(|| sessions.iter().filter(|s| matches!(s.status, SessionStatus::Completed)).next());
     match latest {
         Some(s) => show_report(&s.id, json).await,
         None => {
