@@ -39,15 +39,16 @@ jobs:
 
   boundary-check:
     runs-on: ubuntu-latest
-    needs: build-and-test
+    needs: rust-check
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          bun-version: latest
-      - run: bun install
-      - run: bun run build
-      - run: bunx hex analyze .      # Architecture boundary verification
+          workspaces: ". -> target"
+      - run: mkdir -p hex-nexus/assets/dist
+      - run: cargo build -p hex-cli --release
+      - run: ./target/release/hex analyze .   # Architecture boundary verification
 
   rust-check:
     runs-on: ubuntu-latest
