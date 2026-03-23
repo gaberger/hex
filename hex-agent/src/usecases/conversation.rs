@@ -115,13 +115,21 @@ impl ConversationLoop {
 
     /// Fallback chain for rate-limited models.
     /// Returns the next model to try after `current`, or `None` if exhausted.
+    /// Fallback chain for rate-limited models.
+    /// Returns the next model to try after `current`, or `None` if exhausted.
+    ///
+    /// Chain: Opus → Sonnet → OpenRouter(deepseek-r1) → MiniMax →
+    ///        MiniMaxFast → Haiku → OpenRouter(llama-4-scout) → Local
     fn fallback_model(current: &ModelSelection) -> Option<ModelSelection> {
         match current {
             ModelSelection::Opus => Some(ModelSelection::Sonnet),
-            ModelSelection::Sonnet => Some(ModelSelection::MiniMax),
+            ModelSelection::Sonnet => Some(ModelSelection::OpenRouter(
+                "deepseek/deepseek-r1".to_string(),
+            )),
             ModelSelection::MiniMax => Some(ModelSelection::MiniMaxFast),
             ModelSelection::MiniMaxFast => Some(ModelSelection::Haiku),
             ModelSelection::Haiku => Some(ModelSelection::Local),
+            ModelSelection::OpenRouter(_) => Some(ModelSelection::MiniMax),
             ModelSelection::Local => None,
         }
     }
@@ -377,6 +385,7 @@ impl ConversationLoop {
                                         rate_limited: true,
                                         model_used: rate_limited_model.to_string(),
                                         latency_ms: turn_start_time.elapsed().as_millis() as u64,
+                                        openrouter_cost_usd: 0.0,
                                     })
                                     .await;
                             }
@@ -643,6 +652,10 @@ impl ConversationLoop {
                     _ => 4,
                 }
             );
+            // TODO: thread actual OpenRouter cost from AnthropicResponse/TokenUsage
+            // once the openai_compat adapter populates it in the response struct.
+            let openrouter_cost = 0.0_f64;
+
             let _ = self
                 .rl
                 .report_reward(&RlReward {
@@ -653,6 +666,7 @@ impl ConversationLoop {
                     rate_limited: was_rate_limited,
                     model_used: actual_model_used.clone(),
                     latency_ms,
+                    openrouter_cost_usd: openrouter_cost,
                 })
                 .await;
 

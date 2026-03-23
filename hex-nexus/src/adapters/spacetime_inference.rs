@@ -143,6 +143,9 @@ impl SpacetimeInferenceClient {
     }
 
     /// Record a completed inference response in SpacetimeDB.
+    ///
+    /// `openrouter_cost_usd` carries the actual cost reported by OpenRouter's
+    /// `usage.cost` field.  Pass an empty string for non-OpenRouter providers.
     pub async fn complete_inference(
         &self,
         request_id: u64,
@@ -154,6 +157,7 @@ impl SpacetimeInferenceClient {
         cache_write_tokens: u64,
         latency_ms: u64,
         cost_usd: &str,
+        openrouter_cost_usd: &str,
         created_at: &str,
     ) -> Result<(), String> {
         self.call_reducer(
@@ -168,6 +172,7 @@ impl SpacetimeInferenceClient {
                 cache_write_tokens,
                 latency_ms,
                 cost_usd,
+                openrouter_cost_usd,
                 created_at,
             ]),
         )

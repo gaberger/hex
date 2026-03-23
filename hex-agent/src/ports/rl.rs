@@ -40,6 +40,8 @@ pub enum ModelSelection {
     MiniMax,
     /// MiniMax M2.5-Lightning — 2x speed, slightly higher output cost
     MiniMaxFast,
+    /// OpenRouter model — dynamic ID (e.g. "meta-llama/llama-4-maverick")
+    OpenRouter(String),
     /// ollama/vllm — no rate limits
     Local,
 }
@@ -55,6 +57,9 @@ impl ModelSelection {
             "model:minimax" => Self::MiniMax,
             "model:minimax_fast" => Self::MiniMaxFast,
             "model:local" => Self::Local,
+            s if s.starts_with("model:openrouter:") => {
+                Self::OpenRouter(s.trim_start_matches("model:openrouter:").to_string())
+            }
             _ => Self::Sonnet,
         }
     }
@@ -67,6 +72,7 @@ impl ModelSelection {
             Self::Haiku => "claude-haiku-4-5-20251001",
             Self::MiniMax => "MiniMax-M2.7",
             Self::MiniMaxFast => "MiniMax-M1",
+            Self::OpenRouter(ref id) => id.as_str(),
             Self::Local => "local",
         }
     }
@@ -78,7 +84,7 @@ impl ModelSelection {
 
     /// Whether this selection routes to an OpenAI-compatible provider (not Anthropic).
     pub fn is_openai_compat(&self) -> bool {
-        matches!(self, Self::MiniMax | Self::MiniMaxFast | Self::Local)
+        matches!(self, Self::MiniMax | Self::MiniMaxFast | Self::OpenRouter(_) | Self::Local)
     }
 }
 
@@ -188,6 +194,10 @@ pub struct RlReward {
     /// End-to-end response latency in milliseconds.
     #[serde(default)]
     pub latency_ms: u64,
+    /// Actual cost in USD from OpenRouter (0.0 if not an OpenRouter model or unknown).
+    /// When > 0, the RL engine uses this for cost-efficiency reward instead of token estimates.
+    #[serde(default)]
+    pub openrouter_cost_usd: f64,
 }
 
 /// Port for querying the RL engine in hex-hub.
@@ -218,6 +228,10 @@ mod tests {
         assert_eq!(ModelSelection::from_action("model:sonnet"), ModelSelection::Sonnet);
         assert_eq!(ModelSelection::from_action("model:haiku"), ModelSelection::Haiku);
         assert_eq!(ModelSelection::from_action("model:local"), ModelSelection::Local);
+        assert_eq!(
+            ModelSelection::from_action("model:openrouter:meta-llama/llama-4-maverick"),
+            ModelSelection::OpenRouter("meta-llama/llama-4-maverick".to_string())
+        );
         assert_eq!(ModelSelection::from_action("unknown"), ModelSelection::Sonnet);
     }
 
@@ -323,9 +337,27 @@ mod tests {
             rate_limited: true,
             model_used: "claude-opus-4-6".to_string(),
             latency_ms: 1234,
+            openrouter_cost_usd: 0.0,
         };
         assert!(reward.rate_limited);
         assert_eq!(reward.model_used, "claude-opus-4-6");
         assert_eq!(reward.latency_ms, 1234);
+        assert_eq!(reward.openrouter_cost_usd, 0.0);
+    }
+
+    #[test]
+    fn rl_reward_openrouter_cost() {
+        let reward = RlReward {
+            state_key: "k".to_string(),
+            action: "model:openrouter:meta-llama/llama-4-maverick".to_string(),
+            reward: 0.5,
+            next_state_key: "nk".to_string(),
+            rate_limited: false,
+            model_used: "meta-llama/llama-4-maverick".to_string(),
+            latency_ms: 800,
+            openrouter_cost_usd: 0.0042,
+        };
+        assert!(!reward.rate_limited);
+        assert!(reward.openrouter_cost_usd > 0.0);
     }
 }

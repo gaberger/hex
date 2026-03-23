@@ -334,9 +334,11 @@ mod real {
             action: &str,
             reward: f64,
             next_state_key: &str,
+            rate_limited: bool,
+            openrouter_cost_usd: f64,
         ) -> Result<(), StateError> {
             self.call_reducer("record_reward", serde_json::json!([
-                state_key, action, reward, next_state_key, false
+                state_key, action, reward, next_state_key, rate_limited, openrouter_cost_usd
             ])).await?;
             Ok(())
         }
@@ -1178,7 +1180,7 @@ mod stub {
     #[async_trait]
     impl IStatePort for SpacetimeStateAdapter {
         async fn rl_select_action(&self, _: &RlState) -> Result<String, StateError> { Err(Self::err()) }
-        async fn rl_record_reward(&self, _: &str, _: &str, _: f64, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn rl_record_reward(&self, _: &str, _: &str, _: f64, _: &str, _: bool, _: f64) -> Result<(), StateError> { Err(Self::err()) }
         async fn rl_get_stats(&self) -> Result<RlStats, StateError> { Err(Self::err()) }
         async fn pattern_store(&self, _: &str, _: &str, _: f64) -> Result<String, StateError> { Err(Self::err()) }
         async fn pattern_search(&self, _: &str, _: &str, _: u32) -> Result<Vec<PatternEntry>, StateError> { Err(Self::err()) }

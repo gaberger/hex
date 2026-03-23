@@ -89,7 +89,7 @@ struct Args {
     #[arg(long, default_value = "85")]
     compact_threshold: u32,
 
-    /// LLM provider: anthropic, minimax, ollama, or auto (default: auto)
+    /// LLM provider: anthropic, minimax, openrouter, ollama, or auto (default: auto)
     #[arg(long, default_value = "auto")]
     provider: String,
 
@@ -255,12 +255,16 @@ async fn main() -> anyhow::Result<()> {
     // Resolve API keys through the secret broker (cache → env)
     let anthropic_key = secrets.resolve_secret("ANTHROPIC_API_KEY").await.ok();
     let minimax_key = secrets.resolve_secret("MINIMAX_API_KEY").await.ok();
+    let openrouter_key = secrets.resolve_secret("OPENROUTER_API_KEY").await.ok();
 
     if anthropic_key.is_some() {
         tracing::info!("Resolved ANTHROPIC_API_KEY via secrets broker");
     }
     if minimax_key.is_some() {
         tracing::info!("Resolved MINIMAX_API_KEY via secrets broker");
+    }
+    if openrouter_key.is_some() {
+        tracing::info!("Resolved OPENROUTER_API_KEY via secrets broker");
     }
 
     // Build the primary LLM adapter based on --provider + resolved keys
@@ -278,6 +282,14 @@ async fn main() -> anyhow::Result<()> {
             });
             tracing::info!(model = "MiniMax-M2.5", "Using MiniMax provider");
             Arc::new(OpenAiCompatAdapter::minimax(key))
+        }
+        "openrouter" => {
+            let key = openrouter_key.clone().unwrap_or_else(|| {
+                eprintln!("\x1b[31mError: OPENROUTER_API_KEY not found in secrets or environment\x1b[0m");
+                std::process::exit(1);
+            });
+            tracing::info!(model = %args.model, "Using OpenRouter provider");
+            Arc::new(OpenAiCompatAdapter::openrouter(key, args.model.clone()))
         }
         "anthropic" => {
             let key = anthropic_key.clone().unwrap_or_else(|| {
@@ -300,6 +312,9 @@ async fn main() -> anyhow::Result<()> {
                 } else if let Some(key) = minimax_key.clone() {
                     tracing::info!("Nexus + Anthropic unavailable — using MiniMax");
                     Arc::new(OpenAiCompatAdapter::minimax(key))
+                } else if let Some(key) = openrouter_key.clone() {
+                    tracing::info!("Nexus + Anthropic + MiniMax unavailable — using OpenRouter");
+                    Arc::new(OpenAiCompatAdapter::openrouter(key, args.model.clone()))
                 } else {
                     tracing::info!("No inference providers — falling back to Ollama at {}", args.ollama_host);
                     Arc::new(OpenAiCompatAdapter::ollama(&args.model, Some(&args.ollama_host)))
@@ -309,6 +324,9 @@ async fn main() -> anyhow::Result<()> {
             } else if let Some(key) = minimax_key.clone() {
                 tracing::info!("No ANTHROPIC_API_KEY — using MiniMax as primary provider");
                 Arc::new(OpenAiCompatAdapter::minimax(key))
+            } else if let Some(key) = openrouter_key.clone() {
+                tracing::info!("No ANTHROPIC/MINIMAX keys — using OpenRouter as primary provider");
+                Arc::new(OpenAiCompatAdapter::openrouter(key, args.model.clone()))
             } else {
                 // No API keys — try local Ollama as last resort
                 tracing::info!("No API keys found — falling back to Ollama at {}", args.ollama_host);
@@ -555,6 +573,13 @@ async fn main() -> anyhow::Result<()> {
         if minimax_key.is_some() {
             models.push(ModelSelection::MiniMax);
             models.push(ModelSelection::MiniMaxFast);
+        }
+        if openrouter_key.is_some() {
+            // OpenRouter provides access to many models; register the commonly
+            // used ones so the RL engine can select them during fallback.
+            models.push(ModelSelection::OpenRouter("deepseek/deepseek-r1".to_string()));
+            models.push(ModelSelection::OpenRouter("meta-llama/llama-4-maverick".to_string()));
+            models.push(ModelSelection::OpenRouter("meta-llama/llama-4-scout".to_string()));
         }
         // Local is always available (no key needed)
         models.push(ModelSelection::Local);

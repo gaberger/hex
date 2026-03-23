@@ -8,8 +8,8 @@
  * Dependency: domain types only.
  */
 
-/** Supported local inference providers. */
-export type InferenceProvider = 'ollama' | 'openai-compatible' | 'vllm' | 'llama-cpp';
+/** Supported inference providers (local and cloud). */
+export type InferenceProvider = 'ollama' | 'openai-compatible' | 'vllm' | 'llama-cpp' | 'openrouter';
 
 /** Health status of an inference endpoint. */
 export type EndpointStatus = 'healthy' | 'unhealthy' | 'unknown';

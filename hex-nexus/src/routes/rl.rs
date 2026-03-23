@@ -33,6 +33,12 @@ pub struct RewardRequest {
     pub action: String,
     pub reward: f64,
     pub next_state_key: String,
+    /// Whether the request was rate-limited.
+    #[serde(default)]
+    pub rate_limited: bool,
+    /// Actual cost from OpenRouter in USD (0.0 if not applicable).
+    #[serde(default)]
+    pub openrouter_cost_usd: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,7 +112,14 @@ pub async fn submit_reward(
 ) -> ApiResult {
     let port = state.state_port.as_ref().ok_or_else(port_unavailable)?;
 
-    port.rl_record_reward(&body.state_key, &body.action, body.reward, &body.next_state_key)
+    port.rl_record_reward(
+        &body.state_key,
+        &body.action,
+        body.reward,
+        &body.next_state_key,
+        body.rate_limited,
+        body.openrouter_cost_usd,
+    )
         .await
         .map_err(state_err)?;
 

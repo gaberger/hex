@@ -105,6 +105,7 @@ async fn status() -> anyhow::Result<()> {
     let keys = [
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
         "HEX_HUB_SECRET",
         "SPACETIMEDB_TOKEN",
     ];

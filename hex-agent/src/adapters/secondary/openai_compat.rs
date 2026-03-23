@@ -81,6 +81,23 @@ impl OpenAiCompatAdapter {
         )
     }
 
+    /// Convenience constructor for OpenRouter (300+ models via single API key).
+    ///
+    /// OpenRouter uses the standard OpenAI chat completions format but requires
+    /// additional headers for analytics and supports provider preference routing.
+    pub fn openrouter(api_key: String, model: String) -> Self {
+        Self::new(
+            api_key,
+            "https://openrouter.ai/api/v1".to_string(),
+            model,
+        )
+    }
+
+    /// Returns true if this adapter is pointing at OpenRouter.
+    fn is_openrouter(&self) -> bool {
+        self.base_url.contains("openrouter.ai")
+    }
+
     /// Create from environment variables for self-hosted models.
     ///
     /// Reads:
@@ -257,11 +274,29 @@ impl AnthropicPort for OpenAiCompatAdapter {
                 .unwrap_or_default();
         }
 
-        let response = self
+        // OpenRouter routing preferences (ADR-2603231600)
+        if self.is_openrouter() {
+            body["provider"] = serde_json::json!({
+                "order": ["Together", "Lambda", "Fireworks"],
+                "allow_fallbacks": true
+            });
+            body["route"] = serde_json::json!("fallback");
+        }
+
+        let mut request = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
+            .header("Content-Type", "application/json");
+
+        // OpenRouter-specific headers (ADR-2603231600)
+        if self.is_openrouter() {
+            request = request
+                .header("HTTP-Referer", "https://github.com/hex-intf")
+                .header("X-Title", "hex-agent");
+        }
+
+        let response = request
             .json(&body)
             .send()
             .await
@@ -277,6 +312,12 @@ impl AnthropicPort for OpenAiCompatAdapter {
                 .unwrap_or(5);
             return Err(AnthropicError::RateLimited {
                 retry_after_ms: retry_after * 1000,
+            });
+        }
+        if status == 402 {
+            return Err(AnthropicError::Api {
+                status,
+                message: "OpenRouter: insufficient credits. Top up at https://openrouter.ai/credits".to_string(),
             });
         }
         if status >= 400 {
@@ -339,6 +380,11 @@ impl AnthropicPort for OpenAiCompatAdapter {
             output_tokens: oai_resp.usage.completion_tokens,
             ..Default::default()
         };
+
+        // Log OpenRouter actual cost if present
+        if let Some(cost) = oai_resp.usage.cost {
+            tracing::info!(openrouter_cost_usd = cost, model = %oai_resp.model, "OpenRouter actual cost");
+        }
 
         Ok(AnthropicResponse {
             content,
@@ -452,6 +498,9 @@ struct OaiChoiceMessage {
 struct OaiUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
+    /// Actual cost in USD (OpenRouter-specific, absent for other providers)
+    #[serde(default)]
+    cost: Option<f64>,
 }
 
 #[cfg(test)]
@@ -496,6 +545,20 @@ mod tests {
         assert_eq!(oai[0].role, "system");
         assert_eq!(oai[1].role, "user");
         assert_eq!(oai[2].role, "assistant");
+    }
+
+    #[test]
+    fn openrouter_constructor_sets_correct_url() {
+        let adapter = OpenAiCompatAdapter::openrouter("sk-or-test".to_string(), "meta-llama/llama-4-maverick".to_string());
+        assert!(adapter.is_openrouter());
+        assert_eq!(adapter.base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(adapter.model, "meta-llama/llama-4-maverick");
+    }
+
+    #[test]
+    fn non_openrouter_detected_correctly() {
+        let adapter = OpenAiCompatAdapter::minimax("key".to_string());
+        assert!(!adapter.is_openrouter());
     }
 
     #[test]

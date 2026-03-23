@@ -18,7 +18,7 @@ use crate::nexus_client::NexusClient;
 pub enum InferenceAction {
     /// Register a new inference provider
     Add {
-        /// Provider type: ollama, vllm, openai-compat
+        /// Provider type: ollama, vllm, openai-compat, openrouter
         provider_type: String,
         /// Base URL (e.g., http://bazzite.local:11434)
         url: String,
@@ -39,8 +39,18 @@ pub enum InferenceAction {
         /// Provider ID or URL
         target: String,
     },
-    /// Auto-discover Ollama instances on common addresses
-    Discover,
+    /// Auto-discover inference providers
+    Discover {
+        /// Provider to discover: ollama (default, LAN scan), openrouter (fetch model catalog)
+        #[arg(long, default_value = "ollama")]
+        provider: String,
+        /// Filter models by name substring
+        #[arg(long)]
+        filter: Option<String>,
+        /// Minimum context window size
+        #[arg(long)]
+        min_context: Option<u64>,
+    },
     /// Remove a registered provider
     Remove {
         /// Provider ID
@@ -55,7 +65,12 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         }
         InferenceAction::List => list_providers().await,
         InferenceAction::Test { target } => test_provider(&target).await,
-        InferenceAction::Discover => discover_ollama().await,
+        InferenceAction::Discover { provider, filter, min_context } => {
+            match provider.as_str() {
+                "openrouter" => discover_openrouter(filter.as_deref(), min_context).await,
+                _ => discover_ollama().await,
+            }
+        }
         InferenceAction::Remove { provider_id } => remove_provider(&provider_id).await,
     }
 }
@@ -443,6 +458,142 @@ async fn discover_ollama() -> anyhow::Result<()> {
         println!("  Or register:  hex inference add ollama http://<host>:11434 --model <model>");
     } else {
         println!("{} {} provider(s) available.", "✓".green(), found);
+    }
+
+    Ok(())
+}
+
+async fn discover_openrouter(filter: Option<&str>, min_context: Option<u64>) -> anyhow::Result<()> {
+    println!("{}", "── Discovering OpenRouter Models ──".cyan());
+    println!();
+
+    // Check for API key
+    let api_key = match std::env::var("OPENROUTER_API_KEY") {
+        Ok(key) => key,
+        Err(_) => {
+            // Try hex secrets vault
+            let client = NexusClient::from_env();
+            if let Ok(()) = client.ensure_running().await {
+                match client.get("/api/secrets/OPENROUTER_API_KEY").await {
+                    Ok(data) => data.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    Err(_) => String::new(),
+                }
+            } else {
+                String::new()
+            }
+        }
+    };
+
+    if api_key.is_empty() {
+        println!("  {} OPENROUTER_API_KEY not set.", "✗".red());
+        println!("  Set it with: hex secrets set OPENROUTER_API_KEY sk-or-...");
+        println!("  Or export:   export OPENROUTER_API_KEY=sk-or-...");
+        return Ok(());
+    }
+
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()?;
+
+    println!("  {} Fetching models from openrouter.ai...", "→".cyan());
+
+    let resp = http
+        .get("https://openrouter.ai/api/v1/models")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        println!("  {} OpenRouter returned HTTP {}", "✗".red(), resp.status());
+        return Ok(());
+    }
+
+    let body: serde_json::Value = resp.json().await?;
+    let models = body.get("data").and_then(|d| d.as_array());
+
+    let Some(models) = models else {
+        println!("  {} No models found in response", "!".yellow());
+        return Ok(());
+    };
+
+    let min_ctx = min_context.unwrap_or(0);
+    let mut count = 0;
+    let mut registered = 0;
+
+    let client = NexusClient::from_env();
+    let nexus_running = client.ensure_running().await.is_ok();
+
+    for model in models {
+        let id = model.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let name = model.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+        let context_length = model.get("context_length").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        // Apply filters
+        if let Some(f) = filter {
+            if !id.to_lowercase().contains(&f.to_lowercase()) && !name.to_lowercase().contains(&f.to_lowercase()) {
+                continue;
+            }
+        }
+        if context_length < min_ctx {
+            continue;
+        }
+
+        // Check if model supports tools (function calling)
+        let supported_params = model.get("supported_parameters")
+            .and_then(|v| v.as_array());
+        let supports_tools = supported_params
+            .map(|params| params.iter().any(|p| p.as_str() == Some("tools")))
+            .unwrap_or(false);
+
+        // Get pricing
+        let pricing = model.get("pricing");
+        let prompt_price = pricing
+            .and_then(|p| p.get("prompt"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("0");
+        let completion_price = pricing
+            .and_then(|p| p.get("completion"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("0");
+
+        let tool_badge = if supports_tools { " [tools]" } else { "" };
+        println!(
+            "  {} {} — {}K ctx, ${}/{} per M tok{}",
+            "●".green(),
+            id,
+            context_length / 1000,
+            prompt_price,
+            completion_price,
+            tool_badge,
+        );
+
+        // Register with nexus if running
+        if nexus_running {
+            let reg_body = serde_json::json!({
+                "id": format!("openrouter-{}", id.replace('/', "-")),
+                "provider": "openrouter",
+                "url": "https://openrouter.ai/api/v1",
+                "model": id,
+                "models_json": serde_json::to_string(&vec![id]).unwrap_or_default(),
+                "requires_auth": true,
+                "secret_key": "OPENROUTER_API_KEY",
+            });
+
+            match client.post("/api/inference/register", &reg_body).await {
+                Ok(_) => registered += 1,
+                Err(_) => {} // Silent — don't spam on registration failures
+            }
+        }
+
+        count += 1;
+    }
+
+    println!();
+    println!("{} {} models found, {} registered with nexus.", "✓".green(), count, registered);
+
+    if !nexus_running {
+        println!("  {} hex-nexus not running — models listed but not registered", "!".yellow());
+        println!("  Start nexus: hex nexus start");
     }
 
     Ok(())

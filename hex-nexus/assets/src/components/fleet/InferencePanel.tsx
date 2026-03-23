@@ -15,6 +15,7 @@ const COST_PER_1K: Record<string, number> = {
   anthropic: 0.015,
   openai: 0.01,
   openai_compat: 0.005,
+  openrouter: 0.008,
   ollama: 0,
   vllm: 0,
   "llama-cpp": 0,
@@ -34,15 +35,22 @@ const InferencePanel: Component = () => {
   const totalRequests = createMemo(() => inferenceRequests().length);
 
   const tokenStats = createMemo(() => {
-    let totalIn = 0, totalOut = 0;
+    let totalIn = 0, totalOut = 0, actualCost = 0;
+    let hasActualCost = false;
     for (const r of inferenceRequests()) {
       totalIn += r.inputTokens ?? r.input_tokens ?? r.prompt_tokens ?? 0;
       totalOut += r.outputTokens ?? r.output_tokens ?? r.completion_tokens ?? 0;
+      // Use actual OpenRouter cost when available
+      const orCost = r.openrouterCostUsd ?? r.openrouter_cost_usd;
+      if (orCost != null && orCost !== "" && Number(orCost) > 0) {
+        actualCost += Number(orCost);
+        hasActualCost = true;
+      }
     }
-    // Estimate cost based on provider mix
+    // Use actual OpenRouter cost for requests that have it, estimate the rest
     const avgCost = 0.005;
-    const cost = ((totalIn + totalOut) / 1000) * avgCost;
-    return { totalIn, totalOut, cost, count: inferenceRequests().length };
+    const cost = hasActualCost ? actualCost : ((totalIn + totalOut) / 1000) * avgCost;
+    return { totalIn, totalOut, cost, hasActualCost, count: inferenceRequests().length };
   });
 
   function registerProvider(e: Event) {
@@ -143,6 +151,7 @@ const InferencePanel: Component = () => {
               <option value="ollama">Ollama</option>
               <option value="vllm">vLLM</option>
               <option value="openai-compatible">OpenAI-compatible</option>
+              <option value="openrouter">OpenRouter</option>
               <option value="llama-cpp">llama.cpp</option>
             </select>
           </div>
@@ -209,7 +218,14 @@ const InferencePanel: Component = () => {
                       <span class={`relative inline-flex h-2.5 w-2.5 rounded-full ${isHealthy() ? 'bg-green-500' : 'bg-gray-500'}`} />
                     </span>
                     <span class="text-xs font-semibold text-gray-100 truncate">{id()}</span>
-                    <span class="ml-auto rounded bg-gray-800 px-1.5 py-0.5 text-[9px] text-gray-400 uppercase">{pType()}</span>
+                    <span
+                      class="ml-auto rounded px-1.5 py-0.5 text-[9px] uppercase"
+                      classList={{
+                        "bg-indigo-900/60 text-indigo-300": pType() === "openrouter",
+                        "bg-blue-900/60 text-blue-300": pType() === "anthropic",
+                        "bg-gray-800 text-gray-400": pType() !== "openrouter" && pType() !== "anthropic",
+                      }}
+                    >{pType()}</span>
                   </div>
 
                   {/* URL */}
@@ -284,8 +300,8 @@ const InferencePanel: Component = () => {
               <p class="text-[9px] text-gray-500 uppercase">Output</p>
             </div>
             <div>
-              <p class="text-sm font-bold font-mono text-gray-100">${tokenStats().cost.toFixed(2)}</p>
-              <p class="text-[9px] text-gray-500 uppercase">Est. Cost</p>
+              <p class="text-sm font-bold font-mono text-gray-100">${tokenStats().cost.toFixed(4)}</p>
+              <p class="text-[9px] text-gray-500 uppercase">{tokenStats().hasActualCost ? "Actual Cost" : "Est. Cost"}</p>
             </div>
             <div>
               <p class="text-sm font-bold font-mono text-gray-100">{tokenStats().count}</p>

@@ -418,6 +418,8 @@ pub trait IStatePort: Send + Sync {
         action: &str,
         reward: f64,
         next_state_key: &str,
+        rate_limited: bool,
+        openrouter_cost_usd: f64,
     ) -> Result<(), StateError>;
     async fn rl_get_stats(&self) -> Result<RlStats, StateError>;
 

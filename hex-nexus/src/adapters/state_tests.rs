@@ -210,7 +210,7 @@ mod contract_tests {
         assert!(!action_str.is_empty(), "Action should not be empty");
 
         let reward_result = port
-            .rl_record_reward("state-1", &action_str, 0.8, "state-2")
+            .rl_record_reward("state-1", &action_str, 0.8, "state-2", false, 0.0)
             .await;
         assert!(reward_result.is_ok(), "rl_record_reward failed: {:?}", reward_result.err());
 

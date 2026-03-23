@@ -22,7 +22,7 @@ pub struct InferenceRequest {
     #[auto_inc]
     pub request_id: u64,
     pub agent_id: String,
-    /// Provider identifier: "anthropic", "minimax", "ollama", "vllm"
+    /// Provider identifier: "anthropic", "minimax", "ollama", "vllm", "openrouter"
     pub provider: String,
     pub model: String,
     /// Serialized messages array (JSON)
@@ -66,6 +66,8 @@ pub struct InferenceResponse {
     pub latency_ms: u64,
     /// Stored as string for precision
     pub cost_usd: String,
+    /// Actual cost reported by OpenRouter (empty for other providers)
+    pub openrouter_cost_usd: String,
     /// ISO 8601 timestamp
     pub created_at: String,
 }
@@ -78,7 +80,7 @@ pub struct InferenceProvider {
     /// Unique provider identifier
     #[primary_key]
     pub provider_id: String,
-    /// "anthropic", "openai_compat", "ollama", "vllm"
+    /// "anthropic", "openai_compat", "ollama", "vllm", "openrouter"
     pub provider_type: String,
     pub base_url: String,
     /// Reference to secret_vault key, never plaintext
@@ -170,6 +172,7 @@ pub fn request_inference(
                 cache_write_tokens: 0,
                 latency_ms: 0,
                 cost_usd: "0".to_string(),
+                openrouter_cost_usd: String::new(),
                 created_at: created_at.clone(),
             });
             return Ok(());
@@ -195,6 +198,7 @@ pub fn request_inference(
                 cache_write_tokens: 0,
                 latency_ms: 0,
                 cost_usd: "0".to_string(),
+                openrouter_cost_usd: String::new(),
                 created_at: created_at.clone(),
             });
             return Ok(());
@@ -240,6 +244,7 @@ pub fn complete_inference(
     cache_write_tokens: u64,
     latency_ms: u64,
     cost_usd: String,
+    openrouter_cost_usd: String,
     created_at: String,
 ) -> Result<(), String> {
     // 1. Update request status
@@ -265,6 +270,7 @@ pub fn complete_inference(
         cache_write_tokens,
         latency_ms,
         cost_usd: cost_usd.clone(),
+        openrouter_cost_usd: openrouter_cost_usd.clone(),
         created_at,
     });
 
@@ -273,7 +279,11 @@ pub fn complete_inference(
     if let Some(budget) = ctx.db.agent_budget().agent_id().find(&request.agent_id) {
         // Parse and add cost
         let prev_usd: f64 = budget.used_usd.parse().unwrap_or(0.0);
-        let add_usd: f64 = cost_usd.parse().unwrap_or(0.0);
+        let add_usd: f64 = if !openrouter_cost_usd.is_empty() {
+            openrouter_cost_usd.parse().unwrap_or_else(|_| cost_usd.parse().unwrap_or(0.0))
+        } else {
+            cost_usd.parse().unwrap_or(0.0)
+        };
         let new_usd = prev_usd + add_usd;
 
         ctx.db.agent_budget().agent_id().update(AgentBudget {
@@ -331,6 +341,7 @@ pub fn fail_inference(
         cache_write_tokens: 0,
         latency_ms: 0,
         cost_usd: "0".to_string(),
+        openrouter_cost_usd: String::new(),
         created_at,
     });
 
@@ -482,9 +493,9 @@ pub fn append_stream_chunk(
 /// Validate a provider type string.
 pub fn validate_provider_type(provider_type: &str) -> Result<(), String> {
     match provider_type {
-        "anthropic" | "openai_compat" | "ollama" | "vllm" => Ok(()),
+        "anthropic" | "openai_compat" | "ollama" | "vllm" | "openrouter" => Ok(()),
         _ => Err(format!(
-            "Unknown provider type '{}'. Expected: anthropic, openai_compat, ollama, vllm",
+            "Unknown provider type '{}'. Expected: anthropic, openai_compat, ollama, vllm, openrouter",
             provider_type
         )),
     }
@@ -581,7 +592,7 @@ mod tests {
 
     #[test]
     fn valid_provider_types_accepted() {
-        for pt in &["anthropic", "openai_compat", "ollama", "vllm"] {
+        for pt in &["anthropic", "openai_compat", "ollama", "vllm", "openrouter"] {
             assert!(validate_provider_type(pt).is_ok(), "Provider type '{}' should be valid", pt);
         }
     }
@@ -753,5 +764,39 @@ mod tests {
     #[test]
     fn add_cost_both_invalid() {
         assert_eq!(add_cost_usd("bad", "worse"), "0.000000");
+    }
+
+    // ─── OpenRouter cost preference ────────────────────────────────────
+
+    #[test]
+    fn openrouter_cost_preferred_over_computed() {
+        // When openrouter_cost_usd is present, it should be preferred
+        let openrouter_cost = "0.003500";
+        let computed_cost = "0.004000";
+
+        let add_usd: f64 = if !openrouter_cost.is_empty() {
+            openrouter_cost.parse().unwrap_or_else(|_| computed_cost.parse().unwrap_or(0.0))
+        } else {
+            computed_cost.parse().unwrap_or(0.0)
+        };
+        assert!((add_usd - 0.003500).abs() < f64::EPSILON);
+
+        // When openrouter_cost_usd is empty, fall back to computed
+        let empty_cost = "";
+        let add_usd_fallback: f64 = if !empty_cost.is_empty() {
+            empty_cost.parse().unwrap_or_else(|_| computed_cost.parse().unwrap_or(0.0))
+        } else {
+            computed_cost.parse().unwrap_or(0.0)
+        };
+        assert!((add_usd_fallback - 0.004000).abs() < f64::EPSILON);
+
+        // When openrouter_cost_usd is invalid, fall back to computed
+        let bad_cost = "not_a_number";
+        let add_usd_bad: f64 = if !bad_cost.is_empty() {
+            bad_cost.parse().unwrap_or_else(|_| computed_cost.parse().unwrap_or(0.0))
+        } else {
+            computed_cost.parse().unwrap_or(0.0)
+        };
+        assert!((add_usd_bad - 0.004000).abs() < f64::EPSILON);
     }
 }

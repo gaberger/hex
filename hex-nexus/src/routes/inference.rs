@@ -119,16 +119,20 @@ pub async fn inference_complete(
     };
 
     match result {
-        Ok((content, model, input_tokens, output_tokens)) => {
+        Ok((content, model, input_tokens, output_tokens, openrouter_cost)) => {
             tracing::info!(model = %model, input_tokens, output_tokens, "inference/complete OK");
+            let mut resp = json!({
+                "content": content,
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            });
+            if !openrouter_cost.is_empty() {
+                resp["openrouter_cost_usd"] = json!(openrouter_cost);
+            }
             (
                 StatusCode::OK,
-                Json(json!({
-                    "content": content,
-                    "model": model,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                })),
+                Json(resp),
             )
         }
         Err(e) => {
