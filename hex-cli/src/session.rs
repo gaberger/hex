@@ -228,7 +228,8 @@ impl DevSession {
         Ok(summaries)
     }
 
-    /// Remove all `Completed` session files. Returns count of removed files.
+    /// Remove stale sessions (Failed, or InProgress with $0 cost).
+    /// Completed sessions are the audit trail and are preserved.
     pub fn clean_completed() -> Result<usize> {
         let dir = sessions_dir()?;
         if !dir.exists() {
@@ -247,9 +248,20 @@ impl DevSession {
             };
             let session: Self = match serde_json::from_str(&data) {
                 Ok(s) => s,
-                Err(_) => continue,
+                Err(_) => {
+                    // Corrupt file — remove it
+                    let _ = fs::remove_file(&path);
+                    count += 1;
+                    continue;
+                }
             };
-            if session.status == SessionStatus::Completed {
+            let should_remove = match session.status {
+                SessionStatus::Failed => true,
+                // Stale in-progress with no work done
+                SessionStatus::InProgress if session.total_cost_usd == 0.0 => true,
+                _ => false,
+            };
+            if should_remove {
                 fs::remove_file(&path)?;
                 count += 1;
             }
