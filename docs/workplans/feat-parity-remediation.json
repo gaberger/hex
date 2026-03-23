@@ -1,0 +1,156 @@
+{
+  "id": "wp-parity-remediation",
+  "feature": "CLI / MCP / Dashboard Parity Remediation",
+  "description": "Close the top parity gaps identified in the parity matrix. MCP at 23% coverage is the weakest surface. 60 orphaned REST endpoints need cleanup. ADR-2603222229.",
+  "adr": "ADR-2603222229",
+  "priority": "high",
+  "created_at": "2026-03-23T00:00:00Z",
+  "created_by": "planner",
+  "status": "planned",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Fix undiscoverable MCP tools",
+      "tier": 0,
+      "description": "5 inference tools are implemented in dispatch_tool() but missing from mcp-tools.json. hex_analyze_json is in mcp-tools.json but has no dispatch handler. Quick wins.",
+      "gate": { "type": "build", "command": "cargo build -p hex-cli --release", "blocking": true },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add 5 inference tools to mcp-tools.json",
+          "layer": "primary",
+          "description": "Add hex_inference_add, hex_inference_list, hex_inference_test, hex_inference_discover, hex_inference_remove to config/mcp-tools.json with proper inputSchema. Sync to hex-cli/assets/schemas/mcp-tools.json.",
+          "deps": [],
+          "files": ["config/mcp-tools.json", "hex-cli/assets/schemas/mcp-tools.json"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Implement hex_analyze_json dispatch",
+          "layer": "primary",
+          "description": "Add hex_analyze_json case to dispatch_tool() in mcp.rs. Should call same /api/analyze endpoint but return raw JSON instead of formatted text.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/mcp.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "Add hex task assign CLI command",
+          "layer": "primary",
+          "description": "Add Assign variant to TaskAction in hex-cli/src/commands/task.rs. MCP tool hex_hexflo_task_assign exists but no CLI equivalent.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/task.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Add enforcement + test MCP tools",
+      "tier": 1,
+      "description": "Enforcement and test commands exist in CLI but have zero MCP coverage. These are critical for open-model agents.",
+      "gate": { "type": "build", "command": "cargo build -p hex-cli --release", "blocking": true },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add enforce MCP tools",
+          "layer": "primary",
+          "description": "Add hex_enforce_list, hex_enforce_mode, hex_enforce_sync, hex_enforce_prompt to mcp-tools.json and dispatch_tool(). These let any MCP client query and manage enforcement rules.",
+          "deps": ["P1.1"],
+          "files": ["hex-cli/src/commands/mcp.rs", "config/mcp-tools.json"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Add test MCP tools",
+          "layer": "primary",
+          "description": "Add hex_test_history, hex_test_trends to mcp-tools.json and dispatch_tool(). These let agents query test health without CLI access.",
+          "deps": ["P1.1"],
+          "files": ["hex-cli/src/commands/mcp.rs", "config/mcp-tools.json"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.3",
+          "name": "Add project MCP tools",
+          "layer": "primary",
+          "description": "Add hex_project_list, hex_project_register to mcp-tools.json and dispatch_tool(). Project management is CLI-only today.",
+          "deps": ["P1.1"],
+          "files": ["hex-cli/src/commands/mcp.rs", "config/mcp-tools.json"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Add dashboard panes for CLI-only features",
+      "tier": 2,
+      "description": "Add dashboard views for features that currently only exist in CLI.",
+      "gate": { "type": "build", "command": "cargo build -p hex-nexus --release", "blocking": false },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Add inbox notification panel",
+          "layer": "primary",
+          "description": "Create InboxPane.tsx in hex-nexus/assets/src/components/. Show unacked notifications with priority, source, payload. Ack button. REST: GET /api/hexflo/inbox/{agent_id}, PATCH /api/hexflo/inbox/{id}/ack.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/project/InboxPane.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Add enforcement rules panel",
+          "layer": "primary",
+          "description": "Create EnforcementPane.tsx. Show all rules (local + SpacetimeDB), enforcement mode, enable/disable toggle. REST: GET /api/hexflo/enforcement-rules.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/project/EnforcementPane.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.3",
+          "name": "Add test health panel",
+          "layer": "primary",
+          "description": "Create TestHealthPane.tsx. Show recent test sessions, pass/fail trends, flaky tests. REST: GET /api/test-sessions, /api/test-sessions/trends, /api/test-sessions/flaky.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/project/TestHealthPane.tsx"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Audit and clean orphaned REST endpoints",
+      "tier": 3,
+      "description": "60 REST endpoints (41%) have zero consumers. Deprecate or remove them.",
+      "gate": { "type": "build", "command": "cargo build -p hex-nexus --release", "blocking": false },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Classify orphaned endpoints",
+          "layer": "secondary",
+          "description": "For each of the 60 orphaned endpoints: mark as keep (will gain consumer), deprecate (add X-Deprecated header), or remove. Focus on: 13 coordination endpoints, 6 RL endpoints, 5 per-project query endpoints.",
+          "deps": [],
+          "files": ["docs/analysis/orphaned-endpoint-decisions.md"],
+          "agent": "planner"
+        },
+        {
+          "id": "P4.2",
+          "name": "Remove or deprecate endpoints",
+          "layer": "secondary",
+          "description": "Execute decisions from P4.1. Remove endpoints marked for removal. Add deprecation_layer to endpoints marked for deprecation.",
+          "deps": ["P4.1"],
+          "files": ["hex-nexus/src/routes/mod.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ],
+  "success_metrics": [
+    "MCP coverage rises from 23% to 50%+",
+    "All implemented MCP tools are discoverable in mcp-tools.json",
+    "Dashboard has inbox, enforcement, and test health panels",
+    "Orphaned REST endpoints classified and actioned",
+    "hex_analyze_json dispatches correctly"
+  ],
+  "dependency_order": "P1 (tier 0) → P2 (tier 1) → P3 (tier 2) → P4 (tier 3)",
+  "estimated_agents": 4
+}

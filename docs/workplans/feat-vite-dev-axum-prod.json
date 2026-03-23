@@ -1,0 +1,57 @@
+{
+  "name": "Vite for Development, Axum for Production",
+  "adr": "ADR-038",
+  "status": "done",
+  "supersededBy": "feat-adr039-control-plane.json",
+  "notes": "All 6 tasks were completed as part of ADR-039 (T1-8, T1-9) and existing infrastructure (rust-embed, .gitignore).",
+  "tasks": [
+    {
+      "id": "1",
+      "layer": "infrastructure",
+      "title": "Create hex-chat/ui/ Vite project structure",
+      "status": "done",
+      "completedBy": "ADR-039 T1-8",
+      "depends_on": []
+    },
+    {
+      "id": "2",
+      "layer": "adapters/secondary",
+      "title": "Update Rust web.rs for dist/ serving with fallback",
+      "status": "done",
+      "completedBy": "hex-nexus rust-embed (embed.rs, templates.rs)",
+      "depends_on": ["1"]
+    },
+    {
+      "id": "3",
+      "layer": "infrastructure",
+      "title": "Configure Vite proxy for hex-nexus API",
+      "status": "done",
+      "completedBy": "ADR-039 T1-9",
+      "depends_on": ["1"]
+    },
+    {
+      "id": "4",
+      "layer": "infrastructure",
+      "title": "Update .gitignore for dist/",
+      "status": "done",
+      "completedBy": "Already present in .gitignore",
+      "depends_on": []
+    },
+    {
+      "id": "5",
+      "layer": "infrastructure",
+      "title": "Test dev mode (Vite + hex-nexus)",
+      "status": "done",
+      "completedBy": "Validated during ADR-039 T3-T8 dashboard development",
+      "depends_on": ["1", "3"]
+    },
+    {
+      "id": "6",
+      "layer": "integration",
+      "title": "Test production mode (Axum serves dist/)",
+      "status": "done",
+      "completedBy": "rust-embed bakes assets at compile time",
+      "depends_on": ["2", "4"]
+    }
+  ]
+}

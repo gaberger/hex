@@ -1,0 +1,129 @@
+{
+  "id": "wp-agent-identity-disambiguation",
+  "feature": "Multi-Instance Agent Identity Disambiguation",
+  "description": "Fix agent identity resolution so multiple concurrent Claude Code instances in the same project each show their own unique agent ID on the statusline and dashboard. Adds claude_pid to session state, PPID-chain matching in statusline, short ID display in dashboard AgentCard, and updates resolve_agent_id() across all call sites.",
+  "adr": "ADR-065",
+  "priority": "high",
+  "created_at": "2026-03-22T22:30:00Z",
+  "created_by": "planner",
+  "status": "done",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Session State Schema + Hook Registration",
+      "tier": 0,
+      "description": "Add claude_pid field to SessionState struct. Set it via parent_id() in register_session_agent() and try_lazy_register(). This is the foundation — all other changes depend on session files containing claude_pid.",
+      "gate": { "type": "build", "command": "cargo check -p hex-cli", "blocking": true },
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Add claude_pid to SessionState struct",
+          "layer": "domain",
+          "description": "Add `claude_pid: Option<u32>` with serde default to SessionState in hook.rs. Set via std::os::unix::process::parent_id() in both register_session_agent() and try_lazy_register().",
+          "deps": [],
+          "files": ["hex-cli/src/commands/hook.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Statusline PPID-Chain Matching",
+      "tier": 2,
+      "description": "Update hex-statusline.cjs to walk the PPID chain via ps, match session files by claude_pid, and display name:shortId format for uniqueness.",
+      "gate": { "type": "build", "command": "node scripts/hex-statusline.cjs", "blocking": false },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "PPID-chain session matching in statusline",
+          "layer": "primary",
+          "description": "Replace 'newest file' strategy with PPID-chain walk. Collect ancestor PIDs via ps, match session files by claude_pid field. Fallback to newest for legacy files without claude_pid.",
+          "deps": ["P0.1"],
+          "files": ["scripts/hex-statusline.cjs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Display name:shortId format",
+          "layer": "primary",
+          "description": "Always show {name}:{8-char-uuid} on statusline for uniqueness across concurrent agents. E.g. claude-jaco2.lan:d9c3b1c0",
+          "deps": ["P0.1"],
+          "files": ["scripts/hex-statusline.cjs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Dashboard Agent Identity",
+      "tier": 2,
+      "description": "Add 8-char short ID display to AgentCard component in dashboard assets for visual disambiguation.",
+      "gate": { "type": "build", "command": "cd hex-nexus && cargo build --release", "blocking": true },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add short ID to AgentCard",
+          "layer": "primary",
+          "description": "Show 8-char agent ID prefix in monospace font next to agent name. Full UUID on hover via title attribute.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/agent/AgentCard.tsx"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Resolve Agent ID Unification",
+      "tier": 1,
+      "description": "Update all resolve_agent_id() call sites to use the priority order: CLAUDE_SESSION_ID → HEX_AGENT_ID → claude_pid PPID match → filtered newest. Currently duplicated across nexus_client.rs, mcp.rs, test.rs, agent.rs.",
+      "gate": { "type": "build", "command": "cargo check -p hex-cli", "blocking": true },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Add claude_pid matching to nexus_client::read_session_agent_id",
+          "layer": "secondary",
+          "description": "After CLAUDE_SESSION_ID check fails, walk PPID chain and match session files by claude_pid field before falling back to newest. This is the primary resolution path used by MCP tools.",
+          "deps": ["P0.1"],
+          "files": ["hex-cli/src/nexus_client.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Unify resolve_agent_id across mcp.rs, test.rs, agent.rs",
+          "layer": "secondary",
+          "description": "DRY: Replace duplicated resolve_agent_id() functions in mcp.rs, test.rs, and agent.rs with calls to the canonical implementation in nexus_client.rs. All should use the same priority chain.",
+          "deps": ["P3.1"],
+          "files": ["hex-cli/src/commands/mcp.rs", "hex-cli/src/commands/test.rs", "hex-cli/src/commands/agent.rs", "hex-cli/src/nexus_client.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Build + Validate",
+      "tier": 4,
+      "description": "Rebuild hex-cli and hex-nexus binaries. Verify the session file contains claude_pid after restart. Verify statusline shows correct unique identity per instance.",
+      "gate": { "type": "build", "command": "cargo build -p hex-cli -p hex-nexus --release", "blocking": true },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Rebuild binaries and restart nexus",
+          "layer": "primary",
+          "description": "cargo build --release for hex-cli and hex-nexus. Restart nexus daemon. Verify session file contains claude_pid after new session-start hook fires.",
+          "deps": ["P0.1", "P1.1", "P1.2", "P2.1", "P3.2"],
+          "files": [],
+          "agent": "integrator"
+        },
+        {
+          "id": "P4.2",
+          "name": "Multi-instance validation",
+          "layer": "primary",
+          "description": "Open two Claude Code instances in hex-intf. Verify each shows a different shortId on its statusline. Verify dashboard AgentFleet shows both with distinct short IDs.",
+          "deps": ["P4.1"],
+          "files": [],
+          "agent": "integrator"
+        }
+      ]
+    }
+  ]
+}

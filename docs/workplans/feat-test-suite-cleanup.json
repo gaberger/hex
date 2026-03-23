@@ -1,0 +1,99 @@
+{
+  "id": "wp-test-suite-cleanup",
+  "feature": "Test Suite Cleanup — Fix Skipped Tests",
+  "description": "27 tests were failing due to missing TS usecases (Rust migration), stale hex-hub E2E expectations, and unavailable tree-sitter native bindings. Tests are now skipped/renamed. This workplan tracks the proper fixes to restore full coverage.",
+  "adr": "ADR-035",
+  "priority": "normal",
+  "created_at": "2026-03-22T00:00:00Z",
+  "created_by": "planner",
+  "status": "planned",
+  "status_note": "Tests skipped in session 2026-03-22. 900 pass / 0 fail / 62 skip / 4 todo.",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Delete Dead Tests (hex-hub E2E)",
+      "tier": 0,
+      "description": "hex-hub was retired and replaced by hex-nexus. The E2E test file uses old hex-hub API expectations. Either delete or rewrite for hex-nexus REST API.",
+      "gate": { "type": "test", "command": "bun test", "blocking": true },
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Rewrite hex-nexus E2E tests for current REST API",
+          "layer": "primary",
+          "description": "tests/e2e/hex-nexus.test.ts is describe.skip. Rewrite to test current hex-nexus endpoints: /api/health, /api/hex-agents/connect, /api/swarms, /api/hexflo/memory, /api/hexflo/inbox. Requires cargo build -p hex-nexus --release first.",
+          "deps": [],
+          "files": ["tests/e2e/hex-nexus.test.ts"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Restore TS Usecase Tests or Delete",
+      "tier": 1,
+      "description": "8 test files reference TS usecases (layer-classifier, path-normalizer, import-boundary-checker, arch-analyzer) that no longer exist. These usecases were migrated to Rust in hex-nexus/src/analysis/. Decision: delete the TS tests and write Rust equivalents, or restore the TS modules.",
+      "gate": { "type": "test", "command": "bun test", "blocking": true },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Decide: delete TS usecase tests or restore TS modules",
+          "layer": "domain",
+          "description": "The usecases (layer-classifier, path-normalizer, import-boundary-checker, arch-analyzer) were migrated to Rust. If ADR-035 is proceeding, delete the TS test files. If hybrid mode continues, restore the TS modules.",
+          "deps": [],
+          "files": [],
+          "agent": "planner"
+        },
+        {
+          "id": "P1.2",
+          "name": "Delete or fix 8 skipped test files",
+          "layer": "domain",
+          "description": "Files renamed to .skip.ts: tests/unit/arch-analyzer, layer-classifier, path-normalizer, import-boundary-checker, treesitter-multilang. Property tests: import-boundary, layer-classifier, path-normalizer. Smoke test: 4 it.todo entries in imports.smoke.test.ts.",
+          "deps": ["P1.1"],
+          "files": [
+            "tests/unit/arch-analyzer.test.skip.ts",
+            "tests/unit/layer-classifier.test.skip.ts",
+            "tests/unit/path-normalizer.test.skip.ts",
+            "tests/unit/import-boundary-checker.test.skip.ts",
+            "tests/unit/treesitter-multilang.test.skip.ts",
+            "tests/property/import-boundary.property.test.skip.ts",
+            "tests/property/layer-classifier.property.test.skip.ts",
+            "tests/property/path-normalizer.property.test.skip.ts",
+            "tests/smoke/imports.smoke.test.ts"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Fix Tree-Sitter Integration Tests",
+      "tier": 2,
+      "description": "3 test files skip because tree-sitter WASM grammars or native NAPI bindings aren't available in the test environment. Fix: either install grammars in test setup, or mock the tree-sitter layer.",
+      "gate": { "type": "test", "command": "bun test", "blocking": true },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Ensure tree-sitter WASM grammars are installed for tests",
+          "layer": "secondary",
+          "description": "native-treesitter.test.ts, treesitter-ast.test.ts, scoped-analysis.test.ts all need tree-sitter grammars. Add a test setup script or bun pretest hook that verifies grammars exist.",
+          "deps": [],
+          "files": [
+            "tests/integration/native-treesitter.test.ts",
+            "tests/integration/treesitter-ast.test.ts",
+            "tests/integration/scoped-analysis.test.ts"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Restore self-analysis E2E test",
+          "layer": "primary",
+          "description": "tests/e2e/self-analysis.test.ts needs tree-sitter WASM + import path normalization. Depends on P2.1.",
+          "deps": ["P2.1"],
+          "files": ["tests/e2e/self-analysis.test.ts"],
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ]
+}

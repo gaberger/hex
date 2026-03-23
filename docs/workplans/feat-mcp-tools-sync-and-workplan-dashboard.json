@@ -1,0 +1,95 @@
+{
+  "id": "wp-mcp-tools-sync-workplan-dashboard-2026-03-21",
+  "title": "MCP Tool Registry Sync + Workplan Dashboard Visibility",
+  "description": "MCP tool definitions are now decoupled to config/mcp-tools.json. This workplan syncs them into SpacetimeDB on nexus startup (ADR-044 pattern) and adds workplan execution visibility to the project dashboard.",
+  "created_at": "2026-03-21",
+  "created_by": "planner",
+  "priority": "high",
+  "status": "planned",
+  "related_adrs": ["ADR-044 (Config Sync)", "ADR-039 (Nexus Control Plane)", "ADR-046 (Workplan Reporting)"],
+  "phases": [
+    {
+      "id": "P1",
+      "name": "SpacetimeDB MCP Tool Table + Sync",
+      "tier": 0,
+      "description": "Create a SpacetimeDB table for MCP tool definitions and sync from config/mcp-tools.json on nexus startup.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus --release",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add mcp_tool table to hexflo-coordination WASM module",
+          "layer": "secondary",
+          "description": "Add a new SpacetimeDB table `mcp_tool` with fields: name (String, primary_key), category (String), description (String), route_method (String), route_path (String), input_schema (String as JSON), version (String), synced_at (String). Add a reducer `mcp_tool_sync(name, category, description, route_method, route_path, input_schema, version)` that upserts the tool definition.",
+          "deps": [],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Add tool sync to nexus config_sync on startup",
+          "layer": "usecases",
+          "description": "In hex-nexus config_sync, read config/mcp-tools.json and call the mcp_tool_sync reducer for each tool. This follows the ADR-044 pattern: repo files are source of truth, SpacetimeDB is distribution. Add a sync_mcp_tools() function that loads the JSON, iterates tools, and calls the reducer via the SpacetimeDB client.",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/src/config_sync.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "Add REST endpoint for tool registry",
+          "layer": "primary",
+          "description": "GET /api/tools — returns all registered MCP tools from SpacetimeDB (or from config/mcp-tools.json as fallback). Useful for dashboard and external clients to discover available tools.",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/src/routes/mod.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Dashboard Workplan View",
+      "tier": 1,
+      "description": "Add workplan execution visibility to the hex-nexus dashboard. Shows active/historical workplan executions with phase progress, agent assignments, and gate results.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus --release",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Create workplan data store",
+          "layer": "secondary",
+          "description": "Create hex-nexus/assets/src/stores/workplan.ts — a Solid.js store that fetches workplan data from GET /api/workplan/list and GET /api/workplan/{id}/report. Polls every 5s when a workplan is active. Exports: workplans() signal with list, activeWorkplan() for current execution, and fetchReport(id) action.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/stores/workplan.ts"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Create WorkplanView component",
+          "layer": "primary",
+          "description": "Create hex-nexus/assets/src/components/views/WorkplanView.tsx — the main workplan dashboard view. Shows: (1) Active execution banner with phase progress bar, (2) Execution history table (id, feature, status, phases completed/total, duration, agents), (3) Expandable detail panel for selected execution showing phase breakdown, gate results, and git commits. Use existing dashboard CSS variables and table patterns from AgentFleet.tsx.",
+          "deps": ["P2.1"],
+          "files": ["hex-nexus/assets/src/components/views/WorkplanView.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.3",
+          "name": "Wire WorkplanView into dashboard router",
+          "layer": "primary",
+          "description": "Add 'Workplans' nav item to the dashboard sidebar/navigation. Wire the WorkplanView component into the router so it's accessible at the /workplans path. Add a workplan status indicator to the project detail view showing active execution count.",
+          "deps": ["P2.2"],
+          "files": [
+            "hex-nexus/assets/src/app/App.tsx",
+            "hex-nexus/assets/src/components/views/ProjectDetail.tsx"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ]
+}

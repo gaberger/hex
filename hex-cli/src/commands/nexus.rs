@@ -856,8 +856,8 @@ async fn auto_register_project(nexus: &crate::nexus_client::NexusClient, project
     // SpacetimeDB module replay can take >7.5s on cold start, and the nexus
     // state port needs time to connect after that. Total wait budget: ~12s.
     let delays = [2, 3, 4, 3]; // seconds between attempts
-    for attempt in 0..4 {
-        tokio::time::sleep(std::time::Duration::from_secs(delays[attempt])).await;
+    for (attempt, delay) in delays.iter().enumerate() {
+        tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
         // Check if already registered
         if let Ok(resp) = nexus.get("/api/projects").await {
             if let Some(projects) = resp.get("projects").and_then(|v| v.as_array()) {

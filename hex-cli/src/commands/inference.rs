@@ -579,10 +579,9 @@ async fn discover_openrouter(filter: Option<&str>, min_context: Option<u64>) -> 
                 "secret_key": "OPENROUTER_API_KEY",
             });
 
-            match client.post("/api/inference/register", &reg_body).await {
-                Ok(_) => registered += 1,
-                Err(_) => {} // Silent — don't spam on registration failures
-            }
+            if client.post("/api/inference/register", &reg_body).await.is_ok() {
+                registered += 1;
+            } // Silent — don't spam on registration failures
         }
 
         count += 1;

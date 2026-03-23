@@ -1,0 +1,157 @@
+{
+  "id": "feat-worktree-enforcement",
+  "title": "Feature: Worktree Enforcement in Agent Hooks — close the gap between ADR-004 and actual agent behavior",
+  "specs": null,
+  "adr": "ADR-2603231700",
+  "created": "2026-03-23",
+  "status": "pending",
+  "status_note": "Critical — without this, all swarm features bypass worktree isolation",
+  "topology": "pipeline",
+  "budget": "~40000 tokens",
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Extend SessionState in hook.rs with worktree_path (Option<String>) and allowed_paths (Vec<String>). These fields track the active worktree and permitted file paths for the current task. Update save/load to handle new fields with serde defaults for backward compatibility.",
+      "layer": "domain",
+      "adapter": "hooks",
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/worktree-enforcement/session-state",
+      "done_condition": "SessionState serializes/deserializes with new fields; existing session files load without error (serde defaults)"
+    },
+    {
+      "id": "step-2",
+      "description": "Add workplan step resolution to pre-agent hook. When HEXFLO_TASK:{uuid} is present: (1) load active workplan JSON from docs/workplans/, (2) match task title against workplan steps (fuzzy match on step description or step-N ID), (3) extract worktree_branch and layer/adapter fields. Store resolved worktree_branch in session state. If workplan not found or step not matched, warn but allow (fail-open).",
+      "layer": "usecases",
+      "adapter": "hooks",
+      "port": null,
+      "dependencies": ["step-1"],
+      "tier": 1,
+      "specs": [],
+      "worktree_branch": "feat/worktree-enforcement/workplan-resolution",
+      "done_condition": "pre-agent resolves task UUID to workplan step; worktree_branch stored in session state; fail-open when workplan missing"
+    },
+    {
+      "id": "step-3",
+      "description": "Add worktree auto-creation in pre-agent hook. After resolving worktree_branch: (1) run git worktree list to check if it exists, (2) if not, run git worktree add <path> -b <branch> from project root, (3) path format: ../{project}-worktrees/feat/{feature}/{adapter}, (4) validate branch name matches feat/*/* pattern, (5) store worktree_path in session state, (6) output HEXFLO_WORKTREE_PATH=<path> to stdout so the orchestrator can include it in the agent prompt. Respect MAX_WORKTREES=8 limit — block if at capacity.",
+      "layer": "adapters/primary",
+      "adapter": "hooks",
+      "port": null,
+      "dependencies": ["step-2"],
+      "tier": 2,
+      "specs": [],
+      "worktree_branch": "feat/worktree-enforcement/auto-create",
+      "done_condition": "Worktree auto-created on first agent spawn for a task; path output to stdout; blocked at 8 concurrent worktrees; branch naming validated"
+    },
+    {
+      "id": "step-4",
+      "description": "Add adapter boundary enforcement to pre-edit hook. When session state has allowed_paths (derived from task's layer/adapter): (1) resolve the file path being edited from TOOL_INPUT, (2) check if it falls within the allowed boundary, (3) docs/, tests/, config/ always allowed (cross-cutting), (4) if outside boundary and mode is mandatory: block with exit 2 and message showing allowed paths, (5) if advisory: warn but allow. Boundary mapping: domain→domain/, ports→ports/, adapters/secondary/{name}→files matching adapter name, usecases→usecases/+composition-root, integration→tests/.",
+      "layer": "adapters/primary",
+      "adapter": "hooks",
+      "port": null,
+      "dependencies": ["step-1"],
+      "tier": 1,
+      "specs": [],
+      "worktree_branch": "feat/worktree-enforcement/boundary-check",
+      "done_condition": "pre-edit blocks edits outside adapter boundary in mandatory mode; warns in advisory mode; docs/tests always allowed"
+    },
+    {
+      "id": "step-5",
+      "description": "Add dependency order enforcement to pre-agent hook. Before allowing a task to start: (1) load workplan steps, (2) find current step's dependencies[], (3) for each dependency, resolve its HexFlo task ID and check status via GET /api/swarms/tasks/{id}, (4) if any dependency is not 'completed': block with exit 2 and message listing incomplete dependencies, (5) cache dependency check result in session state for 30s to avoid repeated API calls. Fail-open if nexus is unreachable.",
+      "layer": "usecases",
+      "adapter": "hooks",
+      "port": null,
+      "dependencies": ["step-2"],
+      "tier": 2,
+      "specs": [],
+      "worktree_branch": "feat/worktree-enforcement/dependency-order",
+      "done_condition": "pre-agent blocks task when dependencies incomplete; allows when all deps completed; fail-open when nexus unreachable"
+    },
+    {
+      "id": "step-6",
+      "description": "Add auto-merge and cleanup to subagent-stop hook. After marking a task complete: (1) check if all tasks in the same tier are completed, (2) if yes, run feature-workflow.sh merge for that tier's worktrees (in dependency order), (3) if merge succeeds, run feature-workflow.sh cleanup for merged worktrees, (4) if ALL workplan tasks are complete, update workplan status to 'done'. Log all merge/cleanup operations. Do not auto-merge if any task in the tier failed.",
+      "layer": "adapters/primary",
+      "adapter": "hooks",
+      "port": null,
+      "dependencies": ["step-3", "step-5"],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/worktree-enforcement/auto-merge",
+      "done_condition": "Tier completion triggers automatic merge in dependency order; cleanup removes merged worktrees; workplan marked done when all complete"
+    },
+    {
+      "id": "step-7",
+      "description": "Add hex agent audit command to hex-cli. Scans git log for commits by agents (Co-Authored-By: Claude) and cross-references with HexFlo task completions. Flags: (1) commits on main without associated worktree branch, (2) agents that edited files outside their assigned boundary, (3) tasks completed without matching git commits. Output as a compliance report with pass/warn/fail per task.",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "port": null,
+      "dependencies": ["step-3", "step-4"],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/worktree-enforcement/audit",
+      "done_condition": "hex agent audit produces compliance report; flags main-branch agent edits and boundary violations"
+    },
+    {
+      "id": "step-8",
+      "description": "Integration tests: (1) spawn mock background agent with HEXFLO_TASK — verify worktree auto-created, (2) attempt edit outside boundary — verify blocked in mandatory mode, (3) spawn task with incomplete dependency — verify blocked, (4) complete all tier tasks — verify auto-merge triggered, (5) hex agent audit on test commits — verify report flags violations. Run hex analyze to verify no boundary violations in the enforcement code itself.",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": ["step-6", "step-7"],
+      "tier": 4,
+      "specs": [],
+      "worktree_branch": "feat/worktree-enforcement/integration",
+      "done_condition": "All integration tests pass; hex analyze clean; enforcement hooks work end-to-end"
+    }
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  },
+  "mergeOrder": [
+    "step-1 (session state — tier 0, all others depend on it)",
+    "step-1 → step-2, step-4 parallel (workplan resolution + boundary check — tier 1)",
+    "step-2 → step-3, step-5 parallel (auto-create + dependency order — tier 2)",
+    "step-3 + step-5 → step-6 (auto-merge — needs worktrees + dependency checking)",
+    "step-3 + step-4 → step-7 (audit — needs worktree tracking + boundary rules)",
+    "step-6 + step-7 → step-8 (integration tests — all features)"
+  ],
+  "riskRegister": [
+    {
+      "risk": "Worktree creation fails due to uncommitted changes on main",
+      "impact": "high",
+      "mitigation": "pre-agent checks git status before worktree add; stash uncommitted changes or block with message"
+    },
+    {
+      "risk": "Workplan JSON format inconsistency — step IDs don't match HexFlo task titles",
+      "impact": "medium",
+      "mitigation": "Fuzzy matching on step description; include step-N ID in HexFlo task title as convention"
+    },
+    {
+      "risk": "Auto-merge conflicts between worktrees",
+      "impact": "high",
+      "mitigation": "Rebase-first strategy (ADR-004); if conflict detected, block auto-merge and notify user via inbox (ADR-060)"
+    },
+    {
+      "risk": "Disk exhaustion from too many worktrees",
+      "impact": "medium",
+      "mitigation": "MAX_WORKTREES=8 enforced; stale detection flags worktrees >24h without commits"
+    },
+    {
+      "risk": "Hook latency — worktree resolution adds time to every agent spawn",
+      "impact": "low",
+      "mitigation": "Cache workplan resolution in session state; git worktree list is fast (<50ms)"
+    }
+  ],
+  "successCriteria": [
+    "Background agent with HEXFLO_TASK automatically gets its own worktree (not main)",
+    "Agent attempting to edit file outside its adapter boundary is blocked with clear message",
+    "Agent cannot start until its dependency tasks are completed",
+    "Completing all tier tasks triggers automatic merge in correct dependency order",
+    "hex agent audit correctly flags main-branch agent edits as violations",
+    "Entire enforcement pipeline adds <3s to agent spawn time",
+    "Existing non-worktree workflows (foreground agents, read-only agents) are unaffected"
+  ]
+}

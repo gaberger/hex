@@ -1,0 +1,102 @@
+{
+  "feature": "hex-nexus-remaining",
+  "adr": "ADR-024",
+  "status": "in_progress",
+  "status_note": "R1 (commits) likely done — hex-nexus and hex-agent are tracked in git. R2 (build verify) needs recheck after architecture evolution. R3 (E2E tests) not started. Some tasks may be obsolete (RL engine deprioritized, hex-hub retired).",
+  "description": "Remaining work from the original hex-nexus workplan — E2E integration tests and uncommitted stabilization",
+  "parent_workplan": "feat-hex-nexus.json",
+  "completed_phases": ["P1", "P2", "P3", "P4", "P5", "P6", "P7.1", "P7.2"],
+  "phases": [
+    {
+      "id": "R1",
+      "name": "Commit Uncommitted Work",
+      "tier": 0,
+      "tasks": [
+        {
+          "id": "R1.1",
+          "name": "Stage and commit hex-nexus extraction",
+          "layer": "infrastructure",
+          "description": "hex-nexus/ is a new crate extracted from hex-hub/ (lib vs binary split). All source files are untracked or modified. Stage hex-nexus/, updated hex-hub/, and root Cargo.toml workspace changes. Commit as a single logical unit.",
+          "deps": [],
+          "files": ["hex-nexus/", "hex-hub/", "Cargo.toml", "Cargo.lock"]
+        },
+        {
+          "id": "R1.2",
+          "name": "Stage and commit new hex-agent files",
+          "layer": "infrastructure",
+          "description": "Several hex-agent files are untracked: build.rs, lib.rs, hub_client.rs, rl_client.rs, migrate.rs, rl port, hook_dispatch, skill_trigger, tests/. Commit these additions.",
+          "deps": [],
+          "files": [
+            "hex-agent/build.rs",
+            "hex-agent/src/lib.rs",
+            "hex-agent/src/adapters/primary/migrate.rs",
+            "hex-agent/src/adapters/secondary/hub_client.rs",
+            "hex-agent/src/adapters/secondary/rl_client.rs",
+            "hex-agent/src/ports/rl.rs",
+            "hex-agent/src/usecases/hook_dispatch.rs",
+            "hex-agent/src/usecases/skill_trigger.rs",
+            "hex-agent/tests/"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "name": "Cargo Build Verification",
+      "tier": 1,
+      "tasks": [
+        {
+          "id": "R2.1",
+          "name": "Verify workspace builds cleanly",
+          "layer": "infrastructure",
+          "description": "Run 'cargo build --workspace' and fix any compilation errors in hex-agent, hex-hub, hex-nexus, hex-desktop. Ensure feature flags (spacetimedb) compile correctly.",
+          "deps": ["R1.1", "R1.2"],
+          "files": []
+        }
+      ]
+    },
+    {
+      "id": "R3",
+      "name": "E2E Integration Tests (P7.3)",
+      "tier": 2,
+      "tasks": [
+        {
+          "id": "R3.1",
+          "name": "Hub-agent spawn test",
+          "layer": "test",
+          "description": "Test that hex-hub can spawn a hex-agent process, establish WebSocket connection, and exchange heartbeats. Use mock Anthropic endpoint.",
+          "deps": ["R2.1"],
+          "files": ["hex-nexus/tests/agent_spawn_test.rs"]
+        },
+        {
+          "id": "R3.2",
+          "name": "Chat round-trip test",
+          "layer": "test",
+          "description": "Send chat message via WS → hub routes to agent → agent calls mock Anthropic → response streams back via WS. Verify tool_use round-trip.",
+          "deps": ["R3.1"],
+          "files": ["hex-nexus/tests/chat_roundtrip_test.rs"]
+        },
+        {
+          "id": "R3.3",
+          "name": "RL experience recording test",
+          "layer": "test",
+          "description": "After a successful agent task, verify that an RL experience is recorded in the Q-table and patterns are stored with correct confidence scores.",
+          "deps": ["R2.1"],
+          "files": ["hex-nexus/tests/rl_integration_test.rs"]
+        },
+        {
+          "id": "R3.4",
+          "name": "Workplan multi-phase execution test",
+          "layer": "test",
+          "description": "Feed a 2-phase workplan JSON to the orchestration API. Verify phases execute in tier order, tasks are tracked, and completion status is reported via WS.",
+          "deps": ["R3.1"],
+          "files": ["hex-nexus/tests/workplan_e2e_test.rs"]
+        }
+      ]
+    }
+  ],
+  "estimated_loc": {
+    "commits": "~0 new LOC (staging existing work)",
+    "tests": "~600 Rust LOC"
+  }
+}

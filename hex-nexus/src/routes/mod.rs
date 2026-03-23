@@ -1,5 +1,6 @@
 pub mod adrs;
 pub mod agents;
+pub mod browse;
 pub mod files;
 pub mod stdb;
 pub mod analysis;
@@ -205,6 +206,76 @@ async fn workplan_files() -> Json<serde_json::Value> {
     }
 
     Json(json!({ "ok": false, "count": 0, "workplans": [], "error": "docs/workplans/ not found" }))
+}
+
+/// GET /api/projects/{id}/workplans — list workplan files from a project's docs/workplans/ directory.
+/// Accepts optional `?root=/abs/path` query param as fallback when project lookup fails.
+async fn project_workplan_files(
+    axum::extract::Path(project_id): axum::extract::Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::State(state): axum::extract::State<crate::state::SharedState>,
+) -> Json<serde_json::Value> {
+    // Resolve project root: try state port first, then ?root= fallback
+    let root_path = match state.state_port.as_ref() {
+        Some(sp) => match sp.project_find(&project_id).await {
+            Ok(Some(p)) => p.root_path,
+            _ => match params.get("root") {
+                Some(r) if !r.is_empty() && std::path::Path::new(r).is_dir() => r.clone(),
+                _ => return Json(json!({ "ok": false, "count": 0, "workplans": [], "error": format!("Project '{}' not found", project_id) })),
+            },
+        },
+        None => match params.get("root") {
+            Some(r) if !r.is_empty() && std::path::Path::new(r).is_dir() => r.clone(),
+            _ => return Json(json!({ "ok": false, "count": 0, "workplans": [], "error": "State port not configured" })),
+        },
+    };
+
+    let dir = std::path::PathBuf::from(&root_path).join("docs/workplans");
+    if !dir.is_dir() {
+        return Json(json!({ "ok": false, "count": 0, "workplans": [], "error": "docs/workplans/ not found" }));
+    }
+
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return Json(json!({ "ok": false, "count": 0, "workplans": [], "error": "Cannot read docs/workplans/" })),
+    };
+
+    let mut workplans = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let filename = entry.file_name().to_string_lossy().to_string();
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                let phase_count = parsed.get("phases").and_then(|p| p.as_array()).map(|a| a.len()).unwrap_or(0);
+                let task_count: usize = parsed.get("phases").and_then(|p| p.as_array())
+                    .map(|phases| phases.iter().filter_map(|ph| ph.get("tasks").and_then(|t| t.as_array())).map(|t| t.len()).sum())
+                    .unwrap_or(0);
+                workplans.push(json!({
+                    "file": filename,
+                    "id": parsed.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                    "title": parsed.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                    "status": parsed.get("status").and_then(|v| v.as_str()).unwrap_or("active"),
+                    "priority": parsed.get("priority").and_then(|v| v.as_str()).unwrap_or(""),
+                    "created_at": parsed.get("created_at").and_then(|v| v.as_str()).unwrap_or(""),
+                    "phases": phase_count,
+                    "tasks": task_count,
+                    "related_adrs": parsed.get("related_adrs").cloned().unwrap_or(json!([])),
+                }));
+            }
+        }
+    }
+
+    workplans.sort_by(|a, b| {
+        let pa = a["priority"].as_str().unwrap_or("");
+        let pb = b["priority"].as_str().unwrap_or("");
+        let order = |p: &str| match p { "critical" => 0, "high" => 1, "medium" => 2, "low" => 3, _ => 4 };
+        order(pa).cmp(&order(pb))
+    });
+
+    Json(json!({ "ok": true, "count": workplans.len(), "workplans": workplans }))
 }
 
 /// GET /api/adr/next — return the next available ADR number (atomic read).
@@ -473,6 +544,11 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/tools", get(tools_registry))
         // Workplan file definitions — reads docs/workplans/*.json from disk
         .route("/api/workplans", get(workplan_files))
+        // Project-scoped workplan files (dashboard passes ?root= as fallback)
+        .route("/api/projects/{id}/workplans", get(project_workplan_files))
+        // Project-scoped file browsing (ADR-045)
+        .route("/api/{project_id}/browse", get(browse::browse_dir))
+        .route("/api/{project_id}/read/{*path}", get(browse::read_file))
         // Fleet (remote compute)
         .route("/api/fleet", get(fleet::list_nodes))
         .route("/api/fleet/register", post(fleet::register_node)

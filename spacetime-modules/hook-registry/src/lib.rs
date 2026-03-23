@@ -1,4 +1,6 @@
-use spacetimedb::{table, reducer, ReducerContext, Table};
+#![allow(clippy::too_many_arguments, clippy::needless_borrows_for_generic_args)]
+
+use spacetimedb::{reducer, table, ReducerContext, Table};
 
 // ── Tables ──────────────────────────────────────────────
 
@@ -89,7 +91,11 @@ pub fn update_hook(
     tool_pattern: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let existing = ctx.db.hook().id().find(&id)
+    let existing = ctx
+        .db
+        .hook()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("Hook '{}' not found", id))?;
 
     let updated = Hook {
@@ -121,7 +127,11 @@ pub fn toggle_hook(
     enabled: bool,
     timestamp: String,
 ) -> Result<(), String> {
-    let existing = ctx.db.hook().id().find(&id)
+    let existing = ctx
+        .db
+        .hook()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("Hook '{}' not found", id))?;
 
     let updated = Hook {
@@ -178,6 +188,9 @@ fn validate_event_type(event_type: &str) -> Result<(), String> {
 fn validate_handler_type(handler_type: &str) -> Result<(), String> {
     match handler_type {
         "shell" | "wasm" | "reducer" | "http" => Ok(()),
-        _ => Err(format!("Invalid handler_type: '{}'. Must be one of: shell, wasm, reducer, http", handler_type)),
+        _ => Err(format!(
+            "Invalid handler_type: '{}'. Must be one of: shell, wasm, reducer, http",
+            handler_type
+        )),
     }
 }

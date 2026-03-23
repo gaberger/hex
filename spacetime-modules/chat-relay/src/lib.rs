@@ -1,4 +1,6 @@
-use spacetimedb::{table, reducer, ReducerContext, Table};
+#![allow(clippy::too_many_arguments, clippy::needless_borrows_for_generic_args)]
+
+use spacetimedb::{reducer, table, ReducerContext, Table};
 
 // ── Agent Chat (original tables) ────────────────────────────
 
@@ -32,11 +34,11 @@ pub struct Message {
 pub struct ChatSession {
     #[unique]
     pub id: String,
-    pub parent_id: String,       // empty string = no parent
+    pub parent_id: String, // empty string = no parent
     pub project_id: String,
     pub title: String,
     pub model: String,
-    pub status: String,          // active | archived | compacted
+    pub status: String, // active | archived | compacted
     pub created_at: String,
     pub updated_at: String,
 }
@@ -47,9 +49,9 @@ pub struct ChatSessionMessage {
     #[unique]
     pub id: String,
     pub session_id: String,
-    pub role: String,            // user | assistant | system | tool
-    pub parts_json: String,      // JSON array of MessagePart
-    pub model: String,           // empty string = none
+    pub role: String,       // user | assistant | system | tool
+    pub parts_json: String, // JSON array of MessagePart
+    pub model: String,      // empty string = none
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub sequence: u32,
@@ -90,10 +92,7 @@ pub fn create_conversation(
 }
 
 #[reducer]
-pub fn archive_conversation(
-    ctx: &ReducerContext,
-    conversation_id: String,
-) -> Result<(), String> {
+pub fn archive_conversation(ctx: &ReducerContext, conversation_id: String) -> Result<(), String> {
     let conv = ctx.db.conversation().id().find(&conversation_id);
     match conv {
         Some(old) => {
@@ -122,7 +121,10 @@ pub fn send_message(
         return Err(format!("Conversation '{}' not found", conversation_id));
     }
 
-    let msg_count = ctx.db.message().iter()
+    let msg_count = ctx
+        .db
+        .message()
+        .iter()
         .filter(|m| m.conversation_id == conversation_id)
         .count();
 
@@ -140,11 +142,11 @@ pub fn send_message(
 }
 
 #[reducer]
-pub fn clear_conversation(
-    ctx: &ReducerContext,
-    conversation_id: String,
-) -> Result<(), String> {
-    let messages: Vec<Message> = ctx.db.message().iter()
+pub fn clear_conversation(ctx: &ReducerContext, conversation_id: String) -> Result<(), String> {
+    let messages: Vec<Message> = ctx
+        .db
+        .message()
+        .iter()
         .filter(|m| m.conversation_id == conversation_id)
         .collect();
 
@@ -187,7 +189,11 @@ pub fn session_update_title(
     title: String,
     updated_at: String,
 ) -> Result<(), String> {
-    let session = ctx.db.chat_session().id().find(&session_id)
+    let session = ctx
+        .db
+        .chat_session()
+        .id()
+        .find(&session_id)
         .ok_or_else(|| format!("Session '{}' not found", session_id))?;
     ctx.db.chat_session().id().update(ChatSession {
         title,
@@ -204,7 +210,11 @@ pub fn session_set_status(
     status: String,
     updated_at: String,
 ) -> Result<(), String> {
-    let session = ctx.db.chat_session().id().find(&session_id)
+    let session = ctx
+        .db
+        .chat_session()
+        .id()
+        .find(&session_id)
         .ok_or_else(|| format!("Session '{}' not found", session_id))?;
     ctx.db.chat_session().id().update(ChatSession {
         status,
@@ -215,19 +225,22 @@ pub fn session_set_status(
 }
 
 #[reducer]
-pub fn session_delete(
-    ctx: &ReducerContext,
-    session_id: String,
-) -> Result<(), String> {
+pub fn session_delete(ctx: &ReducerContext, session_id: String) -> Result<(), String> {
     // Delete all messages first
-    let messages: Vec<ChatSessionMessage> = ctx.db.chat_session_message().iter()
+    let messages: Vec<ChatSessionMessage> = ctx
+        .db
+        .chat_session_message()
+        .iter()
         .filter(|m| m.session_id == session_id)
         .collect();
     for msg in messages {
         ctx.db.chat_session_message().id().delete(&msg.id);
     }
     // Delete archived messages
-    let archived: Vec<ChatSessionMessageArchive> = ctx.db.chat_session_message_archive().iter()
+    let archived: Vec<ChatSessionMessageArchive> = ctx
+        .db
+        .chat_session_message_archive()
+        .iter()
         .filter(|m| m.session_id == session_id)
         .collect();
     for msg in archived {
@@ -252,7 +265,10 @@ pub fn session_message_append(
     created_at: String,
 ) -> Result<(), String> {
     // Verify session exists
-    ctx.db.chat_session().id().find(&session_id)
+    ctx.db
+        .chat_session()
+        .id()
+        .find(&session_id)
         .ok_or_else(|| format!("Session '{}' not found", session_id))?;
 
     ctx.db.chat_session_message().insert(ChatSessionMessage {
@@ -284,7 +300,10 @@ pub fn session_revert(
     to_sequence: u32,
     updated_at: String,
 ) -> Result<(), String> {
-    let to_delete: Vec<ChatSessionMessage> = ctx.db.chat_session_message().iter()
+    let to_delete: Vec<ChatSessionMessage> = ctx
+        .db
+        .chat_session_message()
+        .iter()
         .filter(|m| m.session_id == session_id && m.sequence > to_sequence)
         .collect();
     for msg in to_delete {
@@ -306,22 +325,27 @@ pub fn session_archive_messages(
     up_to_sequence: u32,
     archived_at: String,
 ) -> Result<(), String> {
-    let to_archive: Vec<ChatSessionMessage> = ctx.db.chat_session_message().iter()
+    let to_archive: Vec<ChatSessionMessage> = ctx
+        .db
+        .chat_session_message()
+        .iter()
         .filter(|m| m.session_id == session_id && m.sequence <= up_to_sequence)
         .collect();
     for msg in to_archive {
-        ctx.db.chat_session_message_archive().insert(ChatSessionMessageArchive {
-            id: msg.id.clone(),
-            session_id: msg.session_id,
-            role: msg.role,
-            parts_json: msg.parts_json,
-            model: msg.model,
-            input_tokens: msg.input_tokens,
-            output_tokens: msg.output_tokens,
-            sequence: msg.sequence,
-            created_at: msg.created_at,
-            archived_at: archived_at.clone(),
-        });
+        ctx.db
+            .chat_session_message_archive()
+            .insert(ChatSessionMessageArchive {
+                id: msg.id.clone(),
+                session_id: msg.session_id,
+                role: msg.role,
+                parts_json: msg.parts_json,
+                model: msg.model,
+                input_tokens: msg.input_tokens,
+                output_tokens: msg.output_tokens,
+                sequence: msg.sequence,
+                created_at: msg.created_at,
+                archived_at: archived_at.clone(),
+            });
         ctx.db.chat_session_message().id().delete(&msg.id);
     }
     Ok(())

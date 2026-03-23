@@ -1,0 +1,108 @@
+{
+  "feature": "mcp-client-support",
+  "adr": "ADR-033",
+  "status": "planned",
+  "description": "Enable hex-agent to discover and call tools from external MCP servers via stdio transport",
+  "phases": [
+    {
+      "id": "M1",
+      "name": "Domain Types + Port",
+      "tier": 0,
+      "tasks": [
+        {
+          "id": "M1.1",
+          "name": "MCP domain types",
+          "layer": "domain",
+          "description": "Define JsonRpcMessage, McpTool, McpToolResult, McpServerConfig, McpConnection types",
+          "deps": [],
+          "files": ["hex-agent/src/domain/mcp.rs"]
+        },
+        {
+          "id": "M1.2",
+          "name": "McpClientPort trait",
+          "layer": "ports",
+          "description": "Define IMcpClientPort with connect, list_tools, call_tool, disconnect methods",
+          "deps": ["M1.1"],
+          "files": ["hex-agent/src/ports/mcp_client.rs"]
+        }
+      ]
+    },
+    {
+      "id": "M2",
+      "name": "Secondary Adapters",
+      "tier": 1,
+      "tasks": [
+        {
+          "id": "M2.1",
+          "name": "Stdio MCP transport",
+          "layer": "adapters/secondary",
+          "description": "Spawn MCP server process, JSON-RPC 2.0 over stdin/stdout, initialization handshake, connection lifecycle",
+          "deps": ["M1.2"],
+          "files": ["hex-agent/src/adapters/secondary/mcp_stdio_client.rs"]
+        },
+        {
+          "id": "M2.2",
+          "name": "MCP config loader",
+          "layer": "adapters/secondary",
+          "description": "Read mcpServers from .claude/settings.json (project + user level), merge configs",
+          "deps": ["M1.1"],
+          "files": ["hex-agent/src/adapters/secondary/mcp_config.rs"]
+        }
+      ]
+    },
+    {
+      "id": "M3",
+      "name": "Tool Discovery + Routing",
+      "tier": 2,
+      "tasks": [
+        {
+          "id": "M3.1",
+          "name": "MCP tool discovery usecase",
+          "layer": "usecases",
+          "description": "Connect to configured MCP servers, call tools/list, prefix names with mcp__<server>__, merge with builtins",
+          "deps": ["M2.1", "M2.2"],
+          "files": ["hex-agent/src/usecases/mcp_discovery.rs"]
+        },
+        {
+          "id": "M3.2",
+          "name": "Extend tool dispatcher",
+          "layer": "adapters/secondary",
+          "description": "Route tool_use calls to built-in OR MCP tools based on mcp__ prefix",
+          "deps": ["M3.1"],
+          "files": ["hex-agent/src/adapters/secondary/tools.rs"]
+        }
+      ]
+    },
+    {
+      "id": "M4",
+      "name": "Composition + Tests",
+      "tier": 3,
+      "tasks": [
+        {
+          "id": "M4.1",
+          "name": "Wire MCP client into main.rs",
+          "layer": "composition-root",
+          "description": "Initialize MCP client, load configs, run discovery, pass merged tools to ConversationLoop",
+          "deps": ["M3.2"],
+          "files": ["hex-agent/src/main.rs"]
+        },
+        {
+          "id": "M4.2",
+          "name": "Integration tests",
+          "layer": "test",
+          "description": "Test with mock MCP server: connection, tool discovery, tool call, error handling, timeout",
+          "deps": ["M4.1"],
+          "files": ["hex-agent/tests/mcp_client_test.rs"]
+        }
+      ]
+    }
+  ],
+  "estimated_loc": {
+    "domain": "~200 LOC",
+    "adapters": "~500 LOC",
+    "usecases": "~150 LOC",
+    "composition": "~30 LOC",
+    "tests": "~300 LOC",
+    "total": "~1,230 LOC"
+  }
+}

@@ -1,0 +1,204 @@
+{
+  "id": "wp-agent-resilience-2026-03-21",
+  "title": "Agent Resilience — Supervisor, Auto-Restart, and Dashboard Health Status",
+  "description": "hex-agent is a critical runtime component. When it crashes or loses hub connection, it exits silently with no restart. The dashboard has no visibility into agent health. This workplan adds a supervisor in nexus, reconnection logic in hex-agent, and live health status in the dashboard UI.",
+  "created_at": "2026-03-21",
+  "created_by": "planner",
+  "priority": "critical",
+  "status": "planned",
+  "related_adrs": ["ADR-037 (Agent Lifecycle)", "ADR-039 (Nexus Control Plane)", "ADR-040 (Remote Agent Transport)"],
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Agent Supervisor in hex-nexus",
+      "tier": 0,
+      "description": "Add a supervisor loop in nexus that monitors the default agent process and restarts it on crash. This is the most critical fix — ensures hex-agent is always running.",
+      "gate": {
+        "type": "build+test",
+        "command": "cargo build -p hex-nexus --release && cargo test -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add AgentSupervisor module to hex-nexus",
+          "layer": "usecases",
+          "description": "New module hex-nexus/src/orchestration/agent_supervisor.rs. Wraps spawn_default_agent() in a supervision loop: (1) Spawn agent process, (2) Monitor via waitpid/try_wait in a tokio task, (3) On exit: log reason, wait backoff delay (1s, 2s, 4s, max 30s), respawn, (4) On SIGTERM/nexus shutdown: kill agent, don't respawn. Track restart_count and last_restart_at. Expose supervisor state via a method for the dashboard.",
+          "deps": [],
+          "files": ["hex-nexus/src/orchestration/agent_supervisor.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Replace spawn_default_agent with AgentSupervisor",
+          "layer": "usecases",
+          "description": "In hex-nexus/src/lib.rs, replace the current spawn_default_agent() call with AgentSupervisor::start(). The supervisor runs as a background tokio task. On nexus shutdown, call supervisor.stop() to gracefully kill the agent. Remove the manual child.kill() shutdown logic.",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/src/lib.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "Add supervisor status REST endpoint",
+          "layer": "primary",
+          "description": "GET /api/agents/supervisor — returns { running: bool, pid: u32, restart_count: u32, last_restart_at: string, uptime_secs: u64, backoff_secs: u32 }. Wire into routes/mod.rs.",
+          "deps": ["P1.1"],
+          "files": [
+            "hex-nexus/src/routes/orchestration.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "hex-agent Reconnection Logic",
+      "tier": 1,
+      "description": "Instead of exiting on hub connection loss, hex-agent should attempt to reconnect with exponential backoff. This handles transient nexus restarts without needing the supervisor to restart the entire agent process.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-agent --release",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add reconnection loop to hub-managed mode",
+          "layer": "usecases",
+          "description": "In hex-agent/src/main.rs, wrap the hub message loop in an outer reconnection loop. When hub_client.recv() returns an error: (1) Log 'Hub connection lost, reconnecting...', (2) Exponential backoff: 1s, 2s, 4s, 8s, max 30s, (3) Attempt hub_client.connect() again, (4) On success: re-register agent and resume message loop, (5) On persistent failure after N attempts: exit with error code so supervisor can restart fresh. Preserve conversation state across reconnects.",
+          "deps": [],
+          "files": ["hex-agent/src/main.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Add reconnect support to HubClientAdapter",
+          "layer": "secondary",
+          "description": "The WebSocket hub client adapter needs a reconnect() method that tears down the old connection and establishes a new one. Check hex-agent/src/adapters/ for the hub client. Add is_connected() polling and reconnect() that reuses the same URL/token. Heartbeat task should detect disconnection and pause until reconnected.",
+          "deps": [],
+          "files": ["hex-agent/src/adapters/secondary/hub_client.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.3",
+          "name": "Graceful shutdown signal handling",
+          "layer": "primary",
+          "description": "hex-agent should catch SIGTERM/SIGINT and send HubMessage::Deregister before exiting. Currently it just dies. Add a tokio::signal handler that: (1) Sends deregister to hub, (2) Cancels heartbeat task, (3) Exits cleanly with code 0. This lets nexus distinguish between crash (restart) and intentional shutdown (don't restart).",
+          "deps": ["P2.1"],
+          "files": ["hex-agent/src/main.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Dashboard Agent Health Status",
+      "tier": 2,
+      "description": "The dashboard must show real-time agent health: live/stale/dead badges, restart count, uptime, and reconnection status. Uses existing heartbeat data from SpacetimeDB agent_registry + new supervisor endpoint.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus --release",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "AgentHealthBar component",
+          "layer": "primary",
+          "description": "New SolidJS component hex-nexus/assets/src/components/AgentHealthBar.tsx. Shows: (1) Green/yellow/red dot for live/stale/dead based on last heartbeat, (2) Agent name + uptime, (3) Restart count badge (if > 0, show warning), (4) Status text: idle/thinking/executing. Subscribes to SpacetimeDB agent_heartbeat table for real-time updates.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/AgentHealthBar.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Supervisor status widget",
+          "layer": "primary",
+          "description": "Widget in the dashboard sidebar or header that shows supervisor status from GET /api/agents/supervisor. Shows: (1) 'Agent: running' or 'Agent: restarting...' with spinner, (2) Restart count with tooltip showing times, (3) PID for debugging. Polls every 10s or uses WebSocket event 'agent_restarted'.",
+          "deps": ["P1.3", "P3.1"],
+          "files": ["hex-nexus/assets/src/components/SupervisorStatus.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.3",
+          "name": "Wire health components into dashboard layout",
+          "layer": "primary",
+          "description": "Add AgentHealthBar to the dashboard header (always visible). Add SupervisorStatus to the sidebar. When agent is dead, show a prominent banner: 'Agent offline — restarting...' with countdown timer based on backoff. Add WebSocket listeners for agent_spawned, agent_connected, agent_disconnected events.",
+          "deps": ["P3.1", "P3.2"],
+          "files": [
+            "hex-nexus/assets/src/App.tsx",
+            "hex-nexus/assets/src/components/Sidebar.tsx"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Remote Agent Resilience",
+      "tier": 3,
+      "description": "Extend the supervisor and health monitoring to cover remote agents (like bazzite). Remote agents that stop heartbeating should be flagged in the dashboard and optionally re-spawned via SSH.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus --release",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Remote agent health monitoring",
+          "layer": "usecases",
+          "description": "In the heartbeat cleanup task (hex-nexus/src/coordination/cleanup.rs), when a remote agent goes stale/dead: (1) Update its status in SpacetimeDB, (2) Broadcast WebSocket event 'agent_stale' / 'agent_dead', (3) Dashboard shows the agent turning yellow then red. Distinguishable from local agent crashes.",
+          "deps": ["P3.1"],
+          "files": [
+            "hex-nexus/src/coordination/cleanup.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.2",
+          "name": "Optional remote agent auto-reconnect",
+          "layer": "usecases",
+          "description": "When a known remote agent (previously connected via /api/agents/connect) goes dead, nexus can optionally attempt to re-spawn it via SSH (using the stored host from the connect registration). Add a config flag: auto_reconnect_remote: bool (default: false). When enabled, call spawn_remote_agent for dead remote agents. Store remote agent metadata (host, project_dir) in SpacetimeDB for reconnection.",
+          "deps": ["P4.1"],
+          "files": [
+            "hex-nexus/src/orchestration/agent_supervisor.rs",
+            "hex-nexus/src/routes/agents.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_phases": 4,
+    "total_tasks": 11,
+    "priority": "critical",
+    "critical_path": "P1 (supervisor) → P2 (reconnect) → P3 (dashboard) → P4 (remote)",
+    "parallel_opportunities": [
+      "P1.1 + P2.1 + P2.2 (supervisor and reconnect are independent)",
+      "P3.1 + P3.2 (dashboard components are independent)"
+    ]
+  },
+  "execution_strategy": {
+    "recommended_mode": "swarm",
+    "wave_1": ["P1.1 (supervisor module)", "P2.1 (reconnect loop)", "P2.2 (hub client reconnect)"],
+    "wave_2": ["P1.2 (wire supervisor)", "P1.3 (REST endpoint)", "P2.3 (signal handling)"],
+    "wave_3": ["P3.1 (health bar)", "P3.2 (supervisor widget)", "P3.3 (layout wiring)"],
+    "wave_4": ["P4.1 (remote health)", "P4.2 (remote auto-reconnect)"]
+  },
+  "exit_criteria": {
+    "must_have": [
+      "hex-agent auto-restarts within 5s of crash",
+      "Dashboard shows agent health in real-time (live/stale/dead)",
+      "hex-agent survives transient nexus restarts via reconnection",
+      "Supervisor status visible in dashboard"
+    ],
+    "nice_to_have": [
+      "Remote agent auto-reconnect via SSH",
+      "Historical restart timeline in dashboard",
+      "Alert/notification on agent crash"
+    ]
+  }
+}

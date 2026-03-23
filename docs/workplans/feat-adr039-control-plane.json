@@ -1,0 +1,493 @@
+{
+  "feature": "ADR-039 Nexus Agent Control Plane",
+  "adr": "ADR-039",
+  "created": "2026-03-20",
+  "status": "done",
+  "swarmId": "93435a6c-da48-48c3-9da5-0353d1aa9cb2",
+  "topology": "hierarchical",
+  "budget": "~102400 tokens",
+  "phases": 6,
+  "totalSteps": 25,
+  "description": "Build the hex-nexus agent control plane — OpenCode-inspired multi-project interface with SpacetimeDB-native state, SolidJS frontend, queue-driven inference bridge",
+
+  "tiers": {
+    "T0": {
+      "name": "SpacetimeDB Codegen + Wiring",
+      "parallel": true,
+      "dependsOn": [],
+      "steps": [
+        {
+          "id": "T0-1",
+          "title": "Generate SpacetimeDB TypeScript bindings for hexflo-coordination module",
+          "adapter": "secondary/spacetimedb-codegen-adapter",
+          "command": "spacetime generate --lang typescript --out-dir hex-chat/ui/src/spacetimedb/ --project-path spacetime-modules/hexflo-coordination",
+          "status": "done"
+        },
+        {
+          "id": "T0-2",
+          "title": "Generate SpacetimeDB TypeScript bindings for agent-registry module",
+          "adapter": "secondary/spacetimedb-codegen-adapter",
+          "command": "spacetime generate --lang typescript --out-dir hex-chat/ui/src/spacetimedb/ --project-path spacetime-modules/agent-registry",
+          "status": "done"
+        },
+        {
+          "id": "T0-3",
+          "title": "Generate SpacetimeDB TypeScript bindings for chat-relay module",
+          "adapter": "secondary/spacetimedb-codegen-adapter",
+          "command": "spacetime generate --lang typescript --out-dir hex-chat/ui/src/spacetimedb/ --project-path spacetime-modules/chat-relay",
+          "status": "done"
+        },
+        {
+          "id": "T0-4",
+          "title": "Generate SpacetimeDB TypeScript bindings for inference-gateway module",
+          "adapter": "secondary/spacetimedb-codegen-adapter",
+          "command": "spacetime generate --lang typescript --out-dir hex-chat/ui/src/spacetimedb/ --project-path spacetime-modules/inference-gateway",
+          "status": "done"
+        },
+        {
+          "id": "T0-5",
+          "title": "Generate SpacetimeDB TypeScript bindings for fleet-state module",
+          "adapter": "secondary/spacetimedb-codegen-adapter",
+          "command": "spacetime generate --lang typescript --out-dir hex-chat/ui/src/spacetimedb/ --project-path spacetime-modules/fleet-state",
+          "status": "done"
+        },
+        {
+          "id": "T0-6",
+          "title": "Fix spacetime_state.rs .connect() — complete Rust WebSocket subscription wiring",
+          "adapter": "secondary/spacetimedb-adapter",
+          "file": "hex-nexus/src/adapters/spacetime_state.rs",
+          "status": "done",
+          "notes": "Current .connect() returns error because codegen bindings not fully linked. Fix to establish real WebSocket connection."
+        },
+        {
+          "id": "T0-7",
+          "title": "Verify SpacetimeDB module deployment and table queryability",
+          "adapter": "secondary/spacetimedb-adapter",
+          "status": "done",
+          "notes": "Test browser→SpacetimeDB direct WebSocket connection. Verify all 17 modules deployed."
+        }
+      ]
+    },
+
+    "T1": {
+      "name": "SolidJS Scaffold + Vite Config",
+      "parallel": false,
+      "dependsOn": ["T0"],
+      "steps": [
+        {
+          "id": "T1-8",
+          "title": "Scaffold Vite + SolidJS + Tailwind CSS 4 project in hex-chat/ui/",
+          "adapter": "secondary/scaffold-adapter",
+          "status": "done",
+          "notes": "Per ADR-038. Structure: index.html, package.json, vite.config.ts, tsconfig.json, tailwind.config.ts, src/"
+        },
+        {
+          "id": "T1-9",
+          "title": "Configure Vite proxy for hex-nexus (5555) and SpacetimeDB (3000)",
+          "adapter": "secondary/build-adapter",
+          "file": "hex-chat/ui/vite.config.ts",
+          "status": "done"
+        }
+      ]
+    },
+
+    "T2": {
+      "name": "SpacetimeDB ↔ SolidJS Bridge Hooks",
+      "parallel": true,
+      "dependsOn": ["T0", "T1"],
+      "steps": [
+        {
+          "id": "T2-10",
+          "title": "Create useSpacetimeDB hook — connection management, auth, reconnection",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-chat/ui/src/hooks/useSpacetimeDB.ts",
+          "status": "done",
+          "notes": "DbConnection builder, auth token from localStorage, auto-reconnect with exponential backoff"
+        },
+        {
+          "id": "T2-11",
+          "title": "Create useTable hook — bridge SpacetimeDB onInsert/onUpdate/onDelete to SolidJS signals",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-chat/ui/src/hooks/useTable.ts",
+          "status": "done",
+          "notes": "Generic hook: useTable<T>(tableName) → Accessor<T[]> that auto-updates on row changes"
+        },
+        {
+          "id": "T2-12",
+          "title": "Create stores/connection.ts — DbConnection singleton",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-chat/ui/src/stores/connection.ts",
+          "status": "done",
+          "notes": "Singleton pattern. Subscribes to core tables on connect: swarms, tasks, agents, sessions, inference_endpoints"
+        }
+      ]
+    },
+
+    "T3": {
+      "name": "Layout Shell + Views",
+      "parallel": true,
+      "dependsOn": ["T2"],
+      "steps": [
+        {
+          "id": "T3-13",
+          "title": "Build App.tsx with 3-column layout (Sidebar, PaneManager, RightPanel, BottomBar)",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-chat/ui/src/App.tsx",
+          "status": "done"
+        },
+        {
+          "id": "T3-14",
+          "title": "Implement Sidebar.tsx — projects/agents/swarms lists from SpacetimeDB subscriptions",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-chat/ui/src/components/layout/Sidebar.tsx",
+          "status": "done",
+          "dependsOn": ["T3-13"]
+        },
+        {
+          "id": "T3-15",
+          "title": "Implement RightPanel.tsx — inference/fleet/tokens from SpacetimeDB subscriptions",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-chat/ui/src/components/layout/RightPanel.tsx",
+          "status": "done",
+          "dependsOn": ["T3-13"]
+        },
+        {
+          "id": "T3-16",
+          "title": "Implement BottomBar.tsx — chat input with slash command detection",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-chat/ui/src/components/layout/BottomBar.tsx",
+          "status": "done",
+          "dependsOn": ["T3-13"]
+        },
+        {
+          "id": "T3-17",
+          "title": "Build ChatView.tsx — SpacetimeDB session_messages + WebSocket LLM streaming",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-chat/ui/src/components/chat/ChatView.tsx",
+          "status": "done",
+          "dependsOn": ["T3-14", "T3-15", "T3-16"],
+          "notes": "Messages from SpacetimeDB subscription, live streaming via WebSocket /ws/chat"
+        },
+        {
+          "id": "T3-18",
+          "title": "Implement MessageList.tsx — virtual scroll, sticky headers, auto-scroll",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-chat/ui/src/components/chat/MessageList.tsx",
+          "status": "done",
+          "dependsOn": ["T3-17"]
+        },
+        {
+          "id": "T3-19",
+          "title": "Build Message.tsx — role badges, model indicators, expandable tool calls",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-chat/ui/src/components/chat/Message.tsx",
+          "status": "done",
+          "dependsOn": ["T3-18"]
+        },
+        {
+          "id": "T3-20",
+          "title": "Implement ChatInput.tsx — slash command prefix detection",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-chat/ui/src/components/chat/ChatInput.tsx",
+          "status": "done",
+          "dependsOn": ["T3-18"]
+        }
+      ]
+    },
+
+    "T4": {
+      "name": "Backend OpenAPI + Agent Spawn",
+      "parallel": true,
+      "dependsOn": [],
+      "notes": "Independent of frontend — can run in parallel with T1-T3",
+      "steps": [
+        {
+          "id": "T4-21",
+          "title": "Add utoipa dependency to hex-nexus Cargo.toml for OpenAPI generation",
+          "adapter": "secondary/build-adapter",
+          "file": "hex-nexus/Cargo.toml",
+          "status": "done"
+        },
+        {
+          "id": "T4-22",
+          "title": "Annotate stateless routes with utoipa for OpenAPI 3.1 spec",
+          "adapter": "primary/api-adapter",
+          "status": "done",
+          "dependsOn": ["T4-21"],
+          "notes": "Only stateless routes: /api/analyze, /api/summarize, /api/scaffold, /api/agents/spawn"
+        },
+        {
+          "id": "T4-23",
+          "title": "Add POST /api/agents/spawn endpoint for GUI-driven agent spawning",
+          "adapter": "primary/api-adapter",
+          "status": "done",
+          "dependsOn": ["T4-22"],
+          "notes": "Spawns hex-agent subprocess locally or dispatches to fleet node (ADR-037)"
+        },
+        {
+          "id": "T4-24",
+          "title": "Mark state-read routes as deprecated in favor of SpacetimeDB direct access",
+          "adapter": "primary/api-adapter",
+          "status": "done",
+          "dependsOn": ["T4-23"]
+        },
+        {
+          "id": "T4-25",
+          "title": "Serve OpenAPI spec at GET /api/openapi.json",
+          "adapter": "primary/api-adapter",
+          "status": "done",
+          "dependsOn": ["T4-24"]
+        }
+      ]
+    }
+  },
+
+    "T5": {
+      "name": "Multi-Project Panes (Phase 2)",
+      "parallel": true,
+      "dependsOn": ["T3"],
+      "steps": [
+        {
+          "id": "T5-26",
+          "title": "Pane store — binary tree state management with split/close/maximize/resize",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/stores/panes.ts",
+          "status": "done"
+        },
+        {
+          "id": "T5-27",
+          "title": "PaneManager — recursive tiling renderer with draggable dividers",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/components/panes/PaneManager.tsx",
+          "status": "done"
+        },
+        {
+          "id": "T5-28",
+          "title": "PaneLeaf — type→component resolver with lazy loading",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/components/panes/PaneLeaf.tsx",
+          "status": "done"
+        },
+        {
+          "id": "T5-29",
+          "title": "ProjectCard + ProjectOverview — project grid with health badges and agent counts",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/components/project/ProjectOverview.tsx",
+          "status": "done"
+        },
+        {
+          "id": "T5-30",
+          "title": "FileTree — recursive collapsible file browser with change indicators",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/components/project/FileTree.tsx",
+          "status": "done"
+        },
+        {
+          "id": "T5-31",
+          "title": "TaskBoard — kanban-style task board from SpacetimeDB swarm_task",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/components/project/TaskBoard.tsx",
+          "status": "done"
+        },
+        {
+          "id": "T5-32",
+          "title": "AgentLog — live agent inspector with heartbeat and task status",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/components/project/AgentLog.tsx",
+          "status": "done"
+        },
+        {
+          "id": "T5-33",
+          "title": "Wire PaneManager into App.tsx + keyboard shortcuts (Ctrl+\\, Ctrl+-, Ctrl+W, etc.)",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/app/App.tsx",
+          "status": "done"
+        },
+        {
+          "id": "T5-34",
+          "title": "dashboard.html entry point for SolidJS app + Vite multi-page config",
+          "adapter": "secondary/build-adapter",
+          "file": "hex-nexus/assets/dashboard.html",
+          "status": "done"
+        },
+        {
+          "id": "T5-35",
+          "title": "Fix NexusClient auth — persist token to ~/.hex/nexus.token, send Bearer header",
+          "adapter": "primary/cli-adapter",
+          "file": "hex-cli/src/nexus_client.rs",
+          "status": "done",
+          "notes": "Unblocked HexFlo MCP tools and CLI swarm/task commands"
+        }
+      ]
+    },
+
+    "T6": {
+      "name": "Agent Control (Phase 3)",
+      "parallel": true,
+      "dependsOn": ["T5"],
+      "hexfloSwarmId": "d53ee257-0566-458b-bd50-596ab7da2b02",
+      "steps": [
+        {
+          "id": "T6-36",
+          "title": "SpawnDialog — modal for GUI-driven agent spawning via POST /api/agents/spawn",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/components/agent/SpawnDialog.tsx",
+          "status": "done"
+        },
+        {
+          "id": "T6-37",
+          "title": "AgentCard — compact status card with kill button and heartbeat age",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/components/agent/AgentCard.tsx",
+          "status": "done"
+        },
+        {
+          "id": "T6-38",
+          "title": "AgentLog → full AgentInspector with kill/restart controls, memory snapshot, task status colors",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/components/project/AgentLog.tsx",
+          "status": "done"
+        },
+        {
+          "id": "T6-39",
+          "title": "Wire SpawnDialog into App.tsx (Ctrl+N) + Sidebar spawn button",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/app/App.tsx",
+          "status": "done"
+        },
+        {
+          "id": "T6-40",
+          "title": "Global UI state store (stores/ui.ts) for cross-component dialog control",
+          "adapter": "secondary/solidjs-adapter",
+          "file": "hex-nexus/assets/src/stores/ui.ts",
+          "status": "done"
+        },
+        {
+          "id": "T6-41",
+          "title": "Fix MCP tool name mismatch — add hexflo_ prefix to swarm/task/memory tools",
+          "adapter": "primary/cli-adapter",
+          "file": "hex-cli/src/commands/mcp.rs",
+          "status": "done",
+          "notes": "Tool names now match Claude Code deferred tool registry"
+        }
+      ]
+    },
+
+    "T7": {
+      "name": "Swarm Visualization (Phase 4)",
+      "parallel": true,
+      "dependsOn": ["T5"],
+      "hexfloSwarmId": "baf661f7-8a91-44fd-9700-55d1fb9a0f86",
+      "steps": [
+        { "id": "T7-42", "title": "SwarmMonitor — main swarm visualization pane composing DAG + header + timeline", "file": "hex-nexus/assets/src/components/swarm/SwarmMonitor.tsx", "status": "done" },
+        { "id": "T7-43", "title": "TaskDAG — SVG dependency graph with BFS layout and live status coloring", "file": "hex-nexus/assets/src/components/swarm/TaskDAG.tsx", "status": "done" },
+        { "id": "T7-44", "title": "SwarmHeader — phase indicator pills + progress bar + agent/task counts", "file": "hex-nexus/assets/src/components/swarm/SwarmHeader.tsx", "status": "done" },
+        { "id": "T7-45", "title": "SwarmTimeline — vertical chronological event log with status dots", "file": "hex-nexus/assets/src/components/swarm/SwarmTimeline.tsx", "status": "done" },
+        { "id": "T7-46", "title": "Register swarm-monitor pane type + sidebar wiring", "file": "hex-nexus/assets/src/components/panes/PaneLeaf.tsx", "status": "done" }
+      ]
+    },
+
+    "T8": {
+      "name": "Command System + Polish (Phase 5)",
+      "parallel": true,
+      "dependsOn": ["T6", "T7"],
+      "hexfloSwarmId": "e17e6d7d-0afd-434a-a07e-8eba3a546db4",
+      "steps": [
+        { "id": "T8-47", "title": "CommandPalette — Ctrl+P fuzzy search overlay with categories, keyboard nav, ESC close", "file": "hex-nexus/assets/src/components/command/CommandPalette.tsx", "status": "done" },
+        { "id": "T8-48", "title": "Command registry store — 11 actions with fuzzy matching and word-boundary scoring", "file": "hex-nexus/assets/src/stores/commands.ts", "status": "done" },
+        { "id": "T8-49", "title": "CodeBlock — syntax-highlighted code with keyword/string/comment/number coloring", "file": "hex-nexus/assets/src/components/code/CodeBlock.tsx", "status": "done" },
+        { "id": "T8-50", "title": "DiffViewer — unified diff renderer with add/remove/context line coloring", "file": "hex-nexus/assets/src/components/code/DiffViewer.tsx", "status": "done" },
+        { "id": "T8-51", "title": "Wire CommandPalette into App.tsx (Ctrl+P toggle) + command palette UI signal", "file": "hex-nexus/assets/src/app/App.tsx", "status": "done" }
+      ]
+    },
+
+  "milestones": {
+    "M1": {
+      "phase": "Phase 1 Complete",
+      "criteria": "Chat works in SolidJS with SpacetimeDB-backed message history and live subscriptions",
+      "requiredSteps": ["T0-*", "T1-*", "T2-*", "T3-*", "T4-*"],
+      "status": "done"
+    },
+    "M2": {
+      "phase": "Phase 2 Complete",
+      "criteria": "Tiling pane system with project overview, file tree, task board, agent log. Sidebar items open panes. Keyboard shortcuts for split/close/maximize.",
+      "requiredSteps": ["T5-*"],
+      "status": "done"
+    },
+    "M3": {
+      "phase": "Phase 3 Complete",
+      "criteria": "GUI-driven agent spawning (SpawnDialog), agent inspection with kill/restart/memory, AgentCard, Ctrl+N shortcut. HexFlo MCP tools fully operational.",
+      "requiredSteps": ["T6-*"],
+      "status": "done"
+    },
+    "M4": {
+      "phase": "Phase 4 Complete",
+      "criteria": "Swarm visualization: TaskDAG with SVG dependency graph, SwarmHeader with phase indicator and progress bar, SwarmTimeline with chronological events. Sidebar swarm click opens SwarmMonitor.",
+      "requiredSteps": ["T7-*"],
+      "status": "done"
+    },
+    "M5": {
+      "phase": "Phase 5 Complete",
+      "criteria": "CommandPalette (Ctrl+P) with fuzzy search, categorized actions, keyboard navigation. CodeBlock with syntax highlighting. DiffViewer with unified diff rendering. Command registry with 11 registered actions.",
+      "requiredSteps": ["T8-*"],
+      "status": "done"
+    },
+    "M6": {
+      "phase": "Phase 6 Complete",
+      "criteria": "FleetView with node cards and register form. InferencePanel with provider cards, model badges, register form, and CostTracker. RightPanel headers link to full panes. Commands registered.",
+      "requiredSteps": ["T9-*"],
+      "status": "done"
+    },
+    "M7": {
+      "phase": "Phase 7 Complete",
+      "criteria": "hexflo-cleanup SpacetimeDB module with scheduled cleanup_stale_agents reducer (30s interval), heartbeat tracking, task reclamation for dead agents, cleanup audit log.",
+      "requiredSteps": ["T10-*"],
+      "status": "done"
+    },
+    "M8": {
+      "phase": "Phase 8 Complete",
+      "criteria": "hexflo-lifecycle SpacetimeDB module with automatic phase transitions (SPECS→PLAN→CODE→VALIDATE→INTEGRATE→COMPLETE), tier-based task dependency tracking, phase transition audit log.",
+      "status": "done"
+    },
+    "M9": {
+      "phase": "Phase 9 Complete",
+      "criteria": "inference-bridge SpacetimeDB module with queue-driven inference (submit→claim→complete), optimistic locking for multi-worker, per-agent token budgets, provider routing table, full audit trail.",
+      "status": "done"
+    },
+    "M10": {
+      "phase": "Phase 10 Complete",
+      "criteria": "Deprecation middleware on state-read GET routes with X-Deprecated/X-Migration-Target headers. OpenAPI 3.1 endpoint at /api/openapi.json for stateless routes only. Route registration grouped into stateless-compute/deprecated-state/websocket sections. CleanupService conditionally disabled when SpacetimeDB backend is active.",
+      "status": "done"
+    }
+  },
+
+  "parallelizationPlan": {
+    "wave1": {
+      "description": "SpacetimeDB codegen + Backend OpenAPI (fully parallel)",
+      "agents": ["T0 codegen agent", "T4 backend agent"],
+      "maxParallel": 2
+    },
+    "wave2": {
+      "description": "SolidJS scaffold + Vite config (after T0 completes)",
+      "agents": ["T1 scaffold agent"],
+      "maxParallel": 1
+    },
+    "wave3": {
+      "description": "Bridge hooks + Layout shell (after T1 completes)",
+      "agents": ["T2 hooks agent", "T3 layout agent"],
+      "maxParallel": 2
+    }
+  },
+
+  "futurPhases": {
+    "phase2": "Multi-Project Panes (Week 3-4) — PaneManager, ProjectCard, FileTree",
+    "phase3": "Agent Control (Week 5-6) — SpawnDialog, AgentInspector, AgentCard",
+    "phase4": "Swarm Visualization (Week 7-8) — SwarmMonitor, TaskNode DAG",
+    "phase5": "Command System + Polish (Week 9-10) — CommandPalette, Shiki, Pierre",
+    "phase6": "Fleet + Inference Control (Week 11-12) — FleetView, ProviderCard, CostTracker",
+    "phase7": "SpacetimeDB 2.0 Procedures — heartbeat/cleanup migration",
+    "phase8": "Triggered procedures — task reclamation, phase transitions",
+    "phase9": "Hybrid LLM Bridge — queue-driven inference via SpacetimeDB",
+    "phase10": "hex-nexus → filesystem adapter only (~500-line binary)"
+  }
+}

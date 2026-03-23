@@ -17,7 +17,7 @@ const OPENCODE_SETTINGS_LOCATIONS: &[&str] =
 
 const HOME_OPENCODE_SETTINGS: &str = ".opencode/settings.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OpencodeSettings {
     #[serde(default)]
     pub mcp_servers: Option<HashMap<String, McpServerConfig>>,
@@ -129,6 +129,7 @@ fn chrono_lite_timestamp() -> String {
     format!("{}", secs)
 }
 
+#[allow(dead_code)]
 fn merge_settings(existing: OpencodeSettings, hex_version: &str) -> OpencodeSettings {
     let mut settings = existing;
 
@@ -545,16 +546,4 @@ fn cmd_status() -> Result<()> {
     }
 
     Ok(())
-}
-
-impl Default for OpencodeSettings {
-    fn default() -> Self {
-        Self {
-            mcp_servers: None,
-            agents: None,
-            skills: None,
-            hooks: None,
-            hex: None,
-        }
-    }
 }

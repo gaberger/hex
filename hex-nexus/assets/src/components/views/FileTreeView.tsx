@@ -30,28 +30,55 @@ function sortNodes(nodes: TreeNode[]): TreeNode[] {
   });
 }
 
-async function fetchDir(path: string): Promise<TreeNode[]> {
+async function fetchDir(relativePath: string, projectId?: string): Promise<TreeNode[]> {
   try {
-    const data = await restClient.get(`/api/files?path=${encodeURIComponent(path)}&list=true`);
-    const files: string[] = data.files ?? data ?? [];
-    return sortNodes(
-      files.map((f) => ({
-        name: f,
-        path: path === '.' ? f : `${path}/${f}`,
-        isDir: guessIsDir(f),
-        expanded: false,
-        loaded: false,
-      }))
-    );
+    let data: any;
+    if (projectId) {
+      // Use project-scoped browse API (resolves project path server-side)
+      data = await restClient.get(
+        `/api/${encodeURIComponent(projectId)}/browse?path=${encodeURIComponent(relativePath)}`
+      );
+      const entries: { name: string; kind: string }[] = data.entries ?? [];
+      return sortNodes(
+        entries.map((e) => ({
+          name: e.name,
+          path: relativePath === '' || relativePath === '.' ? e.name : `${relativePath}/${e.name}`,
+          isDir: e.kind === 'dir',
+          expanded: false,
+          loaded: false,
+        }))
+      );
+    } else {
+      // Fallback: global file API (CWD-based)
+      data = await restClient.get(`/api/files?path=${encodeURIComponent(relativePath)}&list=true`);
+      const files: string[] = data.files ?? data ?? [];
+      return sortNodes(
+        files.map((f) => ({
+          name: f,
+          path: relativePath === '.' ? f : `${relativePath}/${f}`,
+          isDir: guessIsDir(f),
+          expanded: false,
+          loaded: false,
+        }))
+      );
+    }
   } catch {
     return [];
   }
 }
 
-async function fetchFileContent(path: string): Promise<string> {
+async function fetchFileContent(path: string, projectId?: string): Promise<string> {
   try {
-    const data = await restClient.get(`/api/files?path=${encodeURIComponent(path)}`);
-    return data.content ?? '';
+    if (projectId) {
+      // Use project-scoped read API
+      const data = await restClient.get(
+        `/api/${encodeURIComponent(projectId)}/read/${encodeURIComponent(path)}`
+      );
+      return data.content ?? '';
+    } else {
+      const data = await restClient.get(`/api/files?path=${encodeURIComponent(path)}`);
+      return data.content ?? '';
+    }
   } catch (e: any) {
     return `// Error loading file: ${e.message}`;
   }
@@ -139,13 +166,10 @@ const FileTreeView: Component = () => {
   const [treeLoading, setTreeLoading] = createSignal(true);
   const [treePanelOpen, setTreePanelOpen] = createSignal(true);
 
-  // Resolve project root path from route → projects store
-  const projectRoot = createMemo(() => {
+  // Extract projectId from route for project-scoped browse API
+  const projectId = createMemo(() => {
     const r = route();
-    const pid = (r as any).projectId ?? "";
-    if (!pid) return ".";
-    const proj = projects().find((p) => p.id === pid);
-    return proj?.path || ".";
+    return (r as any).projectId ?? "";
   });
 
   const isMarkdown = createMemo(() => {
@@ -159,11 +183,11 @@ const FileTreeView: Component = () => {
     return fp.split('/').pop() ?? fp;
   });
 
-  // Load root on init (scoped to project directory)
+  // Load root on init (scoped to project directory via browse API)
   (async () => {
     setTreeLoading(true);
-    const root = projectRoot();
-    const nodes = await fetchDir(root);
+    const pid = projectId();
+    const nodes = await fetchDir('.', pid || undefined);
     setTree(nodes);
     setTreeLoading(false);
   })();
@@ -178,7 +202,7 @@ const FileTreeView: Component = () => {
           const willExpand = !n.expanded;
           if (willExpand && !n.loaded) {
             // Lazy-load children
-            fetchDir(n.path).then((children) => {
+            fetchDir(n.path, projectId() || undefined).then((children) => {
               setTree((prev) => updateNodeInTree(prev, n.path, { children, loaded: true }));
             });
           }
@@ -210,7 +234,7 @@ const FileTreeView: Component = () => {
     setSelectedFile(node.path);
     if (window.innerWidth < 768) setTreePanelOpen(false);
     setLoading(true);
-    const content = await fetchFileContent(node.path);
+    const content = await fetchFileContent(node.path, projectId() || undefined);
     setFileContent(content);
     setLoading(false);
   }
@@ -259,7 +283,7 @@ const FileTreeView: Component = () => {
             class="rounded p-1 transition-colors text-[var(--text-faint)] hover:text-[var(--text-secondary)]"
             onClick={async () => {
               setTreeLoading(true);
-              const nodes = await fetchDir(projectRoot());
+              const nodes = await fetchDir('.', projectId() || undefined);
               setTree(nodes);
               setTreeLoading(false);
             }}

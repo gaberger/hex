@@ -1,4 +1,6 @@
-use spacetimedb::{table, reducer, ReducerContext, Table};
+#![allow(clippy::too_many_arguments, clippy::needless_borrows_for_generic_args)]
+
+use spacetimedb::{reducer, table, ReducerContext, Table};
 
 // ── Tables ──────────────────────────────────────────────
 
@@ -83,12 +85,14 @@ pub fn register_definition(
 
     ctx.db.agent_definition().insert(def);
 
-    ctx.db.agent_definition_version().insert(AgentDefinitionVersion {
-        definition_id: id,
-        version: 1,
-        snapshot_json: snapshot,
-        created_at: timestamp,
-    });
+    ctx.db
+        .agent_definition_version()
+        .insert(AgentDefinitionVersion {
+            definition_id: id,
+            version: 1,
+            snapshot_json: snapshot,
+            created_at: timestamp,
+        });
 
     Ok(())
 }
@@ -110,7 +114,11 @@ pub fn update_definition(
     validate_json(&constraints_json, "constraints_json")?;
     validate_json(&metadata_json, "metadata_json")?;
 
-    let existing = ctx.db.agent_definition().id().find(&id)
+    let existing = ctx
+        .db
+        .agent_definition()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("AgentDefinition '{}' not found", id))?;
 
     let new_version = existing.version + 1;
@@ -134,12 +142,14 @@ pub fn update_definition(
 
     ctx.db.agent_definition().id().update(updated);
 
-    ctx.db.agent_definition_version().insert(AgentDefinitionVersion {
-        definition_id: id,
-        version: new_version,
-        snapshot_json: snapshot,
-        created_at: timestamp,
-    });
+    ctx.db
+        .agent_definition_version()
+        .insert(AgentDefinitionVersion {
+            definition_id: id,
+            version: new_version,
+            snapshot_json: snapshot,
+            created_at: timestamp,
+        });
 
     Ok(())
 }
@@ -157,11 +167,12 @@ pub fn remove_definition(ctx: &ReducerContext, id: String) -> Result<(), String>
 /// Lookup helper — clients subscribe to the agent_definition table and filter
 /// locally by name. This reducer exists for API completeness.
 #[reducer]
-pub fn get_definition_by_name(
-    ctx: &ReducerContext,
-    name: String,
-) -> Result<(), String> {
-    let _found = ctx.db.agent_definition().name().find(&name)
+pub fn get_definition_by_name(ctx: &ReducerContext, name: String) -> Result<(), String> {
+    let _found = ctx
+        .db
+        .agent_definition()
+        .name()
+        .find(&name)
         .ok_or_else(|| format!("AgentDefinition with name '{}' not found", name))?;
     Ok(())
 }

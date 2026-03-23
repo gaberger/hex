@@ -1,0 +1,167 @@
+{
+  "id": "wp-mandatory-swarm-tracking",
+  "feature": "Mandatory Swarm Tracking for Background Agents",
+  "description": "Add PreToolUse hook on Agent tool to enforce HEXFLO_TASK tracking, harden SubagentStart, fix stderr visibility, and add audit trail. ADR-2603221939.",
+  "adr": "ADR-2603221939",
+  "priority": "high",
+  "created_at": "2026-03-22T19:39:00Z",
+  "created_by": "planner",
+  "status": "done",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "PreToolUse hook on Agent tool",
+      "tier": 0,
+      "description": "Add Agent matcher to settings.json hooks, implement hex hook pre-agent in hook.rs. Background agents without HEXFLO_TASK exit(2). Foreground agents get advisory warning. Exempt: Explore, Plan, claude-code-guide.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli --release",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add pre-agent hook handler to hook.rs",
+          "layer": "primary",
+          "description": "Add PreAgent variant to HookEvent enum. Implement pre_agent() function that reads stdin JSON (prompt, subagent_type, run_in_background). For background agents: check prompt contains HEXFLO_TASK:{uuid} regex, validate uuid format. Exit(2) to block if missing. For foreground: warn to stdout. Exempt agent types: Explore, Plan, claude-code-guide.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/hook.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Add Agent matcher to settings template",
+          "layer": "primary",
+          "description": "Add Agent PreToolUse matcher to hex-setup/mcp/hex-claude-settings.json and hex-cli/assets/templates/hex-claude-settings.json. Matcher: { \"matcher\": \"Agent\", \"hooks\": [{ \"type\": \"command\", \"command\": \"hex hook pre-agent\", \"timeout\": 3000 }] }",
+          "deps": ["P1.1"],
+          "files": ["hex-setup/mcp/hex-claude-settings.json", "hex-cli/assets/templates/hex-claude-settings.json"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "Validate task exists in active swarm",
+          "layer": "primary",
+          "description": "In pre_agent(), after extracting HEXFLO_TASK uuid, GET /api/hexflo/tasks/{id} to verify the task exists and belongs to an active swarm. If nexus unreachable, degrade to advisory (warn but don't block). If task not found, exit(2).",
+          "deps": ["P1.1"],
+          "files": ["hex-cli/src/commands/hook.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Harden SubagentStart",
+      "tier": 1,
+      "description": "Add ownership validation, lazy agent connect, and heartbeat to SubagentStart hook.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli --release",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Validate task ownership in SubagentStart",
+          "layer": "primary",
+          "description": "Before assigning task to agent, check if task.agent_id is already set and differs from current agent. If so, warn but proceed (task reassignment is valid for retries). Log the reassignment.",
+          "deps": ["P1.1"],
+          "files": ["hex-cli/src/commands/hook.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Lazy agent connect in SubagentStart",
+          "layer": "primary",
+          "description": "If session state has no agent_id when SubagentStart fires, call POST /api/hex-agents/connect to register before assigning the task. This closes the lazy-registration gap where subagents spawn before the first UserPromptSubmit.",
+          "deps": ["P1.1"],
+          "files": ["hex-cli/src/commands/hook.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.3",
+          "name": "Send heartbeat on SubagentStart",
+          "layer": "primary",
+          "description": "Call send_heartbeat() at the start of subagent_start() so the parent agent doesn't go stale during long-running subagent work. Currently heartbeats only fire on UserPromptSubmit.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/hook.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Fix stderr visibility",
+      "tier": 1,
+      "description": "Change pre_bash warnings from eprintln! to println! so Claude can see and act on them.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli --release",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Change pre_bash warnings to stdout",
+          "layer": "primary",
+          "description": "In pre_bash(), replace eprintln! with println! for destructive command warnings. Claude cannot see stderr — only the human terminal sees it, making these warnings useless for AI enforcement.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/hook.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Workplan context propagation",
+      "tier": 2,
+      "description": "Inject parent workplan context into subagent prompts via pre-agent hook.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli --release",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Inject HEXFLO_WORKPLAN into agent prompt context",
+          "layer": "primary",
+          "description": "In pre_agent(), read workplan_id from session state. If present, output HEXFLO_WORKPLAN:{id} as context that SubagentStart can capture. Store alongside current_task_id in session state. SubagentStop includes workplan_id in task completion payload.",
+          "deps": ["P1.1", "P2.1"],
+          "files": ["hex-cli/src/commands/hook.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Retroactive audit command",
+      "tier": 3,
+      "description": "Add hex agent audit to detect untracked work by cross-referencing git log against HexFlo tasks.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli --release && cargo test -p hex-cli",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Add hex agent audit command",
+          "layer": "primary",
+          "description": "Add Audit variant to AgentAction. Read git log --oneline -20, fetch completed tasks from /api/hexflo/tasks. Cross-reference: commits with Co-Authored-By that don't match any task result are flagged as 'dark agents'. Display report with commit hash, message, and whether it's tracked.",
+          "deps": ["P2.1"],
+          "files": ["hex-cli/src/commands/agent.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ],
+  "success_metrics": [
+    "Background Agent tool calls without HEXFLO_TASK are blocked (exit code 2)",
+    "Foreground Agent tool calls without HEXFLO_TASK get advisory warning",
+    "Explore/Plan/claude-code-guide agents are exempt from tracking",
+    "hex agent audit detects commits not mapped to HexFlo tasks",
+    "SubagentStart sends heartbeat to prevent parent stale detection"
+  ],
+  "dependency_order": "P1 (tier 0) → P2 + P3 (parallel, tier 1) → P4 (tier 2) → P5 (tier 3)",
+  "estimated_agents": 2
+}

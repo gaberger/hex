@@ -1,4 +1,6 @@
-use spacetimedb::{table, reducer, ReducerContext, Table};
+#![allow(clippy::too_many_arguments, clippy::needless_borrows_for_generic_args)]
+
+use spacetimedb::{reducer, table, ReducerContext, Table};
 
 // ── Tables ──────────────────────────────────────────────
 
@@ -83,7 +85,11 @@ pub fn update_skill(
     body: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let existing = ctx.db.skill().id().find(&id)
+    let existing = ctx
+        .db
+        .skill()
+        .id()
+        .find(&id)
         .ok_or_else(|| format!("Skill '{}' not found", id))?;
 
     let triggers: Vec<TriggerEntry> = serde_json::from_str(&triggers_json)
@@ -99,7 +105,9 @@ pub fn update_skill(
     ctx.db.skill().id().update(updated);
 
     // Rebuild trigger index — delete old entries, insert new
-    let old_triggers: Vec<_> = ctx.db.skill_trigger_index()
+    let old_triggers: Vec<_> = ctx
+        .db
+        .skill_trigger_index()
         .iter()
         .filter(|t| t.skill_id == id)
         .collect();
@@ -125,7 +133,9 @@ pub fn remove_skill(ctx: &ReducerContext, id: String) -> Result<(), String> {
     }
 
     // Clean up trigger index
-    let triggers: Vec<_> = ctx.db.skill_trigger_index()
+    let triggers: Vec<_> = ctx
+        .db
+        .skill_trigger_index()
         .iter()
         .filter(|t| t.skill_id == id)
         .collect();
@@ -147,12 +157,11 @@ pub fn search_skills(
     // SpacetimeDB reducers can't return values directly — clients read via subscriptions.
     // This reducer exists as a no-op query hint; clients subscribe to skill table
     // and filter locally. Kept for API completeness and future server-side filtering.
-    let _matches: Vec<_> = ctx.db.skill_trigger_index()
+    let _matches: Vec<_> = ctx
+        .db
+        .skill_trigger_index()
         .iter()
-        .filter(|t| {
-            t.trigger_type == trigger_type
-                && t.trigger_value.contains(&query)
-        })
+        .filter(|t| t.trigger_type == trigger_type && t.trigger_value.contains(&query))
         .collect();
     Ok(())
 }

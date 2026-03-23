@@ -1,0 +1,258 @@
+{
+  "id": "wp-unified-test-harness",
+  "feature": "Unified Test Harness & Linting Pipeline (ADR-057)",
+  "description": "Implement 5-level test pyramid with unified hex test entry point: lint (clippy+tsc), unit tests for hex-cli modules, Vitest for dashboard stores, integration test cleanup, SpacetimeDB module tests, and agent-browser E2E testing.",
+  "adr": "ADR-057 (unified test harness), ADR-005 (quality gates), ADR-014 (no mock.module)",
+  "created_at": "2026-03-22T00:00:00Z",
+  "created_by": "planner",
+  "status": "planned",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "hex test lint subcommand",
+      "tier": 0,
+      "description": "Add a Lint variant to TestAction that runs cargo clippy (workspace + spacetime-modules) and bun run check. This is the lowest-friction improvement — pure additive, no new deps.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Add Lint variant to TestAction enum",
+          "layer": "primary",
+          "description": "Add `Lint` to the TestAction enum in hex-cli/src/commands/test.rs. Wire it into the run() match arm to call a new run_lint_checks() function.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/test.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.2",
+          "name": "Implement run_lint_checks()",
+          "layer": "primary",
+          "description": "Add run_lint_checks(r: &mut TestResults) that runs: (1) cargo clippy --workspace -- -D warnings, (2) cargo clippy --workspace -- -D warnings in spacetime-modules/, (3) bun run check (if bun is available). Each is a separate check() call. Use Command::new like the existing helpers.",
+          "deps": ["P0.1"],
+          "files": ["hex-cli/src/commands/test.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.3",
+          "name": "Wire lint into hex test all",
+          "layer": "primary",
+          "description": "Add run_lint_checks() call to the TestAction::All branch, between unit and arch. Update the Full variant (add if missing) to run all + e2e.",
+          "deps": ["P0.2"],
+          "files": ["hex-cli/src/commands/test.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "hex-cli unit tests",
+      "tier": 1,
+      "description": "Add #[cfg(test)] mod tests blocks to hex-cli modules that have testable pure logic. No new files — tests live inline.",
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-cli --lib",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Unit tests for readme.rs",
+          "layer": "domain",
+          "description": "Add tests to hex-cli/src/commands/readme.rs: (1) parse_adr_summaries handles various ADR formats (missing status, different title patterns). (2) sync_adr_section replaces content between sentinels without touching surrounding text. (3) sync_adr_section appends section when sentinels are missing. (4) generate_readme produces expected structure for each language. Use tempdir for file-based tests.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/readme.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Unit tests for interview.rs",
+          "layer": "domain",
+          "description": "Add tests for is_empty_project(): (1) truly empty dir returns true. (2) dir with only .git/ returns true. (3) dir with .git/ + .hex/ returns true. (4) dir with any other file returns false. (5) dir with a subdirectory returns false. Use tempdir.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/interview.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "Unit tests for adr.rs",
+          "layer": "domain",
+          "description": "Add tests for parse_adr_status(): (1) accepted status from **Status:** line. (2) proposed status. (3) unknown when no status line. (4) case-insensitive matching. Also test extract_title() and parse_enforced_by() with various input formats.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/adr.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Integration test cleanup",
+      "tier": 2,
+      "description": "Fix integration tests so they clean up swarms, tasks, and memory entries after running. Prevents state pollution across test runs.",
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-cli --lib",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add teardown to run_integration_tests()",
+          "layer": "integration",
+          "description": "At the end of run_integration_tests() in test.rs, complete the test swarm via PATCH /api/swarms/:id and delete the test memory key. Use best-effort (ignore errors) so cleanup doesn't mask real test failures. Also deregister the test agent via DELETE /api/agents/:id.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/test.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Dashboard Vitest setup + store tests",
+      "tier": 3,
+      "description": "Add Vitest to the dashboard (hex-nexus/assets/) and write unit tests for the most critical stores. Integrate into hex test unit.",
+      "gate": {
+        "type": "test",
+        "command": "cd hex-nexus/assets && npx vitest run",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Initialize Vitest in hex-nexus/assets",
+          "layer": "infrastructure",
+          "description": "Add vitest as a devDependency in hex-nexus/assets/package.json. Create vitest.config.ts with solid-js plugin. Add a test script. Create src/stores/__tests__/ directory.",
+          "deps": [],
+          "files": [
+            "hex-nexus/assets/package.json",
+            "hex-nexus/assets/vitest.config.ts"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Test toast store",
+          "layer": "domain",
+          "description": "Create hex-nexus/assets/src/stores/__tests__/toast.test.ts. Test: addToast() creates toast with correct type/message, toast auto-expires after timeout, dismissToast() removes by id, max toast limit is enforced.",
+          "deps": ["P3.1"],
+          "files": ["hex-nexus/assets/src/stores/__tests__/toast.test.ts"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.3",
+          "name": "Test hexflo-monitor store",
+          "layer": "domain",
+          "description": "Create hex-nexus/assets/src/stores/__tests__/hexflo-monitor.test.ts. Test: completed swarms don't re-toast on initialization, failed tasks trigger error toast, completedSwarms set is seeded from swarm status. Mock the connection store signals.",
+          "deps": ["P3.1"],
+          "files": ["hex-nexus/assets/src/stores/__tests__/hexflo-monitor.test.ts"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.4",
+          "name": "Wire dashboard tests into hex test unit",
+          "layer": "primary",
+          "description": "Add run_dashboard_tests(r: &mut TestResults) to test.rs. Runs npx vitest run in hex-nexus/assets/. Called from run_unit_tests(). Skips gracefully if vitest not installed.",
+          "deps": ["P3.2"],
+          "files": ["hex-cli/src/commands/test.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "SpacetimeDB module tests (P0 priority)",
+      "tier": 4,
+      "description": "Add cargo tests to the two highest-risk untested WASM modules: agent-registry and workplan-state.",
+      "gate": {
+        "type": "test",
+        "command": "cd spacetime-modules && cargo test -p agent-registry -p workplan-state",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Tests for agent-registry module",
+          "layer": "domain",
+          "description": "Add #[cfg(test)] mod tests to spacetime-modules/agent-registry/src/lib.rs. Test: register_agent creates valid entry, heartbeat updates timestamp, status transitions (active → stale → dead), remove_agent deletes from table. Use SpacetimeDB's test utilities for in-memory table access.",
+          "deps": [],
+          "files": ["spacetime-modules/agent-registry/src/lib.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.2",
+          "name": "Tests for workplan-state module",
+          "layer": "domain",
+          "description": "Add #[cfg(test)] mod tests to spacetime-modules/workplan-state/src/lib.rs. Test: create workplan with phases, task status transitions (pending → in_progress → completed), invalid transitions are rejected, phase completion triggers next phase.",
+          "deps": [],
+          "files": ["spacetime-modules/workplan-state/src/lib.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "E2E testing with agent-browser",
+      "tier": 5,
+      "description": "Set up agent-browser based E2E tests that validate the dashboard renders correctly and responds to interaction. Uses AI-optimized accessibility snapshots.",
+      "gate": {
+        "type": "test",
+        "command": "hex test e2e",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Add E2e variant to TestAction",
+          "layer": "primary",
+          "description": "Add E2e and Full variants to TestAction enum. E2e runs run_e2e_tests(). Full runs all + e2e. Wire into match arm.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/test.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.2",
+          "name": "Implement run_e2e_tests() with agent-browser",
+          "layer": "primary",
+          "description": "Add run_e2e_tests(r: &mut TestResults) that: (1) checks agent-browser is installed, (2) verifies nexus is running at :5555, (3) runs agent-browser open http://127.0.0.1:5555, (4) takes snapshot -i and verifies key elements exist (sidebar, project list, status bar), (5) navigates to /chat and verifies chat input exists, (6) takes screenshot to tests/e2e/dashboard.png, (7) closes browser. Each step is a check() call.",
+          "deps": ["P5.1"],
+          "files": ["hex-cli/src/commands/test.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.3",
+          "name": "Create E2E test script for CI",
+          "layer": "infrastructure",
+          "description": "Create scripts/e2e-test.sh that starts nexus, waits for health check, runs hex test e2e, captures exit code, stops nexus, exits with captured code. This wraps the full lifecycle for CI.",
+          "deps": ["P5.2"],
+          "files": ["scripts/e2e-test.sh"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "name": "CI pipeline",
+      "tier": 6,
+      "description": "Create GitHub Actions workflow that runs the full test matrix: lint, unit, integration, and optional E2E.",
+      "gate": {
+        "type": "build",
+        "command": "cat .github/workflows/test.yml",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P6.1",
+          "name": "Create .github/workflows/test.yml",
+          "layer": "infrastructure",
+          "description": "Create the CI workflow with 4 jobs: lint (clippy + tsc), unit (cargo test + bun test + vitest), integration (needs lint+unit, requires SpacetimeDB service container, runs hex test services + arch), e2e (needs integration, runs scripts/e2e-test.sh). Cache cargo targets and node_modules. Use ubuntu-latest.",
+          "deps": ["P5.3"],
+          "files": [".github/workflows/test.yml"],
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ]
+}

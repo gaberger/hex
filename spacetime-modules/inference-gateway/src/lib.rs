@@ -8,10 +8,12 @@
 //!   - `inference_request` (public) — agents write requests here
 //!   - `inference_response` (public) — responses written after LLM call
 //!   - `inference_provider` (public) — registered LLM endpoints
+
+#![allow(clippy::too_many_arguments, clippy::needless_borrows_for_generic_args)]
 //!   - `agent_budget` (public) — per-agent token budget enforcement
 //!   - `inference_stream_chunk` (public) — streaming response chunks
 
-use spacetimedb::{table, reducer, ReducerContext, Table};
+use spacetimedb::{reducer, table, ReducerContext, Table};
 
 // ─── Inference Request ──────────────────────────────────────────────────────
 
@@ -205,10 +207,13 @@ pub fn request_inference(
         }
 
         // Increment provider's current_rpm
-        ctx.db.inference_provider().provider_id().update(InferenceProvider {
-            current_rpm: prov.current_rpm + 1,
-            ..prov
-        });
+        ctx.db
+            .inference_provider()
+            .provider_id()
+            .update(InferenceProvider {
+                current_rpm: prov.current_rpm + 1,
+                ..prov
+            });
     }
 
     // 3. Insert request with status "queued"
@@ -248,13 +253,20 @@ pub fn complete_inference(
     created_at: String,
 ) -> Result<(), String> {
     // 1. Update request status
-    let request = ctx.db.inference_request().request_id().find(&request_id)
+    let request = ctx
+        .db
+        .inference_request()
+        .request_id()
+        .find(&request_id)
         .ok_or_else(|| format!("Request {} not found", request_id))?;
 
-    ctx.db.inference_request().request_id().update(InferenceRequest {
-        status: "completed".to_string(),
-        ..request.clone()
-    });
+    ctx.db
+        .inference_request()
+        .request_id()
+        .update(InferenceRequest {
+            status: "completed".to_string(),
+            ..request.clone()
+        });
 
     // 2. Insert response
     ctx.db.inference_response().insert(InferenceResponse {
@@ -280,7 +292,9 @@ pub fn complete_inference(
         // Parse and add cost
         let prev_usd: f64 = budget.used_usd.parse().unwrap_or(0.0);
         let add_usd: f64 = if !openrouter_cost_usd.is_empty() {
-            openrouter_cost_usd.parse().unwrap_or_else(|_| cost_usd.parse().unwrap_or(0.0))
+            openrouter_cost_usd
+                .parse()
+                .unwrap_or_else(|_| cost_usd.parse().unwrap_or(0.0))
         } else {
             cost_usd.parse().unwrap_or(0.0)
         };
@@ -294,17 +308,27 @@ pub fn complete_inference(
     }
 
     // 4. Update InferenceProvider avg_latency_ms (exponential moving average)
-    if let Some(prov) = ctx.db.inference_provider().provider_id().find(&request.provider) {
+    if let Some(prov) = ctx
+        .db
+        .inference_provider()
+        .provider_id()
+        .find(&request.provider)
+    {
         let new_avg = (prov.avg_latency_ms * 9 + latency_ms) / 10;
-        ctx.db.inference_provider().provider_id().update(InferenceProvider {
-            avg_latency_ms: new_avg,
-            ..prov
-        });
+        ctx.db
+            .inference_provider()
+            .provider_id()
+            .update(InferenceProvider {
+                avg_latency_ms: new_avg,
+                ..prov
+            });
     }
 
     log::info!(
         "Inference completed: request={}, agent={}, tokens={}",
-        request_id, request.agent_id, total_tokens
+        request_id,
+        request.agent_id,
+        total_tokens
     );
 
     Ok(())
@@ -318,14 +342,21 @@ pub fn fail_inference(
     error_message: String,
     created_at: String,
 ) -> Result<(), String> {
-    let request = ctx.db.inference_request().request_id().find(&request_id)
+    let request = ctx
+        .db
+        .inference_request()
+        .request_id()
+        .find(&request_id)
         .ok_or_else(|| format!("Request {} not found", request_id))?;
 
     // 1. Update request status
-    ctx.db.inference_request().request_id().update(InferenceRequest {
-        status: "failed".to_string(),
-        ..request.clone()
-    });
+    ctx.db
+        .inference_request()
+        .request_id()
+        .update(InferenceRequest {
+            status: "failed".to_string(),
+            ..request.clone()
+        });
 
     // 2. Insert failure response
     ctx.db.inference_response().insert(InferenceResponse {
@@ -347,7 +378,9 @@ pub fn fail_inference(
 
     log::info!(
         "Inference failed: request={}, agent={}, error={}",
-        request_id, request.agent_id, error_message
+        request_id,
+        request.agent_id,
+        error_message
     );
 
     Ok(())
@@ -368,15 +401,18 @@ pub fn register_provider(
     validate_provider_type(&provider_type)?;
 
     if let Some(existing) = ctx.db.inference_provider().provider_id().find(&provider_id) {
-        ctx.db.inference_provider().provider_id().update(InferenceProvider {
-            provider_type,
-            base_url,
-            api_key_ref,
-            models_json,
-            rate_limit_rpm,
-            rate_limit_tpm,
-            ..existing
-        });
+        ctx.db
+            .inference_provider()
+            .provider_id()
+            .update(InferenceProvider {
+                provider_type,
+                base_url,
+                api_key_ref,
+                models_json,
+                rate_limit_rpm,
+                rate_limit_tpm,
+                ..existing
+            });
     } else {
         ctx.db.inference_provider().insert(InferenceProvider {
             provider_id,
@@ -399,12 +435,12 @@ pub fn register_provider(
 
 /// Remove an inference provider by ID.
 #[reducer]
-pub fn remove_provider(
-    ctx: &ReducerContext,
-    provider_id: String,
-) -> Result<(), String> {
+pub fn remove_provider(ctx: &ReducerContext, provider_id: String) -> Result<(), String> {
     if let Some(_existing) = ctx.db.inference_provider().provider_id().find(&provider_id) {
-        ctx.db.inference_provider().provider_id().delete(&provider_id);
+        ctx.db
+            .inference_provider()
+            .provider_id()
+            .delete(&provider_id);
         log::info!("Provider removed: {}", provider_id);
         Ok(())
     } else {
@@ -451,11 +487,14 @@ pub fn reset_rate_counters(ctx: &ReducerContext) -> Result<(), String> {
     let providers: Vec<InferenceProvider> = ctx.db.inference_provider().iter().collect();
 
     for prov in providers {
-        ctx.db.inference_provider().provider_id().update(InferenceProvider {
-            current_rpm: 0,
-            current_tpm: 0,
-            ..prov
-        });
+        ctx.db
+            .inference_provider()
+            .provider_id()
+            .update(InferenceProvider {
+                current_rpm: 0,
+                current_tpm: 0,
+                ..prov
+            });
     }
 
     log::info!("Rate counters reset for all providers");
@@ -475,15 +514,17 @@ pub fn append_stream_chunk(
 ) -> Result<(), String> {
     validate_chunk_type(&chunk_type)?;
 
-    ctx.db.inference_stream_chunk().insert(InferenceStreamChunk {
-        chunk_id: 0, // auto_inc
-        request_id,
-        agent_id,
-        chunk_type,
-        content,
-        sequence,
-        created_at,
-    });
+    ctx.db
+        .inference_stream_chunk()
+        .insert(InferenceStreamChunk {
+            chunk_id: 0, // auto_inc
+            request_id,
+            agent_id,
+            chunk_type,
+            content,
+            sequence,
+            created_at,
+        });
 
     Ok(())
 }
@@ -593,7 +634,11 @@ mod tests {
     #[test]
     fn valid_provider_types_accepted() {
         for pt in &["anthropic", "openai_compat", "ollama", "vllm", "openrouter"] {
-            assert!(validate_provider_type(pt).is_ok(), "Provider type '{}' should be valid", pt);
+            assert!(
+                validate_provider_type(pt).is_ok(),
+                "Provider type '{}' should be valid",
+                pt
+            );
         }
     }
 
@@ -608,8 +653,17 @@ mod tests {
 
     #[test]
     fn valid_chunk_types_accepted() {
-        for ct in &["text_delta", "tool_use_start", "input_json_delta", "message_stop"] {
-            assert!(validate_chunk_type(ct).is_ok(), "Chunk type '{}' should be valid", ct);
+        for ct in &[
+            "text_delta",
+            "tool_use_start",
+            "input_json_delta",
+            "message_stop",
+        ] {
+            assert!(
+                validate_chunk_type(ct).is_ok(),
+                "Chunk type '{}' should be valid",
+                ct
+            );
         }
     }
 
@@ -624,7 +678,11 @@ mod tests {
     #[test]
     fn valid_request_statuses_accepted() {
         for s in &["queued", "processing", "completed", "failed"] {
-            assert!(validate_request_status(s).is_ok(), "Status '{}' should be valid", s);
+            assert!(
+                validate_request_status(s).is_ok(),
+                "Status '{}' should be valid",
+                s
+            );
         }
     }
 
@@ -639,7 +697,11 @@ mod tests {
     #[test]
     fn valid_response_statuses_accepted() {
         for s in &["completed", "failed", "rate_limited", "budget_exceeded"] {
-            assert!(validate_response_status(s).is_ok(), "Status '{}' should be valid", s);
+            assert!(
+                validate_response_status(s).is_ok(),
+                "Status '{}' should be valid",
+                s
+            );
         }
     }
 
@@ -654,7 +716,11 @@ mod tests {
     #[test]
     fn valid_priorities_accepted() {
         for p in 0..=3u8 {
-            assert!(validate_priority(p).is_ok(), "Priority {} should be valid", p);
+            assert!(
+                validate_priority(p).is_ok(),
+                "Priority {} should be valid",
+                p
+            );
         }
     }
 
@@ -775,7 +841,9 @@ mod tests {
         let computed_cost = "0.004000";
 
         let add_usd: f64 = if !openrouter_cost.is_empty() {
-            openrouter_cost.parse().unwrap_or_else(|_| computed_cost.parse().unwrap_or(0.0))
+            openrouter_cost
+                .parse()
+                .unwrap_or_else(|_| computed_cost.parse().unwrap_or(0.0))
         } else {
             computed_cost.parse().unwrap_or(0.0)
         };
@@ -784,7 +852,9 @@ mod tests {
         // When openrouter_cost_usd is empty, fall back to computed
         let empty_cost = "";
         let add_usd_fallback: f64 = if !empty_cost.is_empty() {
-            empty_cost.parse().unwrap_or_else(|_| computed_cost.parse().unwrap_or(0.0))
+            empty_cost
+                .parse()
+                .unwrap_or_else(|_| computed_cost.parse().unwrap_or(0.0))
         } else {
             computed_cost.parse().unwrap_or(0.0)
         };
@@ -793,7 +863,9 @@ mod tests {
         // When openrouter_cost_usd is invalid, fall back to computed
         let bad_cost = "not_a_number";
         let add_usd_bad: f64 = if !bad_cost.is_empty() {
-            bad_cost.parse().unwrap_or_else(|_| computed_cost.parse().unwrap_or(0.0))
+            bad_cost
+                .parse()
+                .unwrap_or_else(|_| computed_cost.parse().unwrap_or(0.0))
         } else {
             computed_cost.parse().unwrap_or(0.0)
         };

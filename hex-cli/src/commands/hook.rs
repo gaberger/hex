@@ -43,6 +43,15 @@ struct SessionState {
     edits: u64,
     #[serde(default)]
     phase: Option<String>,
+    /// Active worktree path for current task (ADR-2603231700)
+    #[serde(default)]
+    worktree_path: Option<String>,
+    /// Allowed file paths for adapter boundary enforcement (ADR-2603231700)
+    #[serde(default)]
+    allowed_paths: Vec<String>,
+    /// Resolved worktree branch name from workplan step
+    #[serde(default)]
+    worktree_branch: Option<String>,
 }
 
 impl SessionState {
@@ -322,6 +331,9 @@ async fn register_session_agent(project_dir: &PathBuf, project_name: &str) -> Re
             swarm_id: None,
             current_task_id: None,
             phase: None,
+            worktree_path: None,
+            allowed_paths: Vec::new(),
+            worktree_branch: None,
         };
         state.save()?;
 

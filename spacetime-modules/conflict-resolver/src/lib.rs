@@ -6,7 +6,9 @@
 //! Tables:
 //!   - `conflict_event` (public) -- records of detected conflicts and their resolutions
 
-use spacetimedb::{table, reducer, ReducerContext, Table};
+#![allow(clippy::too_many_arguments, clippy::needless_borrows_for_generic_args)]
+
+use spacetimedb::{reducer, table, ReducerContext, Table};
 
 // ─── Conflict Event (PUBLIC) ────────────────────────────────────────────────
 
@@ -56,7 +58,8 @@ pub fn report_conflict(
 
     log::info!(
         "Conflict reported on '{}' between agents: {}",
-        file_path, agents_json
+        file_path,
+        agents_json
     );
 
     Ok(())
@@ -100,7 +103,9 @@ pub fn resolve_conflict(
 
             log::info!(
                 "Conflict {} resolved via '{}' by '{}'",
-                conflict_id, resolution, resolved_by
+                conflict_id,
+                resolution,
+                resolved_by
             );
 
             Ok(())
@@ -134,7 +139,11 @@ mod tests {
     #[test]
     fn valid_resolutions_accepted() {
         for r in &["priority", "merge", "escalate", "pending"] {
-            assert!(validate_resolution(r).is_ok(), "Resolution '{}' should be valid", r);
+            assert!(
+                validate_resolution(r).is_ok(),
+                "Resolution '{}' should be valid",
+                r
+            );
         }
     }
 

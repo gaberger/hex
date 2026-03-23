@@ -1,0 +1,87 @@
+{
+  "id": "feat-registration-lifecycle-gaps",
+  "title": "Feature: Fix project + agent registration fragmentation (ADR-065)",
+  "specs": "docs/specs/registration-lifecycle-gaps.json",
+  "adr": "ADR-065",
+  "created": "2026-03-22",
+  "status": "planned",
+  "topology": "pipeline",
+  "budget": "~20000 tokens",
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Update hex agent connect CLI to send project_dir (CWD), generated session_id, and agent name in the POST body. Write session file client-side after successful response. Include projectId from response in session file.",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": ["S01", "S02"],
+      "worktree_branch": "feat/reg-gaps/cli-connect",
+      "done_condition": "hex agent connect writes ~/.hex/sessions/agent-{session_id}.json on the calling host with correct agentId and project"
+    },
+    {
+      "id": "step-2",
+      "description": "Update POST /api/hex-agents/connect response to include projectId. Auto-register project via project_find/register_project when project_dir is provided but project doesn't exist in SpacetimeDB.",
+      "layer": "adapters/primary",
+      "adapter": "rest-api",
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": ["S07"],
+      "worktree_branch": "feat/reg-gaps/server-connect",
+      "done_condition": "Connect response includes projectId; project auto-registered in SpacetimeDB project table"
+    },
+    {
+      "id": "step-3",
+      "description": "Rewrite resolve_agent_id() in hex-cli/src/commands/inbox.rs with priority: (1) CLAUDE_SESSION_ID env → exact file lookup, (2) HEX_AGENT_ID env → direct use, (3) newest non-nexus session file. Filter out files where name starts with 'nexus-agent'.",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "port": null,
+      "dependencies": ["step-1"],
+      "tier": 1,
+      "specs": ["S03", "S04", "S05", "S08"],
+      "worktree_branch": "feat/reg-gaps/resolve-agent",
+      "done_condition": "resolve_agent_id returns correct ID when CLAUDE_SESSION_ID set, when HEX_AGENT_ID set, and when falling back to file scan (skipping nexus files)"
+    },
+    {
+      "id": "step-4",
+      "description": "End-to-end test: hex agent connect on bazzite → session file written → hex inbox list resolves correct agent → notification received. Verify project appears in SpacetimeDB project table.",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": ["step-1", "step-2", "step-3"],
+      "tier": 2,
+      "specs": ["S06"],
+      "worktree_branch": "feat/reg-gaps/integration",
+      "done_condition": "hex inbox list works on bazzite after hex agent connect; project visible in spacetime sql"
+    }
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  },
+  "mergeOrder": [
+    "step-1, step-2 parallel (client + server)",
+    "step-1 → step-3 (session file needed for resolve)",
+    "step-1, step-2, step-3 → step-4 (integration test)"
+  ],
+  "riskRegister": [
+    {
+      "risk": "Session file naming collision between hex agent connect and Claude Code session-start",
+      "impact": "medium",
+      "mitigation": "Use different prefixes: agent-session-{id} for Claude, agent-connect-{id} for CLI connect"
+    },
+    {
+      "risk": "Project auto-registration creates duplicates across hosts",
+      "impact": "low",
+      "mitigation": "project_find() deduplicates by name (ADR-059)"
+    }
+  ],
+  "successCriteria": [
+    "hex agent connect on bazzite writes session file readable by hex inbox list",
+    "hex inbox list on bazzite returns correct notifications for the connected agent",
+    "Project auto-registered in SpacetimeDB when agent connects from a new project",
+    "resolve_agent_id correctly prioritizes CLAUDE_SESSION_ID > HEX_AGENT_ID > file scan"
+  ]
+}

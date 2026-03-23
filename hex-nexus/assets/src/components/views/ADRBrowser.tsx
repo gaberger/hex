@@ -4,6 +4,7 @@ import { MarkdownEditor } from '../editor';
 import { addToast } from '../../stores/toast';
 import { getHexfloConn } from '../../stores/connection';
 import { restClient } from '../../services/rest-client';
+import { projects } from '../../stores/projects';
 
 interface WorkPlanListItem {
   id: string;
@@ -53,11 +54,15 @@ interface ADRListResult {
   isFallback: boolean;
 }
 
-async function fetchADRList(projectId?: string): Promise<ADRListResult> {
+async function fetchADRList(projectId?: string, projectPath?: string): Promise<ADRListResult> {
   try {
-    const url = projectId
-      ? `/api/projects/${encodeURIComponent(projectId)}/adrs`
-      : '/api/adrs';
+    let url: string;
+    if (projectId) {
+      url = `/api/projects/${encodeURIComponent(projectId)}/adrs`;
+      if (projectPath) url += `?root=${encodeURIComponent(projectPath)}`;
+    } else {
+      url = '/api/adrs';
+    }
     const items = await restClient.get<ADRListItem[]>(url);
     return { items, isFallback: false };
   } catch {
@@ -231,14 +236,18 @@ async function fetchADRContent(adrId: string): Promise<string> {
     || `# ADR-${adrId}\n\n*Content will be loaded from the API once available.*\n\nRun \`hex adr status ${adrId}\` from the CLI to view this ADR.`;
 }
 
-async function fetchADRDetail(id: string, projectId?: string): Promise<ADRDetail | null> {
+async function fetchADRDetail(id: string, projectId?: string, projectPath?: string): Promise<ADRDetail | null> {
   if (!id) return null;
 
   // Try the full detail API first (project-scoped if available)
   try {
-    const url = projectId
-      ? `/api/projects/${encodeURIComponent(projectId)}/adrs/${id}`
-      : `/api/adrs/${id}`;
+    let url: string;
+    if (projectId) {
+      url = `/api/projects/${encodeURIComponent(projectId)}/adrs/${id}`;
+      if (projectPath) url += `?root=${encodeURIComponent(projectPath)}`;
+    } else {
+      url = `/api/adrs/${id}`;
+    }
     return await restClient.get<ADRDetail>(url);
   } catch {
     // API not available, fall through
@@ -271,6 +280,14 @@ const ADRBrowser: Component = () => {
     return (r as { projectId?: string }).projectId;
   });
 
+  // Resolve project filesystem path from projects store
+  const projectPath = createMemo(() => {
+    const pid = projectId();
+    if (!pid) return "";
+    const p = projects().find((p) => p.id === pid);
+    return p?.path ?? "";
+  });
+
   // Fetch workplan list to cross-reference ADRs
   const [workplanList] = createResource(
     () => projectId(),
@@ -299,8 +316,8 @@ const ADRBrowser: Component = () => {
     return map;
   });
 
-  const fetchKey = createMemo(() => ({ pid: projectId(), retry: retryCount() }));
-  const [adrListResult, { refetch: refetchList }] = createResource(fetchKey, (key) => fetchADRList(key.pid));
+  const fetchKey = createMemo(() => ({ pid: projectId(), ppath: projectPath(), retry: retryCount() }));
+  const [adrListResult, { refetch: refetchList }] = createResource(fetchKey, (key) => fetchADRList(key.pid, key.ppath));
 
   const isFallback = createMemo(() => adrListResult()?.isFallback ?? false);
 
@@ -327,11 +344,12 @@ const ADRBrowser: Component = () => {
   const adrFetchKey = createMemo(() => {
     const id = effectiveSelectedId();
     const pid = projectId();
-    return id ? { id, projectId: pid } : null;
+    const ppath = projectPath();
+    return id ? { id, projectId: pid, projectPath: ppath } : null;
   });
 
   const [adrDetail] = createResource(adrFetchKey, (key) =>
-    key ? fetchADRDetail(key.id, key.projectId) : Promise.resolve(null)
+    key ? fetchADRDetail(key.id, key.projectId, key.projectPath) : Promise.resolve(null)
   );
 
   const selectedADR = createMemo(() => {

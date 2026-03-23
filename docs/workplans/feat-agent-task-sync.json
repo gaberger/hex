@@ -1,0 +1,261 @@
+{
+  "id": "wp-agent-task-sync",
+  "feature": "Claude Code Agent ↔ HexFlo Task State Synchronization",
+  "description": "Bridge the gap between Claude Code subagents (spawned via Agent tool) and HexFlo task state in SpacetimeDB. Currently, coordinators create swarm tasks and spawn agents, but task status stays 'pending' because nothing wires agent lifecycle events to task_assign/task_complete calls. This workplan implements automatic task state synchronization using Claude Code hooks, a new MCP tool, and the hex-setup → hex init deployment pipeline for hook helpers.",
+  "adr": "ADR-048 (session registration — extended to cover task lifecycle), ADR-022 (coordination wiring), ADR-037 (agent lifecycle)",
+  "created_at": "2026-03-22T00:00:00Z",
+  "created_by": "planner",
+  "status": "done",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Establish hex-setup/helpers/ deployment pipeline",
+      "tier": 0,
+      "description": "Hook helpers currently live in docs/helpers/ (orphaned). Move them to hex-setup/helpers/ so they get baked into the hex-nexus binary via rust-embed and deployed to target projects during 'hex init'. This follows the same pattern as hex-setup/agents/, hex-setup/skills/, and hex-setup/hooks/.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus --release",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Move helpers from docs/helpers/ to hex-setup/helpers/",
+          "layer": "infrastructure",
+          "description": "Move agent-register.cjs, hub-push.cjs, and hook-handler.cjs from docs/helpers/ to hex-setup/helpers/. These are the canonical source files that get embedded into the hex-nexus binary.",
+          "deps": [],
+          "files": [
+            "hex-setup/helpers/agent-register.cjs",
+            "hex-setup/helpers/hub-push.cjs",
+            "hex-setup/helpers/hook-handler.cjs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.2",
+          "name": "Add HelperTemplates rust-embed struct",
+          "layer": "secondary",
+          "description": "Add a new rust-embed struct HelperTemplates in hex-nexus/src/templates.rs that embeds hex-setup/helpers/ with prefix 'helpers/'. Follows the same pattern as AgentTemplates, SkillTemplates, HookTemplates, McpTemplates.",
+          "deps": ["P0.1"],
+          "files": [
+            "hex-nexus/src/templates.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.3",
+          "name": "Deploy helpers during hex init",
+          "layer": "primary",
+          "description": "Extend init_project() in hex-nexus/src/routes/files.rs to iterate HelperTemplates and write them to .claude/helpers/ in the target project (same pattern as agents/skills deployment at lines 248-285). Also extend hex-cli/src/commands/init.rs summary output to show helpers count.",
+          "deps": ["P0.2"],
+          "files": [
+            "hex-nexus/src/routes/files.rs",
+            "hex-cli/src/commands/init.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Add task_assign MCP tool + fix task_list route",
+      "tier": 0,
+      "description": "The SpacetimeDB reducer and REST endpoint for task assignment already exist, but there's no MCP tool to expose them. Also fix the task_list MCP tool which hits GET /api/swarms (POST-only) instead of GET /api/swarms/active. The task_list fix is already applied — just needs rebuild verification.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli --release",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add hex_hexflo_task_assign MCP tool",
+          "layer": "primary",
+          "description": "Add a new MCP tool 'hex_hexflo_task_assign' in hex-cli/src/commands/mcp.rs that sends PATCH /api/hexflo/tasks/{task_id} with { agent_id }. The REST endpoint already handles assignment when agent_id is present. Also add the tool definition to hex-setup/mcp/mcp-tools.json with inputs: task_id (required), agent_id (required).",
+          "deps": [],
+          "files": [
+            "hex-cli/src/commands/mcp.rs",
+            "hex-setup/mcp/mcp-tools.json"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Verify task_list fix after rebuild",
+          "layer": "primary",
+          "description": "The task_list MCP tool route was already fixed (GET /api/swarms → GET /api/swarms/active). After rebuilding hex-cli and restarting the MCP server, verify that hex_hexflo_task_list without swarm_id returns all active swarms with tasks.",
+          "deps": [],
+          "files": [
+            "hex-cli/src/commands/mcp.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Wire session registration hooks (ADR-048)",
+      "tier": 1,
+      "description": "ADR-048 is accepted. agent-register.cjs is now in hex-setup/helpers/ (from P0) and gets deployed by hex init. Wire it into the settings template so SessionStart and SessionEnd hooks fire automatically. This gives every Claude Code session a persistent agentId.",
+      "gate": {
+        "type": "manual",
+        "criteria": "Session start prints 'hex-agent registered: <uuid>' and dashboard shows the session",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add SessionStart/SessionEnd hooks to settings template",
+          "layer": "primary",
+          "description": "Update hex-setup/mcp/hex-claude-settings.json to include SessionStart and SessionEnd hooks that invoke .claude/helpers/agent-register.cjs register/deregister. Follow the fire-and-forget pattern — never block the session. The settings template is deployed by hex init via McpTemplates.",
+          "deps": ["P0.3"],
+          "files": [
+            "hex-setup/mcp/hex-claude-settings.json"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Expose agentId to MCP tools via session state",
+          "layer": "secondary",
+          "description": "After registration, the agentId is saved to ~/.hex/sessions/agent-{sessionId}.json. Add a helper function in hex-cli (e.g., hex-cli/src/session.rs) that resolves the current session's agentId from CLAUDE_SESSION_ID env var + state file. MCP tools like task_assign can auto-populate agent_id when not explicitly provided.",
+          "deps": ["P2.1"],
+          "files": [
+            "hex-cli/src/session.rs",
+            "hex-cli/src/commands/mcp.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Task lifecycle hooks — auto-assign and auto-complete",
+      "tier": 2,
+      "description": "Create task-sync.cjs in hex-setup/helpers/ that intercepts subagent lifecycle events and automatically updates HexFlo task state. When a coordinator spawns a subagent with HEXFLO_TASK:{task_id} in its prompt, the hook claims the task. When the subagent completes, the hook marks it done.",
+      "gate": {
+        "type": "manual",
+        "criteria": "Spawning a subagent with HEXFLO_TASK:uuid in prompt auto-transitions task to in_progress; subagent completion auto-transitions to completed",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Create task-sync.cjs hook helper",
+          "layer": "primary",
+          "description": "New helper hex-setup/helpers/task-sync.cjs that handles two events: (1) SubagentStart — reads stdin for HEXFLO_TASK:{uuid} pattern, calls PATCH /api/hexflo/tasks/{task_id} with { agent_id } to claim it. (2) SubagentStop — reads stdin for the subagent result, calls PATCH /api/hexflo/tasks/{task_id} with { status: 'completed', result }. The task_id→subagent mapping is stored in ~/.hex/sessions/tasks-{sessionId}.json. Fire-and-forget — never blocks the agent.",
+          "deps": ["P2.2"],
+          "files": [
+            "hex-setup/helpers/task-sync.cjs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Wire SubagentStart and SubagentStop hooks in settings template",
+          "layer": "primary",
+          "description": "Add SubagentStart and SubagentStop hooks to hex-setup/mcp/hex-claude-settings.json that invoke .claude/helpers/task-sync.cjs. SubagentStart receives the subagent prompt on stdin. SubagentStop receives the result on stdin.",
+          "deps": ["P3.1"],
+          "files": [
+            "hex-setup/mcp/hex-claude-settings.json"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.3",
+          "name": "Define HEXFLO_TASK convention for coordinator prompts",
+          "layer": "usecases",
+          "description": "Update coordinator agent definitions in hex-setup/agents/hex/ (swarm-coordinator.yml, feature-developer.yml) to include 'HEXFLO_TASK:{task_id}' in the prompt when spawning subagents. This is the contract between coordinators and the task-sync hook. Document the convention in CLAUDE.md under 'Swarm Coordination'.",
+          "deps": ["P3.1"],
+          "files": [
+            "hex-setup/agents/hex/swarm-coordinator.yml",
+            "hex-setup/agents/hex/feature-developer.yml",
+            "CLAUDE.md"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Heartbeat integration for long-running sessions",
+      "tier": 3,
+      "description": "Claude Code sessions don't send heartbeats, so the 120s stale-agent cleanup reclaims their tasks. Add a heartbeat helper in hex-setup/helpers/ wired to PostToolUse, throttled to once per 15 seconds, keeping agent registrations alive.",
+      "gate": {
+        "type": "manual",
+        "criteria": "Agent stays 'active' in dashboard for sessions lasting >2 minutes; stale-agent cleanup does not reclaim tasks from active Claude Code sessions",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Create heartbeat-push.cjs hook helper",
+          "layer": "primary",
+          "description": "New helper hex-setup/helpers/heartbeat-push.cjs that sends a heartbeat to hex-nexus on PostToolUse events, throttled to once per 15 seconds via a timestamp file (~/.hex/sessions/heartbeat-{sessionId}.ts). Reads agentId from ~/.hex/sessions/agent-{sessionId}.json. Hits the agent heartbeat endpoint. Must complete in <50ms (fire-and-forget HTTP, no response wait).",
+          "deps": ["P2.1"],
+          "files": [
+            "hex-setup/helpers/heartbeat-push.cjs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.2",
+          "name": "Wire PostToolUse heartbeat hook in settings template",
+          "layer": "primary",
+          "description": "Add PostToolUse hook to hex-setup/mcp/hex-claude-settings.json that invokes .claude/helpers/heartbeat-push.cjs.",
+          "deps": ["P4.1"],
+          "files": [
+            "hex-setup/mcp/hex-claude-settings.json"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Update ADR-048 and add integration test",
+      "tier": 4,
+      "description": "Extend ADR-048 to document task lifecycle hooks (P3), heartbeat integration (P4), and the hex-setup deployment pipeline (P0) as implemented. Add integration test for the full flow.",
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-nexus task_sync",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Update ADR-048 with task lifecycle and deployment sections",
+          "layer": "domain",
+          "description": "Move heartbeat integration and subagent tracking from 'Future Work' to the Decision section. Add: (4) Task Lifecycle Hooks — HEXFLO_TASK convention, task-sync.cjs, SubagentStart/Stop wiring. (5) Deployment Pipeline — hex-setup/helpers/ → rust-embed → hex init. Add sequence diagram for full flow. Update Files Changed table.",
+          "deps": ["P3.3", "P4.2"],
+          "files": [
+            "docs/adrs/ADR-048-claude-code-session-agent-registration.md"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.2",
+          "name": "Integration test for task state sync",
+          "layer": "integration",
+          "description": "Add a test in hex-nexus/tests/ that simulates: POST /api/agents/connect → POST /api/swarms → POST /api/swarms/{id}/tasks → PATCH with agent_id (assign) → verify status=in_progress → PATCH with status=completed → verify completedAt set. Also test: assign rejects non-pending tasks, completed tasks have result.",
+          "deps": ["P1.1"],
+          "files": [
+            "hex-nexus/tests/task_sync_integration.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ],
+  "success_metrics": [
+    "hex init deploys helpers to .claude/helpers/ alongside agents and skills",
+    "All swarm tasks reflect real-time status (pending → in_progress → completed) without manual intervention",
+    "Dashboard shows which Claude Code session/subagent is working on which task",
+    "Stale-agent cleanup does not reclaim tasks from active Claude Code sessions",
+    "Coordinator agents no longer need HexFlo memory as a side-channel for progress tracking",
+    "task_list MCP tool returns all tasks across swarms without 405 errors"
+  ],
+  "dependency_order": "P0 + P1 (parallel, tier 0) → P2 (tier 1) → P3 (tier 2) → P4 (tier 3) → P5 (tier 4)",
+  "estimated_agents": 3,
+  "mode": "interactive"
+}

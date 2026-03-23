@@ -7,7 +7,9 @@
 //!   - `boundary_rule` (public) -- hex architecture import rules
 //!   - `write_validation` (public) -- validation results for agent writes
 
-use spacetimedb::{table, reducer, ReducerContext, Table};
+#![allow(clippy::too_many_arguments, clippy::needless_borrows_for_generic_args)]
+
+use spacetimedb::{reducer, table, ReducerContext, Table};
 
 // ─── Boundary Rule (PUBLIC) ─────────────────────────────────────────────────
 
@@ -90,13 +92,29 @@ pub fn seed_default_rules(ctx: &ReducerContext) -> Result<(), String> {
         ("domain-no-adapters", "domain", "adapters", "error"),
         ("ports-no-adapters", "ports", "adapters", "error"),
         ("ports-no-usecases", "ports", "usecases", "error"),
-        ("primary-no-secondary", "adapters/primary", "adapters/secondary", "error"),
-        ("secondary-no-primary", "adapters/secondary", "adapters/primary", "error"),
+        (
+            "primary-no-secondary",
+            "adapters/primary",
+            "adapters/secondary",
+            "error",
+        ),
+        (
+            "secondary-no-primary",
+            "adapters/secondary",
+            "adapters/primary",
+            "error",
+        ),
     ];
 
     for (id, source, forbidden, severity) in rules {
         // Upsert: skip if already exists
-        if ctx.db.boundary_rule().rule_id().find(&id.to_string()).is_none() {
+        if ctx
+            .db
+            .boundary_rule()
+            .rule_id()
+            .find(&id.to_string())
+            .is_none()
+        {
             ctx.db.boundary_rule().insert(BoundaryRule {
                 rule_id: id.to_string(),
                 source_layer: source.to_string(),
@@ -138,7 +156,12 @@ pub fn validate_write(
         let import_layer = detect_layer(import_path);
 
         for rule in &rules {
-            if check_violation(source_layer, import_layer, &rule.source_layer, &rule.forbidden_import) {
+            if check_violation(
+                source_layer,
+                import_layer,
+                &rule.source_layer,
+                &rule.forbidden_import,
+            ) {
                 violations.push(format!(
                     "[{}] {} cannot import {} (rule: {})",
                     rule.severity, source_layer, import_layer, rule.rule_id
@@ -163,16 +186,24 @@ pub fn validate_write(
     );
 
     // Upsert validation result
-    if let Some(existing) = ctx.db.write_validation().validation_id().find(&validation_id) {
-        ctx.db.write_validation().validation_id().update(WriteValidation {
-            agent_id,
-            file_path: file_path.clone(),
-            proposed_imports: proposed_imports_json,
-            verdict: verdict.to_string(),
-            violations: violations_json.clone(),
-            validated_at,
-            ..existing
-        });
+    if let Some(existing) = ctx
+        .db
+        .write_validation()
+        .validation_id()
+        .find(&validation_id)
+    {
+        ctx.db
+            .write_validation()
+            .validation_id()
+            .update(WriteValidation {
+                agent_id,
+                file_path: file_path.clone(),
+                proposed_imports: proposed_imports_json,
+                verdict: verdict.to_string(),
+                violations: violations_json.clone(),
+                validated_at,
+                ..existing
+            });
     } else {
         ctx.db.write_validation().insert(WriteValidation {
             validation_id,
@@ -187,7 +218,10 @@ pub fn validate_write(
 
     log::info!(
         "Validated write to '{}' (layer: {}): {} ({} violations)",
-        file_path, source_layer, verdict, violations.len()
+        file_path,
+        source_layer,
+        verdict,
+        violations.len()
     );
 
     Ok(())
@@ -208,12 +242,7 @@ fn parse_json_string_array(json: &str) -> Vec<String> {
 
     inner
         .split(',')
-        .map(|s| {
-            s.trim()
-                .trim_matches('"')
-                .trim_matches('\'')
-                .to_string()
-        })
+        .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
         .filter(|s| !s.is_empty())
         .collect()
 }
@@ -241,12 +270,18 @@ mod tests {
 
     #[test]
     fn detect_primary_adapter_layer() {
-        assert_eq!(detect_layer("src/adapters/primary/cli.ts"), "adapters/primary");
+        assert_eq!(
+            detect_layer("src/adapters/primary/cli.ts"),
+            "adapters/primary"
+        );
     }
 
     #[test]
     fn detect_secondary_adapter_layer() {
-        assert_eq!(detect_layer("src/adapters/secondary/fs.ts"), "adapters/secondary");
+        assert_eq!(
+            detect_layer("src/adapters/secondary/fs.ts"),
+            "adapters/secondary"
+        );
     }
 
     #[test]
@@ -268,7 +303,12 @@ mod tests {
 
     #[test]
     fn domain_importing_adapters_violates() {
-        assert!(check_violation("domain", "adapters/primary", "domain", "adapters"));
+        assert!(check_violation(
+            "domain",
+            "adapters/primary",
+            "domain",
+            "adapters"
+        ));
     }
 
     #[test]
@@ -279,8 +319,10 @@ mod tests {
     #[test]
     fn primary_importing_secondary_violates() {
         assert!(check_violation(
-            "adapters/primary", "adapters/secondary",
-            "adapters/primary", "adapters/secondary"
+            "adapters/primary",
+            "adapters/secondary",
+            "adapters/primary",
+            "adapters/secondary"
         ));
     }
 

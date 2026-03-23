@@ -1,0 +1,165 @@
+{
+  "title": "Plan: hex Context Injection into opencode (ADR-2603231800)",
+  "feature": "opencode-integration",
+  "language": "rust",
+  "status": "in_progress",
+  "description": "Implement hex CLI command to inject hex's complete context (MCP tools, agent definitions, skills, hooks, enforcement rules) into opencode's configuration system",
+  "adr": "ADR-2603231800",
+  "priority": "high",
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Create opencode.rs command module in hex-cli/src/commands/",
+      "adapter": "hex-cli/primary",
+      "tier": 2,
+      "dependencies": [],
+      "status": "completed",
+      "layer": "primary-adapter"
+    },
+    {
+      "id": "step-2",
+      "description": "Implement settings detection - scan ~/.opencode/settings.json, ~/.config/opencode/settings.json, project-level .opencode/settings.json",
+      "adapter": "hex-cli/domain",
+      "tier": 0,
+      "dependencies": [],
+      "status": "completed",
+      "layer": "domain"
+    },
+    {
+      "id": "step-3",
+      "description": "Implement MCP server injection - inject hex MCP spec into opencode mcpServers config",
+      "adapter": "hex-cli/primary",
+      "tier": 2,
+      "dependencies": ["step-2"],
+      "status": "completed",
+      "layer": "primary-adapter"
+    },
+    {
+      "id": "step-4",
+      "description": "Implement agent definitions converter - convert hex YAML agents to opencode format and inject",
+      "adapter": "hex-cli/secondary",
+      "tier": 1,
+      "dependencies": ["step-2"],
+      "status": "completed",
+      "layer": "secondary-adapter"
+    },
+    {
+      "id": "step-5",
+      "description": "Implement skills injector - inject hex skills as opencode slash commands",
+      "adapter": "hex-cli/secondary",
+      "tier": 1,
+      "dependencies": ["step-2"],
+      "status": "completed",
+      "layer": "secondary-adapter"
+    },
+    {
+      "id": "step-6",
+      "description": "Implement hooks injector - inject hex hooks into opencode's hook system",
+      "adapter": "hex-cli/secondary",
+      "tier": 1,
+      "dependencies": ["step-2"],
+      "status": "completed",
+      "layer": "secondary-adapter"
+    },
+    {
+      "id": "step-7",
+      "description": "Implement enforcement rules injector - inject ADR compliance rules into opencode",
+      "adapter": "hex-cli/secondary",
+      "tier": 1,
+      "dependencies": ["step-2"],
+      "status": "completed",
+      "layer": "secondary-adapter"
+    },
+    {
+      "id": "step-8",
+      "description": "Implement project config injector - inject .hex/project.json into opencode settings",
+      "adapter": "hex-cli/secondary",
+      "tier": 1,
+      "dependencies": ["step-2"],
+      "status": "completed",
+      "layer": "secondary-adapter"
+    },
+    {
+      "id": "step-9",
+      "description": "Implement hex opencode remove command - remove hex context from opencode settings",
+      "adapter": "hex-cli/primary",
+      "tier": 2,
+      "dependencies": ["step-2"],
+      "status": "completed",
+      "layer": "primary-adapter"
+    },
+    {
+      "id": "step-10",
+      "description": "Implement hex opencode status command - check what hex context is configured",
+      "adapter": "hex-cli/primary",
+      "tier": 2,
+      "dependencies": ["step-2"],
+      "status": "completed",
+      "layer": "primary-adapter"
+    },
+    {
+      "id": "step-11",
+      "description": "Add tests for settings merging - verify non-destructive merge, validation, rollback",
+      "adapter": "hex-cli/integration",
+      "tier": 4,
+      "dependencies": ["step-3", "step-9", "step-10"],
+      "status": "pending",
+      "layer": "integration"
+    },
+    {
+      "id": "step-12",
+      "description": "Update hex-cli mod.rs to register opencode command module",
+      "adapter": "hex-cli/primary",
+      "tier": 3,
+      "dependencies": ["step-1"],
+      "status": "completed",
+      "layer": "composition-root"
+    }
+  ],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "SPECS",
+      "description": "Define detailed behavioral specs for opencode injection",
+      "status": "completed"
+    },
+    {
+      "phase": 2,
+      "name": "PLAN",
+      "description": "Decompose into adapter-bounded tasks (current)",
+      "status": "completed"
+    },
+    {
+      "phase": 3,
+      "name": "WORKTREES",
+      "description": "Create isolated worktrees per adapter layer",
+      "status": "completed"
+    },
+    {
+      "phase": 4,
+      "name": "CODE",
+      "description": "Implement code with TDD in parallel worktrees",
+      "status": "completed"
+    },
+    {
+      "phase": 5,
+      "name": "VALIDATE",
+      "description": "Run validation judge for semantic verification",
+      "status": "completed"
+    },
+    {
+      "phase": 6,
+      "name": "INTEGRATE",
+      "description": "Merge worktrees in dependency order",
+      "status": "completed"
+    },
+    {
+      "phase": 7,
+      "name": "FINALIZE",
+      "description": "Cleanup worktrees, commit, update ADR status",
+      "status": "in_progress"
+    }
+  ],
+  "created_at": "2026-03-23T15:20:55.387299+00:00",
+  "superseded_by": ""
+}

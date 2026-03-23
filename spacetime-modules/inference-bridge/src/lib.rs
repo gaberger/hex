@@ -7,6 +7,15 @@
 //! "worker" subscribes to pending requests, routes them to the best
 //! provider, and writes the response back. The requesting agent sees
 //! the response via its SpacetimeDB subscription — no polling.
+
+#![allow(clippy::too_many_arguments, clippy::needless_borrows_for_generic_args)]
+
+//!
+//! Instead of agents calling hex-nexus HTTP directly for inference,
+//! they write an InferenceRequest row to SpacetimeDB. A hex-nexus
+//! "worker" subscribes to pending requests, routes them to the best
+//! provider, and writes the response back. The requesting agent sees
+//! the response via its SpacetimeDB subscription — no polling.
 //!
 //! Benefits:
 //! - Inference requests survive hex-nexus restarts
@@ -15,7 +24,7 @@
 //! - Browser can watch inference in real-time
 //! - Rate limiting and budgets enforced server-side
 
-use spacetimedb::{table, reducer, ReducerContext, Table, Timestamp};
+use spacetimedb::{reducer, table, ReducerContext, Table, Timestamp};
 
 // ── Tables ──────────────────────────────────────────────
 
@@ -26,13 +35,13 @@ pub struct InferenceQueue {
     pub request_id: String,
     pub agent_id: String,
     pub swarm_id: String,
-    pub model: String,           // requested model (e.g. "qwen2.5-coder:7b")
-    pub provider_hint: String,   // preferred provider (empty = auto-route)
-    pub messages_json: String,   // JSON-encoded message array
+    pub model: String,         // requested model (e.g. "qwen2.5-coder:7b")
+    pub provider_hint: String, // preferred provider (empty = auto-route)
+    pub messages_json: String, // JSON-encoded message array
     pub max_tokens: u32,
     pub temperature: f64,
-    pub status: String,          // "pending", "processing", "completed", "failed"
-    pub worker_id: String,       // which hex-nexus instance claimed this
+    pub status: String,    // "pending", "processing", "completed", "failed"
+    pub worker_id: String, // which hex-nexus instance claimed this
     pub created_at: Timestamp,
     pub claimed_at: Timestamp,
     pub completed_at: Timestamp,
@@ -49,7 +58,7 @@ pub struct InferenceResult {
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub latency_ms: u64,
-    pub cost_estimate: f64,      // USD estimate
+    pub cost_estimate: f64, // USD estimate
     pub completed_at: Timestamp,
 }
 
@@ -70,11 +79,11 @@ pub struct AgentTokenBudget {
 pub struct ProviderRoute {
     #[primary_key]
     pub provider_id: String,
-    pub provider_type: String,   // "ollama", "vllm", "openai", "anthropic"
+    pub provider_type: String, // "ollama", "vllm", "openai", "anthropic"
     pub base_url: String,
-    pub models_json: String,     // JSON array of model names
+    pub models_json: String, // JSON array of model names
     pub healthy: bool,
-    pub priority: u32,           // lower = preferred
+    pub priority: u32, // lower = preferred
     pub rpm_limit: u32,
     pub current_rpm: u32,
     pub last_health_check: Timestamp,
@@ -146,7 +155,11 @@ pub fn claim_inference(ctx: &ReducerContext, request_id: String, worker_id: Stri
     };
 
     if req.status != "pending" {
-        log::warn!("Request {} already claimed (status: {})", request_id, req.status);
+        log::warn!(
+            "Request {} already claimed (status: {})",
+            request_id,
+            req.status
+        );
         return; // Already claimed by another worker
     }
 

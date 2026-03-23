@@ -1,0 +1,102 @@
+{
+  "id": "wp-readme-restructure",
+  "feature": "README Restructure — Accurate, Modular Documentation",
+  "description": "Split monolithic 850-line README into focused docs. Remove stale npm/npx references, fix CLI reference, extract architecture and enforcement docs. ADR-2603222136.",
+  "adr": "ADR-2603222136",
+  "priority": "high",
+  "created_at": "2026-03-22T21:36:00Z",
+  "created_by": "planner",
+  "status": "done",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Extract architecture docs",
+      "tier": 0,
+      "description": "Move system components, hexagonal layers, SpacetimeDB, hex-nexus, hex-agent, dashboard sections from README into docs/ARCHITECTURE.md.",
+      "gate": { "type": "build", "command": "test -f docs/ARCHITECTURE.md", "blocking": true },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Create docs/ARCHITECTURE.md",
+          "layer": "domain",
+          "description": "Extract system architecture diagram, SpacetimeDB section, hex-nexus section, hex-agent section, dashboard section, inference section from README. Add table of contents. Ensure all diagrams are preserved.",
+          "deps": [],
+          "files": ["docs/ARCHITECTURE.md"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Extract CLI reference",
+      "tier": 0,
+      "description": "Create accurate CLI reference from hex --help output. Remove stale commands.",
+      "gate": { "type": "build", "command": "test -f docs/CLI-REFERENCE.md", "blocking": true },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Create docs/CLI-REFERENCE.md",
+          "layer": "domain",
+          "description": "Generate CLI reference from actual hex --help, hex adr --help, hex enforce --help, hex agent --help, hex test --help, hex swarm --help, hex task --help, hex plan --help output. Include examples. Remove commands that don't exist (hex build, hex orchestrate, hex setup, hex hub).",
+          "deps": [],
+          "files": ["docs/CLI-REFERENCE.md"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Extract enforcement and development docs",
+      "tier": 0,
+      "description": "Create ENFORCEMENT.md (3-layer architecture) and DEVELOPMENT.md (build, test, contribute).",
+      "gate": { "type": "build", "command": "test -f docs/ENFORCEMENT.md && test -f docs/DEVELOPMENT.md", "blocking": true },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Create docs/ENFORCEMENT.md",
+          "layer": "domain",
+          "description": "Document 3-layer enforcement: client hooks (Claude Code), MCP tool guards (any provider), nexus API middleware (server-side). Include IEnforcementPort, DefaultEnforcer, enforcement modes, hex enforce CLI, system prompt for open models.",
+          "deps": [],
+          "files": ["docs/ENFORCEMENT.md"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Create docs/DEVELOPMENT.md",
+          "layer": "domain",
+          "description": "Build instructions (cargo build, bun build), test instructions (hex test, cargo test, bun test), project structure, contribution guide, CI pipeline. Extract from README + CLAUDE.md.",
+          "deps": [],
+          "files": ["docs/DEVELOPMENT.md"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Rewrite README.md",
+      "tier": 1,
+      "description": "Rewrite README to < 200 lines: banner, description, quick start with real commands, simplified architecture diagram, links to docs/.",
+      "gate": { "type": "build", "command": "wc -l README.md | awk '{if($1>250) exit 1}'", "blocking": true },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Rewrite README.md",
+          "layer": "primary",
+          "description": "Keep: banner, badges, one-paragraph description. Add: Quick Start with hex binary commands (not npx). Add: simplified architecture diagram. Add: links to docs/ARCHITECTURE.md, docs/CLI-REFERENCE.md, docs/ENFORCEMENT.md, docs/DEVELOPMENT.md. Remove: npm install, SPECKit/BMAD comparison, inline code examples > 10 lines, TS CLI references, notification channels, token summaries (move to docs/).",
+          "deps": ["P1.1", "P2.1", "P3.1", "P3.2"],
+          "files": ["README.md"],
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ],
+  "success_metrics": [
+    "README.md is < 200 lines and contains only accurate information",
+    "No references to npm install, npx, or TypeScript CLI",
+    "All CLI commands in docs match hex --help output",
+    "docs/ARCHITECTURE.md covers all 5 system components",
+    "docs/ENFORCEMENT.md covers all 3 enforcement layers"
+  ],
+  "dependency_order": "P1 + P2 + P3 (parallel, tier 0) → P4 (tier 1)",
+  "estimated_agents": 2
+}

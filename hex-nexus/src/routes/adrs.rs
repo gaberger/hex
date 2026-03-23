@@ -1,4 +1,4 @@
-use axum::{extract::{Path, State}, Json};
+use axum::{extract::{Path, Query, State}, Json};
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -297,13 +297,24 @@ pub async fn save_adr(
 // ── Project-scoped ADR handlers (ADR-045 Phase 1) ────────
 
 /// GET /api/projects/{id}/adrs — list ADRs from a project's docs/adrs/ directory.
+/// Accepts optional `?root=/abs/path` query param as fallback when project lookup fails.
 pub async fn list_project_adrs(
     Path(project_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let root_path = match resolve_project_path(&state, &project_id).await {
         Ok(p) => p,
-        Err((status, body)) => return (status, body),
+        Err(_) => {
+            // Fallback: use ?root= query param if provided (dashboard passes project path)
+            match params.get("root") {
+                Some(r) if !r.is_empty() && std::path::Path::new(r).is_dir() => r.clone(),
+                _ => return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "ok": false, "error": format!("Project '{}' not found and no valid ?root= provided", project_id) })),
+                ),
+            }
+        }
     };
 
     let adr_dir = PathBuf::from(&root_path).join("docs/adrs");
@@ -325,13 +336,23 @@ pub async fn list_project_adrs(
 }
 
 /// GET /api/projects/{id}/adrs/{adr_id} — get a single ADR from a project.
+/// Accepts optional `?root=/abs/path` query param as fallback when project lookup fails.
 pub async fn get_project_adr(
     Path((project_id, adr_id)): Path<(String, String)>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let root_path = match resolve_project_path(&state, &project_id).await {
         Ok(p) => p,
-        Err((status, body)) => return (status, body),
+        Err(_) => {
+            match params.get("root") {
+                Some(r) if !r.is_empty() && std::path::Path::new(r).is_dir() => r.clone(),
+                _ => return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "ok": false, "error": format!("Project '{}' not found and no valid ?root= provided", project_id) })),
+                ),
+            }
+        }
     };
 
     let adr_dir = PathBuf::from(&root_path).join("docs/adrs");

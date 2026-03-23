@@ -1,0 +1,161 @@
+{
+  "id": "feat-stdb-hydrate",
+  "title": "SpacetimeDB Schema Hydration on New Installs",
+  "status": "planned",
+  "created": "2026-03-21",
+  "driver": "New hex installs need a zero-state SpacetimeDB with all 17 WASM module schemas, reducers, and procedures deployed — but no application data.",
+  "goal": "hex nexus start (or hex stdb hydrate) on a fresh install should: discover/start SpacetimeDB, publish all 17 WASM modules in dependency order, verify schemas are live, run config_sync, and report health — fully automated, idempotent, no user data seeded.",
+
+  "architecture_context": {
+    "spacetimedb_role": "Backbone for all real-time state — agents, swarms, tasks, chat, inference, secrets, config. Connected via WebSocket from hex-nexus.",
+    "wasm_constraint": "WASM modules cannot access filesystem, spawn processes, or make network calls. hex-nexus bridges that gap.",
+    "state_policy": "ADR-025: SpacetimeDB is the ONLY state backend. SQLite removed. No fallback.",
+    "current_gaps": [
+      "No module publish ordering — modules with cross-references can fail if published out of order",
+      "No schema validation after publish (is the table actually queryable?)",
+      "No reducer availability check (can we call swarm_init yet?)",
+      "No initial seed data (default inference providers, architecture rules)",
+      "No health check after config_sync (did sync_config succeed?)",
+      "hex init does not trigger SpacetimeDB setup at all"
+    ]
+  },
+
+  "modules_dependency_order": {
+    "description": "Publish order based on cross-module references. Tier 0 has no deps, each tier depends on prior tiers.",
+    "tier_0_foundation": [
+      "hexflo-coordination     — core tables: swarm, swarm_task, swarm_agent, hexflo_memory, project",
+      "agent-registry          — agent lifecycle + heartbeats",
+      "fleet-state             — compute node registry",
+      "file-lock-manager       — distributed file locks"
+    ],
+    "tier_1_services": [
+      "inference-gateway       — LLM request routing (references agent IDs)",
+      "inference-bridge        — secondary inference coordination",
+      "secret-grant            — API key + endpoint management",
+      "architecture-enforcer   — boundary rules + write validation"
+    ],
+    "tier_2_workflows": [
+      "workplan-state          — task status + phase tracking",
+      "skill-registry          — skill catalog indexing",
+      "hook-registry           — hook lifecycle + execution logs",
+      "agent-definition-registry — agent role definitions + versioning"
+    ],
+    "tier_3_coordination": [
+      "chat-relay              — conversations + message routing",
+      "rl-engine               — Q-learning patterns + decisions",
+      "hexflo-lifecycle        — swarm phase transitions",
+      "hexflo-cleanup          — stale agent reclamation",
+      "conflict-resolver       — merge conflict detection"
+    ]
+  },
+
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Add `hex stdb hydrate` CLI command",
+      "layer": "hex-cli",
+      "file": "hex-cli/src/commands/stdb.rs",
+      "description": "New subcommand that orchestrates the full hydration pipeline. Calls hex-nexus REST endpoint to do the actual work. Flags: --host, --database, --force (re-publish even if modules exist), --dry-run.",
+      "depends_on": [],
+      "tier": 0
+    },
+    {
+      "id": "T2",
+      "title": "Add POST /api/stdb/hydrate endpoint to hex-nexus",
+      "layer": "hex-nexus",
+      "file": "hex-nexus/src/routes/mod.rs",
+      "description": "New route handler that accepts hydration request and orchestrates: (1) ensure SpacetimeDB is running, (2) publish modules in order, (3) verify schemas, (4) run config_sync, (5) return health report. Create new file hex-nexus/src/routes/stdb.rs for the handler.",
+      "depends_on": ["T3", "T4"],
+      "tier": 1
+    },
+    {
+      "id": "T3",
+      "title": "Implement ordered module publisher in hex-nexus",
+      "layer": "hex-nexus",
+      "file": "hex-nexus/src/spacetime_launcher.rs",
+      "description": "Add a publish_modules_ordered() function that: (1) discovers all .wasm files in spacetime-modules/*/target/wasm32-unknown-unknown/release/, (2) sorts by the 4-tier dependency order defined above, (3) publishes each module via `spacetime publish` CLI, (4) waits for each tier to be live before publishing the next, (5) returns a manifest of published modules with status. Must be idempotent — skip modules already published at correct version.",
+      "depends_on": [],
+      "tier": 0
+    },
+    {
+      "id": "T4",
+      "title": "Implement schema verification after publish",
+      "layer": "hex-nexus",
+      "file": "hex-nexus/src/spacetime_launcher.rs",
+      "description": "After each tier is published, verify: (1) tables exist and are queryable via WebSocket subscription, (2) key reducers are callable (dry-call with validation-only flag if available, or call a no-op reducer). Report any schema mismatches. This catches WASM compile issues where a module builds but its tables don't match expectations.",
+      "depends_on": ["T3"],
+      "tier": 1
+    },
+    {
+      "id": "T5",
+      "title": "Embed WASM module binaries in hex-nexus at build time",
+      "layer": "hex-nexus",
+      "file": "hex-nexus/Cargo.toml + hex-nexus/src/templates.rs",
+      "description": "Use rust-embed to bake pre-compiled WASM modules into the hex-nexus binary, similar to how dashboard assets and skill/agent templates are embedded. This allows hydration without requiring the spacetime-modules source tree. Add a WasmModules embed struct pointing to the compiled .wasm output directory. Build script (build.rs) should compile WASM modules before embedding.",
+      "depends_on": [],
+      "tier": 0
+    },
+    {
+      "id": "T6",
+      "title": "Seed default architecture boundary rules",
+      "layer": "hex-nexus",
+      "file": "hex-nexus/src/config_sync.rs",
+      "description": "After modules are published, seed the architecture-enforcer module with the 8 standard hex boundary rules (domain imports only domain, ports import only domain, etc.) via the register_rule reducer. These rules must be present for hex analyze to work against SpacetimeDB. Idempotent — skip if rules already exist.",
+      "depends_on": ["T4"],
+      "tier": 2
+    },
+    {
+      "id": "T7",
+      "title": "Enhance config_sync to report success/failure",
+      "layer": "hex-nexus",
+      "file": "hex-nexus/src/config_sync.rs",
+      "description": "Currently config_sync fires and forgets. Add return types that report: (1) number of configs synced, (2) any sync failures with reducer error messages, (3) timestamp of last successful sync. Store sync status in a SyncReport struct returned to the hydrate endpoint.",
+      "depends_on": [],
+      "tier": 0
+    },
+    {
+      "id": "T8",
+      "title": "Add hydration health check endpoint",
+      "layer": "hex-nexus",
+      "file": "hex-nexus/src/routes/stdb.rs",
+      "description": "GET /api/stdb/health — returns a comprehensive health report: (1) SpacetimeDB connection status, (2) per-module publish status (version, table count, reducer count), (3) config_sync last run + status, (4) overall hydration state: 'empty' | 'partial' | 'hydrated' | 'stale'. Used by hex stdb status and the dashboard.",
+      "depends_on": ["T2"],
+      "tier": 2
+    },
+    {
+      "id": "T9",
+      "title": "Wire hydration into hex nexus start",
+      "layer": "hex-nexus",
+      "file": "hex-nexus/src/lib.rs",
+      "description": "When hex-nexus starts and connects to SpacetimeDB, check hydration state. If 'empty', auto-run the hydration pipeline (publish modules, verify, seed, config_sync). If 'stale' (modules outdated), log a warning suggesting hex stdb hydrate --force. This makes first-time setup fully automatic.",
+      "depends_on": ["T2", "T8"],
+      "tier": 3
+    },
+    {
+      "id": "T10",
+      "title": "Wire hydration into hex init",
+      "layer": "hex-cli",
+      "file": "hex-cli/src/commands/init.rs",
+      "description": "After hex init pulls templates from nexus, also trigger hydration if SpacetimeDB is available. Same graceful fallback pattern: if SpacetimeDB/nexus isn't running, print guidance. If running, hydrate and report module count in the summary.",
+      "depends_on": ["T1", "T9"],
+      "tier": 3
+    }
+  ],
+
+  "acceptance_criteria": [
+    "Fresh install: `hex nexus start` on empty SpacetimeDB → all 17 modules published, schemas verified, config synced, health reports 'hydrated'",
+    "Idempotent: running hydrate twice produces no errors and no duplicate data",
+    "No application state: hydration creates schemas + default rules only, zero swarms/tasks/agents/messages",
+    "Ordered publish: tier N modules only published after tier N-1 is verified live",
+    "Graceful offline: hex init without SpacetimeDB prints clear guidance, doesn't fail",
+    "Health observable: GET /api/stdb/health returns accurate per-module status",
+    "Dashboard integration: hydration status visible on the developer control plane"
+  ],
+
+  "out_of_scope": [
+    "Data migration between SpacetimeDB versions",
+    "Multi-tenant database isolation",
+    "Remote SpacetimeDB cluster deployment",
+    "WASM module hot-reload without restart"
+  ]
+}

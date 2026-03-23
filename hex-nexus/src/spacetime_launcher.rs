@@ -851,7 +851,7 @@ mod tests {
     fn default_config_values() {
         let cfg = SpacetimeConfig::default();
         assert_eq!(cfg.host, "127.0.0.1");
-        assert_eq!(cfg.port, 3000);
+        assert_eq!(cfg.port, 3033);
         assert_eq!(cfg.database, "hex");
         assert_eq!(cfg.data_dir, PathBuf::from(".hex/spacetimedb"));
         assert!(cfg.binary_path.is_none());

@@ -1,0 +1,257 @@
+{
+  "id": "wp-dashboard-ux-overhaul",
+  "feature": "Dashboard UX Overhaul — Fix All 42 Findings",
+  "description": "Complete remediation of all critical bugs, design issues, and missing features identified by the dual UX/UAT review swarms. 5 sprints, 20 tasks, ordered by severity and dependency.",
+  "adr": "ADR-039",
+  "created_at": "2026-03-22T04:00:00Z",
+  "created_by": "planner",
+  "status": "superseded",
+  "superseded_by": "feat-dashboard-project-centric-redesign.json",
+  "phases": [
+    {
+      "id": "S1",
+      "name": "Sprint 1: Critical Bugs",
+      "tier": 0,
+      "description": "Fix 5 critical/major bugs that break core functionality.",
+      "gate": {
+        "type": "build",
+        "command": "cd hex-nexus && cargo check && cd assets && npx tsc --noEmit",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "S1.1",
+          "name": "Fix chat auth token — stop reading location.hash",
+          "layer": "secondary",
+          "description": "UAT-F02: getAuthToken() in stores/chat.ts:36-45 reads location.hash for auth tokens but hash is used for routing. Change to read from localStorage or a query parameter. Also fix the WebSocket URL construction.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/stores/chat.ts"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S1.2",
+          "name": "Add file-viewer Match case in App.tsx",
+          "layer": "primary",
+          "description": "UAT-F03: file-viewer route is defined in router.ts but no <Match> case in App.tsx Switch block. Add <Match when={route().page === 'file-viewer'}> rendering FileTreeView with the file path pre-selected.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/app/App.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S1.3",
+          "name": "Fix useTable callback cleanup on reconnect",
+          "layer": "secondary",
+          "description": "UAT-F04: useTable hook registers onInsert/onUpdate/onDelete callbacks in createEffect but never unregisters them. On SpacetimeDB reconnect, duplicates accumulate. Add onCleanup() to the effect that removes old callbacks.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/hooks/useTable.ts"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S1.4",
+          "name": "Fix health resolveProjectPath to use active project",
+          "layer": "secondary",
+          "description": "UAT-F08: health.ts resolveProjectPath() always picks projs[0].path. Change to use the active project from router store (route().projectId) and find the matching project path.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/stores/health.ts"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S1.5",
+          "name": "Fix truncate_str UTF-8 safety in chat.rs",
+          "layer": "secondary",
+          "description": "UAT-F15: truncate_str in chat.rs:770-776 slices by byte index, can panic on multi-byte UTF-8. Change to s.chars().take(max).collect::<String>() or s.get(..max).unwrap_or(s) with char boundary check.",
+          "deps": [],
+          "files": ["hex-nexus/src/routes/chat.rs"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "S2",
+      "name": "Sprint 2: Session + Chat Persistence",
+      "tier": 1,
+      "description": "Wire frontend session store to backend CRUD API, load chat history, add agent kill button.",
+      "gate": {
+        "type": "build",
+        "command": "cd hex-nexus/assets && npx tsc --noEmit",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "S2.1",
+          "name": "Wire session store to /api/sessions backend",
+          "layer": "secondary",
+          "description": "UAT-F01: session.ts uses only createSignal with no persistence. Wire to backend: on init call GET /api/sessions to load, on create call POST /api/sessions, on switch call GET /api/sessions/{id}. Persist active session ID in localStorage.",
+          "deps": ["S1.1"],
+          "files": ["hex-nexus/assets/src/stores/session.ts"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S2.2",
+          "name": "Load chat history from backend on connect",
+          "layer": "secondary",
+          "description": "UAT-F10: Chat messages are in-memory only. On WebSocket connect, fetch message history from /api/sessions/{id}/messages and populate chatMessages signal. Show loading indicator during fetch.",
+          "deps": ["S2.1"],
+          "files": ["hex-nexus/assets/src/stores/chat.ts", "hex-nexus/assets/src/components/chat/ChatView.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S2.3",
+          "name": "Add agent kill button to AgentFleet view",
+          "layer": "primary",
+          "description": "Missing Feature #1: Backend has DELETE /api/agents/{id} but no UI button. Add a kill/terminate button to each agent card in AgentFleet.tsx with confirmation dialog. Call REST endpoint and show toast on success/failure.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/agent/AgentFleet.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S2.4",
+          "name": "Add workplan execute/pause/resume buttons",
+          "layer": "primary",
+          "description": "Missing Feature: Backend has POST /api/workplan/execute, /pause, /resume but no UI. Add action buttons to WorkplanView.tsx execution table rows. Execute opens a file picker for workplan JSON, pause/resume toggle based on status.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/views/WorkplanView.tsx"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "S3",
+      "name": "Sprint 3: Design System Cleanup",
+      "tier": 2,
+      "description": "Eliminate dual styling, remove inline styles, fix theming, remove dead code.",
+      "gate": {
+        "type": "build",
+        "command": "cd hex-nexus/assets && npx tsc --noEmit",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "S3.1",
+          "name": "Refactor ControlPlane inline styles to Tailwind",
+          "layer": "primary",
+          "description": "UX-F03: ControlPlane.tsx has ~120 lines of inline style={{}} objects with hardcoded hex colors. Convert all to Tailwind utility classes using theme-aware colors (bg-gray-900 instead of #111827, text-cyan-400 instead of #22D3EE, etc.).",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/views/ControlPlane.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S3.2",
+          "name": "Refactor ProjectDetail and BottomBar inline styles",
+          "layer": "primary",
+          "description": "UX-F04/F12: ProjectDetail.tsx tab buttons use hardcoded border-bottom: 2px solid #0E7490. BottomBar.tsx mode pill uses hardcoded rgba() colors. Convert to CSS variables or Tailwind classes.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/views/ProjectDetail.tsx", "hex-nexus/assets/src/components/layout/BottomBar.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S3.3",
+          "name": "Remove font size !important overrides and fix light theme",
+          "layer": "primary",
+          "description": "UX-F01/F02: dashboard.css has blanket !important overrides on all Tailwind text sizes (lines 89-102) and 12+ brittle [style*='...'] selectors for light theme (lines 173-196). Remove the !important block. Replace [style*] selectors with proper CSS variable theming.",
+          "deps": ["S3.1", "S3.2"],
+          "files": ["hex-nexus/assets/src/app/dashboard.css"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S3.4",
+          "name": "Remove dead code — Sidebar.tsx, ProjectCard.tsx, legacy styles",
+          "layer": "primary",
+          "description": "UX-F05/F20: Sidebar.tsx (288px wide) is imported but never rendered — remove it. ProjectCard.tsx is imported only in barrel index.ts but not used in ControlPlane — remove or integrate. Audit styles.css for unused legacy classes.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/layout/Sidebar.tsx", "hex-nexus/assets/src/components/project/ProjectCard.tsx", "hex-nexus/assets/src/styles.css"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S3.5",
+          "name": "Fix ADRBrowser hardcoded colors and remove stale fallback",
+          "layer": "primary",
+          "description": "UX-F08/UAT-F18: ADRBrowser.tsx uses hardcoded hex colors (text-[#f0883e], bg-[#1f2937]) and has 150 lines of hardcoded fallback ADR data. Replace colors with theme-aware Tailwind classes. Remove or gate fallback data with 'offline' warning.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/views/ADRBrowser.tsx"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "S4",
+      "name": "Sprint 4: Responsive + Accessibility",
+      "tier": 3,
+      "description": "Fix responsive breakpoints, add focus indicators, improve mobile nav, add a11y features.",
+      "gate": {
+        "type": "build",
+        "command": "cd hex-nexus/assets && npx tsc --noEmit",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "S4.1",
+          "name": "Make fixed-width panels responsive",
+          "layer": "primary",
+          "description": "UX-F06/F07: ADRBrowser left panel (280px fixed), FileTreeView (280px), WorkplanView table (440px fixed grid) break on mobile. Add responsive Tailwind classes (w-64 md:w-72), collapsible panels, or card layout fallback below md breakpoint.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/views/ADRBrowser.tsx", "hex-nexus/assets/src/components/views/FileTreeView.tsx", "hex-nexus/assets/src/components/views/WorkplanView.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S4.2",
+          "name": "Add focus-visible indicators and a11y improvements",
+          "layer": "primary",
+          "description": "UX-F11/F16: Add focus-visible:ring-2 focus-visible:ring-cyan-500/40 to all nav buttons in App.tsx sidebar. Add text labels alongside status color dots in AgentFleet, HealthPane. Replace emoji icons in FileTreeView with SVG (UX-F22).",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/app/App.tsx", "hex-nexus/assets/src/components/agent/AgentFleet.tsx", "hex-nexus/assets/src/components/views/FileTreeView.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S4.3",
+          "name": "Complete mobile nav with More menu",
+          "layer": "primary",
+          "description": "UX-F19: Mobile bottom tabs only show 3 items (Projects, Agents, Inference). Add a 'More' tab that opens a slide-up menu with Fleet, Workplans, Config, ADRs. Ensure all sidebar items are reachable on mobile.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/app/App.tsx"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "S5",
+      "name": "Sprint 5: Missing Features + Polish",
+      "tier": 4,
+      "description": "Wire remaining backend capabilities to UI, fix minor issues, polish interactions.",
+      "gate": {
+        "type": "build",
+        "command": "cd hex-nexus && cargo check && cd assets && npx tsc --noEmit",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "S5.1",
+          "name": "Add swarm completion notifications and fix duplicates",
+          "layer": "primary",
+          "description": "UAT-F20: hexflo-monitor.ts only toasts on failures, not completions. Add completion toast. UAT-F11: Remove duplicate analyze commands from commands.ts. UAT-F12: Fix nav.swarms to navigate to a real swarms view.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/stores/hexflo-monitor.ts", "hex-nexus/assets/src/stores/commands.ts"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S5.2",
+          "name": "Fix miscellaneous UI issues",
+          "layer": "primary",
+          "description": "UAT-F13: ControlPlane healthScore() returns fake score — show '--' when no data. UAT-F14: Plan/Build mode toggle has no functional effect — wire into chat. UX-F10: Breadcrumbs show raw project IDs — resolve to names. UX-F17: Toast exit animation. UX-F09: ProjectCard hover group fix. UX-F21: CommandPalette createMemo → createEffect.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/views/ControlPlane.tsx", "hex-nexus/assets/src/components/layout/BottomBar.tsx", "hex-nexus/assets/src/stores/router.ts", "hex-nexus/assets/src/components/layout/ToastContainer.tsx", "hex-nexus/assets/src/components/command/CommandPalette.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "S5.3",
+          "name": "Add git error states and SpacetimeDB URI config",
+          "layer": "secondary",
+          "description": "UAT-F07: git.ts silently swallows fetch errors. Add toast or inline error state when git fetches fail. UAT-F09: SpacetimeDB connection uses hardcoded ws://localhost:3000. Make configurable via /api/version response. UAT-F17: Cache project registration in git.ts to avoid redundant REST calls.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/stores/git.ts", "hex-nexus/assets/src/stores/connection.ts"],
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ]
+}

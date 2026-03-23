@@ -1,0 +1,299 @@
+{
+  "id": "wp-dashboard-project-centric-redesign",
+  "feature": "Dashboard Project-Centric Redesign — Single SPA with Correct Hierarchy",
+  "description": "Complete redesign of hex-nexus dashboard to implement the project-centric model: Project → Agents → Worktrees → Commits, governed by ADR → WorkPlan → HexFlo workflow. Consolidates three HTML entry points into one SolidJS SPA. 6 phases, 24 tasks.",
+  "adr": "ADR-052",
+  "supersedes": "wp-dashboard-ux-overhaul",
+  "supersession_reason": "Previous workplan fixed symptoms (42 individual bugs). This workplan fixes the root cause: wrong information architecture. All remaining UX bugs from the old workplan are absorbed into the appropriate phase here.",
+  "audit": "docs/analysis/dashboard-ux-deep-audit-2026-03-22.md",
+  "created_at": "2026-03-22T12:00:00Z",
+  "created_by": "planner",
+  "status": "planned",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Consolidate — Single Entry Point",
+      "tier": 0,
+      "description": "Kill index.html and chat.html. Move all functionality into the SolidJS dashboard.html (renamed to index.html). One app, one styling system, one WebSocket strategy.",
+      "gate": {
+        "type": "build",
+        "command": "cd hex-nexus/assets && npx tsc --noEmit && npx vite build",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Audit legacy entry points for unique features",
+          "layer": "primary",
+          "description": "Read index.html and chat.html. Catalog every feature NOT already in the SolidJS dashboard: (1) index.html: quick-action buttons, project tab-bar selector, 2x2 grid cards, (2) chat.html: full streaming chat with tool calls, file browser panel, collapsible dashboard overlay, session management. Create a migration checklist.",
+          "deps": [],
+          "files": ["hex-nexus/assets/index.html", "hex-nexus/assets/chat.html", "hex-nexus/assets/src/app/App.tsx"],
+          "agent": "planner"
+        },
+        {
+          "id": "P0.2",
+          "name": "Migrate chat.html streaming chat into SolidJS ChatView",
+          "layer": "primary",
+          "description": "The SolidJS ChatView component exists but is incomplete. Port the full streaming chat from chat.html: WebSocket message handling, tool-call rendering, markdown streaming, session create/switch/delete. Ensure it uses the SpacetimeDB chat-relay module (ADR-046: no direct REST for state).",
+          "deps": ["P0.1"],
+          "files": ["hex-nexus/assets/src/components/chat/ChatView.tsx", "hex-nexus/assets/src/stores/chat.ts"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.3",
+          "name": "Remove legacy HTML files and vanilla JS scripts",
+          "layer": "primary",
+          "description": "Delete index.html (old), chat.html, and all vanilla JS scripts they reference. Rename dashboard.html → index.html. Update rust-embed config in hex-nexus if needed. Ensure axum serves the SolidJS SPA as the sole entry point at /.",
+          "deps": ["P0.2"],
+          "files": ["hex-nexus/assets/index.html", "hex-nexus/assets/chat.html", "hex-nexus/assets/dashboard.html", "hex-nexus/src/routes/mod.rs"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.4",
+          "name": "Unify styling — purge CSS vars, Tailwind only",
+          "layer": "primary",
+          "description": "Remove all CSS custom property theming from legacy styles.css. Dashboard.css becomes the sole stylesheet. Remove !important overrides, [style*=] selectors. All colors via Tailwind theme (extend tailwind.config with hex layer colors: domain=#58a6ff, ports=#bc8cff, usecases=#3fb950, primary=#f0883e, secondary=#d29922). Remove all inline style={{}} from components (absorbs S3.1-S3.5 from old workplan).",
+          "deps": ["P0.3"],
+          "files": ["hex-nexus/assets/src/app/dashboard.css", "hex-nexus/assets/src/styles.css", "hex-nexus/assets/tailwind.config.js"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Project-Centric Navigation",
+      "tier": 1,
+      "description": "Redesign the sidebar and routing so Project is THE main entity. Everything else is scoped under a project. Global views (Control Plane) aggregate across projects.",
+      "gate": {
+        "type": "build",
+        "command": "cd hex-nexus/assets && npx tsc --noEmit && npx vite build",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Redesign Route type with project-scoped hierarchy",
+          "layer": "primary",
+          "description": "Rewrite the Route discriminated union in router.ts. New hierarchy: (1) control-plane (aggregated dashboard), (2) project/:id (project home), (3) project/:id/agents, (4) project/:id/agents/:agentId, (5) project/:id/swarms, (6) project/:id/swarms/:swarmId, (7) project/:id/swarms/:swarmId/tasks/:taskId, (8) project/:id/adrs, (9) project/:id/workplans, (10) project/:id/workplans/:wpId, (11) project/:id/health, (12) project/:id/graph, (13) project/:id/files, (14) project/:id/chat, (15) project/:id/config/:section. Update hashToRoute/routeToHash. Breadcrumbs should reflect full path (Control Plane > Project > Swarms > Swarm-42 > Task-7).",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/stores/router.ts"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Redesign sidebar as project-centric nav",
+          "layer": "primary",
+          "description": "Replace current sidebar in App.tsx. New structure: (1) Top: Control Plane link (home), (2) Project list (collapsible), (3) When a project is active, expand sub-nav: Overview, Agents, Swarms, ADRs, WorkPlans, Health, Graph, Files, Chat, Config. (4) Bottom: global items that aggregate (Inference, Fleet). Use 272px width (ADR-052) with icon-mode collapse to 48px. Active project highlighted with left border accent.",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/assets/src/app/App.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "Kill tiling pane system — replace with tab navigation",
+          "layer": "primary",
+          "description": "Remove PaneManager, PaneLeaf, panes.ts store, and all pane-related keyboard shortcuts. Replace with simple route-based tab navigation within each project page. The center area renders ONE view at a time based on the route. If users need side-by-side, they can use browser split-screen. This eliminates the competing dual-navigation system (routes vs panes).",
+          "deps": ["P1.2"],
+          "files": ["hex-nexus/assets/src/stores/panes.ts", "hex-nexus/assets/src/components/panes/PaneManager.tsx", "hex-nexus/assets/src/components/panes/PaneLeaf.tsx", "hex-nexus/assets/src/app/App.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.4",
+          "name": "Implement URL routing with deep-linking",
+          "layer": "primary",
+          "description": "Every page must have a unique URL via hash routing. Examples: #/ (control-plane), #/project/abc123 (project home), #/project/abc123/swarms/sw-42 (swarm detail), #/project/abc123/swarms/sw-42/tasks/t-7 (task detail). Browser back/forward must work. Remove localStorage-based navigation state. Keep localStorage only for user preferences (theme, collapsed sidebar).",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/assets/src/stores/router.ts"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Project Home — The Hub Page",
+      "tier": 2,
+      "description": "Build the project home page that shows the full picture: active swarms, recent agents, health score, recent commits, and the governance→execution pipeline.",
+      "gate": {
+        "type": "build",
+        "command": "cd hex-nexus/assets && npx tsc --noEmit",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Build ProjectHome component with 4 quadrants",
+          "layer": "primary",
+          "description": "New ProjectHome.tsx replaces ProjectDetail.tsx. Four sections: (1) Top-left: Health ring + architecture score + violation count, (2) Top-right: Active swarms with task progress bars, (3) Bottom-left: Recent agents with status (active/stale/dead) and their worktree paths, (4) Bottom-right: Recent commits from all worktrees (via GET /api/{pid}/git/log). Each section links deeper (click swarm → swarm detail, click agent → agent detail).",
+          "deps": ["P1.2"],
+          "files": ["hex-nexus/assets/src/components/project/ProjectHome.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Build governance pipeline banner",
+          "layer": "primary",
+          "description": "At the top of ProjectHome, show a horizontal pipeline: ADRs (count + latest) → WorkPlans (active + status) → Swarms (active + task completion %). Each node is clickable and shows a mini-status. Visually represents the ADR → WorkPlan → HexFlo workflow. Uses hex layer colors (ADR=orange, WorkPlan=purple, Swarm=green).",
+          "deps": ["P2.1"],
+          "files": ["hex-nexus/assets/src/components/project/GovernancePipeline.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.3",
+          "name": "Build Control Plane as aggregated project view",
+          "layer": "primary",
+          "description": "Redesign ControlPlane.tsx as an aggregated view across ALL projects. Show: (1) Project cards with health badges and active swarm count, (2) Global swarm activity (tasks in-progress across all projects), (3) Inference usage summary (total tokens, cost, active providers), (4) Fleet status (online nodes, capacity). This is the landing page — its job is to route users into the right project.",
+          "deps": ["P2.1"],
+          "files": ["hex-nexus/assets/src/components/views/ControlPlane.tsx"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Agent → Worktree → Commit Drill-Down",
+      "tier": 3,
+      "description": "Build the project-scoped agent views that show the full chain: Agent → assigned tasks → worktree → commits.",
+      "gate": {
+        "type": "build",
+        "command": "cd hex-nexus/assets && npx tsc --noEmit",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Build project-scoped AgentList view",
+          "layer": "primary",
+          "description": "New AgentList.tsx (project-scoped, replaces global AgentFleet for within-project use). Queries SwarmAgent table filtered by project's active swarms (swarm.project_id === activeProjectId). Each agent card shows: name, role, status, heartbeat age, assigned tasks count, worktree path. Click → agent detail. Also show RemoteAgent entries for this project.",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/assets/src/components/project/AgentList.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Build AgentDetail view with worktree + commits",
+          "layer": "primary",
+          "description": "New AgentDetail.tsx at route project/:id/agents/:agentId. Shows: (1) Agent info (name, role, model, status, heartbeat), (2) Assigned tasks (from SwarmTask where agent_id matches), (3) Worktree info (path, branch, from SwarmAgent.worktree_path), (4) Recent commits in that worktree (GET /api/{pid}/git/task-commits?agent_id=X or filter git/log by worktree branch). Full chain visible: Agent → Tasks → Worktree → Commits.",
+          "deps": ["P3.1"],
+          "files": ["hex-nexus/assets/src/components/project/AgentDetail.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.3",
+          "name": "Build SwarmDetail view with task→agent mapping",
+          "layer": "primary",
+          "description": "New SwarmDetail.tsx at route project/:id/swarms/:swarmId. Shows: (1) Swarm metadata (name, topology, status, created_at), (2) Task list with status badges and assigned agent names, (3) Task DAG visualization (dependency graph if deps exist), (4) Agent roster for this swarm with health indicators. Click task → shows agent + worktree + commits inline. Click agent → AgentDetail page.",
+          "deps": ["P3.1"],
+          "files": ["hex-nexus/assets/src/components/project/SwarmDetail.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.4",
+          "name": "Build WorkPlanDetail view linked to swarm execution",
+          "layer": "primary",
+          "description": "New WorkPlanDetail.tsx at route project/:id/workplans/:wpId. Shows: (1) Workplan phases with tier numbers and gates, (2) Tasks within each phase with status + assigned agent, (3) Link to the HexFlo swarm executing this workplan (if memory key 'workplan:{wpId}:swarm_id' exists), (4) Execute/Pause/Resume buttons wired to REST endpoints. Visually connects the WorkPlan → HexFlo pipeline.",
+          "deps": ["P3.3"],
+          "files": ["hex-nexus/assets/src/components/project/WorkPlanDetail.tsx"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "ADR → WorkPlan → HexFlo Governance Flow",
+      "tier": 4,
+      "description": "Wire the governance pipeline so users can trace from an ADR decision through its workplan to the executing swarm and see live progress.",
+      "gate": {
+        "type": "build",
+        "command": "cd hex-nexus/assets && npx tsc --noEmit",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Enhance ADRBrowser with workplan links",
+          "layer": "primary",
+          "description": "In ADRBrowser.tsx, for each ADR, scan workplans for those referencing this ADR (workplan.adr field). Show a 'WorkPlans' badge with count. Click badge → navigate to the workplan. If workplan has an active swarm, show swarm status inline (green dot = active, checkmark = completed). This creates the ADR → WorkPlan link.",
+          "deps": ["P3.4"],
+          "files": ["hex-nexus/assets/src/components/views/ADRBrowser.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.2",
+          "name": "Build governance timeline view",
+          "layer": "primary",
+          "description": "New GovernanceTimeline.tsx — a vertical timeline view at project/:id showing the full governance flow: (1) ADR created (date, title, status), (2) WorkPlan created referencing ADR, (3) HexFlo Swarm initialized from workplan, (4) Tasks created → assigned → completed, (5) Final validation verdict. Each node shows timestamp, status, and is clickable to drill into the detail page. This is the 'story of how a feature was built' view.",
+          "deps": ["P4.1"],
+          "files": ["hex-nexus/assets/src/components/project/GovernanceTimeline.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.3",
+          "name": "Wire project config page to show live sync status",
+          "layer": "primary",
+          "description": "Enhance ConfigPage.tsx to show sync status for each config type: skills, agent definitions, hooks. For each item, show source_path (filesystem) and synced_at (when last pushed to SpacetimeDB via ADR-044 config sync). Add a 'Resync' button that triggers POST /api/config/sync for the project. Shows the connection between filesystem config and SpacetimeDB state.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/views/ConfigPage.tsx"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Polish — Responsive, A11y, Design System",
+      "tier": 5,
+      "description": "Final polish: responsive layout, accessibility, design system enforcement, keyboard shortcuts cleanup. Absorbs remaining items from old workplan S3-S5.",
+      "gate": {
+        "type": "build",
+        "command": "cd hex-nexus && cargo check && cd assets && npx tsc --noEmit && npx vite build",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Responsive layout — collapsible sidebar + mobile nav",
+          "layer": "primary",
+          "description": "Sidebar: 272px default, icon-mode collapse to 48px at md breakpoint, hidden drawer on mobile. Right panel: collapsible at lg breakpoint. Mobile: bottom tab bar with 4 items + More menu. All fixed-width panels (ADRBrowser 280px, FileTree 280px, WorkplanView 440px) become responsive with min/max constraints.",
+          "deps": ["P1.2"],
+          "files": ["hex-nexus/assets/src/app/App.tsx", "hex-nexus/assets/src/components/views/ADRBrowser.tsx", "hex-nexus/assets/src/components/views/FileTreeView.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.2",
+          "name": "Accessibility pass — focus, ARIA, color contrast",
+          "layer": "primary",
+          "description": "Add focus-visible:ring-2 to all interactive elements. Add aria-label to icon-only buttons. Add text labels alongside color-only status indicators (agent status, health score). Replace emoji icons with SVG. Ensure color contrast meets WCAG AA. Add skip-to-content link.",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/app/App.tsx", "hex-nexus/assets/src/components/agent/AgentFleet.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.3",
+          "name": "Design system enforcement — hex layer colors everywhere",
+          "layer": "primary",
+          "description": "Apply ADR-052 design system consistently: (1) Dark mode default bg-[#0a0e14], (2) Hex layer colors in all architecture views (Domain=#58a6ff, Ports=#bc8cff, UseCases=#3fb950, Primary=#f0883e, Secondary=#d29922), (3) Status colors standardized (green=active, cyan=in-progress, yellow=warning, red=error, gray=idle), (4) JetBrains Mono for code/identifiers, Inter for UI. Remove all hardcoded hex colors from components.",
+          "deps": ["P0.4"],
+          "files": ["hex-nexus/assets/tailwind.config.js", "hex-nexus/assets/src/app/dashboard.css"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.4",
+          "name": "Clean up keyboard shortcuts for new navigation",
+          "layer": "primary",
+          "description": "Remove pane-related shortcuts (Ctrl+\\, Ctrl+-, Ctrl+W for panes, Ctrl+] Ctrl+[). Keep: Ctrl+P (command palette), Tab (Plan/Build toggle), Ctrl+N (spawn agent). Add: Ctrl+1-5 to switch project sub-pages (Overview, Agents, Swarms, ADRs, Config). Update shortcuts help dialog.",
+          "deps": ["P1.3"],
+          "files": ["hex-nexus/assets/src/app/App.tsx", "hex-nexus/assets/src/components/layout/ShortcutsHelp.tsx"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.5",
+          "name": "Rebuild hex-nexus binary and smoke test",
+          "layer": "secondary",
+          "description": "Build the final SolidJS assets (npx vite build). Rebuild hex-nexus with rust-embed (cargo build -p hex-nexus --release). Start the daemon and manually verify: (1) / serves the SolidJS SPA, (2) All routes work via hash navigation, (3) SpacetimeDB subscriptions connect, (4) Project drill-down works end-to-end (Project → Agents → Worktree → Commits), (5) ADR → WorkPlan → Swarm links resolve.",
+          "deps": ["P5.1", "P5.2", "P5.3", "P5.4"],
+          "files": ["hex-nexus/Cargo.toml"],
+          "agent": "integrator"
+        }
+      ]
+    }
+  ]
+}

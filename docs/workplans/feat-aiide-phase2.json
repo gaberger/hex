@@ -1,0 +1,285 @@
+{
+  "id": "wp-aiide-phase2",
+  "feature": "AIIDE Phase 2 — Config Sync, Project Init, Production",
+  "description": "Enable bidirectional config sync between repo files and SpacetimeDB, so dashboard views are reactive and edits persist back to repo. Includes hex init scaffolding and production build.",
+  "adr": "ADR-044",
+  "priority": "high",
+  "created_at": "2026-03-21T00:00:00Z",
+  "created_by": "planner",
+  "status": "in_progress",
+  "status_note": "P0 partially done (hex init exists, config_sync.rs implemented per ADR-044). P1 SpacetimeDB config tables partially done. P2-P4 not started. Overlaps with feat-adr-gap-closure P6 (skill lifecycle).",
+  "relates_to": "wp-aiide-remaining",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Project Init + Sync Foundation",
+      "tier": 0,
+      "description": "hex init scaffolding, SpacetimeDB config tables, module publish, TS bindings regen, startup sync, production build.",
+      "gate": { "type": "build", "command": "cargo build -p hex-nexus --release", "blocking": true },
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Implement hex init <path> — scaffold .hex/, .claude/, docs/adrs/",
+          "layer": "primary",
+          "deps": [],
+          "files": ["hex-cli/src/commands/"],
+          "agent": "hex-coder",
+          "status": "done"
+        },
+        {
+          "id": "P0.2",
+          "name": "Add SpacetimeDB tables: project_config, skill_registry, agent_definition",
+          "layer": "domain",
+          "description": "New tables in hexflo-coordination WASM module for framework config",
+          "deps": [],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "agent": "hex-coder",
+          "status": "partial"
+        },
+        {
+          "id": "P0.3",
+          "name": "Publish updated hexflo-coordination module",
+          "layer": "domain",
+          "deps": ["P0.2"],
+          "files": [],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P0.4",
+          "name": "Regenerate TypeScript bindings",
+          "layer": "primary",
+          "deps": ["P0.3"],
+          "files": ["hex-nexus/assets/src/spacetimedb/"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P0.5",
+          "name": "Nexus startup sync — read repo files, push to SpacetimeDB",
+          "layer": "secondary",
+          "description": "config_sync.rs on startup reads .hex/, .claude/ files and upserts into SpacetimeDB tables",
+          "deps": ["P0.3"],
+          "files": ["hex-nexus/src/config_sync.rs"],
+          "agent": "hex-coder",
+          "status": "done"
+        },
+        {
+          "id": "P0.6",
+          "name": "Production build with embedded assets",
+          "layer": "primary",
+          "deps": [],
+          "files": ["hex-nexus/build.rs"],
+          "agent": "hex-coder",
+          "status": "done"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Dashboard SpacetimeDB Integration",
+      "tier": 1,
+      "description": "Dashboard views subscribe to SpacetimeDB config tables instead of REST polling.",
+      "gate": { "type": "build", "command": "cargo build -p hex-nexus --release", "blocking": true },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Dashboard subscribes to project_config, skill_registry, agent_definition",
+          "layer": "primary",
+          "deps": ["P0.4"],
+          "files": ["hex-nexus/assets/src/stores/"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P1.2",
+          "name": "MCPToolsView reads from project_config subscription",
+          "layer": "primary",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/assets/src/components/config/MCPToolsView.tsx"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P1.3",
+          "name": "HooksView reads from project_config subscription",
+          "layer": "primary",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/assets/src/components/config/HooksView.tsx"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P1.4",
+          "name": "SkillsView reads from skill_registry subscription",
+          "layer": "primary",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/assets/src/components/config/SkillsView.tsx"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P1.5",
+          "name": "AgentDefsView reads from agent_definition subscription",
+          "layer": "primary",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/assets/src/components/config/AgentDefsView.tsx"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P1.6",
+          "name": "BlueprintView reads from project_config subscription",
+          "layer": "primary",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/assets/src/components/config/BlueprintView.tsx"],
+          "agent": "hex-coder",
+          "status": "todo"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Bidirectional Sync",
+      "tier": 2,
+      "description": "Dashboard edits write back to repo files. File change detection triggers re-sync.",
+      "gate": { "type": "build", "command": "cargo build -p hex-nexus --release", "blocking": true },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Dashboard config edits via SpacetimeDB reducer to file write API",
+          "layer": "primary",
+          "description": "Edit in dashboard -> reducer -> file write API -> repo file",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/config/", "hex-nexus/src/routes/"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P2.2",
+          "name": "File change detection (fsnotify or poll) triggers re-sync",
+          "layer": "secondary",
+          "deps": [],
+          "files": ["hex-nexus/src/config_sync.rs"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P2.3",
+          "name": "Refresh Config button triggers manual re-sync",
+          "layer": "primary",
+          "deps": ["P2.1"],
+          "files": ["hex-nexus/assets/src/components/config/"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P2.4",
+          "name": "Config change history tracking (who, what, when)",
+          "layer": "secondary",
+          "deps": ["P2.1"],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "agent": "hex-coder",
+          "status": "todo"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Missing Features",
+      "tier": 3,
+      "description": "File tree, worktree API, agent-registry project_id, session persistence migration.",
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "File tree component — nested directory browser with file preview",
+          "layer": "primary",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/project/FileTree.tsx"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P3.2",
+          "name": "Worktree API — GET /api/projects/{id}/worktrees (real git data)",
+          "layer": "primary",
+          "deps": [],
+          "files": ["hex-nexus/src/routes/mod.rs", "hex-nexus/src/git/"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P3.3",
+          "name": "Agent-registry project_id field + SpacetimeDB module update",
+          "layer": "domain",
+          "deps": [],
+          "files": ["spacetime-modules/agent-registry/src/lib.rs"],
+          "agent": "hex-coder",
+          "status": "done"
+        },
+        {
+          "id": "P3.4",
+          "name": "Session persistence migration from SQLite to SpacetimeDB",
+          "layer": "secondary",
+          "deps": [],
+          "files": ["hex-nexus/src/adapters/"],
+          "agent": "hex-coder",
+          "status": "todo"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Polish + DX",
+      "tier": 4,
+      "description": "Keyboard shortcuts, command palette search, light theme, ADR CI check, performance audit.",
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Keyboard shortcuts overlay (Ctrl+? shows all shortcuts)",
+          "layer": "primary",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/components/"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P4.2",
+          "name": "Command palette entity search (projects, agents, ADRs, skills)",
+          "layer": "primary",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/stores/commands.ts"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P4.3",
+          "name": "Light theme color palette",
+          "layer": "primary",
+          "deps": [],
+          "files": ["hex-nexus/assets/src/app/"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P4.4",
+          "name": "ADR compliance CI check via GitHub Actions",
+          "layer": "primary",
+          "deps": [],
+          "files": [".github/workflows/"],
+          "agent": "hex-coder",
+          "status": "todo"
+        },
+        {
+          "id": "P4.5",
+          "name": "Performance audit — lazy loading, bundle size, subscription count",
+          "layer": "primary",
+          "deps": [],
+          "files": [],
+          "agent": "reviewer",
+          "status": "todo"
+        }
+      ]
+    }
+  ]
+}

@@ -63,7 +63,7 @@ fn main() {
                 let lock_token = config
                     .token
                     .clone()
-                    .unwrap_or_else(|| hex_nexus::daemon::generate_token());
+                    .unwrap_or_else(hex_nexus::daemon::generate_token);
 
                 let addr = format!("127.0.0.1:{}", config.port);
                 match tokio::net::TcpListener::bind(&addr).await {
@@ -80,15 +80,11 @@ fn main() {
                         );
 
                         // Notify via system tray that hub is ready
-                        if let Ok(notification) =
-                            tauri_plugin_notification::NotificationExt::notification(&handle)
-                                .builder()
-                                .title("hex-hub")
-                                .body(format!("Dashboard ready at http://{}", addr))
-                                .show()
-                        {
-                            let _ = notification;
-                        }
+                        let _ = tauri_plugin_notification::NotificationExt::notification(&handle)
+                            .builder()
+                            .title("hex-hub")
+                            .body(format!("Dashboard ready at http://{}", addr))
+                            .show();
 
                         if let Err(e) = hex_nexus::axum::serve(listener, router).await {
                             tracing::error!("Axum server error: {}", e);
