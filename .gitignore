@@ -37,6 +37,9 @@ coverage/
 *.log
 .hex-intf/
 
+# Docs — local-only (ADRs, workplans, specs, architecture docs)
+docs/
+
 # Development docs (analysis, architecture research, specs, workplans)
 docs/analysis/
 docs/architecture/
