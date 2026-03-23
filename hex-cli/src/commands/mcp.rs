@@ -118,11 +118,100 @@ fn load_tools_json() -> String {
     builtin_tools_json()
 }
 
+// ─── Enforcement (ADR-2603221959) ───────────────────────
+
+use hex_core::domain::enforcement::DefaultEnforcer;
+use hex_core::ports::enforcement::{EnforcementContext, EnforcementMode, EnforcementResult, IEnforcementPort};
+
+/// Tools that are read-only — no enforcement needed.
+const READ_ONLY_TOOLS: &[&str] = &[
+    "hex_analyze", "hex_status", "hex_hexflo_swarm_status", "hex_hexflo_task_list",
+    "hex_hexflo_memory_retrieve", "hex_hexflo_memory_search",
+    "hex_adr_list", "hex_adr_search", "hex_adr_status", "hex_adr_abandoned",
+    "hex_plan_list", "hex_plan_status", "hex_plan_history", "hex_plan_report",
+    "hex_agent_list", "hex_nexus_status", "hex_secrets_status", "hex_secrets_has",
+    "hex_inference_list",
+    // Lifecycle tools — exempt because they establish the session
+    "hex_session_start", "hex_session_heartbeat", "hex_workplan_activate",
+];
+
+/// Build enforcement context from tool name and args.
+fn build_enforcement_ctx(name: &str, args: &Value) -> EnforcementContext {
+    EnforcementContext {
+        agent_id: resolve_mcp_agent_id(),
+        workplan_id: resolve_mcp_workplan_id(),
+        task_id: args.get("task_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        operation: name.to_string(),
+        target_file: args.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        ..Default::default()
+    }
+}
+
+/// Resolve agent_id from session state for MCP context.
+fn resolve_mcp_agent_id() -> String {
+    resolve_session_agent_id().unwrap_or_default()
+}
+
+/// Resolve workplan_id from session state for MCP context.
+fn resolve_mcp_workplan_id() -> String {
+    let session_id = std::env::var("CLAUDE_SESSION_ID").unwrap_or_default();
+    let sessions_dir = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+        .join(".hex/sessions");
+    let key = if session_id.is_empty() {
+        format!("agent-{}.json", std::process::id())
+    } else {
+        format!("agent-{}.json", &session_id)
+    };
+    let path = sessions_dir.join(key);
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(state) = serde_json::from_str::<Value>(&content) {
+            return state["workplan_id"].as_str().unwrap_or("").to_string();
+        }
+    }
+    String::new()
+}
+
+/// Get enforcement mode from project config.
+fn get_enforcement_mode() -> EnforcementMode {
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+        .or_else(|_| std::env::var("HEX_PROJECT_DIR"))
+        .unwrap_or_else(|_| ".".to_string());
+    let project_json = std::path::Path::new(&project_dir).join(".hex/project.json");
+    if let Ok(content) = std::fs::read_to_string(&project_json) {
+        if let Ok(project) = serde_json::from_str::<Value>(&content) {
+            if let Some(mode) = project["lifecycle_enforcement"].as_str() {
+                return EnforcementMode::from_str(mode);
+            }
+        }
+    }
+    EnforcementMode::Mandatory
+}
+
 // ─── Tool Dispatch ───────────────────────────────────────
 
 /// Execute a tool call by delegating to the nexus REST API.
 /// Returns MCP-formatted content result.
 async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
+    // ADR-2603221959 P2: Enforce rules before mutating tools
+    if !READ_ONLY_TOOLS.iter().any(|t| *t == name) {
+        let ctx = build_enforcement_ctx(name, args);
+        let enforcer = DefaultEnforcer::new(get_enforcement_mode());
+        match enforcer.check(&ctx) {
+            EnforcementResult::Block(reason) => {
+                return serde_json::json!({
+                    "type": "text",
+                    "text": format!("[BLOCKED] {}", reason),
+                    "isError": true,
+                });
+            }
+            EnforcementResult::Warn(msg) => {
+                eprintln!("[hex] WARNING: {}", msg);
+            }
+            EnforcementResult::Allow => {}
+        }
+    }
+
     let result = match name {
         // ── Analysis ──
         "hex_analyze" => {
@@ -441,6 +530,78 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("");
             let path = format!("/api/hexflo/inbox/{}/ack", id);
             nexus.patch(&path, &serde_json::json!({ "agent_id": agent_id })).await.map_err(|e| e.to_string())
+        }
+
+        // ── Provider-agnostic lifecycle tools (ADR-2603221959 P3) ──
+        // These replace Claude Code hooks for non-Claude providers.
+
+        "hex_session_start" => {
+            let hostname = gethostname::gethostname().to_string_lossy().to_string();
+            let project_dir = args.get("project_dir").and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default());
+            let model = args.get("model").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let body = serde_json::json!({
+                "host": hostname,
+                "name": format!("agent-{}", &hostname),
+                "project_dir": project_dir,
+                "model": model,
+            });
+            match nexus.post("/api/hex-agents/connect", &body).await {
+                Ok(data) => {
+                    // Also fetch active swarms and workplan context
+                    let swarms = nexus.get("/api/swarms/active").await.unwrap_or(serde_json::json!({}));
+                    Ok(serde_json::json!({
+                        "agent_id": data["agentId"],
+                        "session": "started",
+                        "active_swarms": swarms.get("swarms").unwrap_or(&serde_json::json!([])),
+                        "enforcement_mode": format!("{:?}", get_enforcement_mode()),
+                    }))
+                }
+                Err(e) => Err(format!("Session start failed: {}", e)),
+            }
+        }
+
+        "hex_session_heartbeat" => {
+            let agent_id = resolve_mcp_agent_id();
+            if agent_id.is_empty() {
+                Ok(serde_json::json!({ "warning": "No agent registered — call hex_session_start first" }))
+            } else {
+                let _ = nexus.post("/api/hex-agents/heartbeat", &serde_json::json!({
+                    "agent_id": agent_id,
+                })).await;
+                // Check inbox
+                let inbox = nexus.get(&format!("/api/hexflo/inbox?agent_id={}", agent_id))
+                    .await.unwrap_or(serde_json::json!({ "notifications": [] }));
+                Ok(serde_json::json!({
+                    "heartbeat": "sent",
+                    "notifications": inbox.get("notifications").unwrap_or(&serde_json::json!([])),
+                }))
+            }
+        }
+
+        "hex_workplan_activate" => {
+            let workplan_id = args.get("workplan_id").and_then(|v| v.as_str()).unwrap_or("");
+            if workplan_id.is_empty() {
+                Err("workplan_id is required".to_string())
+            } else {
+                // Store in HexFlo memory so enforcement can read it
+                let _ = nexus.post("/api/hexflo/memory", &serde_json::json!({
+                    "key": "active_workplan",
+                    "value": workplan_id,
+                    "scope": "session",
+                })).await;
+                // Try to load workplan details
+                let details = nexus.get(&format!("/api/workplan/{}", workplan_id))
+                    .await.unwrap_or(serde_json::json!({}));
+                Ok(serde_json::json!({
+                    "workplan_id": workplan_id,
+                    "activated": true,
+                    "details": details,
+                }))
+            }
         }
 
         _ => Err(format!("Unknown tool: {}", name)),

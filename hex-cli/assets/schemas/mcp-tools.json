@@ -430,6 +430,42 @@
         },
         "required": ["notification_id", "agent_id"]
       }
+    },
+    {
+      "name": "hex_session_start",
+      "category": "lifecycle",
+      "description": "Start a hex session — register agent, load context. Use this instead of hooks for non-Claude providers (ADR-2603221959)",
+      "route": { "method": "POST", "path": "/api/hex-agents/connect" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_dir": { "type": "string", "description": "Project root directory" },
+          "model": { "type": "string", "description": "LLM model name (e.g. llama3, qwen2, claude-sonnet)" }
+        }
+      }
+    },
+    {
+      "name": "hex_session_heartbeat",
+      "category": "lifecycle",
+      "description": "Send heartbeat and check inbox. Call periodically to keep agent alive (ADR-2603221959)",
+      "route": { "method": "POST", "path": "/api/hex-agents/heartbeat" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "hex_workplan_activate",
+      "category": "lifecycle",
+      "description": "Set the active workplan for this session. Required before mutating operations in mandatory mode (ADR-2603221959)",
+      "route": { "method": "POST", "path": "/api/hexflo/memory" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workplan_id": { "type": "string", "description": "Workplan ID to activate (e.g. wp-my-feature)" }
+        },
+        "required": ["workplan_id"]
+      }
     }
   ]
 }
