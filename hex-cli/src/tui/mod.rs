@@ -104,6 +104,7 @@ impl TuiApp {
             "deepseek-r1".into(),
             "openrouter".into(),
             0.0,
+            ".".into(),
         );
         Self::with_config(session, config)
     }
@@ -226,6 +227,7 @@ impl TuiApp {
         println!("hex dev — {} mode{}", mode, dry_label);
         println!("  feature: {}", self.session.feature_description);
         println!("  model:   {} via {}", self.config.model, self.config.provider);
+        println!("  dir:     {}", self.config.output_dir);
         if self.config.budget > 0.0 {
             println!("  budget:  ${:.2}", self.config.budget);
         }
@@ -1059,7 +1061,8 @@ impl TuiApp {
             GateResult::Approved => {
                 if let Some(ref result) = self.adr_result {
                     // Write the ADR file to disk
-                    let path = std::path::Path::new(&result.file_path);
+                    let resolved = self.config.resolve_path(&result.file_path);
+                    let path = std::path::Path::new(&resolved);
                     if let Some(parent) = path.parent() {
                         if let Err(e) = std::fs::create_dir_all(parent) {
                             error!(error = %e, "failed to create ADR directory");
@@ -1067,10 +1070,10 @@ impl TuiApp {
                         }
                     }
                     if let Err(e) = std::fs::write(path, &result.content) {
-                        error!(error = %e, path = %result.file_path, "failed to write ADR file");
+                        error!(error = %e, path = %resolved, "failed to write ADR file");
                         return false;
                     }
-                    info!(path = %result.file_path, "ADR written to disk");
+                    info!(path = %resolved, "ADR written to disk");
 
                     // Update session
                     self.session.adr_path = Some(result.file_path.clone());
@@ -1087,7 +1090,8 @@ impl TuiApp {
                 // Launch $EDITOR on the ADR file, then treat as approved
                 if let Some(ref result) = self.adr_result {
                     // First write the file so $EDITOR can open it
-                    let path = std::path::Path::new(&result.file_path);
+                    let resolved = self.config.resolve_path(&result.file_path);
+                    let path = std::path::Path::new(&resolved);
                     if let Some(parent) = path.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
@@ -1275,7 +1279,8 @@ impl TuiApp {
             GateResult::Approved => {
                 if let Some(ref result) = self.workplan_result {
                     // Write the workplan JSON to disk
-                    let path = std::path::Path::new(&result.file_path);
+                    let resolved = self.config.resolve_path(&result.file_path);
+                    let path = std::path::Path::new(&resolved);
                     if let Some(parent) = path.parent() {
                         if let Err(e) = std::fs::create_dir_all(parent) {
                             error!(error = %e, "failed to create workplan directory");
@@ -1283,10 +1288,10 @@ impl TuiApp {
                         }
                     }
                     if let Err(e) = std::fs::write(path, &result.content) {
-                        error!(error = %e, path = %result.file_path, "failed to write workplan file");
+                        error!(error = %e, path = %resolved, "failed to write workplan file");
                         return false;
                     }
-                    info!(path = %result.file_path, "workplan written to disk");
+                    info!(path = %resolved, "workplan written to disk");
 
                     // Update session
                     self.session.workplan_path = Some(result.file_path.clone());
@@ -1302,7 +1307,8 @@ impl TuiApp {
             GateResult::Edited(_) => {
                 // Launch $EDITOR on the workplan JSON
                 if let Some(ref result) = self.workplan_result {
-                    let path = std::path::Path::new(&result.file_path);
+                    let resolved = self.config.resolve_path(&result.file_path);
+                    let path = std::path::Path::new(&resolved);
                     if let Some(parent) = path.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
@@ -1470,12 +1476,13 @@ impl TuiApp {
     /// Process pending gate actions in the headless (Auto) pipeline.
     /// Called from `run_headless` after generating a workplan.
     fn handle_workplan_headless(&mut self, result: &WorkplanPhaseResult) -> Result<()> {
-        let path = std::path::Path::new(&result.file_path);
+        let resolved = self.config.resolve_path(&result.file_path);
+        let path = std::path::Path::new(&resolved);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, &result.content)?;
-        println!("         wrote {}", result.file_path);
+        println!("         wrote {}", resolved);
         println!("         {}", workplan_summary(&result.parsed));
 
         self.session.workplan_path = Some(result.file_path.clone());
@@ -1488,12 +1495,13 @@ impl TuiApp {
     /// Called from `run_headless` after generating an ADR.
     fn handle_adr_headless(&mut self, result: &AdrPhaseResult) -> Result<()> {
         // In auto mode, write file and advance immediately
-        let path = std::path::Path::new(&result.file_path);
+        let resolved = self.config.resolve_path(&result.file_path);
+        let path = std::path::Path::new(&resolved);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, &result.content)?;
-        println!("         wrote {}", result.file_path);
+        println!("         wrote {}", resolved);
 
         self.session.adr_path = Some(result.file_path.clone());
         self.session.add_cost(result.cost_usd, result.tokens)?;
@@ -1673,7 +1681,8 @@ impl TuiApp {
             GateResult::Approved => {
                 // Write the generated code to disk
                 if let Some(ref file_path) = result.file_path {
-                    let path = std::path::Path::new(file_path);
+                    let resolved = self.config.resolve_path(file_path);
+                    let path = std::path::Path::new(&resolved);
                     if let Some(parent) = path.parent() {
                         if let Err(e) = std::fs::create_dir_all(parent) {
                             error!(error = %e, "failed to create directory for code file");
@@ -1681,10 +1690,10 @@ impl TuiApp {
                         }
                     }
                     if let Err(e) = std::fs::write(path, &result.content) {
-                        error!(error = %e, path = %file_path, "failed to write code file");
+                        error!(error = %e, path = %resolved, "failed to write code file");
                         return false;
                     }
-                    info!(path = %file_path, step = %result.step_id, "code written to disk");
+                    info!(path = %resolved, step = %result.step_id, "code written to disk");
                 } else {
                     warn!(step = %result.step_id, "no file path for code step — content not written");
                 }
@@ -1702,7 +1711,8 @@ impl TuiApp {
             GateResult::Edited(_) => {
                 // Write file first, then open $EDITOR
                 if let Some(ref file_path) = result.file_path {
-                    let path = std::path::Path::new(file_path);
+                    let resolved = self.config.resolve_path(file_path);
+                    let path = std::path::Path::new(&resolved);
                     if let Some(parent) = path.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
@@ -1767,7 +1777,8 @@ impl TuiApp {
 
         for result in results {
             if let Some(ref file_path) = result.file_path {
-                let path = std::path::Path::new(file_path);
+                let resolved = self.config.resolve_path(file_path);
+                let path = std::path::Path::new(&resolved);
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
@@ -1775,7 +1786,7 @@ impl TuiApp {
                 println!(
                     "         [{}] wrote {} ({} tokens, ${:.4}, {:.1}s)",
                     result.step_id,
-                    file_path,
+                    resolved,
                     result.tokens,
                     result.cost_usd,
                     result.duration_ms as f64 / 1000.0,
@@ -1940,11 +1951,16 @@ impl TuiApp {
             GateResult::Approved => {
                 if let Some(ValidateResult::FixesProposed { ref fixes, .. }) = self.validate_result {
                     for fix in fixes {
-                        if let Err(e) = std::fs::write(&fix.file_path, &fix.fixed) {
-                            error!(error = %e, file = %fix.file_path, "failed to apply fix");
+                        let resolved = self.config.resolve_path(&fix.file_path);
+                        let path = std::path::Path::new(&resolved);
+                        if let Some(parent) = path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        if let Err(e) = std::fs::write(path, &fix.fixed) {
+                            error!(error = %e, file = %resolved, "failed to apply fix");
                             return false;
                         }
-                        info!(file = %fix.file_path, "applied architecture fix");
+                        info!(file = %resolved, "applied architecture fix");
                     }
                 }
                 let _ = self.session.update_phase(PipelinePhase::Commit);
@@ -1984,10 +2000,15 @@ impl TuiApp {
                     violations.len(), fixes.len(), total_cost_usd,
                 );
                 for fix in fixes {
-                    if let Err(e) = std::fs::write(&fix.file_path, &fix.fixed) {
-                        eprintln!("         ERROR applying fix to {}: {:#}", fix.file_path, e);
+                    let resolved = self.config.resolve_path(&fix.file_path);
+                    let path = std::path::Path::new(&resolved);
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(e) = std::fs::write(path, &fix.fixed) {
+                        eprintln!("         ERROR applying fix to {}: {:#}", resolved, e);
                     } else {
-                        println!("         fixed {}", fix.file_path);
+                        println!("         fixed {}", resolved);
                     }
                 }
                 // Re-validate once

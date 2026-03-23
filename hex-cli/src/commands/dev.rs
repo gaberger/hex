@@ -42,6 +42,12 @@ pub enum DevAction {
         /// Cost budget ceiling in USD (0 = unlimited)
         #[arg(long, default_value = "0.0")]
         budget: f64,
+
+        /// Output directory for generated files.
+        /// Defaults to examples/<slug>/ based on the feature description.
+        /// Use --dir . to write to the current directory.
+        #[arg(long, default_value = "")]
+        dir: String,
     },
 
     /// Resume the most recent in-progress session
@@ -74,8 +80,9 @@ pub async fn run(action: DevAction) -> Result<()> {
             model,
             provider,
             budget,
+            dir,
         } => {
-            start_session(description, quick, auto, dry_run, model, provider, budget).await
+            start_session(description, quick, auto, dry_run, model, provider, budget, dir).await
         }
     }
 }
@@ -133,6 +140,7 @@ async fn resume_latest() -> Result<()> {
                 "".into(),
                 "openrouter".into(),
                 0.0,
+                ".".into(),
             );
             launch_tui(s, config).await
         }
@@ -150,6 +158,7 @@ async fn resume_by_id(id: &str) -> Result<()> {
         "".into(),
         "openrouter".into(),
         0.0,
+        ".".into(),
     );
     launch_tui(session, config).await
 }
@@ -162,7 +171,28 @@ async fn start_session(
     model: String,
     provider: String,
     budget: f64,
+    dir: String,
 ) -> Result<()> {
+    let output_dir = if dir.is_empty() {
+        // Auto-generate: examples/<slug>/
+        let slug = description
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+            .collect::<String>();
+        // Collapse repeated hyphens and trim
+        let slug = slug
+            .split('-')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("-");
+        let slug = if slug.len() > 50 { &slug[..50] } else { &slug };
+        let slug = slug.trim_end_matches('-');
+        format!("examples/{}", slug)
+    } else {
+        dir
+    };
+
     let config = DevConfig::from_args(
         description.clone(),
         quick,
@@ -171,6 +201,7 @@ async fn start_session(
         model.clone(),
         provider,
         budget,
+        output_dir.clone(),
     );
 
     let mut session = DevSession::new(&description);

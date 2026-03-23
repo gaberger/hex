@@ -94,6 +94,9 @@ pub struct DevConfig {
     pub budget: f64,
     /// Feature description — what we're building.
     pub description: String,
+    /// Output directory for generated files (e.g. "examples/todo-api").
+    /// All code, ADRs, and workplans are written under this directory.
+    pub output_dir: String,
 }
 
 impl DevConfig {
@@ -109,6 +112,7 @@ impl DevConfig {
         model: String,
         provider: String,
         budget: f64,
+        output_dir: String,
     ) -> Self {
         let mode = if dry_run {
             DevMode::DryRun
@@ -126,6 +130,17 @@ impl DevConfig {
             provider,
             budget,
             description,
+            output_dir,
+        }
+    }
+
+    /// Resolve a relative file path to be under the output directory.
+    /// If output_dir is "." or empty, returns the path unchanged.
+    pub fn resolve_path(&self, path: &str) -> String {
+        if self.output_dir.is_empty() || self.output_dir == "." {
+            path.to_string()
+        } else {
+            format!("{}/{}", self.output_dir, path)
         }
     }
 }
@@ -209,6 +224,7 @@ mod tests {
             "model".into(),
             "provider".into(),
             5.0,
+            "test-output".into(),
         );
         assert_eq!(cfg.mode, DevMode::DryRun);
     }
@@ -223,6 +239,7 @@ mod tests {
             "model".into(),
             "provider".into(),
             0.0,
+            "test-output".into(),
         );
         assert_eq!(cfg.mode, DevMode::Auto);
     }
@@ -237,6 +254,7 @@ mod tests {
             "".into(),
             "openrouter".into(),
             0.0,
+            "test-output".into(),
         );
         assert_eq!(cfg.mode, DevMode::Interactive);
         assert_eq!(cfg.model, ""); // empty = auto-select per phase TaskType
