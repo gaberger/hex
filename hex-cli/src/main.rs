@@ -161,6 +161,11 @@ enum Commands {
     },
     /// Project status
     Status,
+    /// Inject hex context into opencode (ADR-2603231800)
+    Opencode {
+        #[command(subcommand)]
+        action: commands::opencode::Commands,
+    },
 }
 
 #[tokio::main]
@@ -204,5 +209,6 @@ async fn main() -> anyhow::Result<()> {
         Commands::Git { action } => commands::git_cmd::run(action).await,
         Commands::Assets => commands::assets_cmd::list().await,
         Commands::Status => status::run().await,
+        Commands::Opencode { action } => commands::opencode::run(action),
     }
 }
