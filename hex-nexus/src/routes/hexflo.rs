@@ -273,3 +273,98 @@ pub async fn cleanup(
         ),
     }
 }
+
+// ── Enforcement Rules (ADR-2603221959 P5) ──────────────
+
+fn enforcement_rules_dir() -> std::path::PathBuf {
+    let base = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"));
+    base.join(".hex").join("enforcement-rules")
+}
+
+/// GET /api/hexflo/enforcement-rules — list all rules
+pub async fn enforcement_rules_list(
+    State(_state): State<SharedState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let dir = enforcement_rules_dir();
+    if !dir.is_dir() {
+        return (StatusCode::OK, Json(json!({ "ok": true, "rules": [], "count": 0 })));
+    }
+
+    let mut rules = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if entry.path().extension().and_then(|e| e.to_str()) == Some("json") {
+                if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                    if let Ok(rule) = serde_json::from_str::<serde_json::Value>(&content) {
+                        rules.push(rule);
+                    }
+                }
+            }
+        }
+    }
+
+    (StatusCode::OK, Json(json!({ "ok": true, "rules": rules, "count": rules.len() })))
+}
+
+/// POST /api/hexflo/enforcement-rules — upsert a rule
+pub async fn enforcement_rules_upsert(
+    State(_state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let id = match body["id"].as_str() {
+        Some(id) if !id.is_empty() => id.to_string(),
+        _ => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "id is required" }))),
+    };
+
+    let dir = enforcement_rules_dir();
+    if std::fs::create_dir_all(&dir).is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Failed to create rules dir" })));
+    }
+
+    let path = dir.join(format!("{}.json", id));
+    match serde_json::to_string_pretty(&body) {
+        Ok(content) => {
+            if std::fs::write(&path, content).is_ok() {
+                (StatusCode::OK, Json(json!({ "ok": true, "id": id })))
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Failed to write rule" })))
+            }
+        }
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e.to_string() }))),
+    }
+}
+
+/// PATCH /api/hexflo/enforcement-rules/toggle — enable/disable a rule
+pub async fn enforcement_rules_toggle(
+    State(_state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let id = match body["id"].as_str() {
+        Some(id) => id.to_string(),
+        None => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "id is required" }))),
+    };
+    let enabled = body["enabled"].as_u64().unwrap_or(1);
+
+    let dir = enforcement_rules_dir();
+    let path = dir.join(format!("{}.json", id));
+    if !path.exists() {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": format!("Rule '{}' not found", id) })));
+    }
+
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            if let Ok(mut rule) = serde_json::from_str::<serde_json::Value>(&content) {
+                rule["enabled"] = serde_json::json!(enabled);
+                if let Ok(updated) = serde_json::to_string_pretty(&rule) {
+                    let _ = std::fs::write(&path, updated);
+                }
+                (StatusCode::OK, Json(json!({ "ok": true, "id": id, "enabled": enabled })))
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Failed to parse rule" })))
+            }
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+    }
+}

@@ -178,14 +178,13 @@ pub fn agent_assign_swarm(
 #[reducer]
 pub fn agent_evict_dead(
     ctx: &ReducerContext,
-    threshold_timestamp: String,
 ) -> Result<(), String> {
     let to_remove: Vec<String> = ctx.db.hex_agent().iter()
-        .filter(|a| a.status == "dead" && a.last_heartbeat < threshold_timestamp)
+        .filter(|a| a.status == "dead")
         .map(|a| a.id.clone())
         .collect();
-    for id in to_remove {
-        ctx.db.hex_agent().id().delete(&id);
+    for id in &to_remove {
+        ctx.db.hex_agent().id().delete(id);
     }
     Ok(())
 }
@@ -199,16 +198,20 @@ pub fn agent_mark_inactive(
     stale_threshold: String,
     dead_threshold: String,
 ) -> Result<(), String> {
+    // Normalize Z → +00:00 for consistent string comparison of RFC3339 timestamps
+    let stale_t = stale_threshold.replace("Z", "+00:00");
+    let dead_t = dead_threshold.replace("Z", "+00:00");
     let agents: Vec<HexAgent> = ctx.db.hex_agent().iter()
         .filter(|a| a.status == "online" || a.status == "idle" || a.status == "stale")
         .collect();
     for agent in agents {
-        if agent.last_heartbeat < dead_threshold && agent.status != "dead" {
+        let hb = agent.last_heartbeat.replace("Z", "+00:00");
+        if hb < dead_t && agent.status != "dead" {
             ctx.db.hex_agent().id().update(HexAgent {
                 status: "dead".to_string(),
                 ..agent
             });
-        } else if agent.last_heartbeat < stale_threshold && agent.status == "online" {
+        } else if hb < stale_t && agent.status == "online" {
             ctx.db.hex_agent().id().update(HexAgent {
                 status: "stale".to_string(),
                 ..agent
@@ -865,12 +868,39 @@ pub fn task_assign(
         return Err(format!("Task '{}' is not pending (status: {})", task_id, task.status));
     }
 
+    let swarm_id = task.swarm_id.clone();
+
     ctx.db.swarm_task().id().update(SwarmTask {
         status: "in_progress".to_string(),
-        agent_id,
-        completed_at: timestamp,
+        agent_id: agent_id.clone(),
+        completed_at: timestamp.clone(),
         ..task
     });
+
+    // ── Link agent ↔ swarm (ADR-058 relationship fix) ──────────────
+    // Update hex_agent.swarm_id so the unified registry reflects membership
+    if let Some(agent) = ctx.db.hex_agent().id().find(&agent_id) {
+        ctx.db.hex_agent().id().update(HexAgent {
+            swarm_id: swarm_id.clone(),
+            ..agent
+        });
+    }
+
+    // Ensure a swarm_agent row exists for this agent in this swarm
+    if ctx.db.swarm_agent().id().find(&agent_id).is_none() {
+        let name = ctx.db.hex_agent().id().find(&agent_id)
+            .map(|a| a.name.clone())
+            .unwrap_or_else(|| agent_id.clone());
+        ctx.db.swarm_agent().insert(SwarmAgent {
+            id: agent_id,
+            swarm_id,
+            name,
+            role: String::new(),
+            status: "active".to_string(),
+            worktree_path: String::new(),
+            last_heartbeat: timestamp,
+        });
+    }
 
     Ok(())
 }
@@ -1114,5 +1144,106 @@ pub fn memory_clear_scope(
         ctx.db.hexflo_memory().key().delete(&entry.key);
     }
 
+    Ok(())
+}
+
+// ============================================================
+//  Enforcement Rules (ADR-2603221959 P5)
+// ============================================================
+
+/// An enforcement rule — persisted in SpacetimeDB, synced from .hex/adr-rules.toml.
+/// These rules are checked by MCP tool guards and nexus API middleware.
+#[table(name = enforcement_rule, public)]
+#[derive(Clone, Debug)]
+pub struct EnforcementRule {
+    #[unique]
+    pub id: String,
+    /// ADR reference (e.g. "ADR-056")
+    pub adr: String,
+    /// Operation this rule applies to: "edit", "spawn_agent", "bash", "*"
+    pub operation: String,
+    /// Condition: "requires_workplan", "requires_task", "boundary_check", "pattern_match"
+    pub condition: String,
+    /// Severity: "block", "warn", "info"
+    pub severity: String,
+    /// Whether this rule is active
+    pub enabled: u8, // 1 = enabled, 0 = disabled (SpacetimeDB lacks bool in some contexts)
+    /// Project ID this rule applies to (empty = global)
+    pub project_id: String,
+    /// Human-readable description
+    pub message: String,
+    /// File patterns to match (comma-separated, e.g. ".ts,.tsx")
+    pub file_patterns: String,
+    /// Violation patterns to detect (comma-separated literal strings)
+    pub violation_patterns: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[reducer]
+pub fn enforcement_rule_upsert(
+    ctx: &ReducerContext,
+    id: String,
+    adr: String,
+    operation: String,
+    condition: String,
+    severity: String,
+    enabled: u8,
+    project_id: String,
+    message: String,
+    file_patterns: String,
+    violation_patterns: String,
+) -> Result<(), String> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Delete existing if present (upsert)
+    if ctx.db.enforcement_rule().id().find(&id).is_some() {
+        ctx.db.enforcement_rule().id().delete(&id);
+    }
+
+    ctx.db.enforcement_rule().insert(EnforcementRule {
+        id,
+        adr,
+        operation,
+        condition,
+        severity,
+        enabled,
+        project_id,
+        message,
+        file_patterns,
+        violation_patterns,
+        created_at: now.clone(),
+        updated_at: now,
+    });
+
+    Ok(())
+}
+
+#[reducer]
+pub fn enforcement_rule_toggle(
+    ctx: &ReducerContext,
+    id: String,
+    enabled: u8,
+) -> Result<(), String> {
+    let rule = ctx.db.enforcement_rule().id().find(&id)
+        .ok_or_else(|| format!("Rule '{}' not found", id))?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    ctx.db.enforcement_rule().id().delete(&id);
+    ctx.db.enforcement_rule().insert(EnforcementRule {
+        enabled,
+        updated_at: now,
+        ..rule
+    });
+
+    Ok(())
+}
+
+#[reducer]
+pub fn enforcement_rule_delete(
+    ctx: &ReducerContext,
+    id: String,
+) -> Result<(), String> {
+    ctx.db.enforcement_rule().id().delete(&id);
     Ok(())
 }

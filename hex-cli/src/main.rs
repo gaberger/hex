@@ -139,6 +139,11 @@ enum Commands {
         #[command(subcommand)]
         action: SkillAction,
     },
+    /// Manage enforcement rules (ADR-2603221959)
+    Enforce {
+        #[command(subcommand)]
+        action: commands::enforce::EnforceAction,
+    },
     /// Inspect embedded assets baked into the binary (ADR-2603221522)
     Assets,
     /// Project status
@@ -182,6 +187,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Mcp => commands::mcp::run_mcp_server().await,
         Commands::Test { action } => commands::test::run(action).await,
         Commands::Skill { action } => commands::skill::run(action).await,
+        Commands::Enforce { action } => commands::enforce::run(action).await,
         Commands::Assets => commands::assets_cmd::list().await,
         Commands::Status => status::run().await,
     }
