@@ -85,7 +85,8 @@ impl std::fmt::Display for DevMode {
 pub struct DevConfig {
     /// Execution mode controlling gate behavior and phase skipping.
     pub mode: DevMode,
-    /// Inference model override (e.g. "deepseek-r1", "claude-sonnet-4").
+    /// Inference model override (e.g. "deepseek/deepseek-r1", "meta-llama/llama-4-maverick").
+    /// Empty string means each phase auto-selects the best model for its TaskType.
     pub model: String,
     /// Inference provider preference (e.g. "openrouter", "anthropic").
     pub provider: String,
@@ -233,12 +234,12 @@ mod tests {
             false,
             false,
             false,
-            "deepseek-r1".into(),
+            "".into(),
             "openrouter".into(),
             0.0,
         );
         assert_eq!(cfg.mode, DevMode::Interactive);
-        assert_eq!(cfg.model, "deepseek-r1");
+        assert_eq!(cfg.model, ""); // empty = auto-select per phase TaskType
         assert_eq!(cfg.provider, "openrouter");
         assert_eq!(cfg.budget, 0.0);
         assert_eq!(cfg.description, "feat");

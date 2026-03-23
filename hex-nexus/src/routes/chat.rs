@@ -8,8 +8,10 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
+use std::time::Duration;
 use uuid::Uuid;
 
+use crate::ports::secret_grant::ISecretGrantPort;
 use crate::ports::session::{ISessionPort, MessagePart, NewMessage, Role, TokenUsage};
 use crate::state::{SharedState, WsEnvelope};
 
@@ -492,6 +494,31 @@ async fn llm_bridge(
         if let Some(ref model) = requested_model {
             ep.model = model.clone();
         }
+        // Resolve secret key reference to actual value from vault
+        if ep.requires_auth && !ep.secret_key.is_empty() && !ep.secret_key.starts_with("sk-") {
+            let key_ref = ep.secret_key.clone();
+            tracing::debug!(key_ref = %key_ref, "resolving secret key reference");
+            // Try environment variable first, then vault
+            if let Ok(val) = std::env::var(&key_ref) {
+                tracing::debug!("resolved from env var");
+                ep.secret_key = val;
+            } else if let Some(ref stdb) = state.spacetime_secrets {
+                match stdb.vault_get(&key_ref).await {
+                    Ok(Some(val)) => {
+                        tracing::debug!("resolved from vault");
+                        ep.secret_key = val;
+                    }
+                    Ok(None) => {
+                        tracing::warn!(key = %key_ref, "secret not found in vault");
+                    }
+                    Err(e) => {
+                        tracing::warn!(key = %key_ref, error = %e, "vault_get failed");
+                    }
+                }
+            } else {
+                tracing::warn!("spacetime_secrets not available for vault resolution");
+            }
+        }
         // Route through registered inference endpoint (OpenAI-compatible API)
         match call_inference_endpoint(&ep, &messages).await {
             Ok(resp) => resp,
@@ -659,7 +686,10 @@ pub(crate) async fn call_inference_endpoint(
     ep: &crate::routes::secrets::InferenceEndpointEntry,
     messages: &[serde_json::Value],
 ) -> Result<InferenceResult, String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
     let model = if ep.model.is_empty() { "default".to_string() } else { ep.model.clone() };
     let is_openrouter = ep.provider == "openrouter"
         || ep.url.contains("openrouter.ai");
@@ -804,7 +834,10 @@ pub(crate) async fn call_anthropic(
     api_key: &str,
     messages: &[serde_json::Value],
 ) -> Result<InferenceResult, String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
     let body = json!({
         "model": "claude-sonnet-4-20250514",
         "max_tokens": 4096,

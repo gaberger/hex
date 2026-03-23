@@ -215,9 +215,29 @@ impl WorkplanPhase {
                 wp
             }
             Err(first_err) => {
-                warn!(error = %first_err, "first JSON parse failed — attempting retry with fix prompt");
-                self.retry_json_fix(&selected, &raw_content, &first_err.to_string())
-                    .await?
+                let preview = if raw_content.len() > 500 {
+                    &raw_content[..500]
+                } else {
+                    &raw_content
+                };
+                warn!(
+                    error = %first_err,
+                    raw_response_preview = %preview,
+                    "first JSON parse failed — attempting retry with fix prompt"
+                );
+                match self
+                    .retry_json_fix(&selected, &raw_content, &first_err.to_string())
+                    .await
+                {
+                    Ok(wp) => wp,
+                    Err(retry_err) => {
+                        warn!(
+                            error = %retry_err,
+                            "retry also failed — falling back to single-step workplan"
+                        );
+                        make_fallback_workplan(feature_description)
+                    }
+                }
             }
         };
 
@@ -368,22 +388,45 @@ impl WorkplanPhase {
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /// Extract JSON from a string that might contain markdown fences or other wrapping.
+///
+/// Strategy (in order):
+/// 1. Look for ```json ... ``` fences and extract inner content
+/// 2. Look for ``` ... ``` fences (no language tag) and extract if it looks like JSON
+/// 3. Find the outermost `{` ... `}` pair using brace-depth counting
+/// 4. Fall back to the raw trimmed content
 fn extract_json(content: &str) -> String {
     let trimmed = content.trim();
 
-    // Try to extract from ```json ... ``` fences
+    // Strategy 1: Extract from ```json ... ``` fences
     if let Some(start) = trimmed.find("```json") {
         let after_fence = &trimmed[start + 7..];
-        if let Some(end) = after_fence.find("```") {
-            return after_fence[..end].trim().to_string();
+        // Skip to end of the opening fence line (there may be extra chars after ```json)
+        let after_newline = if let Some(nl) = after_fence.find('\n') {
+            &after_fence[nl + 1..]
+        } else {
+            after_fence
+        };
+        if let Some(end) = after_newline.find("```") {
+            return after_newline[..end].trim().to_string();
+        }
+        // No closing fence — try to parse everything after the opening fence
+        let rest = after_newline.trim();
+        if !rest.is_empty() {
+            return rest.to_string();
         }
     }
 
-    // Try to extract from ``` ... ``` fences (without json label)
+    // Strategy 2: Extract from ``` ... ``` fences (without json label)
     if let Some(start) = trimmed.find("```") {
         let after_fence = &trimmed[start + 3..];
-        if let Some(end) = after_fence.find("```") {
-            let inner = after_fence[..end].trim();
+        // Skip the rest of the opening fence line
+        let after_newline = if let Some(nl) = after_fence.find('\n') {
+            &after_fence[nl + 1..]
+        } else {
+            after_fence
+        };
+        if let Some(end) = after_newline.find("```") {
+            let inner = after_newline[..end].trim();
             // Only use if it looks like JSON
             if inner.starts_with('{') {
                 return inner.to_string();
@@ -391,17 +434,97 @@ fn extract_json(content: &str) -> String {
         }
     }
 
-    // Find the first { and last } — the JSON object
-    if let Some(start) = trimmed.find('{') {
+    // Strategy 3: Find the outermost JSON object using brace-depth counting.
+    // This is more robust than first-`{` / last-`}` because it handles
+    // trailing text like "} Hope this helps!" correctly.
+    if let Some(obj_start) = trimmed.find('{') {
+        let mut depth = 0i32;
+        let mut in_string = false;
+        let mut escape_next = false;
+        let mut obj_end = None;
+
+        for (i, ch) in trimmed[obj_start..].char_indices() {
+            if escape_next {
+                escape_next = false;
+                continue;
+            }
+            match ch {
+                '\\' if in_string => {
+                    escape_next = true;
+                }
+                '"' => {
+                    in_string = !in_string;
+                }
+                '{' if !in_string => {
+                    depth += 1;
+                }
+                '}' if !in_string => {
+                    depth -= 1;
+                    if depth == 0 {
+                        obj_end = Some(obj_start + i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(end) = obj_end {
+            return trimmed[obj_start..=end].to_string();
+        }
+
+        // Depth never reached 0 — fall back to first-`{` / last-`}`
         if let Some(end) = trimmed.rfind('}') {
-            if end > start {
-                return trimmed[start..=end].to_string();
+            if end > obj_start {
+                return trimmed[obj_start..=end].to_string();
             }
         }
     }
 
-    // Fall back to the raw content
+    // Strategy 4: Fall back to the raw content
     trimmed.to_string()
+}
+
+/// Build a minimal single-step fallback workplan when all parsing attempts fail.
+fn make_fallback_workplan(feature_description: &str) -> WorkplanData {
+    let slug: String = feature_description
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .take(6)
+        .collect::<Vec<_>>()
+        .join("-");
+
+    WorkplanData {
+        id: format!("wp-{}", slug),
+        title: format!("Plan: {}", feature_description),
+        specs: None,
+        adr: None,
+        created: None,
+        status: Some("planned".into()),
+        status_note: Some("auto-generated fallback — LLM JSON extraction failed".into()),
+        topology: Some("pipeline".into()),
+        budget: None,
+        steps: vec![WorkplanStep {
+            id: "step-1".into(),
+            description: feature_description.to_string(),
+            layer: Some("adapters/primary".into()),
+            adapter: Some("primary/cli".into()),
+            port: None,
+            dependencies: vec![],
+            tier: 2,
+            specs: None,
+            worktree_branch: None,
+            done_condition: None,
+        }],
+        merge_order: None,
+        risk_register: None,
+        success_criteria: None,
+        dependencies: None,
+    }
 }
 
 /// Validate workplan structure beyond what serde can check.
@@ -523,6 +646,61 @@ mod tests {
         let result = extract_json(input);
         assert!(result.starts_with('{'));
         assert!(result.ends_with('}'));
+    }
+
+    #[test]
+    fn extract_json_fenced_with_trailing_text() {
+        let input = "Sure!\n```json\n{\"id\": \"wp-1\", \"title\": \"T\"}\n```\nHope this helps!";
+        assert_eq!(extract_json(input), "{\"id\": \"wp-1\", \"title\": \"T\"}");
+    }
+
+    #[test]
+    fn extract_json_no_closing_fence() {
+        // LLM forgot to close the fence
+        let input = "```json\n{\"id\": \"wp-1\"}\n";
+        let result = extract_json(input);
+        assert!(result.contains("\"id\""));
+        assert!(result.contains("wp-1"));
+    }
+
+    #[test]
+    fn extract_json_trailing_explanation() {
+        // JSON followed by chatty LLM text
+        let input = "{\"id\": \"wp-1\", \"title\": \"T\", \"steps\": []} I hope this workplan meets your needs!";
+        let result = extract_json(input);
+        // Brace-depth counting should stop at the first balanced `}`
+        assert!(result.starts_with('{'));
+        assert!(result.ends_with('}'));
+        assert!(!result.contains("I hope"));
+    }
+
+    #[test]
+    fn extract_json_nested_braces_in_strings() {
+        // Braces inside string values should not confuse the parser
+        let input = r#"{"id": "wp-{test}", "title": "Plan for {feature}", "steps": []}"#;
+        let result = extract_json(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn extract_json_fenced_with_language_extras() {
+        // Some LLMs put extra text on the fence line: ```json5 or ```jsonc
+        let input = "```json\n{\"id\": \"wp-x\"}\n```";
+        let result = extract_json(input);
+        assert_eq!(result, "{\"id\": \"wp-x\"}");
+    }
+
+    #[test]
+    fn fallback_workplan_structure() {
+        let wp = make_fallback_workplan("Add OAuth2 authentication");
+        assert_eq!(wp.title, "Plan: Add OAuth2 authentication");
+        assert_eq!(wp.steps.len(), 1);
+        assert_eq!(wp.steps[0].id, "step-1");
+        assert_eq!(wp.steps[0].tier, 2);
+        assert_eq!(wp.steps[0].adapter, Some("primary/cli".into()));
+        assert!(wp.status_note.as_deref().unwrap().contains("fallback"));
+        // Should pass validation
+        assert!(validate_workplan(&wp).is_ok());
     }
 
     #[test]

@@ -30,8 +30,9 @@ pub enum DevAction {
         #[arg(long)]
         dry_run: bool,
 
-        /// Inference model to use (OpenRouter model ID, e.g. deepseek/deepseek-r1)
-        #[arg(long, default_value = "deepseek/deepseek-r1")]
+        /// Inference model override (OpenRouter model ID, e.g. deepseek/deepseek-r1).
+        /// If omitted, each phase auto-selects the best model for its task type.
+        #[arg(long, default_value = "")]
         model: String,
 
         /// Inference provider
@@ -129,7 +130,7 @@ async fn resume_latest() -> Result<()> {
             let config = DevConfig::from_args(
                 s.feature_description.clone(),
                 false, false, false,
-                "deepseek-r1".into(),
+                "".into(),
                 "openrouter".into(),
                 0.0,
             );
@@ -146,7 +147,7 @@ async fn resume_by_id(id: &str) -> Result<()> {
     let config = DevConfig::from_args(
         session.feature_description.clone(),
         false, false, false,
-        "deepseek-r1".into(),
+        "".into(),
         "openrouter".into(),
         0.0,
     );
@@ -173,7 +174,9 @@ async fn start_session(
     );
 
     let mut session = DevSession::new(&description);
-    session.model_selections.insert("default".into(), model);
+    if !model.is_empty() {
+        session.model_selections.insert("default".into(), model);
+    }
     session.save()?;
 
     println!(

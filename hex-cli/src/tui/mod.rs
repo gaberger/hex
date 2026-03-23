@@ -194,6 +194,19 @@ impl TuiApp {
 
     /// Headless execution for Auto and DryRun modes — no alternate screen,
     /// just stdout progress lines. Suitable for CI pipelines.
+    /// Returns `true` if the error looks like a transient failure worth retrying.
+    fn is_retryable(e: &anyhow::Error) -> bool {
+        let msg = format!("{:#}", e).to_lowercase();
+        msg.contains("timed out")
+            || msg.contains("timeout")
+            || msg.contains("429")
+            || msg.contains("rate limit")
+            || msg.contains("502")
+            || msg.contains("503")
+            || msg.contains("bad gateway")
+            || msg.contains("service unavailable")
+    }
+
     fn run_headless(&mut self) -> Result<()> {
         // Initialize budget tracker for headless mode (already done in with_config,
         // but ensure it exists for the `new()` path as well).
@@ -253,13 +266,34 @@ impl TuiApp {
                         provider_pref,
                     );
 
-                    let result = if let Ok(handle) = &rt {
+                    let first_attempt = if let Ok(handle) = &rt {
                         // Already inside a tokio runtime
                         tokio::task::block_in_place(|| handle.block_on(execute_fut))
                     } else {
                         // Create a new runtime
                         let tmp_rt = tokio::runtime::Runtime::new()?;
                         tmp_rt.block_on(execute_fut)
+                    };
+
+                    let result = match first_attempt {
+                        Ok(r) => Ok(r),
+                        Err(e) if Self::is_retryable(&e) => {
+                            eprintln!("         RETRY: {:#}", e);
+                            std::thread::sleep(Duration::from_secs(5));
+                            let adr_phase = AdrPhase::from_env();
+                            let retry_fut = adr_phase.execute(
+                                &self.session.feature_description,
+                                model_override,
+                                provider_pref,
+                            );
+                            if let Ok(handle) = &rt {
+                                tokio::task::block_in_place(|| handle.block_on(retry_fut))
+                            } else {
+                                let tmp_rt = tokio::runtime::Runtime::new()?;
+                                tmp_rt.block_on(retry_fut)
+                            }
+                        }
+                        Err(e) => Err(e),
                     };
 
                     match result {
@@ -314,11 +348,33 @@ impl TuiApp {
                         provider_pref,
                     );
 
-                    let result = if let Ok(handle) = &rt {
+                    let first_attempt = if let Ok(handle) = &rt {
                         tokio::task::block_in_place(|| handle.block_on(execute_fut))
                     } else {
                         let tmp_rt = tokio::runtime::Runtime::new()?;
                         tmp_rt.block_on(execute_fut)
+                    };
+
+                    let result = match first_attempt {
+                        Ok(r) => Ok(r),
+                        Err(e) if Self::is_retryable(&e) => {
+                            eprintln!("         RETRY: {:#}", e);
+                            std::thread::sleep(Duration::from_secs(5));
+                            let wp_phase = WorkplanPhase::from_env();
+                            let retry_fut = wp_phase.execute(
+                                &adr_path,
+                                &self.session.feature_description,
+                                model_override,
+                                provider_pref,
+                            );
+                            if let Ok(handle) = &rt {
+                                tokio::task::block_in_place(|| handle.block_on(retry_fut))
+                            } else {
+                                let tmp_rt = tokio::runtime::Runtime::new()?;
+                                tmp_rt.block_on(retry_fut)
+                            }
+                        }
+                        Err(e) => Err(e),
                     };
 
                     match result {
@@ -340,7 +396,7 @@ impl TuiApp {
                             self.handle_workplan_headless(&r)?;
                         }
                         Err(e) => {
-                            eprintln!("         ERROR: {}", e);
+                            eprintln!("         ERROR: {:#}", e);
                         }
                     }
                 }
@@ -359,12 +415,12 @@ impl TuiApp {
                         Ok(content) => match serde_json::from_str::<crate::pipeline::workplan_phase::WorkplanData>(&content) {
                             Ok(wp) => wp,
                             Err(e) => {
-                                eprintln!("         ERROR: failed to parse workplan: {}", e);
+                                eprintln!("         ERROR: failed to parse workplan: {:#}", e);
                                 continue;
                             }
                         },
                         Err(e) => {
-                            eprintln!("         ERROR: failed to read workplan: {}", e);
+                            eprintln!("         ERROR: failed to read workplan: {:#}", e);
                             continue;
                         }
                     };
@@ -395,7 +451,7 @@ impl TuiApp {
                             self.swarm_result = Some(r);
                         }
                         Err(e) => {
-                            eprintln!("         ERROR: {}", e);
+                            eprintln!("         ERROR: {:#}", e);
                             // Advance anyway — swarm creation is best-effort
                             let _ = self.session.update_phase(PipelinePhase::Code);
                         }
@@ -415,12 +471,12 @@ impl TuiApp {
                         Ok(content) => match serde_json::from_str::<WorkplanData>(&content) {
                             Ok(wp) => wp,
                             Err(e) => {
-                                eprintln!("         ERROR: failed to parse workplan: {}", e);
+                                eprintln!("         ERROR: failed to parse workplan: {:#}", e);
                                 continue;
                             }
                         },
                         Err(e) => {
-                            eprintln!("         ERROR: failed to read workplan: {}", e);
+                            eprintln!("         ERROR: failed to read workplan: {:#}", e);
                             continue;
                         }
                     };
@@ -445,11 +501,33 @@ impl TuiApp {
                         provider_pref,
                     );
 
-                    let result = if let Ok(handle) = &rt {
+                    let first_attempt = if let Ok(handle) = &rt {
                         tokio::task::block_in_place(|| handle.block_on(execute_fut))
                     } else {
                         let tmp_rt = tokio::runtime::Runtime::new()?;
                         tmp_rt.block_on(execute_fut)
+                    };
+
+                    let result = match first_attempt {
+                        Ok(r) => Ok(r),
+                        Err(e) if Self::is_retryable(&e) => {
+                            eprintln!("         RETRY: {:#}", e);
+                            std::thread::sleep(Duration::from_secs(5));
+                            let retry_phase = CodePhase::from_env();
+                            let retry_fut = retry_phase.execute_all(
+                                &workplan_data,
+                                swarm_id.as_deref(),
+                                model_override,
+                                provider_pref,
+                            );
+                            if let Ok(handle) = &rt {
+                                tokio::task::block_in_place(|| handle.block_on(retry_fut))
+                            } else {
+                                let tmp_rt = tokio::runtime::Runtime::new()?;
+                                tmp_rt.block_on(retry_fut)
+                            }
+                        }
+                        Err(e) => Err(e),
                     };
 
                     match result {
@@ -457,7 +535,7 @@ impl TuiApp {
                             self.handle_code_headless(&results)?;
                         }
                         Err(e) => {
-                            eprintln!("         ERROR: {}", e);
+                            eprintln!("         ERROR: {:#}", e);
                         }
                     }
                 }
@@ -480,11 +558,32 @@ impl TuiApp {
                         provider_pref,
                     );
 
-                    let result = if let Ok(handle) = &rt {
+                    let first_attempt = if let Ok(handle) = &rt {
                         tokio::task::block_in_place(|| handle.block_on(execute_fut))
                     } else {
                         let tmp_rt = tokio::runtime::Runtime::new()?;
                         tmp_rt.block_on(execute_fut)
+                    };
+
+                    let result = match first_attempt {
+                        Ok(r) => Ok(r),
+                        Err(e) if Self::is_retryable(&e) => {
+                            eprintln!("         RETRY: {:#}", e);
+                            std::thread::sleep(Duration::from_secs(5));
+                            let retry_phase = ValidatePhase::from_env();
+                            let retry_fut = retry_phase.execute(
+                                true,
+                                model_override,
+                                provider_pref,
+                            );
+                            if let Ok(handle) = &rt {
+                                tokio::task::block_in_place(|| handle.block_on(retry_fut))
+                            } else {
+                                let tmp_rt = tokio::runtime::Runtime::new()?;
+                                tmp_rt.block_on(retry_fut)
+                            }
+                        }
+                        Err(e) => Err(e),
                     };
 
                     match result {
@@ -492,7 +591,7 @@ impl TuiApp {
                             self.handle_validate_headless(&vr)?;
                         }
                         Err(e) => {
-                            eprintln!("         ERROR: {}", e);
+                            eprintln!("         ERROR: {:#}", e);
                         }
                     }
                 }
@@ -1729,7 +1828,7 @@ impl TuiApp {
                 );
                 for fix in fixes {
                     if let Err(e) = std::fs::write(&fix.file_path, &fix.fixed) {
-                        eprintln!("         ERROR applying fix to {}: {}", fix.file_path, e);
+                        eprintln!("         ERROR applying fix to {}: {:#}", fix.file_path, e);
                     } else {
                         println!("         fixed {}", fix.file_path);
                     }
@@ -1753,7 +1852,7 @@ impl TuiApp {
                         eprintln!("         re-check FAIL: {} violation(s) remain", violations.len());
                     }
                     Ok(_) => {}
-                    Err(e) => eprintln!("         re-check ERROR: {}", e),
+                    Err(e) => eprintln!("         re-check ERROR: {:#}", e),
                 }
                 self.session.update_phase(PipelinePhase::Commit)?;
             }
