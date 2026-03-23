@@ -5,10 +5,13 @@
  * reactive Solid.js signals for the workplan view. Polls every 5s when an
  * active execution is detected.
  *
+ * All reactive primitives are created inside initWorkplanStore() which must
+ * be called from the App.tsx composition root (ADR-2603231000).
+ *
  * Usage:
  *   import { workplans, activeWorkplan, fetchReport } from "../stores/workplan";
  */
-import { createSignal, createEffect, onCleanup } from "solid-js";
+import { createSignal, createRoot, type Accessor, type Setter } from "solid-js";
 import { restClient } from "../services/rest-client";
 
 // ── Types ─────────────────────────────────────────────
@@ -44,14 +47,43 @@ export interface WorkplanReport {
   commits: { sha: string; message: string; phase: string; author: string }[];
 }
 
-// ── Signals ───────────────────────────────────────────
+// ── Signals (assigned inside createRoot by initWorkplanStore) ─────────────
 
-const [workplans, setWorkplans] = createSignal<WorkplanExecution[]>([]);
-const [activeWorkplan, setActiveWorkplan] = createSignal<WorkplanExecution | null>(null);
-const [workplanLoading, setWorkplanLoading] = createSignal(false);
-const [workplanError, setWorkplanError] = createSignal<string | null>(null);
+let workplans: Accessor<WorkplanExecution[]> = () => [];
+let setWorkplans: Setter<WorkplanExecution[]> = () => {};
+let activeWorkplan: Accessor<WorkplanExecution | null> = () => null;
+let setActiveWorkplan: Setter<WorkplanExecution | null> = () => {};
+let workplanLoading: Accessor<boolean> = () => false;
+let setWorkplanLoading: Setter<boolean> = () => {};
+let workplanError: Accessor<string | null> = () => null;
+let setWorkplanError: Setter<string | null> = () => {};
 
 export { workplans, activeWorkplan, workplanLoading, workplanError };
+
+// ── Initialization (call from App.tsx composition root) ──────────────────
+
+let _initialized = false;
+
+export function initWorkplanStore() {
+  if (_initialized) return;
+  _initialized = true;
+
+  createRoot(() => {
+    const [_workplans, _setWorkplans] = createSignal<WorkplanExecution[]>([]);
+    const [_activeWorkplan, _setActiveWorkplan] = createSignal<WorkplanExecution | null>(null);
+    const [_workplanLoading, _setWorkplanLoading] = createSignal(false);
+    const [_workplanError, _setWorkplanError] = createSignal<string | null>(null);
+
+    workplans = _workplans;
+    setWorkplans = _setWorkplans;
+    activeWorkplan = _activeWorkplan;
+    setActiveWorkplan = _setActiveWorkplan;
+    workplanLoading = _workplanLoading;
+    setWorkplanLoading = _setWorkplanLoading;
+    workplanError = _workplanError;
+    setWorkplanError = _setWorkplanError;
+  });
+}
 
 // ── Fetchers ──────────────────────────────────────────
 

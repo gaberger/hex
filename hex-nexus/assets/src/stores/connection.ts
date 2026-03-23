@@ -4,13 +4,17 @@
  * Creates a DbConnection to the hexflo-coordination module, subscribes to
  * all core tables, and exports typed SolidJS signal accessors for each table.
  *
+ * All reactive primitives (signals + useTable effects) are created inside
+ * initConnectionStore() which must be called from App.tsx before any other
+ * store initialization (ADR-2603231000).
+ *
  * Usage:
  *   import { swarms, tasks, agents, connected } from "../stores/connection";
  *   // In a component:  <For each={swarms()}>{(s) => ...}</For>
  */
 import {
   createSignal,
-  createEffect,
+  createRoot,
   type Accessor,
 } from "solid-js";
 import { useTable, type SpacetimeDBTableHandle } from "../hooks/useTable";
@@ -41,23 +45,66 @@ const SPACETIMEDB_URI = resolveSpacetimeDbUri();
 const TOKEN_KEY_PREFIX = "stdb_token_";
 
 // ---------------------------------------------------------------------------
-// Connection state signals
+// Connection state signals — assigned inside createRoot by initConnectionStore
 // ---------------------------------------------------------------------------
 
 // hexflo-coordination
-const [hexfloConn, setHexfloConn] = createSignal<any | null>(null);
-const [hexfloConnected, setHexfloConnected] = createSignal(false);
+let hexfloConn: Accessor<any | null> = () => null;
+let setHexfloConn: (v: any | null) => void = () => {};
+let hexfloConnected: Accessor<boolean> = () => false;
+let setHexfloConnected: (v: boolean) => void = () => {};
 
 // agent-registry — retired (ADR-058), kept as stubs for backwards compat
-const agentRegistryConnected = hexfloConnected; // delegate to hexflo
+let agentRegistryConnected: Accessor<boolean> = () => false;
 
 // inference-gateway
-const [inferenceConn, setInferenceConn] = createSignal<any | null>(null);
-const [inferenceConnected, setInferenceConnected] = createSignal(false);
+let inferenceConn: Accessor<any | null> = () => null;
+let setInferenceConn: (v: any | null) => void = () => {};
+let inferenceConnected: Accessor<boolean> = () => false;
+let setInferenceConnected: (v: boolean) => void = () => {};
 
 // fleet-state
-const [fleetConn, setFleetConn] = createSignal<any | null>(null);
-const [fleetConnected, setFleetConnected] = createSignal(false);
+let fleetConn: Accessor<any | null> = () => null;
+let setFleetConn: (v: any | null) => void = () => {};
+let fleetConnected: Accessor<boolean> = () => false;
+let setFleetConnected: (v: boolean) => void = () => {};
+
+// ---------------------------------------------------------------------------
+// Table accessors — assigned inside createRoot by initConnectionStore
+// ---------------------------------------------------------------------------
+
+// hexflo-coordination tables
+let swarms: Accessor<any[]> = () => [];
+let swarmTasks: Accessor<any[]> = () => [];
+let swarmAgents: Accessor<any[]> = () => [];
+let hexfloMemory: Accessor<any[]> = () => [];
+let registeredProjects: Accessor<any[]> = () => [];
+let projectConfigs: Accessor<any[]> = () => [];
+let skillRegistry: Accessor<any[]> = () => [];
+let agentDefinitions: Accessor<any[]> = () => [];
+let registryAgents: Accessor<any[]> = () => [];
+let agentHeartbeats: Accessor<any[]> = () => [];
+
+// inference-gateway tables
+let inferenceProviders: Accessor<any[]> = () => [];
+let inferenceRequests: Accessor<any[]> = () => [];
+
+// fleet-state tables
+let fleetNodes: Accessor<any[]> = () => [];
+
+// Aggregated connection status
+let anyConnected: Accessor<boolean> = () => false;
+
+// Export all accessors
+export {
+  hexfloConnected, agentRegistryConnected, inferenceConnected, fleetConnected,
+  anyConnected,
+  swarms, swarmTasks, swarmAgents, hexfloMemory,
+  registeredProjects, projectConfigs, skillRegistry, agentDefinitions,
+  registryAgents, agentHeartbeats,
+  inferenceProviders, inferenceRequests,
+  fleetNodes,
+};
 
 // ---------------------------------------------------------------------------
 // Generic connection helper
@@ -149,77 +196,77 @@ function connectModule(opts: ConnectOpts) {
 }
 
 // ---------------------------------------------------------------------------
-// Table accessors (reactive signals)
+// Initialization — call once from App.tsx composition root
 // ---------------------------------------------------------------------------
 
-// hexflo-coordination tables
-export const swarms: Accessor<any[]> = useTable(
-  () => hexfloConn()?.db.swarm as SpacetimeDBTableHandle<any> | undefined,
-);
-export const swarmTasks: Accessor<any[]> = useTable(
-  () => hexfloConn()?.db.swarm_task as SpacetimeDBTableHandle<any> | undefined,
-);
-export const swarmAgents: Accessor<any[]> = useTable(
-  () => hexfloConn()?.db.swarm_agent as SpacetimeDBTableHandle<any> | undefined,
-);
-export const hexfloMemory: Accessor<any[]> = useTable(
-  () => hexfloConn()?.db.hexflo_memory as SpacetimeDBTableHandle<any> | undefined,
-);
-export const registeredProjects: Accessor<any[]> = useTable(
-  () => hexfloConn()?.db.project as SpacetimeDBTableHandle<any> | undefined,
-);
-export const projectConfigs: Accessor<any[]> = useTable(
-  () => hexfloConn()?.db.project_config as SpacetimeDBTableHandle<any> | undefined,
-);
-export const skillRegistry: Accessor<any[]> = useTable(
-  () => hexfloConn()?.db.skill_registry as SpacetimeDBTableHandle<any> | undefined,
-);
-export const agentDefinitions: Accessor<any[]> = useTable(
-  () => hexfloConn()?.db.agent_definition as SpacetimeDBTableHandle<any> | undefined,
-);
+let _storeInitialized = false;
 
-// ADR-058: unified agent registry lives in hexflo-coordination (hex_agent table)
-export const registryAgents: Accessor<any[]> = useTable(
-  () => hexfloConn()?.db.hex_agent as SpacetimeDBTableHandle<any> | undefined,
-);
-// Heartbeat data is inline on hex_agent.lastHeartbeat — no separate table needed.
-// Keep agentHeartbeats as an empty signal for backwards compat with components.
-export const agentHeartbeats: Accessor<any[]> = () => [];
+/**
+ * Initialize all connection signals and table accessors inside a createRoot.
+ * Must be called before any other store init or initConnections().
+ */
+export function initConnectionStore() {
+  if (_storeInitialized) return;
+  _storeInitialized = true;
 
-// inference-gateway tables
-export const inferenceProviders: Accessor<any[]> = useTable(
-  () => inferenceConn()?.db.inference_provider as SpacetimeDBTableHandle<any> | undefined,
-);
-export const inferenceRequests: Accessor<any[]> = useTable(
-  () => inferenceConn()?.db.inference_request as SpacetimeDBTableHandle<any> | undefined,
-);
-// NOTE: inference_response and agent_budget tables are NOT subscribed.
-// Add subscriptions here when InferenceDetail view is built.
+  createRoot(() => {
+    // Connection state signals
+    const [_hexfloConn, _setHexfloConn] = createSignal<any | null>(null);
+    const [_hexfloConnected, _setHexfloConnected] = createSignal(false);
+    const [_inferenceConn, _setInferenceConn] = createSignal<any | null>(null);
+    const [_inferenceConnected, _setInferenceConnected] = createSignal(false);
+    const [_fleetConn, _setFleetConn] = createSignal<any | null>(null);
+    const [_fleetConnected, _setFleetConnected] = createSignal(false);
 
-// fleet-state tables
-export const fleetNodes: Accessor<any[]> = useTable(
-  () => fleetConn()?.db.compute_node as SpacetimeDBTableHandle<any> | undefined,
-);
+    // Assign to module-level variables
+    hexfloConn = _hexfloConn;
+    setHexfloConn = _setHexfloConn;
+    hexfloConnected = _hexfloConnected;
+    setHexfloConnected = _setHexfloConnected;
+    agentRegistryConnected = _hexfloConnected; // delegate to hexflo (ADR-058)
+    inferenceConn = _inferenceConn;
+    setInferenceConn = _setInferenceConn;
+    inferenceConnected = _inferenceConnected;
+    setInferenceConnected = _setInferenceConnected;
+    fleetConn = _fleetConn;
+    setFleetConn = _setFleetConn;
+    fleetConnected = _fleetConnected;
+    setFleetConnected = _setFleetConnected;
 
-// Aggregated connection status
-export { hexfloConnected, agentRegistryConnected, inferenceConnected, fleetConnected };
+    // Table accessors (useTable creates createEffect inside — needs reactive owner)
+    swarms = useTable(() => _hexfloConn()?.db.swarm as SpacetimeDBTableHandle<any> | undefined);
+    swarmTasks = useTable(() => _hexfloConn()?.db.swarm_task as SpacetimeDBTableHandle<any> | undefined);
+    swarmAgents = useTable(() => _hexfloConn()?.db.swarm_agent as SpacetimeDBTableHandle<any> | undefined);
+    hexfloMemory = useTable(() => _hexfloConn()?.db.hexflo_memory as SpacetimeDBTableHandle<any> | undefined);
+    registeredProjects = useTable(() => _hexfloConn()?.db.project as SpacetimeDBTableHandle<any> | undefined);
+    projectConfigs = useTable(() => _hexfloConn()?.db.project_config as SpacetimeDBTableHandle<any> | undefined);
+    skillRegistry = useTable(() => _hexfloConn()?.db.skill_registry as SpacetimeDBTableHandle<any> | undefined);
+    agentDefinitions = useTable(() => _hexfloConn()?.db.agent_definition as SpacetimeDBTableHandle<any> | undefined);
+    registryAgents = useTable(() => _hexfloConn()?.db.hex_agent as SpacetimeDBTableHandle<any> | undefined);
+    agentHeartbeats = () => []; // Heartbeat data inline on hex_agent.lastHeartbeat (ADR-058)
 
-export const anyConnected: Accessor<boolean> = () =>
-  hexfloConnected() || agentRegistryConnected() || inferenceConnected() || fleetConnected();
+    // inference-gateway tables
+    inferenceProviders = useTable(() => _inferenceConn()?.db.inference_provider as SpacetimeDBTableHandle<any> | undefined);
+    inferenceRequests = useTable(() => _inferenceConn()?.db.inference_request as SpacetimeDBTableHandle<any> | undefined);
 
-// ---------------------------------------------------------------------------
-// Initialization — call once at app startup
-// ---------------------------------------------------------------------------
+    // fleet-state tables
+    fleetNodes = useTable(() => _fleetConn()?.db.compute_node as SpacetimeDBTableHandle<any> | undefined);
 
-let initialized = false;
+    // Aggregated connection status
+    anyConnected = () => _hexfloConnected() || _inferenceConnected() || _fleetConnected();
+  });
+}
+
+let _connectionsInitialized = false;
 
 /**
  * Initialize all SpacetimeDB module connections.
  * Safe to call multiple times (idempotent).
+ * Must be called after initConnectionStore().
  */
 export function initConnections() {
-  if (initialized) return;
-  initialized = true;
+  if (_connectionsInitialized) return;
+  _connectionsInitialized = true;
 
   // Clear stale tokens after module schema changes (e.g., spacetime publish --clear-database).
   // The SDK caches tokens in localStorage; stale tokens cause DataView deserialization crashes.
@@ -234,8 +281,6 @@ export function initConnections() {
   }
 
   // hexflo-coordination: swarms, tasks, agents, memory
-  // This is the canonical coordination database — the IStatePort adapter
-  // should also write here (see feedback_spacetimedb_single_source.md)
   connectModule({
     module: "hexflo-coordination",
     builder: HexfloDbConnection,

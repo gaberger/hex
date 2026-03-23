@@ -4,8 +4,11 @@
  * ALL state operations go through SpacetimeDB reducers via WebSocket.
  * REST is ONLY used for filesystem operations (scaffold, file deletion)
  * because WASM modules cannot access the local filesystem.
+ *
+ * Reactive primitives created inside initProjectStore() — must be called
+ * from App.tsx composition root after initConnectionStore() (ADR-2603231000).
  */
-import { createMemo } from "solid-js";
+import { createMemo, createRoot, type Accessor } from "solid-js";
 import { registeredProjects, getHexfloConn } from "./connection";
 import { addToast } from "./toast";
 import { restClient } from "../services/rest-client";
@@ -18,16 +21,31 @@ export interface Project {
   lastActivity?: string;
 }
 
-// Reactive project list from SpacetimeDB subscription
-export const projects = createMemo<Project[]>(() => {
-  return registeredProjects()
-    .map((p: any) => ({
-      id: p.projectId ?? p.project_id ?? p.id ?? "",
-      name: p.name ?? "unnamed",
-      path: p.path ?? "",
-    }))
-    .filter((p) => p.id !== ""); // Guard: never show projects with empty IDs
-});
+// Reactive project list — assigned inside createRoot by initProjectStore
+let projects: Accessor<Project[]> = () => [];
+export { projects };
+
+// ── Initialization ───────────────────────────────────────────────────────
+
+let _initialized = false;
+
+export function initProjectStore() {
+  if (_initialized) return;
+  _initialized = true;
+
+  createRoot(() => {
+    const _projects = createMemo<Project[]>(() => {
+      return (registeredProjects() ?? [])
+        .map((p: any) => ({
+          id: p.projectId ?? p.project_id ?? p.id ?? "",
+          name: p.name ?? "unnamed",
+          path: p.path ?? "",
+        }))
+        .filter((p) => p.id !== ""); // Guard: never show projects with empty IDs
+    });
+    projects = _projects;
+  });
+}
 
 /** Return current projects from SpacetimeDB subscription. */
 export function fetchProjects(): Project[] {

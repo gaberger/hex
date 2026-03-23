@@ -191,7 +191,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 .unwrap_or_default();
 
             let ping_ok = client
-                .get(format!("{}/v1/ping", stdb_host_clone))
+                .get(format!("{}{}", stdb_host_clone, hex_core::SPACETIMEDB_PING_PATH))
                 .send()
                 .await
                 .map(|r| r.status().is_success())

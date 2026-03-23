@@ -1,5 +1,5 @@
 import { type Component, onMount, onCleanup, createSignal, For, Show, Switch, Match, lazy } from 'solid-js';
-import { initConnections } from '../stores/connection';
+import { initConnectionStore, initConnections } from '../stores/connection';
 import BottomBar from '../components/layout/BottomBar';
 import Breadcrumbs from '../components/layout/Breadcrumbs';
 import SpawnDialog from '../components/agent/SpawnDialog';
@@ -12,9 +12,10 @@ import { startNexusHealthPoll, stopNexusHealthPoll } from '../stores/nexus-healt
 import { mode, toggleMode } from '../stores/mode';
 import { initChatConnection, disconnectChat } from '../stores/chat';
 import { startHexFloMonitor } from '../stores/hexflo-monitor';
-import { route, initRouter, navigate, activeProjectId } from '../stores/router';
+import { route, initRouter, initRouterStore, navigate, activeProjectId } from '../stores/router';
 import type { Route } from '../stores/router';
-import { projects } from '../stores/projects';
+import { projects, initProjectStore } from '../stores/projects';
+import { initWorkplanStore } from '../stores/workplan';
 import ChatView from '../components/chat/ChatView';
 import { ControlPlane, ProjectDetail } from '../components/views';
 import { ProjectHome } from '../components/project';
@@ -126,6 +127,14 @@ const App: Component = () => {
   const [mobileDrawerOpen, setMobileDrawerOpen] = createSignal(false);
 
   onMount(() => {
+    // Initialize reactive stores in dependency order (ADR-2603231000):
+    // connection → projects → router → workplan (independent)
+    initConnectionStore();    // must be first — creates signals other stores depend on
+    initProjectStore();       // depends on registeredProjects from connection
+    initRouterStore();        // depends on projects from project store
+    initWorkplanStore();      // independent — REST-backed, no store dependencies
+
+    // Start connections and monitors (uses signals created above)
     initConnections();
     startNexusHealthPoll();
     initChatConnection();

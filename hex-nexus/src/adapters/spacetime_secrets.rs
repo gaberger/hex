@@ -138,7 +138,7 @@ impl SpacetimeSecretClient {
 
     /// Attempt initial connection to SpacetimeDB.
     pub async fn connect(&self) -> bool {
-        let url = format!("{}/v1/ping", self.host);
+        let url = format!("{}{}", self.host, hex_core::SPACETIMEDB_PING_PATH);
         let healthy = self.http
             .get(&url)
             .timeout(Duration::from_secs(2))

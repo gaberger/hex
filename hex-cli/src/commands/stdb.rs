@@ -158,7 +158,7 @@ async fn status() -> anyhow::Result<()> {
         .timeout(std::time::Duration::from_secs(2))
         .build()?;
 
-    let ping_url = format!("{}/v1/ping", host);
+    let ping_url = format!("{}{}", host, hex_core::SPACETIMEDB_PING_PATH);
     match client.get(&ping_url).send().await {
         Ok(r) if r.status().is_success() => {
             println!("  Status: {}", "running".green());
@@ -212,7 +212,7 @@ async fn start(port: u16) -> anyhow::Result<()> {
         .build()?;
 
     if client
-        .get(format!("{}/v1/ping", host))
+        .get(format!("{}{}", host, hex_core::SPACETIMEDB_PING_PATH))
         .send()
         .await
         .map(|r| r.status().is_success())
@@ -248,7 +248,7 @@ async fn start(port: u16) -> anyhow::Result<()> {
             for _ in 0..20 {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 if client
-                    .get(format!("{}/v1/ping", host))
+                    .get(format!("{}{}", host, hex_core::SPACETIMEDB_PING_PATH))
                     .send()
                     .await
                     .map(|r| r.status().is_success())
@@ -303,7 +303,7 @@ async fn stop() -> anyhow::Result<()> {
                 .build()?;
 
             if client
-                .get(format!("{}/v1/ping", host))
+                .get(format!("{}{}", host, hex_core::SPACETIMEDB_PING_PATH))
                 .send()
                 .await
                 .map(|r| r.status().is_success())
@@ -342,7 +342,7 @@ async fn publish(modules_dir: &str, host: &str, database: &str) -> anyhow::Resul
         .build()?;
 
     if !client
-        .get(format!("{}/v1/ping", host))
+        .get(format!("{}{}", host, hex_core::SPACETIMEDB_PING_PATH))
         .send()
         .await
         .map(|r| r.status().is_success())
@@ -557,7 +557,7 @@ async fn hydrate(host: &str, database: &str, force: bool, dry_run: bool) -> anyh
         .timeout(std::time::Duration::from_secs(2))
         .build()?;
     if !client
-        .get(format!("{}/v1/ping", host))
+        .get(format!("{}{}", host, hex_core::SPACETIMEDB_PING_PATH))
         .send()
         .await
         .map(|r| r.status().is_success())
@@ -679,7 +679,7 @@ async fn generate(out_dir: &str, host: &str, database: &str) -> anyhow::Result<(
         .build()?;
 
     if !client
-        .get(format!("{}/v1/ping", host))
+        .get(format!("{}{}", host, hex_core::SPACETIMEDB_PING_PATH))
         .send()
         .await
         .map(|r| r.status().is_success())

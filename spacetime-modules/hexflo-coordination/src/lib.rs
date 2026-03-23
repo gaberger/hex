@@ -1194,9 +1194,8 @@ pub fn enforcement_rule_upsert(
     message: String,
     file_patterns: String,
     violation_patterns: String,
+    timestamp: String,
 ) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
-
     // Delete existing if present (upsert)
     if ctx.db.enforcement_rule().id().find(&id).is_some() {
         ctx.db.enforcement_rule().id().delete(&id);
@@ -1213,8 +1212,8 @@ pub fn enforcement_rule_upsert(
         message,
         file_patterns,
         violation_patterns,
-        created_at: now.clone(),
-        updated_at: now,
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
     });
 
     Ok(())
@@ -1225,15 +1224,15 @@ pub fn enforcement_rule_toggle(
     ctx: &ReducerContext,
     id: String,
     enabled: u8,
+    timestamp: String,
 ) -> Result<(), String> {
     let rule = ctx.db.enforcement_rule().id().find(&id)
         .ok_or_else(|| format!("Rule '{}' not found", id))?;
 
-    let now = chrono::Utc::now().to_rfc3339();
     ctx.db.enforcement_rule().id().delete(&id);
     ctx.db.enforcement_rule().insert(EnforcementRule {
         enabled,
-        updated_at: now,
+        updated_at: timestamp,
         ..rule
     });
 

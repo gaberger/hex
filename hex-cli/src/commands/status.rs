@@ -79,7 +79,7 @@ pub async fn run() -> anyhow::Result<()> {
                 .ok();
             if let Some(client) = client {
                 let stdb_ok = client
-                    .get(format!("{}/v1/ping", stdb_host))
+                    .get(format!("{}{}", stdb_host, hex_core::SPACETIMEDB_PING_PATH))
                     .send()
                     .await
                     .map(|r| r.status().is_success())

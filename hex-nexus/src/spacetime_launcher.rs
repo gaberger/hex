@@ -14,6 +14,9 @@ use std::time::Duration;
 
 use tokio::process::{Child, Command};
 
+// Re-export the canonical ping path from hex-core for local convenience.
+pub use hex_core::SPACETIMEDB_PING_PATH;
+
 // ── Configuration ─────────────────────────────────────────
 
 /// Configuration for the local SpacetimeDB instance.
@@ -228,8 +231,8 @@ impl SpacetimeLauncher {
     /// if the server responds with a 2xx status.
     pub async fn health_check(&self) -> Result<bool, String> {
         let url = format!(
-            "http://{}:{}/database/ping",
-            self.config.host, self.config.port
+            "http://{}:{}{}",
+            self.config.host, self.config.port, SPACETIMEDB_PING_PATH
         );
 
         let client = reqwest::Client::builder()
@@ -302,7 +305,7 @@ impl SpacetimeLauncher {
                 .arg("--server")
                 .arg(&host)
                 .arg(&self.config.database)
-                .arg("--project-path")
+                .arg("--module-path")
                 .arg(&path)
                 .arg("--yes")
                 .output()
@@ -344,7 +347,7 @@ impl SpacetimeLauncher {
             .arg("rust")
             .arg("--out-dir")
             .arg(out_dir)
-            .arg("--project-path")
+            .arg("--module-path")
             .arg(&self.config.database)
             .arg("--server")
             .arg(&host)
@@ -476,7 +479,7 @@ pub async fn publish_module(
         .arg("--server")
         .arg(host)
         .arg(database)
-        .arg("--project-path")
+        .arg("--module-path")
         .arg(module_path)
         .arg("--yes")
         .output()
@@ -510,7 +513,7 @@ pub async fn generate_bindings(
         .arg("rust")
         .arg("--out-dir")
         .arg(out_dir)
-        .arg("--project-path")
+        .arg("--module-path")
         .arg(database)
         .arg("--server")
         .arg(host)
@@ -744,14 +747,14 @@ async fn verify_tier_schemas(
     let mut all_ok = true;
 
     for module_name in module_names {
-        // SpacetimeDB v1 API: GET /v1/database/<name>/info
+        // SpacetimeDB v1 API: GET /database/<name>/info
         // If the database exists and has schemas, this returns 200.
         // We use the database name which is the same as the module name
-        // when published with `spacetime publish <database> --project-path <path>`.
+        // when published with `spacetime publish <database> --module-path <path>`.
         //
         // However, in hex we publish all modules into a single database,
         // so we verify by pinging the database endpoint instead.
-        let url = format!("{}/v1/ping", host);
+        let url = format!("{}{}", host, SPACETIMEDB_PING_PATH);
 
         match client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => {

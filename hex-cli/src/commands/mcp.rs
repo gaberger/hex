@@ -139,6 +139,12 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_project_list",
     // Lifecycle tools — exempt because they establish the session
     "hex_session_start", "hex_session_heartbeat", "hex_workplan_activate",
+    // Git queries (read-only)
+    "hex_git_status", "hex_git_log", "hex_git_diff", "hex_git_branches",
+    // Secrets vault read (read-only)
+    "hex_secrets_vault_get",
+    // Agent lifecycle queries (read-only)
+    "hex_agent_id", "hex_agent_info", "hex_agent_audit",
 ];
 
 /// Build enforcement context from tool name and args.
@@ -660,6 +666,120 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 body["name"] = serde_json::json!(name);
             }
             nexus.post("/api/projects/register", &body).await.map_err(|e| e.to_string())
+        }
+
+        // ── Git queries ──
+        "hex_git_status" => {
+            let project_id = args.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.get(&format!("/api/{}/git/status", project_id))
+                .await.map_err(|e| e.to_string())
+        }
+
+        "hex_git_log" => {
+            let project_id = args.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10);
+            nexus.get(&format!("/api/{}/git/log?limit={}", project_id, limit))
+                .await.map_err(|e| e.to_string())
+        }
+
+        "hex_git_diff" => {
+            let project_id = args.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.get(&format!("/api/{}/git/diff", project_id))
+                .await.map_err(|e| e.to_string())
+        }
+
+        "hex_git_branches" => {
+            let project_id = args.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.get(&format!("/api/{}/git/branches", project_id))
+                .await.map_err(|e| e.to_string())
+        }
+
+        // ── Secrets (extended) ──
+        "hex_secrets_grant" => {
+            let body = serde_json::json!({
+                "agent_id": args.get("agent_id").and_then(|v| v.as_str()).unwrap_or(""),
+                "secret_key": args.get("secret_key").and_then(|v| v.as_str()).unwrap_or(""),
+                "purpose": args.get("purpose").and_then(|v| v.as_str()).unwrap_or(""),
+            });
+            nexus.post("/secrets/grant", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_secrets_revoke" => {
+            let body = serde_json::json!({
+                "grant_id": args.get("grant_id").and_then(|v| v.as_str()).unwrap_or(""),
+            });
+            nexus.post("/secrets/revoke", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_secrets_vault_set" => {
+            let body = serde_json::json!({
+                "key": args.get("key").and_then(|v| v.as_str()).unwrap_or(""),
+                "value": args.get("value").and_then(|v| v.as_str()).unwrap_or(""),
+            });
+            nexus.post("/api/secrets/vault", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_secrets_vault_get" => {
+            let key = args.get("key").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.get(&format!("/api/secrets/vault/{}", key))
+                .await.map_err(|e| e.to_string())
+        }
+
+        // ── Agent lifecycle (extended) ──
+        "hex_agent_id" => {
+            match resolve_session_agent_id() {
+                Some(id) => Ok(serde_json::json!({ "agent_id": id })),
+                None => Err("No agent_id found in session state. Call hex_session_start or run hex hook session-start first.".to_string()),
+            }
+        }
+
+        "hex_agent_info" => {
+            let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.get(&format!("/api/hex-agents/{}", agent_id))
+                .await.map_err(|e| e.to_string())
+        }
+
+        "hex_agent_audit" => {
+            // Cross-reference git log Co-Authored-By commits with HexFlo completed tasks
+            let agent_id = args.get("agent_id").and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| resolve_session_agent_id().unwrap_or_default());
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20);
+
+            // Get completed tasks from HexFlo
+            let tasks = nexus.get("/api/swarms/active").await.unwrap_or(serde_json::json!({}));
+
+            // Get recent git log looking for Co-Authored-By or agent references
+            let git_output = std::process::Command::new("git")
+                .args(["log", &format!("--max-count={}", limit), "--pretty=format:%H|%s|%an|%ae|%b", "--no-merges"])
+                .output();
+
+            let mut commits = Vec::new();
+            if let Ok(output) = git_output {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let parts: Vec<&str> = line.splitn(5, '|').collect();
+                    if parts.len() >= 4 {
+                        let body = parts.get(4).unwrap_or(&"");
+                        let is_agent_commit = body.contains("Co-Authored-By:") || body.contains(&agent_id);
+                        if is_agent_commit || agent_id.is_empty() {
+                            commits.push(serde_json::json!({
+                                "hash": parts[0],
+                                "subject": parts[1],
+                                "author": parts[2],
+                                "email": parts[3],
+                                "agent_attributed": is_agent_commit,
+                            }));
+                        }
+                    }
+                }
+            }
+
+            Ok(serde_json::json!({
+                "agent_id": agent_id,
+                "commits": commits,
+                "tasks": tasks,
+            }))
         }
 
         // ── Provider-agnostic lifecycle tools (ADR-2603221959 P3) ──

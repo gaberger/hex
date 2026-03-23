@@ -626,6 +626,152 @@
         },
         "required": ["workplan_id"]
       }
+    },
+    {
+      "name": "hex_git_status",
+      "category": "git",
+      "description": "Show git status for a project (staged, unstaged, untracked files)",
+      "route": { "method": "GET", "path": "/api/{project_id}/git/status" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": { "type": "string", "description": "Project identifier" }
+        },
+        "required": ["project_id"]
+      }
+    },
+    {
+      "name": "hex_git_log",
+      "category": "git",
+      "description": "Show recent git commit log for a project",
+      "route": { "method": "GET", "path": "/api/{project_id}/git/log" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": { "type": "string", "description": "Project identifier" },
+          "limit": { "type": "integer", "description": "Max commits to return (default 10)" }
+        },
+        "required": ["project_id"]
+      }
+    },
+    {
+      "name": "hex_git_diff",
+      "category": "git",
+      "description": "Show git diff (unstaged changes) for a project",
+      "route": { "method": "GET", "path": "/api/{project_id}/git/diff" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": { "type": "string", "description": "Project identifier" }
+        },
+        "required": ["project_id"]
+      }
+    },
+    {
+      "name": "hex_git_branches",
+      "category": "git",
+      "description": "List git branches for a project",
+      "route": { "method": "GET", "path": "/api/{project_id}/git/branches" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": { "type": "string", "description": "Project identifier" }
+        },
+        "required": ["project_id"]
+      }
+    },
+    {
+      "name": "hex_secrets_grant",
+      "category": "secrets",
+      "description": "Grant an agent access to a secret key with stated purpose",
+      "route": { "method": "POST", "path": "/secrets/grant" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "description": "Agent ID to grant access to" },
+          "secret_key": { "type": "string", "description": "Secret key name to grant access to" },
+          "purpose": { "type": "string", "description": "Stated purpose for accessing this secret" }
+        },
+        "required": ["agent_id", "secret_key", "purpose"]
+      }
+    },
+    {
+      "name": "hex_secrets_revoke",
+      "category": "secrets",
+      "description": "Revoke a previously granted secret access",
+      "route": { "method": "POST", "path": "/secrets/revoke" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "grant_id": { "type": "string", "description": "Grant ID to revoke" }
+        },
+        "required": ["grant_id"]
+      }
+    },
+    {
+      "name": "hex_secrets_vault_set",
+      "category": "secrets",
+      "description": "Store a secret in the hex vault",
+      "route": { "method": "POST", "path": "/api/secrets/vault" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "description": "Secret key name" },
+          "value": { "type": "string", "description": "Secret value to store" }
+        },
+        "required": ["key", "value"]
+      }
+    },
+    {
+      "name": "hex_secrets_vault_get",
+      "category": "secrets",
+      "description": "Retrieve a secret from the hex vault by key",
+      "route": { "method": "GET", "path": "/api/secrets/vault/{key}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "description": "Secret key to retrieve" }
+        },
+        "required": ["key"]
+      }
+    },
+    {
+      "name": "hex_agent_id",
+      "category": "agent",
+      "description": "Get the current agent's ID from the session state file (no nexus call needed)",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_agent_info",
+      "category": "agent",
+      "description": "Get detailed info about a specific hex agent by ID",
+      "route": { "method": "GET", "path": "/api/hex-agents/{id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "description": "Agent ID to look up" }
+        },
+        "required": ["agent_id"]
+      }
+    },
+    {
+      "name": "hex_agent_audit",
+      "category": "agent",
+      "description": "Audit trail: cross-reference git commits with HexFlo task completions for an agent",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "description": "Agent ID to audit (defaults to current session agent)" },
+          "limit": { "type": "integer", "description": "Max git commits to scan (default 20)" }
+        },
+        "required": []
+      }
     }
   ]
 }

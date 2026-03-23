@@ -4,8 +4,11 @@
  * Every page has a unique URL via hash routing. Browser back/forward works.
  * Project is THE root entity — all views are scoped under a project.
  * Global views (inference, fleet) aggregate across projects.
+ *
+ * Memos (activeProjectId, breadcrumbs) created inside initRouterStore() —
+ * must be called from App.tsx after initProjectStore() (ADR-2603231000).
  */
-import { createSignal, createMemo } from "solid-js";
+import { createSignal, createMemo, createRoot, type Accessor } from "solid-js";
 import { projects } from "./projects";
 
 // ── Route types ─────────────────────────────────────────────────────────────
@@ -35,14 +38,15 @@ export type Route =
 
 // ── State ───────────────────────────────────────────────────────────────────
 
+// Signal is safe at module level — no computation, just a getter/setter pair
 const [route, setRoute] = createSignal<Route>({ page: "control-plane" });
 export { route };
 
+// ── Derived state (assigned inside createRoot by initRouterStore) ───────────
+
 /** Active project — derived from route. */
-export const activeProjectId = createMemo(() => {
-  const r = route();
-  return (r as any).projectId ?? "";
-});
+let activeProjectId: Accessor<string> = () => "";
+export { activeProjectId };
 
 // ── Breadcrumbs ─────────────────────────────────────────────────────────────
 
@@ -52,127 +56,146 @@ export interface Breadcrumb {
   route?: Route;
 }
 
-function projectName(pid: string): string {
-  return (projects().find((p) => p.id === pid)?.name ?? pid) || "Project";
-}
+let breadcrumbs: Accessor<Breadcrumb[]> = () => [];
+export { breadcrumbs };
 
-export const breadcrumbs = createMemo<Breadcrumb[]>(() => {
-  const r = route();
-  const crumbs: Breadcrumb[] = [
-    { label: "Control Plane", icon: "hexagon", route: { page: "control-plane" } },
-  ];
+// ── Initialization (call from App.tsx after initProjectStore) ───────────────
 
-  if (r.page === "control-plane") return crumbs;
+let _initialized = false;
 
-  // Global pages
-  if (r.page === "inference") {
-    crumbs.push({ label: "Inference", icon: "server" });
-    return crumbs;
-  }
-  if (r.page === "fleet") {
-    crumbs.push({ label: "Fleet Nodes", icon: "monitor" });
-    return crumbs;
-  }
+export function initRouterStore() {
+  if (_initialized) return;
+  _initialized = true;
 
-  // All remaining pages are project-scoped
-  const pid = (r as any).projectId as string;
-  if (!pid) return crumbs;
+  createRoot(() => {
+    activeProjectId = createMemo(() => {
+      const r = route();
+      return (r as any).projectId ?? "";
+    });
 
-  crumbs.push({
-    label: projectName(pid),
-    icon: "folder",
-    route: { page: "project", projectId: pid },
-  });
+    const projectName = (pid: string): string => {
+      return ((projects() ?? []).find((p) => p.id === pid)?.name ?? pid) || "Project";
+    };
 
-  switch (r.page) {
-    case "project":
-      break;
+    breadcrumbs = createMemo<Breadcrumb[]>(() => {
+      const r = route();
+      const crumbs: Breadcrumb[] = [
+        { label: "Control Plane", icon: "hexagon", route: { page: "control-plane" } },
+      ];
 
-    case "project-agents":
-      crumbs.push({ label: "Agents", icon: "bot", route: { page: "project-agents", projectId: pid } });
-      break;
+      if (r.page === "control-plane") return crumbs;
 
-    case "project-agent-detail":
-      crumbs.push({ label: "Agents", icon: "bot", route: { page: "project-agents", projectId: pid } });
-      crumbs.push({ label: r.agentId, icon: "bot" });
-      break;
-
-    case "project-swarms":
-      crumbs.push({ label: "Swarms", icon: "zap", route: { page: "project-swarms", projectId: pid } });
-      break;
-
-    case "project-swarm-detail":
-      crumbs.push({ label: "Swarms", icon: "zap", route: { page: "project-swarms", projectId: pid } });
-      crumbs.push({ label: r.swarmId, icon: "zap" });
-      break;
-
-    case "project-swarm-task":
-      crumbs.push({ label: "Swarms", icon: "zap", route: { page: "project-swarms", projectId: pid } });
-      crumbs.push({ label: r.swarmId, icon: "zap", route: { page: "project-swarm-detail", projectId: pid, swarmId: r.swarmId } });
-      crumbs.push({ label: `Task ${r.taskId}`, icon: "check-square" });
-      break;
-
-    case "project-adrs":
-      crumbs.push({ label: "ADRs", icon: "file-text", route: { page: "project-adrs", projectId: pid } });
-      break;
-
-    case "project-adr-detail":
-      crumbs.push({ label: "ADRs", icon: "file-text", route: { page: "project-adrs", projectId: pid } });
-      crumbs.push({ label: `ADR-${r.adrId}`, icon: "file-text" });
-      break;
-
-    case "project-workplans":
-      crumbs.push({ label: "WorkPlans", icon: "clipboard-list", route: { page: "project-workplans", projectId: pid } });
-      break;
-
-    case "project-workplan-detail":
-      crumbs.push({ label: "WorkPlans", icon: "clipboard-list", route: { page: "project-workplans", projectId: pid } });
-      crumbs.push({ label: r.workplanId, icon: "clipboard-list" });
-      break;
-
-    case "project-health":
-      crumbs.push({ label: "Health", icon: "activity" });
-      break;
-
-    case "project-graph":
-      crumbs.push({ label: "Dependencies", icon: "share-2" });
-      break;
-
-    case "project-files":
-      crumbs.push({ label: "Files", icon: "folder" });
-      break;
-
-    case "project-file": {
-      crumbs.push({ label: "Files", icon: "folder", route: { page: "project-files", projectId: pid } });
-      const filename = r.filePath.split("/").pop() || r.filePath;
-      crumbs.push({ label: filename, icon: "file" });
-      break;
-    }
-
-    case "project-chat":
-      crumbs.push({ label: r.sessionId || "Chat", icon: "message-square" });
-      break;
-
-    case "project-config": {
-      const sectionLabels: Record<string, string> = {
-        blueprint: "Blueprint",
-        tools: "MCP Tools",
-        hooks: "Hooks",
-        skills: "Skills",
-        context: "Context",
-        agents: "Agent Definitions",
-        spacetimedb: "SpacetimeDB",
-      };
-      crumbs.push({ label: "Config", icon: "settings", route: { page: "project-config", projectId: pid, section: "blueprint" } });
-      if (r.section !== "blueprint") {
-        crumbs.push({ label: sectionLabels[r.section] || r.section, icon: "settings" });
+      // Global pages
+      if (r.page === "inference") {
+        crumbs.push({ label: "Inference", icon: "server" });
+        return crumbs;
       }
-      break;
-    }
-  }
+      if (r.page === "fleet") {
+        crumbs.push({ label: "Fleet Nodes", icon: "monitor" });
+        return crumbs;
+      }
 
-  return crumbs;
-});
+      // All remaining pages are project-scoped
+      const pid = (r as any).projectId as string;
+      if (!pid) return crumbs;
+
+      crumbs.push({
+        label: projectName(pid),
+        icon: "folder",
+        route: { page: "project", projectId: pid },
+      });
+
+      switch (r.page) {
+        case "project":
+          break;
+
+        case "project-agents":
+          crumbs.push({ label: "Agents", icon: "bot", route: { page: "project-agents", projectId: pid } });
+          break;
+
+        case "project-agent-detail":
+          crumbs.push({ label: "Agents", icon: "bot", route: { page: "project-agents", projectId: pid } });
+          crumbs.push({ label: r.agentId, icon: "bot" });
+          break;
+
+        case "project-swarms":
+          crumbs.push({ label: "Swarms", icon: "zap", route: { page: "project-swarms", projectId: pid } });
+          break;
+
+        case "project-swarm-detail":
+          crumbs.push({ label: "Swarms", icon: "zap", route: { page: "project-swarms", projectId: pid } });
+          crumbs.push({ label: r.swarmId, icon: "zap" });
+          break;
+
+        case "project-swarm-task":
+          crumbs.push({ label: "Swarms", icon: "zap", route: { page: "project-swarms", projectId: pid } });
+          crumbs.push({ label: r.swarmId, icon: "zap", route: { page: "project-swarm-detail", projectId: pid, swarmId: r.swarmId } });
+          crumbs.push({ label: `Task ${r.taskId}`, icon: "check-square" });
+          break;
+
+        case "project-adrs":
+          crumbs.push({ label: "ADRs", icon: "file-text", route: { page: "project-adrs", projectId: pid } });
+          break;
+
+        case "project-adr-detail":
+          crumbs.push({ label: "ADRs", icon: "file-text", route: { page: "project-adrs", projectId: pid } });
+          crumbs.push({ label: `ADR-${r.adrId}`, icon: "file-text" });
+          break;
+
+        case "project-workplans":
+          crumbs.push({ label: "WorkPlans", icon: "clipboard-list", route: { page: "project-workplans", projectId: pid } });
+          break;
+
+        case "project-workplan-detail":
+          crumbs.push({ label: "WorkPlans", icon: "clipboard-list", route: { page: "project-workplans", projectId: pid } });
+          crumbs.push({ label: r.workplanId, icon: "clipboard-list" });
+          break;
+
+        case "project-health":
+          crumbs.push({ label: "Health", icon: "activity" });
+          break;
+
+        case "project-graph":
+          crumbs.push({ label: "Dependencies", icon: "share-2" });
+          break;
+
+        case "project-files":
+          crumbs.push({ label: "Files", icon: "folder" });
+          break;
+
+        case "project-file": {
+          crumbs.push({ label: "Files", icon: "folder", route: { page: "project-files", projectId: pid } });
+          const filename = r.filePath.split("/").pop() || r.filePath;
+          crumbs.push({ label: filename, icon: "file" });
+          break;
+        }
+
+        case "project-chat":
+          crumbs.push({ label: r.sessionId || "Chat", icon: "message-square" });
+          break;
+
+        case "project-config": {
+          const sectionLabels: Record<string, string> = {
+            blueprint: "Blueprint",
+            tools: "MCP Tools",
+            hooks: "Hooks",
+            skills: "Skills",
+            context: "Context",
+            agents: "Agent Definitions",
+            spacetimedb: "SpacetimeDB",
+          };
+          crumbs.push({ label: "Config", icon: "settings", route: { page: "project-config", projectId: pid, section: "blueprint" } });
+          if (r.section !== "blueprint") {
+            crumbs.push({ label: sectionLabels[r.section] || r.section, icon: "settings" });
+          }
+          break;
+        }
+      }
+
+      return crumbs;
+    });
+  });
+}
 
 // ── Navigation ──────────────────────────────────────────────────────────────
 

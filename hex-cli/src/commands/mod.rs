@@ -1,6 +1,7 @@
 pub mod adr;
 pub mod assets_cmd;
 pub mod enforce;
+pub mod git_cmd;
 pub mod adr_review;
 pub mod agent;
 pub mod analyze;

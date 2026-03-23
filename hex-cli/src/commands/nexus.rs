@@ -115,13 +115,30 @@ async fn ensure_spacetimedb() {
         .build()
         .unwrap();
 
-    if http.get(format!("{}/v1/ping", stdb_host))
+    if is_spacetimedb_reachable(&http, &stdb_host).await {
+        println!("{} SpacetimeDB already running at {}", "\u{2b21}".green(), stdb_host);
+        return;
+    }
+
+    // Something might be on port 3000 that isn't SpacetimeDB
+    if http.get(format!("{}{}", stdb_host, hex_core::SPACETIMEDB_PING_PATH))
         .send()
         .await
         .map(|r| r.status().is_success())
         .unwrap_or(false)
     {
-        println!("{} SpacetimeDB already running at {}", "\u{2b21}".green(), stdb_host);
+        println!(
+            "  {} Port 3000 is in use by another service (not SpacetimeDB)",
+            "!".yellow()
+        );
+        println!(
+            "  {} Find it: lsof -i :3000",
+            "\u{2192}".dimmed()
+        );
+        println!(
+            "  {} Set HEX_SPACETIMEDB_HOST to use a different port",
+            "\u{2192}".dimmed()
+        );
         return;
     }
 
@@ -153,20 +170,33 @@ async fn ensure_spacetimedb() {
     // Wait for SpacetimeDB to become responsive
     for i in 0..15 {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        if http.get(format!("{}/v1/ping", stdb_host))
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false)
-        {
+        if is_spacetimedb_reachable(&http, &stdb_host).await {
             println!("{} SpacetimeDB ready at {} ({}ms)", "\u{2b21}".green(), stdb_host, (i + 1) * 500);
-            // Save PID for cleanup
             return;
         }
     }
 
     println!("  {} SpacetimeDB started but not responsive after 7.5s", "!".yellow());
     println!("  {} Check logs: {}", "\u{2192}".dimmed(), stdb_log.display());
+}
+
+/// Verify that SpacetimeDB is actually running on the given host.
+///
+/// A simple 200 check is insufficient — any web server (e.g. Next.js on :3000)
+/// will return 200 for unknown paths. We verify by checking that the response
+/// Content-Type is NOT text/html (SpacetimeDB returns text/plain or JSON).
+async fn is_spacetimedb_reachable(http: &reqwest::Client, host: &str) -> bool {
+    match http.get(format!("{}{}", host, hex_core::SPACETIMEDB_PING_PATH)).send().await {
+        Ok(r) if r.status().is_success() => {
+            let ct = r.headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            // SpacetimeDB ping returns text/plain or no content-type, never text/html
+            !ct.contains("text/html")
+        }
+        _ => false,
+    }
 }
 
 fn try_start_spacetimedb(bin: &str, args: &[&str], stdout: &std::fs::File, stderr: &std::fs::File) -> bool {
@@ -201,12 +231,25 @@ async fn start(port: u16, bind: &str, token: Option<&str>, no_agent: bool) -> an
         if let Ok(pid_str) = tokio::fs::read_to_string(&pid_path).await {
             if let Ok(pid) = pid_str.trim().parse::<u32>() {
                 if is_process_alive(pid) {
-                    println!(
-                        "{} hex-nexus is already running (PID {})",
-                        "\u{2b21}".cyan(),
-                        pid
-                    );
-                    return Ok(());
+                    // Check if the running daemon is stale (binary rebuilt since last start)
+                    let port = read_port();
+                    if is_daemon_stale(port).await {
+                        println!(
+                            "{} hex-nexus binary was rebuilt — restarting daemon...",
+                            "\u{2b21}".yellow()
+                        );
+                        stop().await.ok();
+                        // Fall through to normal start path below
+                    } else {
+                        // Nexus is running and up-to-date — ensure SpacetimeDB is up
+                        ensure_spacetimedb().await;
+                        println!(
+                            "{} hex-nexus is already running (PID {})",
+                            "\u{2b21}".cyan(),
+                            pid
+                        );
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -219,6 +262,23 @@ async fn start(port: u16, bind: &str, token: Option<&str>, no_agent: bool) -> an
 
     // ── Check if port is already in use (catches orphan processes) ──
     if is_port_in_use(port) {
+        // Try to detect an orphaned hex-nexus on this port
+        if let Some(orphan_pid) = find_orphan_nexus_pid(port) {
+            println!(
+                "{} Found orphaned hex-nexus (PID {}) on port {} — adopting",
+                "\u{2b21}".cyan(),
+                orphan_pid,
+                port
+            );
+            adopt_orphan(orphan_pid, port).await?;
+            println!(
+                "{} hex-nexus is already running (PID {})",
+                "\u{2b21}".green(),
+                orphan_pid
+            );
+            return Ok(());
+        }
+
         println!(
             "{} Port {} is already in use by another process",
             "\u{2b21}".red(),
@@ -358,21 +418,24 @@ async fn start(port: u16, bind: &str, token: Option<&str>, no_agent: bool) -> an
             port
         );
 
+        // Auto-register current project if not already registered
+        let project_dir = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| ".".to_string());
+        let nexus_url = format!("http://127.0.0.1:{}", port);
+        let nexus = crate::nexus_client::NexusClient::new(nexus_url.clone());
+        auto_register_project(&nexus, &project_dir).await;
+
         // Auto-start default hex-agent (ADR-037)
         if !no_agent {
             if let Some(agent_bin) = find_agent_binary() {
-                let project_dir = std::env::current_dir()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|_| ".".to_string());
-                let nexus_url = format!("http://127.0.0.1:{}", port);
 
                 // Query nexus for registered inference endpoints to pass to agent
                 let mut cmd = std::process::Command::new(&agent_bin);
                 cmd.args(["--hub-url", &nexus_url, "--project-dir", &project_dir]);
 
                 // Forward inference provider config as env vars
-                let agent_nexus = crate::nexus_client::NexusClient::new(nexus_url.clone());
-                if let Ok(resp) = agent_nexus.get("/api/inference/endpoints").await {
+                if let Ok(resp) = nexus.get("/api/inference/endpoints").await {
                     let resp: serde_json::Value = resp;
                     if let Some(eps) = resp.get("endpoints").and_then(|v| v.as_array()) {
                         for ep in eps {
@@ -424,7 +487,7 @@ async fn start(port: u16, bind: &str, token: Option<&str>, no_agent: bool) -> an
                             "project_dir": project_dir,
                             "session_id": format!("nexus-{}", agent_pid),
                         });
-                        let _ = agent_nexus.post("/api/hex-agents/connect", &reg_body).await
+                        let _ = nexus.post("/api/hex-agents/connect", &reg_body).await
                             .map(|_| {
                                 tracing::debug!("Nexus agent registered as {}", agent_name);
                             })
@@ -478,8 +541,21 @@ async fn stop() -> anyhow::Result<()> {
     let pid_path = pid_file();
 
     if !pid_path.exists() {
-        println!("{} hex-nexus is not running (no PID file)", "\u{2b21}".dimmed());
-        return Ok(());
+        // Fallback: check for orphaned hex-nexus before giving up
+        let port = read_port();
+        if let Some(orphan_pid) = find_orphan_nexus_pid(port) {
+            println!(
+                "{} Found orphaned hex-nexus (PID {}) on port {} — adopting before stop",
+                "\u{2b21}".cyan(),
+                orphan_pid,
+                port
+            );
+            adopt_orphan(orphan_pid, port).await?;
+            // Fall through to the normal stop logic
+        } else {
+            println!("{} hex-nexus is not running (no PID file)", "\u{2b21}".dimmed());
+            return Ok(());
+        }
     }
 
     let pid_str = tokio::fs::read_to_string(&pid_path).await?;
@@ -532,8 +608,20 @@ async fn status() -> anyhow::Result<()> {
     let pid_path = pid_file();
 
     if !pid_path.exists() {
-        println!("{} hex-nexus is {}", "\u{2b21}".dimmed(), "not running".red());
-        return Ok(());
+        // Fallback: probe the default port for an orphaned hex-nexus
+        let port = read_port();
+        if let Some(orphan_pid) = find_orphan_nexus_pid(port) {
+            println!(
+                "{} Found orphaned hex-nexus (PID {}) — adopting",
+                "\u{2b21}".cyan(),
+                orphan_pid
+            );
+            adopt_orphan(orphan_pid, port).await?;
+            // Fall through to the normal status display with the adopted PID
+        } else {
+            println!("{} hex-nexus is {}", "\u{2b21}".dimmed(), "not running".red());
+            return Ok(());
+        }
     }
 
     let pid_str = tokio::fs::read_to_string(&pid_path).await?;
@@ -547,6 +635,14 @@ async fn status() -> anyhow::Result<()> {
         println!("{} hex-nexus is {}", "\u{2b21}".cyan(), "running".green());
         println!("  PID:  {}", pid);
         println!("  Port: {}", port);
+
+        // Stale binary warning
+        if is_daemon_stale(port).await {
+            println!(
+                "  Binary: {} (run `hex nexus start` to auto-restart)",
+                "STALE — rebuilt since last start".yellow()
+            );
+        }
 
         // HTTP health check for SpacetimeDB and grant status
         let nexus_url = std::env::var("HEX_NEXUS_URL")
@@ -576,7 +672,7 @@ async fn status() -> anyhow::Result<()> {
                 .ok();
             if let Some(ref client) = client {
                 let stdb_ok = client
-                    .get(format!("{}/v1/ping", stdb_host))
+                    .get(format!("{}{}", stdb_host, hex_core::SPACETIMEDB_PING_PATH))
                     .send()
                     .await
                     .map(|r| r.status().is_success())
@@ -698,8 +794,119 @@ async fn logs(lines: usize, follow: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Auto-register the current working directory as a project if not already registered.
+///
+/// Checks `GET /api/projects` for an existing entry matching `project_dir`.
+/// If none exists, registers via `POST /api/projects/register`.
+/// Failures are non-fatal — logged and swallowed so nexus startup isn't blocked.
+async fn auto_register_project(nexus: &crate::nexus_client::NexusClient, project_dir: &str) {
+    // Give SpacetimeDB state port time to initialize after daemon starts.
+    // The version endpoint responds before the state port is fully connected.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Derive project name from directory basename
+    let name = project_dir
+        .rsplit('/')
+        .next()
+        .unwrap_or("unknown")
+        .to_string();
+
+    let body = serde_json::json!({
+        "rootPath": project_dir,
+        "name": name,
+    });
+
+    // Try registration up to 2 times — first attempt may hit state port not ready
+    for attempt in 0..2 {
+        // Check if already registered
+        if let Ok(resp) = nexus.get("/api/projects").await {
+            if let Some(projects) = resp.get("projects").and_then(|v| v.as_array()) {
+                if !projects.is_empty() {
+                    let already = projects.iter().any(|p| {
+                        p.get("rootPath").and_then(|v| v.as_str()) == Some(project_dir)
+                    });
+                    if already {
+                        return;
+                    }
+                }
+            }
+        }
+
+        match nexus.post("/api/projects/register", &body).await {
+            Ok(resp) => {
+                let id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                println!(
+                    "{} Project registered: {} ({})",
+                    "\u{2b21}".green(),
+                    name,
+                    &id[..8.min(id.len())]
+                );
+                return;
+            }
+            Err(e) => {
+                if attempt == 0 {
+                    // Retry after a short delay — state port may still be connecting
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                } else {
+                    println!(
+                        "  {} Auto-register project failed: {}",
+                        "!".yellow(),
+                        e
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn is_port_in_use(port: u16) -> bool {
     std::net::TcpListener::bind(format!("127.0.0.1:{}", port)).is_err()
+}
+
+/// Find an orphaned hex-nexus process listening on `port` when the PID file is missing.
+///
+/// Uses `lsof` to ask the kernel which process owns the LISTEN socket, then verifies
+/// the process name contains "hex-nexus". Returns `None` if the port is free or owned
+/// by a non-nexus process.
+fn find_orphan_nexus_pid(port: u16) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        // lsof -t -i :<port> -sTCP:LISTEN returns just the PID(s)
+        let output = std::process::Command::new("lsof")
+            .args(["-t", &format!("-i:{}", port), "-sTCP:LISTEN"])
+            .output()
+            .ok()?;
+        let pids_str = String::from_utf8_lossy(&output.stdout);
+        for line in pids_str.lines() {
+            if let Ok(pid) = line.trim().parse::<u32>() {
+                // Verify this is actually hex-nexus (not some random process on the port)
+                if let Ok(ps_out) = std::process::Command::new("ps")
+                    .args(["-p", &pid.to_string(), "-o", "comm="])
+                    .output()
+                {
+                    let comm = String::from_utf8_lossy(&ps_out.stdout);
+                    if comm.trim().contains("hex-nexus") {
+                        return Some(pid);
+                    }
+                }
+            }
+        }
+        None
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = port;
+        None
+    }
+}
+
+/// Adopt an orphaned hex-nexus by writing its PID and port to the tracking files.
+async fn adopt_orphan(pid: u32, port: u16) -> anyhow::Result<()> {
+    let dir = hex_dir();
+    tokio::fs::create_dir_all(&dir).await?;
+    tokio::fs::write(pid_file(), pid.to_string()).await?;
+    tokio::fs::write(port_file(), port.to_string()).await?;
+    Ok(())
 }
 
 fn is_process_alive(pid: u32) -> bool {
@@ -712,5 +919,66 @@ fn is_process_alive(pid: u32) -> bool {
     {
         let _ = pid;
         false
+    }
+}
+
+/// Check if the running daemon's build hash differs from the on-disk binary.
+/// Returns true if the daemon should be restarted (stale binary).
+async fn is_daemon_stale(port: u16) -> bool {
+    // 1. Get the running daemon's build hash via /api/version
+    let running_hash = match get_running_build_hash(port).await {
+        Some(h) => h,
+        None => return false, // Can't reach daemon — don't interfere
+    };
+
+    // 2. Get the on-disk binary's build hash
+    let disk_hash = match get_disk_build_hash() {
+        Some(h) => h,
+        None => return false, // Can't find binary — don't interfere
+    };
+
+    if running_hash != disk_hash {
+        tracing::debug!(
+            running = %running_hash,
+            disk = %disk_hash,
+            "Daemon build hash mismatch — binary was rebuilt"
+        );
+        true
+    } else {
+        false
+    }
+}
+
+/// Query the running daemon's /api/version endpoint for its buildHash.
+async fn get_running_build_hash(port: u16) -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .ok()?;
+
+    let resp = client
+        .get(format!("http://127.0.0.1:{}/api/version", port))
+        .send()
+        .await
+        .ok()?;
+
+    let json: serde_json::Value = resp.json().await.ok()?;
+    json.get("buildHash")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Run `hex-nexus --build-hash` on the on-disk binary to get its compiled hash.
+fn get_disk_build_hash() -> Option<String> {
+    let nexus_bin = find_nexus_binary()?;
+    let output = std::process::Command::new(&nexus_bin)
+        .arg("--build-hash")
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
     }
 }

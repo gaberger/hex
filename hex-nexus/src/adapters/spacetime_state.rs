@@ -89,12 +89,17 @@ mod real {
                 let body = resp.text().await.unwrap_or_default();
                 return Err(StateError::Storage(format!("Reducer {} failed ({}): {}", reducer, status, body)));
             }
-            // SpacetimeDB v1 returns empty body on success for most reducers
+            // SpacetimeDB v1 returns empty body on success for most reducers.
+            // Some versions return whitespace or non-JSON text — treat as null.
             let text = resp.text().await.unwrap_or_default();
-            if text.is_empty() {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                tracing::debug!("call_reducer '{}': non-empty response: {}", reducer, &trimmed[..trimmed.len().min(200)]);
+            }
+            if trimmed.is_empty() {
                 Ok(serde_json::Value::Null)
             } else {
-                serde_json::from_str(&text).map_err(|e| StateError::Storage(e.to_string()))
+                Ok(serde_json::from_str(trimmed).unwrap_or(serde_json::Value::Null))
             }
         }
 
@@ -117,10 +122,11 @@ mod real {
                 return Err(StateError::Storage(format!("Reducer {} failed ({}): {}", reducer, status, body)));
             }
             let text = resp.text().await.unwrap_or_default();
-            if text.is_empty() {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
                 Ok(serde_json::Value::Null)
             } else {
-                serde_json::from_str(&text).map_err(|e| StateError::Storage(e.to_string()))
+                Ok(serde_json::from_str(trimmed).unwrap_or(serde_json::Value::Null))
             }
         }
 
@@ -163,7 +169,17 @@ mod real {
                 let body = resp.text().await.unwrap_or_default();
                 return Err(StateError::Storage(format!("SQL query failed: {}", body)));
             }
-            let body: serde_json::Value = resp.json().await.map_err(|e| StateError::Storage(e.to_string()))?;
+            let text = resp.text().await.map_err(|e| StateError::Storage(e.to_string()))?;
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                tracing::debug!("query_table: empty response for SQL: {}", sql);
+                return Ok(Vec::new());
+            }
+            let body: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| {
+                tracing::warn!("query_table: failed to parse response — error: {e}, raw: {trimmed}");
+                StateError::Storage(e.to_string())
+            })?;
+            tracing::debug!("query_table: raw response for '{}': {}", sql, body);
             Ok(Self::parse_stdb_response(body))
         }
 
@@ -899,7 +915,17 @@ mod real {
         }
         async fn project_list(&self) -> Result<Vec<ProjectRecord>, StateError> {
             let rows = self.query_table("SELECT * FROM project").await?;
-            Ok(rows.into_iter().filter_map(|r| serde_json::from_value(r).ok()).collect())
+            tracing::debug!("project_list raw rows: {:?}", rows);
+            let result: Vec<ProjectRecord> = rows.into_iter().filter_map(|r| {
+                match serde_json::from_value::<ProjectRecord>(r.clone()) {
+                    Ok(p) => Some(p),
+                    Err(e) => {
+                        tracing::warn!("project_list: failed to deserialize row: {e} — raw: {r}");
+                        None
+                    }
+                }
+            }).collect();
+            Ok(result)
         }
         async fn project_update_state(&self, id: &str, push_type: &str, data: serde_json::Value, file_path: Option<&str>) -> Result<(), StateError> {
             self.call_reducer("project_update_state", serde_json::json!([

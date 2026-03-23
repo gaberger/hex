@@ -67,7 +67,7 @@ pub async fn hydrate(
         .unwrap();
 
     let ping_ok = client
-        .get(format!("{}/v1/ping", host))
+        .get(format!("{}{}", host, hex_core::SPACETIMEDB_PING_PATH))
         .send()
         .await
         .map(|r| r.status().is_success())
@@ -224,7 +224,7 @@ pub async fn health(
         .unwrap();
 
     let stdb_reachable = client
-        .get(format!("{}/v1/ping", host))
+        .get(format!("{}{}", host, hex_core::SPACETIMEDB_PING_PATH))
         .send()
         .await
         .map(|r| r.status().is_success())

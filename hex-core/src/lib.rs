@@ -17,6 +17,17 @@ pub mod domain;
 pub mod ports;
 pub mod rules;
 
+// ── Infrastructure Constants ──────────────────────────────
+// Shared across hex-cli, hex-nexus, and hex-agent to prevent string drift.
+
+/// Canonical SpacetimeDB health-check endpoint path.
+/// All code that pings SpacetimeDB MUST use this constant — never hardcode the path.
+/// See ADR rule `adr-039-no-stale-ping` for enforcement.
+pub const SPACETIMEDB_PING_PATH: &str = "/database/ping";
+
+/// Default SpacetimeDB host URL.
+pub const SPACETIMEDB_DEFAULT_HOST: &str = "http://127.0.0.1:3000";
+
 /// Re-export commonly used types at the crate root.
 pub use domain::agents::{AgentConstraints, AgentDefinition, AgentMetrics};
 pub use domain::messages::{ContentBlock, ConversationState, Message, Role, StopReason};

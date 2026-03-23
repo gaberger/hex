@@ -378,11 +378,9 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/analyze", post(analysis::analyze_path)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/{project_id}/analyze", get(analysis::analyze_project))
-        .route("/api/{project_id}/analyze/text", get(analysis::analyze_project_text))
         // ADR compliance (ADR-045) — check code against accepted ADRs
         .route("/api/analyze/adr-compliance", post(analysis::analyze_adr_compliance)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
-        .route("/api/{project_id}/analyze/adr-compliance", get(analysis::analyze_project_adr_compliance))
         // ADR number reservation (atomic next-number for multi-agent coordination)
         .route("/api/adr/reserve", post(adr_reserve_number))
         .route("/api/adr/next", get(adr_next_number))
@@ -437,8 +435,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/coordination/activity", post(coordination::publish_activity)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/coordination/activities", get(coordination::get_activities))
-        .route("/api/coordination/unstaged", get(coordination::get_unstaged))
-        .route("/api/coordination/cleanup", post(coordination::cleanup_stale_sessions))
         // RL (reinforcement learning) engine
         .route("/api/rl/action", post(rl::select_action)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))

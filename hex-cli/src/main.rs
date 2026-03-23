@@ -16,6 +16,7 @@ use commands::{
     adr::AdrAction,
     agent::AgentAction,
     analyze,
+    git_cmd::GitAction,
     hook::HookEvent,
     inbox::InboxAction,
     init::InitArgs,
@@ -153,6 +154,11 @@ enum Commands {
     },
     /// Inspect embedded assets baked into the binary (ADR-2603221522)
     Assets,
+    /// Git integration (status, log, diff, branches)
+    Git {
+        #[command(subcommand)]
+        action: GitAction,
+    },
     /// Project status
     Status,
 }
@@ -195,6 +201,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Test { action } => commands::test::run(action).await,
         Commands::Skill { action } => commands::skill::run(action).await,
         Commands::Enforce { action } => commands::enforce::run(action).await,
+        Commands::Git { action } => commands::git_cmd::run(action).await,
         Commands::Assets => commands::assets_cmd::list().await,
         Commands::Status => status::run().await,
     }
