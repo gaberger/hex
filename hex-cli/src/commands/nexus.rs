@@ -10,9 +10,9 @@ const DEFAULT_PORT: u16 = 5555;
 ///
 /// Search order:
 /// 1. `HEX_NEXUS_BIN` env var
-/// 2. `hex-nexus` on `$PATH`
-/// 3. `./target/release/hex-nexus`
-/// 4. `./target/debug/hex-nexus`
+/// 2. `./target/release/hex-nexus` (local release build)
+/// 3. `./target/debug/hex-nexus` (local debug build)
+/// 4. `hex-nexus` on `$PATH`
 fn find_nexus_binary() -> Option<PathBuf> {
     // 1. Explicit env var
     if let Ok(p) = std::env::var("HEX_NEXUS_BIN") {
@@ -22,18 +22,18 @@ fn find_nexus_binary() -> Option<PathBuf> {
         }
     }
 
-    // 2. PATH lookup
-    let path_var = std::env::var("PATH").unwrap_or_default();
-    for dir in path_var.split(':') {
-        let candidate = PathBuf::from(dir).join("hex-nexus");
+    // 2-3. Local build artifacts (checked before PATH so dev builds take priority)
+    for profile in &["release", "debug"] {
+        let candidate = PathBuf::from(format!("target/{}/hex-nexus", profile));
         if candidate.is_file() {
             return Some(candidate);
         }
     }
 
-    // 3-4. Local build artifacts
-    for profile in &["release", "debug"] {
-        let candidate = PathBuf::from(format!("target/{}/hex-nexus", profile));
+    // 4. PATH lookup
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    for dir in path_var.split(':') {
+        let candidate = PathBuf::from(dir).join("hex-nexus");
         if candidate.is_file() {
             return Some(candidate);
         }
@@ -109,6 +109,13 @@ fn read_port() -> u16 {
 async fn ensure_spacetimedb() -> bool {
     let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
         .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+
+    // Kill hung spacetimedb-update processes (they block spacetime CLI commands)
+    let _ = std::process::Command::new("pkill")
+        .args(["-f", "spacetimedb-update"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 
     // Check if already running
     let http = reqwest::Client::builder()

@@ -31,8 +31,8 @@ pub async fn hydrate(
     State(state): State<SharedState>,
     Json(body): Json<HydrateRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let host = body.host.unwrap_or_else(|| "http://127.0.0.1:3033".to_string());
-    let database = body.database.unwrap_or_else(|| "hex".to_string());
+    let host = body.host.unwrap_or_else(|| hex_core::SPACETIMEDB_DEFAULT_HOST.to_string());
+    let database = body.database.unwrap_or_else(|| hex_core::STDB_DATABASE_CORE.to_string());
     let force = body.force.unwrap_or(false);
     let dry_run = body.dry_run.unwrap_or(false);
 
@@ -213,9 +213,9 @@ pub async fn health(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let host = std::env::var("HEX_SPACETIMEDB_HOST")
-        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+        .unwrap_or_else(|_| hex_core::SPACETIMEDB_DEFAULT_HOST.to_string());
     let database = std::env::var("HEX_SPACETIMEDB_DATABASE")
-        .unwrap_or_else(|_| "hex".to_string());
+        .unwrap_or_else(|_| hex_core::STDB_DATABASE_CORE.to_string());
 
     // Check SpacetimeDB connectivity
     let client = reqwest::Client::builder()

@@ -131,7 +131,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
             .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
         let stdb_database = std::env::var("HEX_SPACETIMEDB_DATABASE")
-            .unwrap_or_else(|_| "hex-nexus".to_string());
+            .unwrap_or_else(|_| hex_core::stdb_database_for_module("secret-grant").to_string());
 
         let hub_id = std::env::var("HEX_HUB_ID").unwrap_or_else(|_| "hub-local".to_string());
         let client = adapters::spacetime_secrets::SpacetimeSecretClient::new(
@@ -155,9 +155,9 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
 
         let inference_db = std::env::var("HEX_INFERENCE_STDB_DATABASE")
-            .unwrap_or_else(|_| "inference-gateway".to_string());
+            .unwrap_or_else(|_| hex_core::stdb_database_for_module("inference-gateway").to_string());
         let chat_db = std::env::var("HEX_CHAT_STDB_DATABASE")
-            .unwrap_or_else(|_| "chat-relay".to_string());
+            .unwrap_or_else(|_| hex_core::stdb_database_for_module("chat-relay").to_string());
 
         let inference_client =
             adapters::spacetime_inference::SpacetimeInferenceClient::new(
@@ -179,7 +179,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
             .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
         let stdb_database = std::env::var("HEX_SPACETIMEDB_DATABASE")
-            .unwrap_or_else(|_| "hex".to_string());
+            .unwrap_or_else(|_| hex_core::STDB_DATABASE_CORE.to_string());
         let stdb_host_clone = stdb_host.clone();
         let stdb_db_clone = stdb_database.clone();
 
@@ -265,7 +265,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
             .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
         let stdb_db = std::env::var("HEX_SPACETIMEDB_DATABASE")
-            .unwrap_or_else(|_| "hexflo-coordination".to_string());
+            .unwrap_or_else(|_| hex_core::STDB_DATABASE_CORE.to_string());
         let sp_for_sync = app_state.state_port.clone();
         tokio::spawn(async move {
             // ADR-043: Auto-register project from .hex/project.yaml
@@ -287,7 +287,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
             .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
         let chat_db = std::env::var("HEX_CHAT_STDB_DATABASE")
-            .unwrap_or_else(|_| "chat-relay".to_string());
+            .unwrap_or_else(|_| hex_core::stdb_database_for_module("chat-relay").to_string());
 
         let stdb_adapter = adapters::spacetime_session::SpacetimeSessionAdapter::new(
             stdb_host.clone(),

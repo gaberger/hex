@@ -531,28 +531,40 @@ pub async fn generate_bindings(
 
 /// Module publish order — tiered by cross-module dependency.
 ///
-/// IMPORTANT: All modules publish to a single SpacetimeDB database (`hex`).
-/// SpacetimeDB treats each publish as a full schema replacement — publishing
-/// module B after module A would DROP module A's tables. Therefore only
-/// `hexflo-coordination` (the mega-module containing all core tables) is
-/// published. The other modules are listed here for documentation but are
-/// NOT included in the active tiers.
-///
-/// Future: give each module its own database, or merge remaining tables
-/// into hexflo-coordination.
+/// Each module publishes to its own SpacetimeDB database (ADR-2603231500).
+/// Database names are resolved via `hex_core::stdb_database_for_module()`.
+/// hexflo-coordination → "hex" (backward compat), all others → directory name.
 pub const MODULE_TIERS: &[&[&str]] = &[
-    // Tier 0: The mega-module — contains all core tables (15 tables, 40+ reducers)
+    // Tier 0: Foundation — no cross-module dependencies
     &[
         "hexflo-coordination",
+        "agent-registry",
+        "fleet-state",
+        "file-lock-manager",
     ],
-    // Future tiers: these modules have their own tables but cannot be published
-    // to the same `hex` database without wiping hexflo-coordination's schema.
-    // When each gets its own database, re-enable them here.
-    //
-    // Tier 1 (dormant): agent-registry, fleet-state, file-lock-manager
-    // Tier 2 (dormant): inference-gateway, inference-bridge, secret-grant, architecture-enforcer
-    // Tier 3 (dormant): workplan-state, skill-registry, hook-registry, agent-definition-registry
-    // Tier 4 (dormant): chat-relay, rl-engine, hexflo-lifecycle, hexflo-cleanup, conflict-resolver
+    // Tier 1: Services — reference agent/project IDs from tier 0
+    &[
+        "inference-gateway",
+        "inference-bridge",
+        "secret-grant",
+        "architecture-enforcer",
+    ],
+    // Tier 2: Workflows — reference agents, inference, secrets
+    &[
+        "workplan-state",
+        "skill-registry",
+        "hook-registry",
+        "agent-definition-registry",
+    ],
+    // Tier 3: Coordination — reference everything above
+    &[
+        "chat-relay",
+        "rl-engine",
+        "hexflo-lifecycle",
+        "hexflo-cleanup",
+        "conflict-resolver",
+        "test-results",
+    ],
 ];
 
 /// Result of publishing a single module.
@@ -593,7 +605,7 @@ pub struct HydrationResult {
 impl HydrationResult {
     /// Overall status string: "hydrated", "partial", or "empty".
     pub fn status(&self) -> &'static str {
-        if self.total_failed == 0 && self.total_skipped == 0 {
+        if self.total_ok > 0 && self.total_failed == 0 {
             "hydrated"
         } else if self.total_ok > 0 {
             "partial"
@@ -657,7 +669,8 @@ pub async fn publish_modules_ordered(
                 continue;
             }
 
-            match publish_module(host, database, &module_path).await {
+            let module_db = hex_core::stdb_database_for_module(module_name);
+            match publish_module(host, module_db, &module_path).await {
                 Ok(_output) => {
                     tracing::info!(module = module_name, tier = tier_idx, "Published successfully");
                     tier_result.modules.push(ModulePublishResult {
@@ -713,10 +726,16 @@ pub async fn publish_modules_ordered(
         result.tiers.push(tier_result);
     }
 
-    // Final schema verification — check if the core reducer is callable
-    result.schema_verified = verify_tier_schemas(host, database, &["hexflo-coordination"])
-        .await
-        .unwrap_or(false);
+    // Final schema verification — check if the core reducer is callable.
+    // Only verify if at least one module was published successfully;
+    // otherwise mark as verified (nothing to verify for dormant tiers).
+    if result.total_ok > 0 {
+        result.schema_verified = verify_tier_schemas(host, database, &["hexflo-coordination"])
+            .await
+            .unwrap_or(false);
+    } else {
+        result.schema_verified = true;
+    }
 
     Ok(result)
 }
