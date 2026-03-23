@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod api_optimization;
+pub mod enforcement;
 pub mod hooks;
 pub mod messages;
 pub mod secret_grant;
