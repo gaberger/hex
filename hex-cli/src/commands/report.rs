@@ -121,6 +121,9 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
         "Status: ".white().bold(),
         colorize_status(&session.status)
     );
+    if let Some(ref agent_id) = session.agent_id {
+        println!("  {}  {}", "Agent:  ".white().bold(), agent_id.dimmed());
+    }
     println!("  {}  {}", "Started:".white().bold(), session.created_at);
     println!("  {}  {}", "Ended:  ".white().bold(), session.updated_at);
 
@@ -648,6 +651,7 @@ fn print_json_report(
             "tokens": session.total_tokens,
             "steps_completed": session.completed_steps,
             "models": session.model_selections,
+            "agent_id": session.agent_id,
         }
     });
 

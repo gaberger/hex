@@ -502,6 +502,9 @@ impl TuiApp {
                                 r.task_ids.len(),
                                 r.duration_ms as f64 / 1000.0,
                             );
+                            if let Some(ref agent_id) = self.session.agent_id {
+                                println!("  agent:  {}", agent_id);
+                            }
                             self.session.swarm_id = Some(r.swarm_id.clone());
                             let _ = self.session.update_phase(PipelinePhase::Code);
                             self.swarm_result = Some(r);
@@ -1485,7 +1488,8 @@ impl TuiApp {
         println!("         wrote {}", resolved);
         println!("         {}", workplan_summary(&result.parsed));
 
-        self.session.workplan_path = Some(result.file_path.clone());
+        // Store the resolved path so subsequent phases can find the file on disk
+        self.session.workplan_path = Some(resolved);
         self.session.add_cost(result.cost_usd, result.tokens)?;
         self.session.update_phase(PipelinePhase::Swarm)?;
         Ok(())
@@ -1503,7 +1507,8 @@ impl TuiApp {
         std::fs::write(path, &result.content)?;
         println!("         wrote {}", resolved);
 
-        self.session.adr_path = Some(result.file_path.clone());
+        // Store the resolved path so subsequent phases can find the file on disk
+        self.session.adr_path = Some(resolved);
         self.session.add_cost(result.cost_usd, result.tokens)?;
         self.session.update_phase(PipelinePhase::Workplan)?;
         Ok(())

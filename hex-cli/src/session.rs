@@ -97,12 +97,16 @@ pub struct DevSession {
     pub model_selections: HashMap<String, String>,
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
+    /// Agent identity resolved from CLAUDE_SESSION_ID (best-effort).
+    #[serde(default)]
+    pub agent_id: Option<String>,
 }
 
 impl DevSession {
     /// Create a new session in `InProgress` status starting at the `Adr` phase.
     pub fn new(description: &str) -> Self {
         let now = Utc::now().to_rfc3339();
+        let agent_id = resolve_agent_id();
         Self {
             id: Uuid::new_v4().to_string(),
             created_at: now.clone(),
@@ -119,6 +123,7 @@ impl DevSession {
             total_tokens: 0,
             model_selections: HashMap::new(),
             tool_calls: Vec::new(),
+            agent_id,
         }
     }
 
@@ -314,6 +319,23 @@ fn sessions_dir() -> Result<PathBuf> {
 /// `~/.hex/sessions/dev/<id>.json`
 fn session_path(id: &str) -> Result<PathBuf> {
     Ok(sessions_dir()?.join(format!("{}.json", id)))
+}
+
+/// Best-effort resolution of agent identity from CLAUDE_SESSION_ID.
+///
+/// Reads `~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json` and extracts
+/// the `agent_id` field. Returns `None` if anything fails (env var not
+/// set, file missing, parse error).
+fn resolve_agent_id() -> Option<String> {
+    let claude_session = std::env::var("CLAUDE_SESSION_ID").ok()?;
+    let home = dirs::home_dir()?;
+    let agent_file = home
+        .join(".hex")
+        .join("sessions")
+        .join(format!("agent-{}.json", claude_session));
+    let data = fs::read_to_string(&agent_file).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&data).ok()?;
+    parsed["agent_id"].as_str().map(|s| s.to_string())
 }
 
 // ---------------------------------------------------------------------------
