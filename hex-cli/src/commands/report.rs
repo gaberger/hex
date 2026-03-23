@@ -96,9 +96,10 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
     let workplan_info = gather_workplan_info(&session);
     let swarm_info = gather_swarm_info(&session, &client).await;
     let git_info = gather_git_info(&session);
+    let quality_gates = gather_quality_gates(&session, &client).await;
 
     if json_output {
-        print_json_report(&session, &adr_info, &workplan_info, &swarm_info, &git_info);
+        print_json_report(&session, &adr_info, &workplan_info, &swarm_info, &git_info, &quality_gates);
         return Ok(());
     }
 
@@ -284,6 +285,51 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
             }
             _ => {
                 println!("  Status: {}", "Not reached".dimmed());
+            }
+        }
+    }
+
+    // ── Quality Gates (SpacetimeDB) ──────────────────────────
+    if !quality_gates.is_empty() {
+        println!();
+        println!("{}", "── Quality Gates (SpacetimeDB) ───────────────────────────────".dimmed());
+        for qg in &quality_gates {
+            let status_colored = match qg.status.as_str() {
+                "pass" => "PASS".green().to_string(),
+                "fail" => "FAIL".red().to_string(),
+                "running" => "RUNNING".yellow().to_string(),
+                _ => qg.status.to_uppercase().dimmed().to_string(),
+            };
+            let score_str = match (qg.score, qg.grade.as_deref()) {
+                (Some(s), Some(g)) => format!("Score {}/{}", s, g),
+                (Some(s), None) => format!("Score {}", s),
+                _ => String::new(),
+            };
+            let iter_str = if qg.iterations > 1 {
+                format!("({} iterations", qg.iterations)
+            } else {
+                format!("({} iteration", qg.iterations)
+            };
+            let fix_count = qg.fixes.len();
+            let fix_suffix = if fix_count > 0 {
+                format!(", {} fix{})", fix_count, if fix_count == 1 { "" } else { "es" })
+            } else {
+                ")".to_string()
+            };
+            println!(
+                "  Tier {}:  {}  {}  {}{}",
+                qg.tier, status_colored, score_str, iter_str, fix_suffix
+            );
+            for fix in &qg.fixes {
+                let cost_str = if fix.cost_usd > 0.0 {
+                    format!(", ${:.3}", fix.cost_usd)
+                } else {
+                    String::new()
+                };
+                println!(
+                    "    Fix: {} — {} ({}{})",
+                    fix.file, fix.issue, fix.model, cost_str
+                );
             }
         }
     }
@@ -589,6 +635,87 @@ async fn gather_swarm_info(session: &DevSession, client: &NexusClient) -> Option
     })
 }
 
+struct QualityGateInfo {
+    tier: u32,
+    status: String,
+    score: Option<u32>,
+    grade: Option<String>,
+    iterations: u32,
+    fixes: Vec<QualityGateFix>,
+}
+
+struct QualityGateFix {
+    file: String,
+    issue: String,
+    model: String,
+    cost_usd: f64,
+}
+
+async fn gather_quality_gates(session: &DevSession, client: &NexusClient) -> Vec<QualityGateInfo> {
+    let swarm_id = match session.swarm_id.as_ref() {
+        Some(id) => id,
+        None => return Vec::new(),
+    };
+
+    let gates_data = match client
+        .get(&format!(
+            "/api/hexflo/quality-gate?swarm_id={}",
+            swarm_id
+        ))
+        .await
+    {
+        Ok(data) => data,
+        Err(_) => return Vec::new(),
+    };
+
+    let gates_arr = match gates_data.as_array() {
+        Some(arr) => arr,
+        None => return Vec::new(),
+    };
+
+    let mut result = Vec::new();
+    for g in gates_arr {
+        let gate_id = g["id"].as_str().unwrap_or("").to_string();
+        let tier = g["tier"].as_u64().unwrap_or(0) as u32;
+        let status = g["status"].as_str().unwrap_or("pending").to_string();
+        let score = g["score"].as_u64().map(|s| s as u32);
+        let grade = g["grade"].as_str().map(|s| s.to_string());
+        let iterations = g["iterations"].as_u64().unwrap_or(1) as u32;
+
+        // Fetch fixes for this gate
+        let mut fixes = Vec::new();
+        if !gate_id.is_empty() {
+            if let Ok(fixes_data) = client
+                .get(&format!("/api/hexflo/quality-gate/{}/fixes", gate_id))
+                .await
+            {
+                if let Some(fixes_arr) = fixes_data.as_array() {
+                    for f in fixes_arr {
+                        fixes.push(QualityGateFix {
+                            file: f["file"].as_str().unwrap_or("").to_string(),
+                            issue: f["issue"].as_str().unwrap_or("").to_string(),
+                            model: f["model"].as_str().unwrap_or("").to_string(),
+                            cost_usd: f["cost_usd"].as_f64().unwrap_or(0.0),
+                        });
+                    }
+                }
+            }
+        }
+
+        result.push(QualityGateInfo {
+            tier,
+            status,
+            score,
+            grade,
+            iterations,
+            fixes,
+        });
+    }
+
+    result.sort_by_key(|g| g.tier);
+    result
+}
+
 struct GitInfo {
     created: Vec<String>,
     modified: Vec<String>,
@@ -676,6 +803,7 @@ fn print_json_report(
     workplan_info: &Option<WorkplanInfo>,
     swarm_info: &Option<SwarmInfo>,
     git_info: &Option<GitInfo>,
+    quality_gates: &[QualityGateInfo],
 ) {
     let mut report = serde_json::json!({
         "session": {
@@ -756,6 +884,27 @@ fn print_json_report(
             "modified": gi.modified,
             "deleted": gi.deleted,
         });
+    }
+
+    if !quality_gates.is_empty() {
+        report["quality_gates"] = serde_json::json!(quality_gates.iter().map(|g| {
+            let mut gate = serde_json::json!({
+                "tier": g.tier,
+                "status": g.status,
+                "score": g.score,
+                "grade": g.grade,
+                "iterations": g.iterations,
+            });
+            if !g.fixes.is_empty() {
+                gate["fixes"] = serde_json::json!(g.fixes.iter().map(|f| serde_json::json!({
+                    "file": f.file,
+                    "issue": f.issue,
+                    "model": f.model,
+                    "cost_usd": f.cost_usd,
+                })).collect::<Vec<_>>());
+            }
+            gate
+        }).collect::<Vec<_>>());
     }
 
     if !session.tool_calls.is_empty() {

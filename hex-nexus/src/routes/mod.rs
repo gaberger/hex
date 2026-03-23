@@ -16,6 +16,7 @@ pub mod inference;
 pub mod orchestration;
 pub mod projects;
 pub mod push;
+pub mod quality;
 pub mod query;
 pub mod rl;
 pub mod secrets;
@@ -492,6 +493,17 @@ pub fn build_router(state: SharedState) -> Router {
             .patch(swarms::update_task_by_id)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/work-items/incomplete", get(swarms::get_incomplete_work))
+        // Quality Gate & Fix Task routes (Swarm Gate Enforcement)
+        .route("/api/hexflo/quality-gate", post(quality::create_quality_gate)
+            .get(quality::list_quality_gates)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/hexflo/quality-gate/{id}", patch(quality::complete_quality_gate)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/hexflo/quality-gate/{id}/fixes", get(quality::list_fixes_for_gate))
+        .route("/api/hexflo/fix-task", post(quality::create_fix_task)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/hexflo/fix-task/{id}", patch(quality::complete_fix_task)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         // Coordination (multi-instance lock/claim/activity)
         .route("/api/coordination/instance/register", post(coordination::register_instance)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))

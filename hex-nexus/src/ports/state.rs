@@ -238,6 +238,45 @@ pub struct CleanupReport {
     pub reclaimed_tasks: u32,
 }
 
+// ── Quality Gate & Fix Task Types (Swarm Gate Enforcement) ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QualityGateInfo {
+    pub id: String,
+    pub swarm_id: String,
+    pub tier: u32,
+    pub gate_type: String,
+    pub target_dir: String,
+    pub language: String,
+    pub status: String,
+    pub score: u32,
+    pub grade: String,
+    pub violations_count: u32,
+    pub error_output: String,
+    pub iteration: u32,
+    pub created_at: String,
+    pub completed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FixTaskInfo {
+    pub id: String,
+    pub gate_task_id: String,
+    pub swarm_id: String,
+    pub fix_type: String,
+    pub target_file: String,
+    pub error_context: String,
+    pub model_used: String,
+    pub tokens: u64,
+    pub cost_usd: String,
+    pub status: String,
+    pub result: String,
+    pub created_at: String,
+    pub completed_at: String,
+}
+
 // ── Agent Notification Inbox Types (ADR-060) ─────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -576,6 +615,48 @@ pub trait IStatePort: Send + Sync {
     async fn hexflo_memory_retrieve(&self, key: &str) -> Result<Option<String>, StateError>;
     async fn hexflo_memory_search(&self, query: &str) -> Result<Vec<(String, String)>, StateError>;
     async fn hexflo_memory_delete(&self, key: &str) -> Result<(), StateError>;
+
+    // ── Quality Gate & Fix Tasks (Swarm Gate Enforcement) ──
+    async fn quality_gate_create(
+        &self,
+        id: &str,
+        swarm_id: &str,
+        tier: u32,
+        gate_type: &str,
+        target_dir: &str,
+        language: &str,
+        iteration: u32,
+    ) -> Result<(), StateError>;
+    async fn quality_gate_complete(
+        &self,
+        id: &str,
+        status: &str,
+        score: u32,
+        grade: &str,
+        violations_count: u32,
+        error_output: &str,
+    ) -> Result<(), StateError>;
+    async fn quality_gate_list(&self, swarm_id: &str) -> Result<Vec<QualityGateInfo>, StateError>;
+    async fn quality_gate_get(&self, id: &str) -> Result<Option<QualityGateInfo>, StateError>;
+    async fn fix_task_create(
+        &self,
+        id: &str,
+        gate_task_id: &str,
+        swarm_id: &str,
+        fix_type: &str,
+        target_file: &str,
+        error_context: &str,
+    ) -> Result<(), StateError>;
+    async fn fix_task_complete(
+        &self,
+        id: &str,
+        status: &str,
+        result: &str,
+        model_used: &str,
+        tokens: u64,
+        cost_usd: &str,
+    ) -> Result<(), StateError>;
+    async fn fix_task_list_by_gate(&self, gate_task_id: &str) -> Result<Vec<FixTaskInfo>, StateError>;
 
     // ── Project Registry (ADR-042) ─────────────────
     async fn project_register(&self, project: ProjectRegistration) -> Result<(), StateError>;

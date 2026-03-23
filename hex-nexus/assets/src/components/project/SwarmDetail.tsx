@@ -15,6 +15,7 @@ import {
 } from "../../stores/connection";
 import { navigate, route } from "../../stores/router";
 import { addToast } from "../../stores/toast";
+import QualityGatePanel from "../fleet/QualityGatePanel";
 
 function relativeTime(timestamp: string | undefined): string {
   if (!timestamp) return "--";
@@ -288,6 +289,11 @@ const SwarmDetail: Component = () => {
                   </For>
                 </div>
               </Show>
+
+              {/* Quality Gates */}
+              <div class="mb-6">
+                <QualityGatePanel />
+              </div>
 
               {/* Agent Roster */}
               <SectionHeader

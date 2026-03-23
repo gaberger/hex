@@ -11,7 +11,7 @@ use serde_json::json;
 use tracing::{debug, info, warn};
 
 use crate::nexus_client::NexusClient;
-use crate::pipeline::workplan_phase::WorkplanData;
+use crate::pipeline::workplan_phase::{WorkplanData, WorkplanStep};
 
 // ── Result type ──────────────────────────────────────────────────────────
 
@@ -73,7 +73,7 @@ impl SwarmPhase {
         // ── 2. Create swarm via POST /api/swarms ─────────────────────────
         let create_body = json!({
             "name": swarm_name,
-            "topology": workplan.topology.as_deref().unwrap_or("hierarchical"),
+            "topology": workplan.topology.as_deref().unwrap_or("hex-pipeline"),
             "projectId": "hex-intf",
         });
 
@@ -128,14 +128,20 @@ impl SwarmPhase {
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
+        // ── 4. Build tier summary from step IDs ────────────────────────────
+        let topology_used = workplan.topology.as_deref().unwrap_or("hex-pipeline");
+        let tier_counts = count_tasks_per_tier(&workplan.steps);
+
         info!(
             swarm_id = %swarm_id,
-            swarm_name = %swarm_name,
-            tasks_created = task_ids.len(),
-            tasks_expected = workplan.steps.len(),
-            duration_ms,
-            "Swarm phase complete"
+            topology = %topology_used,
+            tasks = task_ids.len(),
+            "swarm={swarm_id} topology={topology_used} tasks={}",
+            task_ids.len(),
         );
+        for (tier, count, label) in &tier_counts {
+            info!("  Tier {tier}: {count} tasks ({label})");
+        }
 
         Ok(SwarmPhaseResult {
             swarm_id,
@@ -147,6 +153,43 @@ impl SwarmPhase {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
+
+/// Count the number of tasks per tier based on step ID prefixes (e.g. "P0.1" → tier 0).
+///
+/// Returns a sorted vec of `(tier_number, count, label)` tuples.
+fn count_tasks_per_tier(steps: &[WorkplanStep]) -> Vec<(u8, usize, &'static str)> {
+    use std::collections::BTreeMap;
+
+    let mut tier_map: BTreeMap<u8, usize> = BTreeMap::new();
+
+    for step in steps {
+        // Parse tier from step.id like "P0.1", "P1.2", "P2.3"
+        if let Some(tier) = step
+            .id
+            .strip_prefix('P')
+            .and_then(|rest: &str| rest.split('.').next())
+            .and_then(|n: &str| n.parse::<u8>().ok())
+        {
+            *tier_map.entry(tier).or_insert(0) += 1;
+        }
+    }
+
+    tier_map
+        .into_iter()
+        .map(|(tier, count)| {
+            let label = match tier {
+                0 => "domain + ports",
+                1 => "secondary adapters",
+                2 => "primary adapters",
+                3 => "usecases",
+                4 => "composition root",
+                5 => "integration tests",
+                _ => "other",
+            };
+            (tier, count, label)
+        })
+        .collect()
+}
 
 /// Generate a kebab-case swarm name from a feature description.
 ///

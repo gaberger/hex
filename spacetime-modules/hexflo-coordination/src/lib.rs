@@ -1131,6 +1131,222 @@ pub fn memory_delete(
     Ok(())
 }
 
+// ============================================================
+//  Quality Gate & Fix Task Tables (Swarm Gate Enforcement)
+// ============================================================
+
+/// A quality gate check within a swarm — validates code at a specific tier.
+/// Created by the swarm gate enforcement pipeline to track compile, test,
+/// and architecture analysis results per tier.
+#[table(name = quality_gate_task, public)]
+#[derive(Clone, Debug)]
+pub struct QualityGateTask {
+    #[primary_key]
+    pub id: String,
+    pub swarm_id: String,
+    /// Hex architecture tier (0=domain+ports, 1=secondary, 2=primary, 3=usecases, 4=composition)
+    pub tier: u32,
+    /// Gate type: "compile", "test", "analyze", "full"
+    pub gate_type: String,
+    /// Output directory to analyze
+    pub target_dir: String,
+    /// Language: "typescript", "rust"
+    pub language: String,
+    /// Status: "pending", "running", "pass", "fail"
+    pub status: String,
+    /// Architecture score 0-100 (from hex analyze)
+    pub score: u32,
+    /// Letter grade: "A", "B", "C", "D", "F"
+    pub grade: String,
+    pub violations_count: u32,
+    /// First 4KB of error output
+    pub error_output: String,
+    /// Which retry iteration (1, 2, 3)
+    pub iteration: u32,
+    pub created_at: String,
+    /// ISO 8601 or empty if not yet completed
+    pub completed_at: String,
+}
+
+/// A fix task spawned in response to a quality gate failure.
+/// Tracks the automated fix attempt including model usage and cost.
+#[table(name = fix_task, public)]
+#[derive(Clone, Debug)]
+pub struct FixTask {
+    #[primary_key]
+    pub id: String,
+    /// Which quality gate triggered this fix
+    pub gate_task_id: String,
+    pub swarm_id: String,
+    /// Fix type: "compile", "test", "violation"
+    pub fix_type: String,
+    /// File to fix
+    pub target_file: String,
+    /// The error/violation description
+    pub error_context: String,
+    /// Inference model used for the fix
+    pub model_used: String,
+    pub tokens: u64,
+    /// Cost in USD stored as string for WASM compatibility
+    pub cost_usd: String,
+    /// Status: "pending", "running", "completed", "failed"
+    pub status: String,
+    /// Result: "fixed", "unchanged", or error message
+    pub result: String,
+    pub created_at: String,
+    pub completed_at: String,
+}
+
+// ============================================================
+//  Quality Gate Reducers
+// ============================================================
+
+/// Create a new quality gate task for a swarm tier.
+#[reducer]
+pub fn create_quality_gate(
+    ctx: &ReducerContext,
+    id: String,
+    swarm_id: String,
+    tier: u32,
+    gate_type: String,
+    target_dir: String,
+    language: String,
+    iteration: u32,
+    timestamp: String,
+) -> Result<(), String> {
+    // Verify swarm exists
+    if ctx.db.swarm().id().find(&swarm_id).is_none() {
+        return Err(format!("Swarm '{}' not found", swarm_id));
+    }
+
+    if tier > 4 {
+        return Err("Tier must be 0-4".to_string());
+    }
+
+    ctx.db.quality_gate_task().insert(QualityGateTask {
+        id,
+        swarm_id,
+        tier,
+        gate_type,
+        target_dir,
+        language,
+        status: "pending".to_string(),
+        score: 0,
+        grade: String::new(),
+        violations_count: 0,
+        error_output: String::new(),
+        iteration,
+        created_at: timestamp,
+        completed_at: String::new(),
+    });
+
+    Ok(())
+}
+
+/// Complete a quality gate task with results.
+#[reducer]
+pub fn complete_quality_gate(
+    ctx: &ReducerContext,
+    id: String,
+    status: String,
+    score: u32,
+    grade: String,
+    violations_count: u32,
+    error_output: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let gate = ctx.db.quality_gate_task().id().find(&id)
+        .ok_or_else(|| format!("QualityGateTask '{}' not found", id))?;
+
+    if status != "pass" && status != "fail" {
+        return Err(format!("Status must be 'pass' or 'fail', got '{}'", status));
+    }
+
+    ctx.db.quality_gate_task().id().update(QualityGateTask {
+        status,
+        score,
+        grade,
+        violations_count,
+        error_output,
+        completed_at: timestamp,
+        ..gate
+    });
+
+    Ok(())
+}
+
+// ============================================================
+//  Fix Task Reducers
+// ============================================================
+
+/// Create a fix task in response to a quality gate failure.
+#[reducer]
+pub fn create_fix_task(
+    ctx: &ReducerContext,
+    id: String,
+    gate_task_id: String,
+    swarm_id: String,
+    fix_type: String,
+    target_file: String,
+    error_context: String,
+    timestamp: String,
+) -> Result<(), String> {
+    // Verify the gate task exists
+    if ctx.db.quality_gate_task().id().find(&gate_task_id).is_none() {
+        return Err(format!("QualityGateTask '{}' not found", gate_task_id));
+    }
+
+    ctx.db.fix_task().insert(FixTask {
+        id,
+        gate_task_id,
+        swarm_id,
+        fix_type,
+        target_file,
+        error_context,
+        model_used: String::new(),
+        tokens: 0,
+        cost_usd: String::new(),
+        status: "pending".to_string(),
+        result: String::new(),
+        created_at: timestamp,
+        completed_at: String::new(),
+    });
+
+    Ok(())
+}
+
+/// Complete a fix task with results and cost tracking.
+#[reducer]
+pub fn complete_fix_task(
+    ctx: &ReducerContext,
+    id: String,
+    status: String,
+    result: String,
+    model_used: String,
+    tokens: u64,
+    cost_usd: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let fix = ctx.db.fix_task().id().find(&id)
+        .ok_or_else(|| format!("FixTask '{}' not found", id))?;
+
+    if status != "completed" && status != "failed" {
+        return Err(format!("Status must be 'completed' or 'failed', got '{}'", status));
+    }
+
+    ctx.db.fix_task().id().update(FixTask {
+        status,
+        result,
+        model_used,
+        tokens,
+        cost_usd,
+        completed_at: timestamp,
+        ..fix
+    });
+
+    Ok(())
+}
+
 /// Clear all memory entries for a given scope.
 #[reducer]
 pub fn memory_clear_scope(

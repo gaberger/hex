@@ -899,6 +899,141 @@ mod real {
             Ok(())
         }
 
+        // ── Quality Gate & Fix Tasks (Swarm Gate Enforcement) ──
+
+        async fn quality_gate_create(
+            &self,
+            id: &str,
+            swarm_id: &str,
+            tier: u32,
+            gate_type: &str,
+            target_dir: &str,
+            language: &str,
+            iteration: u32,
+        ) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("create_quality_gate", serde_json::json!([
+                id, swarm_id, tier, gate_type, target_dir, language, iteration, now
+            ])).await?;
+            Ok(())
+        }
+
+        async fn quality_gate_complete(
+            &self,
+            id: &str,
+            status: &str,
+            score: u32,
+            grade: &str,
+            violations_count: u32,
+            error_output: &str,
+        ) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("complete_quality_gate", serde_json::json!([
+                id, status, score, grade, violations_count, error_output, now
+            ])).await?;
+            Ok(())
+        }
+
+        async fn quality_gate_list(&self, swarm_id: &str) -> Result<Vec<QualityGateInfo>, StateError> {
+            let sql = format!("SELECT * FROM quality_gate_task WHERE swarm_id = '{}'", swarm_id);
+            let rows = self.query_table(&sql).await?;
+            Ok(rows.into_iter().filter_map(|r| {
+                Some(QualityGateInfo {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    swarm_id: r.get("swarm_id")?.as_str()?.to_string(),
+                    tier: r.get("tier")?.as_u64()? as u32,
+                    gate_type: r.get("gate_type")?.as_str()?.to_string(),
+                    target_dir: r.get("target_dir")?.as_str()?.to_string(),
+                    language: r.get("language")?.as_str()?.to_string(),
+                    status: r.get("status")?.as_str()?.to_string(),
+                    score: r.get("score")?.as_u64().unwrap_or(0) as u32,
+                    grade: r.get("grade")?.as_str()?.to_string(),
+                    violations_count: r.get("violations_count")?.as_u64().unwrap_or(0) as u32,
+                    error_output: r.get("error_output")?.as_str()?.to_string(),
+                    iteration: r.get("iteration")?.as_u64().unwrap_or(1) as u32,
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    completed_at: r.get("completed_at")?.as_str().unwrap_or("").to_string(),
+                })
+            }).collect())
+        }
+
+        async fn quality_gate_get(&self, id: &str) -> Result<Option<QualityGateInfo>, StateError> {
+            let sql = format!("SELECT * FROM quality_gate_task WHERE id = '{}'", id);
+            let rows = self.query_table(&sql).await?;
+            Ok(rows.into_iter().next().and_then(|r| {
+                Some(QualityGateInfo {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    swarm_id: r.get("swarm_id")?.as_str()?.to_string(),
+                    tier: r.get("tier")?.as_u64()? as u32,
+                    gate_type: r.get("gate_type")?.as_str()?.to_string(),
+                    target_dir: r.get("target_dir")?.as_str()?.to_string(),
+                    language: r.get("language")?.as_str()?.to_string(),
+                    status: r.get("status")?.as_str()?.to_string(),
+                    score: r.get("score")?.as_u64().unwrap_or(0) as u32,
+                    grade: r.get("grade")?.as_str()?.to_string(),
+                    violations_count: r.get("violations_count")?.as_u64().unwrap_or(0) as u32,
+                    error_output: r.get("error_output")?.as_str()?.to_string(),
+                    iteration: r.get("iteration")?.as_u64().unwrap_or(1) as u32,
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    completed_at: r.get("completed_at")?.as_str().unwrap_or("").to_string(),
+                })
+            }))
+        }
+
+        async fn fix_task_create(
+            &self,
+            id: &str,
+            gate_task_id: &str,
+            swarm_id: &str,
+            fix_type: &str,
+            target_file: &str,
+            error_context: &str,
+        ) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("create_fix_task", serde_json::json!([
+                id, gate_task_id, swarm_id, fix_type, target_file, error_context, now
+            ])).await?;
+            Ok(())
+        }
+
+        async fn fix_task_complete(
+            &self,
+            id: &str,
+            status: &str,
+            result: &str,
+            model_used: &str,
+            tokens: u64,
+            cost_usd: &str,
+        ) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("complete_fix_task", serde_json::json!([
+                id, status, result, model_used, tokens, cost_usd, now
+            ])).await?;
+            Ok(())
+        }
+
+        async fn fix_task_list_by_gate(&self, gate_task_id: &str) -> Result<Vec<FixTaskInfo>, StateError> {
+            let sql = format!("SELECT * FROM fix_task WHERE gate_task_id = '{}'", gate_task_id);
+            let rows = self.query_table(&sql).await?;
+            Ok(rows.into_iter().filter_map(|r| {
+                Some(FixTaskInfo {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    gate_task_id: r.get("gate_task_id")?.as_str()?.to_string(),
+                    swarm_id: r.get("swarm_id")?.as_str()?.to_string(),
+                    fix_type: r.get("fix_type")?.as_str()?.to_string(),
+                    target_file: r.get("target_file")?.as_str()?.to_string(),
+                    error_context: r.get("error_context")?.as_str()?.to_string(),
+                    model_used: r.get("model_used")?.as_str().unwrap_or("").to_string(),
+                    tokens: r.get("tokens")?.as_u64().unwrap_or(0),
+                    cost_usd: r.get("cost_usd")?.as_str().unwrap_or("").to_string(),
+                    status: r.get("status")?.as_str()?.to_string(),
+                    result: r.get("result")?.as_str().unwrap_or("").to_string(),
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    completed_at: r.get("completed_at")?.as_str().unwrap_or("").to_string(),
+                })
+            }).collect())
+        }
+
         // ── Project Registry (ADR-042) ──────────────────
         async fn project_register(&self, project: ProjectRegistration) -> Result<(), StateError> {
             let registered_at = chrono::Utc::now().to_rfc3339();
@@ -1235,6 +1370,14 @@ mod stub {
         async fn hexflo_memory_retrieve(&self, _: &str) -> Result<Option<String>, StateError> { Err(Self::err()) }
         async fn hexflo_memory_search(&self, _: &str) -> Result<Vec<(String, String)>, StateError> { Err(Self::err()) }
         async fn hexflo_memory_delete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        // ── Quality Gate & Fix Tasks (Swarm Gate Enforcement) ──
+        async fn quality_gate_create(&self, _: &str, _: &str, _: u32, _: &str, _: &str, _: &str, _: u32) -> Result<(), StateError> { Err(Self::err()) }
+        async fn quality_gate_complete(&self, _: &str, _: &str, _: u32, _: &str, _: u32, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn quality_gate_list(&self, _: &str) -> Result<Vec<QualityGateInfo>, StateError> { Err(Self::err()) }
+        async fn quality_gate_get(&self, _: &str) -> Result<Option<QualityGateInfo>, StateError> { Err(Self::err()) }
+        async fn fix_task_create(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn fix_task_complete(&self, _: &str, _: &str, _: &str, _: &str, _: u64, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn fix_task_list_by_gate(&self, _: &str) -> Result<Vec<FixTaskInfo>, StateError> { Err(Self::err()) }
         // ── Project Registry (ADR-042) ──────────────────
         async fn project_register(&self, _: ProjectRegistration) -> Result<(), StateError> { Err(Self::err()) }
         async fn project_unregister(&self, _: &str) -> Result<bool, StateError> { Err(Self::err()) }
