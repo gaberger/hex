@@ -497,6 +497,101 @@
       }
     },
     {
+      "name": "hex_enforce_list",
+      "category": "enforcement",
+      "description": "List all enforcement rules (local .hex/adr-rules.toml + SpacetimeDB)",
+      "route": { "method": "GET", "path": "/api/hexflo/enforcement-rules" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_enforce_mode",
+      "category": "enforcement",
+      "description": "Show current enforcement mode (mandatory/advisory/disabled) from .hex/project.json",
+      "route": { "method": "LOCAL", "path": ".hex/project.json" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_enforce_sync",
+      "category": "enforcement",
+      "description": "Sync enforcement rules from .hex/adr-rules.toml to SpacetimeDB",
+      "route": { "method": "POST", "path": "/api/hexflo/enforcement-rules" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_enforce_prompt",
+      "category": "enforcement",
+      "description": "Generate the enforcement system prompt for non-MCP models (ADR-2603221959 P6)",
+      "route": { "method": "LOCAL", "path": "embedded:templates/enforcement-system-prompt.md" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_test_history",
+      "category": "test",
+      "description": "Show recent test run history with pass/fail counts and durations",
+      "route": { "method": "GET", "path": "/api/test-sessions" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "description": "Max results to return (default 10)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_test_trends",
+      "category": "test",
+      "description": "Show test pass rate trends across recent runs",
+      "route": { "method": "GET", "path": "/api/test-sessions/trends" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "runs": { "type": "integer", "description": "Number of recent runs to include (default 10)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_project_list",
+      "category": "project",
+      "description": "List all projects registered with hex-nexus",
+      "route": { "method": "GET", "path": "/api/projects" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_project_register",
+      "category": "project",
+      "description": "Register a project with hex-nexus for tracking and coordination",
+      "route": { "method": "POST", "path": "/api/projects/register" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Absolute path to the project root" },
+          "name": { "type": "string", "description": "Optional project name (defaults to directory name)" }
+        },
+        "required": ["path"]
+      }
+    },
+    {
       "name": "hex_session_start",
       "category": "lifecycle",
       "description": "Start a hex session — register agent, load context. Use this instead of hooks for non-Claude providers (ADR-2603221959)",

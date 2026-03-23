@@ -131,6 +131,12 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_plan_list", "hex_plan_status", "hex_plan_history", "hex_plan_report",
     "hex_agent_list", "hex_nexus_status", "hex_secrets_status", "hex_secrets_has",
     "hex_inference_list",
+    // Enforcement (read-only queries)
+    "hex_enforce_list", "hex_enforce_mode", "hex_enforce_prompt",
+    // Test history (read-only)
+    "hex_test_history", "hex_test_trends",
+    // Project list (read-only)
+    "hex_project_list",
     // Lifecycle tools — exempt because they establish the session
     "hex_session_start", "hex_session_heartbeat", "hex_workplan_activate",
 ];
@@ -544,6 +550,116 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("");
             let path = format!("/api/hexflo/inbox/{}/ack", id);
             nexus.patch(&path, &serde_json::json!({ "agent_id": agent_id })).await.map_err(|e| e.to_string())
+        }
+
+        // ── Enforcement ──
+        "hex_enforce_list" => {
+            nexus.get("/api/hexflo/enforcement-rules").await.map_err(|e| e.to_string())
+        }
+
+        "hex_enforce_mode" => {
+            let mode = get_enforcement_mode();
+            Ok(serde_json::json!({
+                "mode": format!("{:?}", mode),
+                "source": ".hex/project.json → lifecycle_enforcement",
+            }))
+        }
+
+        "hex_enforce_sync" => {
+            // Re-use the local rule loader from enforce.rs via nexus POST
+            // Read .hex/adr-rules.toml and POST each rule
+            let rules_path = std::path::Path::new(".hex/adr-rules.toml");
+            let alt_path = std::env::var("CLAUDE_PROJECT_DIR")
+                .map(|d| std::path::PathBuf::from(d).join(".hex/adr-rules.toml"))
+                .unwrap_or_default();
+            let content = std::fs::read_to_string(rules_path)
+                .or_else(|_| std::fs::read_to_string(&alt_path));
+            match content {
+                Ok(toml_str) => {
+                    match toml_str.parse::<toml::Table>() {
+                        Ok(parsed) => {
+                            let rules = parsed.get("rules").and_then(|r| r.as_array());
+                            let mut synced = 0u32;
+                            let mut errors = Vec::new();
+                            if let Some(rules) = rules {
+                                for rule in rules {
+                                    let body = serde_json::json!({
+                                        "id": rule.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                                        "adr": rule.get("adr").and_then(|v| v.as_str()).unwrap_or(""),
+                                        "operation": "pattern_match",
+                                        "condition": "pattern_match",
+                                        "severity": rule.get("severity").and_then(|v| v.as_str()).unwrap_or("error"),
+                                        "enabled": 1,
+                                        "project_id": "",
+                                        "message": rule.get("message").and_then(|v| v.as_str()).unwrap_or(""),
+                                    });
+                                    match nexus.post("/api/hexflo/enforcement-rules", &body).await {
+                                        Ok(_) => synced += 1,
+                                        Err(e) => errors.push(format!("{}", e)),
+                                    }
+                                }
+                            }
+                            let total = rules.map(|r| r.len()).unwrap_or(0);
+                            Ok(serde_json::json!({
+                                "synced": synced,
+                                "total": total,
+                                "errors": errors,
+                            }))
+                        }
+                        Err(e) => Err(format!("Failed to parse .hex/adr-rules.toml: {}", e)),
+                    }
+                }
+                Err(_) => Err("No .hex/adr-rules.toml found".to_string()),
+            }
+        }
+
+        "hex_enforce_prompt" => {
+            let mode = format!("{:?}", get_enforcement_mode()).to_lowercase();
+            let is_mandatory = mode == "mandatory";
+            match crate::assets::Assets::get_str("templates/enforcement-system-prompt.md") {
+                Some(template) => {
+                    let output = template
+                        .replace("{{mode}}", &mode)
+                        .replace("{{#if mandatory}}", if is_mandatory { "" } else { "<!-- " })
+                        .replace("{{else}}", if is_mandatory { "<!-- " } else { "" })
+                        .replace("{{/if}}", if is_mandatory { "" } else { " -->" });
+                    Ok(serde_json::json!({
+                        "mode": mode,
+                        "prompt": output,
+                    }))
+                }
+                None => Err("enforcement-system-prompt.md not found in embedded assets".to_string()),
+            }
+        }
+
+        // ── Test history ──
+        "hex_test_history" => {
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10);
+            nexus.get(&format!("/api/test-sessions?limit={}", limit))
+                .await.map_err(|e| e.to_string())
+        }
+
+        "hex_test_trends" => {
+            let runs = args.get("runs").and_then(|v| v.as_u64()).unwrap_or(10);
+            nexus.get(&format!("/api/test-sessions/trends?runs={}", runs))
+                .await.map_err(|e| e.to_string())
+        }
+
+        // ── Project management ──
+        "hex_project_list" => {
+            nexus.get("/api/projects").await.map_err(|e| e.to_string())
+        }
+
+        "hex_project_register" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            let abs_path = std::path::Path::new(path)
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(path));
+            let mut body = serde_json::json!({ "rootPath": abs_path.display().to_string() });
+            if let Some(name) = args.get("name").and_then(|v| v.as_str()) {
+                body["name"] = serde_json::json!(name);
+            }
+            nexus.post("/api/projects/register", &body).await.map_err(|e| e.to_string())
         }
 
         // ── Provider-agnostic lifecycle tools (ADR-2603221959 P3) ──
