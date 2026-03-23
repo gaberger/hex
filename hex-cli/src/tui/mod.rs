@@ -31,7 +31,7 @@ use crate::pipeline::swarm_phase::{SwarmPhase, SwarmPhaseResult};
 use crate::pipeline::validate_phase::{ValidatePhase, ValidateResult};
 use crate::pipeline::workplan_phase::{WorkplanPhase, WorkplanPhaseResult, WorkplanData, workplan_summary};
 use crate::pipeline::{DevConfig, DevMode};
-use crate::session::{DevSession, PipelinePhase, SessionStatus};
+use crate::session::{DevSession, PipelinePhase, SessionStatus, ToolCall};
 use gate::{GateDialog, GateResult};
 
 // ---------------------------------------------------------------------------
@@ -299,6 +299,17 @@ impl TuiApp {
                     match result {
                         Ok(r) => {
                             self.budget.record(&r.model_used, "adr", r.cost_usd, r.tokens);
+                            let _ = self.session.log_tool_call(ToolCall {
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                phase: "adr".into(),
+                                tool: "POST /api/inference/complete".into(),
+                                model: Some(r.model_used.clone()),
+                                tokens: Some(r.tokens),
+                                cost_usd: Some(r.cost_usd),
+                                duration_ms: r.duration_ms,
+                                status: "ok".into(),
+                                detail: Some(r.file_path.clone()),
+                            });
                             println!(
                                 "         model={} tokens={} cost=${:.4} {:.1}s",
                                 r.model_used, r.tokens, r.cost_usd,
@@ -314,8 +325,18 @@ impl TuiApp {
                             self.handle_adr_headless(&r)?;
                         }
                         Err(e) => {
+                            let _ = self.session.log_tool_call(ToolCall {
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                phase: "adr".into(),
+                                tool: "POST /api/inference/complete".into(),
+                                model: None,
+                                tokens: None,
+                                cost_usd: None,
+                                duration_ms: 0,
+                                status: "error".into(),
+                                detail: Some(format!("{:#}", e)),
+                            });
                             eprintln!("         ERROR: {:#}", e);
-                            // Continue to next phases rather than crashing
                         }
                     }
                 }
@@ -380,6 +401,17 @@ impl TuiApp {
                     match result {
                         Ok(r) => {
                             self.budget.record(&r.model_used, "workplan", r.cost_usd, r.tokens);
+                            let _ = self.session.log_tool_call(ToolCall {
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                phase: "workplan".into(),
+                                tool: "POST /api/inference/complete".into(),
+                                model: Some(r.model_used.clone()),
+                                tokens: Some(r.tokens),
+                                cost_usd: Some(r.cost_usd),
+                                duration_ms: r.duration_ms,
+                                status: "ok".into(),
+                                detail: Some(format!("{} ({} steps)", r.file_path, r.parsed.steps.len())),
+                            });
                             println!(
                                 "         model={} tokens={} cost=${:.4} {:.1}s steps={}",
                                 r.model_used, r.tokens, r.cost_usd,
@@ -396,6 +428,17 @@ impl TuiApp {
                             self.handle_workplan_headless(&r)?;
                         }
                         Err(e) => {
+                            let _ = self.session.log_tool_call(ToolCall {
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                phase: "workplan".into(),
+                                tool: "POST /api/inference/complete".into(),
+                                model: None,
+                                tokens: None,
+                                cost_usd: None,
+                                duration_ms: 0,
+                                status: "error".into(),
+                                detail: Some(format!("{:#}", e)),
+                            });
                             eprintln!("         ERROR: {:#}", e);
                         }
                     }
@@ -440,6 +483,17 @@ impl TuiApp {
 
                     match result {
                         Ok(r) => {
+                            let _ = self.session.log_tool_call(ToolCall {
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                phase: "swarm".into(),
+                                tool: "POST /api/swarms".into(),
+                                model: None,
+                                tokens: None,
+                                cost_usd: None,
+                                duration_ms: r.duration_ms,
+                                status: "ok".into(),
+                                detail: Some(format!("swarm={} tasks={}", r.swarm_id, r.task_ids.len())),
+                            });
                             println!(
                                 "         swarm={} tasks={} {:.1}s",
                                 r.swarm_id,
@@ -451,6 +505,17 @@ impl TuiApp {
                             self.swarm_result = Some(r);
                         }
                         Err(e) => {
+                            let _ = self.session.log_tool_call(ToolCall {
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                phase: "swarm".into(),
+                                tool: "POST /api/swarms".into(),
+                                model: None,
+                                tokens: None,
+                                cost_usd: None,
+                                duration_ms: 0,
+                                status: "error".into(),
+                                detail: Some(format!("{:#}", e)),
+                            });
                             eprintln!("         ERROR: {:#}", e);
                             // Advance anyway — swarm creation is best-effort
                             let _ = self.session.update_phase(PipelinePhase::Code);
@@ -532,9 +597,49 @@ impl TuiApp {
 
                     match result {
                         Ok(results) => {
+                            // Log each code step individually
+                            for step in &results {
+                                let _ = self.session.log_tool_call(ToolCall {
+                                    timestamp: chrono::Utc::now().to_rfc3339(),
+                                    phase: "code".into(),
+                                    tool: "POST /api/inference/complete".into(),
+                                    model: Some(step.model_used.clone()),
+                                    tokens: Some(step.tokens),
+                                    cost_usd: Some(step.cost_usd),
+                                    duration_ms: step.duration_ms,
+                                    status: "ok".into(),
+                                    detail: Some(step.step_id.clone()),
+                                });
+                            }
+                            // Log a summary for the entire code phase
+                            let total_tokens: u64 = results.iter().map(|s| s.tokens).sum();
+                            let total_cost: f64 = results.iter().map(|s| s.cost_usd).sum();
+                            let total_duration: u64 = results.iter().map(|s| s.duration_ms).sum();
+                            let _ = self.session.log_tool_call(ToolCall {
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                phase: "code_summary".into(),
+                                tool: "execute_all".into(),
+                                model: None,
+                                tokens: Some(total_tokens),
+                                cost_usd: Some(total_cost),
+                                duration_ms: total_duration,
+                                status: "ok".into(),
+                                detail: Some(format!("{} steps", results.len())),
+                            });
                             self.handle_code_headless(&results)?;
                         }
                         Err(e) => {
+                            let _ = self.session.log_tool_call(ToolCall {
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                phase: "code".into(),
+                                tool: "POST /api/inference/complete".into(),
+                                model: None,
+                                tokens: None,
+                                cost_usd: None,
+                                duration_ms: 0,
+                                status: "error".into(),
+                                detail: Some(format!("{:#}", e)),
+                            });
                             eprintln!("         ERROR: {:#}", e);
                         }
                     }
@@ -588,9 +693,61 @@ impl TuiApp {
 
                     match result {
                         Ok(vr) => {
+                            match &vr {
+                                ValidateResult::Pass { score, .. } => {
+                                    let _ = self.session.log_tool_call(ToolCall {
+                                        timestamp: chrono::Utc::now().to_rfc3339(),
+                                        phase: "validate".into(),
+                                        tool: "GET /api/analyze".into(),
+                                        model: None,
+                                        tokens: None,
+                                        cost_usd: None,
+                                        duration_ms: 0,
+                                        status: "ok".into(),
+                                        detail: Some(format!("PASS score={}", score)),
+                                    });
+                                }
+                                ValidateResult::FixesProposed { violations, fixes, total_cost_usd, total_tokens, .. } => {
+                                    let _ = self.session.log_tool_call(ToolCall {
+                                        timestamp: chrono::Utc::now().to_rfc3339(),
+                                        phase: "validate".into(),
+                                        tool: "POST /api/inference/complete".into(),
+                                        model: None,
+                                        tokens: Some(*total_tokens),
+                                        cost_usd: Some(*total_cost_usd),
+                                        duration_ms: 0,
+                                        status: "ok".into(),
+                                        detail: Some(format!("FixesProposed violations={} fixes={}", violations.len(), fixes.len())),
+                                    });
+                                }
+                                ValidateResult::Fail { violations, error } => {
+                                    let _ = self.session.log_tool_call(ToolCall {
+                                        timestamp: chrono::Utc::now().to_rfc3339(),
+                                        phase: "validate".into(),
+                                        tool: "GET /api/analyze".into(),
+                                        model: None,
+                                        tokens: None,
+                                        cost_usd: None,
+                                        duration_ms: 0,
+                                        status: "error".into(),
+                                        detail: Some(format!("FAIL violations={} {}", violations.len(), error.as_deref().unwrap_or(""))),
+                                    });
+                                }
+                            }
                             self.handle_validate_headless(&vr)?;
                         }
                         Err(e) => {
+                            let _ = self.session.log_tool_call(ToolCall {
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                phase: "validate".into(),
+                                tool: "GET /api/analyze".into(),
+                                model: None,
+                                tokens: None,
+                                cost_usd: None,
+                                duration_ms: 0,
+                                status: "error".into(),
+                                detail: Some(format!("{:#}", e)),
+                            });
                             eprintln!("         ERROR: {:#}", e);
                         }
                     }

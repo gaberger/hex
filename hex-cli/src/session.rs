@@ -65,6 +65,20 @@ impl std::fmt::Display for PipelinePhase {
 // DevSession
 // ---------------------------------------------------------------------------
 
+/// A single API/tool call made during a hex dev session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub timestamp: String,
+    pub phase: String,
+    pub tool: String,           // e.g. "POST /api/inference/complete", "GET /api/adrs"
+    pub model: Option<String>,  // inference model used (if applicable)
+    pub tokens: Option<u64>,    // tokens consumed (if inference)
+    pub cost_usd: Option<f64>,  // cost in USD (if inference)
+    pub duration_ms: u64,       // wall clock time
+    pub status: String,         // "ok", "error", "retry"
+    pub detail: Option<String>, // step ID, error message, or other context
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevSession {
     pub id: String,
@@ -81,6 +95,8 @@ pub struct DevSession {
     pub total_cost_usd: f64,
     pub total_tokens: u64,
     pub model_selections: HashMap<String, String>,
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCall>,
 }
 
 impl DevSession {
@@ -102,7 +118,14 @@ impl DevSession {
             total_cost_usd: 0.0,
             total_tokens: 0,
             model_selections: HashMap::new(),
+            tool_calls: Vec::new(),
         }
+    }
+
+    /// Record a tool/API call in the session log.
+    pub fn log_tool_call(&mut self, call: ToolCall) -> Result<()> {
+        self.tool_calls.push(call);
+        self.save()
     }
 
     // -- persistence --------------------------------------------------------

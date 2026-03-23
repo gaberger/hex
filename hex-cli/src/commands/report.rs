@@ -284,6 +284,56 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
         None => println!("  {}", "Git info unavailable".dimmed()),
     }
 
+    // ── Tools Called ─────────────────────────────────────────
+    println!();
+    println!("{}", "── Tools Called ──────────────────────────────────────────────".dimmed());
+    if session.tool_calls.is_empty() {
+        println!("  {}", "No tool calls recorded (session predates tracking or ran in TUI mode)".dimmed());
+    } else {
+        println!(
+            "  {:<12} {:<10} {:<35} {:<22} {:>7} {:>8} {:>7}",
+            "Timestamp", "Phase", "Tool", "Model", "Tokens", "Cost", "Time"
+        );
+        println!("  {}", "─".repeat(105));
+        for call in &session.tool_calls {
+            let ts = call.timestamp.get(11..19).unwrap_or(&call.timestamp);
+            let model = call.model.as_deref().unwrap_or("—");
+            let model_short = if model.len() > 20 {
+                &model[model.len()-20..]
+            } else {
+                model
+            };
+            let tokens = call.tokens.map(|t| format!("{}", t)).unwrap_or_else(|| "—".into());
+            let cost = call.cost_usd.map(|c| format!("${:.4}", c)).unwrap_or_else(|| "—".into());
+            let duration = format!("{:.1}s", call.duration_ms as f64 / 1000.0);
+            let status_colored = match call.status.as_str() {
+                "ok" => call.status.green().to_string(),
+                "error" => call.status.red().to_string(),
+                "retry" => call.status.yellow().to_string(),
+                _ => call.status.clone(),
+            };
+            println!(
+                "  {:<12} {:<10} {:<35} {:<22} {:>7} {:>8} {:>7}  {}",
+                ts,
+                call.phase,
+                truncate(&call.tool, 35),
+                model_short,
+                tokens,
+                cost,
+                duration,
+                status_colored,
+            );
+        }
+        println!();
+        let ok_count = session.tool_calls.iter().filter(|c| c.status == "ok").count();
+        let err_count = session.tool_calls.iter().filter(|c| c.status == "error").count();
+        let retry_count = session.tool_calls.iter().filter(|c| c.status == "retry").count();
+        println!(
+            "  Total: {} calls ({} ok, {} errors, {} retries)",
+            session.tool_calls.len(), ok_count, err_count, retry_count
+        );
+    }
+
     // ── Summary ─────────────────────────────────────────────
     println!();
     println!("{}", "── Summary ───────────────────────────────────────────────────".dimmed());
@@ -647,6 +697,20 @@ fn print_json_report(
             "modified": gi.modified,
             "deleted": gi.deleted,
         });
+    }
+
+    if !session.tool_calls.is_empty() {
+        report["tool_calls"] = serde_json::json!(session.tool_calls.iter().map(|c| serde_json::json!({
+            "timestamp": c.timestamp,
+            "phase": c.phase,
+            "tool": c.tool,
+            "model": c.model,
+            "tokens": c.tokens,
+            "cost_usd": c.cost_usd,
+            "duration_ms": c.duration_ms,
+            "status": c.status,
+            "detail": c.detail,
+        })).collect::<Vec<_>>());
     }
 
     println!(
