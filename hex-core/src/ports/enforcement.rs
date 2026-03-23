@@ -48,9 +48,10 @@ impl EnforcementResult {
 }
 
 /// Enforcement mode for the project.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum EnforcementMode {
     /// Violations block operations (exit 2 / HTTP 403)
+    #[default]
     Mandatory,
     /// Violations produce warnings but don't block
     Advisory,
@@ -58,14 +59,8 @@ pub enum EnforcementMode {
     Disabled,
 }
 
-impl Default for EnforcementMode {
-    fn default() -> Self {
-        Self::Mandatory
-    }
-}
-
 impl EnforcementMode {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "advisory" => Self::Advisory,
             "disabled" | "off" | "none" => Self::Disabled,

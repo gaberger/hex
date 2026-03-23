@@ -63,6 +63,10 @@ jobs:
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-test-
 
+      - name: Build dashboard assets (required by hex-nexus rust-embed)
+        run: |
+          cd hex-nexus/assets && npm install && npm run build || mkdir -p ../assets/dist
+
       - name: Rust workspace tests
         run: cargo test --workspace --exclude hex-desktop
 

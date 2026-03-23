@@ -59,6 +59,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+      - run: mkdir -p hex-nexus/assets/dist
       - run: cargo check --workspace --exclude hex-desktop
       - run: cargo clippy --workspace --exclude hex-desktop -- -D warnings
       - run: cargo test --workspace --exclude hex-desktop
@@ -73,6 +74,7 @@ jobs:
         with:
           workspaces: ". -> target"
           shared-key: release
+      - run: mkdir -p hex-nexus/assets/dist
       - name: Build all workspace members (release)
         run: cargo build --workspace --exclude hex-desktop --release
       - name: Verify hex-cli binary

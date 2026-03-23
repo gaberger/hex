@@ -181,7 +181,7 @@ fn get_enforcement_mode() -> EnforcementMode {
     if let Ok(content) = std::fs::read_to_string(&project_json) {
         if let Ok(project) = serde_json::from_str::<Value>(&content) {
             if let Some(mode) = project["lifecycle_enforcement"].as_str() {
-                return EnforcementMode::from_str(mode);
+                return EnforcementMode::parse(mode);
             }
         }
     }

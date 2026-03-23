@@ -26,19 +26,10 @@ impl WorkloadClass {
 }
 
 /// Extended thinking configuration for Opus/Sonnet models.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ThinkingConfig {
     pub enabled: bool,
     pub budget_tokens: u32,
-}
-
-impl Default for ThinkingConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            budget_tokens: 0,
-        }
-    }
 }
 
 impl ThinkingConfig {

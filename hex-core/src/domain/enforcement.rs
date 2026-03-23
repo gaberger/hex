@@ -35,7 +35,7 @@ impl DefaultEnforcer {
     /// Create from project config string ("mandatory", "advisory", "disabled").
     pub fn from_mode_str(mode: &str) -> Self {
         Self {
-            mode: EnforcementMode::from_str(mode),
+            mode: EnforcementMode::parse(mode),
         }
     }
 }
