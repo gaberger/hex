@@ -48,6 +48,7 @@ use crate::embed::{serve_index, serve_chat, serve_legacy_dashboard, serve_static
     ),
     paths(
         analysis::analyze_path,
+        analysis::analyze_current_project,
         analysis::analyze_project,
         orchestration::spawn_agent,
         orchestration::list_agents,
@@ -446,7 +447,8 @@ pub fn build_router(state: SharedState) -> Router {
         // ═══════════════════════════════════════════════════════════
 
         // Architecture analysis (ADR-034) — on-demand, native tree-sitter
-        .route("/api/analyze", post(analysis::analyze_path)
+        .route("/api/analyze", get(analysis::analyze_current_project)
+            .post(analysis::analyze_path)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/{project_id}/analyze", get(analysis::analyze_project))
         // ADR compliance (ADR-045) — check code against accepted ADRs

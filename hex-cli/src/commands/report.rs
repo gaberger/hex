@@ -238,15 +238,53 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
         );
     }
 
-    // ── Phase 5: Validation ─────────────────────────────────
+    // ── Phase 5: Quality Gate ────────────────────────────────
     println!();
-    println!("{}", "── Phase 5: Validate ─────────────────────────────────────────".dimmed());
-    match session.current_phase {
-        crate::session::PipelinePhase::Validate | crate::session::PipelinePhase::Commit => {
-            println!("  Status: {}", "PASS".green());
+    println!("{}", "── Phase 5: Quality Gate ─────────────────────────────────────".dimmed());
+    if let Some(ref qr) = session.quality_result {
+        let grade_colored = match qr.grade.as_str() {
+            "A" => qr.grade.green().bold().to_string(),
+            "B" => qr.grade.green().to_string(),
+            "C" => qr.grade.yellow().to_string(),
+            "D" => qr.grade.red().to_string(),
+            _ => qr.grade.red().bold().to_string(),
+        };
+        println!("  Grade:       {} ({}/100)", grade_colored, qr.score);
+        println!("  Iterations:  {}", qr.iterations);
+        let compile_status = if qr.compile_pass {
+            "PASS".green().to_string()
+        } else {
+            "FAIL".red().to_string()
+        };
+        println!("  Compile:     {} ({})", compile_status, qr.compile_language);
+        let test_status = if qr.test_pass {
+            format!("{}/{} passing", qr.tests_passed, qr.tests_passed + qr.tests_failed).green().to_string()
+        } else {
+            format!("{}/{} passing", qr.tests_passed, qr.tests_passed + qr.tests_failed).red().to_string()
+        };
+        println!("  Tests:       {}", test_status);
+        let violations_str = if qr.violations_found == 0 && qr.violations_fixed == 0 {
+            "0".green().to_string()
+        } else if qr.violations_found == 0 {
+            format!("0 ({} fixed)", qr.violations_fixed).green().to_string()
+        } else {
+            format!("{} ({} fixed)", qr.violations_found, qr.violations_fixed).yellow().to_string()
+        };
+        println!("  Violations:  {}", violations_str);
+        if qr.fix_cost_usd > 0.0 || qr.fix_tokens > 0 {
+            println!(
+                "  Fix Cost:    ${:.3} ({} tokens)",
+                qr.fix_cost_usd, format_tokens(qr.fix_tokens)
+            );
         }
-        _ => {
-            println!("  Status: {}", "Not reached".dimmed());
+    } else {
+        match session.current_phase {
+            crate::session::PipelinePhase::Validate | crate::session::PipelinePhase::Commit => {
+                println!("  Status: {}", "PASS".green());
+            }
+            _ => {
+                println!("  Status: {}", "Not reached".dimmed());
+            }
         }
     }
 
@@ -654,6 +692,23 @@ fn print_json_report(
             "agent_id": session.agent_id,
         }
     });
+
+    if let Some(ref qr) = session.quality_result {
+        report["quality_gate"] = serde_json::json!({
+            "grade": qr.grade,
+            "score": qr.score,
+            "iterations": qr.iterations,
+            "compile_pass": qr.compile_pass,
+            "compile_language": qr.compile_language,
+            "test_pass": qr.test_pass,
+            "tests_passed": qr.tests_passed,
+            "tests_failed": qr.tests_failed,
+            "violations_found": qr.violations_found,
+            "violations_fixed": qr.violations_fixed,
+            "fix_cost_usd": qr.fix_cost_usd,
+            "fix_tokens": qr.fix_tokens,
+        });
+    }
 
     if let Some(ref adr) = adr_info {
         report["adr"] = serde_json::json!({

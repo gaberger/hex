@@ -62,6 +62,27 @@ impl std::fmt::Display for PipelinePhase {
 }
 
 // ---------------------------------------------------------------------------
+// QualityReport
+// ---------------------------------------------------------------------------
+
+/// Quality gate results from the validate phase.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QualityReport {
+    pub grade: String,
+    pub score: u32,
+    pub iterations: u32,
+    pub compile_pass: bool,
+    pub compile_language: String,
+    pub test_pass: bool,
+    pub tests_passed: u32,
+    pub tests_failed: u32,
+    pub violations_found: u32,
+    pub violations_fixed: u32,
+    pub fix_cost_usd: f64,
+    pub fix_tokens: u64,
+}
+
+// ---------------------------------------------------------------------------
 // DevSession
 // ---------------------------------------------------------------------------
 
@@ -100,6 +121,9 @@ pub struct DevSession {
     /// Agent identity resolved from CLAUDE_SESSION_ID (best-effort).
     #[serde(default)]
     pub agent_id: Option<String>,
+    /// Quality gate results from the validate phase.
+    #[serde(default)]
+    pub quality_result: Option<QualityReport>,
 }
 
 impl DevSession {
@@ -124,6 +148,7 @@ impl DevSession {
             model_selections: HashMap::new(),
             tool_calls: Vec::new(),
             agent_id,
+            quality_result: None,
         }
     }
 

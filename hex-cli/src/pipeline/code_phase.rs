@@ -5,6 +5,7 @@
 //! targeting a specific adapter boundary.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -37,6 +38,164 @@ pub struct CodeStepResult {
     pub duration_ms: u64,
     /// The RL selection metadata (for reward reporting).
     pub selected_model: SelectedModel,
+}
+
+// ── Scaffold generation ──────────────────────────────────────────────────
+
+/// Convert a feature name into a slug: lowercase, non-alphanumeric → hyphens,
+/// collapse consecutive hyphens, trim leading/trailing hyphens, truncate to 40 chars.
+fn to_feature_slug(name: &str) -> String {
+    let slug: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    // Collapse consecutive hyphens
+    let mut collapsed = String::with_capacity(slug.len());
+    let mut prev_hyphen = false;
+    for c in slug.chars() {
+        if c == '-' {
+            if !prev_hyphen {
+                collapsed.push('-');
+            }
+            prev_hyphen = true;
+        } else {
+            collapsed.push(c);
+            prev_hyphen = false;
+        }
+    }
+    let trimmed = collapsed.trim_matches('-');
+    let truncated = if trimmed.len() > 40 {
+        // Don't cut in the middle of a hyphen sequence — find last non-hyphen ≤ 40
+        let candidate = &trimmed[..40];
+        candidate.trim_end_matches('-')
+    } else {
+        trimmed
+    };
+    truncated.to_string()
+}
+
+/// Generate a minimal project scaffold in `output_dir` so that compile checks
+/// and test runners have something to work with before code generation runs.
+///
+/// Returns a list of files created. Does nothing (returns empty vec) if a
+/// `package.json` (TypeScript) or `Cargo.toml` (Rust) already exists.
+///
+/// # Arguments
+/// * `output_dir` — directory to scaffold into (created if it doesn't exist)
+/// * `language` — `"typescript"`, `"ts"`, `"rust"`, or `"rs"`
+/// * `feature_name` — human-readable feature name (slugified for package name)
+pub fn generate_scaffold(
+    output_dir: &str,
+    language: &str,
+    feature_name: &str,
+) -> Result<Vec<String>> {
+    let dir = Path::new(output_dir);
+    let slug = to_feature_slug(feature_name);
+
+    match language {
+        "typescript" | "ts" => {
+            let pkg_path = dir.join("package.json");
+            if pkg_path.exists() {
+                debug!(path = %pkg_path.display(), "package.json already exists — skipping scaffold");
+                return Ok(vec![]);
+            }
+
+            std::fs::create_dir_all(dir.join("src"))
+                .context("creating scaffold src/ directory")?;
+
+            let package_json = format!(
+                r#"{{
+  "name": "{}",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {{
+    "build": "tsc",
+    "test": "bun test",
+    "start": "bun run src/main.ts"
+  }},
+  "devDependencies": {{
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  }}
+}}"#,
+                slug
+            );
+
+            let tsconfig = r#"{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}"#;
+
+            std::fs::write(&pkg_path, package_json)
+                .context("writing package.json")?;
+            let tsconfig_path = dir.join("tsconfig.json");
+            std::fs::write(&tsconfig_path, tsconfig)
+                .context("writing tsconfig.json")?;
+
+            let files = vec![
+                pkg_path.to_string_lossy().to_string(),
+                tsconfig_path.to_string_lossy().to_string(),
+            ];
+            info!(files = ?files, "TypeScript scaffold generated");
+            Ok(files)
+        }
+        "rust" | "rs" => {
+            let cargo_path = dir.join("Cargo.toml");
+            if cargo_path.exists() {
+                debug!(path = %cargo_path.display(), "Cargo.toml already exists — skipping scaffold");
+                return Ok(vec![]);
+            }
+
+            std::fs::create_dir_all(dir.join("src"))
+                .context("creating scaffold src/ directory")?;
+
+            let cargo_toml = format!(
+                r#"[package]
+name = "{}"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+"#,
+                slug
+            );
+
+            let main_rs = format!(
+                r#"fn main() {{
+    println!("Hello from {}");
+}}"#,
+                feature_name
+            );
+
+            std::fs::write(&cargo_path, cargo_toml)
+                .context("writing Cargo.toml")?;
+            let main_path = dir.join("src").join("main.rs");
+            std::fs::write(&main_path, main_rs)
+                .context("writing src/main.rs")?;
+
+            let files = vec![
+                cargo_path.to_string_lossy().to_string(),
+                main_path.to_string_lossy().to_string(),
+            ];
+            info!(files = ?files, "Rust scaffold generated");
+            Ok(files)
+        }
+        other => {
+            debug!(language = %other, "no scaffold template for language — skipping");
+            Ok(vec![])
+        }
+    }
 }
 
 // ── CodePhase ────────────────────────────────────────────────────────────
@@ -208,6 +367,37 @@ impl CodePhase {
         model_override: Option<&str>,
         provider_pref: Option<&str>,
     ) -> Result<Vec<CodeStepResult>> {
+        self.execute_all_in(workplan, swarm_id, model_override, provider_pref, None)
+            .await
+    }
+
+    /// Execute code generation for all workplan steps, optionally scaffolding
+    /// the `output_dir` first.
+    ///
+    /// If `output_dir` is `Some`, a project scaffold is generated (when no
+    /// `package.json` / `Cargo.toml` exists yet) before any code steps run.
+    pub async fn execute_all_in(
+        &self,
+        workplan: &WorkplanData,
+        swarm_id: Option<&str>,
+        model_override: Option<&str>,
+        provider_pref: Option<&str>,
+        output_dir: Option<&str>,
+    ) -> Result<Vec<CodeStepResult>> {
+        // ── Pre-step scaffold ──────────────────────────────────────────
+        if let Some(dir) = output_dir {
+            let language = self.infer_workplan_language(workplan);
+            match generate_scaffold(dir, &language, &workplan.title) {
+                Ok(files) if !files.is_empty() => {
+                    info!(count = files.len(), dir = %dir, "scaffold generated before code phase");
+                }
+                Ok(_) => { /* already scaffolded or unknown language */ }
+                Err(e) => {
+                    warn!(error = %e, "scaffold generation failed (non-fatal, continuing)");
+                }
+            }
+        }
+
         let mut results = Vec::new();
 
         // Sort steps by tier for correct dependency ordering
@@ -257,6 +447,38 @@ impl CodePhase {
         }
 
         Ok(results)
+    }
+
+    /// Infer the predominant language for the entire workplan (for scaffold).
+    ///
+    /// Checks all step descriptions and the workplan title; defaults to TypeScript.
+    fn infer_workplan_language(&self, workplan: &WorkplanData) -> String {
+        let mut rust_signals = 0u32;
+        let mut ts_signals = 0u32;
+
+        let title_lower = workplan.title.to_lowercase();
+        if title_lower.contains("rust") || title_lower.contains("cargo") {
+            rust_signals += 2;
+        }
+        if title_lower.contains("typescript") || title_lower.contains("bun") {
+            ts_signals += 2;
+        }
+
+        for step in &workplan.steps {
+            let desc = step.description.to_lowercase();
+            if desc.contains("rust") || desc.contains(".rs") || desc.contains("cargo") {
+                rust_signals += 1;
+            }
+            if desc.contains("typescript") || desc.contains(".ts") || desc.contains("bun") {
+                ts_signals += 1;
+            }
+        }
+
+        if rust_signals > ts_signals {
+            "rust".to_string()
+        } else {
+            "typescript".to_string()
+        }
     }
 
     // ── Context fetchers (best-effort, never fail the phase) ─────────────
@@ -606,5 +828,127 @@ mod tests {
     fn extract_code_rs_alias() {
         let input = "```rs\nlet x = 1;\n```";
         assert_eq!(extract_code(input, "rust"), "let x = 1;");
+    }
+
+    // ── Scaffold tests ────────────────────────────────────────────────
+
+    #[test]
+    fn feature_slug_basic() {
+        assert_eq!(to_feature_slug("My Cool Feature"), "my-cool-feature");
+    }
+
+    #[test]
+    fn feature_slug_special_chars() {
+        assert_eq!(to_feature_slug("feat: add OAuth2!"), "feat-add-oauth2");
+    }
+
+    #[test]
+    fn feature_slug_truncates_to_40() {
+        let long = "a]really-long-feature-name-that-exceeds-forty-characters-total";
+        let slug = to_feature_slug(long);
+        assert!(slug.len() <= 40);
+        assert!(!slug.ends_with('-'));
+    }
+
+    #[test]
+    fn feature_slug_collapses_hyphens() {
+        assert_eq!(to_feature_slug("foo---bar"), "foo-bar");
+    }
+
+    #[test]
+    fn feature_slug_trims_hyphens() {
+        assert_eq!(to_feature_slug("--hello--"), "hello");
+    }
+
+    #[test]
+    fn scaffold_typescript_creates_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let files = generate_scaffold(dir, "typescript", "My Feature").unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(Path::new(dir).join("package.json").exists());
+        assert!(Path::new(dir).join("tsconfig.json").exists());
+        assert!(Path::new(dir).join("src").is_dir());
+
+        // Verify package.json content
+        let pkg = std::fs::read_to_string(Path::new(dir).join("package.json")).unwrap();
+        assert!(pkg.contains("\"name\": \"my-feature\""));
+        assert!(pkg.contains("\"type\": \"module\""));
+    }
+
+    #[test]
+    fn scaffold_ts_alias_works() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let files = generate_scaffold(dir, "ts", "test").unwrap();
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn scaffold_rust_creates_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let files = generate_scaffold(dir, "rust", "My Rust App").unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(Path::new(dir).join("Cargo.toml").exists());
+        assert!(Path::new(dir).join("src/main.rs").exists());
+
+        let cargo = std::fs::read_to_string(Path::new(dir).join("Cargo.toml")).unwrap();
+        assert!(cargo.contains("name = \"my-rust-app\""));
+
+        let main = std::fs::read_to_string(Path::new(dir).join("src/main.rs")).unwrap();
+        assert!(main.contains("Hello from My Rust App"));
+    }
+
+    #[test]
+    fn scaffold_rs_alias_works() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let files = generate_scaffold(dir, "rs", "test").unwrap();
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn scaffold_skips_if_package_json_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        std::fs::write(Path::new(dir).join("package.json"), "{}").unwrap();
+
+        let files = generate_scaffold(dir, "typescript", "test").unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn scaffold_skips_if_cargo_toml_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        std::fs::write(Path::new(dir).join("Cargo.toml"), "[package]").unwrap();
+
+        let files = generate_scaffold(dir, "rust", "test").unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn scaffold_unknown_language_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let files = generate_scaffold(dir, "python", "test").unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn scaffold_creates_parent_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("nested").join("deep").join("dir");
+        let dir_str = dir.to_str().unwrap();
+
+        let files = generate_scaffold(dir_str, "typescript", "nested test").unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(dir.join("package.json").exists());
     }
 }

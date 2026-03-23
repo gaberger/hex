@@ -356,6 +356,91 @@ pub async fn analyze_project_adr_compliance(
     })))
 }
 
+/// GET /api/analyze — analyze the current project directory (backwards compatibility).
+///
+/// Resolves the project root from `HEX_PROJECT_ROOT` env var, then falls back
+/// to the current working directory. Returns the same structured response as
+/// `POST /api/analyze` but with added `score`, `grade`, and flattened fields
+/// matching the `hex dev validate` contract.
+#[utoipa::path(
+    get,
+    path = "/api/analyze",
+    responses(
+        (status = 200, description = "Architecture analysis of current project"),
+        (status = 400, description = "Invalid directory"),
+        (status = 500, description = "Analysis failed"),
+    ),
+    tag = "analysis"
+)]
+pub async fn analyze_current_project() -> (StatusCode, Json<serde_json::Value>) {
+    let root_path = std::env::var("HEX_PROJECT_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+
+    let root = root_path.as_path();
+    if !root.is_dir() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("'{}' is not a directory", root.display()) })),
+        );
+    }
+
+    let analyzer = make_analyzer();
+    match analyzer.analyze(root).await {
+        Ok(result) => (StatusCode::OK, Json(format_analyze_response(&result))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+/// Format an `ArchAnalysisResult` into the structured JSON response expected by
+/// `hex dev validate` and the dashboard, including `score`, `grade`, and flat arrays.
+fn format_analyze_response(result: &crate::analysis::domain::ArchAnalysisResult) -> serde_json::Value {
+    let score = result.health_score;
+    let grade = match score {
+        90..=100 => "A",
+        80..=89 => "B",
+        70..=79 => "C",
+        60..=69 => "D",
+        _ => "F",
+    };
+
+    let violations: Vec<serde_json::Value> = result
+        .violations
+        .iter()
+        .map(|v| {
+            json!({
+                "file": v.edge.from_file,
+                "rule": v.rule,
+                "message": format!("{} -> {} (line {})", v.edge.from_file, v.edge.to_file, v.edge.line),
+            })
+        })
+        .collect();
+
+    let dead_exports: Vec<String> = result
+        .dead_exports
+        .iter()
+        .map(|d| format!("{}:{}", d.file, d.export_name))
+        .collect();
+
+    json!({
+        "score": score,
+        "grade": grade,
+        "violations": violations,
+        "dead_exports": dead_exports,
+        "circular_deps": result.circular_deps,
+        "orphan_files": result.orphan_files,
+        "unused_ports": result.unused_ports,
+        "files_analyzed": result.file_count,
+        "import_rules_checked": result.edge_count,
+        "health_score": score,
+        "file_count": result.file_count,
+        "edge_count": result.edge_count,
+    })
+}
+
 // ── Helpers ──────────────────────────────────────────────
 
 fn make_analyzer() -> ArchAnalyzer {

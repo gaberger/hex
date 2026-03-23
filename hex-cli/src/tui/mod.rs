@@ -662,90 +662,114 @@ impl TuiApp {
                         Some(self.config.provider.as_str())
                     };
 
-                    let execute_fut = validate_phase.execute(
-                        true, // auto_fix in headless mode
+                    let output_dir = if self.config.output_dir.is_empty() {
+                        ".".to_string()
+                    } else {
+                        self.config.output_dir.clone()
+                    };
+                    let language = "typescript".to_string(); // inferred from project
+                    let nexus_url = String::new(); // ValidatePhase uses from_env
+
+                    println!("  [run]  quality gate ...");
+
+                    let loop_fut = validate_phase.run_quality_loop(
+                        &output_dir,
+                        &language,
+                        &nexus_url,
                         model_override,
                         provider_pref,
+                        3, // max_iterations
                     );
 
-                    let first_attempt = if let Ok(handle) = &rt {
-                        tokio::task::block_in_place(|| handle.block_on(execute_fut))
+                    let result = if let Ok(handle) = &rt {
+                        tokio::task::block_in_place(|| handle.block_on(loop_fut))
                     } else {
                         let tmp_rt = tokio::runtime::Runtime::new()?;
-                        tmp_rt.block_on(execute_fut)
-                    };
-
-                    let result = match first_attempt {
-                        Ok(r) => Ok(r),
-                        Err(e) if Self::is_retryable(&e) => {
-                            eprintln!("         RETRY: {:#}", e);
-                            std::thread::sleep(Duration::from_secs(5));
-                            let retry_phase = ValidatePhase::from_env();
-                            let retry_fut = retry_phase.execute(
-                                true,
-                                model_override,
-                                provider_pref,
-                            );
-                            if let Ok(handle) = &rt {
-                                tokio::task::block_in_place(|| handle.block_on(retry_fut))
-                            } else {
-                                let tmp_rt = tokio::runtime::Runtime::new()?;
-                                tmp_rt.block_on(retry_fut)
-                            }
-                        }
-                        Err(e) => Err(e),
+                        tmp_rt.block_on(loop_fut)
                     };
 
                     match result {
-                        Ok(vr) => {
-                            match &vr {
-                                ValidateResult::Pass { score, .. } => {
-                                    let _ = self.session.log_tool_call(ToolCall {
-                                        timestamp: chrono::Utc::now().to_rfc3339(),
-                                        phase: "validate".into(),
-                                        tool: "GET /api/analyze".into(),
-                                        model: None,
-                                        tokens: None,
-                                        cost_usd: None,
-                                        duration_ms: 0,
-                                        status: "ok".into(),
-                                        detail: Some(format!("PASS score={}", score)),
-                                    });
+                        Ok(qlr) => {
+                            // Print per-iteration results
+                            for detail in &qlr.iteration_log {
+                                println!("    Iteration {}:", detail.iteration);
+                                println!(
+                                    "      Compile:  {}{}",
+                                    if detail.compile_pass { "PASS" } else { "FAIL" },
+                                    if detail.compile_error_count > 0 {
+                                        format!(" ({} errors)", detail.compile_error_count)
+                                    } else {
+                                        String::new()
+                                    }
+                                );
+                                println!(
+                                    "      Tests:    {}/{}{}",
+                                    detail.tests_passed,
+                                    detail.tests_passed + detail.tests_failed,
+                                    if detail.tests_pass { " PASS" } else { " FAIL" }
+                                );
+                                if detail.analyze_score > 0 || detail.analyze_violations > 0 {
+                                    println!(
+                                        "      Analyze:  Score {} ({})",
+                                        detail.analyze_score,
+                                        if detail.analyze_violations == 0 {
+                                            "clean".to_string()
+                                        } else {
+                                            format!("{} violations", detail.analyze_violations)
+                                        }
+                                    );
                                 }
-                                ValidateResult::FixesProposed { violations, fixes, total_cost_usd, total_tokens, .. } => {
-                                    let _ = self.session.log_tool_call(ToolCall {
-                                        timestamp: chrono::Utc::now().to_rfc3339(),
-                                        phase: "validate".into(),
-                                        tool: "POST /api/inference/complete".into(),
-                                        model: None,
-                                        tokens: Some(*total_tokens),
-                                        cost_usd: Some(*total_cost_usd),
-                                        duration_ms: 0,
-                                        status: "ok".into(),
-                                        detail: Some(format!("FixesProposed violations={} fixes={}", violations.len(), fixes.len())),
-                                    });
-                                }
-                                ValidateResult::Fail { violations, error } => {
-                                    let _ = self.session.log_tool_call(ToolCall {
-                                        timestamp: chrono::Utc::now().to_rfc3339(),
-                                        phase: "validate".into(),
-                                        tool: "GET /api/analyze".into(),
-                                        model: None,
-                                        tokens: None,
-                                        cost_usd: None,
-                                        duration_ms: 0,
-                                        status: "error".into(),
-                                        detail: Some(format!("FAIL violations={} {}", violations.len(), error.as_deref().unwrap_or(""))),
-                                    });
+                                if let Some(action) = &detail.action {
+                                    println!("      -> {}", action);
                                 }
                             }
-                            self.handle_validate_headless(&vr)?;
+
+                            println!(
+                                "    Result: GRADE {} (score {}, {} iteration(s), ${:.4} fix cost)",
+                                qlr.grade, qlr.score, qlr.iterations, qlr.fix_cost_usd,
+                            );
+
+                            // Log tool calls for each fix attempt
+                            let _ = self.session.log_tool_call(ToolCall {
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                phase: "validate".into(),
+                                tool: "quality_loop".into(),
+                                model: None,
+                                tokens: Some(qlr.fix_tokens),
+                                cost_usd: Some(qlr.fix_cost_usd),
+                                duration_ms: 0,
+                                status: if qlr.grade <= 'B' { "ok".into() } else { "warn".into() },
+                                detail: Some(format!(
+                                    "Grade {} score={} iterations={} violations_fixed={}",
+                                    qlr.grade, qlr.score, qlr.iterations, qlr.violations_fixed,
+                                )),
+                            });
+
+                            let _ = self.session.add_cost(qlr.fix_cost_usd, qlr.fix_tokens);
+
+                            // In --auto mode: accept Grade B (80+) with warning, fail on D or F
+                            if self.config.mode == DevMode::Auto {
+                                if qlr.grade == 'D' || qlr.grade == 'F' {
+                                    eprintln!(
+                                        "         FAIL: Grade {} (score {}) is below auto-accept threshold (B/80+)",
+                                        qlr.grade, qlr.score,
+                                    );
+                                    // Still advance to commit phase (user can inspect)
+                                } else if qlr.grade == 'C' {
+                                    eprintln!(
+                                        "         WARNING: Grade {} (score {}) — consider manual review",
+                                        qlr.grade, qlr.score,
+                                    );
+                                }
+                            }
+
+                            self.session.update_phase(PipelinePhase::Commit)?;
                         }
                         Err(e) => {
                             let _ = self.session.log_tool_call(ToolCall {
                                 timestamp: chrono::Utc::now().to_rfc3339(),
                                 phase: "validate".into(),
-                                tool: "GET /api/analyze".into(),
+                                tool: "quality_loop".into(),
                                 model: None,
                                 tokens: None,
                                 cost_usd: None,
@@ -1993,6 +2017,7 @@ impl TuiApp {
     }
 
     /// Process validation result in the headless (Auto) pipeline.
+    #[allow(dead_code)]
     fn handle_validate_headless(&mut self, result: &ValidateResult) -> Result<()> {
         match result {
             ValidateResult::Pass { score, summary } => {

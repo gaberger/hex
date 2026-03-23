@@ -173,6 +173,38 @@ The quality loop shows in the TUI task list:
 | P8 | Update hex report with iteration details and final grade | Pending |
 | P9 | Generate minimal package.json/Cargo.toml in output_dir if tests present | Pending |
 
+## Future: Swarm-Controlled Quality Orchestration
+
+The current implementation embeds the quality loop inside `validate_phase.rs` as a pragmatic first pass. **The correct long-term architecture is swarm-controlled orchestration:**
+
+```
+Current (v1 — embedded loop):
+  validate_phase.rs: compile → test → analyze → fix → retry (hardcoded)
+
+Future (v2 — swarm-controlled):
+  Swarm coordinator creates quality-gate tasks
+  → quality-gate agent runs compile + test + analyze
+  → reports result to swarm
+  → swarm creates fix tasks (one per violation/error)
+  → fix agents execute (tracked, costed, auditable)
+  → swarm re-runs quality gate
+  → loop until Grade A or max iterations
+```
+
+### Why swarm-controlled is better
+
+1. **Each fix attempt is a tracked HexFlo task** — agent assignment, cost, result all recorded
+2. **Fix agents can run in parallel** — multiple violations fixed concurrently
+3. **Swarm topology controls retry strategy** — pipeline for sequential, mesh for parallel fixes
+4. **Quality gate is reusable** — any swarm can include it, not just `hex dev`
+5. **Dashboard visibility** — each fix attempt appears in the swarm task list in real-time
+
+### Migration path
+
+1. v1 (this ADR): Quality loop inside validate_phase.rs — working, tested, ships now
+2. v2: Extract quality gates into standalone swarm tasks
+3. v3: Swarm coordinator owns the retry topology, spawns fix agents via HexFlo
+
 ## Consequences
 
 ### Positive
@@ -180,19 +212,23 @@ The quality loop shows in the TUI task list:
 - **Grade A guarantee** — pipeline iterates until quality meets the bar (or reports why it can't)
 - **Self-healing** — LLM fixes its own mistakes using error output as context
 - **Audit trail** — every fix attempt logged in tool calls with cost
+- **hex analyze is mandatory** — architecture enforcement is built into every pipeline run
 
 ### Negative
 - **Higher cost** — fix iterations add $0.001-0.005 per attempt (still under $0.05 total)
 - **Longer runtime** — 3 iterations adds ~30-60s per gate
 - **May not converge** — some LLM-generated code can't be fixed in 3 attempts
+- **v1 is not swarm-native** — quality loop is embedded, not yet orchestrated by HexFlo
 
 ### Mitigations
 - 3-attempt cap prevents runaway costs
 - Fix prompts include the actual error output (LLM can see what went wrong)
 - Grade B (80+) is accepted in `--auto` mode with a warning; only interactive mode blocks on Grade A
+- v2 migration planned to move quality loop into swarm coordination
 
 ## References
 
 - ADR-2603232005: Self-Sufficient hex-agent with TUI
 - ADR-2603232220: Developer Audit Report
 - ADR-2603232216: Pipeline Validation Report
+- ADR-027: HexFlo Native Coordination (swarm topology for v2)
