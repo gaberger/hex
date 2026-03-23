@@ -176,6 +176,11 @@ enum Commands {
         #[command(subcommand)]
         action: DevAction,
     },
+    /// Developer audit report for hex dev sessions (ADR-2603232220)
+    Report {
+        #[command(subcommand)]
+        action: commands::report::ReportAction,
+    },
 }
 
 #[tokio::main]
@@ -221,5 +226,6 @@ async fn main() -> anyhow::Result<()> {
         Commands::Status => status::run().await,
         Commands::Opencode { action } => commands::opencode::run(action),
         Commands::Dev { action } => commands::dev::run(action).await,
+        Commands::Report { action } => commands::report::run(action).await,
     }
 }

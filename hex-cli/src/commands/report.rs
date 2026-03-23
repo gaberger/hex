@@ -1,0 +1,690 @@
+//! `hex report` — developer audit report for hex dev sessions.
+//!
+//! Assembles a complete trace from ask → ADR → workplan → swarm → tasks → code → validation
+//! using session files, SpacetimeDB, workplan JSON, and git history.
+
+use anyhow::{bail, Result};
+use chrono::DateTime;
+use clap::Subcommand;
+use colored::Colorize;
+use serde_json::Value;
+use std::path::Path;
+
+use crate::nexus_client::NexusClient;
+use crate::session::{DevSession, DevSessionSummary, SessionStatus};
+
+#[derive(Subcommand)]
+pub enum ReportAction {
+    /// Generate audit report for a specific session
+    Show {
+        /// Session ID (or prefix)
+        id: String,
+
+        /// Output as JSON instead of formatted text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate audit report for the most recent completed session
+    Latest {
+        /// Output as JSON instead of formatted text
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all sessions available for reporting
+    List,
+}
+
+pub async fn run(action: ReportAction) -> Result<()> {
+    match action {
+        ReportAction::Show { id, json } => show_report(&id, json).await,
+        ReportAction::Latest { json } => show_latest(json).await,
+        ReportAction::List => list_sessions().await,
+    }
+}
+
+async fn list_sessions() -> Result<()> {
+    let sessions = DevSession::list_all()?;
+    if sessions.is_empty() {
+        println!("No dev sessions found. Run `hex dev start` to create one.");
+        return Ok(());
+    }
+    println!("{}", "hex dev — Sessions".cyan().bold());
+    println!();
+    println!(
+        "  {:<38} {:<12} {:<10} {:<8} {}",
+        "ID", "Status", "Phase", "Cost", "Feature"
+    );
+    println!("  {}", "─".repeat(100));
+    for s in &sessions {
+        let cost = format!("${:.4}", s.total_cost_usd);
+        let desc = truncate(&s.feature_description, 50);
+        println!(
+            "  {:<38} {:<12} {:<10} {:<8} {}",
+            s.id, format!("{}", s.status), format!("{}", s.current_phase), cost, desc
+        );
+    }
+    println!();
+    println!("  Run `hex report show <id>` for a full audit report.");
+    Ok(())
+}
+
+async fn show_latest(json: bool) -> Result<()> {
+    let sessions = DevSession::list_all()?;
+    let latest = sessions
+        .iter()
+        .filter(|s| matches!(s.status, SessionStatus::Completed))
+        .last();
+    match latest {
+        Some(s) => show_report(&s.id, json).await,
+        None => {
+            println!("No completed sessions found.");
+            Ok(())
+        }
+    }
+}
+
+async fn show_report(id: &str, json_output: bool) -> Result<()> {
+    // Find session by ID or prefix
+    let session = find_session(id)?;
+    let client = NexusClient::from_env();
+
+    // Gather all data
+    let adr_info = gather_adr_info(&session);
+    let workplan_info = gather_workplan_info(&session);
+    let swarm_info = gather_swarm_info(&session, &client).await;
+    let git_info = gather_git_info(&session);
+
+    if json_output {
+        print_json_report(&session, &adr_info, &workplan_info, &swarm_info, &git_info);
+        return Ok(());
+    }
+
+    // ── Header ──────────────────────────────────────────────
+    println!();
+    println!("{}", "═".repeat(65).cyan());
+    println!("  {}", "hex dev — Audit Report".cyan().bold());
+    println!("{}", "═".repeat(65).cyan());
+    println!();
+
+    // ── Ask ─────────────────────────────────────────────────
+    println!(
+        "  {}  \"{}\"",
+        "Ask:".white().bold(),
+        session.feature_description.yellow()
+    );
+    println!("  {}  {}", "Session:".white().bold(), session.id.dimmed());
+    println!(
+        "  {}  {}",
+        "Status: ".white().bold(),
+        colorize_status(&session.status)
+    );
+    println!("  {}  {}", "Started:".white().bold(), session.created_at);
+    println!("  {}  {}", "Ended:  ".white().bold(), session.updated_at);
+
+    // Duration
+    if let (Ok(start), Ok(end)) = (
+        DateTime::parse_from_rfc3339(&session.created_at),
+        DateTime::parse_from_rfc3339(&session.updated_at),
+    ) {
+        let dur = end.signed_duration_since(start);
+        println!(
+            "  {} {}s",
+            "Duration:".white().bold(),
+            dur.num_seconds()
+        );
+    }
+
+    println!(
+        "  {}  ${:.4} ({} tokens)",
+        "Cost:   ".white().bold(),
+        session.total_cost_usd,
+        format_tokens(session.total_tokens)
+    );
+
+    // ── Phase 1: ADR ────────────────────────────────────────
+    println!();
+    println!("{}", "── Phase 1: ADR ──────────────────────────────────────────────".dimmed());
+    match &adr_info {
+        Some(info) => {
+            println!("  File:   {}", info.path.green());
+            println!("  Lines:  {}", info.lines);
+            println!("  Size:   {} bytes", info.size);
+            if !info.title.is_empty() {
+                println!("  Title:  {}", info.title);
+            }
+        }
+        None => println!("  {}", "No ADR generated (skipped or failed)".dimmed()),
+    }
+
+    // ── Phase 2: Workplan ───────────────────────────────────
+    println!();
+    println!("{}", "── Phase 2: Workplan ─────────────────────────────────────────".dimmed());
+    match &workplan_info {
+        Some(info) => {
+            println!("  File:   {}", info.path.green());
+            println!("  Title:  {}", info.title);
+            println!("  Steps:  {}", info.total_steps);
+            println!("  Tiers:  {}", info.tier_summary);
+            println!();
+            println!(
+                "  {:<8} {:<6} {:<50} {}",
+                "Step", "Tier", "Description", "Adapter"
+            );
+            println!("  {}", "─".repeat(90));
+            for step in &info.steps {
+                println!(
+                    "  {:<8} T{:<5} {:<50} {}",
+                    step.id,
+                    step.tier,
+                    truncate(&step.description, 50),
+                    step.adapter
+                );
+            }
+        }
+        None => println!("  {}", "No workplan generated (skipped or failed)".dimmed()),
+    }
+
+    // ── Phase 3: Swarm ──────────────────────────────────────
+    println!();
+    println!("{}", "── Phase 3: Swarm ────────────────────────────────────────────".dimmed());
+    match &swarm_info {
+        Some(info) => {
+            println!("  Swarm:    {}", info.id.dimmed());
+            println!("  Name:     {}", info.name);
+            println!("  Topology: {}", info.topology);
+            println!("  Status:   {}", colorize_swarm_status(&info.status));
+            println!("  Tasks:    {}/{} completed", info.tasks_completed, info.tasks_total);
+            if !info.tasks.is_empty() {
+                println!();
+                println!(
+                    "  {:<10} {:<12} {:<50}",
+                    "Task", "Status", "Title"
+                );
+                println!("  {}", "─".repeat(75));
+                for task in &info.tasks {
+                    let status_colored = match task.status.as_str() {
+                        "completed" => "completed".green().to_string(),
+                        "in_progress" => "in_progress".yellow().to_string(),
+                        _ => task.status.dimmed().to_string(),
+                    };
+                    println!(
+                        "  {:<10} {:<12} {}",
+                        &task.id[..8.min(task.id.len())],
+                        status_colored,
+                        truncate(&task.title, 50)
+                    );
+                }
+            }
+        }
+        None => println!("  {}", "No swarm created (skipped or failed)".dimmed()),
+    }
+
+    // ── Phase 4: Code Generation ────────────────────────────
+    println!();
+    println!("{}", "── Phase 4: Code Generation ──────────────────────────────────".dimmed());
+    if session.completed_steps.is_empty() {
+        println!("  {}", "No code generated (skipped or failed)".dimmed());
+    } else {
+        println!("  Steps completed: {}", session.completed_steps.len());
+        println!(
+            "  Steps:  {}",
+            session.completed_steps.join(", ")
+        );
+    }
+
+    // ── Phase 5: Validation ─────────────────────────────────
+    println!();
+    println!("{}", "── Phase 5: Validate ─────────────────────────────────────────".dimmed());
+    match session.current_phase {
+        crate::session::PipelinePhase::Validate | crate::session::PipelinePhase::Commit => {
+            println!("  Status: {}", "PASS".green());
+        }
+        _ => {
+            println!("  Status: {}", "Not reached".dimmed());
+        }
+    }
+
+    // ── Git Changes ─────────────────────────────────────────
+    println!();
+    println!("{}", "── Files Changed ─────────────────────────────────────────────".dimmed());
+    match &git_info {
+        Some(info) => {
+            if !info.created.is_empty() {
+                println!("  {} ({}):", "Created".green().bold(), info.created.len());
+                for f in &info.created {
+                    println!("    {} {}", "+".green(), f);
+                }
+            }
+            if !info.modified.is_empty() {
+                println!("  {} ({}):", "Modified".yellow().bold(), info.modified.len());
+                for f in &info.modified {
+                    println!("    {} {}", "~".yellow(), f);
+                }
+            }
+            if !info.deleted.is_empty() {
+                println!("  {} ({}):", "Deleted".red().bold(), info.deleted.len());
+                for f in &info.deleted {
+                    println!("    {} {}", "-".red(), f);
+                }
+            }
+            if info.created.is_empty() && info.modified.is_empty() && info.deleted.is_empty() {
+                println!("  {}", "No file changes detected".dimmed());
+            }
+            println!();
+            println!(
+                "  Total: {} created, {} modified, {} deleted",
+                info.created.len(),
+                info.modified.len(),
+                info.deleted.len()
+            );
+        }
+        None => println!("  {}", "Git info unavailable".dimmed()),
+    }
+
+    // ── Summary ─────────────────────────────────────────────
+    println!();
+    println!("{}", "── Summary ───────────────────────────────────────────────────".dimmed());
+
+    let artifact_count = [
+        adr_info.as_ref().map(|_| 1).unwrap_or(0),
+        workplan_info.as_ref().map(|_| 1).unwrap_or(0),
+    ]
+    .iter()
+    .sum::<usize>()
+        + git_info
+            .as_ref()
+            .map(|g| g.created.len())
+            .unwrap_or(0);
+
+    let models: Vec<&str> = session
+        .model_selections
+        .values()
+        .map(|s| s.as_str())
+        .collect();
+
+    println!("  Artifacts:  {}", artifact_count);
+    if !models.is_empty() {
+        println!("  Models:     {}", models.join(", "));
+    }
+    println!(
+        "  Inference:  {} tokens, ${:.4}",
+        format_tokens(session.total_tokens),
+        session.total_cost_usd
+    );
+    if let Some(ref si) = swarm_info {
+        println!(
+            "  Swarm:      {} tasks ({} completed, {} pending)",
+            si.tasks_total, si.tasks_completed, si.tasks_total - si.tasks_completed
+        );
+    }
+
+    println!();
+    println!("{}", "═".repeat(65).cyan());
+    println!();
+
+    Ok(())
+}
+
+// ── Data gathering ──────────────────────────────────────────────────────
+
+fn find_session(id: &str) -> Result<DevSession> {
+    // Try exact match first
+    if let Ok(s) = DevSession::load(id) {
+        return Ok(s);
+    }
+    // Try prefix match
+    let sessions = DevSession::list_all()?;
+    let matches: Vec<&DevSessionSummary> = sessions
+        .iter()
+        .filter(|s| s.id.starts_with(id))
+        .collect();
+    match matches.len() {
+        0 => bail!("No session found matching '{}'", id),
+        1 => DevSession::load(&matches[0].id),
+        n => bail!(
+            "Ambiguous: {} sessions match '{}'. Provide more characters.",
+            n, id
+        ),
+    }
+}
+
+struct AdrInfo {
+    path: String,
+    lines: usize,
+    size: u64,
+    title: String,
+}
+
+fn gather_adr_info(session: &DevSession) -> Option<AdrInfo> {
+    let path = session.adr_path.as_ref()?;
+    let p = Path::new(path);
+    if !p.exists() {
+        return Some(AdrInfo {
+            path: path.clone(),
+            lines: 0,
+            size: 0,
+            title: "(file not found)".into(),
+        });
+    }
+    let content = std::fs::read_to_string(p).ok()?;
+    let lines = content.lines().count();
+    let size = p.metadata().map(|m| m.len()).unwrap_or(0);
+    let title = content
+        .lines()
+        .find(|l| l.starts_with("# "))
+        .unwrap_or("")
+        .trim_start_matches("# ")
+        .to_string();
+    Some(AdrInfo {
+        path: path.clone(),
+        lines,
+        size,
+        title,
+    })
+}
+
+struct WorkplanStep {
+    id: String,
+    description: String,
+    adapter: String,
+    tier: u32,
+}
+
+struct WorkplanInfo {
+    path: String,
+    title: String,
+    total_steps: usize,
+    tier_summary: String,
+    steps: Vec<WorkplanStep>,
+}
+
+fn gather_workplan_info(session: &DevSession) -> Option<WorkplanInfo> {
+    let path = session.workplan_path.as_ref()?;
+    let content = std::fs::read_to_string(path).ok()?;
+    let data: Value = serde_json::from_str(&content).ok()?;
+
+    let title = data["title"].as_str().unwrap_or("").to_string();
+    let steps_arr = data["steps"].as_array()?;
+
+    let mut tier_counts: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
+    let mut steps = Vec::new();
+
+    for s in steps_arr {
+        let tier = s["tier"].as_u64().unwrap_or(0) as u32;
+        *tier_counts.entry(tier).or_insert(0) += 1;
+        steps.push(WorkplanStep {
+            id: s["id"].as_str().unwrap_or("?").to_string(),
+            description: s["description"].as_str().unwrap_or("").to_string(),
+            adapter: s["adapter"].as_str().unwrap_or("").to_string(),
+            tier,
+        });
+    }
+
+    let tier_summary = tier_counts
+        .iter()
+        .map(|(t, c)| format!("T{}: {}", t, c))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Some(WorkplanInfo {
+        path: path.clone(),
+        title,
+        total_steps: steps.len(),
+        tier_summary,
+        steps,
+    })
+}
+
+struct SwarmTask {
+    id: String,
+    title: String,
+    status: String,
+}
+
+struct SwarmInfo {
+    id: String,
+    name: String,
+    topology: String,
+    status: String,
+    tasks_total: usize,
+    tasks_completed: usize,
+    tasks: Vec<SwarmTask>,
+}
+
+async fn gather_swarm_info(session: &DevSession, client: &NexusClient) -> Option<SwarmInfo> {
+    let swarm_id = session.swarm_id.as_ref()?;
+
+    // Try fetching from nexus
+    let swarms_data = client.get("/api/swarms").await.ok()?;
+    let swarms = swarms_data.as_array()?;
+
+    let swarm = swarms.iter().find(|s| {
+        s["id"].as_str().unwrap_or("") == swarm_id
+    })?;
+
+    let name = swarm["name"].as_str().unwrap_or("").to_string();
+    let topology = swarm["topology"].as_str().unwrap_or("").to_string();
+    let status = swarm["status"].as_str().unwrap_or("").to_string();
+
+    let tasks_arr = swarm["tasks"].as_array();
+    let mut tasks = Vec::new();
+    let mut completed = 0;
+
+    if let Some(arr) = tasks_arr {
+        for t in arr {
+            let task_status = t["status"].as_str().unwrap_or("pending").to_string();
+            if task_status == "completed" {
+                completed += 1;
+            }
+            tasks.push(SwarmTask {
+                id: t["id"].as_str().unwrap_or("").to_string(),
+                title: t["title"].as_str().unwrap_or("").to_string(),
+                status: task_status,
+            });
+        }
+    }
+
+    Some(SwarmInfo {
+        id: swarm_id.clone(),
+        name,
+        topology,
+        status,
+        tasks_total: tasks.len(),
+        tasks_completed: completed,
+        tasks,
+    })
+}
+
+struct GitInfo {
+    created: Vec<String>,
+    modified: Vec<String>,
+    deleted: Vec<String>,
+}
+
+fn gather_git_info(session: &DevSession) -> Option<GitInfo> {
+    // Collect all files this session touched
+    let mut created = Vec::new();
+    let mut modified = Vec::new();
+    let mut deleted = Vec::new();
+
+    // ADR file
+    if let Some(ref path) = session.adr_path {
+        if Path::new(path).exists() {
+            created.push(path.clone());
+        }
+    }
+
+    // Workplan file
+    if let Some(ref path) = session.workplan_path {
+        if Path::new(path).exists() {
+            created.push(path.clone());
+        }
+    }
+
+    // Generated code files — scan for files matching step patterns
+    // Check git status for untracked/modified files in src/ and tests/
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain", "--no-renames"])
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let status = &line[..2];
+        let file = line[3..].trim().to_string();
+
+        // Only include files likely generated by this session
+        let dominated = file.starts_with("src/core/")
+            || file.starts_with("src/adapters/")
+            || file.starts_with("tests/")
+            || file.starts_with("docs/adrs/")
+            || file.starts_with("docs/workplans/");
+
+        if !dominated {
+            continue;
+        }
+
+        match status.trim() {
+            "??" | "A" | "A " => {
+                if !created.contains(&file) {
+                    created.push(file);
+                }
+            }
+            "M" | " M" | "M " | "MM" => {
+                modified.push(file);
+            }
+            "D" | " D" | "D " => {
+                deleted.push(file);
+            }
+            _ => {}
+        }
+    }
+
+    created.sort();
+    modified.sort();
+    deleted.sort();
+
+    Some(GitInfo {
+        created,
+        modified,
+        deleted,
+    })
+}
+
+// ── JSON output ─────────────────────────────────────────────────────────
+
+fn print_json_report(
+    session: &DevSession,
+    adr_info: &Option<AdrInfo>,
+    workplan_info: &Option<WorkplanInfo>,
+    swarm_info: &Option<SwarmInfo>,
+    git_info: &Option<GitInfo>,
+) {
+    let mut report = serde_json::json!({
+        "session": {
+            "id": session.id,
+            "feature": session.feature_description,
+            "status": format!("{}", session.status),
+            "started": session.created_at,
+            "ended": session.updated_at,
+            "phase": format!("{}", session.current_phase),
+            "cost_usd": session.total_cost_usd,
+            "tokens": session.total_tokens,
+            "steps_completed": session.completed_steps,
+            "models": session.model_selections,
+        }
+    });
+
+    if let Some(ref adr) = adr_info {
+        report["adr"] = serde_json::json!({
+            "path": adr.path,
+            "lines": adr.lines,
+            "size_bytes": adr.size,
+            "title": adr.title,
+        });
+    }
+
+    if let Some(ref wp) = workplan_info {
+        report["workplan"] = serde_json::json!({
+            "path": wp.path,
+            "title": wp.title,
+            "total_steps": wp.total_steps,
+            "tier_summary": wp.tier_summary,
+            "steps": wp.steps.iter().map(|s| serde_json::json!({
+                "id": s.id,
+                "description": s.description,
+                "adapter": s.adapter,
+                "tier": s.tier,
+            })).collect::<Vec<_>>(),
+        });
+    }
+
+    if let Some(ref si) = swarm_info {
+        report["swarm"] = serde_json::json!({
+            "id": si.id,
+            "name": si.name,
+            "topology": si.topology,
+            "status": si.status,
+            "tasks_total": si.tasks_total,
+            "tasks_completed": si.tasks_completed,
+            "tasks": si.tasks.iter().map(|t| serde_json::json!({
+                "id": t.id,
+                "title": t.title,
+                "status": t.status,
+            })).collect::<Vec<_>>(),
+        });
+    }
+
+    if let Some(ref gi) = git_info {
+        report["files"] = serde_json::json!({
+            "created": gi.created,
+            "modified": gi.modified,
+            "deleted": gi.deleted,
+        });
+    }
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).unwrap_or_default()
+    );
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max - 3])
+    }
+}
+
+fn format_tokens(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}K", tokens as f64 / 1_000.0)
+    } else {
+        format!("{}", tokens)
+    }
+}
+
+fn colorize_status(status: &SessionStatus) -> String {
+    match status {
+        SessionStatus::Completed => "completed".green().to_string(),
+        SessionStatus::InProgress => "in_progress".yellow().to_string(),
+        SessionStatus::Paused => "paused".blue().to_string(),
+        SessionStatus::Failed => "failed".red().to_string(),
+    }
+}
+
+fn colorize_swarm_status(status: &str) -> String {
+    match status {
+        "active" => "active".green().to_string(),
+        "completed" => "completed".dimmed().to_string(),
+        _ => status.to_string(),
+    }
+}

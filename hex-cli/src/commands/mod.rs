@@ -16,6 +16,7 @@ pub mod memory;
 pub mod nexus;
 pub mod opencode;
 pub mod plan;
+pub mod report;
 pub mod project;
 pub mod readme;
 pub mod secrets;
