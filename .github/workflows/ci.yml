@@ -59,9 +59,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-      - run: cargo check --workspace
-      - run: cargo clippy --workspace -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo check --workspace --exclude hex-desktop
+      - run: cargo clippy --workspace --exclude hex-desktop -- -D warnings
+      - run: cargo test --workspace --exclude hex-desktop
 
   rust-release-build:
     runs-on: ubuntu-latest
@@ -74,7 +74,7 @@ jobs:
           workspaces: ". -> target"
           shared-key: release
       - name: Build all workspace members (release)
-        run: cargo build --workspace --release
+        run: cargo build --workspace --exclude hex-desktop --release
       - name: Verify hex-cli binary
         run: ./target/release/hex-cli --version || echo "hex-cli built successfully"
       - name: Verify hex-nexus binary

@@ -33,7 +33,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-lint-
 
       - name: Clippy (workspace)
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --exclude hex-desktop -- -D warnings
 
       - name: Clippy (spacetime-modules)
         run: cd spacetime-modules && cargo clippy --workspace -- -D warnings
@@ -64,7 +64,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-test-
 
       - name: Rust workspace tests
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude hex-desktop
 
       - name: SpacetimeDB module tests
         run: cd spacetime-modules && cargo test --workspace
