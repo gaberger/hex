@@ -1,3 +1,4 @@
+// @ts-nocheck — legacy adapter, replaced by Rust CLI (ADR-010)
 /**
  * Notification Query Adapter (Primary / Driving)
  *

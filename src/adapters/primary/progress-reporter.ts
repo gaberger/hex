@@ -1,3 +1,4 @@
+// @ts-nocheck — legacy adapter, replaced by Rust CLI (ADR-010)
 /**
  * Progress Reporter — tree-style progress output for CLI operations.
  *

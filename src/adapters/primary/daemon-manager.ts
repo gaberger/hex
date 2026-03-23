@@ -1,3 +1,4 @@
+// @ts-nocheck — legacy adapter, replaced by Rust CLI (ADR-010)
 /**
  * Daemon Manager — manages the dashboard hub as a background service
  *
