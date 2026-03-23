@@ -120,7 +120,8 @@ spacetime-modules/
 ├── conflict-resolver/       # State conflict resolution
 ├── secret-grant/            # Secret distribution
 ├── hexflo-cleanup/          # Stale agent detection
-└── hexflo-lifecycle/        # Agent lifecycle events
+├── hexflo-lifecycle/        # Agent lifecycle events
+└── test-results/            # Test session persistence (ADR-058)
 ```
 
 #### hex-nexus — The Filesystem Bridge
@@ -820,10 +821,21 @@ npx @anthropic-hex/hex --help
 | `hex mcp` | Start MCP stdio server for Claude Code / IDE integration |
 | `hex setup` | Install tree-sitter grammars + skills + agents + hex-hub binary |
 | `hex init [--fast\|--minimal\|--include\|--large-project]` | Initialize project (supports large codebases via streaming scanner) |
-| `hex adr list` | List all ADRs with status |
+| `hex adr list` | List all ADRs with status (supports timestamp IDs) |
 | `hex adr status` | Show ADR lifecycle summary |
 | `hex adr search <query>` | Search ADRs by keyword |
+| `hex adr schema` | Show ADR template with next timestamp ID |
 | `hex adr abandoned` | Detect stale/abandoned ADRs |
+| `hex enforce list` | List all enforcement rules (local + SpacetimeDB) |
+| `hex enforce sync` | Sync rules from `.hex/adr-rules.toml` to SpacetimeDB |
+| `hex enforce mode` | Show enforcement mode (mandatory/advisory/disabled) |
+| `hex enforce prompt` | Generate system prompt for non-MCP models |
+| `hex agent audit` | Cross-reference git commits against HexFlo task tracking |
+| `hex agent list` | List all registered agents |
+| `hex agent id` | Show current session's agent ID |
+| `hex test history` | Show recent test run history |
+| `hex test trends` | Show pass rate trends per category |
+| `hex assets` | List all embedded assets in the binary |
 | `hex help` | Show all commands and usage |
 | `hex version` | Print current version |
 
@@ -844,6 +856,28 @@ proposed → accepted → (deprecated | superseded | rejected)
 - `hex adr abandoned` — Detect stale ADRs with no related commits in 90 days (indicates forgotten decisions)
 
 ADRs are stored in `docs/adrs/` and tracked via frontmatter (status, date, supersedes). The lifecycle system helps teams identify which architectural decisions are active vs. historical.
+
+**ADR numbering:** New ADRs use timestamp-based IDs (`ADR-YYMMDDHHMM`, e.g. `ADR-2603221500`) to eliminate race conditions in concurrent multi-agent creation. Legacy sequential IDs (`ADR-001` through `ADR-066`) are preserved. Both formats are accepted by all tools.
+
+### Provider-Agnostic Enforcement (ADR-2603221939, ADR-2603221959)
+
+hex enforces the ADR → Workplan → Swarm → Agent pipeline through three layers, ensuring compliance regardless of which LLM provider drives the agents:
+
+```
+Layer 1: Client hooks     (Claude Code)   → pre-agent, pre-edit, pre-bash
+Layer 2: MCP tool guards  (any provider)  → DefaultEnforcer before tool dispatch
+Layer 3: Nexus API guards (server-side)   → axum middleware backstop (403 on violation)
+```
+
+All three layers share the same `IEnforcementPort` implementation from `hex-core`:
+
+| Check | Mandatory Mode | Advisory Mode |
+|:------|:--------------|:-------------|
+| Background agent without `HEXFLO_TASK:` | **Blocked** | Warning |
+| Mutating operation without active workplan | **Blocked** | Warning |
+| Unregistered agent | Warning | Allowed |
+
+**For non-MCP models** (Ollama, vLLM, Llama): use `hex enforce prompt` to generate system prompt instructions, and call the MCP lifecycle tools (`hex_session_start`, `hex_session_heartbeat`, `hex_workplan_activate`) via REST API.
 
 <br/>
 
