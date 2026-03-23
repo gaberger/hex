@@ -34,6 +34,7 @@ use crate::state::SharedState;
 use crate::middleware::agent_guard::agent_guard;
 use crate::middleware::auth::auth_layer;
 use crate::middleware::deprecation::deprecation_layer;
+use crate::middleware::enforcement::enforcement_layer;
 use crate::embed::{serve_index, serve_chat, serve_legacy_dashboard, serve_static};
 
 // ── OpenAPI Spec (ADR-039) ─────────────────────────────
@@ -606,8 +607,9 @@ pub fn build_router(state: SharedState) -> Router {
         // WebSocket
         .route("/ws", get(ws::ws_handler))
         .route("/ws/chat", get(chat::chat_ws_handler))
-        // Middleware
+        // Middleware (order: outermost runs first → auth → agent_guard → enforcement → deprecation → handler)
         .layer(axum::middleware::from_fn(deprecation_layer))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), enforcement_layer))
         .layer(axum::middleware::from_fn_with_state(state.clone(), agent_guard))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth_layer))
         .layer(cors)
