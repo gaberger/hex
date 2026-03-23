@@ -126,14 +126,16 @@ const App: Component = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = createSignal(false);
 
-  onMount(() => {
-    // Initialize reactive stores in dependency order (ADR-2603231000):
-    // connection → projects → router → workplan (independent)
-    initConnectionStore();    // must be first — creates signals other stores depend on
-    initProjectStore();       // depends on registeredProjects from connection
-    initRouterStore();        // depends on projects from project store
-    initWorkplanStore();      // independent — REST-backed, no store dependencies
+  // Initialize reactive stores SYNCHRONOUSLY before any child renders.
+  // These must run during component creation (not onMount) so child
+  // components capture the real signal accessors, not the default () => []
+  // stubs. See ADR-2603231000 for the full diagnosis.
+  initConnectionStore();    // must be first — creates signals other stores depend on
+  initProjectStore();       // depends on registeredProjects from connection
+  initRouterStore();        // depends on projects from project store
+  initWorkplanStore();      // independent — REST-backed, no store dependencies
 
+  onMount(() => {
     // Start connections and monitors (uses signals created above)
     initConnections();
     startNexusHealthPoll();

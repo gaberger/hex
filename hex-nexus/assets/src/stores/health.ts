@@ -44,9 +44,9 @@ async function resolveProjectPath(): Promise<string> {
     const match = active ? projs.find((p: any) => p.id === active || p.name === active) : null;
     return (match?.path || projs[0].path) || ".";
   }
-  // Fallback: try the nexus status endpoint for project info
+  // Fallback: try the nexus health endpoint for project info
   try {
-    const data = await restClient.get<any>("/api/status");
+    const data = await restClient.get<any>("/api/health");
     if (data.project_dir) return data.project_dir;
   } catch { /* fall through */ }
   return ".";

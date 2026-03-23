@@ -20,6 +20,7 @@ import {
   swarms,
   swarmTasks,
   swarmAgents,
+  registryAgents,
 } from "../../stores/connection";
 import { healthData, healthLoading, fetchHealth } from "../../stores/health";
 import { navigate } from "../../stores/router";
@@ -27,6 +28,7 @@ import { restClient } from "../../services/rest-client";
 import GovernancePipeline from "./GovernancePipeline";
 import { entityBelongsToProject } from "../../utils/project-match";
 import { route } from "../../stores/router";
+import { projects } from "../../stores/projects";
 
 interface ProjectHomeProps {
   projectId: string;
@@ -119,8 +121,10 @@ const ProjectHome: Component<ProjectHomeProps> = (props) => {
   }
 
   // ---- Bottom-left: Recent Agents ----
+  // Use registryAgents (hex_agent table) not swarmAgents (swarm_agent table).
+  // swarm_agent only has agents assigned to swarms; registryAgents has all connected agents.
   const projectAgents = createMemo(() =>
-    swarmAgents().filter(
+    registryAgents().filter(
       (a: any) => entityBelongsToProject(a, pid()),
     ),
   );
@@ -137,16 +141,33 @@ const ProjectHome: Component<ProjectHomeProps> = (props) => {
   );
 
   // ---- Bottom-right: Recent Commits ----
+  // Resolve project path from store — REST git endpoints need the filesystem path,
+  // not the canonical ID (e.g., "/Volumes/.../hex-intf" not "hex-intf-1xq8wun").
+  const projectPath = createMemo(() => {
+    const p = projects().find((p) => p.id === props.projectId);
+    return p?.path ?? "";
+  });
+
   const [commits] = createResource(
-    () => props.projectId,
-    async (pid) => {
+    () => projectPath(),
+    async (path) => {
+      if (!path) return [];
       try {
-        const data = await restClient.get<any>(
-          `/api/${pid}/git/log?limit=10`,
-        );
+        const data = await restClient.post<any>("/api/git/log", {
+          root_path: path,
+          limit: 10,
+        });
         return Array.isArray(data) ? data : data?.commits ?? data?.data ?? [];
       } catch {
-        return [];
+        // Fallback: try the path-based URL
+        try {
+          const data = await restClient.get<any>(
+            `/api/${props.projectId}/git/log?limit=10`,
+          );
+          return Array.isArray(data) ? data : data?.commits ?? data?.data ?? [];
+        } catch {
+          return [];
+        }
       }
     },
   );

@@ -8,7 +8,7 @@
  * Reactive primitives created inside initProjectStore() — must be called
  * from App.tsx composition root after initConnectionStore() (ADR-2603231000).
  */
-import { createMemo, createRoot, type Accessor } from "solid-js";
+import { createSignal, createEffect, createRoot, type Accessor } from "solid-js";
 import { registeredProjects, getHexfloConn } from "./connection";
 import { addToast } from "./toast";
 import { restClient } from "../services/rest-client";
@@ -21,8 +21,10 @@ export interface Project {
   lastActivity?: string;
 }
 
-// Reactive project list — assigned inside createRoot by initProjectStore
-let projects: Accessor<Project[]> = () => [];
+// Stable signal proxy — never reassigned, so SolidJS JSX compiler always
+// tracks the same accessor. The createEffect inside initProjectStore()
+// pushes updates into this signal when SpacetimeDB subscription data changes.
+const [projects, setProjects] = createSignal<Project[]>([]);
 export { projects };
 
 // ── Initialization ───────────────────────────────────────────────────────
@@ -34,16 +36,16 @@ export function initProjectStore() {
   _initialized = true;
 
   createRoot(() => {
-    const _projects = createMemo<Project[]>(() => {
-      return (registeredProjects() ?? [])
+    createEffect(() => {
+      const mapped = (registeredProjects() ?? [])
         .map((p: any) => ({
           id: p.projectId ?? p.project_id ?? p.id ?? "",
           name: p.name ?? "unnamed",
           path: p.path ?? "",
         }))
-        .filter((p) => p.id !== ""); // Guard: never show projects with empty IDs
+        .filter((p: Project) => p.id !== "");
+      setProjects(mapped);
     });
-    projects = _projects;
   });
 }
 

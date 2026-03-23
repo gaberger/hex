@@ -271,7 +271,7 @@ export function initConnections() {
   // Clear stale tokens after module schema changes (e.g., spacetime publish --clear-database).
   // The SDK caches tokens in localStorage; stale tokens cause DataView deserialization crashes.
   // TODO: Replace with schema version check once SDK supports it.
-  const SCHEMA_VERSION = "6"; // Bump when re-publishing any module with --clear-database
+  const SCHEMA_VERSION = "8"; // Bump when re-publishing any module with --clear-database
   if (localStorage.getItem("stdb_schema_version") !== SCHEMA_VERSION) {
     Object.keys(localStorage)
       .filter((k) => k.startsWith(TOKEN_KEY_PREFIX))
@@ -281,8 +281,9 @@ export function initConnections() {
   }
 
   // hexflo-coordination: swarms, tasks, agents, memory
+  // Database name is "hex" (ADR-2603231500: hexflo-coordination publishes to "hex" for backward compat)
   connectModule({
-    module: "hexflo-coordination",
+    module: "hex",
     builder: HexfloDbConnection,
     setConn: setHexfloConn,
     setConnected: setHexfloConnected,
