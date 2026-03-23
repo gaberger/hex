@@ -47,7 +47,7 @@ impl NexusClient {
     /// Create a client with explicit base URL and optional auth token.
     pub fn with_token(base_url: String, auth_token: Option<String>) -> Self {
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(120))
             .build()
             .expect("failed to build HTTP client");
         let agent_id = read_session_agent_id();

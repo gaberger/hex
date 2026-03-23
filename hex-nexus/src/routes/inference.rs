@@ -10,6 +10,7 @@ use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::ports::secret_grant::ISecretGrantPort;
 use crate::state::SharedState;
 
 #[derive(Debug, Deserialize)]
@@ -56,11 +57,21 @@ pub async fn inference_complete(
     }
 
     // Try registered inference endpoints first (SpacetimeDB providers)
+    // If a model is requested, find the provider that serves it; otherwise use first provider.
     let endpoint: Option<crate::routes::secrets::InferenceEndpointEntry> =
         if let Some(ref stdb) = state.inference_stdb {
             match stdb.list_providers().await {
                 Ok(providers) if !providers.is_empty() => {
-                    let p = &providers[0];
+                    // Find the provider that matches the requested model
+                    let matched = if let Some(ref requested_model) = body.model {
+                        providers.iter().find(|p| {
+                            p.models_json.contains(requested_model.as_str())
+                        })
+                    } else {
+                        None
+                    };
+                    // Fall back to first provider if no model match
+                    let p = matched.unwrap_or(&providers[0]);
                     let first_model = p
                         .models_json
                         .trim_start_matches('[')
@@ -96,6 +107,31 @@ pub async fn inference_complete(
         // Apply requested model override
         if let Some(ref model) = body.model {
             ep.model = model.clone();
+        }
+        // Resolve secret key reference to actual value from vault
+        if ep.requires_auth && !ep.secret_key.is_empty() && !ep.secret_key.starts_with("sk-") {
+            let key_ref = ep.secret_key.clone();
+            tracing::debug!(key_ref = %key_ref, "resolving secret key reference");
+            // Try environment variable first, then vault
+            if let Ok(val) = std::env::var(&key_ref) {
+                tracing::debug!("resolved from env var");
+                ep.secret_key = val;
+            } else if let Some(ref stdb) = state.spacetime_secrets {
+                match stdb.vault_get(&key_ref).await {
+                    Ok(Some(val)) => {
+                        tracing::debug!("resolved from vault");
+                        ep.secret_key = val;
+                    }
+                    Ok(None) => {
+                        tracing::warn!(key = %key_ref, "secret not found in vault");
+                    }
+                    Err(e) => {
+                        tracing::warn!(key = %key_ref, error = %e, "vault_get failed");
+                    }
+                }
+            } else {
+                tracing::warn!("spacetime_secrets not available for vault resolution");
+            }
         }
         match super::chat::call_inference_endpoint(&ep, &messages).await {
             Ok(resp) => Ok(resp),

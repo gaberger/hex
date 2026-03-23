@@ -1,0 +1,22 @@
+{
+  "title": "Plan: fix dashboard inference page routing and add OpenRouter support",
+  "feature": "",
+  "language": "typescript",
+  "status": "planned",
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "fix dashboard inference page routing and add OpenRouter support",
+      "adapter": "core/domain",
+      "tier": 0,
+      "dependencies": [],
+      "status": "pending"
+    }
+  ],
+  "phases": [],
+  "created_at": "2026-03-23T16:31:57.350617+00:00",
+  "adr": "",
+  "description": "",
+  "priority": "",
+  "superseded_by": ""
+}

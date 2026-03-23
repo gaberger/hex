@@ -11,11 +11,16 @@ use tracing_subscriber::EnvFilter;
 pub mod assets;
 mod commands;
 pub(crate) mod nexus_client;
+pub mod pipeline;
+pub mod prompts;
+pub mod session;
+pub mod tui;
 
 use commands::{
     adr::AdrAction,
     agent::AgentAction,
     analyze,
+    dev::DevAction,
     git_cmd::GitAction,
     hook::HookEvent,
     inbox::InboxAction,
@@ -166,6 +171,11 @@ enum Commands {
         #[command(subcommand)]
         action: commands::opencode::Commands,
     },
+    /// Interactive TUI-driven development pipeline (ADR-2603232005)
+    Dev {
+        #[command(subcommand)]
+        action: DevAction,
+    },
 }
 
 #[tokio::main]
@@ -210,5 +220,6 @@ async fn main() -> anyhow::Result<()> {
         Commands::Assets => commands::assets_cmd::list().await,
         Commands::Status => status::run().await,
         Commands::Opencode { action } => commands::opencode::run(action),
+        Commands::Dev { action } => commands::dev::run(action).await,
     }
 }

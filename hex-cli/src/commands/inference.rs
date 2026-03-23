@@ -474,7 +474,7 @@ async fn discover_openrouter(filter: Option<&str>, min_context: Option<u64>) -> 
             // Try hex secrets vault
             let client = NexusClient::from_env();
             if let Ok(()) = client.ensure_running().await {
-                match client.get("/api/secrets/OPENROUTER_API_KEY").await {
+                match client.get("/api/secrets/vault/OPENROUTER_API_KEY").await {
                     Ok(data) => data.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     Err(_) => String::new(),
                 }

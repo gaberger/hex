@@ -30,6 +30,9 @@ gethostname = "0.4"
 toml = "0.8"
 # Embedded asset bundle (ADR-2603221522)
 rust-embed = "8"
+# TUI for `hex dev` (ADR-2603232005)
+ratatui = "0.29"
+crossterm = "0.28"
 
 [dev-dependencies]
 tempfile = "3"

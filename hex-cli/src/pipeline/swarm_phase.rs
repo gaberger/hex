@@ -1,0 +1,226 @@
+//! Swarm initialization phase for `hex dev` pipeline.
+//!
+//! This is the third phase: given an approved workplan, it creates a HexFlo
+//! swarm and tasks via hex-nexus REST API. No inference needed — pure
+//! coordination.
+
+use std::time::Instant;
+
+use anyhow::{Context, Result};
+use serde_json::json;
+use tracing::{debug, info, warn};
+
+use crate::nexus_client::NexusClient;
+use crate::pipeline::workplan_phase::WorkplanData;
+
+// ── Result type ──────────────────────────────────────────────────────────
+
+/// Output of a successful swarm initialization phase.
+#[derive(Debug, Clone)]
+pub struct SwarmPhaseResult {
+    /// The HexFlo swarm ID (UUID).
+    pub swarm_id: String,
+    /// The swarm name (kebab-case, derived from feature description).
+    pub swarm_name: String,
+    /// Mapping of (workplan step_id, hexflo task_id) pairs.
+    pub task_ids: Vec<(String, String)>,
+    /// Wall-clock duration in milliseconds.
+    pub duration_ms: u64,
+}
+
+// ── SwarmPhase ───────────────────────────────────────────────────────────
+
+/// Executes the swarm initialization phase of the `hex dev` pipeline.
+///
+/// Creates a HexFlo swarm and one task per workplan step via hex-nexus
+/// REST API. No inference calls — pure coordination.
+pub struct SwarmPhase {
+    client: NexusClient,
+}
+
+impl SwarmPhase {
+    /// Create a new phase with the standard nexus URL resolution.
+    pub fn from_env() -> Self {
+        Self {
+            client: NexusClient::from_env(),
+        }
+    }
+
+    /// Create a new phase pointing at an explicit nexus URL.
+    pub fn new(nexus_url: &str) -> Self {
+        Self {
+            client: NexusClient::new(nexus_url.to_string()),
+        }
+    }
+
+    /// Execute the swarm initialization phase.
+    ///
+    /// # Arguments
+    /// * `feature_description` - used to derive the swarm name
+    /// * `workplan` - the parsed workplan whose steps become tasks
+    pub async fn execute(
+        &self,
+        feature_description: &str,
+        workplan: &WorkplanData,
+    ) -> Result<SwarmPhaseResult> {
+        info!("Swarm phase: creating swarm and tasks from workplan");
+        let start = Instant::now();
+
+        // ── 1. Generate swarm name ───────────────────────────────────────
+        let swarm_name = generate_swarm_name(feature_description);
+        debug!(swarm_name = %swarm_name, "derived swarm name from feature description");
+
+        // ── 2. Create swarm via POST /api/swarms ─────────────────────────
+        let create_body = json!({
+            "name": swarm_name,
+            "topology": workplan.topology.as_deref().unwrap_or("hierarchical"),
+            "projectId": "hex-intf",
+        });
+
+        let swarm_resp = self
+            .client
+            .post("/api/swarms", &create_body)
+            .await
+            .context("POST /api/swarms failed — is hex-nexus running?")?;
+
+        let swarm_id = swarm_resp["id"]
+            .as_str()
+            .context("swarm response missing 'id' field")?
+            .to_string();
+
+        info!(swarm_id = %swarm_id, swarm_name = %swarm_name, "swarm created");
+
+        // ── 3. Create one task per workplan step ─────────────────────────
+        let mut task_ids: Vec<(String, String)> = Vec::with_capacity(workplan.steps.len());
+
+        for step in &workplan.steps {
+            let title = format!("{}: {}", step.id, step.description);
+            // Truncate title to 200 chars for readability
+            let title = if title.len() > 200 {
+                format!("{}...", &title[..197])
+            } else {
+                title
+            };
+
+            let task_body = json!({
+                "title": title,
+            });
+
+            let task_path = format!("/api/swarms/{}/tasks", swarm_id);
+            match self.client.post(&task_path, &task_body).await {
+                Ok(task_resp) => {
+                    let task_id = task_resp["id"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
+                    if task_id.is_empty() {
+                        warn!(step_id = %step.id, "task created but response missing 'id'");
+                    } else {
+                        debug!(step_id = %step.id, task_id = %task_id, "task created");
+                        task_ids.push((step.id.clone(), task_id));
+                    }
+                }
+                Err(e) => {
+                    warn!(step_id = %step.id, error = %e, "failed to create task — skipping");
+                }
+            }
+        }
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        info!(
+            swarm_id = %swarm_id,
+            swarm_name = %swarm_name,
+            tasks_created = task_ids.len(),
+            tasks_expected = workplan.steps.len(),
+            duration_ms,
+            "Swarm phase complete"
+        );
+
+        Ok(SwarmPhaseResult {
+            swarm_id,
+            swarm_name,
+            task_ids,
+            duration_ms,
+        })
+    }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+/// Generate a kebab-case swarm name from a feature description.
+///
+/// Max 40 characters, truncated at a word boundary.
+fn generate_swarm_name(description: &str) -> String {
+    let slug: String = description
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+
+    if slug.len() <= 40 {
+        return slug;
+    }
+
+    let truncated = &slug[..40];
+    if let Some(pos) = truncated.rfind('-') {
+        truncated[..pos].to_string()
+    } else {
+        truncated.to_string()
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn swarm_name_basic() {
+        let name = generate_swarm_name("Add user authentication via OAuth2");
+        assert_eq!(name, "add-user-authentication-via-oauth2");
+    }
+
+    #[test]
+    fn swarm_name_truncation() {
+        let long_desc = "This is a very long feature description that should be truncated to forty characters";
+        let name = generate_swarm_name(long_desc);
+        assert!(name.len() <= 40, "name '{}' is {} chars", name, name.len());
+        // Should end at a word boundary (hyphen)
+        assert!(!name.ends_with('-'));
+    }
+
+    #[test]
+    fn swarm_name_special_chars() {
+        let name = generate_swarm_name("Add $pecial ch@rs & stuff!");
+        assert!(!name.contains('$'));
+        assert!(!name.contains('@'));
+        assert!(!name.contains('&'));
+        assert!(!name.contains('!'));
+    }
+
+    #[test]
+    fn swarm_name_short() {
+        let name = generate_swarm_name("fix bug");
+        assert_eq!(name, "fix-bug");
+    }
+
+    #[test]
+    fn swarm_name_empty() {
+        let name = generate_swarm_name("");
+        assert_eq!(name, "");
+    }
+
+    #[test]
+    fn swarm_name_exactly_40() {
+        // "a-b" repeated to get exactly 40 chars
+        let desc = "a b a b a b a b a b a b a b a b a b a b";
+        let name = generate_swarm_name(desc);
+        assert!(name.len() <= 40);
+    }
+}
