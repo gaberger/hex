@@ -53,12 +53,32 @@ pub enum PlanAction {
     Schema,
 }
 
+/// Deserialize a JSON null or missing string as empty string.
+fn nullable_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
+
+/// Deserialize phases that may be an array, object, number, or null — only arrays are used.
+fn flexible_phases<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Phase>, D::Error> {
+    let val = serde_json::Value::deserialize(d)?;
+    match val {
+        serde_json::Value::Array(_) => {
+            serde_json::from_value(val).map_err(serde::de::Error::custom)
+        }
+        _ => Ok(Vec::new()), // object, number, null — treat as no phases
+    }
+}
+
 /// A workplan step.
 #[derive(Debug, Serialize, Deserialize)]
 struct Step {
+    #[serde(default)]
     id: String,
+    #[serde(default)]
     description: String,
+    #[serde(default, deserialize_with = "nullable_string")]
     adapter: String,
+    #[serde(default)]
     tier: u8,
     #[serde(default)]
     dependencies: Vec<String>,
@@ -76,19 +96,21 @@ struct Workplan {
     #[serde(default)]
     language: String,
     #[serde(default)]
+    status: String,
+    #[serde(default)]
     steps: Vec<Step>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flexible_phases")]
     phases: Vec<Phase>,
-    #[serde(default, rename = "createdAt")]
+    #[serde(default, alias = "createdAt", alias = "created")]
     created_at: String,
-    #[serde(default)]
-    created_at_alt: String,
     #[serde(default)]
     adr: String,
     #[serde(default)]
     description: String,
     #[serde(default)]
     priority: String,
+    #[serde(default)]
+    superseded_by: String,
 }
 
 /// A phase in the current workplan format.
@@ -141,11 +163,11 @@ impl Workplan {
         if !self.phases.is_empty() {
             self.phases.iter()
                 .flat_map(|p| &p.tasks)
-                .filter(|t| t.status == "completed")
+                .filter(|t| t.status == "done" || t.status == "completed")
                 .count()
         } else {
             self.steps.iter()
-                .filter(|s| s.status == "completed")
+                .filter(|s| s.status == "done" || s.status == "completed")
                 .count()
         }
     }
@@ -309,13 +331,14 @@ async fn create_plan(requirements: &[String], lang: &str, adr: Option<&str>, no_
             title: format!("Plan: {}", requirements.join(", ")),
             feature: String::new(),
             language: lang.to_string(),
+            status: "planned".to_string(),
             steps,
             phases: Vec::new(),
             created_at: chrono::Utc::now().to_rfc3339(),
-            created_at_alt: String::new(),
             adr: String::new(),
             description: String::new(),
             priority: String::new(),
+            superseded_by: String::new(),
         };
 
         let json = serde_json::to_string_pretty(&plan)?;
@@ -397,7 +420,27 @@ async fn list_plans() -> anyhow::Result<()> {
                             format!(" {}", plan.priority.red())
                         };
 
-                        println!("  {} {}{} {}{}", "\u{25cb}".dimmed(), title, adr_tag, progress, priority_tag);
+                        let status_icon = match plan.status.as_str() {
+                            "done" => "\u{2713}".green(),
+                            "in_progress" => "\u{25cf}".yellow(),
+                            "superseded" => "\u{2192}".dimmed(),
+                            "planned" => "\u{25cb}".dimmed(),
+                            _ => "\u{25cb}".dimmed(),
+                        };
+
+                        let status_tag = if plan.status.is_empty() {
+                            String::new()
+                        } else {
+                            let colored = match plan.status.as_str() {
+                                "done" => plan.status.green().to_string(),
+                                "in_progress" => plan.status.yellow().to_string(),
+                                "superseded" => plan.status.dimmed().to_string(),
+                                _ => plan.status.dimmed().to_string(),
+                            };
+                            format!(" [{}]", colored)
+                        };
+
+                        println!("  {} {}{}{} {}{}", status_icon, title, adr_tag, status_tag, progress, priority_tag);
                     } else {
                         println!("  {} {} (parse error)", "\u{25cb}".dimmed(), name);
                     }

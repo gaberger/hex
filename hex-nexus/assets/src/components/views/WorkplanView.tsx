@@ -224,7 +224,7 @@ const WorkplanView: Component = () => {
   });
 
   const sortedWorkplans = createMemo(() => {
-    return [...workplans()].sort((a, b) => {
+    return [...(workplans() ?? [])].sort((a, b) => {
       // Active first, then by creation time descending
       if (a.status === "active" && b.status !== "active") return -1;
       if (b.status === "active" && a.status !== "active") return 1;
@@ -303,7 +303,7 @@ const WorkplanView: Component = () => {
         <div>
           <h2 class="text-[22px] font-bold text-gray-100">Workplans</h2>
           <p class="mt-0.5 text-xs text-gray-400">
-            {workplans().length} execution{workplans().length !== 1 ? "s" : ""}
+            {(workplans() ?? []).length} execution{(workplans() ?? []).length !== 1 ? "s" : ""}
           </p>
         </div>
         <div class="flex items-center gap-2">
@@ -363,14 +363,14 @@ const WorkplanView: Component = () => {
       </Show>
 
       {/* Loading state */}
-      <Show when={workplanLoading() && workplans().length === 0}>
+      <Show when={workplanLoading() && (workplans() ?? []).length === 0}>
         <div class="flex flex-1 items-center justify-center">
           <p class="text-sm text-gray-500">Loading workplans...</p>
         </div>
       </Show>
 
       {/* Execution history table (shown above file list when there are executions) */}
-      <Show when={workplans().length > 0}>
+      <Show when={(workplans() ?? []).length > 0}>
         <section class="mb-6">
           <h3 class="mb-3 text-[12px] font-semibold uppercase tracking-wider text-gray-500">
             Execution History
