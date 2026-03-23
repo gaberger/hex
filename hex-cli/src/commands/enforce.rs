@@ -27,6 +27,8 @@ pub enum EnforceAction {
     },
     /// Show current enforcement mode (mandatory/advisory/disabled)
     Mode,
+    /// Output a system prompt for non-MCP models (ADR-2603221959 P6)
+    Prompt,
 }
 
 pub async fn run(action: EnforceAction) -> anyhow::Result<()> {
@@ -36,6 +38,7 @@ pub async fn run(action: EnforceAction) -> anyhow::Result<()> {
         EnforceAction::Disable { rule_id } => toggle(&rule_id, false).await,
         EnforceAction::Enable { rule_id } => toggle(&rule_id, true).await,
         EnforceAction::Mode => show_mode().await,
+        EnforceAction::Prompt => generate_prompt().await,
     }
 }
 
@@ -257,4 +260,24 @@ fn resolve_mode() -> String {
     }
 
     "mandatory".to_string()
+}
+
+/// Generate a system prompt for non-MCP models (ADR-2603221959 P6).
+/// Outputs the enforcement template with the current mode substituted.
+async fn generate_prompt() -> anyhow::Result<()> {
+    let mode = resolve_mode();
+    let is_mandatory = mode == "mandatory";
+
+    let template = crate::assets::Assets::get_str("templates/enforcement-system-prompt.md")
+        .ok_or_else(|| anyhow::anyhow!("enforcement-system-prompt.md not found in embedded assets"))?;
+
+    // Simple template substitution
+    let output = template
+        .replace("{{mode}}", &mode)
+        .replace("{{#if mandatory}}", if is_mandatory { "" } else { "<!-- " })
+        .replace("{{else}}", if is_mandatory { "<!-- " } else { "" })
+        .replace("{{/if}}", if is_mandatory { "" } else { " -->" });
+
+    println!("{}", output);
+    Ok(())
 }
