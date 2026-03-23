@@ -508,7 +508,7 @@ async fn gather_swarm_info(session: &DevSession, client: &NexusClient) -> Option
     let swarm_id = session.swarm_id.as_ref()?;
 
     // Try fetching from nexus
-    let swarms_data = client.get("/api/swarms").await.ok()?;
+    let swarms_data = client.get("/api/swarms/active").await.ok()?;
     let swarms = swarms_data.as_array()?;
 
     let swarm = swarms.iter().find(|s| {
