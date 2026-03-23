@@ -1,0 +1,148 @@
+{
+  "title": "Feature: v2 Swarm-Controlled Quality Orchestration — HexFlo drives compile/test/analyze/fix loop",
+  "feature": "swarm-quality-v2",
+  "language": "rust",
+  "status": "planned",
+  "adr": "ADR-2603232340",
+  "description": "Migrate quality loop from embedded validate_phase.rs logic to HexFlo swarm-controlled orchestration. Each quality gate and fix attempt becomes a tracked swarm task with agent assignment, cost tracking, and dashboard visibility. Swarm topology encodes hex architecture rules (tier ordering, parallel within tier, gate after each tier).",
+  "priority": "high",
+  "superseded_by": "",
+  "created_at": "2026-03-24T00:00:00.000000+00:00",
+  "phases": [
+    {
+      "name": "Quality Gate Tasks",
+      "description": "Extract quality gates into standalone swarm task types",
+      "steps": ["step-1", "step-2", "step-3"]
+    },
+    {
+      "name": "Fix Agent Tasks",
+      "description": "Fix attempts as tracked swarm tasks with agent assignment",
+      "steps": ["step-4", "step-5"]
+    },
+    {
+      "name": "Hex-Pipeline Topology",
+      "description": "New swarm topology that encodes hex architecture tier rules",
+      "steps": ["step-6", "step-7"]
+    },
+    {
+      "name": "Coordinator Intelligence",
+      "description": "HexFlo coordinator drives the loop, spawns agents, enforces Grade A",
+      "steps": ["step-8", "step-9", "step-10"]
+    },
+    {
+      "name": "Dashboard & Reporting",
+      "description": "Real-time visibility into quality loop execution",
+      "steps": ["step-11", "step-12"]
+    }
+  ],
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Define QualityGateTask type in hexflo-coordination WASM module. Fields: task_id, gate_type (compile/test/analyze), target_dir, language, status (pending/running/pass/fail), score, violations_count, error_output (first 4KB). New table + reducer in SpacetimeDB.",
+      "adapter": "secondary/spacetimedb",
+      "tier": 0,
+      "dependencies": [],
+      "status": "pending",
+      "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"]
+    },
+    {
+      "id": "step-2",
+      "description": "Define FixTask type in hexflo-coordination WASM module. Fields: task_id, gate_task_id (which gate failed), fix_type (compile/test/violation), target_file, error_context, model_used, tokens, cost_usd, status, result. Links fix attempts to the gate that triggered them.",
+      "adapter": "secondary/spacetimedb",
+      "tier": 0,
+      "dependencies": [],
+      "status": "pending",
+      "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"]
+    },
+    {
+      "id": "step-3",
+      "description": "Add REST endpoints for quality gate and fix tasks: POST /api/hexflo/quality-gate (create gate task), PATCH /api/hexflo/quality-gate/:id (update result), POST /api/hexflo/fix-task (create fix task), GET /api/hexflo/quality-gate/:id/fixes (list fixes for a gate).",
+      "adapter": "primary/http",
+      "tier": 1,
+      "dependencies": ["step-1", "step-2"],
+      "status": "pending",
+      "files": ["hex-nexus/src/routes/swarms.rs", "hex-nexus/src/routes/mod.rs"]
+    },
+    {
+      "id": "step-4",
+      "description": "Implement QualityGateAgent — a reusable agent definition that runs compile + test + hex analyze on a target directory and reports results back to HexFlo. Can be spawned by the swarm coordinator as a task. Reads gate_type to decide which checks to run.",
+      "adapter": "secondary/agent",
+      "tier": 1,
+      "dependencies": ["step-1"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/quality_agent.rs"]
+    },
+    {
+      "id": "step-5",
+      "description": "Implement FixAgent — a reusable agent that takes a FixTask, loads the appropriate prompt template (fix-compile/fix-tests/fix-violations), calls inference, writes the fixed file, and reports result back to HexFlo. Each fix is a separate tracked task.",
+      "adapter": "secondary/agent",
+      "tier": 1,
+      "dependencies": ["step-2"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/fix_agent.rs"]
+    },
+    {
+      "id": "step-6",
+      "description": "Add hex-pipeline topology to HexFlo. This topology encodes hexagonal architecture rules: tiers 0-4 execute in order, tasks within a tier run in parallel, a quality gate runs after each tier completes, the next tier is blocked until the gate passes. Different from generic 'pipeline' which is purely sequential.",
+      "adapter": "secondary/coordination",
+      "tier": 1,
+      "dependencies": [],
+      "status": "pending",
+      "files": ["hex-nexus/src/coordination/mod.rs", "spacetime-modules/hexflo-coordination/src/lib.rs"]
+    },
+    {
+      "id": "step-7",
+      "description": "Update hex dev workplan-to-swarm mapping. When creating a swarm from a workplan, use hex-pipeline topology. Group tasks by tier. After each tier's tasks complete, auto-create a quality gate task. The swarm status shows per-tier progress with gate results.",
+      "adapter": "primary/tui",
+      "tier": 2,
+      "dependencies": ["step-6"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/swarm_phase.rs"]
+    },
+    {
+      "id": "step-8",
+      "description": "Implement SwarmQualityCoordinator in hex-nexus. This component watches for quality gate task completions via SpacetimeDB subscription. On gate failure: creates FixTask(s) — one per violation/error. On fix completion: re-creates the quality gate task. Enforces max 3 iterations per gate. Updates swarm status with current grade.",
+      "adapter": "secondary/coordination",
+      "tier": 2,
+      "dependencies": ["step-3", "step-4", "step-5"],
+      "status": "pending",
+      "files": ["hex-nexus/src/coordination/quality.rs"]
+    },
+    {
+      "id": "step-9",
+      "description": "Add Grade A enforcement to swarm completion logic. A hex-pipeline swarm cannot be marked 'completed' unless the final quality gate passed with Grade A (or Grade B in auto mode). The swarm status shows the current grade prominently. hex swarm status shows the grade.",
+      "adapter": "secondary/coordination",
+      "tier": 2,
+      "dependencies": ["step-8"],
+      "status": "pending",
+      "files": ["hex-nexus/src/coordination/mod.rs", "hex-nexus/src/routes/swarms.rs"]
+    },
+    {
+      "id": "step-10",
+      "description": "Parallel fix execution. When multiple violations exist, the coordinator creates multiple FixTasks that can run concurrently (mesh sub-topology within the fix phase). Each fix agent works on a different file. After all fixes complete, re-gate. This is faster than sequential fixes.",
+      "adapter": "secondary/coordination",
+      "tier": 3,
+      "dependencies": ["step-8"],
+      "status": "pending",
+      "files": ["hex-nexus/src/coordination/quality.rs"]
+    },
+    {
+      "id": "step-11",
+      "description": "Dashboard: Quality Gate panel. Subscribe to QualityGateTask and FixTask tables via SpacetimeDB WebSocket. Show per-tier gate status (pass/fail/in-progress), fix attempts with cost, current grade with color coding (A=green, B=yellow, C/D/F=red). Live updates as gates and fixes execute.",
+      "adapter": "primary/dashboard",
+      "tier": 2,
+      "dependencies": ["step-1", "step-2"],
+      "status": "pending",
+      "files": ["hex-nexus/assets/src/components/fleet/QualityGatePanel.tsx"]
+    },
+    {
+      "id": "step-12",
+      "description": "Update hex report to read quality data from SpacetimeDB (QualityGateTask + FixTask tables) instead of session.quality_result. Show per-tier gate results, per-fix attempt details (model, cost, file, before/after). JSON output includes the full quality trail. Fallback to session file if SpacetimeDB unavailable.",
+      "adapter": "primary/cli",
+      "tier": 3,
+      "dependencies": ["step-3"],
+      "status": "pending",
+      "files": ["hex-cli/src/commands/report.rs"]
+    }
+  ]
+}
