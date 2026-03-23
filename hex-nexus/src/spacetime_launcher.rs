@@ -481,6 +481,7 @@ pub async fn publish_module(
         .arg(database)
         .arg("--module-path")
         .arg(module_path)
+        .arg("--delete-data=on-conflict")
         .arg("--yes")
         .output()
         .await

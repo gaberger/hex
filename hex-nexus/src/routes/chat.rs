@@ -487,7 +487,7 @@ async fn llm_bridge(
         None
     };
 
-    let (content, model_name, input_tokens, output_tokens) = if let Some(mut ep) = endpoint {
+    let (content, model_name, input_tokens, output_tokens, openrouter_cost) = if let Some(mut ep) = endpoint {
         // Apply requested model override if specified
         if let Some(ref model) = requested_model {
             ep.model = model.clone();
@@ -579,6 +579,7 @@ async fn llm_bridge(
         let model = model_name.clone();
         let in_tok = input_tokens;
         let out_tok = output_tokens;
+        let or_cost = openrouter_cost.clone();
 
         tokio::spawn(async move {
             let now = chrono::Utc::now().to_rfc3339();
@@ -631,6 +632,7 @@ async fn llm_bridge(
                         0, 0, // cache tokens
                         0,    // latency_ms — not measured at this layer
                         "0",  // cost_usd
+                        &or_cost, // openrouter_cost_usd
                         &now,
                     )
                     .await
@@ -645,44 +647,112 @@ async fn llm_bridge(
     signal_idle(&ws_tx, &topic);
 }
 
-/// Call a registered inference endpoint (OpenAI-compatible /v1/chat/completions or Ollama /api/chat)
+/// Result from an inference endpoint call.
+///
+/// The fifth field carries the OpenRouter actual cost (from `usage.cost`)
+/// as a string, or empty for non-OpenRouter providers.
+pub(crate) type InferenceResult = (String, String, u64, u64, String);
+
+/// Call a registered inference endpoint (OpenAI-compatible /v1/chat/completions,
+/// Ollama /api/chat, or OpenRouter /api/v1/chat/completions).
 pub(crate) async fn call_inference_endpoint(
     ep: &crate::routes::secrets::InferenceEndpointEntry,
     messages: &[serde_json::Value],
-) -> Result<(String, String, u64, u64), String> {
+) -> Result<InferenceResult, String> {
     let client = reqwest::Client::new();
     let model = if ep.model.is_empty() { "default".to_string() } else { ep.model.clone() };
+    let is_openrouter = ep.provider == "openrouter"
+        || ep.url.contains("openrouter.ai");
 
-    let (url, body) = match ep.provider.as_str() {
-        "ollama" => {
-            let url = format!("{}/api/chat", ep.url);
-            let body = json!({
-                "model": model,
-                "messages": messages,
-                "stream": false,
-            });
-            (url, body)
-        }
-        _ => {
-            // OpenAI-compatible (vLLM, OpenRouter, etc.)
-            let url = format!("{}/v1/chat/completions", ep.url);
-            let body = json!({
-                "model": model,
-                "messages": messages,
-                "max_tokens": 4096,
-            });
-            (url, body)
+    let (url, body) = if is_openrouter {
+        let url = "https://openrouter.ai/api/v1/chat/completions".to_string();
+        let body = json!({
+            "model": model,
+            "messages": messages,
+            "max_tokens": 4096,
+            "provider": {
+                "order": ["Together", "Fireworks", "DeepInfra", "Lepton"],
+            },
+            "route": "fallback",
+        });
+        (url, body)
+    } else {
+        match ep.provider.as_str() {
+            "ollama" => {
+                let url = format!("{}/api/chat", ep.url);
+                let body = json!({
+                    "model": model,
+                    "messages": messages,
+                    "stream": false,
+                });
+                (url, body)
+            }
+            _ => {
+                // OpenAI-compatible (vLLM, etc.)
+                let url = format!("{}/v1/chat/completions", ep.url);
+                let body = json!({
+                    "model": model,
+                    "messages": messages,
+                    "max_tokens": 4096,
+                });
+                (url, body)
+            }
         }
     };
 
     let mut req = client.post(&url).json(&body);
-    if !ep.secret_key.is_empty() {
+
+    if is_openrouter {
+        // OpenRouter requires its own API key + identification headers
+        if ep.secret_key.is_empty() {
+            return Err("OPENROUTER_API_KEY not set — register with `hex secrets set OPENROUTER_API_KEY <key>` then `hex inference add openrouter`".into());
+        }
+        req = req
+            .header("Authorization", format!("Bearer {}", ep.secret_key))
+            .header("HTTP-Referer", "https://github.com/hex-intf")
+            .header("X-Title", "hex-agent");
+    } else if !ep.secret_key.is_empty() {
         req = req.header("Authorization", format!("Bearer {}", ep.secret_key));
     }
 
     let resp = req.send().await.map_err(|e| format!("connection: {e}"))?;
     let status = resp.status().as_u16();
+
+    // OpenRouter-specific error handling
     if status >= 400 {
+        if is_openrouter {
+            let retry_after = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let err = resp.text().await.unwrap_or_default();
+            return match status {
+                402 => Err("OpenRouter: insufficient credits — top up at https://openrouter.ai/credits".into()),
+                429 => {
+                    let msg = if let Some(ra) = retry_after {
+                        format!("OpenRouter: rate limited — retry after {ra}s")
+                    } else {
+                        "OpenRouter: rate limited — back off and retry".into()
+                    };
+                    Err(msg)
+                }
+                502 => {
+                    // Try to extract which upstream provider failed
+                    let detail = if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&err) {
+                        parsed["error"]["message"]
+                            .as_str()
+                            .unwrap_or("upstream provider down")
+                            .to_string()
+                    } else {
+                        "upstream provider down".to_string()
+                    };
+                    tracing::warn!(status = 502, detail = %detail, "OpenRouter upstream failure");
+                    Err(format!("OpenRouter 502: {detail}"))
+                }
+                _ => Err(format!("OpenRouter HTTP {status}: {}", truncate_str(&err, 200))),
+            };
+        }
         let err = resp.text().await.unwrap_or_default();
         return Err(format!("HTTP {status}: {}", truncate_str(&err, 200)));
     }
@@ -695,7 +765,27 @@ pub(crate) async fn call_inference_endpoint(
             let model_used = data["model"].as_str().unwrap_or(&model).to_string();
             let prompt_tokens = data["prompt_eval_count"].as_u64().unwrap_or(0);
             let eval_tokens = data["eval_count"].as_u64().unwrap_or(0);
-            Ok((content, model_used, prompt_tokens, eval_tokens))
+            Ok((content, model_used, prompt_tokens, eval_tokens, String::new()))
+        }
+        _ if is_openrouter => {
+            let content = data["choices"][0]["message"]["content"]
+                .as_str().unwrap_or("(empty)").to_string();
+            let model_used = data["model"].as_str().unwrap_or(&model).to_string();
+            let input_tokens = data["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
+            let output_tokens = data["usage"]["completion_tokens"].as_u64().unwrap_or(0);
+            // Extract actual cost from OpenRouter's usage.cost field
+            let openrouter_cost = data["usage"]["cost"]
+                .as_f64()
+                .map(|c| format!("{:.8}", c))
+                .unwrap_or_default();
+            if !openrouter_cost.is_empty() {
+                tracing::info!(
+                    openrouter_cost_usd = %openrouter_cost,
+                    model = %model_used,
+                    "OpenRouter actual cost"
+                );
+            }
+            Ok((content, model_used, input_tokens, output_tokens, openrouter_cost))
         }
         _ => {
             // OpenAI-compatible response format
@@ -704,7 +794,7 @@ pub(crate) async fn call_inference_endpoint(
             let model_used = data["model"].as_str().unwrap_or(&model).to_string();
             let input_tokens = data["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
             let output_tokens = data["usage"]["completion_tokens"].as_u64().unwrap_or(0);
-            Ok((content, model_used, input_tokens, output_tokens))
+            Ok((content, model_used, input_tokens, output_tokens, String::new()))
         }
     }
 }
@@ -713,7 +803,7 @@ pub(crate) async fn call_inference_endpoint(
 pub(crate) async fn call_anthropic(
     api_key: &str,
     messages: &[serde_json::Value],
-) -> Result<(String, String, u64, u64), String> {
+) -> Result<InferenceResult, String> {
     let client = reqwest::Client::new();
     let body = json!({
         "model": "claude-sonnet-4-20250514",
@@ -748,7 +838,7 @@ pub(crate) async fn call_anthropic(
     let model = data["model"].as_str().unwrap_or("unknown").to_string();
     let input_tokens = data["usage"]["input_tokens"].as_u64().unwrap_or(0);
     let output_tokens = data["usage"]["output_tokens"].as_u64().unwrap_or(0);
-    Ok((content, model, input_tokens, output_tokens))
+    Ok((content, model, input_tokens, output_tokens, String::new()))
 }
 
 fn send_error(ws_tx: &tokio::sync::broadcast::Sender<WsEnvelope>, topic: &str, msg: &str) {
