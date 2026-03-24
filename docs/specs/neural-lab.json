@@ -1,0 +1,142 @@
+{
+  "feature": "neural-lab",
+  "description": "Encode neural network architecture, experiment lifecycle, and autonomous research loops as SpacetimeDB transactional state — inspired by karpathy/autoresearch methodology",
+
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "Create a network config and retrieve it",
+      "given": "The neural-lab module is published and no configs exist",
+      "when": "A reducer call creates a NetworkConfig with n_layer=12, n_head=6, n_embd=768, window_pattern='SSSL'",
+      "then": "The config is persisted with status='candidate', a generated UUID id, parent_id='', and created_at timestamp",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "Create config with parent lineage",
+      "given": "A NetworkConfig 'A' exists with id='cfg-001'",
+      "when": "A new config 'B' is created with parent_id='cfg-001' and n_embd increased to 1024",
+      "then": "Config 'B' has parent_id='cfg-001' and all other fields copied from 'A' except n_embd=1024",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "Create and start an experiment",
+      "given": "A NetworkConfig exists with id='cfg-001'",
+      "when": "experiment_create is called with config_id='cfg-001', hypothesis='increase width', mutation_diff='{\"n_embd\": [768, 1024]}'",
+      "then": "An Experiment row is inserted with status='queued', the config_id linked, and baseline_bpb copied from the parent config's frontier",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "Experiment kept on improvement",
+      "given": "An Experiment exists with status='training', baseline_bpb='1.42'",
+      "when": "experiment_complete is called with val_bpb='1.38' (improvement of 0.04)",
+      "then": "Status is set to 'kept', improvement_bpb='0.04', and ResearchFrontier is updated with this experiment as best",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "Experiment discarded on regression",
+      "given": "An Experiment exists with status='training', baseline_bpb='1.42'",
+      "when": "experiment_complete is called with val_bpb='1.45' (regression of -0.03)",
+      "then": "Status is set to 'discarded', improvement_bpb='-0.03', and ResearchFrontier is NOT updated",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "HappyPath",
+      "description": "Scheduled reducer auto-generates mutation candidates",
+      "given": "ResearchFrontier has best_config_id='cfg-001' and fewer than MIN_QUEUE_DEPTH experiments are queued",
+      "when": "research_loop_tick() fires",
+      "then": "New Experiment rows are inserted with status='queued', each with a different deterministic mutation strategy, and config variants are created with parent_id='cfg-001'",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "HappyPath",
+      "description": "Frontier tracks best per lineage",
+      "given": "Two experiments completed for lineage 'gpt-small': exp-A with val_bpb='1.42' (kept) and exp-B with val_bpb='1.38' (kept)",
+      "when": "frontier_consolidate() runs",
+      "then": "ResearchFrontier for 'gpt-small' shows best_val_bpb='1.38', best_experiment_id=exp-B, total_kept=2",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "ErrorHandling",
+      "description": "Experiment failure is recorded without affecting frontier",
+      "given": "An Experiment exists with status='training'",
+      "when": "experiment_fail is called with error_message='OOM on GPU node'",
+      "then": "Status is set to 'failed', error_message is stored, ResearchFrontier is unchanged, and the experiment does not count toward total_kept or total_discarded",
+      "negative_spec": false
+    },
+    {
+      "id": "S09",
+      "category": "EdgeCase",
+      "description": "Stale experiment cleanup reclaims timed-out jobs",
+      "given": "An Experiment with status='training' has wall_time exceeding 2x time_budget_secs",
+      "when": "stale_experiment_cleanup() fires",
+      "then": "The experiment status is set to 'failed' with error_message='timeout: exceeded 2x time budget'",
+      "negative_spec": false
+    },
+    {
+      "id": "S10",
+      "category": "EdgeCase",
+      "description": "First experiment in a lineage has no baseline",
+      "given": "No ResearchFrontier exists for lineage 'gpt-small'",
+      "when": "experiment_complete is called with val_bpb='1.50'",
+      "then": "The experiment is always 'kept' (no baseline to compare against), a new ResearchFrontier is created with best_val_bpb='1.50'",
+      "negative_spec": false
+    },
+    {
+      "id": "S11",
+      "category": "Integration",
+      "description": "hex-nexus dispatches queued experiments to GPU fleet",
+      "given": "hex-nexus is subscribed to the Experiment table via WebSocket",
+      "when": "research_loop_tick() inserts an Experiment with status='queued'",
+      "then": "hex-nexus receives the subscription event, selects an available GPU node from fleet-state, and calls experiment_start reducer with the gpu_node_id",
+      "negative_spec": false
+    },
+    {
+      "id": "S12",
+      "category": "Integration",
+      "description": "REST API exposes frontier and experiment history",
+      "given": "neural-lab module has experiments and a frontier",
+      "when": "GET /api/neural-lab/frontier/gpt-small is called",
+      "then": "Response includes best_config (full NetworkConfig), best_val_bpb, recent experiments (last 20), and total_experiments/kept/discarded counts",
+      "negative_spec": false
+    },
+    {
+      "id": "S13",
+      "category": "Integration",
+      "description": "CLI lists experiments with keep/discard verdicts",
+      "given": "Multiple experiments exist for lineage 'gpt-small'",
+      "when": "hex neural-lab experiments --lineage gpt-small is run",
+      "then": "Output shows a table with columns: id, hypothesis, val_bpb, improvement, status (kept/discarded/failed), wall_time, gpu_node",
+      "negative_spec": false
+    },
+    {
+      "id": "S14",
+      "category": "Security",
+      "description": "Config creation validates field ranges",
+      "given": "No configs exist",
+      "when": "config_create is called with n_layer=0 or n_embd=0 or vocab_size < 256",
+      "then": "The reducer rejects the config with an error — no row is inserted",
+      "negative_spec": true
+    },
+    {
+      "id": "S15",
+      "category": "HappyPath",
+      "description": "Mutation strategy table tracks which strategies produce improvements",
+      "given": "MutationStrategy table has entries for 'widen', 'deepen', 'attention'",
+      "when": "mutation_strategy_update() fires and 'widen' has produced 5 kept / 2 discarded while 'deepen' has 1 kept / 6 discarded",
+      "then": "The 'widen' strategy gets higher selection_weight than 'deepen', and future research_loop_tick() calls prefer 'widen'",
+      "negative_spec": false
+    }
+  ]
+}

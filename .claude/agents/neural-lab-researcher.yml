@@ -1,0 +1,166 @@
+# neural-lab-researcher — SpacetimeDB WASM module developer for neural network encoding
+# Implements tables, reducers, and scheduled reducers for autonomous research loops
+
+name: neural-lab-researcher
+type: coder
+version: "1.0.0"
+description: >
+  Develops the neural-lab SpacetimeDB WASM module that encodes neural network
+  architecture as transactional state. Implements tables (NetworkConfig, Experiment,
+  ResearchFrontier), CRUD reducers, scheduled reducers for autonomous experiment
+  loops, and mutation strategy learning. Follows existing spacetime-modules patterns.
+
+model:
+  tier: 2
+  preferred: sonnet
+  fallback: haiku
+  upgrade_to: opus
+  upgrade_condition: >
+    Upgrade to Opus when: scheduled reducer logic requires complex state machine
+    reasoning, or when keep/discard branching logic has edge cases after 3 iterations.
+
+context:
+  load_strategy:
+    - level: L2
+      scope: "spacetime-modules/rl-engine/src/lib.rs"
+      purpose: Reference pattern for SpacetimeDB table definitions and reducers
+    - level: L2
+      scope: "spacetime-modules/hexflo-coordination/src/lib.rs"
+      purpose: Reference pattern for swarm/task/agent tables and scheduled reducers
+    - level: L2
+      scope: "spacetime-modules/inference-gateway/src/lib.rs"
+      purpose: Reference pattern for string-encoded floats and JSON fields
+    - level: L1
+      scope: "spacetime-modules/Cargo.toml"
+      purpose: Workspace configuration and SpacetimeDB dependency version
+    - level: L3
+      scope: "spacetime-modules/neural-lab/src/lib.rs"
+      purpose: The file being actively developed
+      load: on_demand
+    - level: L1
+      scope: "docs/adrs/ADR-2603241230-neural-network-encoding-spacetimedb-wasm.md"
+      purpose: Architecture decision and table schemas
+    - level: L1
+      scope: "docs/specs/neural-lab.json"
+      purpose: Behavioral specifications to validate against
+
+  token_budget:
+    max: 120000
+    reserved_response: 25000
+    allocation:
+      reference_modules: 15000
+      adr_and_specs: 10000
+      target_module: 20000
+      error_context: 10000
+      generation_space: 65000
+
+constraints:
+  - Follow SpacetimeDB table patterns from existing modules (rl-engine, hexflo-coordination)
+  - Use String type for floats (SpacetimeDB precision convention)
+  - Use String type for booleans (SpacetimeDB workaround)
+  - All table fields use snake_case
+  - All timestamps as ISO 8601 strings
+  - IDs as UUID strings with #[unique] attribute
+  - Reducer functions take &ReducerContext as first parameter
+  - Validate all inputs in reducers (no silent failures)
+  - Scheduled reducers use SpacetimeDB schedule_at or repeat patterns
+  - Module must compile with cargo build -p neural-lab
+  - Never import from other WASM modules (per-module database isolation)
+
+tools:
+  required:
+    - Read
+    - Write
+    - Edit
+    - Bash
+    - Glob
+    - Grep
+  optional:
+    - mcp__hex__hex_hexflo_task_complete
+    - mcp__hex__hex_hexflo_memory_store
+
+inputs:
+  task:
+    type: WorkplanStep
+    required: true
+    description: The specific workplan step to implement
+  adr:
+    type: string
+    required: true
+    description: Path to the ADR document
+  specs:
+    type: string
+    required: true
+    description: Path to the behavioral specs
+
+outputs:
+  code_units:
+    type: CodeUnit[]
+    description: All files created or modified
+  compile_result:
+    type: object
+    schema:
+      success: boolean
+      warnings: number
+      errors: string[]
+
+workflow:
+  phases:
+    - id: study_patterns
+      name: "Study Existing Module Patterns"
+      steps:
+        - Read rl-engine/src/lib.rs for table + reducer patterns
+        - Read hexflo-coordination/src/lib.rs for scheduled reducer patterns
+        - Read inference-gateway/src/lib.rs for string-float and JSON patterns
+        - Note the SpacetimeDB SDK version from workspace Cargo.toml
+
+    - id: implement
+      name: "Implement Tables and Reducers"
+      steps:
+        - Define all tables with correct types and attributes
+        - Implement CRUD reducers with input validation
+        - Implement scheduled reducers with correct timing
+        - Add constants (MIN_QUEUE_DEPTH, EXPLORATION_BONUS, etc.)
+
+    - id: verify
+      name: "Compile and Verify"
+      steps:
+        - Run cargo build -p neural-lab
+        - Fix any compilation errors
+        - Run cargo clippy -p neural-lab -- -D warnings
+        - Verify all behavioral specs are covered
+
+  feedback_loop:
+    max_iterations: 5
+    gates:
+      - name: compile
+        command:
+          rust: "cargo build -p neural-lab"
+        timeout_ms: 60000
+        on_fail: |
+          Parse compiler errors. Common issues:
+            - Missing spacetimedb imports (use spacetimedb::{table, reducer, ...})
+            - Wrong Table trait methods (filter_by vs iter)
+            - String vs &str mismatches
+            - Missing #[derive(Clone, Debug)]
+
+      - name: clippy
+        command:
+          rust: "cargo clippy -p neural-lab -- -D warnings"
+        timeout_ms: 30000
+        on_fail: |
+          Fix clippy warnings. Common in SpacetimeDB modules:
+            - Unnecessary clones (SpacetimeDB tables return owned values)
+            - Unused variables in reducers (prefix with _)
+
+    on_max_iterations:
+      action: escalate
+      message: >
+        neural-lab module failed after {{max_iterations}} iterations.
+        Last gate: {{last_failed_gate}}. Requesting human review.
+
+  commit:
+    when: all_gates_pass
+    message_template: "feat(neural-lab): {{step_description}}"
+    include:
+      - "spacetime-modules/neural-lab/**"

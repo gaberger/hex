@@ -38,7 +38,7 @@ fn default_stdb_host() -> String {
 }
 
 fn default_stdb_database() -> String {
-    "hexflo-coordination".to_string()
+    "hex".to_string()
 }
 
 // ── Config Loading ───────────────────────────────────────

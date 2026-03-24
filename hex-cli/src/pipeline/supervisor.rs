@@ -1139,29 +1139,122 @@ impl Supervisor {
         match role {
             "hex-coder" => {
                 let phase = CodePhase::from_env();
-                // Execute code generation for each workplan step in this tier
-                for step in workplan_steps {
-                    // Build a minimal WorkplanData for the step
-                    let step_workplan = WorkplanData {
-                        id: "supervisor-tier".into(),
-                        title: workplan_summary.to_string(),
-                        specs: None,
-                        adr: None,
-                        created: None,
-                        status: None,
-                        status_note: None,
-                        topology: None,
-                        budget: None,
-                        steps: vec![(*step).clone()],
-                        merge_order: None,
-                        risk_register: None,
-                        success_criteria: None,
-                        dependencies: None,
-                    };
-                    phase
-                        .execute_step(step, &step_workplan, model_override, provider_pref)
-                        .await
-                        .with_context(|| format!("code phase step {} failed", step.id))?;
+
+                // Load YAML agent definition for phase-based workflow
+                let agent_def = AgentDefinition::load("hex-coder");
+
+                let use_workflow = agent_def
+                    .as_ref()
+                    .and_then(|d| d.workflow.as_ref())
+                    .map(|w| w.is_phase_based())
+                    .unwrap_or(false);
+
+                if use_workflow {
+                    let workflow = agent_def.as_ref().unwrap().workflow.as_ref().unwrap();
+
+                    // Build engine with adapter vars from the first workplan step
+                    let first_adapter = workplan_steps
+                        .first()
+                        .and_then(|s| s.adapter.as_deref());
+                    let first_adapter_name = first_adapter
+                        .and_then(|a| a.rsplit('/').next());
+                    let engine = self.workflow_engine_for_step(
+                        first_adapter,
+                        first_adapter_name,
+                    );
+
+                    info!(
+                        phases = workflow.phases.len(),
+                        "running YAML workflow phases for hex-coder"
+                    );
+
+                    // Execute structured TDD phases (pre_validate → red → green → refactor → gate)
+                    let phase_results = engine.execute_phases(workflow);
+                    for pr in &phase_results {
+                        if let Some(ref gf) = pr.gate_failure {
+                            warn!(
+                                phase = %pr.phase_id,
+                                gate = %gf.gate_name,
+                                "blocking gate recorded — supervisor will enforce"
+                            );
+                        }
+                    }
+
+                    // Execute code generation for each workplan step
+                    for step in workplan_steps {
+                        let step_workplan = WorkplanData {
+                            id: "supervisor-tier".into(),
+                            title: workplan_summary.to_string(),
+                            specs: None,
+                            adr: None,
+                            created: None,
+                            status: None,
+                            status_note: None,
+                            topology: None,
+                            budget: None,
+                            steps: vec![(*step).clone()],
+                            merge_order: None,
+                            risk_register: None,
+                            success_criteria: None,
+                            dependencies: None,
+                        };
+                        phase
+                            .execute_step(step, &step_workplan, model_override, provider_pref)
+                            .await
+                            .with_context(|| format!("code phase step {} failed", step.id))?;
+                    }
+
+                    // Run feedback loop if defined (compile → lint → test gates)
+                    if let Some(ref fl) = workflow.feedback_loop {
+                        info!(
+                            max_iterations = fl.max_iterations,
+                            gates = fl.gates.len(),
+                            "running feedback loop"
+                        );
+                        let (iterations, escalated, escalation_msg) =
+                            engine.run_feedback_loop(fl);
+                        let total_iterations = iterations.len();
+                        let all_passed = iterations
+                            .last()
+                            .map(|last| last.iter().all(|g| g.success))
+                            .unwrap_or(false);
+                        info!(
+                            iterations = total_iterations,
+                            all_passed,
+                            "feedback loop complete"
+                        );
+                        if escalated {
+                            warn!(
+                                "feedback loop escalated after {} iterations: {:?}",
+                                total_iterations,
+                                escalation_msg
+                            );
+                        }
+                    }
+                } else {
+                    // Fallback: direct CodePhase execution (no YAML workflow)
+                    for step in workplan_steps {
+                        let step_workplan = WorkplanData {
+                            id: "supervisor-tier".into(),
+                            title: workplan_summary.to_string(),
+                            specs: None,
+                            adr: None,
+                            created: None,
+                            status: None,
+                            status_note: None,
+                            topology: None,
+                            budget: None,
+                            steps: vec![(*step).clone()],
+                            merge_order: None,
+                            risk_register: None,
+                            success_criteria: None,
+                            dependencies: None,
+                        };
+                        phase
+                            .execute_step(step, &step_workplan, model_override, provider_pref)
+                            .await
+                            .with_context(|| format!("code phase step {} failed", step.id))?;
+                    }
                 }
             }
             "hex-reviewer" => {
