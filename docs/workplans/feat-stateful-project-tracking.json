@@ -1,6 +1,7 @@
 {
   "id": "feat-stateful-project-tracking",
   "title": "Feature: Stateful Project Tracking Service",
+  "adr": "ADR-011",
   "status": "superseded",
   "superseded_by": "feat-checkpoint-remaining.json",
   "status_note": "Steps 1-5 completed. Only integration tests remain — tracked in feat-checkpoint-remaining.json.",

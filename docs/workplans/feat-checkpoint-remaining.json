@@ -1,5 +1,6 @@
 {
   "feature": "checkpoint-remaining",
+  "adr": "ADR-011",
   "parent_workplan": "feat-stateful-project-tracking.json",
   "status": "done",
   "status_note": "All 5 integration tests passing (92 assertions, 1.4s). Closed 2026-03-22.",
