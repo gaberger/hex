@@ -27,6 +27,7 @@ use commands::{
     inbox::InboxAction,
     init::InitArgs,
     memory::MemoryAction,
+    neural_lab::NeuralLabAction,
     nexus::NexusAction,
     plan::PlanAction,
     project::ProjectAction,
@@ -96,6 +97,12 @@ enum Commands {
     Memory {
         #[command(subcommand)]
         action: MemoryAction,
+    },
+    /// Neural architecture lab (experiment, mutate, evaluate model configs)
+    #[command(name = "neural-lab")]
+    NeuralLab {
+        #[command(subcommand)]
+        action: NeuralLabAction,
     },
     /// Architecture Decision Records
     Adr {
@@ -211,6 +218,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Task { action } => commands::task::run(action).await,
         Commands::Inbox { action } => commands::inbox::run(action).await,
         Commands::Memory { action } => commands::memory::run(action).await,
+        Commands::NeuralLab { action } => commands::neural_lab::run(action).await,
         Commands::Adr { action } => commands::adr::run(action).await,
         Commands::Project { action } => commands::project::run(action).await,
         Commands::Analyze { path, strict, adr_compliance, json } => {

@@ -145,6 +145,9 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_secrets_vault_get",
     // Agent lifecycle queries (read-only)
     "hex_agent_id", "hex_agent_info", "hex_agent_audit",
+    // Neural Lab (read-only queries)
+    "hex_neural_lab_config_list", "hex_neural_lab_experiment_list",
+    "hex_neural_lab_frontier", "hex_neural_lab_strategies",
 ];
 
 /// Build enforcement context from tool name and args.
@@ -858,6 +861,80 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                     "details": details,
                 }))
             }
+        }
+
+        // ── Neural Lab ──
+        "hex_neural_lab_config_create" => {
+            let mut body = serde_json::json!({});
+            if let Some(n) = args.get("name").and_then(|v| v.as_str()) { body["name"] = serde_json::json!(n); }
+            if let Some(p) = args.get("parent_id").and_then(|v| v.as_str()) { body["parent_id"] = serde_json::json!(p); }
+            if let Some(v) = args.get("n_layer").and_then(|v| v.as_u64()) { body["n_layer"] = serde_json::json!(v); }
+            if let Some(v) = args.get("n_head").and_then(|v| v.as_u64()) { body["n_head"] = serde_json::json!(v); }
+            if let Some(v) = args.get("n_embd").and_then(|v| v.as_u64()) { body["n_embd"] = serde_json::json!(v); }
+            if let Some(v) = args.get("vocab_size").and_then(|v| v.as_u64()) { body["vocab_size"] = serde_json::json!(v); }
+            if let Some(v) = args.get("window_pattern").and_then(|v| v.as_str()) { body["window_pattern"] = serde_json::json!(v); }
+            if let Some(v) = args.get("activation").and_then(|v| v.as_str()) { body["activation"] = serde_json::json!(v); }
+            nexus.post("/api/neural-lab/configs", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_neural_lab_config_list" => {
+            let mut query_parts = Vec::new();
+            if let Some(s) = args.get("status").and_then(|v| v.as_str()) {
+                query_parts.push(format!("status={}", s));
+            }
+            if let Some(l) = args.get("lineage").and_then(|v| v.as_str()) {
+                query_parts.push(format!("lineage={}", l));
+            }
+            let query = if query_parts.is_empty() { String::new() } else { format!("?{}", query_parts.join("&")) };
+            nexus.get(&format!("/api/neural-lab/configs{}", query)).await.map_err(|e| e.to_string())
+        }
+
+        "hex_neural_lab_experiment_create" => {
+            let mut body = serde_json::json!({
+                "config_id": args.get("config_id").and_then(|v| v.as_str()).unwrap_or(""),
+                "hypothesis": args.get("hypothesis").and_then(|v| v.as_str()).unwrap_or(""),
+            });
+            if let Some(l) = args.get("lineage").and_then(|v| v.as_str()) {
+                body["lineage"] = serde_json::json!(l);
+            }
+            nexus.post("/api/neural-lab/experiments", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_neural_lab_experiment_list" => {
+            let mut query_parts = Vec::new();
+            if let Some(l) = args.get("lineage").and_then(|v| v.as_str()) {
+                query_parts.push(format!("lineage={}", l));
+            }
+            if let Some(s) = args.get("status").and_then(|v| v.as_str()) {
+                query_parts.push(format!("status={}", s));
+            }
+            let query = if query_parts.is_empty() { String::new() } else { format!("?{}", query_parts.join("&")) };
+            nexus.get(&format!("/api/neural-lab/experiments{}", query)).await.map_err(|e| e.to_string())
+        }
+
+        "hex_neural_lab_frontier" => {
+            let lineage = args.get("lineage").and_then(|v| v.as_str()).unwrap_or("default");
+            nexus.get(&format!("/api/neural-lab/frontier/{}", lineage)).await.map_err(|e| e.to_string())
+        }
+
+        "hex_neural_lab_strategies" => {
+            nexus.get("/api/neural-lab/strategies").await.map_err(|e| e.to_string())
+        }
+
+        "hex_neural_lab_loop_start" => {
+            let lineage = args.get("lineage").and_then(|v| v.as_str()).unwrap_or("default");
+            nexus.post("/api/neural-lab/loop/start", &serde_json::json!({
+                "lineage": lineage,
+                "status": "active",
+            })).await.map_err(|e| e.to_string())
+        }
+
+        "hex_neural_lab_loop_stop" => {
+            let lineage = args.get("lineage").and_then(|v| v.as_str()).unwrap_or("default");
+            nexus.post("/api/neural-lab/loop/stop", &serde_json::json!({
+                "lineage": lineage,
+                "status": "stopped",
+            })).await.map_err(|e| e.to_string())
         }
 
         _ => Err(format!("Unknown tool: {}", name)),

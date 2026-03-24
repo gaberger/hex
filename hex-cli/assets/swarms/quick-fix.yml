@@ -1,0 +1,75 @@
+# quick-fix — Minimal pipeline for small changes and bug fixes
+# Used by: hex dev start "fix typo" --quick
+
+name: quick-fix
+version: "1.0.0"
+description: >
+  Fast pipeline for small fixes. Code generation + compile check only.
+  No review, no tests, no docs. For trivial changes where speed matters.
+
+topology: pipeline
+
+inference_defaults:
+  provider: openrouter
+  endpoint: /api/inference/complete
+  fallback_chain: [openrouter/free]
+  temperature: 0.2
+  timeout_ms: 60000
+
+agents:
+  - role: hex-coder
+    prompt: agent-coder.md
+    cardinality: per_workplan_step
+    inference:
+      task_type: code_generation
+      model: meta-llama/llama-4-maverick
+      fallback: openrouter/free
+      max_tokens: 4096
+    context:
+      token_budget: 50000
+      includes:
+        - "{{workplan_step}}"
+        - "{{port_interfaces}}"
+        - "{{architecture_rules}}"
+        - "{{language}}"
+    output:
+      type: source_file
+      write_to: "{{output_dir}}/{{inferred_path}}"
+
+  - role: hex-fixer
+    prompt: agent-fixer.md
+    cardinality: per_issue
+    triggered_by: [compile_check]
+    inference:
+      task_type: code_edit
+      model: meta-llama/llama-4-maverick    # cheap model for quick fixes
+      fallback: openrouter/free
+      max_tokens: 4096
+    context:
+      token_budget: 30000
+      includes:
+        - "{{source_file}}"
+        - "{{compile_errors}}"
+        - "{{architecture_rules}}"
+    output:
+      type: source_file
+      write_to: "{{source_file}}"
+
+objectives:
+  - id: CodeGenerated
+    required: true
+    evaluate: check_source_files_exist
+  - id: CodeCompiles
+    required: true
+    depends_on: [CodeGenerated]
+    evaluate:
+      command: "npx tsc --noEmit"
+      alt_command: "cargo check"
+
+iteration:
+  max_per_tier: 3
+  on_max_iterations: report_and_continue
+
+grade_thresholds:
+  auto:
+    minimum: null

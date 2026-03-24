@@ -1,25 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": "1.0.0",
-  "description": "hex MCP tool definitions — installed into target projects by `hex init`. Single source of truth for CLI, MCP server, and SpacetimeDB sync.",
-  "server": {
-    "name": "hex",
-    "command": "hex",
-    "args": ["mcp"],
-    "transport": "stdio",
-    "protocolVersion": "2024-11-05"
-  },
+  "description": "hex MCP tool definitions — single source of truth for CLI, MCP server, and SpacetimeDB sync",
   "tools": [
     {
       "name": "hex_analyze",
       "category": "analysis",
-      "cli": "hex analyze <path>",
-      "description": "Architecture health check: boundary violations, dead exports, circular deps. Runs tree-sitter analysis against hexagonal import rules.",
+      "description": "Architecture health check: boundary violations, dead exports, circular deps",
       "route": { "method": "POST", "path": "/api/analyze" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "Project root path to analyze (default: '.')" }
+          "path": { "type": "string", "description": "Project root path to analyze" }
         },
         "required": ["path"]
       }
@@ -27,8 +19,7 @@
     {
       "name": "hex_analyze_json",
       "category": "analysis",
-      "cli": "hex analyze <path> --format json",
-      "description": "Architecture health check returning raw JSON for programmatic consumption by agents and hooks.",
+      "description": "Architecture health check returning raw JSON (for programmatic use)",
       "route": { "method": "POST", "path": "/api/analyze" },
       "inputSchema": {
         "type": "object",
@@ -41,8 +32,7 @@
     {
       "name": "hex_status",
       "category": "analysis",
-      "cli": "hex status",
-      "description": "Show project status: service health, registered agents, active swarms, architecture score.",
+      "description": "Show project status and service health",
       "route": { "method": "GET", "path": "/api/version" },
       "inputSchema": {
         "type": "object",
@@ -53,15 +43,14 @@
     {
       "name": "hex_hexflo_swarm_init",
       "category": "swarm",
-      "cli": "hex swarm init <name> [topology]",
-      "description": "Initialize a new HexFlo swarm for coordinated multi-agent feature development. Topologies: hierarchical (default), mesh, pipeline.",
+      "description": "Initialize a new swarm for coordinated multi-agent work",
       "route": { "method": "POST", "path": "/api/swarms" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "name": { "type": "string", "description": "Swarm name (usually the feature name)" },
-          "project_id": { "type": "string", "description": "Project identifier (default: current directory)" },
-          "topology": { "type": "string", "enum": ["hierarchical", "mesh", "pipeline"], "description": "Swarm topology (default: hierarchical)" }
+          "name": { "type": "string", "description": "Swarm name" },
+          "project_id": { "type": "string", "description": "Project identifier" },
+          "topology": { "type": "string", "description": "Topology: hierarchical, mesh, star" }
         },
         "required": ["name", "project_id"]
       }
@@ -69,8 +58,7 @@
     {
       "name": "hex_hexflo_swarm_status",
       "category": "swarm",
-      "cli": "hex swarm status",
-      "description": "Get status of all active swarms including tasks, agents, and heartbeat health.",
+      "description": "Get status of all active swarms with tasks and agents",
       "route": { "method": "GET", "path": "/api/swarms/active" },
       "inputSchema": {
         "type": "object",
@@ -81,28 +69,13 @@
     {
       "name": "hex_hexflo_task_create",
       "category": "task",
-      "cli": "hex task create <swarm-id> <title>",
-      "description": "Create a task in a swarm. Each task maps to one adapter boundary and one git worktree.",
+      "description": "Create a task in a swarm",
       "route": { "method": "POST", "path": "/api/swarms/{swarm_id}/tasks" },
       "inputSchema": {
         "type": "object",
         "properties": {
           "swarm_id": { "type": "string", "description": "Swarm ID to add task to" },
-          "title": { "type": "string", "description": "Task title — should describe the adapter-bounded work unit" },
-          "assignee": { "type": "string", "description": "Agent role to assign (e.g., hex-coder, integrator)" },
-          "metadata": {
-            "type": "object",
-            "description": "Task metadata (phase, feature, tier, adapter, port, worktree_branch)",
-            "properties": {
-              "phase": { "type": "string", "enum": ["specs", "plan", "code", "validate", "integrate"] },
-              "feature": { "type": "string" },
-              "tier": { "type": "integer", "minimum": 0, "maximum": 5 },
-              "adapter": { "type": "string" },
-              "port": { "type": "string" },
-              "layer": { "type": "string", "enum": ["domain", "ports", "usecases", "adapters/primary", "adapters/secondary"] },
-              "worktree_branch": { "type": "string" }
-            }
-          }
+          "title": { "type": "string", "description": "Task title/description" }
         },
         "required": ["swarm_id", "title"]
       }
@@ -110,13 +83,12 @@
     {
       "name": "hex_hexflo_task_list",
       "category": "task",
-      "cli": "hex task list",
-      "description": "List all tasks across swarms. Optionally filter by swarm_id. Shows status, assignee, and tier.",
+      "description": "List tasks in a swarm",
       "route": { "method": "GET", "path": "/api/swarms/{swarm_id}" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "swarm_id": { "type": "string", "description": "Filter by swarm ID (omit for all swarms)" }
+          "swarm_id": { "type": "string", "description": "Swarm ID (omit for all)" }
         },
         "required": []
       }
@@ -124,7 +96,6 @@
     {
       "name": "hex_hexflo_task_assign",
       "category": "task",
-      "cli": "hex task assign <task-id> <agent-id>",
       "description": "Assign a task to an agent. Sets status to 'in_progress' and records the agent_id. Only works on tasks with 'pending' status.",
       "route": { "method": "PATCH", "path": "/api/hexflo/tasks/{task_id}" },
       "inputSchema": {
@@ -139,14 +110,13 @@
     {
       "name": "hex_hexflo_task_complete",
       "category": "task",
-      "cli": "hex task complete <task-id> [result]",
-      "description": "Mark a task as completed. Always include the git commit hash in the result string.",
+      "description": "Mark a task as completed",
       "route": { "method": "PATCH", "path": "/api/hexflo/tasks/{task_id}" },
       "inputSchema": {
         "type": "object",
         "properties": {
           "task_id": { "type": "string", "description": "Task ID to complete" },
-          "result": { "type": "string", "description": "Completion summary with commit hash (e.g., 'feat(cli-adapter): implement IWorkplanPort — commit abc1234')" }
+          "result": { "type": "string", "description": "Completion result/summary" }
         },
         "required": ["task_id"]
       }
@@ -154,15 +124,14 @@
     {
       "name": "hex_hexflo_memory_store",
       "category": "memory",
-      "cli": "hex memory store <key> <value>",
-      "description": "Store a key-value pair in persistent HexFlo memory. Scopes: global, swarm, agent. Persists across sessions.",
+      "description": "Store a key-value pair in persistent memory",
       "route": { "method": "POST", "path": "/api/hexflo/memory" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "key": { "type": "string", "description": "Memory key (convention: 'feature/<name>/progress', 'swarm/<name>/config')" },
-          "value": { "type": "string", "description": "Value to store (JSON stringified for complex objects)" },
-          "scope": { "type": "string", "enum": ["global", "swarm", "agent"], "description": "Memory scope (default: global)" }
+          "key": { "type": "string", "description": "Memory key" },
+          "value": { "type": "string", "description": "Value to store" },
+          "scope": { "type": "string", "description": "Scope: global, swarm, agent" }
         },
         "required": ["key", "value"]
       }
@@ -170,8 +139,7 @@
     {
       "name": "hex_hexflo_memory_retrieve",
       "category": "memory",
-      "cli": "hex memory get <key>",
-      "description": "Retrieve a value by key from persistent HexFlo memory. Use for session continuity and swarm state recovery.",
+      "description": "Retrieve a value by key from persistent memory",
       "route": { "method": "GET", "path": "/api/hexflo/memory/{key}" },
       "inputSchema": {
         "type": "object",
@@ -184,13 +152,12 @@
     {
       "name": "hex_hexflo_memory_search",
       "category": "memory",
-      "cli": "hex memory search <query>",
-      "description": "Fuzzy search persistent HexFlo memory by query string. Returns matching keys and values.",
+      "description": "Search persistent memory by query",
       "route": { "method": "GET", "path": "/api/hexflo/memory/search" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "query": { "type": "string", "description": "Search query (fuzzy matched against keys and values)" }
+          "query": { "type": "string", "description": "Search query" }
         },
         "required": ["query"]
       }
@@ -198,13 +165,12 @@
     {
       "name": "hex_adr_list",
       "category": "adr",
-      "cli": "hex adr list [--status <status>]",
-      "description": "List Architecture Decision Records. Optionally filter by status: proposed, accepted, deprecated, superseded.",
+      "description": "List Architecture Decision Records",
       "route": { "method": "GET", "path": "/api/adrs" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "status": { "type": "string", "enum": ["proposed", "accepted", "deprecated", "superseded"], "description": "Filter by ADR status" }
+          "status": { "type": "string", "description": "Filter by status: proposed, accepted, deprecated, superseded" }
         },
         "required": []
       }
@@ -212,14 +178,13 @@
     {
       "name": "hex_adr_search",
       "category": "adr",
-      "cli": "hex adr search <query>",
-      "description": "Search ADRs by keyword across titles, context, and decision sections.",
+      "description": "Search ADRs by keyword",
       "route": { "method": "GET", "path": "/api/adrs/search" },
       "inputSchema": {
         "type": "object",
         "properties": {
           "query": { "type": "string", "description": "Search query" },
-          "limit": { "type": "integer", "description": "Max results (default: 10)" }
+          "limit": { "type": "integer", "description": "Max results (default 10)" }
         },
         "required": ["query"]
       }
@@ -227,13 +192,12 @@
     {
       "name": "hex_adr_status",
       "category": "adr",
-      "cli": "hex adr status <id>",
-      "description": "Show detailed status of a specific ADR including cross-references and compliance.",
+      "description": "Show detailed status of a specific ADR",
       "route": { "method": "GET", "path": "/api/adrs/{id}" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "id": { "type": "string", "description": "ADR ID (e.g., ADR-027)" }
+          "id": { "type": "string", "description": "ADR ID (e.g. ADR-027)" }
         },
         "required": ["id"]
       }
@@ -241,13 +205,12 @@
     {
       "name": "hex_adr_abandoned",
       "category": "adr",
-      "cli": "hex adr abandoned [--days <N>]",
-      "description": "Find stale/abandoned ADRs that have been in 'proposed' status too long without acceptance.",
+      "description": "Find stale/abandoned proposed ADRs",
       "route": { "method": "GET", "path": "/api/adrs/abandoned" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "days": { "type": "integer", "description": "Days without update to consider abandoned (default: 14)" }
+          "days": { "type": "integer", "description": "Days without update to consider abandoned (default 14)" }
         },
         "required": []
       }
@@ -255,8 +218,7 @@
     {
       "name": "hex_plan_list",
       "category": "workplan",
-      "cli": "hex plan list",
-      "description": "List existing workplans from docs/workplans/ with step counts and completion progress.",
+      "description": "List existing workplans from docs/workplans/",
       "route": { "method": "LOCAL", "path": "docs/workplans/" },
       "inputSchema": {
         "type": "object",
@@ -267,13 +229,12 @@
     {
       "name": "hex_plan_status",
       "category": "workplan",
-      "cli": "hex plan status <file>",
-      "description": "Show detailed status of a specific workplan: steps, dependencies, completion, assigned agents.",
+      "description": "Show detailed status of a specific workplan",
       "route": { "method": "LOCAL", "path": "docs/workplans/{file}" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "file": { "type": "string", "description": "Workplan filename (e.g., feat-auth.json)" }
+          "file": { "type": "string", "description": "Workplan filename (e.g. feat-secrets-plan-b.json)" }
         },
         "required": ["file"]
       }
@@ -281,13 +242,12 @@
     {
       "name": "hex_plan_execute",
       "category": "workplan",
-      "cli": "hex plan execute <file>",
-      "description": "Start executing a workplan. Spawns agents per task, tracks progress in SpacetimeDB, enforces tier ordering.",
+      "description": "Start executing a workplan from a JSON file path. Spawns agents per task, tracks progress in SpacetimeDB.",
       "route": { "method": "POST", "path": "/api/workplan/execute" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "file": { "type": "string", "description": "Path to workplan JSON file (e.g., docs/workplans/feat-auth.json)" }
+          "file": { "type": "string", "description": "Path to workplan JSON file (e.g. docs/workplans/feat-auth.json)" }
         },
         "required": ["file"]
       }
@@ -295,8 +255,7 @@
     {
       "name": "hex_plan_pause",
       "category": "workplan",
-      "cli": "hex plan pause",
-      "description": "Pause the currently running workplan execution. In-flight agents complete their current task but no new tasks are dispatched.",
+      "description": "Pause the currently running workplan execution",
       "route": { "method": "POST", "path": "/api/workplan/pause" },
       "inputSchema": {
         "type": "object",
@@ -307,8 +266,7 @@
     {
       "name": "hex_plan_resume",
       "category": "workplan",
-      "cli": "hex plan resume",
-      "description": "Resume a paused workplan execution. Dispatches the next tier of tasks.",
+      "description": "Resume a paused workplan execution",
       "route": { "method": "POST", "path": "/api/workplan/resume" },
       "inputSchema": {
         "type": "object",
@@ -319,8 +277,7 @@
     {
       "name": "hex_plan_report",
       "category": "workplan",
-      "cli": "hex plan report <id>",
-      "description": "Get aggregate report for a workplan execution: phases completed, tasks by status, agent performance, gate results, duration.",
+      "description": "Get aggregate report for a workplan execution — phases, tasks, agents, gates, duration",
       "route": { "method": "GET", "path": "/api/workplan/{id}/report" },
       "inputSchema": {
         "type": "object",
@@ -333,8 +290,7 @@
     {
       "name": "hex_plan_history",
       "category": "workplan",
-      "cli": "hex plan history",
-      "description": "List all workplan executions (active, completed, failed) from SpacetimeDB with timestamps and outcomes.",
+      "description": "List all workplan executions (active + completed + failed) from SpacetimeDB",
       "route": { "method": "GET", "path": "/api/workplan/list" },
       "inputSchema": {
         "type": "object",
@@ -345,17 +301,16 @@
     {
       "name": "hex_agent_connect",
       "category": "agent",
-      "cli": "hex agent connect",
-      "description": "Register this Claude Code session (or any AI agent) with hex-nexus. Returns an agentId used for heartbeats, task assignment, and fleet tracking.",
+      "description": "Register this Claude Code session (or any agent) with hex-nexus. Returns an agentId for heartbeats and task assignment.",
       "route": { "method": "POST", "path": "/api/agents/connect" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "name": { "type": "string", "description": "Agent display name (default: auto-generated from host)" },
-          "host": { "type": "string", "description": "Hostname (default: current machine)" },
+          "name":        { "type": "string", "description": "Agent display name (default: auto-generated from host)" },
+          "host":        { "type": "string", "description": "Hostname (default: current machine)" },
           "project_dir": { "type": "string", "description": "Project root path (default: cwd)" },
-          "model": { "type": "string", "description": "LLM model identifier (e.g., claude-opus-4-6)" },
-          "session_id": { "type": "string", "description": "Claude Code session ID (stored in metadata)" }
+          "model":       { "type": "string", "description": "LLM model identifier (e.g. claude-opus-4-6)" },
+          "session_id":  { "type": "string", "description": "Claude Code session ID (stored in metadata)" }
         },
         "required": []
       }
@@ -363,8 +318,7 @@
     {
       "name": "hex_agent_disconnect",
       "category": "agent",
-      "cli": "hex agent disconnect <agent-id>",
-      "description": "Deregister an agent from hex-nexus. Releases any assigned tasks back to the pool.",
+      "description": "Deregister an agent from hex-nexus by its agentId",
       "route": { "method": "POST", "path": "/api/agents/disconnect" },
       "inputSchema": {
         "type": "object",
@@ -377,8 +331,7 @@
     {
       "name": "hex_agent_list",
       "category": "agent",
-      "cli": "hex agent list",
-      "description": "List all agents currently registered with hex-nexus (local + remote) with heartbeat status and assigned tasks.",
+      "description": "List all agents currently registered with hex-nexus (local + remote)",
       "route": { "method": "GET", "path": "/api/agents" },
       "inputSchema": {
         "type": "object",
@@ -389,8 +342,7 @@
     {
       "name": "hex_nexus_status",
       "category": "nexus",
-      "cli": "hex nexus status",
-      "description": "Check hex-nexus daemon health: uptime, SpacetimeDB connection, active subscriptions, registered projects.",
+      "description": "Check hex-nexus daemon status",
       "route": { "method": "GET", "path": "/api/version" },
       "inputSchema": {
         "type": "object",
@@ -401,8 +353,7 @@
     {
       "name": "hex_nexus_start",
       "category": "nexus",
-      "cli": "hex nexus start",
-      "description": "Start the hex-nexus daemon. Must be run from terminal, not from within MCP. Dashboard available at http://localhost:5555.",
+      "description": "Start the hex-nexus daemon",
       "route": null,
       "inputSchema": {
         "type": "object",
@@ -413,8 +364,7 @@
     {
       "name": "hex_secrets_status",
       "category": "secrets",
-      "cli": "hex secrets status",
-      "description": "Show secrets backend status: which provider is active (env, keychain, vault) and which keys are available.",
+      "description": "Show secrets backend status",
       "route": { "method": "GET", "path": "/api/secrets/status" },
       "inputSchema": {
         "type": "object",
@@ -425,13 +375,12 @@
     {
       "name": "hex_secrets_has",
       "category": "secrets",
-      "cli": "hex secrets has <key>",
-      "description": "Check if a secret key exists without revealing its value. Safe for use in agent workflows.",
+      "description": "Check if a secret key exists",
       "route": null,
       "inputSchema": {
         "type": "object",
         "properties": {
-          "key": { "type": "string", "description": "Secret key name to check (e.g., ANTHROPIC_API_KEY)" }
+          "key": { "type": "string", "description": "Secret key to check" }
         },
         "required": ["key"]
       }
@@ -439,26 +388,24 @@
     {
       "name": "hex_inference_add",
       "category": "inference",
-      "cli": "hex inference add <type> <url> --model <model>",
-      "description": "Register an inference provider (ollama, vllm, openai-compat). Tests connectivity and discovers available models.",
+      "description": "Register an inference endpoint (Ollama, OpenAI, Anthropic, etc.) with hex-nexus",
       "route": { "method": "POST", "path": "/api/inference/register" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "provider_type": { "type": "string", "enum": ["ollama", "vllm", "openai-compat"], "description": "Provider type" },
-          "url": { "type": "string", "description": "Base URL (e.g., http://localhost:11434)" },
-          "model": { "type": "string", "description": "Model name (e.g., qwen3:32b, minimax-m1:80b)" },
-          "key": { "type": "string", "description": "API key (not needed for Ollama)" },
-          "id": { "type": "string", "description": "Provider ID (auto-generated if omitted)" }
+          "id": { "type": "string", "description": "Unique identifier for this endpoint" },
+          "provider_type": { "type": "string", "description": "Provider type: ollama, openai, anthropic, etc.", "default": "ollama" },
+          "url": { "type": "string", "description": "Endpoint URL (e.g. http://localhost:11434)" },
+          "model": { "type": "string", "description": "Model name (e.g. llama3, gpt-4o)" },
+          "key": { "type": "string", "description": "API key secret name (omit for keyless providers like local Ollama)" }
         },
-        "required": ["provider_type", "url"]
+        "required": ["id", "url", "model"]
       }
     },
     {
       "name": "hex_inference_list",
       "category": "inference",
-      "cli": "hex inference list",
-      "description": "List all registered inference providers (env vars + nexus-registered) with health status.",
+      "description": "List all registered inference endpoints and their status",
       "route": { "method": "GET", "path": "/api/inference/endpoints" },
       "inputSchema": {
         "type": "object",
@@ -469,13 +416,12 @@
     {
       "name": "hex_inference_test",
       "category": "inference",
-      "cli": "hex inference test <url>",
-      "description": "Test connectivity to an inference provider. Checks health, lists models, runs a quick inference probe with latency measurement.",
+      "description": "Test connectivity to a registered inference endpoint",
       "route": null,
       "inputSchema": {
         "type": "object",
         "properties": {
-          "target": { "type": "string", "description": "Provider URL or host (e.g., http://localhost:11434 or bazzite.local)" }
+          "target": { "type": "string", "description": "Endpoint ID or URL to test" }
         },
         "required": ["target"]
       }
@@ -483,8 +429,7 @@
     {
       "name": "hex_inference_discover",
       "category": "inference",
-      "cli": "hex inference discover",
-      "description": "Auto-discover Ollama instances on localhost and LAN. Checks SpacetimeDB registry and scans common network addresses.",
+      "description": "Discover inference endpoints on the local network (LAN scan)",
       "route": null,
       "inputSchema": {
         "type": "object",
@@ -495,8 +440,7 @@
     {
       "name": "hex_inference_remove",
       "category": "inference",
-      "cli": "hex inference remove <provider-id>",
-      "description": "Remove a registered inference provider by ID.",
+      "description": "Remove a registered inference endpoint",
       "route": { "method": "POST", "path": "/api/inference/providers/{provider_id}/remove" },
       "inputSchema": {
         "type": "object",
@@ -504,6 +448,442 @@
           "provider_id": { "type": "string", "description": "Provider ID to remove" }
         },
         "required": ["provider_id"]
+      }
+    },
+    {
+      "name": "hex_inbox_notify",
+      "category": "inbox",
+      "description": "Send a notification to an agent or broadcast to all agents in a project (ADR-060)",
+      "route": { "method": "POST", "path": "/api/hexflo/inbox/notify" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "description": "Target agent ID (mutually exclusive with project_id)" },
+          "project_id": { "type": "string", "description": "Target project ID for broadcast (mutually exclusive with agent_id)" },
+          "priority": { "type": "integer", "description": "0=info, 1=warning, 2=critical", "default": 1 },
+          "kind": { "type": "string", "description": "Notification kind: restart, update, shutdown, config_change, info" },
+          "payload": { "type": "string", "description": "JSON payload with event-specific data", "default": "{}" }
+        },
+        "required": ["kind"]
+      }
+    },
+    {
+      "name": "hex_inbox_query",
+      "category": "inbox",
+      "description": "Query an agent's notification inbox (ADR-060)",
+      "route": { "method": "GET", "path": "/api/hexflo/inbox/{agent_id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "description": "Agent ID to query inbox for" },
+          "min_priority": { "type": "integer", "description": "Minimum priority filter (0-2)", "default": 0 },
+          "unacked_only": { "type": "boolean", "description": "Only show unacknowledged notifications", "default": true }
+        },
+        "required": ["agent_id"]
+      }
+    },
+    {
+      "name": "hex_inbox_ack",
+      "category": "inbox",
+      "description": "Acknowledge a notification (only the target agent can ack) (ADR-060)",
+      "route": { "method": "PATCH", "path": "/api/hexflo/inbox/{id}/ack" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "notification_id": { "type": "integer", "description": "Notification ID to acknowledge" },
+          "agent_id": { "type": "string", "description": "Agent ID acknowledging the notification" }
+        },
+        "required": ["notification_id", "agent_id"]
+      }
+    },
+    {
+      "name": "hex_enforce_list",
+      "category": "enforcement",
+      "description": "List all enforcement rules (local .hex/adr-rules.toml + SpacetimeDB)",
+      "route": { "method": "GET", "path": "/api/hexflo/enforcement-rules" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_enforce_mode",
+      "category": "enforcement",
+      "description": "Show current enforcement mode (mandatory/advisory/disabled) from .hex/project.json",
+      "route": { "method": "LOCAL", "path": ".hex/project.json" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_enforce_sync",
+      "category": "enforcement",
+      "description": "Sync enforcement rules from .hex/adr-rules.toml to SpacetimeDB",
+      "route": { "method": "POST", "path": "/api/hexflo/enforcement-rules" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_enforce_prompt",
+      "category": "enforcement",
+      "description": "Generate the enforcement system prompt for non-MCP models (ADR-2603221959 P6)",
+      "route": { "method": "LOCAL", "path": "embedded:templates/enforcement-system-prompt.md" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_test_history",
+      "category": "test",
+      "description": "Show recent test run history with pass/fail counts and durations",
+      "route": { "method": "GET", "path": "/api/test-sessions" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "description": "Max results to return (default 10)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_test_trends",
+      "category": "test",
+      "description": "Show test pass rate trends across recent runs",
+      "route": { "method": "GET", "path": "/api/test-sessions/trends" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "runs": { "type": "integer", "description": "Number of recent runs to include (default 10)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_project_list",
+      "category": "project",
+      "description": "List all projects registered with hex-nexus",
+      "route": { "method": "GET", "path": "/api/projects" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_project_register",
+      "category": "project",
+      "description": "Register a project with hex-nexus for tracking and coordination",
+      "route": { "method": "POST", "path": "/api/projects/register" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Absolute path to the project root" },
+          "name": { "type": "string", "description": "Optional project name (defaults to directory name)" }
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "hex_session_start",
+      "category": "lifecycle",
+      "description": "Start a hex session — register agent, load context. Use this instead of hooks for non-Claude providers (ADR-2603221959)",
+      "route": { "method": "POST", "path": "/api/hex-agents/connect" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_dir": { "type": "string", "description": "Project root directory" },
+          "model": { "type": "string", "description": "LLM model name (e.g. llama3, qwen2, claude-sonnet)" }
+        }
+      }
+    },
+    {
+      "name": "hex_session_heartbeat",
+      "category": "lifecycle",
+      "description": "Send heartbeat and check inbox. Call periodically to keep agent alive (ADR-2603221959)",
+      "route": { "method": "POST", "path": "/api/hex-agents/heartbeat" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "hex_workplan_activate",
+      "category": "lifecycle",
+      "description": "Set the active workplan for this session. Required before mutating operations in mandatory mode (ADR-2603221959)",
+      "route": { "method": "POST", "path": "/api/hexflo/memory" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workplan_id": { "type": "string", "description": "Workplan ID to activate (e.g. wp-my-feature)" }
+        },
+        "required": ["workplan_id"]
+      }
+    },
+    {
+      "name": "hex_git_status",
+      "category": "git",
+      "description": "Show git status for a project (staged, unstaged, untracked files)",
+      "route": { "method": "GET", "path": "/api/{project_id}/git/status" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": { "type": "string", "description": "Project identifier" }
+        },
+        "required": ["project_id"]
+      }
+    },
+    {
+      "name": "hex_git_log",
+      "category": "git",
+      "description": "Show recent git commit log for a project",
+      "route": { "method": "GET", "path": "/api/{project_id}/git/log" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": { "type": "string", "description": "Project identifier" },
+          "limit": { "type": "integer", "description": "Max commits to return (default 10)" }
+        },
+        "required": ["project_id"]
+      }
+    },
+    {
+      "name": "hex_git_diff",
+      "category": "git",
+      "description": "Show git diff (unstaged changes) for a project",
+      "route": { "method": "GET", "path": "/api/{project_id}/git/diff" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": { "type": "string", "description": "Project identifier" }
+        },
+        "required": ["project_id"]
+      }
+    },
+    {
+      "name": "hex_git_branches",
+      "category": "git",
+      "description": "List git branches for a project",
+      "route": { "method": "GET", "path": "/api/{project_id}/git/branches" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": { "type": "string", "description": "Project identifier" }
+        },
+        "required": ["project_id"]
+      }
+    },
+    {
+      "name": "hex_secrets_grant",
+      "category": "secrets",
+      "description": "Grant an agent access to a secret key with stated purpose",
+      "route": { "method": "POST", "path": "/secrets/grant" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "description": "Agent ID to grant access to" },
+          "secret_key": { "type": "string", "description": "Secret key name to grant access to" },
+          "purpose": { "type": "string", "description": "Stated purpose for accessing this secret" }
+        },
+        "required": ["agent_id", "secret_key", "purpose"]
+      }
+    },
+    {
+      "name": "hex_secrets_revoke",
+      "category": "secrets",
+      "description": "Revoke a previously granted secret access",
+      "route": { "method": "POST", "path": "/secrets/revoke" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "grant_id": { "type": "string", "description": "Grant ID to revoke" }
+        },
+        "required": ["grant_id"]
+      }
+    },
+    {
+      "name": "hex_secrets_vault_set",
+      "category": "secrets",
+      "description": "Store a secret in the hex vault",
+      "route": { "method": "POST", "path": "/api/secrets/vault" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "description": "Secret key name" },
+          "value": { "type": "string", "description": "Secret value to store" }
+        },
+        "required": ["key", "value"]
+      }
+    },
+    {
+      "name": "hex_secrets_vault_get",
+      "category": "secrets",
+      "description": "Retrieve a secret from the hex vault by key",
+      "route": { "method": "GET", "path": "/api/secrets/vault/{key}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "description": "Secret key to retrieve" }
+        },
+        "required": ["key"]
+      }
+    },
+    {
+      "name": "hex_agent_id",
+      "category": "agent",
+      "description": "Get the current agent's ID from the session state file (no nexus call needed)",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_agent_info",
+      "category": "agent",
+      "description": "Get detailed info about a specific hex agent by ID",
+      "route": { "method": "GET", "path": "/api/hex-agents/{id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "description": "Agent ID to look up" }
+        },
+        "required": ["agent_id"]
+      }
+    },
+    {
+      "name": "hex_agent_audit",
+      "category": "agent",
+      "description": "Audit trail: cross-reference git commits with HexFlo task completions for an agent",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "description": "Agent ID to audit (defaults to current session agent)" },
+          "limit": { "type": "integer", "description": "Max git commits to scan (default 20)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_config_create",
+      "category": "neural-lab",
+      "description": "Create a neural architecture configuration with hyperparameters",
+      "route": { "method": "POST", "path": "/api/neural-lab/configs" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Configuration name" },
+          "parent_id": { "type": "string", "description": "Parent config ID for lineage tracking" },
+          "n_layer": { "type": "integer", "description": "Number of transformer layers" },
+          "n_head": { "type": "integer", "description": "Number of attention heads" },
+          "n_embd": { "type": "integer", "description": "Embedding dimension" },
+          "vocab_size": { "type": "integer", "description": "Vocabulary size" },
+          "window_pattern": { "type": "string", "description": "Attention pattern (e.g. sliding_window, global)" },
+          "activation": { "type": "string", "description": "Activation function (e.g. gelu, swiglu)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_config_list",
+      "category": "neural-lab",
+      "description": "List neural architecture configurations with optional filters",
+      "route": { "method": "GET", "path": "/api/neural-lab/configs" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "description": "Filter by status (active, archived)" },
+          "lineage": { "type": "string", "description": "Filter by lineage name" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_experiment_create",
+      "category": "neural-lab",
+      "description": "Create an experiment to evaluate a config against a hypothesis",
+      "route": { "method": "POST", "path": "/api/neural-lab/experiments" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "config_id": { "type": "string", "description": "Config ID to test" },
+          "hypothesis": { "type": "string", "description": "Hypothesis text describing what this experiment tests" },
+          "lineage": { "type": "string", "description": "Lineage name for grouping" }
+        },
+        "required": ["config_id", "hypothesis"]
+      }
+    },
+    {
+      "name": "hex_neural_lab_experiment_list",
+      "category": "neural-lab",
+      "description": "List experiments with optional lineage and status filters",
+      "route": { "method": "GET", "path": "/api/neural-lab/experiments" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineage": { "type": "string", "description": "Filter by lineage name" },
+          "status": { "type": "string", "description": "Filter by status (pending, running, completed, failed)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_frontier",
+      "category": "neural-lab",
+      "description": "Get the Pareto frontier (best loss vs params tradeoff) for a lineage",
+      "route": { "method": "GET", "path": "/api/neural-lab/frontier/{lineage}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineage": { "type": "string", "description": "Lineage name (defaults to 'default')" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_strategies",
+      "category": "neural-lab",
+      "description": "List available mutation strategies for neural architecture search",
+      "route": { "method": "GET", "path": "/api/neural-lab/strategies" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_loop_start",
+      "category": "neural-lab",
+      "description": "Start the autonomous experiment loop for a lineage",
+      "route": { "method": "POST", "path": "/api/neural-lab/loop/start" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineage": { "type": "string", "description": "Lineage name (defaults to 'default')" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_loop_stop",
+      "category": "neural-lab",
+      "description": "Stop the autonomous experiment loop for a lineage",
+      "route": { "method": "POST", "path": "/api/neural-lab/loop/stop" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineage": { "type": "string", "description": "Lineage name (defaults to 'default')" }
+        },
+        "required": []
       }
     }
   ]

@@ -13,6 +13,7 @@ pub mod init;
 pub mod interview;
 pub mod mcp;
 pub mod memory;
+pub mod neural_lab;
 pub mod nexus;
 pub mod opencode;
 pub mod plan;
