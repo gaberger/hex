@@ -5,7 +5,7 @@
 //! read source files from disk, attach boundary rules, and include upstream
 //! output so that inference calls carry exactly the information the agent needs.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -195,20 +195,27 @@ impl Supervisor {
     /// - Tier 4+: `src/` (all)
     fn files_for_tier(&self, tier: u32) -> Vec<(String, String)> {
         let base = PathBuf::from(&self.output_dir).join("src");
-        let dirs: Vec<PathBuf> = match tier {
-            0 => vec![
-                base.join("core").join("domain"),
-                base.join("core").join("ports"),
-            ],
-            1 => vec![base.join("adapters").join("secondary")],
-            2 => vec![base.join("adapters").join("primary")],
-            3 => vec![base.join("core").join("usecases")],
-            _ => vec![base],
+        let lang = self.language.as_str();
+
+        // For Rust/Go single-binary projects, files live under src/ root
+        // not in the hexagonal sub-directories.  Fall through to scan all of src/.
+        let dirs: Vec<PathBuf> = match lang {
+            "rust" | "go" => vec![base.clone()],
+            _ => match tier {
+                0 => vec![
+                    base.join("core").join("domain"),
+                    base.join("core").join("ports"),
+                ],
+                1 => vec![base.join("adapters").join("secondary")],
+                2 => vec![base.join("adapters").join("primary")],
+                3 => vec![base.join("core").join("usecases")],
+                _ => vec![base],
+            },
         };
 
         let mut files = Vec::new();
         for dir in dirs {
-            Self::collect_files(&dir, &self.output_dir, &mut files);
+            Self::collect_files_for_language(&dir, &self.output_dir, Some(lang), &mut files);
         }
         files
     }
@@ -264,6 +271,15 @@ impl Supervisor {
 
     /// Recursively collect source files from `dir`, storing `(relative_path, content)`.
     fn collect_files(dir: &Path, base: &str, out: &mut Vec<(String, String)>) {
+        Self::collect_files_for_language(dir, base, None, out);
+    }
+
+    fn collect_files_for_language(
+        dir: &Path,
+        base: &str,
+        language: Option<&str>,
+        out: &mut Vec<(String, String)>,
+    ) {
         let entries = match fs::read_dir(dir) {
             Ok(e) => e,
             Err(_) => return,
@@ -271,11 +287,20 @@ impl Supervisor {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                Self::collect_files(&path, base, out);
+                Self::collect_files_for_language(&path, base, language, out);
             } else if path.is_file() {
-                // Only include source files
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                if matches!(ext, "ts" | "js" | "rs" | "tsx" | "jsx") {
+                // Filter extensions by language when known, to avoid picking up
+                // stale files from a previous run with a different language.
+                let allowed = match language {
+                    Some("rust") => matches!(ext, "rs" | "toml"),
+                    Some("go") => matches!(ext, "go"),
+                    Some("typescript") | Some("javascript") => {
+                        matches!(ext, "ts" | "js" | "tsx" | "jsx")
+                    }
+                    _ => matches!(ext, "ts" | "js" | "rs" | "tsx" | "jsx"),
+                };
+                if allowed {
                     if let Some(content) = Self::read_file_truncated(&path) {
                         let rel = path
                             .strip_prefix(base)
@@ -736,6 +761,20 @@ impl Supervisor {
             warn!(error = %e, "scaffold generation failed — CodeGenerated may not pass");
         }
 
+        // Clear stale review files from any previous pipeline run so that
+        // evaluate_review_passes counts only reviews from THIS run.
+        let review_dir = PathBuf::from(&self.output_dir).join(".hex-review");
+        if review_dir.is_dir() {
+            if let Ok(entries) = fs::read_dir(&review_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.extension().and_then(|e| e.to_str()) == Some("json") {
+                        let _ = fs::remove_file(&p);
+                    }
+                }
+            }
+        }
+
         // Group steps by tier
         let max_tier = workplan.steps.iter().map(|s| s.tier as u32).max().unwrap_or(0);
         let mut tier_results: Vec<(u32, TierResult)> = Vec::new();
@@ -814,6 +853,7 @@ impl Supervisor {
             let states = evaluate_all(
                 &objectives,
                 &[],  // fresh evaluation each time
+                tier,
                 &self.output_dir,
                 &self.language,
                 &self.nexus_url,
@@ -860,8 +900,9 @@ impl Supervisor {
                 agent_role, obj
             );
 
-            // Build context and execute the appropriate agent
-            self.execute_agent_tracked(
+            // Build context and execute the appropriate agent.
+            // Reviewer failures (timeouts, inference errors) are non-fatal — skip rather than abort.
+            let agent_result = self.execute_agent_tracked(
                 agent_role,
                 tier,
                 unmet_state,
@@ -870,13 +911,27 @@ impl Supervisor {
                 workplan_summary,
                 iteration,
             )
-            .await
-            .with_context(|| {
-                format!(
-                    "agent {} failed for objective {} (tier {}, iteration {})",
-                    agent_role, obj, tier, iteration
-                )
-            })?;
+            .await;
+
+            if let Err(e) = agent_result {
+                use crate::pipeline::objectives::Objective::*;
+                if matches!(obj, ReviewPasses | UxReviewPasses) {
+                    warn!(
+                        error = %e,
+                        objective = %obj,
+                        "reviewer agent failed — skipping objective for this iteration"
+                    );
+                    prior_results.insert(obj, true);
+                    continue;
+                } else {
+                    return Err(e).with_context(|| {
+                        format!(
+                            "agent {} failed for objective {} (tier {}, iteration {})",
+                            agent_role, obj, tier, iteration
+                        )
+                    });
+                }
+            }
 
             // Mark that this objective now has a prior result
             prior_results.insert(obj, true);
@@ -886,6 +941,7 @@ impl Supervisor {
         let final_states = evaluate_all(
             &objectives,
             &[],
+            tier,
             &self.output_dir,
             &self.language,
             &self.nexus_url,
@@ -1216,6 +1272,16 @@ impl Supervisor {
                         }
                     }
 
+                    // Select model from YAML definition (ADR-2603240130)
+                    let yaml_selected = self.select_model_for_role("hex-coder", 0);
+                    let yaml_model_id = yaml_selected.model_id.clone();
+                    let effective_model: Option<&str> = model_override.or(Some(&yaml_model_id));
+                    info!(
+                        model = %yaml_model_id,
+                        source = %yaml_selected.source,
+                        "hex-coder model selected from YAML"
+                    );
+
                     // Execute code generation for each workplan step
                     for step in workplan_steps {
                         let step_workplan = WorkplanData {
@@ -1235,7 +1301,7 @@ impl Supervisor {
                             dependencies: None,
                         };
                         let result = phase
-                            .execute_step(step, &step_workplan, model_override, provider_pref)
+                            .execute_step(step, &step_workplan, effective_model, provider_pref)
                             .await
                             .with_context(|| format!("code phase step {} failed", step.id))?;
 
@@ -1271,6 +1337,55 @@ impl Supervisor {
                             all_passed,
                             "feedback loop complete"
                         );
+                        if !all_passed {
+                            // Gates failed — invoke FixAgent on gate errors, then retry once
+                            let gate_errors: Vec<String> = iterations
+                                .last()
+                                .map(|last| {
+                                    last.iter()
+                                        .filter(|g| !g.success)
+                                        .map(|g| {
+                                            format!("Gate '{}' failed:\n{}", g.gate_name, g.output)
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+
+                            if !gate_errors.is_empty() {
+                                let (target_file, fix_type) = self.infer_fix_target(
+                                    tier,
+                                    &state.objective,
+                                    &gate_errors,
+                                );
+                                let fix_input = FixTaskInput {
+                                    fix_type,
+                                    target_file,
+                                    error_context: gate_errors.join("\n\n"),
+                                    language: self.language.clone(),
+                                    output_dir: self.output_dir.clone(),
+                                };
+                                let fix_agent = FixAgent::from_env();
+                                match fix_agent.execute(fix_input, effective_model, provider_pref).await {
+                                    Ok(fix_result) => {
+                                        info!(
+                                            status = %fix_result.status,
+                                            file = %fix_result.file_path,
+                                            "gate fixer complete — retrying gates"
+                                        );
+                                        // One retry pass after the fix
+                                        let (retry_iters, _, _) = engine.run_feedback_loop(fl);
+                                        let retry_passed = retry_iters
+                                            .last()
+                                            .map(|last| last.iter().all(|g| g.success))
+                                            .unwrap_or(false);
+                                        info!(retry_passed, "gate retry after fix complete");
+                                    }
+                                    Err(e) => {
+                                        warn!(error = %e, "gate fixer failed — continuing");
+                                    }
+                                }
+                            }
+                        }
                         if escalated {
                             warn!(
                                 "feedback loop escalated after {} iterations: {:?}",
@@ -1281,6 +1396,15 @@ impl Supervisor {
                     }
                 } else {
                     // Fallback: direct CodePhase execution (no YAML workflow)
+                    // Still use YAML model selection (ADR-2603240130)
+                    let yaml_selected = self.select_model_for_role("hex-coder", 0);
+                    let yaml_model_id = yaml_selected.model_id.clone();
+                    let effective_model: Option<&str> = model_override.or(Some(&yaml_model_id));
+                    info!(
+                        model = %yaml_model_id,
+                        source = %yaml_selected.source,
+                        "hex-coder model selected from YAML (fallback path)"
+                    );
                     for step in workplan_steps {
                         let step_workplan = WorkplanData {
                             id: "supervisor-tier".into(),
@@ -1299,7 +1423,7 @@ impl Supervisor {
                             dependencies: None,
                         };
                         let result = phase
-                            .execute_step(step, &step_workplan, model_override, provider_pref)
+                            .execute_step(step, &step_workplan, effective_model, provider_pref)
                             .await
                             .with_context(|| format!("code phase step {} failed", step.id))?;
 
@@ -1321,8 +1445,11 @@ impl Supervisor {
                 let agent = ReviewerAgent::from_env();
                 let target_file = self.first_source_file_for_tier(tier);
                 let context = self.build_reviewer_context(&target_file);
+                let reviewer_selected = self.select_model_for_role("hex-reviewer", 0);
+                let reviewer_model_id = reviewer_selected.model_id.clone();
+                let reviewer_model: Option<&str> = model_override.or(Some(&reviewer_model_id));
                 let result = agent
-                    .execute(&context, model_override, provider_pref)
+                    .execute(&context, reviewer_model, provider_pref)
                     .await
                     .context("reviewer agent failed")?;
                 // Log per-role performance with actual metrics
@@ -1347,7 +1474,9 @@ impl Supervisor {
                         "recommendation": i.recommendation,
                     })).collect::<Vec<_>>(),
                 });
-                let review_path = review_dir.join(format!("review-tier{}.json", tier));
+                // Always write to the same file so evaluate_review_passes sees only the
+                // most-recent review verdict (not an accumulation across all tiers).
+                let review_path = review_dir.join("review-latest.json");
                 fs::write(&review_path, serde_json::to_string_pretty(&review_json)?)
                     .with_context(|| format!("writing review to {}", review_path.display()))?;
                 info!(verdict = %result.verdict, issues = result.issues.len(), "review complete");
@@ -1356,8 +1485,11 @@ impl Supervisor {
                 let agent = TesterAgent::from_env();
                 let target_file = self.first_source_file_for_tier(tier);
                 let context = self.build_tester_context(&target_file);
+                let tester_selected = self.select_model_for_role("hex-tester", 0);
+                let tester_model_id = tester_selected.model_id.clone();
+                let tester_model: Option<&str> = model_override.or(Some(&tester_model_id));
                 let result = agent
-                    .execute(&context, model_override, provider_pref)
+                    .execute(&context, tester_model, provider_pref)
                     .await
                     .context("tester agent failed")?;
                 // Log per-role performance with actual metrics
@@ -1434,6 +1566,14 @@ impl Supervisor {
                 info!(verdict = %result.verdict, issues = result.issues.len(), "ux review complete");
             }
             "hex-fixer" => {
+                // For Rust compile errors: auto-add missing crates to Cargo.toml
+                // before calling the expensive LLM fixer. This handles the common
+                // "use of undeclared crate" error caused by generated code importing
+                // crates not yet listed in Cargo.toml.
+                if self.language == "rust" && state.objective == Objective::CodeCompiles {
+                    self.auto_patch_cargo_toml(&state.blocking_issues);
+                }
+
                 let agent = FixAgent::from_env();
                 let (target_file, fix_type) =
                     self.infer_fix_target(tier, &state.objective, &state.blocking_issues);
@@ -1477,7 +1617,14 @@ impl Supervisor {
         files
             .first()
             .map(|(path, _)| path.clone())
-            .unwrap_or_else(|| format!("src/unknown-tier{}.ts", tier))
+            .unwrap_or_else(|| {
+                let ext = match self.language.as_str() {
+                    "rust" => "rs",
+                    "go" => "go",
+                    _ => "ts",
+                };
+                format!("src/unknown-tier{}.{}", tier, ext)
+            })
     }
 
     /// Infer fix target file and fix_type from the objective and blocking issues.
@@ -1496,11 +1643,17 @@ impl Supervisor {
                 let candidate = parts.first().unwrap_or(&"").trim();
                 if candidate.contains('.') && (candidate.contains('/') || candidate.contains('\\'))
                 {
-                    // Looks like a file path — resolve it
-                    let full_path = PathBuf::from(&self.output_dir).join(candidate);
+                    // Looks like a file path — resolve to an absolute path so that
+                    // the second path join below (full_path) doesn't double-prepend
+                    // output_dir when output_dir is itself a relative path.
+                    let abs_output = std::env::current_dir()
+                        .unwrap_or_else(|_| PathBuf::from("."))
+                        .join(&self.output_dir);
+                    let full_path = abs_output.join(candidate);
                     if full_path.exists() {
                         Some(full_path.display().to_string())
                     } else {
+                        // File doesn't exist yet — return relative so fixer can create it
                         Some(candidate.to_string())
                     }
                 } else {
@@ -1527,6 +1680,65 @@ impl Supervisor {
         };
 
         (full_path, fix_type)
+    }
+
+    /// Auto-patch `Cargo.toml` by adding missing crate dependencies inferred from
+    /// compile error messages (e.g. "use of undeclared crate or module `clap`").
+    /// This avoids expensive LLM calls for the common "missing dependency" error.
+    fn auto_patch_cargo_toml(&self, blocking_issues: &[String]) {
+        // Known crates and their Cargo.toml entries
+        let known_crates: &[(&str, &str)] = &[
+            ("clap", r#"clap = { version = "4", features = ["derive"] }"#),
+            ("serde", r#"serde = { version = "1", features = ["derive"] }"#),
+            ("serde_json", r#"serde_json = "1""#),
+            ("anyhow", r#"anyhow = "1""#),
+            ("tokio", r#"tokio = { version = "1", features = ["full"] }"#),
+            ("thiserror", r#"thiserror = "1""#),
+            ("tracing", r#"tracing = "0.1""#),
+            ("regex", r#"regex = "1""#),
+            ("chrono", r#"chrono = "0.4""#),
+            ("uuid", r#"uuid = { version = "1", features = ["v4"] }"#),
+        ];
+
+        let cargo_path = PathBuf::from(&self.output_dir).join("Cargo.toml");
+        if !cargo_path.exists() {
+            return;
+        }
+
+        let cargo_content = match fs::read_to_string(&cargo_path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        let mut additions: Vec<&str> = Vec::new();
+        let combined_errors = blocking_issues.join("\n");
+
+        for (crate_name, dep_line) in known_crates {
+            // Check if the error mentions this crate and it's not yet in Cargo.toml
+            let mentioned = combined_errors.contains(&format!("crate or module `{}`", crate_name))
+                || combined_errors.contains(&format!("use of undeclared crate `{}`", crate_name))
+                || combined_errors.contains(&format!("`{}` is not", crate_name));
+            if mentioned && !cargo_content.contains(crate_name) {
+                additions.push(dep_line);
+            }
+        }
+
+        if additions.is_empty() {
+            return;
+        }
+
+        // Insert additions before the end of [dependencies] section
+        let patched = if cargo_content.contains("[dependencies]") {
+            format!("{}\n{}\n", cargo_content.trim_end(), additions.join("\n"))
+        } else {
+            format!("{}\n[dependencies]\n{}\n", cargo_content.trim_end(), additions.join("\n"))
+        };
+
+        if let Err(e) = fs::write(&cargo_path, patched) {
+            warn!(error = %e, "failed to auto-patch Cargo.toml");
+        } else {
+            info!(added = additions.len(), "auto-patched Cargo.toml with missing dependencies");
+        }
     }
 
     // ── YAML-driven dispatch (ADR-2603240130 steps 8-9) ─────────────────
