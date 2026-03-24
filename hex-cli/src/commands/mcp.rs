@@ -846,6 +846,12 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 // Try to load workplan details
                 let details = nexus.get(&format!("/api/workplan/{}", workplan_id))
                     .await.unwrap_or(serde_json::json!({}));
+
+                // Update .hex/status.json so the statusline shows the active ADR
+                let adr_id = details["adr"].as_str().unwrap_or(workplan_id);
+                let adr_title = details["title"].as_str().unwrap_or("");
+                update_status_json(adr_id, adr_title);
+
                 Ok(serde_json::json!({
                     "workplan_id": workplan_id,
                     "activated": true,
@@ -867,6 +873,24 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             "isError": true
         }),
     }
+}
+
+/// Update `.hex/status.json` with the active ADR — read-modify-write so we
+/// preserve other fields (nexus pid, swarm status, etc.).
+fn update_status_json(adr_id: &str, adr_title: &str) {
+    let status_path = std::path::Path::new(".hex/status.json");
+    let mut data: serde_json::Value = if status_path.exists() {
+        std::fs::read_to_string(status_path)
+            .ok()
+            .and_then(|c| serde_json::from_str(&c).ok())
+            .unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    data["activeAdr"] = serde_json::json!(adr_id);
+    data["activeAdrTitle"] = serde_json::json!(adr_title);
+    let _ = std::fs::create_dir_all(".hex");
+    let _ = std::fs::write(status_path, serde_json::to_string_pretty(&data).unwrap_or_default());
 }
 
 // ─── Server Loop ─────────────────────────────────────────

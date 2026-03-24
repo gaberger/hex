@@ -393,7 +393,7 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
         match std::fs::read_to_string(&rules_path) {
             Ok(content) => match toml::from_str::<AdrRulesFile>(&content) {
                 Ok(parsed) => {
-                    println!(
+                    eprintln!(
                         "    {} Loaded {} rule(s) from {}",
                         "\u{2713}".green(),
                         parsed.rules.len(),
