@@ -105,12 +105,13 @@ pub fn bool_badge(val: bool) -> String {
 
 /// Truncate a string to `max_len` characters, appending "…" if truncated.
 pub fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    if s.chars().count() <= max_len {
         s.to_string()
     } else if max_len <= 1 {
         "…".to_string()
     } else {
-        format!("{}…", &s[..max_len - 1])
+        let truncated: String = s.chars().take(max_len - 1).collect();
+        format!("{}…", truncated)
     }
 }
 
