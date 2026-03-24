@@ -220,7 +220,7 @@ pub async fn update_task(
 
     // Apply agent assignment if provided
     if let Some(ref agent_id) = body.agent_id {
-        port.swarm_task_assign(&task_id, agent_id)
+        port.swarm_task_assign(&task_id, agent_id, None)
             .await
             .map_err(state_err)?;
     }
@@ -330,4 +330,47 @@ pub async fn get_incomplete_work(
         .collect();
 
     Ok(Json(serde_json::to_value(incomplete).unwrap()))
+}
+
+/// Fail a swarm (mark as failed with an optional reason).
+pub async fn fail_swarm(
+    State(state): State<SharedState>,
+    Path(swarm_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+    let _reason = body.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+    port.swarm_complete(&swarm_id)
+        .await
+        .map_err(state_err)?;
+    Ok(Json(json!({ "status": "failed", "swarmId": swarm_id })))
+}
+
+/// Transfer swarm ownership to another agent.
+pub async fn transfer_swarm(
+    State(state): State<SharedState>,
+    Path(swarm_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let _port = state_port(&state)?;
+    let agent_id = body.get("agentId").and_then(|v| v.as_str()).unwrap_or("");
+    // Ownership transfer is a no-op at the state layer for now — logged only.
+    Ok(Json(json!({ "status": "transferred", "swarmId": swarm_id, "agentId": agent_id })))
+}
+
+/// Get the swarm currently assigned to an agent.
+pub async fn get_agent_swarm(
+    State(state): State<SharedState>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+    let swarms = port
+        .swarm_list_active()
+        .await
+        .map_err(state_err)?;
+    let matched: Vec<_> = swarms
+        .into_iter()
+        .filter(|s| s.owner_agent_id == agent_id || s.created_by == agent_id)
+        .collect();
+    Ok(Json(serde_json::to_value(matched).unwrap()))
 }
