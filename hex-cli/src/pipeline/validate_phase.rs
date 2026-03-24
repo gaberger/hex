@@ -825,12 +825,21 @@ impl ValidatePhase {
             context.insert(k.to_string(), v.to_string());
         }
 
-        // Try to find and include the primary source file content
+        // Extract the file with most errors from compile_errors/violations context
+        // and include its content so the fixer can see the actual code
         if !context.contains_key("file_content") {
-            if let Some(file_content) = self.read_first_source_file(output_dir) {
-                let file_path = self.find_first_source_file(output_dir).unwrap_or_default();
-                context.insert("file_content".to_string(), file_content);
-                context.insert("file_path".to_string(), file_path);
+            let error_file = context.get("compile_errors")
+                .or_else(|| context.get("violations"))
+                .or_else(|| context.get("test_output"))
+                .and_then(|errors| extract_error_file(errors, output_dir));
+
+            let target = error_file.or_else(|| self.find_first_source_file(output_dir));
+
+            if let Some(ref file_path) = target {
+                if let Ok(content) = std::fs::read_to_string(file_path) {
+                    context.insert("file_content".to_string(), content);
+                    context.insert("file_path".to_string(), file_path.clone());
+                }
             }
         }
 
@@ -891,8 +900,10 @@ impl ValidatePhase {
         // Strip markdown code fences if present
         let clean_content = strip_code_fences(&fixed_content);
 
-        // Write the fix to the target file
-        if let Some(target) = self.find_first_source_file(output_dir) {
+        // Write the fix to the target file (the one from context, or first source file)
+        let target_file = context.get("file_path").cloned()
+            .or_else(|| self.find_first_source_file(output_dir));
+        if let Some(target) = target_file {
             let target_path = Path::new(&target);
             if let Some(parent) = target_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -929,8 +940,62 @@ impl ValidatePhase {
             .and_then(|p| std::fs::read_to_string(p).ok())
     }
 
-    // ── Internal helpers ────────────────────────────────────────────────
+}
 
+/// Extract the file path with the most errors from compiler/test output.
+///
+/// Parses lines like:
+/// - TypeScript: `src/core/domain/P0.1.ts(5,10): error TS2304: ...`
+/// - Rust: `error[E0425]: ... --> src/main.rs:10:5`
+///
+/// Returns the absolute path of the file with the most error mentions.
+fn extract_error_file(error_output: &str, output_dir: &str) -> Option<String> {
+    let mut file_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+    for line in error_output.lines() {
+        // TypeScript: path(line,col): error ...
+        if let Some(paren_pos) = line.find('(') {
+            let candidate = line[..paren_pos].trim();
+            if candidate.contains('/') && (candidate.ends_with(".ts") || candidate.ends_with(".tsx") || candidate.ends_with(".js")) {
+                let full = if candidate.starts_with('/') {
+                    candidate.to_string()
+                } else {
+                    format!("{}/{}", output_dir, candidate)
+                };
+                if Path::new(&full).exists() {
+                    *file_counts.entry(full).or_insert(0) += 1;
+                }
+            }
+        }
+        // Rust: --> path:line:col
+        if let Some(arrow_pos) = line.find("--> ") {
+            let rest = &line[arrow_pos + 4..];
+            if let Some(colon_pos) = rest.find(':') {
+                let candidate = rest[..colon_pos].trim();
+                if candidate.contains('/') && candidate.ends_with(".rs") {
+                    let full = if candidate.starts_with('/') {
+                        candidate.to_string()
+                    } else {
+                        format!("{}/{}", output_dir, candidate)
+                    };
+                    if Path::new(&full).exists() {
+                        *file_counts.entry(full).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // Return the file with the most error mentions
+    file_counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(path, _)| path)
+}
+
+// ── Internal helpers ────────────────────────────────────────────────
+
+impl ValidatePhase {
     /// Fetch and parse architecture analysis from hex-nexus.
     async fn fetch_analysis(&self) -> Result<AnalysisResult> {
         let path = format!(
