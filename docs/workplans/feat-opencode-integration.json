@@ -103,7 +103,7 @@
       "adapter": "hex-cli/integration",
       "tier": 4,
       "dependencies": ["step-3", "step-9", "step-10"],
-      "status": "pending",
+      "status": "done",
       "layer": "integration"
     },
     {

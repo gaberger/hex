@@ -37,7 +37,7 @@
       "adapter": "secondary/inference-client",
       "tier": 1,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-agent/src/adapters/secondary/inference_client.rs",
         "hex-agent/src/ports/inference.rs"
@@ -49,7 +49,7 @@
       "adapter": "secondary/prompt-templates",
       "tier": 1,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-cli/assets/prompts/adr-generate.md",
         "hex-cli/assets/prompts/workplan-generate.md",
@@ -65,7 +65,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": ["step-1", "step-2"],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-cli/src/commands/dev.rs",
         "hex-cli/src/tui/mod.rs",
@@ -81,7 +81,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-3"],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-cli/src/commands/dev.rs",
         "hex-cli/src/pipeline/adr_phase.rs"
@@ -93,7 +93,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-4"],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-cli/src/pipeline/workplan_phase.rs"
       ]
@@ -104,7 +104,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-5"],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-cli/src/pipeline/swarm_phase.rs"
       ]
@@ -115,7 +115,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-6"],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-cli/src/pipeline/code_phase.rs"
       ]
@@ -126,7 +126,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-7"],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-cli/src/pipeline/validate_phase.rs"
       ]
@@ -137,7 +137,7 @@
       "adapter": "secondary/session-store",
       "tier": 1,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-cli/src/session.rs"
       ]
@@ -148,7 +148,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-3"],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-cli/src/commands/dev.rs"
       ]
@@ -159,7 +159,7 @@
       "adapter": "secondary/rl-integration",
       "tier": 1,
       "dependencies": ["step-1"],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-agent/src/adapters/secondary/rl_client.rs",
         "hex-cli/src/pipeline/model_selection.rs"
@@ -171,7 +171,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-3", "step-11"],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-cli/src/tui/status_bar.rs",
         "hex-cli/src/pipeline/budget.rs"

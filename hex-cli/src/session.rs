@@ -80,6 +80,9 @@ pub struct QualityReport {
     pub violations_fixed: u32,
     pub fix_cost_usd: f64,
     pub fix_tokens: u64,
+    /// Quality thresholds that were checked (from agent YAML), if any.
+    #[serde(default)]
+    pub quality_thresholds_checked: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

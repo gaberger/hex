@@ -32,7 +32,7 @@
       "adapter": "secondary/inference",
       "tier": 1,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/src/routes/chat.rs"]
     },
     {
@@ -41,7 +41,7 @@
       "adapter": "secondary/inference",
       "tier": 1,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/src/routes/chat.rs"]
     },
     {
@@ -50,7 +50,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": [
         "hex-cli/src/pipeline/workplan_phase.rs",
         "hex-cli/src/pipeline/code_phase.rs",
@@ -63,7 +63,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/tui/mod.rs"]
     },
     {
@@ -72,7 +72,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/workplan_phase.rs"]
     },
     {
@@ -81,7 +81,7 @@
       "adapter": "integration",
       "tier": 4,
       "dependencies": ["step-1", "step-2", "step-3", "step-4", "step-5"],
-      "status": "pending",
+      "status": "done",
       "files": []
     },
     {
@@ -90,7 +90,7 @@
       "adapter": "docs",
       "tier": 4,
       "dependencies": ["step-6"],
-      "status": "pending",
+      "status": "done",
       "files": [
         "docs/guides/openrouter-setup.md",
         "docs/guides/development-workflow.md"

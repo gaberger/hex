@@ -8,10 +8,19 @@ use std::fs;
 use std::io::BufRead;
 use std::path::Path;
 
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::nexus_client::NexusClient;
+use crate::pipeline::agent_def::{AgentDefinition, QualityThresholds};
 use crate::pipeline::validate_phase::ValidatePhase;
+
+/// Load quality thresholds from the agent YAML definition.
+/// Returns the thresholds for the given role, or defaults if not found.
+pub fn load_quality_thresholds(role: &str) -> QualityThresholds {
+    AgentDefinition::load(role)
+        .and_then(|def| def.quality_thresholds)
+        .unwrap_or_default()
+}
 
 /// An objective that must be satisfied for a workplan tier to be complete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -534,6 +543,18 @@ fn evaluate_review_passes(output_dir: &str) -> ObjectiveState {
 }
 
 async fn evaluate_architecture(output_dir: &str, nexus_url: &str) -> ObjectiveState {
+    // Load quality thresholds from the fixer agent definition (handles ArchitectureGradeA)
+    let thresholds = load_quality_thresholds("hex-fixer");
+    info!(
+        "Quality thresholds loaded: max_lint_warnings={:?}, max_file_lines={:?}, \
+         max_function_lines={:?}, max_cyclomatic_complexity={:?}, test_coverage={:?}",
+        thresholds.max_lint_warnings,
+        thresholds.max_file_lines,
+        thresholds.max_function_lines,
+        thresholds.max_cyclomatic_complexity,
+        thresholds.test_coverage,
+    );
+
     let client = NexusClient::new(nexus_url.to_string());
     let encoded_path = urlencoding(output_dir);
     let api_path = format!("/api/analyze?path={}", encoded_path);
@@ -549,32 +570,53 @@ async fn evaluate_architecture(output_dir: &str, nexus_url: &str) -> ObjectiveSt
                 .or_else(|| resp["violation_count"].as_u64().map(|n| n as usize))
                 .unwrap_or(0);
 
-            if score >= 90 && violation_count == 0 {
-                ObjectiveState::met(
-                    Objective::ArchitectureGradeA,
-                    format!("score {}/100, 0 violations", score),
-                )
-            } else {
-                let mut issues = Vec::new();
-                if score < 90 {
-                    issues.push(format!("architecture score {}/100 (need >= 90)", score));
-                }
-                if violation_count > 0 {
-                    issues.push(format!("{} violations found", violation_count));
-                    // Include first few violation messages
-                    if let Some(arr) = resp["violations"].as_array() {
-                        for v in arr.iter().take(5) {
-                            let file = v["file"].as_str().unwrap_or("unknown");
-                            let msg = v["message"].as_str().unwrap_or("violation");
-                            issues.push(format!("  {}: {}", file, msg));
-                        }
+            // Extract lint warning count from analysis response if available
+            let lint_warnings = resp["lint_warnings"]
+                .as_u64()
+                .or_else(|| resp["warnings"].as_u64())
+                .unwrap_or(0) as u32;
+
+            let mut issues = Vec::new();
+            let mut met = true;
+
+            if score < 90 {
+                met = false;
+                issues.push(format!("architecture score {}/100 (need >= 90)", score));
+            }
+            if violation_count > 0 {
+                met = false;
+                issues.push(format!("{} violations found", violation_count));
+                // Include first few violation messages
+                if let Some(arr) = resp["violations"].as_array() {
+                    for v in arr.iter().take(5) {
+                        let file = v["file"].as_str().unwrap_or("unknown");
+                        let msg = v["message"].as_str().unwrap_or("violation");
+                        issues.push(format!("  {}: {}", file, msg));
                     }
                 }
-                ObjectiveState::unmet(
-                    Objective::ArchitectureGradeA,
-                    format!("score {}/100, {} violations", score, violation_count),
-                    issues,
-                )
+            }
+
+            // Check lint warnings against threshold
+            if let Some(max_lint) = thresholds.max_lint_warnings {
+                if lint_warnings > max_lint {
+                    met = false;
+                    issues.push(format!(
+                        "lint warnings {} exceeds threshold {} (from agent YAML)",
+                        lint_warnings, max_lint
+                    ));
+                }
+                info!("Lint warnings check: {} / max {}", lint_warnings, max_lint);
+            }
+
+            let detail = format!(
+                "score {}/100, {} violations, {} lint warnings",
+                score, violation_count, lint_warnings
+            );
+
+            if met {
+                ObjectiveState::met(Objective::ArchitectureGradeA, detail)
+            } else {
+                ObjectiveState::unmet(Objective::ArchitectureGradeA, detail, issues)
             }
         }
         Err(err) => {

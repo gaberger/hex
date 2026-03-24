@@ -1740,6 +1740,25 @@ impl SupervisorResult {
         }
         .to_string();
 
+        // Load quality thresholds from agent YAML to include in report
+        let thresholds = crate::pipeline::objectives::load_quality_thresholds("hex-fixer");
+        let mut thresholds_checked = Vec::new();
+        if let Some(v) = thresholds.max_lint_warnings {
+            thresholds_checked.push(format!("max_lint_warnings={}", v));
+        }
+        if let Some(v) = thresholds.max_file_lines {
+            thresholds_checked.push(format!("max_file_lines={}", v));
+        }
+        if let Some(v) = thresholds.max_function_lines {
+            thresholds_checked.push(format!("max_function_lines={}", v));
+        }
+        if let Some(v) = thresholds.max_cyclomatic_complexity {
+            thresholds_checked.push(format!("max_cyclomatic_complexity={}", v));
+        }
+        if let Some(v) = thresholds.test_coverage {
+            thresholds_checked.push(format!("test_coverage={}%", v));
+        }
+
         crate::session::QualityReport {
             grade,
             score,
@@ -1753,6 +1772,7 @@ impl SupervisorResult {
             violations_fixed: 0,
             fix_cost_usd: 0.0,
             fix_tokens: 0,
+            quality_thresholds_checked: thresholds_checked,
         }
     }
 

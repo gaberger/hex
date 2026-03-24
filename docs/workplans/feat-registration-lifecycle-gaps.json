@@ -16,9 +16,13 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": ["S01", "S02"],
+      "specs": [
+        "S01",
+        "S02"
+      ],
       "worktree_branch": "feat/reg-gaps/cli-connect",
-      "done_condition": "hex agent connect writes ~/.hex/sessions/agent-{session_id}.json on the calling host with correct agentId and project"
+      "done_condition": "hex agent connect writes ~/.hex/sessions/agent-{session_id}.json on the calling host with correct agentId and project",
+      "status": "done"
     },
     {
       "id": "step-2",
@@ -28,33 +32,51 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": ["S07"],
+      "specs": [
+        "S07"
+      ],
       "worktree_branch": "feat/reg-gaps/server-connect",
-      "done_condition": "Connect response includes projectId; project auto-registered in SpacetimeDB project table"
+      "done_condition": "Connect response includes projectId; project auto-registered in SpacetimeDB project table",
+      "status": "done"
     },
     {
       "id": "step-3",
-      "description": "Rewrite resolve_agent_id() in hex-cli/src/commands/inbox.rs with priority: (1) CLAUDE_SESSION_ID env → exact file lookup, (2) HEX_AGENT_ID env → direct use, (3) newest non-nexus session file. Filter out files where name starts with 'nexus-agent'.",
+      "description": "Rewrite resolve_agent_id() in hex-cli/src/commands/inbox.rs with priority: (1) CLAUDE_SESSION_ID env \u2192 exact file lookup, (2) HEX_AGENT_ID env \u2192 direct use, (3) newest non-nexus session file. Filter out files where name starts with 'nexus-agent'.",
       "layer": "adapters/primary",
       "adapter": "cli",
       "port": null,
-      "dependencies": ["step-1"],
+      "dependencies": [
+        "step-1"
+      ],
       "tier": 1,
-      "specs": ["S03", "S04", "S05", "S08"],
+      "specs": [
+        "S03",
+        "S04",
+        "S05",
+        "S08"
+      ],
       "worktree_branch": "feat/reg-gaps/resolve-agent",
-      "done_condition": "resolve_agent_id returns correct ID when CLAUDE_SESSION_ID set, when HEX_AGENT_ID set, and when falling back to file scan (skipping nexus files)"
+      "done_condition": "resolve_agent_id returns correct ID when CLAUDE_SESSION_ID set, when HEX_AGENT_ID set, and when falling back to file scan (skipping nexus files)",
+      "status": "done"
     },
     {
       "id": "step-4",
-      "description": "End-to-end test: hex agent connect on bazzite → session file written → hex inbox list resolves correct agent → notification received. Verify project appears in SpacetimeDB project table.",
+      "description": "End-to-end test: hex agent connect on bazzite \u2192 session file written \u2192 hex inbox list resolves correct agent \u2192 notification received. Verify project appears in SpacetimeDB project table.",
       "layer": "integration",
       "adapter": null,
       "port": null,
-      "dependencies": ["step-1", "step-2", "step-3"],
+      "dependencies": [
+        "step-1",
+        "step-2",
+        "step-3"
+      ],
       "tier": 2,
-      "specs": ["S06"],
+      "specs": [
+        "S06"
+      ],
       "worktree_branch": "feat/reg-gaps/integration",
-      "done_condition": "hex inbox list works on bazzite after hex agent connect; project visible in spacetime sql"
+      "done_condition": "hex inbox list works on bazzite after hex agent connect; project visible in spacetime sql",
+      "status": "done"
     }
   ],
   "dependencies": {
@@ -63,8 +85,8 @@
   },
   "mergeOrder": [
     "step-1, step-2 parallel (client + server)",
-    "step-1 → step-3 (session file needed for resolve)",
-    "step-1, step-2, step-3 → step-4 (integration test)"
+    "step-1 \u2192 step-3 (session file needed for resolve)",
+    "step-1, step-2, step-3 \u2192 step-4 (integration test)"
   ],
   "riskRegister": [
     {

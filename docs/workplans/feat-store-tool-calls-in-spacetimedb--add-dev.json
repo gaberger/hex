@@ -37,7 +37,7 @@
       "adapter": "secondary/spacetimedb",
       "tier": 0,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"]
     },
     {
@@ -46,7 +46,7 @@
       "adapter": "primary/http",
       "tier": 2,
       "dependencies": ["step-1"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/src/routes/swarms.rs", "hex-nexus/src/routes/mod.rs"]
     },
     {
@@ -55,7 +55,7 @@
       "adapter": "secondary/session",
       "tier": 1,
       "dependencies": ["step-2"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/session.rs"]
     },
     {
@@ -64,7 +64,7 @@
       "adapter": "primary/cli",
       "tier": 2,
       "dependencies": ["step-2"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/commands/report.rs"]
     },
     {
@@ -73,7 +73,7 @@
       "adapter": "primary/dashboard",
       "tier": 2,
       "dependencies": ["step-1"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/assets/src/components/fleet/ToolCallFeed.tsx"]
     },
     {
@@ -82,7 +82,7 @@
       "adapter": "primary/http",
       "tier": 3,
       "dependencies": ["step-2"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/src/routes/swarms.rs", "hex-cli/src/commands/report.rs"]
     }
   ]

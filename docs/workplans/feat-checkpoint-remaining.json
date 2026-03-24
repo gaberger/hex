@@ -24,7 +24,7 @@
       "dependencies": [],
       "tier": 0,
       "files": ["tests/integration/checkpoint-lifecycle.test.ts"],
-      "status": "todo",
+      "status": "done",
       "done_condition": "bun test tests/integration/checkpoint-lifecycle.test.ts passes"
     },
     {
@@ -34,7 +34,7 @@
       "dependencies": [],
       "tier": 0,
       "files": ["tests/integration/checkpoint-lifecycle.test.ts"],
-      "status": "todo",
+      "status": "done",
       "done_condition": "prune test case passes"
     },
     {
@@ -44,7 +44,7 @@
       "dependencies": [],
       "tier": 0,
       "files": ["tests/integration/checkpoint-lifecycle.test.ts"],
-      "status": "todo",
+      "status": "done",
       "done_condition": "crash simulation test case passes"
     }
   ],

@@ -32,7 +32,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/tui/mod.rs"]
     },
     {
@@ -41,7 +41,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/validate_phase.rs"]
     },
     {
@@ -50,7 +50,7 @@
       "adapter": "primary/http",
       "tier": 1,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/src/routes/analysis.rs"]
     },
     {
@@ -59,7 +59,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/tui/mod.rs", "hex-cli/src/pipeline/code_phase.rs"]
     },
     {
@@ -68,7 +68,7 @@
       "adapter": "secondary/inference",
       "tier": 1,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/code_phase.rs"]
     }
   ]

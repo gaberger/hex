@@ -450,6 +450,18 @@ pub struct QualityThresholds {
     pub max_cyclomatic_complexity: Option<u32>,
 }
 
+impl Default for QualityThresholds {
+    fn default() -> Self {
+        Self {
+            test_coverage: Some(80),
+            max_lint_warnings: Some(5),
+            max_file_lines: Some(500),
+            max_function_lines: Some(50),
+            max_cyclomatic_complexity: Some(10),
+        }
+    }
+}
+
 // ── Swarm Composition ───────────────────────────────────────────────────
 
 /// Top-level swarm definition (e.g. dev-pipeline.yml).

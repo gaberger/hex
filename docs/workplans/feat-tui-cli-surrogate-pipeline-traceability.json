@@ -15,7 +15,8 @@
         "hex task complete <id> <result> --json returns {\"id\": \"...\", \"status\": \"completed\"}",
         "hex analyze <path> --json returns {\"score\": N, \"violations\": [...]}",
         "All commands exit 0 on success, non-zero on failure with JSON error on stderr"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "step-2",
@@ -27,7 +28,8 @@
         "CliRunner::run(args) -> Result<serde_json::Value> executes and parses JSON stdout",
         "Timeout of 30s per command, configurable",
         "Errors include stderr content for debugging"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "step-3",
@@ -39,7 +41,8 @@
         "complete_tracking_task uses hex task complete instead of PATCH /api/swarms/tasks/{id}",
         "Agent ID is passed via --agent-id flag",
         "Tasks show correct status in hex report latest"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "step-4",
@@ -50,7 +53,8 @@
         "execute_all_tracked_in uses hex task complete for each step",
         "Task status updates appear in swarm status",
         "Quick mode code phase still tracks tasks correctly"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "step-5",
@@ -61,7 +65,8 @@
         "ValidatePhase uses hex analyze <output_dir> --json instead of GET /api/analyze",
         "Architecture score (0-100) flows into quality_result on the session",
         "Violations list populates the report"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "step-6",
@@ -72,18 +77,20 @@
         "SwarmPhase uses hex swarm init and hex task create instead of direct POST",
         "task_id_map populated from CLI JSON responses",
         "Project ID included in swarm creation"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "step-7",
       "tier": 2,
-      "description": "Wire quality_result into session from supervisor run — populate score, grade, compile/test results",
+      "description": "Wire quality_result into session from supervisor run \u2014 populate score, grade, compile/test results",
       "adapter": "tui",
       "acceptance": [
         "After supervisor.run(), session.quality_result is populated with score/grade/compile/test data",
         "hex report latest shows numerical score and grade in Quality Gate section",
         "Quality gate section shows compile status, test counts, and violation counts"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "step-8",
@@ -94,18 +101,20 @@
         "Report shows project_id for all sessions (new and old)",
         "Falls back to hex project list when session.project_id is None",
         "JSON report includes project_id field"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "step-9",
       "tier": 3,
-      "description": "Add swarm agent report sections to audit report — reviewer findings, test results, UX issues, documentation status",
+      "description": "Add swarm agent report sections to audit report \u2014 reviewer findings, test results, UX issues, documentation status",
       "adapter": "cli",
       "acceptance": [
         "Report has 'Agent Reports' section after Quality Gate",
         "Shows per-agent: role, objective addressed, duration, pass/fail, summary",
         "At least reviewer, tester, documenter, UX agent results visible when supervisor ran"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "step-10",
@@ -117,7 +126,8 @@
         "hex report latest shows: project_id, session_id, swarm_id, all tasks completed",
         "All tool calls logged with model, tokens, cost",
         "Quality gate shows numerical score from hex analyze"
-      ]
+      ],
+      "status": "done"
     }
   ]
 }

@@ -37,7 +37,7 @@
       "adapter": "secondary/fmt",
       "tier": 0,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/Cargo.toml", "hex-cli/src/fmt.rs", "hex-cli/src/main.rs"]
     },
     {
@@ -46,7 +46,7 @@
       "adapter": "primary/cli",
       "tier": 1,
       "dependencies": ["step-1"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/commands/adr.rs"]
     },
     {
@@ -55,7 +55,7 @@
       "adapter": "primary/cli",
       "tier": 1,
       "dependencies": ["step-1"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/commands/agent.rs", "hex-cli/src/commands/plan.rs"]
     },
     {
@@ -64,7 +64,7 @@
       "adapter": "primary/cli",
       "tier": 1,
       "dependencies": ["step-1"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/commands/inference.rs", "hex-cli/src/commands/test.rs", "hex-cli/src/commands/stdb.rs", "hex-cli/src/commands/git_cmd.rs", "hex-cli/src/commands/report.rs"]
     }
   ]

@@ -42,7 +42,7 @@
       "adapter": "secondary/spacetimedb",
       "tier": 0,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"]
     },
     {
@@ -51,7 +51,7 @@
       "adapter": "secondary/spacetimedb",
       "tier": 0,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"]
     },
     {
@@ -60,7 +60,7 @@
       "adapter": "primary/http",
       "tier": 1,
       "dependencies": ["step-1", "step-2"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/src/routes/swarms.rs", "hex-nexus/src/routes/mod.rs"]
     },
     {
@@ -69,7 +69,7 @@
       "adapter": "secondary/agent",
       "tier": 1,
       "dependencies": ["step-1"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/quality_agent.rs"]
     },
     {
@@ -78,7 +78,7 @@
       "adapter": "secondary/agent",
       "tier": 1,
       "dependencies": ["step-2"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/fix_agent.rs"]
     },
     {
@@ -87,7 +87,7 @@
       "adapter": "secondary/coordination",
       "tier": 1,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/src/coordination/mod.rs", "spacetime-modules/hexflo-coordination/src/lib.rs"]
     },
     {
@@ -96,7 +96,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": ["step-6"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/swarm_phase.rs"]
     },
     {
@@ -105,7 +105,7 @@
       "adapter": "secondary/coordination",
       "tier": 2,
       "dependencies": ["step-3", "step-4", "step-5"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/src/coordination/quality.rs"]
     },
     {
@@ -114,7 +114,7 @@
       "adapter": "secondary/coordination",
       "tier": 2,
       "dependencies": ["step-8"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/src/coordination/mod.rs", "hex-nexus/src/routes/swarms.rs"]
     },
     {
@@ -123,7 +123,7 @@
       "adapter": "secondary/coordination",
       "tier": 3,
       "dependencies": ["step-8"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/src/coordination/quality.rs"]
     },
     {
@@ -132,7 +132,7 @@
       "adapter": "primary/dashboard",
       "tier": 2,
       "dependencies": ["step-1", "step-2"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/assets/src/components/fleet/QualityGatePanel.tsx"]
     },
     {
@@ -141,7 +141,7 @@
       "adapter": "primary/cli",
       "tier": 3,
       "dependencies": ["step-3"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/commands/report.rs"]
     }
   ]

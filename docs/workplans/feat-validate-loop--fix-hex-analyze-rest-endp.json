@@ -37,7 +37,7 @@
       "adapter": "primary/http",
       "tier": 1,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-nexus/src/routes/mod.rs", "hex-nexus/src/analysis/analyzer.rs"]
     },
     {
@@ -46,7 +46,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/validate_phase.rs"]
     },
     {
@@ -55,7 +55,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/validate_phase.rs"]
     },
     {
@@ -64,7 +64,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": ["step-1"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/validate_phase.rs"]
     },
     {
@@ -73,7 +73,7 @@
       "adapter": "secondary/prompts",
       "tier": 1,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/assets/prompts/fix-compile.md", "hex-cli/assets/prompts/fix-tests.md"]
     },
     {
@@ -82,7 +82,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-2", "step-3", "step-4", "step-5"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/validate_phase.rs"]
     },
     {
@@ -91,7 +91,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-6"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/tui/mod.rs"]
     },
     {
@@ -100,7 +100,7 @@
       "adapter": "primary/cli",
       "tier": 3,
       "dependencies": ["step-6"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/commands/report.rs"]
     },
     {
@@ -109,7 +109,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/code_phase.rs"]
     }
   ]
