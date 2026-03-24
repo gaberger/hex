@@ -621,12 +621,67 @@ pub fn research_loop_tick(ctx: &ReducerContext) {
             .count();
 
         if queued_count < MIN_QUEUE_DEPTH {
-            log::info!(
-                "Lineage '{}' has only {} queued experiments (min={}), mutations needed",
-                frontier.lineage_name,
-                queued_count,
-                MIN_QUEUE_DEPTH
-            );
+            // Auto-generate mutations from the best config
+            if let Some(best_config) = ctx.db.network_config().id().find(&frontier.best_config_id) {
+                let strategies = ["widen", "deepen", "attention", "optimizer", "activation"];
+                let needed = MIN_QUEUE_DEPTH - queued_count;
+                let ts_hash = format!("{:?}", ctx.timestamp).bytes().fold(0usize, |a, b| a.wrapping_mul(31).wrapping_add(b as usize));
+
+                for i in 0..needed {
+                    let strategy = strategies[(ts_hash + i) % strategies.len()];
+                    let (hypothesis, mutation_diff) = match strategy {
+                        "widen" => (
+                            format!("widen: n_embd {} → {}", best_config.n_embd, best_config.n_embd + 128),
+                            format!("{{\"strategy\":\"widen\",\"n_embd\":[{},{}]}}", best_config.n_embd, best_config.n_embd + 128),
+                        ),
+                        "deepen" => (
+                            format!("deepen: n_layer {} → {}", best_config.n_layer, best_config.n_layer + 2),
+                            format!("{{\"strategy\":\"deepen\",\"n_layer\":[{},{}]}}", best_config.n_layer, best_config.n_layer + 2),
+                        ),
+                        "attention" => {
+                            let new_pattern = if best_config.window_pattern == "SSSL" { "SSLL" } else { "SSSL" };
+                            (
+                                format!("attention: window {} → {}", best_config.window_pattern, new_pattern),
+                                format!("{{\"strategy\":\"attention\",\"window_pattern\":[\"{}\",\"{}\"]}}", best_config.window_pattern, new_pattern),
+                            )
+                        }
+                        "optimizer" => (
+                            "optimizer: adjust lr by -10%".to_string(),
+                            "{\"strategy\":\"optimizer\",\"lr_adjust\":-0.1}".to_string(),
+                        ),
+                        _ => (
+                            format!("activation: try swiglu (was {})", best_config.activation),
+                            format!("{{\"strategy\":\"activation\",\"activation\":[\"{}\",\"swiglu\"]}}", best_config.activation),
+                        ),
+                    };
+
+                    let exp_id = generate_id(ctx);
+                    let now = now_str(ctx);
+                    ctx.db.experiment().insert(Experiment {
+                        id: format!("{}-{}", exp_id, i),
+                        config_id: best_config.id.clone(),
+                        swarm_id: String::new(),
+                        hypothesis,
+                        mutation_diff,
+                        status: "queued".to_string(),
+                        val_bpb: String::new(),
+                        baseline_bpb: frontier.best_val_bpb.clone(),
+                        improvement_bpb: String::new(),
+                        train_loss_final: String::new(),
+                        tokens_processed: 0,
+                        wall_time_secs: 0,
+                        gpu_node_id: String::new(),
+                        git_branch: String::new(),
+                        git_commit: String::new(),
+                        started_at: String::new(),
+                        completed_at: String::new(),
+                        error_message: String::new(),
+                        lineage_name: frontier.lineage_name.clone(),
+                    });
+
+                    log::info!("Auto-generated experiment for lineage '{}': {}", frontier.lineage_name, strategy);
+                }
+            }
         }
     }
 
