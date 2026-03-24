@@ -772,6 +772,119 @@
         },
         "required": []
       }
+    },
+    {
+      "name": "hex_neural_lab_config_create",
+      "category": "neural-lab",
+      "description": "Create a neural architecture configuration with hyperparameters",
+      "route": { "method": "POST", "path": "/api/neural-lab/configs" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Configuration name" },
+          "parent_id": { "type": "string", "description": "Parent config ID for lineage tracking" },
+          "n_layer": { "type": "integer", "description": "Number of transformer layers" },
+          "n_head": { "type": "integer", "description": "Number of attention heads" },
+          "n_embd": { "type": "integer", "description": "Embedding dimension" },
+          "vocab_size": { "type": "integer", "description": "Vocabulary size" },
+          "window_pattern": { "type": "string", "description": "Attention pattern (e.g. sliding_window, global)" },
+          "activation": { "type": "string", "description": "Activation function (e.g. gelu, swiglu)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_config_list",
+      "category": "neural-lab",
+      "description": "List neural architecture configurations with optional filters",
+      "route": { "method": "GET", "path": "/api/neural-lab/configs" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "description": "Filter by status (active, archived)" },
+          "lineage": { "type": "string", "description": "Filter by lineage name" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_experiment_create",
+      "category": "neural-lab",
+      "description": "Create an experiment to evaluate a config against a hypothesis",
+      "route": { "method": "POST", "path": "/api/neural-lab/experiments" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "config_id": { "type": "string", "description": "Config ID to test" },
+          "hypothesis": { "type": "string", "description": "Hypothesis text describing what this experiment tests" },
+          "lineage": { "type": "string", "description": "Lineage name for grouping" }
+        },
+        "required": ["config_id", "hypothesis"]
+      }
+    },
+    {
+      "name": "hex_neural_lab_experiment_list",
+      "category": "neural-lab",
+      "description": "List experiments with optional lineage and status filters",
+      "route": { "method": "GET", "path": "/api/neural-lab/experiments" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineage": { "type": "string", "description": "Filter by lineage name" },
+          "status": { "type": "string", "description": "Filter by status (pending, running, completed, failed)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_frontier",
+      "category": "neural-lab",
+      "description": "Get the Pareto frontier (best loss vs params tradeoff) for a lineage",
+      "route": { "method": "GET", "path": "/api/neural-lab/frontier/{lineage}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineage": { "type": "string", "description": "Lineage name (defaults to 'default')" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_strategies",
+      "category": "neural-lab",
+      "description": "List available mutation strategies for neural architecture search",
+      "route": { "method": "GET", "path": "/api/neural-lab/strategies" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_loop_start",
+      "category": "neural-lab",
+      "description": "Start the autonomous experiment loop for a lineage",
+      "route": { "method": "POST", "path": "/api/neural-lab/loop/start" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineage": { "type": "string", "description": "Lineage name (defaults to 'default')" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_neural_lab_loop_stop",
+      "category": "neural-lab",
+      "description": "Stop the autonomous experiment loop for a lineage",
+      "route": { "method": "POST", "path": "/api/neural-lab/loop/stop" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lineage": { "type": "string", "description": "Lineage name (defaults to 'default')" }
+        },
+        "required": []
+      }
     }
   ]
 }

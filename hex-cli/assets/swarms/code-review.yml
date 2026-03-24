@@ -1,0 +1,90 @@
+# code-review — Review-only swarm for existing code
+# Used by: hex review <directory>
+
+name: code-review
+version: "1.0.0"
+description: >
+  Reviews existing code for quality, architecture compliance, and UX issues.
+  Does not generate or modify code — only produces review reports.
+
+topology: mesh
+
+inference_defaults:
+  provider: openrouter
+  endpoint: /api/inference/complete
+  fallback_chain: [openrouter/free]
+  temperature: 0.2
+  timeout_ms: 120000
+
+agents:
+  - role: hex-reviewer
+    prompt: agent-reviewer.md
+    cardinality: per_source_file
+    parallel_with: [hex-ux, hex-analyzer]
+    inference:
+      task_type: reasoning
+      model: deepseek/deepseek-r1
+      fallback: openrouter/free
+      max_tokens: 4096
+    context:
+      token_budget: 50000
+      includes:
+        - "{{source_file}}"
+        - "{{port_interface}}"
+        - "{{architecture_rules}}"
+        - "{{review_checklist}}"
+    output:
+      type: structured_json
+      schema: ReviewResult
+      write_to: "{{output_dir}}/.hex-review/{{file_slug}}.json"
+
+  - role: hex-ux
+    prompt: agent-ux.md
+    cardinality: per_tier
+    when: has_primary_adapters
+    parallel_with: [hex-reviewer]
+    inference:
+      task_type: reasoning
+      model: deepseek/deepseek-r1
+      fallback: openrouter/free
+      max_tokens: 4096
+    context:
+      token_budget: 50000
+      includes:
+        - "{{adapter_files}}"
+        - "{{user_description}}"
+        - "{{ux_checklist}}"
+    output:
+      type: structured_json
+      schema: UxReviewResult
+      write_to: "{{output_dir}}/.hex-ux-review/review.json"
+
+  - role: hex-analyzer
+    prompt: null
+    cardinality: once
+    inference: null
+    execute:
+      command: "hex analyze {{output_dir}} --json"
+      timeout_ms: 30000
+    output:
+      type: analyze_result
+
+objectives:
+  - id: ReviewPasses
+    required: true
+    evaluate: check_review_json_verdict
+  - id: ArchitectureGradeA
+    required: true
+    evaluate:
+      command: "hex analyze {{output_dir}} --json"
+    threshold:
+      score: 90
+      violations: 0
+  - id: UxReviewPasses
+    required: false
+    when: has_primary_adapters
+    evaluate: check_ux_review_json_verdict
+
+iteration:
+  max_per_tier: 1
+  on_max_iterations: report

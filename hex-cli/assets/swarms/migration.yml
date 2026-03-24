@@ -1,0 +1,116 @@
+# migration — Framework/dependency upgrade swarm
+# Used by: hex migrate <from> <to>
+
+name: migration
+version: "1.0.0"
+description: >
+  Assists with framework or dependency migrations. Analyzes existing code,
+  generates upgraded code per file, validates compilation and tests pass.
+  Stricter quality gates — no regressions allowed.
+
+topology: pipeline
+
+inference_defaults:
+  provider: openrouter
+  endpoint: /api/inference/complete
+  fallback_chain: [openrouter/free]
+  temperature: 0.2                      # conservative for migrations
+  timeout_ms: 120000
+
+agents:
+  - role: hex-coder
+    prompt: agent-coder.md
+    cardinality: per_source_file
+    inference:
+      task_type: code_edit              # editing existing code, not generating new
+      model: deepseek/deepseek-r1       # reasoning needed for migrations
+      fallback: openrouter/free
+      max_tokens: 4096
+    context:
+      token_budget: 60000
+      includes:
+        - "{{source_file}}"             # file to migrate
+        - "{{migration_from}}"          # old framework/version
+        - "{{migration_to}}"            # new framework/version
+        - "{{migration_guide}}"         # upgrade guide if available
+        - "{{port_interfaces}}"
+        - "{{architecture_rules}}"
+    output:
+      type: source_file
+      write_to: "{{source_file}}"       # in-place upgrade
+
+  - role: hex-tester
+    prompt: agent-tester.md
+    cardinality: per_source_file
+    depends_on: [hex-coder]
+    inference:
+      task_type: code_generation
+      model: meta-llama/llama-4-maverick
+      fallback: openrouter/free
+      max_tokens: 4096
+    context:
+      token_budget: 50000
+      includes:
+        - "{{source_file}}"
+        - "{{port_interface}}"
+        - "{{test_patterns}}"
+    output:
+      type: test_file
+      write_to: "{{output_dir}}/tests/{{file_slug}}.test.ts"
+    post_execute:
+      - compile_check
+      - run_tests
+
+  - role: hex-analyzer
+    prompt: null
+    cardinality: once
+    depends_on: [hex-coder]
+    inference: null
+    execute:
+      command: "hex analyze {{output_dir}} --json"
+      timeout_ms: 30000
+
+  - role: hex-fixer
+    prompt: agent-fixer.md
+    cardinality: per_issue
+    triggered_by: [hex-tester, hex-analyzer]
+    inference:
+      task_type: code_edit
+      model: deepseek/deepseek-r1
+      fallback: openrouter/free
+      max_tokens: 4096
+      upgrade:
+        after_iterations: 2             # escalate faster for migrations
+        to: openrouter/auto
+    context:
+      token_budget: 50000
+      includes:
+        - "{{source_file}}"
+        - "{{issue_description}}"
+        - "{{upstream_output}}"
+        - "{{architecture_rules}}"
+    output:
+      type: source_file
+      write_to: "{{source_file}}"
+
+objectives:
+  - id: CodeCompiles
+    required: true
+    evaluate:
+      command: "npx tsc --noEmit"
+      alt_command: "cargo check"
+  - id: TestsPass
+    required: true
+    depends_on: [CodeCompiles]
+    evaluate:
+      command: "bun test"
+      alt_command: "cargo test"
+  - id: ArchitectureGradeA
+    required: true
+    threshold:
+      score: 90
+      violations: 0
+
+iteration:
+  max_per_tier: 5
+  on_max_iterations: abort              # migrations must not leave code broken
