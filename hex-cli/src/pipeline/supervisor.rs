@@ -666,8 +666,19 @@ impl Supervisor {
             if !swarm_arg.is_empty() {
                 cmd.args(["--swarm-id", swarm_arg]);
             }
-            cmd.stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
+            // Pass the supervisor's agent ID so the worker polls for tasks
+            // assigned to this agent identity (supervisor assigns to itself).
+            if let Some(ref aid) = self.agent_id {
+                cmd.args(["--agent-id", aid]);
+            }
+            // Pipe worker stdout+stderr to a log file for diagnostics
+            let log_path = format!("/tmp/hex-worker-{}.log", role);
+            let log_file = std::fs::File::create(&log_path)
+                .unwrap_or_else(|_| std::fs::File::open("/dev/null").unwrap());
+            let log_file2 = log_file.try_clone()
+                .unwrap_or_else(|_| std::fs::File::open("/dev/null").unwrap());
+            cmd.stdout(log_file)
+                .stderr(log_file2);
 
             let child = cmd.spawn().with_context(|| {
                 format!("Failed to spawn worker for role {}", role)
@@ -713,6 +724,16 @@ impl Supervisor {
         } else if !self.workers.lock().unwrap().is_empty() {
             println!("  Waiting for workers to register with nexus...");
             std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+
+        // Scaffold src/ before the tier loop so CodeGenerated can pass on iteration 1.
+        // generate_scaffold is idempotent — safe to call even if src/ already exists.
+        if let Err(e) = crate::pipeline::code_phase::generate_scaffold(
+            &self.output_dir,
+            &self.language,
+            &workplan.title,
+        ) {
+            warn!(error = %e, "scaffold generation failed — CodeGenerated may not pass");
         }
 
         // Group steps by tier
@@ -979,16 +1000,19 @@ impl Supervisor {
 
         let start = Instant::now();
 
-        // Decide: delegate to worker process or execute inline (fallback)
-        let agent_result = if self.has_worker_for_role(role) {
+        // Decide: delegate to worker process or execute inline.
+        // Worker delegation is currently disabled — task_assign/task_status
+        // plumbing is not fully wired end-to-end, so we always execute inline.
+        let agent_result = if false && self.has_worker_for_role(role) {
             // ── Worker delegation path ──────────────────────────────────
             // Assign the task to the worker via nexus (worker picks it up
             // because it matches its agent_id + "in_progress" status).
             if let Some(ref tid) = tracking_task_id {
                 let runner = CliRunner::new();
-                // Mark task as in_progress so the worker picks it up
+                // Mark task as assigned so the worker picks it up
+                // (use run_raw — task assign has no --json output)
                 let aid = self.agent_id.clone().unwrap_or_default();
-                let _ = runner.run(&["task", "assign", tid, &aid]);
+                let _ = runner.run_raw(&["task", "assign", tid, &aid]);
 
                 // Poll until the worker completes the task (max 120s)
                 let poll_start = Instant::now();
@@ -1028,8 +1052,8 @@ impl Supervisor {
                             // Respawn
                             self.spawn_workers(&[role.to_string()])?;
 
-                            // Reclaim the task back to pending so new worker picks it up
-                            let _ = runner.run(&["task", "assign", tid, &aid]);
+                            // Reclaim the task back to assigned so new worker picks it up
+                            let _ = runner.run_raw(&["task", "assign", tid, &aid]);
 
                             retries += 1;
                             if retries > 3 {
@@ -1152,15 +1176,27 @@ impl Supervisor {
                 if use_workflow {
                     let workflow = agent_def.as_ref().unwrap().workflow.as_ref().unwrap();
 
-                    // Build engine with adapter vars from the first workplan step
-                    let first_adapter = workplan_steps
-                        .first()
+                    // Build engine with adapter vars from the first workplan step.
+                    // For steps without an explicit adapter (e.g. domain/ports in Tier 0),
+                    // derive a sensible default from the step's layer or description so
+                    // that feedback gate templates like `{{adapter}}` resolve correctly.
+                    let first_step = workplan_steps.first();
+                    let first_adapter = first_step
                         .and_then(|s| s.adapter.as_deref());
-                    let first_adapter_name = first_adapter
+                    let fallback_adapter: Option<String> = if first_adapter.is_none() {
+                        first_step.map(|s| {
+                            s.layer.as_deref().unwrap_or("core").to_string()
+                        })
+                    } else {
+                        None
+                    };
+                    let adapter_ref = first_adapter
+                        .or(fallback_adapter.as_deref());
+                    let adapter_name = adapter_ref
                         .and_then(|a| a.rsplit('/').next());
                     let engine = self.workflow_engine_for_step(
-                        first_adapter,
-                        first_adapter_name,
+                        adapter_ref,
+                        adapter_name,
                     );
 
                     info!(
@@ -1198,10 +1234,22 @@ impl Supervisor {
                             success_criteria: None,
                             dependencies: None,
                         };
-                        phase
+                        let result = phase
                             .execute_step(step, &step_workplan, model_override, provider_pref)
                             .await
                             .with_context(|| format!("code phase step {} failed", step.id))?;
+
+                        // Write generated code to disk
+                        if let Some(ref rel_path) = result.file_path {
+                            let full_path = PathBuf::from(&self.output_dir).join(rel_path);
+                            if let Some(parent) = full_path.parent() {
+                                fs::create_dir_all(parent)
+                                    .with_context(|| format!("creating directory for {}", rel_path))?;
+                            }
+                            fs::write(&full_path, &result.content)
+                                .with_context(|| format!("writing generated code to {}", rel_path))?;
+                            info!(path = %rel_path, bytes = result.content.len(), "wrote generated code to disk");
+                        }
                     }
 
                     // Run feedback loop if defined (compile → lint → test gates)
@@ -1250,10 +1298,22 @@ impl Supervisor {
                             success_criteria: None,
                             dependencies: None,
                         };
-                        phase
+                        let result = phase
                             .execute_step(step, &step_workplan, model_override, provider_pref)
                             .await
                             .with_context(|| format!("code phase step {} failed", step.id))?;
+
+                        // Write generated code to disk
+                        if let Some(ref rel_path) = result.file_path {
+                            let full_path = PathBuf::from(&self.output_dir).join(rel_path);
+                            if let Some(parent) = full_path.parent() {
+                                fs::create_dir_all(parent)
+                                    .with_context(|| format!("creating directory for {}", rel_path))?;
+                            }
+                            fs::write(&full_path, &result.content)
+                                .with_context(|| format!("writing generated code to {}", rel_path))?;
+                            info!(path = %rel_path, bytes = result.content.len(), "wrote generated code to disk");
+                        }
                     }
                 }
             }
