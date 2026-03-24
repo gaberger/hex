@@ -16,6 +16,9 @@ pub enum TaskAction {
         swarm_id: String,
         /// Task title
         title: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// List all tasks across active swarms
     List,
@@ -25,6 +28,9 @@ pub enum TaskAction {
         id: String,
         /// Completion result/summary
         result: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Assign a task to an agent
     Assign {
@@ -37,14 +43,14 @@ pub enum TaskAction {
 
 pub async fn run(action: TaskAction) -> anyhow::Result<()> {
     match action {
-        TaskAction::Create { swarm_id, title } => create(&swarm_id, &title).await,
+        TaskAction::Create { swarm_id, title, json } => create(&swarm_id, &title, json).await,
         TaskAction::List => list().await,
-        TaskAction::Complete { id, result } => complete(&id, result.as_deref()).await,
+        TaskAction::Complete { id, result, json } => complete(&id, result.as_deref(), json).await,
         TaskAction::Assign { task_id, agent_id } => assign(&task_id, agent_id).await,
     }
 }
 
-async fn create(swarm_id: &str, title: &str) -> anyhow::Result<()> {
+async fn create(swarm_id: &str, title: &str, json_output: bool) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
@@ -68,11 +74,15 @@ async fn create(swarm_id: &str, title: &str) -> anyhow::Result<()> {
     // fall back to the task-specific pattern
     match resp {
         Ok(data) => {
-            let task_id = data["taskId"].as_str().unwrap_or("-");
-            println!("{} Task created", "\u{2b21}".green());
-            println!("  ID:    {}", task_id);
-            println!("  Swarm: {}", swarm_id);
-            println!("  Title: {}", title.bold());
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&data)?);
+            } else {
+                let task_id = data["taskId"].as_str().unwrap_or("-");
+                println!("{} Task created", "\u{2b21}".green());
+                println!("  ID:    {}", task_id);
+                println!("  Swarm: {}", swarm_id);
+                println!("  Title: {}", title.bold());
+            }
         }
         Err(e) => {
             // Try alternative: the path-based endpoint
@@ -82,11 +92,15 @@ async fn create(swarm_id: &str, title: &str) -> anyhow::Result<()> {
 
             match alt_resp {
                 Ok(data) => {
-                    let task_id = data["id"].as_str().or(data["taskId"].as_str()).unwrap_or("-");
-                    println!("{} Task created", "\u{2b21}".green());
-                    println!("  ID:    {}", task_id);
-                    println!("  Swarm: {}", swarm_id);
-                    println!("  Title: {}", title.bold());
+                    if json_output {
+                        println!("{}", serde_json::to_string_pretty(&data)?);
+                    } else {
+                        let task_id = data["id"].as_str().or(data["taskId"].as_str()).unwrap_or("-");
+                        println!("{} Task created", "\u{2b21}".green());
+                        println!("  ID:    {}", task_id);
+                        println!("  Swarm: {}", swarm_id);
+                        println!("  Title: {}", title.bold());
+                    }
                 }
                 Err(_) => return Err(e),
             }
@@ -174,7 +188,7 @@ async fn list() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn complete(id: &str, result: Option<&str>) -> anyhow::Result<()> {
+async fn complete(id: &str, result: Option<&str>, json_output: bool) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
@@ -206,13 +220,17 @@ async fn complete(id: &str, result: Option<&str>) -> anyhow::Result<()> {
         "result": result.unwrap_or(""),
     });
 
-    nexus.patch(&path, &body).await?;
+    let resp = nexus.patch(&path, &body).await?;
 
-    println!("{} Task completed", "\u{2b21}".green());
-    println!("  ID:    {}", id);
-    println!("  Swarm: {}", swarm_id);
-    if let Some(r) = result {
-        println!("  Result: {}", r);
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        println!("{} Task completed", "\u{2b21}".green());
+        println!("  ID:    {}", id);
+        println!("  Swarm: {}", swarm_id);
+        if let Some(r) = result {
+            println!("  Result: {}", r);
+        }
     }
 
     Ok(())

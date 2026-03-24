@@ -19,10 +19,15 @@ const LAYER_DIRS: &[(&str, &str, Layer)] = &[
     ("adapters/secondary", "Secondary Adapters", Layer::AdapterSecondary),
 ];
 
-pub async fn run(path: &str, strict: bool, adr_compliance_only: bool) -> anyhow::Result<()> {
+pub async fn run(path: &str, strict: bool, adr_compliance_only: bool, json_output: bool) -> anyhow::Result<()> {
     let root = Path::new(path)
         .canonicalize()
         .unwrap_or_else(|_| Path::new(path).to_path_buf());
+
+    // JSON mode: collect results and emit structured output
+    if json_output {
+        return run_json(&root, strict, adr_compliance_only).await;
+    }
 
     println!(
         "{} Architecture analysis: {}",
@@ -515,6 +520,97 @@ async fn store_compliance_in_hexflo(
 
     // Best-effort POST — ignore errors
     let _ = nexus.post("/api/hexflo/memory", &payload).await;
+}
+
+/// JSON output mode for `hex analyze --json`.
+async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyhow::Result<()> {
+    let mut result = serde_json::json!({});
+
+    if !adr_compliance_only {
+        // Local boundary violations
+        let has_src = root.join("src").is_dir();
+        let violations: Vec<serde_json::Value> = if has_src {
+            scan_local_violations(root)
+                .iter()
+                .map(|v| {
+                    serde_json::json!({
+                        "source_file": v.source_file,
+                        "imported_path": v.imported_path,
+                        "rule": v.rule,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Try nexus for score
+        let nexus = NexusClient::from_env();
+        let mut score: Option<u64> = None;
+        let mut boundary_errors: Vec<serde_json::Value> = Vec::new();
+        if nexus.ensure_running().await.is_ok() {
+            if let Ok(resp) = nexus.get("/api/projects").await {
+                if let Some(projects) = resp.get("projects").and_then(|p| p.as_array()) {
+                    let matching = projects.iter().find(|p| {
+                        p["rootPath"]
+                            .as_str()
+                            .map(|rp| root.to_string_lossy().contains(rp) || rp.contains(&*root.to_string_lossy()))
+                            .unwrap_or(false)
+                    });
+                    if let Some(project) = matching {
+                        let pid = project["id"].as_str().unwrap_or("-");
+                        let health_path = format!("/api/{}/health", pid);
+                        if let Ok(health) = nexus.get(&health_path).await {
+                            score = health["score"].as_u64();
+                            if let Some(v) = health["violations"].as_u64() {
+                                boundary_errors.push(serde_json::json!({"count": v}));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        result["score"] = score.map(serde_json::Value::from).unwrap_or(serde_json::Value::Null);
+        result["violations"] = serde_json::Value::Array(violations);
+        result["boundary_errors"] = serde_json::Value::Array(boundary_errors);
+    }
+
+    // ADR compliance
+    let adr_violations = check_adr_compliance(root);
+    let error_count = adr_violations.iter().filter(|v| v.severity == "error").count();
+    let warning_count = adr_violations.iter().filter(|v| v.severity == "warning").count();
+
+    let adr_details: Vec<serde_json::Value> = adr_violations
+        .iter()
+        .map(|v| {
+            serde_json::json!({
+                "adr": v.adr,
+                "file": v.file,
+                "line": v.line,
+                "message": v.message,
+                "severity": v.severity,
+            })
+        })
+        .collect();
+
+    result["adr_compliance"] = serde_json::json!({
+        "violation_count": adr_violations.len(),
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "violations": adr_details,
+    });
+
+    // Best-effort store in HexFlo
+    store_compliance_in_hexflo(&adr_violations, error_count, warning_count).await;
+
+    println!("{}", serde_json::to_string_pretty(&result)?);
+
+    if strict && !adr_violations.is_empty() {
+        std::process::exit(1);
+    }
+
+    Ok(())
 }
 
 fn print_check(label: &str, present: bool) {

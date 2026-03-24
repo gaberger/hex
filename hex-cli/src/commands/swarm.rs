@@ -17,6 +17,9 @@ pub enum SwarmAction {
         /// Topology type
         #[arg(short, long, default_value = "hierarchical")]
         topology: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Show current swarm status
     Status,
@@ -26,13 +29,13 @@ pub enum SwarmAction {
 
 pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
     match action {
-        SwarmAction::Init { name, topology } => init(&name, &topology).await,
+        SwarmAction::Init { name, topology, json } => init(&name, &topology, json).await,
         SwarmAction::Status => status().await,
         SwarmAction::List => list().await,
     }
 }
 
-async fn init(name: &str, topology: &str) -> anyhow::Result<()> {
+async fn init(name: &str, topology: &str, json_output: bool) -> anyhow::Result<()> {
     match topology {
         "hierarchical" | "mesh" | "pipeline" => {}
         other => {
@@ -64,11 +67,15 @@ async fn init(name: &str, topology: &str) -> anyhow::Result<()> {
         )
         .await?;
 
-    let id = resp["id"].as_str().unwrap_or("-");
-    println!("{} Swarm initialized", "\u{2b21}".green());
-    println!("  ID:       {}", id);
-    println!("  Name:     {}", name.bold());
-    println!("  Topology: {}", topology);
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        let id = resp["id"].as_str().unwrap_or("-");
+        println!("{} Swarm initialized", "\u{2b21}".green());
+        println!("  ID:       {}", id);
+        println!("  Name:     {}", name.bold());
+        println!("  Topology: {}", topology);
+    }
 
     Ok(())
 }

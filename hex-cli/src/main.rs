@@ -117,6 +117,9 @@ enum Commands {
         /// Run only ADR compliance checks (skip boundary analysis)
         #[arg(long)]
         adr_compliance: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Workplan management (create, list, status)
     Plan {
@@ -209,8 +212,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Memory { action } => commands::memory::run(action).await,
         Commands::Adr { action } => commands::adr::run(action).await,
         Commands::Project { action } => commands::project::run(action).await,
-        Commands::Analyze { path, strict, adr_compliance } => {
-            analyze::run(&path, strict, adr_compliance).await
+        Commands::Analyze { path, strict, adr_compliance, json } => {
+            analyze::run(&path, strict, adr_compliance, json).await
         }
         Commands::Plan { action } => commands::plan::run(action).await,
         Commands::Inference { action } => commands::inference::run(action).await,

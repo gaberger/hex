@@ -3,6 +3,7 @@
 pub mod adr_phase;
 pub mod agents;
 pub mod budget;
+pub mod cli_runner;
 pub mod code_phase;
 pub mod dev_mode;
 pub mod fix_agent;
@@ -14,6 +15,7 @@ pub mod swarm_phase;
 pub mod validate_phase;
 pub mod workplan_phase;
 
+pub use cli_runner::CliRunner;
 pub use adr_phase::{AdrPhase, AdrPhaseResult};
 pub use agents::{
     DocResult, DocumenterAgent, ReviewerAgent, ReviewIssue, ReviewResult, TestAgentResult,
