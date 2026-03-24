@@ -48,61 +48,35 @@ impl std::fmt::Display for TaskType {
 
 // ── Defaults ─────────────────────────────────────────────────────────────
 
-/// Hardcoded fallback models when the RL engine has no data.
-/// All are OpenRouter model IDs — the primary inference provider.
+/// Default model: OpenRouter auto-router picks the best model per request.
+/// Falls back to task-specific models if auto isn't available.
 fn default_model_for(task_type: TaskType) -> &'static str {
+    // openrouter/auto lets OpenRouter pick the best model for each request
+    // based on prompt content, context length, and cost optimization.
+    // See: https://openrouter.ai/docs/guides/routing/routers/auto-router
     match task_type {
-        TaskType::Reasoning => "deepseek/deepseek-r1",
-        TaskType::StructuredOutput => "meta-llama/llama-4-maverick",
-        TaskType::CodeGeneration => "meta-llama/llama-4-maverick",
-        TaskType::CodeEdit => "deepseek/deepseek-r1",
-        TaskType::General => "meta-llama/llama-4-maverick",
+        TaskType::Reasoning => "openrouter/auto",
+        TaskType::StructuredOutput => "openrouter/auto",
+        TaskType::CodeGeneration => "openrouter/auto",
+        TaskType::CodeEdit => "openrouter/auto",
+        TaskType::General => "openrouter/auto",
     }
 }
 
-/// Free-tier fallback models when paid models fail (402/insufficient credits).
-/// These have lower rate limits but zero cost.
-pub fn free_fallback_for(task_type: TaskType) -> &'static str {
-    match task_type {
-        TaskType::Reasoning => "qwen/qwen3-next-80b-a3b-instruct:free",
-        TaskType::StructuredOutput => "nvidia/nemotron-3-super-120b-a12b:free",
-        TaskType::CodeGeneration => "qwen/qwen3-coder:free",
-        TaskType::CodeEdit => "qwen/qwen3-next-80b-a3b-instruct:free",
-        TaskType::General => "nvidia/nemotron-3-super-120b-a12b:free",
-    }
+/// Free-tier fallback: `openrouter/free` routes to the best free model.
+/// Used when paid credits are exhausted (402/insufficient credits).
+pub fn free_fallback_for(_task_type: TaskType) -> &'static str {
+    // openrouter/free lets OpenRouter pick the best FREE model per request.
+    // No per-task-type selection needed — OpenRouter handles it.
+    "openrouter/free"
 }
 
-/// Ordered fallback chain for a task type.
-/// Tries paid model first, then free alternatives.
-pub fn fallback_chain_for(task_type: TaskType) -> Vec<&'static str> {
-    match task_type {
-        TaskType::Reasoning => vec![
-            "deepseek/deepseek-r1",
-            "qwen/qwen3-next-80b-a3b-instruct:free",
-            "nvidia/nemotron-3-super-120b-a12b:free",
-            "openai/gpt-oss-120b:free",
-        ],
-        TaskType::StructuredOutput => vec![
-            "meta-llama/llama-4-maverick",
-            "nvidia/nemotron-3-super-120b-a12b:free",
-            "qwen/qwen3-next-80b-a3b-instruct:free",
-        ],
-        TaskType::CodeGeneration => vec![
-            "meta-llama/llama-4-maverick",
-            "qwen/qwen3-coder:free",
-            "nvidia/nemotron-3-super-120b-a12b:free",
-        ],
-        TaskType::CodeEdit => vec![
-            "deepseek/deepseek-r1",
-            "qwen/qwen3-next-80b-a3b-instruct:free",
-            "qwen/qwen3-coder:free",
-        ],
-        TaskType::General => vec![
-            "meta-llama/llama-4-maverick",
-            "nvidia/nemotron-3-super-120b-a12b:free",
-            "openai/gpt-oss-120b:free",
-        ],
-    }
+/// Ordered fallback chain: auto (paid) → free → specific free models → ollama.
+pub fn fallback_chain_for(_task_type: TaskType) -> Vec<&'static str> {
+    vec![
+        "openrouter/auto",  // Best paid model (OpenRouter picks)
+        "openrouter/free",  // Best free model (OpenRouter picks)
+    ]
 }
 
 // ── RL response types ────────────────────────────────────────────────────
