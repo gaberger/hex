@@ -1,52 +1,71 @@
-//! Shared CLI table formatting via `tabled` (ADR-2603241226).
+//! Shared CLI table formatting (ADR-2603241226).
 //!
-//! Provides a consistent look for all `hex` CLI table output:
-//! - `HexTable::new(rows)` — default rounded-border table
-//! - `HexTable::compact(rows)` — borderless, for piping / minimal output
-//! - Helper functions for colored status badges, truncation, relative time
+//! ONE function for all hex CLI table output:
+//!   `pretty_table(&["Col1", "Col2"], &[vec!["a", "b"], vec!["c", "d"]])`
+//!
+//! Plus helpers: status_badge, score_badge, truncate, progress.
 
 use colored::Colorize;
-use tabled::settings::object::Columns;
-use tabled::settings::{Alignment, Modify, Style, Width};
+use tabled::builder::Builder;
+use tabled::settings::Style;
 use tabled::{Table, Tabled};
 
-// ── HexTable ────────────────────────────────────────────────────────────
+// ── pretty_table — the ONE function ─────────────────────────────────────
 
-/// Wrapper for consistent hex-branded CLI tables.
+/// Render a table with rounded borders from headers + rows of strings.
+///
+/// ```ignore
+/// pretty_table(&["ID", "Status"], &[
+///     vec!["ADR-001", "accepted"],
+///     vec!["ADR-002", "proposed"],
+/// ]);
+/// ```
+pub fn pretty_table(headers: &[&str], rows: &[Vec<String>]) -> String {
+    if rows.is_empty() {
+        return "  (no results)".dimmed().to_string();
+    }
+    let mut builder = Builder::new();
+    builder.push_record(headers.iter().map(|h| h.to_string()));
+    for row in rows {
+        builder.push_record(row.clone());
+    }
+    builder.build().with(Style::rounded()).to_string()
+}
+
+/// Render a compact borderless table (for piping / minimal output).
+pub fn pretty_table_compact(headers: &[&str], rows: &[Vec<String>]) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut builder = Builder::new();
+    builder.push_record(headers.iter().map(|h| h.to_string()));
+    for row in rows {
+        builder.push_record(row.clone());
+    }
+    builder.build().with(Style::blank()).to_string()
+}
+
+// ── HexTable — derive-based wrapper ─────────────────────────────────────
+
+/// For commands that use `#[derive(Tabled)]` structs.
+/// Wraps `tabled::Table` with consistent hex styling.
 pub struct HexTable;
 
 impl HexTable {
-    /// Render a table with rounded borders (default hex style).
+    /// Rounded-border table from Tabled-derived rows.
     pub fn new<T: Tabled>(rows: &[T]) -> String {
         if rows.is_empty() {
             return "  (no results)".dimmed().to_string();
         }
-        Table::new(rows)
-            .with(Style::rounded())
-            .with(Modify::new(Columns::first()).with(Alignment::left()))
-            .to_string()
+        Table::new(rows).with(Style::rounded()).to_string()
     }
 
-    /// Render a compact borderless table (for piping, minimal output).
+    /// Borderless table from Tabled-derived rows.
     pub fn compact<T: Tabled>(rows: &[T]) -> String {
         if rows.is_empty() {
             return String::new();
         }
-        Table::new(rows)
-            .with(Style::blank())
-            .with(Modify::new(Columns::first()).with(Alignment::left()))
-            .to_string()
-    }
-
-    /// Render with max column widths (prevents wide terminals from stretching).
-    pub fn bounded<T: Tabled>(rows: &[T], max_width: usize) -> String {
-        if rows.is_empty() {
-            return "  (no results)".dimmed().to_string();
-        }
-        Table::new(rows)
-            .with(Style::rounded())
-            .with(Width::wrap(max_width).keep_words(true))
-            .to_string()
+        Table::new(rows).with(Style::blank()).to_string()
     }
 }
 
@@ -56,20 +75,12 @@ impl HexTable {
 pub fn status_badge(status: &str) -> String {
     match status.to_lowercase().as_str() {
         "accepted" | "done" | "completed" | "pass" | "passed" => {
-            format!("{}", status.green().bold())
+            status.green().bold().to_string()
         }
-        "proposed" | "pending" | "planned" => {
-            format!("{}", status.yellow())
-        }
-        "in_progress" | "active" | "running" => {
-            format!("{}", status.cyan().bold())
-        }
-        "deprecated" | "superseded" | "abandoned" | "stale" => {
-            format!("{}", status.red())
-        }
-        "fail" | "failed" | "error" => {
-            format!("{}", status.red().bold())
-        }
+        "proposed" | "pending" | "planned" => status.yellow().to_string(),
+        "in_progress" | "active" | "running" => status.cyan().bold().to_string(),
+        "deprecated" | "superseded" | "abandoned" | "stale" => status.red().to_string(),
+        "fail" | "failed" | "error" => status.red().bold().to_string(),
         _ => status.to_string(),
     }
 }
@@ -115,7 +126,7 @@ pub fn truncate(s: &str, max_len: usize) -> String {
     }
 }
 
-/// Format a count as "N / M" with coloring based on completion.
+/// Format a count as "N/M" with coloring based on completion.
 pub fn progress(done: u32, total: u32) -> String {
     let text = format!("{}/{}", done, total);
     if done >= total {
@@ -133,39 +144,33 @@ pub fn progress(done: u32, total: u32) -> String {
 mod tests {
     use super::*;
 
-    #[derive(Tabled)]
-    struct TestRow {
-        id: String,
-        name: String,
-        status: String,
-    }
-
     #[test]
-    fn hex_table_default_renders() {
-        let rows = vec![
-            TestRow { id: "1".into(), name: "foo".into(), status: "ok".into() },
-            TestRow { id: "2".into(), name: "bar".into(), status: "err".into() },
-        ];
-        let output = HexTable::new(&rows);
+    fn pretty_table_renders() {
+        let output = pretty_table(
+            &["ID", "Name", "Status"],
+            &[
+                vec!["1".into(), "foo".into(), "ok".into()],
+                vec!["2".into(), "bar".into(), "err".into()],
+            ],
+        );
         assert!(output.contains("foo"));
         assert!(output.contains("bar"));
         assert!(output.contains("╭")); // rounded borders
     }
 
     #[test]
-    fn hex_table_compact_no_borders() {
-        let rows = vec![
-            TestRow { id: "1".into(), name: "test".into(), status: "ok".into() },
-        ];
-        let output = HexTable::compact(&rows);
+    fn pretty_table_compact_no_borders() {
+        let output = pretty_table_compact(
+            &["ID", "Name"],
+            &[vec!["1".into(), "test".into()]],
+        );
         assert!(output.contains("test"));
-        assert!(!output.contains("╭")); // no borders
+        assert!(!output.contains("╭"));
     }
 
     #[test]
-    fn hex_table_empty_shows_message() {
-        let rows: Vec<TestRow> = vec![];
-        let output = HexTable::new(&rows);
+    fn pretty_table_empty_shows_message() {
+        let output = pretty_table(&["ID"], &[]);
         assert!(output.contains("no results"));
     }
 
@@ -177,8 +182,15 @@ mod tests {
     }
 
     #[test]
+    fn truncate_utf8_safe() {
+        // Should not panic on multi-byte chars
+        let s = "hello — world";
+        let t = truncate(s, 8);
+        assert_eq!(t.chars().count(), 8);
+    }
+
+    #[test]
     fn status_badges_colored() {
-        // Just verify they don't panic and return non-empty
         assert!(!status_badge("accepted").is_empty());
         assert!(!status_badge("proposed").is_empty());
         assert!(!status_badge("deprecated").is_empty());
@@ -196,5 +208,18 @@ mod tests {
     fn progress_formatting() {
         let p = progress(3, 5);
         assert!(p.contains("3/5"));
+    }
+
+    #[test]
+    fn with_status_badges_in_table() {
+        let output = pretty_table(
+            &["Name", "Status"],
+            &[
+                vec!["ADR-001".into(), status_badge("accepted")],
+                vec!["ADR-002".into(), status_badge("proposed")],
+            ],
+        );
+        assert!(output.contains("ADR-001"));
+        assert!(output.contains("ADR-002"));
     }
 }
