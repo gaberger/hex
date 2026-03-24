@@ -1,0 +1,31 @@
+# quick-fix — Minimal pipeline for small changes and bug fixes
+# Used by: hex dev start "fix typo" --quick
+
+name: quick-fix
+version: "1.0.0"
+description: >
+  Fast pipeline for small fixes. Code generation + compile check only.
+  No review, no tests, no docs. For trivial changes where speed matters.
+
+topology: pipeline
+
+agents:
+  - role: hex-coder
+    cardinality: per_workplan_step
+  - role: hex-fixer
+    cardinality: per_issue
+    triggered_by: [compile_check]
+
+objectives:
+  - id: CodeGenerated
+    required: true
+  - id: CodeCompiles
+    required: true
+
+iteration:
+  max_per_tier: 3
+  on_max_iterations: report_and_continue
+
+grade_thresholds:
+  auto:
+    minimum: null           # no grade requirement

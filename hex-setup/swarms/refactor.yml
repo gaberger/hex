@@ -1,0 +1,35 @@
+# refactor — Architecture improvement swarm
+# Used by: hex refactor <directory>
+
+name: refactor
+version: "1.0.0"
+description: >
+  Analyzes existing code for architecture violations, reviews for quality
+  issues, fixes them, and re-validates. Iterates until Grade A.
+
+topology: pipeline
+
+agents:
+  - role: hex-analyzer
+    cardinality: once
+  - role: hex-reviewer
+    cardinality: per_source_file
+    depends_on: [hex-analyzer]
+  - role: hex-fixer
+    cardinality: per_issue
+    triggered_by: [hex-analyzer, hex-reviewer]
+
+objectives:
+  - id: ArchitectureGradeA
+    required: true
+    threshold:
+      score: 90
+      violations: 0
+  - id: ReviewPasses
+    required: true
+  - id: CodeCompiles
+    required: true
+
+iteration:
+  max_per_tier: 5
+  on_max_iterations: report_and_continue

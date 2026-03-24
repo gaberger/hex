@@ -1,0 +1,39 @@
+# migration — Framework/dependency upgrade swarm
+# Used by: hex migrate <from> <to>
+
+name: migration
+version: "1.0.0"
+description: >
+  Assists with framework or dependency migrations. Analyzes existing code,
+  generates upgraded code per file, validates compilation and tests pass.
+  Stricter quality gates — no regressions allowed.
+
+topology: pipeline
+
+agents:
+  - role: hex-coder
+    cardinality: per_source_file
+  - role: hex-tester
+    cardinality: per_source_file
+    depends_on: [hex-coder]
+  - role: hex-analyzer
+    cardinality: once
+    depends_on: [hex-coder]
+  - role: hex-fixer
+    cardinality: per_issue
+    triggered_by: [hex-tester, hex-analyzer]
+
+objectives:
+  - id: CodeCompiles
+    required: true
+  - id: TestsPass
+    required: true
+  - id: ArchitectureGradeA
+    required: true
+    threshold:
+      score: 90
+      violations: 0
+
+iteration:
+  max_per_tier: 5
+  on_max_iterations: abort   # migrations must not leave code broken

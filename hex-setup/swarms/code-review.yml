@@ -1,0 +1,36 @@
+# code-review — Review-only swarm for existing code
+# Used by: hex review <directory>
+
+name: code-review
+version: "1.0.0"
+description: >
+  Reviews existing code for quality, architecture compliance, and UX issues.
+  Does not generate or modify code — only produces review reports.
+
+topology: mesh
+
+agents:
+  - role: hex-reviewer
+    cardinality: per_source_file
+    parallel_with: [hex-ux, hex-analyzer]
+  - role: hex-ux
+    cardinality: per_tier
+    when: has_primary_adapters
+  - role: hex-analyzer
+    cardinality: once
+
+objectives:
+  - id: ReviewPasses
+    required: true
+  - id: ArchitectureGradeA
+    required: true
+    threshold:
+      score: 90
+      violations: 0
+  - id: UxReviewPasses
+    required: false
+    when: has_primary_adapters
+
+iteration:
+  max_per_tier: 1          # single pass — review only, no fix loop
+  on_max_iterations: report

@@ -1,0 +1,23 @@
+# documentation — Generate docs for existing code
+# Used by: hex docs generate <directory>
+
+name: documentation
+version: "1.0.0"
+description: >
+  Generates comprehensive documentation: README.md, API reference from
+  port interfaces, inline JSDoc/rustdoc, architecture overview, and
+  development guide. Single-pass, no fix loop.
+
+topology: pipeline
+
+agents:
+  - role: hex-documenter
+    cardinality: per_swarm
+
+objectives:
+  - id: DocsGenerated
+    required: true
+
+iteration:
+  max_per_tier: 1
+  on_max_iterations: report

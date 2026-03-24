@@ -1,0 +1,29 @@
+# test-suite — Generate tests for existing code
+# Used by: hex test generate <directory>
+
+name: test-suite
+version: "1.0.0"
+description: >
+  Generates comprehensive test suites for existing code. London-school
+  unit tests, integration tests, and property tests. Validates they pass.
+
+topology: pipeline
+
+agents:
+  - role: hex-tester
+    cardinality: per_source_file
+  - role: hex-fixer
+    cardinality: per_issue
+    triggered_by: [hex-tester]
+
+objectives:
+  - id: TestsExist
+    required: true
+  - id: TestsPass
+    required: true
+  - id: CodeCompiles
+    required: true
+
+iteration:
+  max_per_tier: 3
+  on_max_iterations: report_and_continue

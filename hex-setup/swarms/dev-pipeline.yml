@@ -1,0 +1,128 @@
+# dev-pipeline — Full development pipeline with all agent roles
+# Used by: hex dev start "description" --auto
+#
+# Flow per tier:
+#   hex-coder (parallel per step)
+#   → hex-reviewer + hex-tester (parallel per file)
+#   → hex-analyzer (per tier)
+#   → hex-ux (if UI adapters)
+#   → hex-fixer (if any failures)
+#   → loop until all objectives met
+#   → hex-documenter (final tier only)
+
+name: dev-pipeline
+version: "1.0.0"
+description: >
+  Complete AI development pipeline. Generates code, reviews for quality,
+  writes tests, enforces hex architecture, checks UX, fixes issues, and
+  generates documentation. Goal-driven objective loop per tier.
+
+topology: hex-pipeline
+
+agents:
+  - role: hex-coder
+    definition: hex-coder.yml
+    cardinality: per_workplan_step
+    tier_scope: current            # only runs for steps in the active tier
+
+  - role: hex-reviewer
+    definition: hex-coder.yml      # reviewer uses same context loading
+    prompt_override: agent-reviewer.md
+    cardinality: per_source_file
+    parallel_with: [hex-tester]
+    depends_on: [hex-coder]
+
+  - role: hex-tester
+    definition: hex-coder.yml
+    prompt_override: agent-tester.md
+    cardinality: per_source_file
+    parallel_with: [hex-reviewer]
+    depends_on: [hex-coder]
+
+  - role: hex-analyzer
+    definition: null               # no inference — runs hex analyze
+    cardinality: per_tier
+    depends_on: [hex-coder]
+
+  - role: hex-ux
+    definition: hex-coder.yml
+    prompt_override: agent-ux.md
+    cardinality: per_tier
+    depends_on: [hex-coder]
+    when: has_primary_adapters     # only if tier 2 adapters exist
+
+  - role: hex-fixer
+    definition: hex-coder.yml
+    prompt_override: agent-fixer.md
+    cardinality: per_issue
+    triggered_by: [hex-reviewer, hex-tester, hex-analyzer, hex-ux]
+
+  - role: hex-documenter
+    definition: hex-coder.yml
+    prompt_override: agent-documenter.md
+    cardinality: per_swarm
+    when: final_tier               # only on the last tier
+    depends_on: [hex-coder, hex-reviewer, hex-tester, hex-analyzer]
+
+objectives:
+  - id: CodeGenerated
+    required: true
+    agent: hex-coder
+
+  - id: CodeCompiles
+    required: true
+    agent: hex-fixer
+    depends_on: [CodeGenerated]
+
+  - id: TestsExist
+    required: true
+    agent: hex-tester
+    depends_on: [CodeGenerated]
+
+  - id: TestsPass
+    required: true
+    agent: hex-fixer
+    depends_on: [CodeCompiles, TestsExist]
+
+  - id: ReviewPasses
+    required: true
+    agent: hex-reviewer
+    depends_on: [CodeGenerated]
+
+  - id: ArchitectureGradeA
+    required: true
+    agent: hex-analyzer
+    depends_on: [CodeGenerated]
+    threshold:
+      score: 90
+      violations: 0
+
+  - id: UxReviewPasses
+    required: false
+    agent: hex-ux
+    when: has_primary_adapters
+
+  - id: DocsGenerated
+    required: false
+    agent: hex-documenter
+    when: final_tier
+
+iteration:
+  max_per_tier: 5
+  max_total: 25
+  on_max_iterations: report_and_continue
+
+grade_thresholds:
+  interactive:
+    minimum: A              # score >= 90
+  auto:
+    minimum: B              # score >= 80
+  quick:
+    minimum: null           # no quality gate in quick mode
+
+model_defaults:
+  reasoning: deepseek/deepseek-r1
+  code_generation: meta-llama/llama-4-maverick
+  structured_output: meta-llama/llama-4-maverick
+  code_edit: deepseek/deepseek-r1
+  fallback: openrouter/free
