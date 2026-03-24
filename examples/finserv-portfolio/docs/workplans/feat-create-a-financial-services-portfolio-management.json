@@ -1,0 +1,241 @@
+{
+  "id": "wp-portfolio-platform",
+  "title": "Financial Services Portfolio Management Platform",
+  "specs": "path/to/specs/file",
+  "adr": "ADR-2603260000",
+  "created": "2024-03-26",
+  "status": "planned",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": "1000 tokens",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Implement domain entities (Portfolio, Position, Security, RiskMetrics)",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/portfolio/domain",
+      "done_condition": "All domain entities implemented with validation"
+    },
+    {
+      "id": "P0.2",
+      "description": "Define port interfaces for market data, portfolio persistence, cache, audit logging, and auth",
+      "layer": "ports",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 0,
+      "specs": [
+        "S02"
+      ],
+      "worktree_branch": "feat/portfolio/ports",
+      "done_condition": "All required port interfaces defined"
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement composition root with stub/mock adapters",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1",
+        "P0.2"
+      ],
+      "tier": 4,
+      "specs": [
+        "S03"
+      ],
+      "worktree_branch": "feat/portfolio/composition-root",
+      "done_condition": "Composition root implemented with stub adapters"
+    },
+    {
+      "id": "P2.1",
+      "description": "Implement PostgreSQL event store adapter",
+      "layer": "secondary",
+      "adapter": "PostgresEventStore",
+      "port": "IPortfolioRepository",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [
+        "S04"
+      ],
+      "worktree_branch": "feat/portfolio/postgres-event-store",
+      "done_condition": "Event store adapter implemented and tested"
+    },
+    {
+      "id": "P2.2",
+      "description": "Implement portfolio usecases with EventSourcedRepository pattern",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P2.1"
+      ],
+      "tier": 3,
+      "specs": [
+        "S05"
+      ],
+      "worktree_branch": "feat/portfolio/usecases",
+      "done_condition": "Usecases implemented with event sourcing"
+    },
+    {
+      "id": "P3.1",
+      "description": "Implement WebSocket market data adapter",
+      "layer": "secondary",
+      "adapter": "MarketDataWebSocketAdapter",
+      "port": "IMarketDataFeed",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [
+        "S06"
+      ],
+      "worktree_branch": "feat/portfolio/market-data-websocket",
+      "done_condition": "WebSocket adapter implemented and connected"
+    },
+    {
+      "id": "P3.2",
+      "description": "Implement Redis cache adapter for calculated risk metrics",
+      "layer": "secondary",
+      "adapter": "RedisCacheAdapter",
+      "port": "ICache",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [
+        "S07"
+      ],
+      "worktree_branch": "feat/portfolio/redis-cache",
+      "done_condition": "Redis cache adapter implemented and tested"
+    },
+    {
+      "id": "P4.1",
+      "description": "Implement REST API controllers for portfolio CRUD",
+      "layer": "primary",
+      "adapter": "PortfolioController",
+      "port": null,
+      "dependencies": [
+        "P2.2"
+      ],
+      "tier": 2,
+      "specs": [
+        "S08"
+      ],
+      "worktree_branch": "feat/portfolio/rest-api",
+      "done_condition": "REST API controllers implemented and tested"
+    },
+    {
+      "id": "P4.2",
+      "description": "Implement WebSocket broadcast handlers for real-time updates",
+      "layer": "primary",
+      "adapter": "MarketDataWebSocketHandler",
+      "port": null,
+      "dependencies": [
+        "P3.1"
+      ],
+      "tier": 2,
+      "specs": [
+        "S09"
+      ],
+      "worktree_branch": "feat/portfolio/websocket-handler",
+      "done_condition": "WebSocket broadcast handlers implemented"
+    },
+    {
+      "id": "P5.1",
+      "description": "Implement JWT auth adapter with RBAC",
+      "layer": "secondary",
+      "adapter": "JwtAuthAdapter",
+      "port": "IAuthProvider",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [
+        "S10"
+      ],
+      "worktree_branch": "feat/portfolio/jwt-auth",
+      "done_condition": "JWT auth adapter implemented with RBAC"
+    },
+    {
+      "id": "P5.2",
+      "description": "Implement audit logging integration",
+      "layer": "secondary",
+      "adapter": "WinstonAuditLoggerAdapter",
+      "port": "IAuditLogger",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [
+        "S11"
+      ],
+      "worktree_branch": "feat/portfolio/audit-logging",
+      "done_condition": "Audit logging implemented and integrated"
+    },
+    {
+      "id": "P6.1",
+      "description": "Wire all adapters to ports in composition root",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P5.1",
+        "P5.2"
+      ],
+      "tier": 4,
+      "specs": [
+        "S12"
+      ],
+      "worktree_branch": "feat/portfolio/wiring",
+      "done_condition": "All adapters properly wired to ports"
+    }
+  ],
+  "mergeOrder": [
+    "Merge domain and ports",
+    "Merge composition root",
+    "Merge event store and usecases",
+    "Merge market data WebSocket and Redis cache",
+    "Merge REST API and WebSocket handlers",
+    "Merge auth and audit logging",
+    "Final wiring and integration"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Implement read models and projections",
+      "risk": "Event sourcing complexity"
+    },
+    {
+      "impact": "high",
+      "mitigation": "Implement reconnection logic and state synchronization",
+      "risk": "Real-time WebSocket management"
+    }
+  ],
+  "successCriteria": [
+    "End-to-end portfolio CRUD operations working",
+    "Real-time stock price updates via WebSocket",
+    "Risk analytics (VaR, Sharpe ratio) calculated correctly",
+    "JWT auth with RBAC enforced",
+    "Audit logging capturing all actions"
+  ],
+  "dependencies": {
+    "npm": [
+      "typescript",
+      "postgresql",
+      "redis",
+      "jsonwebtoken"
+    ]
+  }
+}
