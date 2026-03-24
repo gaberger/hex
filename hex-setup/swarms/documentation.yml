@@ -10,13 +10,40 @@ description: >
 
 topology: pipeline
 
+inference_defaults:
+  provider: openrouter
+  endpoint: /api/inference/complete
+  fallback_chain: [openrouter/free]
+  temperature: 0.4                      # slightly creative for docs
+  timeout_ms: 120000
+
 agents:
   - role: hex-documenter
+    prompt: agent-documenter.md
     cardinality: per_swarm
+    inference:
+      task_type: reasoning              # synthesizes across all code
+      model: deepseek/deepseek-r1
+      fallback: openrouter/free
+      max_tokens: 8192                  # long output for full README
+    context:
+      token_budget: 80000
+      includes:
+        - "{{adr_content}}"
+        - "{{all_source_files}}"
+        - "{{workplan}}"
+        - "{{port_interfaces}}"
+        - "{{language}}"
+    output:
+      type: documentation
+      files:
+        - "{{output_dir}}/README.md"
+        - "{{output_dir}}/docs/API.md"
 
 objectives:
   - id: DocsGenerated
     required: true
+    evaluate: check_readme_exists
 
 iteration:
   max_per_tier: 1
