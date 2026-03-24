@@ -938,6 +938,12 @@ impl TuiApp {
                         self.session.total_tokens = sup_session.total_tokens;
                     }
 
+                    // Build quality_result from supervisor evaluation
+                    if let Ok(ref sr) = result {
+                        self.session.quality_result =
+                            Some(sr.to_quality_report(language));
+                    }
+
                     match result {
                         Ok(sr) => {
                             let _ = self.session.log_tool_call(ToolCall {

@@ -91,6 +91,19 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
     let session = find_session(id)?;
     let client = NexusClient::from_env();
 
+    // Resolve project_id: session field first, fallback to .hex/project.json
+    let project_id = session.project_id.clone().or_else(|| {
+        let project_json = Path::new(".hex/project.json");
+        if project_json.exists() {
+            std::fs::read_to_string(project_json)
+                .ok()
+                .and_then(|c| serde_json::from_str::<Value>(&c).ok())
+                .and_then(|v| v["id"].as_str().map(|s| s.to_string()))
+        } else {
+            None
+        }
+    });
+
     // Gather all data
     let adr_info = gather_adr_info(&session);
     let workplan_info = gather_workplan_info(&session);
@@ -99,7 +112,7 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
     let quality_gates = gather_quality_gates(&session, &client).await;
 
     if json_output {
-        print_json_report(&session, &adr_info, &workplan_info, &swarm_info, &git_info, &quality_gates);
+        print_json_report(&session, &project_id, &adr_info, &workplan_info, &swarm_info, &git_info, &quality_gates);
         return Ok(());
     }
 
@@ -122,8 +135,8 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
         "Status: ".white().bold(),
         colorize_status(&session.status)
     );
-    if let Some(ref project_id) = session.project_id {
-        println!("  {}  {}", "Project:".white().bold(), project_id.dimmed());
+    if let Some(ref pid) = project_id {
+        println!("  {}  {}", "Project:".white().bold(), pid.dimmed());
     }
     if let Some(ref agent_id) = session.agent_id {
         println!("  {}  {}", "Agent:  ".white().bold(), agent_id.dimmed());
@@ -802,6 +815,7 @@ fn gather_git_info(session: &DevSession) -> Option<GitInfo> {
 
 fn print_json_report(
     session: &DevSession,
+    project_id: &Option<String>,
     adr_info: &Option<AdrInfo>,
     workplan_info: &Option<WorkplanInfo>,
     swarm_info: &Option<SwarmInfo>,
@@ -821,7 +835,7 @@ fn print_json_report(
             "steps_completed": session.completed_steps,
             "models": session.model_selections,
             "agent_id": session.agent_id,
-            "project_id": session.project_id,
+            "project_id": project_id,
         }
     });
 

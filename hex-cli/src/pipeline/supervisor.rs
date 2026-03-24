@@ -1025,6 +1025,80 @@ impl SupervisorResult {
         self.tier_results.iter().all(|(_, r)| r.passed())
     }
 
+    /// Total iterations across all tiers.
+    pub fn total_iterations(&self) -> u32 {
+        self.tier_results.iter().map(|(_, r)| r.iterations()).sum()
+    }
+
+    /// Build a QualityReport from the supervisor's objective states.
+    pub fn to_quality_report(&self, language: &str) -> crate::session::QualityReport {
+        use crate::pipeline::objectives::Objective;
+
+        // Collect all final objective states across tiers
+        let all_states: Vec<&crate::pipeline::objectives::ObjectiveState> =
+            self.tier_results.iter().flat_map(|(_, r)| r.states()).collect();
+
+        let compile_state = all_states.iter().find(|s| matches!(s.objective, Objective::CodeCompiles));
+        let test_state = all_states.iter().find(|s| matches!(s.objective, Objective::TestsPass));
+        let arch_state = all_states.iter().find(|s| matches!(s.objective, Objective::ArchitectureGradeA));
+
+        let compile_pass = compile_state.map(|s| s.met).unwrap_or(false);
+        let test_pass = test_state.map(|s| s.met).unwrap_or(false);
+
+        // Parse test counts from detail string (e.g. "3/5 tests passing")
+        let (tests_passed, tests_failed) = test_state
+            .and_then(|s| {
+                let parts: Vec<&str> = s.detail.split('/').collect();
+                if parts.len() >= 2 {
+                    let passed = parts[0].trim().parse::<u32>().ok()?;
+                    let total_str = parts[1].split_whitespace().next()?;
+                    let total = total_str.parse::<u32>().ok()?;
+                    Some((passed, total.saturating_sub(passed)))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or((0, 0));
+
+        // Parse violation count from architecture detail (e.g. "Score 87/100" or "2 violations")
+        let violations_found = arch_state
+            .and_then(|s| {
+                if s.met { return Some(0); }
+                // Try to extract number from blocking_issues count
+                Some(s.blocking_issues.len() as u32)
+            })
+            .unwrap_or(0);
+
+        // Compute overall score: each objective met = 12.5 points (8 objectives)
+        let met_count = all_states.iter().filter(|s| s.met).count() as u32;
+        let total_count = all_states.len().max(1) as u32;
+        let score = (met_count * 100) / total_count;
+
+        let grade = match score {
+            90..=100 => "A",
+            80..=89 => "B",
+            70..=79 => "C",
+            60..=69 => "D",
+            _ => "F",
+        }
+        .to_string();
+
+        crate::session::QualityReport {
+            grade,
+            score,
+            iterations: self.total_iterations(),
+            compile_pass,
+            compile_language: language.to_string(),
+            test_pass,
+            tests_passed,
+            tests_failed,
+            violations_found,
+            violations_fixed: 0,
+            fix_cost_usd: 0.0,
+            fix_tokens: 0,
+        }
+    }
+
     /// Summary string suitable for printing.
     pub fn summary(&self) -> String {
         let mut lines = Vec::new();
