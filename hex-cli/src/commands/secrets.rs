@@ -11,6 +11,7 @@ use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
 
+use crate::fmt::{pretty_table, bool_badge, truncate};
 use crate::nexus_client::NexusClient;
 
 #[derive(Subcommand)]
@@ -172,41 +173,23 @@ async fn list() -> anyhow::Result<()> {
 
     println!("{} Secret grants ({})", "\u{2b21}".cyan(), grants.len());
     println!();
-    println!(
-        "  {:<20} {:<25} {:<10} {:<8} {}",
-        "AGENT".bold(),
-        "KEY".bold(),
-        "PURPOSE".bold(),
-        "CLAIMED".bold(),
-        "EXPIRES".bold()
-    );
-    println!("  {}", "\u{2500}".repeat(80).dimmed());
 
-    for grant in &grants {
+    let rows: Vec<Vec<String>> = grants.iter().map(|grant| {
         let agent = grant["agentId"].as_str().unwrap_or("-");
         let key = grant["secretKey"].as_str().unwrap_or("-");
         let purpose = grant["purpose"].as_str().unwrap_or("-");
         let claimed = grant["claimed"].as_bool().unwrap_or(false);
         let expires = grant["expiresAt"].as_str().unwrap_or("-");
+        vec![
+            truncate(agent, 20),
+            key.to_string(),
+            truncate(purpose, 15),
+            bool_badge(claimed),
+            truncate(expires, 19),
+        ]
+    }).collect();
 
-        let claimed_str = if claimed {
-            "yes".dimmed().to_string()
-        } else {
-            "no".green().to_string()
-        };
-
-        // Shorten the ISO timestamp for display
-        let expires_short = if expires.len() > 19 {
-            &expires[..19]
-        } else {
-            expires
-        };
-
-        println!(
-            "  {:<20} {:<25} {:<10} {:<8} {}",
-            agent, key, purpose, claimed_str, expires_short
-        );
-    }
+    println!("{}", pretty_table(&["Agent", "Key", "Purpose", "Claimed", "Expires"], &rows));
 
     Ok(())
 }

@@ -6,6 +6,7 @@ use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
 
+use crate::fmt::{pretty_table, status_badge, truncate};
 use crate::nexus_client::NexusClient;
 
 #[derive(Subcommand)]
@@ -57,33 +58,21 @@ async fn create(swarm_id: &str, title: &str, depends_on: &str, json_output: bool
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    // The swarm endpoint expects tasks to be created via the swarm
+    // POST to /api/swarms/{swarm_id}/tasks
     let path = format!("/api/swarms/{}/tasks", swarm_id);
-
-    // Build the request body — include depends_on if non-empty
-    let mut body = json!({
-        "swarmId": swarm_id,
-        "title": title,
-        "action": "create_task",
-    });
+    let mut body = json!({ "title": title });
     if !depends_on.is_empty() {
         body["dependsOn"] = json!(depends_on);
     }
 
-    // The endpoint is POST to create swarm with tasks, but individual task creation
-    // uses the swarm tasks sub-resource. We'll use the HexFlo task_create pattern.
-    let resp = nexus
-        .post("/api/swarms", &body)
-        .await;
+    let resp = nexus.post(&path, &body).await;
 
-    // If the swarm endpoint doesn't support direct task creation,
-    // fall back to the task-specific pattern
     match resp {
         Ok(data) => {
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&data)?);
             } else {
-                let task_id = data["taskId"].as_str().unwrap_or("-");
+                let task_id = data["id"].as_str().unwrap_or("-");
                 println!("{} Task created", "\u{2b21}".green());
                 println!("  ID:    {}", task_id);
                 println!("  Swarm: {}", swarm_id);
@@ -94,13 +83,13 @@ async fn create(swarm_id: &str, title: &str, depends_on: &str, json_output: bool
             }
         }
         Err(e) => {
-            // Try alternative: the path-based endpoint
-            let mut alt_body = json!({ "title": title });
+            // Fallback: try with swarmId in body (older API)
+            let mut alt_body = json!({ "title": title, "swarmId": swarm_id });
             if !depends_on.is_empty() {
                 alt_body["dependsOn"] = json!(depends_on);
             }
             let alt_resp = nexus
-                .post(&path, &alt_body)
+                .post("/api/swarms", &alt_body)
                 .await;
 
             match alt_resp {
@@ -160,46 +149,34 @@ async fn list() -> anyhow::Result<()> {
         total
     );
     println!();
+    let rows: Vec<Vec<String>> = all_tasks
+        .iter()
+        .map(|(swarm_name, _swarm_id, task)| {
+            let tid = task["id"].as_str().unwrap_or("-");
+            let title = task["title"].as_str().unwrap_or("-");
+            let status = task["status"].as_str().unwrap_or("pending");
+            let agent_id = task["agentId"]
+                .as_str()
+                .or_else(|| task["agent_id"].as_str())
+                .unwrap_or("");
+
+            vec![
+                swarm_name.to_string(),
+                status_badge(status),
+                truncate(agent_id, 14),
+                truncate(tid, 12),
+                truncate(title, 50),
+            ]
+        })
+        .collect();
+
     println!(
-        "  {:<15} {:<12} {:<14} {:<12} {}",
-        "SWARM".bold(),
-        "STATUS".bold(),
-        "AGENT".bold(),
-        "TASK ID".bold(),
-        "TITLE".bold()
+        "{}",
+        pretty_table(
+            &["Swarm", "Status", "Agent", "Task ID", "Title"],
+            &rows,
+        )
     );
-    println!("  {}", "\u{2500}".repeat(90).dimmed());
-
-    for (swarm_name, _swarm_id, task) in &all_tasks {
-        let tid = task["id"].as_str().unwrap_or("-");
-        let title = task["title"].as_str().unwrap_or("-");
-        let status = task["status"].as_str().unwrap_or("pending");
-        let agent_id = task["agentId"].as_str()
-            .or_else(|| task["agent_id"].as_str())
-            .unwrap_or("");
-
-        let status_colored = match status {
-            "completed" => status.green().to_string(),
-            "in_progress" | "running" => status.yellow().to_string(),
-            "pending" => status.dimmed().to_string(),
-            "failed" => status.red().to_string(),
-            _ => status.to_string(),
-        };
-
-        let agent_display = if agent_id.is_empty() {
-            "—".dimmed().to_string()
-        } else if agent_id.len() > 12 {
-            agent_id[..12].to_string()
-        } else {
-            agent_id.to_string()
-        };
-
-        let tid_short = if tid.len() > 10 { &tid[..10] } else { tid };
-        println!(
-            "  {:<15} {:<21} {:<14} {:<12} {}",
-            swarm_name, status_colored, agent_display, tid_short, title
-        );
-    }
 
     Ok(())
 }

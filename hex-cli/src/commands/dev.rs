@@ -9,6 +9,7 @@ use anyhow::{bail, Result};
 use clap::Subcommand;
 use colored::Colorize;
 
+use crate::fmt::{pretty_table, status_badge, truncate};
 use crate::pipeline::DevConfig;
 use crate::session::{DevSession, SessionStatus};
 use crate::tui::TuiApp;
@@ -95,30 +96,16 @@ fn list_sessions() -> Result<()> {
         println!("{}", "No dev sessions found.".dimmed());
         return Ok(());
     }
-    println!(
-        "{:<36}  {:<12}  {:<10}  {:<8}  {}",
-        "ID".bold(),
-        "Status".bold(),
-        "Phase".bold(),
-        "Cost".bold(),
-        "Feature".bold(),
-    );
-    for s in &sessions {
-        let status_colored = match s.status {
-            SessionStatus::InProgress => s.status.to_string().yellow().to_string(),
-            SessionStatus::Paused => s.status.to_string().blue().to_string(),
-            SessionStatus::Completed => s.status.to_string().green().to_string(),
-            SessionStatus::Failed => s.status.to_string().red().to_string(),
-        };
-        println!(
-            "{:<36}  {:<12}  {:<10}  ${:<7.2}  {}",
-            s.id.dimmed(),
-            status_colored,
-            s.current_phase,
-            s.total_cost_usd,
-            s.feature_description,
-        );
-    }
+    let rows: Vec<Vec<String>> = sessions.iter().map(|s| {
+        vec![
+            s.id.clone(),
+            status_badge(&s.status.to_string()),
+            s.current_phase.to_string(),
+            format!("${:.4}", s.total_cost_usd),
+            truncate(&s.feature_description, 50),
+        ]
+    }).collect();
+    println!("{}", pretty_table(&["ID", "Status", "Phase", "Cost", "Feature"], &rows));
     Ok(())
 }
 

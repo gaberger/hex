@@ -6,6 +6,7 @@ use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
 
+use crate::fmt::{pretty_table, status_badge, truncate};
 use crate::nexus_client::NexusClient;
 
 #[derive(Subcommand)]
@@ -126,45 +127,21 @@ async fn status() -> anyhow::Result<()> {
                 completed, total
             );
             println!();
-            println!(
-                "  {:<12} {:<16} {:<36} {}",
-                "STATUS".bold(),
-                "AGENT".bold(),
-                "TASK ID".bold(),
-                "TITLE".bold()
-            );
-            println!("  {}", "\u{2500}".repeat(90).dimmed());
-
-            for task in tasks {
+            let rows: Vec<Vec<String>> = tasks.iter().map(|task| {
                 let tid = task["id"].as_str().unwrap_or("-");
                 let title = task["title"].as_str().unwrap_or("-");
                 let status = task["status"].as_str().unwrap_or("unknown");
                 let agent_id = task["agentId"].as_str()
                     .or_else(|| task["agent_id"].as_str())
                     .unwrap_or("");
-
-                let status_colored = match status {
-                    "completed" => status.green().to_string(),
-                    "in_progress" | "running" => status.yellow().to_string(),
-                    "pending" => status.dimmed().to_string(),
-                    "failed" => status.red().to_string(),
-                    _ => status.to_string(),
-                };
-
-                let agent_display = if agent_id.is_empty() {
-                    "—".dimmed().to_string()
-                } else if agent_id.len() > 14 {
-                    agent_id[..14].to_string()
-                } else {
-                    agent_id.to_string()
-                };
-
-                let tid_short = if tid.len() > 34 { &tid[..34] } else { tid };
-                println!(
-                    "  {:<21} {:<16} {:<36} {}",
-                    status_colored, agent_display, tid_short, title
-                );
-            }
+                vec![
+                    status_badge(status),
+                    truncate(agent_id, 16),
+                    truncate(tid, 36),
+                    truncate(title, 50),
+                ]
+            }).collect();
+            println!("{}", pretty_table(&["Status", "Agent", "Task ID", "Title"], &rows));
         }
     }
 
@@ -185,16 +162,8 @@ async fn list() -> anyhow::Result<()> {
 
     println!("{} Swarms ({})", "\u{2b21}".cyan(), swarms.len());
     println!();
-    println!(
-        "  {:<36} {:<20} {:<15} {:<10} {}",
-        "ID".bold(),
-        "NAME".bold(),
-        "TOPOLOGY".bold(),
-        "STATUS".bold(),
-        "TASKS".bold(),
-    );
-    println!("  {}", "\u{2500}".repeat(95).dimmed());
 
+    let mut rows: Vec<Vec<String>> = Vec::new();
     for swarm in &swarms {
         let id = swarm["id"].as_str().unwrap_or("-");
         let name = swarm["name"].as_str().unwrap_or("-");
@@ -233,12 +202,16 @@ async fn list() -> anyhow::Result<()> {
             format!("{}/{} done ({} pending)", completed, total, pending)
         };
 
-        let id_short = if id.len() > 34 { &id[..34] } else { id };
-        println!(
-            "  {:<36} {:<20} {:<15} {:<19} {}",
-            id_short, name, topology, status_colored, task_summary
-        );
+        rows.push(vec![
+            truncate(id, 36),
+            name.to_string(),
+            topology.to_string(),
+            status_colored,
+            task_summary,
+        ]);
     }
+
+    println!("{}", pretty_table(&["ID", "Name", "Topology", "Status", "Tasks"], &rows));
 
     Ok(())
 }
