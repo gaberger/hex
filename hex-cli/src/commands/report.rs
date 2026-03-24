@@ -350,6 +350,36 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
         }
     }
 
+    // ── Agent Reports ──────────────────────────────────────────
+    // Extract per-agent tool calls logged by the supervisor (phase starts with "agent-")
+    let agent_calls: Vec<_> = session.tool_calls.iter()
+        .filter(|c| c.phase.starts_with("agent-"))
+        .collect();
+    if !agent_calls.is_empty() {
+        println!();
+        println!("{}", "── Agent Reports ─────────────────────────────────────────────".dimmed());
+        println!(
+            "  {:<16} {:<12} {:>8} {:>8}  {}",
+            "Agent", "Status", "Time", "Cost", "Objective"
+        );
+        println!("  {}", "─".repeat(75));
+        for call in &agent_calls {
+            let role = call.phase.strip_prefix("agent-").unwrap_or(&call.phase);
+            let status_colored = match call.status.as_str() {
+                "ok" => "ok".green().to_string(),
+                "error" => "FAIL".red().to_string(),
+                _ => call.status.clone(),
+            };
+            let duration = format!("{:.1}s", call.duration_ms as f64 / 1000.0);
+            let cost = call.cost_usd.map(|c| format!("${:.4}", c)).unwrap_or_else(|| "—".into());
+            let objective = call.detail.as_deref().unwrap_or("—");
+            println!(
+                "  {:<16} {:<12} {:>8} {:>8}  {}",
+                role, status_colored, duration, cost, truncate(objective, 40)
+            );
+        }
+    }
+
     // ── Git Changes ─────────────────────────────────────────
     println!();
     println!("{}", "── Files Changed ─────────────────────────────────────────────".dimmed());
@@ -923,6 +953,20 @@ fn print_json_report(
             }
             gate
         }).collect::<Vec<_>>());
+    }
+
+    // Agent reports in JSON
+    let agent_calls: Vec<_> = session.tool_calls.iter()
+        .filter(|c| c.phase.starts_with("agent-"))
+        .collect();
+    if !agent_calls.is_empty() {
+        report["agent_reports"] = serde_json::json!(agent_calls.iter().map(|c| serde_json::json!({
+            "role": c.phase.strip_prefix("agent-").unwrap_or(&c.phase),
+            "status": c.status,
+            "duration_ms": c.duration_ms,
+            "cost_usd": c.cost_usd,
+            "objective": c.detail,
+        })).collect::<Vec<_>>());
     }
 
     if !session.tool_calls.is_empty() {

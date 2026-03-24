@@ -38,6 +38,7 @@ const P = {
   scoreOk: `${B}${fg(84)}`,
   scoreWn: `${B}${fg(220)}`,
   scoreBd: `${B}${fg(203)}`,
+  adr:     `${B}${fg(213)}`,       // bright magenta-pink — active ADR
 };
 
 function safe(fn, fb) { try { return fn(); } catch { return fb; } }
@@ -66,6 +67,8 @@ const swarmUp        = statusData ? !!statusData.swarm : false;
 const agentdbUp      = statusData ? !!statusData.agentdb : false;
 const dashUrl        = statusData ? (statusData.dashboard || '') : '';
 const dashProjectId  = statusData ? (statusData.projectId || '') : '';
+const activeAdr      = statusData ? (statusData.activeAdr || '') : '';
+const activeAdrTitle = statusData ? (statusData.activeAdrTitle || '') : '';
 const activeAgents   = statusData ? (statusData.activeAgents || 0) : 0;
 const idleAgents     = statusData ? (statusData.idleAgents || 0) : 0;
 const totalTasks     = statusData ? (statusData.tasks || 0) : 0;
@@ -121,7 +124,17 @@ const ancestorPids = safe(() => {
   return pids;
 }, []);
 
+const claudeSessionId = process.env.CLAUDE_SESSION_ID || '';
+
 const agentSession = safe(() => {
+  // Strategy 0: CLAUDE_SESSION_ID — the canonical session identifier
+  if (claudeSessionId) {
+    const sessionFile = path.join(sessDir, `agent-${claudeSessionId}.json`);
+    if (fs.existsSync(sessionFile)) {
+      return JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+    }
+  }
+
   const files = fs.readdirSync(sessDir)
     .filter(f => f.startsWith('agent-') && !f.includes('nexus') && f.endsWith('.json'))
     .map(f => {
@@ -208,6 +221,15 @@ if (agentIdShort) {
 // Git
 const mark = isDirty ? `${P.dirty}✱` : `${P.clean}✓`;
 parts.push(`${P.branch}⎇ ${branch} ${mark}`);
+
+// Active ADR — ◆ADR-2603240130 Declarative Swarm…
+if (activeAdr) {
+  const title = activeAdrTitle.length > 28
+    ? activeAdrTitle.slice(0, 27) + '…'
+    : activeAdrTitle;
+  const label = title ? `${activeAdr} ${P.dim}${title}` : activeAdr;
+  parts.push(`${P.adr}◆${label}`);
+}
 
 // HexFlo swarm — ●hexflo 2⚡ [3/5]
 const agt = activeAgents || hexfloAgents;
