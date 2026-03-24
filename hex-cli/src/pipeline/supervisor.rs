@@ -5,7 +5,7 @@
 //! read source files from disk, attach boundary rules, and include upstream
 //! output so that inference calls carry exactly the information the agent needs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -106,6 +106,8 @@ pub struct Supervisor {
     agent_defs: HashMap<String, AgentDefinition>,
     /// Cached swarm composition (loaded once, used for model defaults).
     swarm_comp: Option<SwarmComposition>,
+    /// Spawned worker processes, behind Mutex for interior mutability (killed on drop).
+    workers: Mutex<Vec<(String, std::process::Child)>>,
 }
 
 impl Supervisor {
@@ -139,6 +141,7 @@ impl Supervisor {
             session: None,
             agent_defs,
             swarm_comp,
+            workers: Mutex::new(Vec::new()),
         }
     }
 
@@ -620,6 +623,90 @@ impl Supervisor {
         }
     }
 
+    // ── Worker process management ────────────────────────────────────────
+
+    /// Determine the unique agent roles needed for a workplan.
+    fn roles_for_workplan(workplan: &WorkplanData) -> Vec<String> {
+        let mut roles = HashSet::new();
+        // hex-coder is always needed for code tiers
+        roles.insert("hex-coder".to_string());
+        // reviewer and tester for any code-producing tier
+        roles.insert("hex-reviewer".to_string());
+        roles.insert("hex-tester".to_string());
+        // fixer for remediation loops
+        roles.insert("hex-fixer".to_string());
+
+        let max_tier = workplan.steps.iter().map(|s| s.tier).max().unwrap_or(0);
+
+        // Check for UI adapters → hex-ux
+        let has_ui = workplan.steps.iter().any(|s| {
+            s.adapter
+                .as_deref()
+                .map(|a| a.contains("primary"))
+                .unwrap_or(false)
+                || s.layer
+                    .as_deref()
+                    .map(|l| l.contains("primary"))
+                    .unwrap_or(false)
+        });
+        if has_ui {
+            roles.insert("hex-ux".to_string());
+        }
+
+        // documenter for the final tier
+        if max_tier > 0 {
+            roles.insert("hex-documenter".to_string());
+        }
+
+        roles.into_iter().collect()
+    }
+
+    /// Spawn `hex agent worker --role <role>` processes for each role.
+    ///
+    /// Workers register themselves with nexus and poll for task assignments.
+    /// The supervisor assigns tasks by PATCHing task status via the REST API.
+    fn spawn_workers(&self, roles: &[String]) -> Result<()> {
+        let hex_bin = std::env::current_exe()
+            .unwrap_or_else(|_| std::path::PathBuf::from("hex"));
+
+        let mut workers = self.workers.lock().unwrap();
+        for role in roles {
+            let swarm_arg = self.swarm_id.as_deref().unwrap_or("");
+            let mut cmd = std::process::Command::new(&hex_bin);
+            cmd.args(["agent", "worker", "--role", role]);
+            if !swarm_arg.is_empty() {
+                cmd.args(["--swarm-id", swarm_arg]);
+            }
+            cmd.stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+
+            let child = cmd.spawn().with_context(|| {
+                format!("Failed to spawn worker for role {}", role)
+            })?;
+
+            println!("  Spawned {} worker (PID {})", role, child.id());
+            workers.push((role.clone(), child));
+        }
+        Ok(())
+    }
+
+    /// Kill all spawned worker processes and wait for them to exit.
+    fn kill_workers(&self) {
+        let mut workers = self.workers.lock().unwrap();
+        for (role, child) in workers.iter_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+            debug!(role = role.as_str(), "killed worker");
+        }
+        workers.clear();
+    }
+
+    /// Check whether a worker is running for the given role.
+    fn has_worker_for_role(&self, role: &str) -> bool {
+        let workers = self.workers.lock().unwrap();
+        workers.iter().any(|(r, _)| r == role)
+    }
+
     // ── Goal-driven objective loop ──────────────────────────────────────
 
     /// Run all tiers in order, returning a [`SupervisorResult`] with per-tier outcomes.
@@ -629,6 +716,15 @@ impl Supervisor {
         adr_content: &str,
     ) -> Result<SupervisorResult> {
         let workplan_summary = format!("{} — {}", workplan.id, workplan.title);
+
+        // Spawn worker processes for each role needed by the workplan
+        let roles = Self::roles_for_workplan(workplan);
+        if let Err(e) = self.spawn_workers(&roles) {
+            warn!(error = %e, "failed to spawn workers — falling back to inline execution");
+        } else if !self.workers.lock().unwrap().is_empty() {
+            println!("  Waiting for workers to register with nexus...");
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
 
         // Group steps by tier
         let max_tier = workplan.steps.iter().map(|s| s.tier as u32).max().unwrap_or(0);
@@ -894,9 +990,65 @@ impl Supervisor {
 
         let start = Instant::now();
 
-        let agent_result = self
-            .dispatch_agent(role, tier, state, workplan_steps, adr_content, workplan_summary)
-            .await;
+        // Decide: delegate to worker process or execute inline (fallback)
+        let agent_result = if self.has_worker_for_role(role) {
+            // ── Worker delegation path ──────────────────────────────────
+            // Assign the task to the worker via nexus (worker picks it up
+            // because it matches its agent_id + "in_progress" status).
+            if let Some(ref tid) = tracking_task_id {
+                let runner = CliRunner::new();
+                // Mark task as in_progress so the worker picks it up
+                let aid = self.agent_id.clone().unwrap_or_default();
+                let _ = runner.run(&["task", "assign", tid, &aid]);
+
+                // Poll until the worker completes the task (max 120s)
+                let poll_start = Instant::now();
+                let timeout = std::time::Duration::from_secs(120);
+                let poll_result: Result<()> = loop {
+                    if poll_start.elapsed() > timeout {
+                        break Err(anyhow::anyhow!(
+                            "Task {} timed out after 120s waiting for worker {}",
+                            tid,
+                            role
+                        ));
+                    }
+
+                    if let Ok(status) = runner.run(&["task", "status", tid]) {
+                        let task_status = status["status"].as_str().unwrap_or("pending");
+                        match task_status {
+                            "completed" => break Ok(()),
+                            "failed" => {
+                                let reason =
+                                    status["result"].as_str().unwrap_or("unknown error");
+                                break Err(anyhow::anyhow!(
+                                    "Task {} failed (worker {}): {}",
+                                    tid,
+                                    role,
+                                    reason
+                                ));
+                            }
+                            _ => {} // pending / in_progress — keep polling
+                        }
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                };
+                poll_result
+            } else {
+                // No tracking task ID — cannot delegate without a task, fall back to inline
+                debug!(role, "no tracking task ID — falling back to inline dispatch");
+                self.dispatch_agent(
+                    role, tier, state, workplan_steps, adr_content, workplan_summary,
+                )
+                .await
+            }
+        } else {
+            // ── Inline fallback (no workers running) ────────────────────
+            self.dispatch_agent(
+                role, tier, state, workplan_steps, adr_content, workplan_summary,
+            )
+            .await
+        };
 
         let duration_ms = start.elapsed().as_millis() as u64;
         let success = agent_result.is_ok();
@@ -1343,6 +1495,12 @@ impl Supervisor {
         self.evaluate_quality_thresholds(role, lint_warnings, file_lines, function_lines, test_coverage)
             .iter()
             .all(|c| c.passed)
+    }
+}
+
+impl Drop for Supervisor {
+    fn drop(&mut self) {
+        self.kill_workers();
     }
 }
 
