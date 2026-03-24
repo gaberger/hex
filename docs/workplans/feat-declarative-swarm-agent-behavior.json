@@ -2,7 +2,7 @@
   "title": "Feature: Declarative Swarm Agent Behavior — YAML-driven supervisor",
   "feature": "declarative-agents",
   "language": "rust",
-  "status": "done",
+  "status": "in_progress",
   "adr": "ADR-2603240130",
   "description": "Parse the 14 existing agent YAML definitions into AgentDefinition structs and drive all supervisor behavior from them: model selection, context assembly with L1/L2/L3 levels, TDD workflow phases, feedback loop gates, quality thresholds, and swarm composition.",
   "priority": "high",
@@ -60,7 +60,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": ["step-2"],
-      "status": "done",
+      "status": "plumbing_only",
       "files": ["hex-cli/src/pipeline/supervisor.rs", "hex-cli/src/pipeline/model_selection.rs"]
     },
     {
@@ -69,7 +69,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": ["step-2"],
-      "status": "done",
+      "status": "plumbing_only",
       "files": ["hex-cli/src/pipeline/supervisor.rs"]
     },
     {
@@ -78,7 +78,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-3", "step-4"],
-      "status": "done",
+      "status": "plumbing_only",
       "files": ["hex-cli/src/pipeline/supervisor.rs"]
     },
     {
@@ -87,7 +87,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-5"],
-      "status": "done",
+      "status": "plumbing_only",
       "files": ["hex-cli/src/pipeline/supervisor.rs"]
     },
     {
@@ -105,7 +105,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-5", "step-6", "step-7"],
-      "status": "done",
+      "status": "pending",
       "files": ["hex-cli/src/pipeline/supervisor.rs"]
     },
     {
@@ -114,7 +114,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-8"],
-      "status": "done",
+      "status": "pending",
       "files": ["hex-cli/src/pipeline/objectives.rs", "hex-cli/src/pipeline/supervisor.rs"]
     }
   ]
