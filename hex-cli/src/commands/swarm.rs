@@ -26,11 +26,27 @@ pub enum SwarmAction {
     Status,
     /// List all swarms
     List,
-    /// Clean up stale/completed swarms and their tasks
+    /// Mark a swarm as completed
+    Complete {
+        /// Swarm ID
+        id: String,
+    },
+    /// Mark a swarm as failed
+    Fail {
+        /// Swarm ID
+        id: String,
+        /// Reason for failure
+        #[arg(default_value = "manually failed")]
+        reason: String,
+    },
+    /// Clean up stale/completed swarms (dry-run by default)
     Cleanup {
-        /// Archive swarms older than N hours (default 24)
+        /// Swarms older than N hours are considered stale (default 24)
         #[arg(long, default_value_t = 24)]
-        older_than: u64,
+        stale_hours: u64,
+        /// Actually execute the transitions (default is dry-run)
+        #[arg(long)]
+        apply: bool,
     },
 }
 
@@ -39,7 +55,9 @@ pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
         SwarmAction::Init { name, topology, json } => init(&name, &topology, json).await,
         SwarmAction::Status => status().await,
         SwarmAction::List => list().await,
-        SwarmAction::Cleanup { older_than } => cleanup(older_than).await,
+        SwarmAction::Complete { id } => complete(&id).await,
+        SwarmAction::Fail { id, reason } => fail(&id, &reason).await,
+        SwarmAction::Cleanup { stale_hours, apply } => cleanup(stale_hours, apply).await,
     }
 }
 
@@ -216,39 +234,185 @@ async fn list() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cleanup(older_than: u64) -> anyhow::Result<()> {
+async fn complete(id: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    nexus
+        .patch(&format!("/api/swarms/{}", id), &json!({}))
+        .await?;
+
+    println!("{} Swarm {} marked as completed", "\u{2b21}".green(), &id[..8]);
+    Ok(())
+}
+
+async fn fail(id: &str, reason: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    nexus
+        .post(
+            &format!("/api/swarms/{}/fail", id),
+            &json!({ "reason": reason }),
+        )
+        .await?;
+
+    println!("{} Swarm {} marked as failed: {}", "\u{2b21}".red(), &id[..8], reason);
+    Ok(())
+}
+
+async fn cleanup(stale_hours: u64, apply: bool) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
     let resp = nexus.get("/api/swarms/active").await?;
     let swarms = resp.as_array().cloned().unwrap_or_default();
 
-    let cutoff = chrono::Utc::now() - chrono::Duration::hours(older_than as i64);
-    let mut cleaned = 0u32;
+    if swarms.is_empty() {
+        println!("{} No active swarms to clean up", "\u{2b21}".dimmed());
+        return Ok(());
+    }
+
+    let cutoff = chrono::Utc::now() - chrono::Duration::hours(stale_hours as i64);
+
+    // Classify each swarm
+    struct Action {
+        id: String,
+        name: String,
+        transition: &'static str, // "complete" or "fail"
+        reason: String,
+    }
+    let mut actions: Vec<Action> = Vec::new();
 
     for swarm in &swarms {
-        let created = swarm["created_at"].as_str().unwrap_or("");
-        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created) {
-            if dt < cutoff {
-                let id = swarm["id"].as_str().unwrap_or("");
-                if !id.is_empty() {
-                    let _ = nexus
-                        .patch(
-                            &format!("/api/swarms/{}", id),
-                            &json!({ "status": "archived" }),
-                        )
-                        .await;
-                    cleaned += 1;
+        let id = swarm["id"].as_str().unwrap_or("").to_string();
+        let name = swarm["name"].as_str().unwrap_or("-").to_string();
+        let tasks = swarm["tasks"].as_array();
+        let total = tasks.map(|t| t.len()).unwrap_or(0);
+        let completed = tasks
+            .map(|t| {
+                t.iter()
+                    .filter(|tk| tk["status"].as_str() == Some("completed"))
+                    .count()
+            })
+            .unwrap_or(0);
+
+        // All tasks completed → mark swarm completed
+        if total > 0 && completed == total {
+            actions.push(Action {
+                id,
+                name,
+                transition: "complete",
+                reason: format!("all {}/{} tasks done", completed, total),
+            });
+            continue;
+        }
+
+        // All tasks pending + older than cutoff → mark swarm failed (stale)
+        let created_at = swarm["createdAt"]
+            .as_str()
+            .or_else(|| swarm["created_at"].as_str())
+            .unwrap_or("");
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created_at) {
+            if dt < cutoff && completed == 0 {
+                actions.push(Action {
+                    id,
+                    name,
+                    transition: "fail",
+                    reason: format!("stale — 0/{} tasks started, older than {}h", total, stale_hours),
+                });
+                continue;
+            }
+        }
+
+        // Empty swarms (0 tasks) older than cutoff → fail
+        if total == 0 {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created_at) {
+                if dt < cutoff {
+                    actions.push(Action {
+                        id,
+                        name,
+                        transition: "fail",
+                        reason: "stale — no tasks, older than cutoff".to_string(),
+                    });
                 }
             }
         }
     }
 
+    if actions.is_empty() {
+        println!("{} No swarms need cleanup", "\u{2b21}".dimmed());
+        return Ok(());
+    }
+
+    // Print table
+    let rows: Vec<Vec<String>> = actions
+        .iter()
+        .map(|a| {
+            vec![
+                truncate(&a.id, 36),
+                a.name.clone(),
+                a.transition.to_string(),
+                a.reason.clone(),
+            ]
+        })
+        .collect();
+
     println!(
-        "{} Cleaned {} stale swarm(s) (older than {}h)",
+        "{} Swarm cleanup — {} action(s){}",
         "\u{2b21}".cyan(),
-        cleaned,
-        older_than
+        actions.len(),
+        if apply { "" } else { " (dry-run)" }
     );
+    println!();
+    println!("{}", pretty_table(&["ID", "Name", "Action", "Reason"], &rows));
+
+    if !apply {
+        println!();
+        println!(
+            "Run with {} to execute these transitions",
+            "--apply".bold()
+        );
+        return Ok(());
+    }
+
+    // Execute transitions
+    let mut ok = 0u32;
+    let mut err = 0u32;
+    for action in &actions {
+        let result = match action.transition {
+            "complete" => {
+                nexus
+                    .patch(&format!("/api/swarms/{}", action.id), &json!({}))
+                    .await
+            }
+            "fail" => {
+                nexus
+                    .post(
+                        &format!("/api/swarms/{}/fail", action.id),
+                        &json!({ "reason": action.reason }),
+                    )
+                    .await
+            }
+            _ => unreachable!(),
+        };
+        match result {
+            Ok(_) => ok += 1,
+            Err(e) => {
+                eprintln!("  {} {} — {}", "✗".red(), &action.id[..8], e);
+                err += 1;
+            }
+        }
+    }
+
+    println!();
+    println!(
+        "{} Done: {} succeeded, {} failed",
+        "\u{2b21}".green(),
+        ok,
+        err
+    );
+
     Ok(())
 }
+
