@@ -25,6 +25,12 @@ pub enum SwarmAction {
     Status,
     /// List all swarms
     List,
+    /// Clean up stale/completed swarms and their tasks
+    Cleanup {
+        /// Archive swarms older than N hours (default 24)
+        #[arg(long, default_value_t = 24)]
+        older_than: u64,
+    },
 }
 
 pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
@@ -32,6 +38,7 @@ pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
         SwarmAction::Init { name, topology, json } => init(&name, &topology, json).await,
         SwarmAction::Status => status().await,
         SwarmAction::List => list().await,
+        SwarmAction::Cleanup { older_than } => cleanup(older_than).await,
     }
 }
 
@@ -233,5 +240,42 @@ async fn list() -> anyhow::Result<()> {
         );
     }
 
+    Ok(())
+}
+
+async fn cleanup(older_than: u64) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    let resp = nexus.get("/api/swarms/active").await?;
+    let swarms = resp.as_array().cloned().unwrap_or_default();
+
+    let cutoff = chrono::Utc::now() - chrono::Duration::hours(older_than as i64);
+    let mut cleaned = 0u32;
+
+    for swarm in &swarms {
+        let created = swarm["created_at"].as_str().unwrap_or("");
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created) {
+            if dt < cutoff {
+                let id = swarm["id"].as_str().unwrap_or("");
+                if !id.is_empty() {
+                    let _ = nexus
+                        .patch(
+                            &format!("/api/swarms/{}", id),
+                            &json!({ "status": "archived" }),
+                        )
+                        .await;
+                    cleaned += 1;
+                }
+            }
+        }
+    }
+
+    println!(
+        "{} Cleaned {} stale swarm(s) (older than {}h)",
+        "\u{2b21}".cyan(),
+        cleaned,
+        older_than
+    );
     Ok(())
 }

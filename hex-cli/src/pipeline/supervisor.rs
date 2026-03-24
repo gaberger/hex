@@ -1004,6 +1004,7 @@ impl Supervisor {
                 // Poll until the worker completes the task (max 120s)
                 let poll_start = Instant::now();
                 let timeout = std::time::Duration::from_secs(120);
+                let mut retries = 0u32;
                 let poll_result: Result<()> = loop {
                     if poll_start.elapsed() > timeout {
                         break Err(anyhow::anyhow!(
@@ -1011,6 +1012,49 @@ impl Supervisor {
                             tid,
                             role
                         ));
+                    }
+
+                    // Check if worker is still alive
+                    {
+                        let mut workers = self.workers.lock().unwrap();
+                        let worker_dead = workers
+                            .iter_mut()
+                            .find(|(r, _)| r == role)
+                            .map(|(_, child)| {
+                                child.try_wait().ok().flatten().is_some()
+                            })
+                            .unwrap_or(true);
+
+                        if worker_dead {
+                            warn!(
+                                role,
+                                task_id = ?tid,
+                                "worker process died — respawning"
+                            );
+
+                            // Remove dead worker
+                            workers.retain(|(r, _)| r != role);
+                            drop(workers); // release lock before spawning
+
+                            // Respawn
+                            self.spawn_workers(&[role.to_string()])?;
+
+                            // Reclaim the task back to pending so new worker picks it up
+                            let _ = runner.run(&["task", "assign", tid, &aid]);
+
+                            retries += 1;
+                            if retries > 3 {
+                                break Err(anyhow::anyhow!(
+                                    "Worker for role {} died {} times — giving up",
+                                    role,
+                                    retries
+                                ));
+                            }
+
+                            // Wait for new worker to register
+                            std::thread::sleep(std::time::Duration::from_secs(3));
+                            continue;
+                        }
                     }
 
                     if let Ok(status) = runner.run(&["task", "status", tid]) {
