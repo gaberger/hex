@@ -346,21 +346,57 @@ fn session_path(id: &str) -> Result<PathBuf> {
     Ok(sessions_dir()?.join(format!("{}.json", id)))
 }
 
-/// Best-effort resolution of agent identity from CLAUDE_SESSION_ID.
+/// Best-effort resolution of agent identity.
 ///
-/// Reads `~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json` and extracts
-/// the `agent_id` field. Returns `None` if anything fails (env var not
-/// set, file missing, parse error).
+/// Tries in order:
+/// 1. CLAUDE_SESSION_ID env var → `~/.hex/sessions/agent-{id}.json`
+/// 2. Most recent `agent-*.json` file in `~/.hex/sessions/`
+///
+/// Returns `None` if no agent identity can be found.
 fn resolve_agent_id() -> Option<String> {
-    let claude_session = std::env::var("CLAUDE_SESSION_ID").ok()?;
     let home = dirs::home_dir()?;
-    let agent_file = home
-        .join(".hex")
-        .join("sessions")
-        .join(format!("agent-{}.json", claude_session));
-    let data = fs::read_to_string(&agent_file).ok()?;
-    let parsed: serde_json::Value = serde_json::from_str(&data).ok()?;
-    parsed["agent_id"].as_str().map(|s| s.to_string())
+    let sessions_dir = home.join(".hex").join("sessions");
+
+    // Try CLAUDE_SESSION_ID first
+    if let Ok(claude_session) = std::env::var("CLAUDE_SESSION_ID") {
+        let agent_file = sessions_dir.join(format!("agent-{}.json", claude_session));
+        if let Ok(data) = fs::read_to_string(&agent_file) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+                if let Some(id) = parsed["agent_id"].as_str() {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+
+    // Fallback: find the most recently modified agent-*.json
+    if let Ok(entries) = fs::read_dir(&sessions_dir) {
+        let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.starts_with("agent-") && name.ends_with(".json") {
+                if let Ok(meta) = path.metadata() {
+                    if let Ok(modified) = meta.modified() {
+                        if newest.as_ref().map_or(true, |(t, _)| modified > *t) {
+                            newest = Some((modified, path.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some((_, path)) = newest {
+            if let Ok(data) = fs::read_to_string(&path) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+                    if let Some(id) = parsed["agent_id"].as_str() {
+                        return Some(id.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 // ---------------------------------------------------------------------------
