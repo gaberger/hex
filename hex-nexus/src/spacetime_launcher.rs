@@ -565,6 +565,7 @@ pub const MODULE_TIERS: &[&[&str]] = &[
         "hexflo-cleanup",
         "conflict-resolver",
         "test-results",
+        "neural-lab",
     ],
 ];
 

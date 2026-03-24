@@ -41,7 +41,7 @@ pub const STDB_DATABASE_CORE: &str = "hex";
 /// Format: (module_directory_name, database_name)
 pub const STDB_MODULE_DATABASES: &[(&str, &str)] = &[
     // Tier 0: Foundation
-    ("hexflo-coordination", "hex"),          // mega-module, backward compat
+    ("hexflo-coordination", "hexflo-coordination"),
     ("agent-registry", "agent-registry"),
     ("fleet-state", "fleet-state"),
     ("file-lock-manager", "file-lock-manager"),
@@ -62,6 +62,8 @@ pub const STDB_MODULE_DATABASES: &[(&str, &str)] = &[
     ("hexflo-cleanup", "hexflo-cleanup"),
     ("conflict-resolver", "conflict-resolver"),
     ("test-results", "test-results"),
+    // Tier 4: Research
+    ("neural-lab", "neural-lab"),
 ];
 
 /// Look up the database name for a module by its directory name.
