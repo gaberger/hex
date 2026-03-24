@@ -6,6 +6,7 @@
 
 pub mod controls;
 pub mod gate;
+pub mod messages;
 pub mod pipeline_bar;
 pub mod status_bar;
 pub mod task_list;
@@ -124,6 +125,12 @@ pub struct TuiApp {
     /// Set to `true` after `running_phase` is assigned; the actual blocking call
     /// happens on the *next* tick so render() gets one frame to show the status.
     phase_ready_to_run: bool,
+    /// Channel for receiving messages from phase workers (ADR-2603241500).
+    ui_rx: tokio::sync::mpsc::UnboundedReceiver<messages::UiMessage>,
+    /// Channel sender cloned to each phase worker (ADR-2603241500).
+    ui_tx: tokio::sync::mpsc::UnboundedSender<messages::UiMessage>,
+    /// Read-only UI state rebuilt from messages (ADR-2603241500).
+    ui_state: messages::UiState,
 }
 
 impl TuiApp {
@@ -153,6 +160,14 @@ impl TuiApp {
         let auto_mode = matches!(config.mode, DevMode::Auto);
         let dry_run = config.mode.is_dry_run();
 
+        let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel();
+        let ui_state = messages::UiState::new(
+            &session.feature_description,
+            &session.id,
+            session.project_id.clone(),
+            session.agent_id.clone(),
+        );
+
         Self {
             session,
             config,
@@ -181,6 +196,9 @@ impl TuiApp {
             running_phase: None,
             phase_started: None,
             phase_ready_to_run: false,
+            ui_rx,
+            ui_tx,
+            ui_state,
         }
     }
 
@@ -217,6 +235,11 @@ impl TuiApp {
                     self.handle_key(key.code, key.modifiers);
                 }
             }
+            // Drain messages from phase workers (ADR-2603241500).
+            while let Ok(msg) = self.ui_rx.try_recv() {
+                self.ui_state.apply(msg);
+            }
+
             if last_tick.elapsed() >= tick_rate {
                 self.tick();
                 last_tick = Instant::now();
