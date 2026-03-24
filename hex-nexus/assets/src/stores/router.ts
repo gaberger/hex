@@ -18,6 +18,7 @@ export type Route =
   | { page: "control-plane" }
   | { page: "inference" }
   | { page: "fleet" }
+  | { page: "research-lab" }
   // Project-scoped
   | { page: "project"; projectId: string }
   | { page: "project-agents"; projectId: string }
@@ -92,6 +93,10 @@ export function initRouterStore() {
       }
       if (r.page === "fleet") {
         crumbs.push({ label: "Fleet Nodes", icon: "monitor" });
+        return crumbs;
+      }
+      if (r.page === "research-lab") {
+        crumbs.push({ label: "Research Lab", icon: "cpu" });
         return crumbs;
       }
 
@@ -214,6 +219,8 @@ function routeToHash(r: Route): string {
       return "#/inference";
     case "fleet":
       return "#/fleet";
+    case "research-lab":
+      return "#/research-lab";
     case "project":
       return `#/project/${r.projectId}`;
     case "project-agents":
@@ -260,6 +267,7 @@ function hashToRoute(hash: string): Route {
   // Global routes
   if (parts[0] === "inference") return { page: "inference" };
   if (parts[0] === "fleet") return { page: "fleet" };
+  if (parts[0] === "research-lab") return { page: "research-lab" };
 
   // Project-scoped routes: /project/:id/...
   if (parts[0] === "project" && parts[1]) {
