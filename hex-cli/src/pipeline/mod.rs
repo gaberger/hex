@@ -12,6 +12,7 @@ pub mod model_selection;
 pub mod objectives;
 pub mod quality_agent;
 pub mod supervisor;
+pub mod swarm_config;
 pub mod swarm_phase;
 pub mod validate_phase;
 pub mod workflow_engine;
@@ -38,4 +39,5 @@ pub use objectives::{
     Objective, ObjectiveState,
 };
 pub use supervisor::{AgentContext, Supervisor, SupervisorResult, TierResult};
+pub use swarm_config::SwarmConfig;
 pub use workplan_phase::{WorkplanPhase, WorkplanPhaseResult};

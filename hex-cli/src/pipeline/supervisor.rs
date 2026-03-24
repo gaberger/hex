@@ -626,20 +626,14 @@ impl Supervisor {
     // ── Worker process management ────────────────────────────────────────
 
     /// Determine the unique agent roles needed for a workplan.
+    ///
+    /// Loads the swarm composition from the embedded `dev-pipeline.yml` and
+    /// evaluates each agent's `when` guard against workplan properties.
+    /// See [`crate::pipeline::swarm_config::SwarmConfig`] (ADR-2603241230 step 8).
     fn roles_for_workplan(workplan: &WorkplanData) -> Vec<String> {
-        let mut roles = HashSet::new();
-        // hex-coder is always needed for code tiers
-        roles.insert("hex-coder".to_string());
-        // reviewer and tester for any code-producing tier
-        roles.insert("hex-reviewer".to_string());
-        roles.insert("hex-tester".to_string());
-        // fixer for remediation loops
-        roles.insert("hex-fixer".to_string());
+        let config = crate::pipeline::SwarmConfig::load_default();
 
-        let max_tier = workplan.steps.iter().map(|s| s.tier).max().unwrap_or(0);
-
-        // Check for UI adapters → hex-ux
-        let has_ui = workplan.steps.iter().any(|s| {
+        let has_primary_adapters = workplan.steps.iter().any(|s| {
             s.adapter
                 .as_deref()
                 .map(|a| a.contains("primary"))
@@ -649,16 +643,11 @@ impl Supervisor {
                     .map(|l| l.contains("primary"))
                     .unwrap_or(false)
         });
-        if has_ui {
-            roles.insert("hex-ux".to_string());
-        }
 
-        // documenter for the final tier
-        if max_tier > 0 {
-            roles.insert("hex-documenter".to_string());
-        }
+        let max_tier = workplan.steps.iter().map(|s| s.tier).max().unwrap_or(0);
+        let is_final_tier = max_tier > 0; // called once for the full run, so include final-tier agents
 
-        roles.into_iter().collect()
+        config.roles_for_context(has_primary_adapters, is_final_tier, false)
     }
 
     /// Spawn `hex agent worker --role <role>` processes for each role.

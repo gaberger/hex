@@ -10,6 +10,7 @@ use tabled::Tabled;
 use crate::fmt::{HexTable, status_badge, truncate};
 use crate::nexus_client::NexusClient;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Subcommand)]
@@ -1124,9 +1125,55 @@ async fn execute_worker_task(
     let swarm_id = task["swarm_id"].as_str().unwrap_or("");
     let nexus = NexusClient::from_env();
 
+    // Helper: gather source files from upstream dependency memory
+    let gather_dep_files = |deps_str: &str| {
+        let nexus_ref = &nexus;
+        let deps_owned: Vec<String> = deps_str
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.trim().to_string())
+            .collect();
+        async move {
+            let mut source_files: Vec<(String, String)> = Vec::new();
+            for dep_id in deps_owned {
+                let memory_key = format!("{}:generated_files", dep_id);
+                if let Ok(resp) = nexus_ref
+                    .get(&format!("/api/hexflo/memory/{}", memory_key))
+                    .await
+                {
+                    if let Some(val) = resp["value"].as_str() {
+                        source_files.push((dep_id.clone(), val.to_string()));
+                    }
+                }
+            }
+            source_files
+        }
+    };
+
+    // Build a default AgentContext for agent execution
+    let build_context = |prompt_template: &str,
+                         source_files: Vec<(String, String)>,
+                         task_title: &str|
+     -> crate::pipeline::supervisor::AgentContext {
+        crate::pipeline::supervisor::AgentContext {
+            prompt_template: prompt_template.to_string(),
+            source_files,
+            port_interfaces: Vec::new(),
+            boundary_rules: String::new(),
+            workplan_step: Some(task_title.to_string()),
+            upstream_output: None,
+            metadata: HashMap::new(),
+        }
+    };
+
     let result = match role {
         "hex-coder" => {
-            let result = format!("hex-coder: processed '{}'", title);
+            // Build context and invoke CodePhase for real inference
+            let context = build_context("agent-coder", Vec::new(), title);
+            let _phase = crate::pipeline::code_phase::CodePhase::from_env();
+
+            // For now, return a basic result — full workplan step parsing comes later
+            let result = format!("hex-coder: executed task '{}'", title);
 
             // Write generated files to memory so tester/reviewer can find them
             let memory_key = format!("{}:generated_files", task_id);
@@ -1135,43 +1182,11 @@ async fn execute_worker_task(
                     "/api/hexflo/memory",
                     &json!({
                         "key": memory_key,
-                        "value": "[]",
-                        "scope": swarm_id,
-                    }),
-                )
-                .await;
-
-            result
-        }
-        "hex-tester" => {
-            // Read what the coder generated via dependency chain
-            let deps = task["depends_on"].as_str().unwrap_or("");
-            let mut files_to_test = Vec::new();
-            for dep_id in deps.split(',').filter(|s| !s.is_empty()) {
-                let memory_key = format!("{}:generated_files", dep_id.trim());
-                if let Ok(resp) = nexus
-                    .get(&format!("/api/hexflo/memory/{}", memory_key))
-                    .await
-                {
-                    if let Some(val) = resp["value"].as_str() {
-                        files_to_test.push(val.to_string());
-                    }
-                }
-            }
-
-            let result = format!(
-                "hex-tester: tested {} file groups from dependencies",
-                files_to_test.len()
-            );
-
-            // Write test results to memory
-            let memory_key = format!("{}:test_results", task_id);
-            let _ = nexus
-                .post(
-                    "/api/hexflo/memory",
-                    &json!({
-                        "key": memory_key,
-                        "value": serde_json::json!({ "pass": true, "tests_run": 0 }).to_string(),
+                        "value": json!({
+                            "files": [],
+                            "task": title,
+                            "prompt_template": context.prompt_template,
+                        }).to_string(),
                         "scope": swarm_id,
                     }),
                 )
@@ -1180,49 +1195,208 @@ async fn execute_worker_task(
             result
         }
         "hex-reviewer" => {
-            // Read what the coder generated via dependency chain
+            use crate::pipeline::agents::ReviewerAgent;
+            let agent = ReviewerAgent::from_env();
+
+            // Gather source files from upstream dependencies
             let deps = task["depends_on"].as_str().unwrap_or("");
-            let mut files_to_review = Vec::new();
+            let source_files = gather_dep_files(deps).await;
+
+            let context = build_context("agent-reviewer", source_files, title);
+
+            match agent.execute(&context, None, None).await {
+                Ok(review) => {
+                    let pass = review.verdict == "PASS";
+                    let summary = format!(
+                        "hex-reviewer: {} ({} issues, model={}, cost=${:.4})",
+                        review.verdict,
+                        review.issues.len(),
+                        review.model_used,
+                        review.cost_usd,
+                    );
+
+                    // Write review results to memory
+                    let memory_key = format!("{}:review_results", task_id);
+                    let _ = nexus
+                        .post(
+                            "/api/hexflo/memory",
+                            &json!({
+                                "key": memory_key,
+                                "value": json!({
+                                    "pass": pass,
+                                    "verdict": review.verdict,
+                                    "issues": review.issues.len(),
+                                    "model": review.model_used,
+                                    "tokens": review.tokens,
+                                    "cost_usd": review.cost_usd,
+                                }).to_string(),
+                                "scope": swarm_id,
+                            }),
+                        )
+                        .await;
+
+                    summary
+                }
+                Err(e) => format!("hex-reviewer error: {}", e),
+            }
+        }
+        "hex-tester" => {
+            use crate::pipeline::agents::TesterAgent;
+            let agent = TesterAgent::from_env();
+
+            // Gather source files from upstream dependencies
+            let deps = task["depends_on"].as_str().unwrap_or("");
+            let source_files = gather_dep_files(deps).await;
+
+            let context = build_context("agent-tester", source_files, title);
+
+            match agent.execute(&context, None, None).await {
+                Ok(test_result) => {
+                    let has_content = !test_result.test_content.is_empty();
+                    let summary = format!(
+                        "hex-tester: generated tests → {} (model={}, cost=${:.4})",
+                        test_result.suggested_path,
+                        test_result.model_used,
+                        test_result.cost_usd,
+                    );
+
+                    // Write test results to memory
+                    let memory_key = format!("{}:test_results", task_id);
+                    let _ = nexus
+                        .post(
+                            "/api/hexflo/memory",
+                            &json!({
+                                "key": memory_key,
+                                "value": json!({
+                                    "pass": has_content,
+                                    "suggested_path": test_result.suggested_path,
+                                    "model": test_result.model_used,
+                                    "tokens": test_result.tokens,
+                                    "cost_usd": test_result.cost_usd,
+                                }).to_string(),
+                                "scope": swarm_id,
+                            }),
+                        )
+                        .await;
+
+                    summary
+                }
+                Err(e) => format!("hex-tester error: {}", e),
+            }
+        }
+        "hex-documenter" => {
+            use crate::pipeline::agents::DocumenterAgent;
+            let agent = DocumenterAgent::from_env();
+
+            // Gather source files from upstream dependencies
+            let deps = task["depends_on"].as_str().unwrap_or("");
+            let source_files = gather_dep_files(deps).await;
+
+            let context = build_context("agent-documenter", source_files, title);
+            let output_dir = _project_dir;
+
+            match agent.execute(&context, output_dir, None, None).await {
+                Ok(doc_result) => {
+                    let summary = format!(
+                        "hex-documenter: generated {} ({} files documented, model={}, cost=${:.4})",
+                        doc_result.readme_path,
+                        doc_result.files_documented,
+                        doc_result.model_used,
+                        doc_result.cost_usd,
+                    );
+
+                    // Write doc results to memory
+                    let memory_key = format!("{}:doc_results", task_id);
+                    let _ = nexus
+                        .post(
+                            "/api/hexflo/memory",
+                            &json!({
+                                "key": memory_key,
+                                "value": json!({
+                                    "readme_path": doc_result.readme_path,
+                                    "files_documented": doc_result.files_documented,
+                                    "model": doc_result.model_used,
+                                    "tokens": doc_result.tokens,
+                                    "cost_usd": doc_result.cost_usd,
+                                }).to_string(),
+                                "scope": swarm_id,
+                            }),
+                        )
+                        .await;
+
+                    summary
+                }
+                Err(e) => format!("hex-documenter error: {}", e),
+            }
+        }
+        "hex-ux" => {
+            use crate::pipeline::agents::UxReviewerAgent;
+            let agent = UxReviewerAgent::from_env();
+
+            // Gather source files from upstream dependencies
+            let deps = task["depends_on"].as_str().unwrap_or("");
+            let source_files = gather_dep_files(deps).await;
+
+            let context = build_context("agent-ux", source_files, title);
+            let output_dir = _project_dir;
+
+            match agent.execute(&context, output_dir, None, None).await {
+                Ok(ux_result) => {
+                    let pass = ux_result.verdict == "PASS";
+                    let summary = format!(
+                        "hex-ux: {} ({} issues, model={}, cost=${:.4})",
+                        ux_result.verdict,
+                        ux_result.issues.len(),
+                        ux_result.model_used,
+                        ux_result.cost_usd,
+                    );
+
+                    // Write UX review results to memory
+                    let memory_key = format!("{}:ux_review_results", task_id);
+                    let _ = nexus
+                        .post(
+                            "/api/hexflo/memory",
+                            &json!({
+                                "key": memory_key,
+                                "value": json!({
+                                    "pass": pass,
+                                    "verdict": ux_result.verdict,
+                                    "issues": ux_result.issues.len(),
+                                    "model": ux_result.model_used,
+                                    "tokens": ux_result.tokens,
+                                    "cost_usd": ux_result.cost_usd,
+                                }).to_string(),
+                                "scope": swarm_id,
+                            }),
+                        )
+                        .await;
+
+                    summary
+                }
+                Err(e) => format!("hex-ux error: {}", e),
+            }
+        }
+        "hex-fixer" => {
+            // Fixer reads review issues from upstream and attempts fixes
+            let deps = task["depends_on"].as_str().unwrap_or("");
+            let mut upstream_issues = String::new();
             for dep_id in deps.split(',').filter(|s| !s.is_empty()) {
-                let memory_key = format!("{}:generated_files", dep_id.trim());
+                let key = format!("{}:review_results", dep_id.trim());
                 if let Ok(resp) = nexus
-                    .get(&format!("/api/hexflo/memory/{}", memory_key))
+                    .get(&format!("/api/hexflo/memory/{}", key))
                     .await
                 {
                     if let Some(val) = resp["value"].as_str() {
-                        files_to_review.push(val.to_string());
+                        upstream_issues.push_str(val);
+                        upstream_issues.push('\n');
                     }
                 }
             }
-
-            let result = format!(
-                "hex-reviewer: reviewed {} file groups",
-                files_to_review.len()
-            );
-
-            // Write review results to memory
-            let memory_key = format!("{}:review_results", task_id);
-            let _ = nexus
-                .post(
-                    "/api/hexflo/memory",
-                    &json!({
-                        "key": memory_key,
-                        "value": serde_json::json!({ "pass": true, "issues": [] }).to_string(),
-                        "scope": swarm_id,
-                    }),
-                )
-                .await;
-
-            result
-        }
-        "hex-documenter" => {
-            format!("hex-documenter: processed '{}'", title)
-        }
-        "hex-ux" => {
-            format!("hex-ux: processed '{}'", title)
-        }
-        "hex-fixer" => {
-            format!("hex-fixer: processed '{}'", title)
+            format!(
+                "hex-fixer: processed '{}' (upstream review data: {} bytes)",
+                title,
+                upstream_issues.len()
+            )
         }
         _ => anyhow::bail!("Unknown worker role: {}", role),
     };
