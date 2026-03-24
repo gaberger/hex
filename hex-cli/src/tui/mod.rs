@@ -84,6 +84,9 @@ pub struct TuiApp {
     pub workplan_result: Option<WorkplanPhaseResult>,
     /// Result of the last swarm initialization (held for display).
     pub swarm_result: Option<SwarmPhaseResult>,
+    /// Mapping from workplan step_id → HexFlo task_id (UUID).
+    /// Built after the swarm phase creates tasks.
+    pub task_id_map: std::collections::HashMap<String, String>,
     /// Result of the last validation phase (held until gate is resolved).
     pub validate_result: Option<ValidateResult>,
     /// Results of code generation steps (held until per-step gate is resolved).
@@ -140,6 +143,7 @@ impl TuiApp {
             adr_result: None,
             workplan_result: None,
             swarm_result: None,
+            task_id_map: std::collections::HashMap::new(),
             validate_result: None,
             code_results: Vec::new(),
             code_gate_index: 0,
@@ -228,6 +232,9 @@ impl TuiApp {
         println!("  feature: {}", self.session.feature_description);
         println!("  model:   {} via {}", self.config.model, self.config.provider);
         println!("  dir:     {}", self.config.output_dir);
+        if let Some(ref agent_id) = self.session.agent_id {
+            println!("  agent:   {}", agent_id);
+        }
         if self.config.budget > 0.0 {
             println!("  budget:  ${:.2}", self.config.budget);
         }
@@ -502,8 +509,10 @@ impl TuiApp {
                                 r.task_ids.len(),
                                 r.duration_ms as f64 / 1000.0,
                             );
-                            if let Some(ref agent_id) = self.session.agent_id {
-                                println!("  agent:  {}", agent_id);
+                            // Build step_id → hexflo_task_id map for code phase tracking
+                            self.task_id_map = r.task_ids.iter().cloned().collect();
+                            if !self.task_id_map.is_empty() {
+                                println!("         task_id_map: {} entries", self.task_id_map.len());
                             }
                             self.session.swarm_id = Some(r.swarm_id.clone());
                             let _ = self.session.update_phase(PipelinePhase::Code);
@@ -563,19 +572,58 @@ impl TuiApp {
                         Some(self.config.provider.as_str())
                     };
 
+                    // Use tracked execution when we have a task_id_map (from swarm phase)
+                    let task_id_map = self.task_id_map.clone();
+                    let agent_id = self.session.agent_id.clone();
                     let swarm_id = self.session.swarm_id.clone();
-                    let execute_fut = code_phase.execute_all(
-                        &workplan_data,
-                        swarm_id.as_deref(),
-                        model_override,
-                        provider_pref,
-                    );
+                    let use_tracked = !task_id_map.is_empty();
+                    if use_tracked {
+                        info!(
+                            task_count = task_id_map.len(),
+                            agent_id = ?agent_id,
+                            "using tracked execution with task_id_map"
+                        );
+                    }
 
                     let first_attempt = if let Ok(handle) = &rt {
-                        tokio::task::block_in_place(|| handle.block_on(execute_fut))
+                        tokio::task::block_in_place(|| handle.block_on(async {
+                            if use_tracked {
+                                code_phase.execute_all_tracked(
+                                    &workplan_data,
+                                    &task_id_map,
+                                    agent_id.as_deref(),
+                                    model_override,
+                                    provider_pref,
+                                ).await
+                            } else {
+                                code_phase.execute_all(
+                                    &workplan_data,
+                                    swarm_id.as_deref(),
+                                    model_override,
+                                    provider_pref,
+                                ).await
+                            }
+                        }))
                     } else {
                         let tmp_rt = tokio::runtime::Runtime::new()?;
-                        tmp_rt.block_on(execute_fut)
+                        tmp_rt.block_on(async {
+                            if use_tracked {
+                                code_phase.execute_all_tracked(
+                                    &workplan_data,
+                                    &task_id_map,
+                                    agent_id.as_deref(),
+                                    model_override,
+                                    provider_pref,
+                                ).await
+                            } else {
+                                code_phase.execute_all(
+                                    &workplan_data,
+                                    swarm_id.as_deref(),
+                                    model_override,
+                                    provider_pref,
+                                ).await
+                            }
+                        })
                     };
 
                     let result = match first_attempt {
@@ -584,17 +632,29 @@ impl TuiApp {
                             eprintln!("         RETRY: {:#}", e);
                             std::thread::sleep(Duration::from_secs(5));
                             let retry_phase = CodePhase::from_env();
-                            let retry_fut = retry_phase.execute_all(
-                                &workplan_data,
-                                swarm_id.as_deref(),
-                                model_override,
-                                provider_pref,
-                            );
+                            let retry_async = async {
+                                if use_tracked {
+                                    retry_phase.execute_all_tracked(
+                                        &workplan_data,
+                                        &task_id_map,
+                                        agent_id.as_deref(),
+                                        model_override,
+                                        provider_pref,
+                                    ).await
+                                } else {
+                                    retry_phase.execute_all(
+                                        &workplan_data,
+                                        swarm_id.as_deref(),
+                                        model_override,
+                                        provider_pref,
+                                    ).await
+                                }
+                            };
                             if let Ok(handle) = &rt {
-                                tokio::task::block_in_place(|| handle.block_on(retry_fut))
+                                tokio::task::block_in_place(|| handle.block_on(retry_async))
                             } else {
                                 let tmp_rt = tokio::runtime::Runtime::new()?;
-                                tmp_rt.block_on(retry_fut)
+                                tmp_rt.block_on(retry_async)
                             }
                         }
                         Err(e) => Err(e),

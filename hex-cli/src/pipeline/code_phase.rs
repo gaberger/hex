@@ -371,6 +371,82 @@ impl CodePhase {
             .await
     }
 
+    /// Execute code generation with full HexFlo task tracking.
+    ///
+    /// Like `execute_all`, but uses the `task_id_map` (step_id → hexflo_task_id)
+    /// to PATCH the correct HexFlo task endpoints, and includes `agent_id` in
+    /// status updates so the dashboard shows which agent is working each task.
+    ///
+    /// # Arguments
+    /// * `workplan` - the approved workplan
+    /// * `task_id_map` - mapping from workplan step_id to HexFlo task UUID
+    /// * `agent_id` - optional agent identity for task assignment
+    /// * `model_override` - if `Some`, skip RL and use this model
+    /// * `provider_pref` - if `Some`, prefer models from this provider
+    pub async fn execute_all_tracked(
+        &self,
+        workplan: &WorkplanData,
+        task_id_map: &HashMap<String, String>,
+        agent_id: Option<&str>,
+        model_override: Option<&str>,
+        provider_pref: Option<&str>,
+    ) -> Result<Vec<CodeStepResult>> {
+        let mut results = Vec::new();
+
+        let mut sorted_steps = workplan.steps.clone();
+        sorted_steps.sort_by_key(|s| s.tier);
+
+        for step in &sorted_steps {
+            let hexflo_task_id = task_id_map.get(&step.id);
+
+            // Mark task as in_progress with agent_id (best-effort)
+            if let Some(task_id) = hexflo_task_id {
+                let mut body = json!({ "status": "in_progress" });
+                if let Some(aid) = agent_id {
+                    body["agent_id"] = json!(aid);
+                }
+                let _ = self.client.patch(
+                    &format!("/api/swarms/tasks/{}", task_id),
+                    &body,
+                ).await;
+            }
+
+            match self
+                .execute_step(step, workplan, model_override, provider_pref)
+                .await
+            {
+                Ok(result) => {
+                    // Mark task as completed with result summary
+                    if let Some(task_id) = hexflo_task_id {
+                        let summary = format!(
+                            "Generated {} ({} tokens, ${:.4})",
+                            result.file_path.as_deref().unwrap_or("code"),
+                            result.tokens,
+                            result.cost_usd,
+                        );
+                        let _ = self.client.patch(
+                            &format!("/api/swarms/tasks/{}", task_id),
+                            &json!({ "status": "completed", "result": summary }),
+                        ).await;
+                    }
+                    results.push(result);
+                }
+                Err(e) => {
+                    warn!(step_id = %step.id, error = %e, "code generation failed for step");
+                    // Mark task as failed (best-effort)
+                    if let Some(task_id) = hexflo_task_id {
+                        let _ = self.client.patch(
+                            &format!("/api/swarms/tasks/{}", task_id),
+                            &json!({ "status": "failed", "result": format!("Error: {}", e) }),
+                        ).await;
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Execute code generation for all workplan steps, optionally scaffolding
     /// the `output_dir` first.
     ///
