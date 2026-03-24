@@ -242,6 +242,129 @@ pub async fn delete_project(
     (StatusCode::OK, Json(json!({ "ok": true, "deleted": deleted, "path": root_path })))
 }
 
+/// GET /api/projects/:id/report — full project visibility: project → agents → swarms → tasks
+pub async fn project_report(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "State port not available" }))),
+    };
+
+    // 1. Resolve project — exact ID, then exact name/basename, then prefix match
+    let project = {
+        let by_id = sp.project_get(&id).await.unwrap_or(None);
+        let by_find = if by_id.is_none() { sp.project_find(&id).await.unwrap_or(None) } else { None };
+        let by_prefix = if by_id.is_none() && by_find.is_none() {
+            // Prefix/substring match against name and root_path basename
+            let all = sp.project_list().await.unwrap_or_default();
+            let q = id.to_lowercase();
+            all.into_iter().find(|p| {
+                p.name.to_lowercase().starts_with(&q)
+                    || p.root_path.rsplit('/').next().unwrap_or("").to_lowercase().starts_with(&q)
+                    || p.id.starts_with(&q)
+            })
+        } else {
+            None
+        };
+        match by_id.or(by_find).or(by_prefix) {
+            Some(p) => p,
+            None => {
+                // Return helpful error listing available projects
+                let all = sp.project_list().await.unwrap_or_default();
+                let available: Vec<_> = all.iter().map(|p| json!({ "id": p.id, "name": p.name })).collect();
+                return (StatusCode::NOT_FOUND, Json(json!({
+                    "error": format!("Project '{}' not found", id),
+                    "hint": "Use `hex project list` to see registered projects",
+                    "available": available,
+                })));
+            }
+        }
+    };
+
+    // 2. Agents for this project
+    let all_agents = sp.hex_agent_list().await.unwrap_or_default();
+    let agents: Vec<_> = all_agents.into_iter()
+        .filter(|a| a.get("projectId").and_then(|v| v.as_str()).unwrap_or("") == project.id
+                 || a.get("project_id").and_then(|v| v.as_str()).unwrap_or("") == project.id)
+        .collect();
+
+    // 3. Swarms for this project (filter active + completed by project_id)
+    let all_swarms = sp.swarm_list_active().await.unwrap_or_default();
+    let project_swarms: Vec<_> = all_swarms.into_iter()
+        .filter(|s| s.project_id == project.id)
+        .collect();
+
+    // 4. Tasks per swarm + summary counts
+    let mut swarm_reports = Vec::new();
+    let mut total_tasks = 0usize;
+    let mut completed_tasks = 0usize;
+    let mut pending_tasks = 0usize;
+    let mut failed_tasks = 0usize;
+
+    for swarm in &project_swarms {
+        let tasks = sp.swarm_task_list(Some(&swarm.id)).await.unwrap_or_default();
+        let t_total = tasks.len();
+        let t_completed = tasks.iter().filter(|t| t.status == "completed").count();
+        let t_failed = tasks.iter().filter(|t| t.status == "failed").count();
+        let t_pending = tasks.iter().filter(|t| t.status == "pending").count();
+        let t_in_progress = tasks.iter().filter(|t| t.status == "in_progress").count();
+
+        total_tasks += t_total;
+        completed_tasks += t_completed;
+        failed_tasks += t_failed;
+        pending_tasks += t_pending;
+
+        swarm_reports.push(json!({
+            "id": swarm.id,
+            "name": swarm.name,
+            "topology": swarm.topology,
+            "status": swarm.status,
+            "createdAt": swarm.created_at,
+            "updatedAt": swarm.updated_at,
+            "tasks": {
+                "total": t_total,
+                "completed": t_completed,
+                "pending": t_pending,
+                "inProgress": t_in_progress,
+                "failed": t_failed,
+            },
+            "taskList": tasks.iter().map(|t| json!({
+                "id": t.id,
+                "title": t.title,
+                "status": t.status,
+                "agentId": t.agent_id,
+                "result": t.result,
+                "dependsOn": t.depends_on,
+                "createdAt": t.created_at,
+                "completedAt": t.completed_at,
+            })).collect::<Vec<_>>(),
+        }));
+    }
+
+    let report = json!({
+        "project": {
+            "id": project.id,
+            "name": project.name,
+            "rootPath": project.root_path,
+            "registeredAt": project.registered_at,
+        },
+        "agents": agents,
+        "swarms": swarm_reports,
+        "summary": {
+            "agentCount": agents.len(),
+            "swarmCount": project_swarms.len(),
+            "tasksTotal": total_tasks,
+            "tasksCompleted": completed_tasks,
+            "tasksPending": pending_tasks,
+            "tasksFailed": failed_tasks,
+        },
+    });
+
+    (StatusCode::OK, Json(report))
+}
+
 pub async fn list_projects(
     State(state): State<SharedState>,
 ) -> Json<serde_json::Value> {

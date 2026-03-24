@@ -187,6 +187,214 @@ mod spacetime_adapter_tests {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ProjectRecord deserialization tests
+//
+// Covers bugs found in production:
+//   1. `deserialize_flexible_timestamp` failed on numeric strings ("0")
+//      causing `project_get` to silently return None for every row.
+//   2. `project_get` used SQL WHERE which SpacetimeDB doesn't reliably
+//      support for string PKs — fixed to scan project_list + filter.
+//   3. `parse_stdb_response` must correctly map SpacetimeDB column names
+//      (project_id, path) to ProjectRecord field aliases.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[cfg(test)]
+mod project_record_tests {
+    use crate::ports::state::ProjectRecord;
+
+    // ── deserialize_flexible_timestamp ──────────────────
+
+    #[test]
+    fn project_record_deserializes_numeric_string_timestamp() {
+        // SpacetimeDB stores registered_at as String "0".
+        // ProjectRecord is rename_all = "camelCase" so the camelCase key is "registeredAt".
+        // When SpacetimeDB returns snake_case "registered_at", the field defaults to 0 (no alias).
+        // The important thing is deserialization does NOT panic/fail — it gracefully defaults.
+        let json = r#"{
+            "project_id": "abc-123",
+            "name": "my-project",
+            "path": "/some/path",
+            "registeredAt": "0"
+        }"#;
+        let record: ProjectRecord = serde_json::from_str(json)
+            .expect("Should deserialize with numeric string timestamp");
+        assert_eq!(record.id, "abc-123");
+        assert_eq!(record.registered_at, 0);
+    }
+
+    #[test]
+    fn project_record_numeric_string_timestamp_non_zero() {
+        // Verify the fix: numeric strings like "1711234567000" parse correctly
+        let json = r#"{
+            "project_id": "abc-123",
+            "name": "my-project",
+            "path": "/some/path",
+            "registeredAt": "1711234567000"
+        }"#;
+        let record: ProjectRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.registered_at, 1711234567000);
+    }
+
+    #[test]
+    fn project_record_deserializes_integer_timestamp() {
+        // ProjectRecord is rename_all = "camelCase" so the field is "registeredAt"
+        let json = r#"{
+            "project_id": "abc-123",
+            "name": "my-project",
+            "path": "/some/path",
+            "registeredAt": 1711234567000
+        }"#;
+        let record: ProjectRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.registered_at, 1711234567000);
+    }
+
+    #[test]
+    fn project_record_deserializes_rfc3339_timestamp() {
+        let json = r#"{
+            "project_id": "abc-123",
+            "name": "my-project",
+            "path": "/some/path",
+            "registeredAt": "2026-03-24T12:00:00Z"
+        }"#;
+        let record: ProjectRecord = serde_json::from_str(json).unwrap();
+        assert!(record.registered_at > 0);
+    }
+
+    #[test]
+    fn project_record_defaults_registered_at_when_missing() {
+        let json = r#"{"project_id": "x", "name": "y", "path": "/p"}"#;
+        let record: ProjectRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.registered_at, 0);
+    }
+
+    // ── Field alias mapping (SpacetimeDB column names) ──
+
+    #[test]
+    fn project_record_alias_project_id() {
+        // SpacetimeDB returns column named "project_id" — must map to .id
+        let json = r#"{"project_id": "stdb-pk", "name": "n", "path": "/p"}"#;
+        let record: ProjectRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.id, "stdb-pk");
+    }
+
+    #[test]
+    fn project_record_alias_path() {
+        // SpacetimeDB returns column named "path" — must map to .root_path
+        let json = r#"{"project_id": "x", "name": "n", "path": "/my/root"}"#;
+        let record: ProjectRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.root_path, "/my/root");
+    }
+
+    #[test]
+    fn project_record_alias_root_path() {
+        // Nexus REST API returns "root_path" — must also work
+        let json = r#"{"project_id": "x", "name": "n", "root_path": "/my/root"}"#;
+        let record: ProjectRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.root_path, "/my/root");
+    }
+
+    #[test]
+    fn project_record_camel_case_id() {
+        // Some paths return camelCase "projectId"
+        let json = r#"{"projectId": "camel-id", "name": "n", "rootPath": "/p"}"#;
+        let record: ProjectRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.id, "camel-id");
+        assert_eq!(record.root_path, "/p");
+    }
+
+    // ── parse_stdb_response + ProjectRecord roundtrip ──
+
+    #[test]
+    fn parse_stdb_response_maps_project_columns_correctly() {
+        use crate::adapters::spacetime_state::SpacetimeStateAdapter;
+        use crate::adapters::spacetime_state::SpacetimeConfig;
+
+        // Simulate the SpacetimeDB SQL HTTP response format:
+        // [{"schema": {"elements": [{"name": {"some": "col"}}...]}, "rows": [["v1","v2"...]]}]
+        let stdb_response = serde_json::json!([{
+            "schema": {
+                "elements": [
+                    {"name": {"some": "project_id"}},
+                    {"name": {"some": "name"}},
+                    {"name": {"some": "path"}},
+                    {"name": {"some": "registered_at"}}
+                ]
+            },
+            "rows": [
+                ["hello-world-849ya9", "test-hello-world", "/projects/hello-world", "0"],
+                ["hex-intf-1xq8wun",   "hex-intf",         "/projects/hex-intf",   "0"]
+            ]
+        }]);
+
+        // parse_stdb_response is pub(crate) — access via the adapter type
+        let _ = SpacetimeStateAdapter::new(SpacetimeConfig::default()); // ensure type is in scope
+        let rows = SpacetimeStateAdapter::parse_stdb_response(stdb_response);
+        assert_eq!(rows.len(), 2);
+
+        // Each row should deserialize cleanly into ProjectRecord
+        for row in &rows {
+            let record: Result<ProjectRecord, _> = serde_json::from_value(row.clone());
+            assert!(record.is_ok(), "Row failed to deserialize: {:?} — error: {:?}", row, record.err());
+        }
+
+        let first: ProjectRecord = serde_json::from_value(rows[0].clone()).unwrap();
+        assert_eq!(first.id, "hello-world-849ya9");
+        assert_eq!(first.name, "test-hello-world");
+        assert_eq!(first.root_path, "/projects/hello-world");
+        assert_eq!(first.registered_at, 0);
+    }
+
+    #[test]
+    fn parse_stdb_response_empty_returns_empty_vec() {
+        let empty = serde_json::json!([{"schema": {"elements": []}, "rows": []}]);
+        let rows = crate::adapters::spacetime_state::SpacetimeStateAdapter::parse_stdb_response(empty);
+        assert!(rows.is_empty());
+    }
+
+    // ── project_find scan logic ─────────────────────────
+
+    #[test]
+    fn project_find_logic_matches_by_name() {
+        // Simulate the find logic used in project_find: exact name match
+        let projects = vec![
+            make_record("id-1", "hex-intf", "/projects/hex-intf"),
+            make_record("id-2", "test-hello-world", "/projects/hello-world"),
+        ];
+        let query = "test-hello-world";
+        let found = projects.iter().find(|p| p.name == query);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, "id-2");
+    }
+
+    #[test]
+    fn project_find_logic_matches_by_id() {
+        let projects = vec![
+            make_record("hello-world-849ya9", "test-hello-world", "/projects/hello-world"),
+        ];
+        let query = "hello-world-849ya9";
+        let found = projects.iter().find(|p| p.id == query);
+        assert!(found.is_some());
+    }
+
+    #[test]
+    fn project_find_logic_no_match_returns_none() {
+        let projects = vec![
+            make_record("id-1", "hex-intf", "/projects/hex-intf"),
+        ];
+        let found = projects.iter().find(|p| p.id == "nonexistent" || p.name == "nonexistent");
+        assert!(found.is_none());
+    }
+
+    fn make_record(id: &str, name: &str, path: &str) -> ProjectRecord {
+        serde_json::from_value(serde_json::json!({
+            "project_id": id,
+            "name": name,
+            "path": path
+        })).unwrap()
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // IStatePort contract tests — generic harness that runs
 // against ANY IStatePort implementation.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

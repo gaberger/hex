@@ -187,7 +187,7 @@ mod real {
         ///
         /// SpacetimeDB returns: `[{"schema": {"elements": [{"name": {"some": "col"}, ...}]}, "rows": [["v1", "v2"], ...]}]`
         /// We convert each row array into a `{"col1": "v1", "col2": "v2"}` object using the schema.
-        fn parse_stdb_response(body: serde_json::Value) -> Vec<serde_json::Value> {
+        pub(crate) fn parse_stdb_response(body: serde_json::Value) -> Vec<serde_json::Value> {
             let tables = match body.as_array() {
                 Some(arr) => arr,
                 None => return Vec::new(),
@@ -791,10 +791,36 @@ mod real {
                     name: r.get("name")?.as_str()?.to_string(),
                     topology: r.get("topology")?.as_str()?.to_string(),
                     status: r.get("status")?.as_str()?.to_string(),
+                    owner_agent_id: r.get("owner_agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_by: r.get("created_by").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     created_at: r.get("created_at")?.as_str()?.to_string(),
                     updated_at: r.get("updated_at")?.as_str()?.to_string(),
                 })
             }).collect())
+        }
+
+        async fn swarm_owned_by_agent(&self, agent_id: &str) -> Result<Option<SwarmInfo>, StateError> {
+            let sql = format!("SELECT * FROM swarm WHERE owner_agent_id = '{}' AND status = 'active'", agent_id);
+            let rows = self.query_table(&sql).await?;
+            Ok(rows.into_iter().find_map(|r| {
+                Some(SwarmInfo {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    project_id: r.get("project_id")?.as_str()?.to_string(),
+                    name: r.get("name")?.as_str()?.to_string(),
+                    topology: r.get("topology")?.as_str()?.to_string(),
+                    status: r.get("status")?.as_str()?.to_string(),
+                    owner_agent_id: r.get("owner_agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_by: r.get("created_by").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    updated_at: r.get("updated_at")?.as_str()?.to_string(),
+                })
+            }))
+        }
+
+        async fn swarm_transfer(&self, swarm_id: &str, new_owner_agent_id: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("swarm_transfer", serde_json::json!([swarm_id, new_owner_agent_id, now])).await?;
+            Ok(())
         }
 
         async fn swarm_task_create(&self, id: &str, swarm_id: &str, title: &str, depends_on: &str) -> Result<(), StateError> {
@@ -803,10 +829,21 @@ mod real {
             Ok(())
         }
 
-        async fn swarm_task_assign(&self, task_id: &str, agent_id: &str) -> Result<(), StateError> {
+        async fn swarm_task_assign(&self, task_id: &str, agent_id: &str, expected_version: Option<u64>) -> Result<(), StateError> {
             let now = chrono::Utc::now().to_rfc3339();
-            self.call_reducer("task_assign", serde_json::json!([task_id, agent_id, now])).await?;
-            Ok(())
+            // Use u64::MAX as sentinel for "skip version check"
+            let ver = expected_version.unwrap_or(u64::MAX);
+            let result = self.call_reducer("task_assign", serde_json::json!([task_id, agent_id, ver, now])).await;
+            match result {
+                Ok(_) => Ok(()),
+                Err(StateError::Storage(ref msg)) if msg.contains("version_mismatch") => {
+                    Err(StateError::Conflict(msg.clone()))
+                }
+                Err(StateError::Storage(ref msg)) if msg.contains("already_claimed") => {
+                    Err(StateError::Conflict(msg.clone()))
+                }
+                Err(e) => Err(e),
+            }
         }
 
         async fn swarm_task_complete(&self, task_id: &str, result: &str) -> Result<(), StateError> {
@@ -836,6 +873,8 @@ mod real {
                     agent_id: r.get("agent_id")?.as_str()?.to_string(),
                     result: r.get("result")?.as_str()?.to_string(),
                     depends_on: r.get("depends_on").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    version: r.get("version").and_then(|v| v.as_u64()).unwrap_or(0),
+                    claimed_by: r.get("claimed_by").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     created_at: r.get("created_at")?.as_str()?.to_string(),
                     completed_at: r.get("completed_at")?.as_str()?.to_string(),
                 })
@@ -1048,8 +1087,9 @@ mod real {
             Ok(true)
         }
         async fn project_get(&self, id: &str) -> Result<Option<ProjectRecord>, StateError> {
-            let rows = self.query_table(&format!("SELECT * FROM project WHERE project_id = '{}'", id)).await?;
-            Ok(rows.first().and_then(|r| serde_json::from_value(r.clone()).ok()))
+            // SpacetimeDB SQL WHERE on string PKs is unreliable — scan full table and filter in Rust
+            let all = self.project_list().await?;
+            Ok(all.into_iter().find(|p| p.id == id))
         }
         async fn project_list(&self) -> Result<Vec<ProjectRecord>, StateError> {
             let rows = self.query_table("SELECT * FROM project").await?;
@@ -1446,8 +1486,10 @@ mod stub {
         async fn swarm_complete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError> { Err(Self::err()) }
+        async fn swarm_owned_by_agent(&self, _: &str) -> Result<Option<SwarmInfo>, StateError> { Err(Self::err()) }
+        async fn swarm_transfer(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_task_create(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
-        async fn swarm_task_assign(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_task_assign(&self, _: &str, _: &str, _: Option<u64>) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_task_complete(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_task_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_task_list(&self, _: Option<&str>) -> Result<Vec<SwarmTaskInfo>, StateError> { Err(Self::err()) }

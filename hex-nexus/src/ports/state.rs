@@ -17,6 +17,10 @@ where
         fn visit_i64<E: de::Error>(self, v: i64) -> Result<i64, E> { Ok(v) }
         fn visit_u64<E: de::Error>(self, v: u64) -> Result<i64, E> { Ok(v as i64) }
         fn visit_str<E: de::Error>(self, v: &str) -> Result<i64, E> {
+            // Try numeric string first ("0", "1234567890000"), then RFC3339
+            if let Ok(n) = v.parse::<i64>() {
+                return Ok(n);
+            }
             chrono::DateTime::parse_from_rfc3339(v)
                 .map(|dt| dt.timestamp_millis())
                 .map_err(|_| de::Error::custom(format!("invalid timestamp: {v}")))
@@ -201,8 +205,24 @@ pub struct SwarmInfo {
     pub name: String,
     pub topology: String,
     pub status: String,
+    /// Authoritative owner agent ID (ADR-2603241900).
+    #[serde(default)]
+    pub owner_agent_id: String,
+    /// Kept for backward compat — mirrors owner_agent_id.
+    #[serde(default)]
+    pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// Returned when a task_assign CAS fails.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "conflict", rename_all = "camelCase")]
+pub enum TaskConflict {
+    /// Another agent's version was written between our read and assign.
+    VersionMismatch { expected: u64, actual: u64 },
+    /// Task is no longer pending — already claimed by another agent.
+    AlreadyClaimed { by: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,6 +236,12 @@ pub struct SwarmTaskInfo {
     pub result: String,
     /// Comma-separated task IDs this task depends on (empty = no deps).
     pub depends_on: String,
+    /// Monotonic version for CAS (ADR-2603241900).
+    #[serde(default)]
+    pub version: u64,
+    /// Last agent to claim this task (for conflict messages).
+    #[serde(default)]
+    pub claimed_by: String,
     pub created_at: String,
     pub completed_at: String,
 }
@@ -313,7 +339,7 @@ pub struct ProjectRecord {
     #[serde(alias = "project_id", alias = "projectId")]
     pub id: String,
     pub name: String,
-    #[serde(alias = "path")]
+    #[serde(alias = "path", alias = "root_path")]
     pub root_path: String,
     #[serde(default, deserialize_with = "deserialize_flexible_timestamp")]
     pub registered_at: i64,
@@ -580,6 +606,10 @@ pub trait IStatePort: Send + Sync {
     async fn swarm_complete(&self, id: &str) -> Result<(), StateError>;
     async fn swarm_fail(&self, id: &str, reason: &str) -> Result<(), StateError>;
     async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError>;
+    /// Returns the swarm owned by `agent_id` (status=active), if any.
+    async fn swarm_owned_by_agent(&self, agent_id: &str) -> Result<Option<SwarmInfo>, StateError>;
+    /// Transfer swarm ownership from current owner to `new_owner_agent_id`.
+    async fn swarm_transfer(&self, swarm_id: &str, new_owner_agent_id: &str) -> Result<(), StateError>;
 
     async fn swarm_task_create(
         &self,
@@ -588,7 +618,15 @@ pub trait IStatePort: Send + Sync {
         title: &str,
         depends_on: &str,
     ) -> Result<(), StateError>;
-    async fn swarm_task_assign(&self, task_id: &str, agent_id: &str) -> Result<(), StateError>;
+    /// Assign a task using CAS. `expected_version` must match current task version.
+    /// Pass `None` to skip version check (legacy behaviour).
+    /// Returns `Err(StateError::Conflict(_))` on CAS failure.
+    async fn swarm_task_assign(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        expected_version: Option<u64>,
+    ) -> Result<(), StateError>;
     async fn swarm_task_complete(&self, task_id: &str, result: &str) -> Result<(), StateError>;
     async fn swarm_task_fail(&self, task_id: &str, reason: &str) -> Result<(), StateError>;
     async fn swarm_task_list(&self, swarm_id: Option<&str>) -> Result<Vec<SwarmTaskInfo>, StateError>;
@@ -747,4 +785,7 @@ pub enum StateError {
     Connection(String),
     #[error("Serialization error: {0}")]
     Serialization(String),
+    /// CAS conflict on task_assign (ADR-2603241900).
+    #[error("Conflict: {0}")]
+    Conflict(String),
 }
