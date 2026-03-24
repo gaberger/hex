@@ -386,32 +386,40 @@ async fn frontier(lineage: Option<&str>, json_output: bool) -> anyhow::Result<()
         return Ok(());
     }
 
-    let points = resp["frontier"].as_array().cloned().unwrap_or_default();
-    if points.is_empty() {
-        println!("{} No frontier points for lineage '{}'", "\u{2b21}".dimmed(), lineage_param);
+    // The frontier endpoint returns { bestConfig: {...}, frontier: { best_val_bpb, total_kept, ... } }
+    let frontier = &resp["frontier"];
+    let best_bpb = frontier["best_val_bpb"].as_str().unwrap_or("");
+    if best_bpb.is_empty() && resp["bestConfig"].is_null() {
+        println!("{} No frontier data for lineage '{}'", "\u{2b21}".dimmed(), lineage_param);
         return Ok(());
     }
 
-    println!("{} Pareto Frontier — {}", "\u{2b21}".cyan(), lineage_param.bold());
+    println!("{} Research Frontier — {}", "\u{2b21}".cyan(), lineage_param.bold());
     println!();
-    println!(
-        "  {:<36} {:<12} {:<12} {:<12} {}",
-        "CONFIG ID".bold(), "PARAMS".bold(), "LOSS".bold(), "SPEED".bold(), "NAME".bold()
-    );
-    println!("  {}", "\u{2500}".repeat(90).dimmed());
 
-    for point in &points {
-        let config_id = point["config_id"].as_str().unwrap_or("-");
-        let params = point["param_count"].as_u64().map(|v| format_param_count(v)).unwrap_or("-".into());
-        let loss = point["loss"].as_f64().map(|v| format!("{:.4}", v)).unwrap_or("-".into());
-        let speed = point["tokens_per_sec"].as_f64().map(|v| format!("{:.0}", v)).unwrap_or("-".into());
-        let name = point["name"].as_str().unwrap_or("-");
+    // Best config summary
+    if let Some(cfg) = resp["bestConfig"].as_object() {
+        let name = cfg.get("name").and_then(|v| v.as_str()).unwrap_or("-");
+        let n_layer = cfg.get("n_layer").and_then(|v| v.as_u64()).unwrap_or(0);
+        let n_head = cfg.get("n_head").and_then(|v| v.as_u64()).unwrap_or(0);
+        let n_embd = cfg.get("n_embd").and_then(|v| v.as_u64()).unwrap_or(0);
+        let window = cfg.get("window_pattern").and_then(|v| v.as_str()).unwrap_or("-");
+        let activation = cfg.get("activation").and_then(|v| v.as_str()).unwrap_or("-");
 
-        let id_short = if config_id.len() > 34 { &config_id[..34] } else { config_id };
-        println!(
-            "  {:<36} {:<12} {:<12} {:<12} {}",
-            id_short, params, loss, speed, name
-        );
+        println!("  {} {}", "Best config:".bold(), name.green());
+        println!("    val_bpb:    {}", best_bpb.green().bold());
+        println!("    layers:     {}  heads: {}  embd: {}", n_layer, n_head, n_embd);
+        println!("    window:     {}  activation: {}", window, activation);
+    }
+
+    // Experiment stats
+    let kept = frontier["total_kept"].as_u64().unwrap_or(0);
+    let discarded = frontier["total_discarded"].as_u64().unwrap_or(0);
+    let total = frontier["total_experiments"].as_u64().unwrap_or(0);
+    if total > 0 {
+        println!();
+        println!("  {} total: {}  kept: {}  discarded: {}",
+            "Experiments:".bold(), total, kept.to_string().green(), discarded.to_string().red());
     }
 
     Ok(())
@@ -452,16 +460,25 @@ async fn strategies(json_output: bool) -> anyhow::Result<()> {
     println!("{} Mutation Strategies ({})", "\u{2b21}".cyan(), strats.len());
     println!();
     println!(
-        "  {:<25} {:<15} {}",
-        "NAME".bold(), "TYPE".bold(), "DESCRIPTION".bold()
+        "  {:<16} {:<12} {:<12} {:<10} {}",
+        "STRATEGY".bold(), "WEIGHT".bold(), "SUCCESS".bold(), "TRIED".bold(), "KEPT".bold()
     );
-    println!("  {}", "\u{2500}".repeat(80).dimmed());
+    println!("  {}", "\u{2500}".repeat(65).dimmed());
 
     for s in &strats {
-        let name = s["name"].as_str().unwrap_or("-");
-        let kind = s["type"].as_str().or_else(|| s["kind"].as_str()).unwrap_or("-");
-        let desc = s["description"].as_str().unwrap_or("-");
-        println!("  {:<25} {:<15} {}", name, kind, desc);
+        let name = s["strategy_name"].as_str().unwrap_or("-");
+        let weight = s["selection_weight"].as_str().unwrap_or("0");
+        let success = s["success_rate"].as_str().unwrap_or("0");
+        let tried = s["total_tried"].as_u64().unwrap_or(0);
+        let kept = s["total_kept"].as_u64().unwrap_or(0);
+
+        // Render weight as a visual bar
+        let w: f64 = weight.parse().unwrap_or(0.0);
+        let bar_len = (w * 30.0) as usize;
+        let bar = "\u{2588}".repeat(bar_len);
+
+        println!("  {:<16} {:<12} {:<12} {:<10} {}", name, format!("{:.3}", w), format!("{:.3}", success.parse::<f64>().unwrap_or(0.0)), tried, kept);
+        println!("  {}", bar.cyan());
     }
 
     Ok(())
