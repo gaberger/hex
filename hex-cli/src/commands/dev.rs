@@ -3,6 +3,8 @@
 //! Entry point that creates or resumes a DevSession, then launches the
 //! ratatui TUI for the full ADR → Plan → Code → Validate → Commit pipeline.
 
+use std::io::IsTerminal;
+
 use anyhow::{bail, Result};
 use clap::Subcommand;
 use colored::Colorize;
@@ -134,14 +136,7 @@ async fn resume_latest() -> Result<()> {
     let session = DevSession::load_latest()?;
     match session {
         Some(s) => {
-            let config = DevConfig::from_args(
-                s.feature_description.clone(),
-                false, false, false,
-                "".into(),
-                "openrouter".into(),
-                0.0,
-                ".".into(),
-            );
+            let config = config_from_session(&s);
             launch_tui(s, config).await
         }
         None => {
@@ -152,15 +147,44 @@ async fn resume_latest() -> Result<()> {
 
 async fn resume_by_id(id: &str) -> Result<()> {
     let session = DevSession::load(id)?;
-    let config = DevConfig::from_args(
-        session.feature_description.clone(),
-        false, false, false,
-        "".into(),
-        "openrouter".into(),
-        0.0,
-        ".".into(),
-    );
+
+    // Completed/failed sessions can't be resumed — show summary instead
+    if matches!(session.status, SessionStatus::Completed | SessionStatus::Failed) {
+        print_session_summary(&session);
+        return Ok(());
+    }
+
+    let config = config_from_session(&session);
     launch_tui(session, config).await
+}
+
+/// Reconstruct a `DevConfig` from a persisted session, preserving the
+/// original output_dir, provider, and model selections.
+fn config_from_session(session: &DevSession) -> DevConfig {
+    let model = session
+        .model_selections
+        .get("default")
+        .cloned()
+        .unwrap_or_default();
+    let provider = session
+        .provider
+        .clone()
+        .unwrap_or_else(|| "openrouter".into());
+    let output_dir = session
+        .output_dir
+        .clone()
+        .unwrap_or_else(|| ".".into());
+
+    DevConfig::from_args(
+        session.feature_description.clone(),
+        false,  // interactive mode on resume
+        false,
+        false,
+        model,
+        provider,
+        0.0,
+        output_dir,
+    )
 }
 
 async fn start_session(
@@ -208,6 +232,8 @@ async fn start_session(
     if !model.is_empty() {
         session.model_selections.insert("default".into(), model);
     }
+    session.output_dir = Some(output_dir.clone());
+    session.provider = Some(config.provider.clone());
     session.save()?;
 
     println!(
@@ -232,7 +258,55 @@ async fn launch_tui(session: DevSession, config: DevConfig) -> Result<()> {
         config.mode,
     );
 
+    // Detect TTY — fall back to headless if no terminal available
+    if !std::io::stdout().is_terminal() {
+        println!(
+            "{} No TTY detected — running in headless mode",
+            "⚠".yellow(),
+        );
+        let mut app = TuiApp::with_config(session, config);
+        app.config.mode = crate::pipeline::DevMode::Auto;
+        return app.run();
+    }
+
     let app = TuiApp::with_config(session, config);
     app.run()?;
     Ok(())
+}
+
+/// Print a read-only summary for completed/failed sessions.
+fn print_session_summary(session: &DevSession) {
+    println!(
+        "{} Session {} — {} ({})",
+        if session.status == SessionStatus::Completed { "✓".green() } else { "✗".red() },
+        session.id.dimmed(),
+        session.status,
+        session.current_phase,
+    );
+    println!("  Feature: {}", session.feature_description.bold());
+    println!("  Cost:    ${:.4}", session.total_cost_usd);
+    println!("  Tokens:  {}", session.total_tokens);
+    if let Some(ref adr) = session.adr_path {
+        println!("  ADR:     {}", adr);
+    }
+    if let Some(ref wp) = session.workplan_path {
+        println!("  Plan:    {}", wp);
+    }
+    if let Some(ref dir) = session.output_dir {
+        println!("  Dir:     {}", dir);
+    }
+    if !session.completed_steps.is_empty() {
+        println!("  Steps:   {} completed", session.completed_steps.len());
+    }
+    if !session.tool_calls.is_empty() {
+        println!("  Calls:   {} tool calls logged", session.tool_calls.len());
+    }
+    if let Some(ref qr) = session.quality_result {
+        println!("  Quality: Grade {} (score {})", qr.grade, qr.score);
+    }
+    println!(
+        "\n  {} This session is {}. Use `hex dev start` to create a new one.",
+        "ℹ".blue(),
+        session.status,
+    );
 }

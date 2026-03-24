@@ -28,6 +28,10 @@ pub fn render(frame: &mut Frame, area: Rect, at_gate: bool, paused: bool) {
             Span::raw("  "),
             key_span("l", "log"),
             Span::raw("  "),
+            key_span("j/k", "scroll"),
+            Span::raw("  "),
+            key_span("Esc", "dismiss"),
+            Span::raw("  "),
             key_span("q", "quit"),
         ]
     } else {
@@ -39,6 +43,8 @@ pub fn render(frame: &mut Frame, area: Rect, at_gate: bool, paused: bool) {
             key_span("d", "debug"),
             Span::raw("  "),
             key_span("l", "log"),
+            Span::raw("  "),
+            key_span("j/k", "scroll"),
             Span::raw("  "),
             key_span("q", "quit"),
         ]

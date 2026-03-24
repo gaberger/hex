@@ -124,6 +124,12 @@ pub struct DevSession {
     /// Quality gate results from the validate phase.
     #[serde(default)]
     pub quality_result: Option<QualityReport>,
+    /// Output directory for generated files (persisted for resume).
+    #[serde(default)]
+    pub output_dir: Option<String>,
+    /// Inference provider preference (persisted for resume).
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
 impl DevSession {
@@ -149,6 +155,8 @@ impl DevSession {
             tool_calls: Vec::new(),
             agent_id,
             quality_result: None,
+            output_dir: None,
+            provider: None,
         }
     }
 
