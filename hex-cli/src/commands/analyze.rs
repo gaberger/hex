@@ -571,7 +571,12 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
             }
         }
 
-        result["score"] = score.map(serde_json::Value::from).unwrap_or(serde_json::Value::Null);
+        // Compute local score if nexus didn't provide one
+        let final_score = score.unwrap_or_else(|| {
+            let v = violations.len() as u64;
+            if v == 0 { 100 } else { 100u64.saturating_sub(v * 10) }
+        });
+        result["score"] = serde_json::json!(final_score);
         result["violations"] = serde_json::Value::Array(violations);
         result["boundary_errors"] = serde_json::Value::Array(boundary_errors);
     }
