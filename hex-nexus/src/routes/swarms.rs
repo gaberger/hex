@@ -24,6 +24,9 @@ pub struct CreateSwarmRequest {
 #[serde(rename_all = "camelCase")]
 pub struct CreateTaskRequest {
     pub title: String,
+    /// Comma-separated task IDs this task depends on (empty or absent = no deps).
+    #[serde(default)]
+    pub depends_on: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -181,7 +184,7 @@ pub async fn create_task(
     let port = state_port(&state)?;
     let id = uuid::Uuid::new_v4().to_string();
 
-    port.swarm_task_create(&id, &swarm_id, &body.title)
+    port.swarm_task_create(&id, &swarm_id, &body.title, &body.depends_on)
         .await
         .map_err(state_err)?;
 
@@ -193,6 +196,7 @@ pub async fn create_task(
         "status": "pending",
         "agentId": "",
         "result": "",
+        "dependsOn": body.depends_on,
         "createdAt": now,
         "completedAt": "",
     });

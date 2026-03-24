@@ -205,7 +205,18 @@ impl HexFlo {
         swarm_id: &str,
         title: &str,
     ) -> Result<SwarmTaskInfo, String> {
-        self.task_create_with_agent(swarm_id, title, None).await
+        self.task_create_full(swarm_id, title, "", None).await
+    }
+
+    /// Create a task with dependency tracking.
+    /// `depends_on` is a comma-separated list of task IDs that must complete first.
+    pub async fn task_create_with_deps(
+        &self,
+        swarm_id: &str,
+        title: &str,
+        depends_on: &str,
+    ) -> Result<SwarmTaskInfo, String> {
+        self.task_create_full(swarm_id, title, depends_on, None).await
     }
 
     /// Create a task and optionally assign it to an agent in one operation.
@@ -215,11 +226,22 @@ impl HexFlo {
         title: &str,
         agent_id: Option<&str>,
     ) -> Result<SwarmTaskInfo, String> {
+        self.task_create_full(swarm_id, title, "", agent_id).await
+    }
+
+    /// Create a task with full options: dependencies and optional agent assignment.
+    pub async fn task_create_full(
+        &self,
+        swarm_id: &str,
+        title: &str,
+        depends_on: &str,
+        agent_id: Option<&str>,
+    ) -> Result<SwarmTaskInfo, String> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
 
         self.state
-            .swarm_task_create(&id, swarm_id, title)
+            .swarm_task_create(&id, swarm_id, title, depends_on)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -240,6 +262,7 @@ impl HexFlo {
             status,
             agent_id: assigned_agent,
             result: String::new(),
+            depends_on: depends_on.to_string(),
             created_at: now,
             completed_at: String::new(),
         })

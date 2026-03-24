@@ -37,6 +37,9 @@ pub struct SwarmTask {
     pub agent_id: String,
     /// Result summary (populated on completion).
     pub result: String,
+    /// Comma-separated task IDs this task depends on (empty = no deps).
+    /// SpacetimeDB doesn't support Vec in table columns, so we use CSV.
+    pub depends_on: String,
     pub created_at: String,
     pub completed_at: String,
 }
@@ -824,12 +827,15 @@ pub fn swarm_fail(
 // ============================================================
 
 /// Create a new task in a swarm.
+/// `depends_on` is a comma-separated list of task IDs that must complete before
+/// this task can be assigned. Pass empty string for no dependencies.
 #[reducer]
 pub fn task_create(
     ctx: &ReducerContext,
     id: String,
     swarm_id: String,
     title: String,
+    depends_on: String,
     timestamp: String,
 ) -> Result<(), String> {
     // Verify swarm exists and is active
@@ -840,6 +846,16 @@ pub fn task_create(
         return Err(format!("Swarm '{}' is not active (status: {})", swarm_id, swarm.status));
     }
 
+    // Validate that all referenced dependency task IDs actually exist
+    if !depends_on.is_empty() {
+        for dep_id in depends_on.split(',') {
+            let dep_id = dep_id.trim();
+            if !dep_id.is_empty() && ctx.db.swarm_task().id().find(&dep_id.to_string()).is_none() {
+                return Err(format!("Dependency task '{}' not found", dep_id));
+            }
+        }
+    }
+
     ctx.db.swarm_task().insert(SwarmTask {
         id,
         swarm_id,
@@ -847,11 +863,38 @@ pub fn task_create(
         status: "pending".to_string(),
         agent_id: String::new(),
         result: String::new(),
+        depends_on,
         created_at: timestamp,
         completed_at: String::new(),
     });
 
     Ok(())
+}
+
+/// Check whether all dependencies of a task have been completed.
+/// Returns true if the task has no dependencies or all dependencies are completed.
+fn dependencies_met(ctx: &ReducerContext, task: &SwarmTask) -> bool {
+    if task.depends_on.is_empty() {
+        return true;
+    }
+    for dep_id in task.depends_on.split(',') {
+        let dep_id = dep_id.trim();
+        if dep_id.is_empty() {
+            continue;
+        }
+        match ctx.db.swarm_task().id().find(&dep_id.to_string()) {
+            Some(dep_task) => {
+                if dep_task.status != "completed" {
+                    return false;
+                }
+            }
+            None => {
+                // Dependency task not found — treat as unmet
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Assign a task to an agent.
@@ -867,6 +910,14 @@ pub fn task_assign(
 
     if task.status != "pending" {
         return Err(format!("Task '{}' is not pending (status: {})", task_id, task.status));
+    }
+
+    // Check that all dependency tasks are completed before allowing assignment
+    if !dependencies_met(ctx, &task) {
+        return Err(format!(
+            "Cannot assign task '{}' — dependencies not met (depends_on: {})",
+            task_id, task.depends_on
+        ));
     }
 
     let swarm_id = task.swarm_id.clone();

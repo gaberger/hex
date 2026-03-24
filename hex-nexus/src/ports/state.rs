@@ -214,6 +214,8 @@ pub struct SwarmTaskInfo {
     pub status: String,
     pub agent_id: String,
     pub result: String,
+    /// Comma-separated task IDs this task depends on (empty = no deps).
+    pub depends_on: String,
     pub created_at: String,
     pub completed_at: String,
 }
@@ -584,6 +586,7 @@ pub trait IStatePort: Send + Sync {
         id: &str,
         swarm_id: &str,
         title: &str,
+        depends_on: &str,
     ) -> Result<(), StateError>;
     async fn swarm_task_assign(&self, task_id: &str, agent_id: &str) -> Result<(), StateError>;
     async fn swarm_task_complete(&self, task_id: &str, result: &str) -> Result<(), StateError>;

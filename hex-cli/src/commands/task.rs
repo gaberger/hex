@@ -16,6 +16,9 @@ pub enum TaskAction {
         swarm_id: String,
         /// Task title
         title: String,
+        /// Comma-separated task IDs this task depends on
+        #[arg(long, default_value = "")]
+        depends_on: String,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -43,31 +46,34 @@ pub enum TaskAction {
 
 pub async fn run(action: TaskAction) -> anyhow::Result<()> {
     match action {
-        TaskAction::Create { swarm_id, title, json } => create(&swarm_id, &title, json).await,
+        TaskAction::Create { swarm_id, title, depends_on, json } => create(&swarm_id, &title, &depends_on, json).await,
         TaskAction::List => list().await,
         TaskAction::Complete { id, result, json } => complete(&id, result.as_deref(), json).await,
         TaskAction::Assign { task_id, agent_id } => assign(&task_id, agent_id).await,
     }
 }
 
-async fn create(swarm_id: &str, title: &str, json_output: bool) -> anyhow::Result<()> {
+async fn create(swarm_id: &str, title: &str, depends_on: &str, json_output: bool) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
     // The swarm endpoint expects tasks to be created via the swarm
     let path = format!("/api/swarms/{}/tasks", swarm_id);
 
+    // Build the request body — include depends_on if non-empty
+    let mut body = json!({
+        "swarmId": swarm_id,
+        "title": title,
+        "action": "create_task",
+    });
+    if !depends_on.is_empty() {
+        body["dependsOn"] = json!(depends_on);
+    }
+
     // The endpoint is POST to create swarm with tasks, but individual task creation
     // uses the swarm tasks sub-resource. We'll use the HexFlo task_create pattern.
     let resp = nexus
-        .post(
-            "/api/swarms",
-            &json!({
-                "swarmId": swarm_id,
-                "title": title,
-                "action": "create_task",
-            }),
-        )
+        .post("/api/swarms", &body)
         .await;
 
     // If the swarm endpoint doesn't support direct task creation,
@@ -82,12 +88,19 @@ async fn create(swarm_id: &str, title: &str, json_output: bool) -> anyhow::Resul
                 println!("  ID:    {}", task_id);
                 println!("  Swarm: {}", swarm_id);
                 println!("  Title: {}", title.bold());
+                if !depends_on.is_empty() {
+                    println!("  Deps:  {}", depends_on);
+                }
             }
         }
         Err(e) => {
             // Try alternative: the path-based endpoint
+            let mut alt_body = json!({ "title": title });
+            if !depends_on.is_empty() {
+                alt_body["dependsOn"] = json!(depends_on);
+            }
             let alt_resp = nexus
-                .post(&path, &json!({ "title": title }))
+                .post(&path, &alt_body)
                 .await;
 
             match alt_resp {
@@ -100,6 +113,9 @@ async fn create(swarm_id: &str, title: &str, json_output: bool) -> anyhow::Resul
                         println!("  ID:    {}", task_id);
                         println!("  Swarm: {}", swarm_id);
                         println!("  Title: {}", title.bold());
+                        if !depends_on.is_empty() {
+                            println!("  Deps:  {}", depends_on);
+                        }
                     }
                 }
                 Err(_) => return Err(e),

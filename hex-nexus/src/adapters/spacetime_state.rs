@@ -797,9 +797,9 @@ mod real {
             }).collect())
         }
 
-        async fn swarm_task_create(&self, id: &str, swarm_id: &str, title: &str) -> Result<(), StateError> {
+        async fn swarm_task_create(&self, id: &str, swarm_id: &str, title: &str, depends_on: &str) -> Result<(), StateError> {
             let now = chrono::Utc::now().to_rfc3339();
-            self.call_reducer("task_create", serde_json::json!([id, swarm_id, title, now])).await?;
+            self.call_reducer("task_create", serde_json::json!([id, swarm_id, title, depends_on, now])).await?;
             Ok(())
         }
 
@@ -835,6 +835,7 @@ mod real {
                     status: r.get("status")?.as_str()?.to_string(),
                     agent_id: r.get("agent_id")?.as_str()?.to_string(),
                     result: r.get("result")?.as_str()?.to_string(),
+                    depends_on: r.get("depends_on").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     created_at: r.get("created_at")?.as_str()?.to_string(),
                     completed_at: r.get("completed_at")?.as_str()?.to_string(),
                 })
@@ -1357,7 +1358,7 @@ mod stub {
         async fn swarm_complete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError> { Err(Self::err()) }
-        async fn swarm_task_create(&self, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_task_create(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_task_assign(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_task_complete(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_task_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }

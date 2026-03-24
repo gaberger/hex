@@ -5,7 +5,9 @@
 use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
+use tabled::Tabled;
 
+use crate::fmt::{HexTable, status_badge, truncate};
 use crate::nexus_client::NexusClient;
 
 use std::path::PathBuf;
@@ -51,6 +53,60 @@ pub enum AgentAction {
     Fleet,
     /// Audit recent commits against HexFlo task tracking (ADR-2603221939)
     Audit,
+    /// Run as a persistent agent worker for a specific role
+    Worker {
+        /// Agent role (hex-coder, hex-tester, hex-reviewer, hex-documenter, hex-ux, hex-fixer)
+        #[arg(long)]
+        role: String,
+
+        /// Swarm ID to join (worker only processes tasks from this swarm)
+        #[arg(long)]
+        swarm_id: Option<String>,
+
+        /// Poll interval in seconds (default 5)
+        #[arg(long, default_value_t = 5)]
+        poll_interval: u64,
+    },
+}
+
+// ── Tabled row types ───────────────────────────────────────────────────
+
+#[derive(Tabled)]
+struct AgentRow {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "Name")]
+    name: String,
+    #[tabled(rename = "Status")]
+    status: String,
+    #[tabled(rename = "Swarm")]
+    swarm: String,
+    #[tabled(rename = "Tasks")]
+    tasks: String,
+}
+
+#[derive(Tabled)]
+struct LocalSessionRow {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "Session")]
+    session: String,
+    #[tabled(rename = "Status")]
+    status: String,
+    #[tabled(rename = "Registered")]
+    registered: String,
+}
+
+#[derive(Tabled)]
+struct AuditRow {
+    #[tabled(rename = "")]
+    icon: String,
+    #[tabled(rename = "Commit")]
+    hash: String,
+    #[tabled(rename = "Message")]
+    message: String,
+    #[tabled(rename = "Tracking")]
+    tracking: String,
 }
 
 pub async fn run(action: AgentAction) -> anyhow::Result<()> {
@@ -68,6 +124,11 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
         AgentAction::Disconnect { agent_id } => disconnect(&agent_id).await,
         AgentAction::Fleet => fleet().await,
         AgentAction::Audit => audit().await,
+        AgentAction::Worker {
+            role,
+            swarm_id,
+            poll_interval,
+        } => worker(&role, swarm_id, poll_interval).await,
     }
 }
 
@@ -894,4 +955,184 @@ async fn audit() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Run as a persistent agent worker that polls for and executes tasks.
+///
+/// The worker registers with nexus, sends heartbeats every 30s, polls for
+/// assigned tasks, executes them based on its role, and writes results back.
+/// Runs until SIGTERM.
+async fn worker(
+    role: &str,
+    swarm_id: Option<String>,
+    poll_interval: u64,
+) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    // Register as a role-specific agent
+    let hostname = gethostname::gethostname().to_string_lossy().to_string();
+    let agent_name = format!("{}-{}", role, &hostname);
+    let project_dir = std::env::current_dir()?.to_string_lossy().to_string();
+    let session_id = std::env::var("CLAUDE_SESSION_ID")
+        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+
+    let reg_body = json!({
+        "name": agent_name,
+        "host": hostname,
+        "project_dir": project_dir,
+        "session_id": session_id,
+        "capabilities": [role],
+    });
+    let resp = nexus.post("/api/hex-agents/connect", &reg_body).await?;
+    let agent_id = resp["agentId"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    if agent_id.is_empty() {
+        anyhow::bail!("Failed to register agent — no agentId returned");
+    }
+
+    let short_id = &agent_id[..8.min(agent_id.len())];
+    println!(
+        "{} Worker started: {} (agent: {})",
+        "\u{2b21}".green(),
+        agent_name,
+        short_id
+    );
+    println!("  Role:     {}", role);
+    println!(
+        "  Swarm:    {}",
+        swarm_id.as_deref().unwrap_or("any")
+    );
+    println!("  Poll:     {}s", poll_interval);
+
+    // Set up heartbeat interval (every 30s)
+    let heartbeat_nexus = NexusClient::from_env();
+    let heartbeat_id = agent_id.clone();
+    let _heartbeat_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            let _ = heartbeat_nexus
+                .post(
+                    "/api/hex-agents/heartbeat",
+                    &json!({ "agent_id": heartbeat_id }),
+                )
+                .await;
+        }
+    });
+
+    // Main task poll loop
+    let poll_duration = std::time::Duration::from_secs(poll_interval);
+    loop {
+        let query = if let Some(ref sid) = swarm_id {
+            format!(
+                "/api/swarms/tasks?agent_id={}&status=in_progress&swarm_id={}",
+                agent_id, sid
+            )
+        } else {
+            format!("/api/swarms/tasks?agent_id={}&status=in_progress", agent_id)
+        };
+
+        match nexus.get(&query).await {
+            Ok(resp) => {
+                if let Some(tasks) =
+                    resp.as_array().or_else(|| resp["tasks"].as_array())
+                {
+                    for task in tasks {
+                        let task_id = task["id"].as_str().unwrap_or("");
+                        let title = task["title"].as_str().unwrap_or("");
+                        if task_id.is_empty() {
+                            continue;
+                        }
+
+                        let tid_short = &task_id[..8.min(task_id.len())];
+                        println!(
+                            "  {} Executing task: {} — {}",
+                            "\u{2192}".cyan(),
+                            tid_short,
+                            title
+                        );
+
+                        // Execute based on role
+                        let result =
+                            execute_worker_task(role, task, &project_dir).await;
+
+                        // Write result back
+                        match result {
+                            Ok(summary) => {
+                                let _ = nexus
+                                    .patch(
+                                        &format!("/api/swarms/tasks/{}", task_id),
+                                        &json!({
+                                            "status": "completed",
+                                            "result": summary,
+                                        }),
+                                    )
+                                    .await;
+                                println!(
+                                    "  {} Task completed: {}",
+                                    "\u{2713}".green(),
+                                    tid_short
+                                );
+                            }
+                            Err(e) => {
+                                let _ = nexus
+                                    .patch(
+                                        &format!("/api/swarms/tasks/{}", task_id),
+                                        &json!({
+                                            "status": "failed",
+                                            "result": format!("Error: {}", e),
+                                        }),
+                                    )
+                                    .await;
+                                println!(
+                                    "  {} Task failed: {} — {}",
+                                    "\u{2717}".red(),
+                                    tid_short,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                // Nexus unreachable — wait and retry
+            }
+        }
+
+        tokio::time::sleep(poll_duration).await;
+    }
+
+    // Cleanup (unreachable in normal flow, but for completeness)
+    #[allow(unreachable_code)]
+    {
+        _heartbeat_handle.abort();
+        let _ = nexus.delete(&format!("/api/hex-agents/{}", agent_id)).await;
+        Ok(())
+    }
+}
+
+/// Execute a single task based on the worker's role.
+///
+/// This is a stub implementation — returns placeholder results for now.
+/// Real agent dispatch (via inference + prompt templates) will be wired in later.
+async fn execute_worker_task(
+    role: &str,
+    task: &serde_json::Value,
+    _project_dir: &str,
+) -> anyhow::Result<String> {
+    let title = task["title"].as_str().unwrap_or("");
+
+    match role {
+        "hex-coder" => Ok(format!("hex-coder: processed '{}'", title)),
+        "hex-tester" => Ok(format!("hex-tester: processed '{}'", title)),
+        "hex-reviewer" => Ok(format!("hex-reviewer: processed '{}'", title)),
+        "hex-documenter" => Ok(format!("hex-documenter: processed '{}'", title)),
+        "hex-ux" => Ok(format!("hex-ux: processed '{}'", title)),
+        "hex-fixer" => Ok(format!("hex-fixer: processed '{}'", title)),
+        _ => anyhow::bail!("Unknown worker role: {}", role),
+    }
 }
