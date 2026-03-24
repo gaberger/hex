@@ -18,7 +18,9 @@ use clap::Subcommand;
 use chrono::Utc;
 use colored::Colorize;
 use serde::Serialize;
+use tabled::Tabled;
 
+use crate::fmt::{HexTable, status_badge, truncate};
 use crate::nexus_client::NexusClient;
 
 #[derive(Subcommand)]
@@ -1195,43 +1197,45 @@ async fn run_history() -> anyhow::Result<()> {
         }
     };
 
-    // Print table header
-    println!(
-        "  {:<9} {:<12} {:<8} {:>4}  {:>4}  {:>4}  {:>8}",
-        "COMMIT", "BRANCH", "STATUS", "PASS", "FAIL", "SKIP", "DURATION"
-    );
-    println!("  {}", "─".repeat(58));
-
-    for s in &sessions {
-        let short_commit = if s.commit_hash.len() >= 7 {
-            &s.commit_hash[..7]
-        } else {
-            &s.commit_hash
-        };
-        let short_branch = if s.branch.len() > 12 {
-            format!("{}…", &s.branch[..11])
-        } else {
-            s.branch.clone()
-        };
-        let status_display = match s.overall_status.as_str() {
-            "pass" => "PASS".green().to_string(),
-            "fail" => "FAIL".red().to_string(),
-            _ => "PARTIAL".yellow().to_string(),
-        };
-        let duration = format_duration(s.duration_ms);
-
-        println!(
-            "  {:<9} {:<12} {:<8} {:>4}  {:>4}  {:>4}  {:>8}",
-            short_commit,
-            short_branch,
-            status_display,
-            s.pass_count,
-            s.fail_count,
-            s.skip_count,
-            duration,
-        );
+    #[derive(Tabled)]
+    struct HistoryRow {
+        #[tabled(rename = "Commit")]
+        commit: String,
+        #[tabled(rename = "Branch")]
+        branch: String,
+        #[tabled(rename = "Status")]
+        status: String,
+        #[tabled(rename = "Pass")]
+        pass: u32,
+        #[tabled(rename = "Fail")]
+        fail: u32,
+        #[tabled(rename = "Skip")]
+        skip: u32,
+        #[tabled(rename = "Duration")]
+        duration: String,
     }
-    println!();
+
+    let rows: Vec<HistoryRow> = sessions
+        .iter()
+        .map(|s| {
+            let short_commit = if s.commit_hash.len() >= 7 {
+                s.commit_hash[..7].to_string()
+            } else {
+                s.commit_hash.clone()
+            };
+            HistoryRow {
+                commit: short_commit,
+                branch: truncate(&s.branch, 12),
+                status: status_badge(&s.overall_status),
+                pass: s.pass_count,
+                fail: s.fail_count,
+                skip: s.skip_count,
+                duration: format_duration(s.duration_ms),
+            }
+        })
+        .collect();
+
+    println!("{}", HexTable::new(&rows));
     Ok(())
 }
 
@@ -1341,55 +1345,59 @@ async fn run_trends() -> anyhow::Result<()> {
         }
     };
 
-    // Print table header
-    println!(
-        "  {:<16} {:<22} {:>9}",
-        "Category",
-        &format!("Last {} runs", runs),
-        "Pass rate"
-    );
-    println!("  {}", "─".repeat(50));
-
-    for trend in &trends {
-        let pass_count = trend.results.iter().filter(|&&b| b).count();
-        let total = trend.results.len();
-        let rate = if total > 0 {
-            (pass_count as f64 / total as f64 * 100.0) as u32
-        } else {
-            0
-        };
-
-        // Build bar: green block for pass, red block for fail
-        let mut bar = String::new();
-        for (i, &passed) in trend.results.iter().enumerate() {
-            if i >= runs {
-                break;
-            }
-            if passed {
-                bar.push_str(&"█".green().to_string());
-            } else {
-                bar.push_str(&"░".red().to_string());
-            }
-        }
-        // Pad if fewer results than `runs`
-        for _ in trend.results.len()..runs {
-            bar.push(' ');
-        }
-
-        let rate_display = if rate == 100 {
-            format!("{}%", rate).green().to_string()
-        } else if rate >= 80 {
-            format!("{}%", rate).yellow().to_string()
-        } else {
-            format!("{}%", rate).red().to_string()
-        };
-
-        println!(
-            "  {:<16} {:<22} {:>9}",
-            trend.category, bar, rate_display,
-        );
+    #[derive(Tabled)]
+    struct TrendRow {
+        #[tabled(rename = "Category")]
+        category: String,
+        #[tabled(rename = "Last Runs")]
+        bar: String,
+        #[tabled(rename = "Pass Rate")]
+        rate: String,
     }
-    println!();
+
+    let rows: Vec<TrendRow> = trends
+        .iter()
+        .map(|trend| {
+            let pass_count = trend.results.iter().filter(|&&b| b).count();
+            let total = trend.results.len();
+            let rate = if total > 0 {
+                (pass_count as f64 / total as f64 * 100.0) as u32
+            } else {
+                0
+            };
+
+            let mut bar = String::new();
+            for (i, &passed) in trend.results.iter().enumerate() {
+                if i >= runs {
+                    break;
+                }
+                if passed {
+                    bar.push_str(&"█".green().to_string());
+                } else {
+                    bar.push_str(&"░".red().to_string());
+                }
+            }
+            for _ in trend.results.len()..runs {
+                bar.push(' ');
+            }
+
+            let rate_display = if rate == 100 {
+                format!("{}%", rate).green().to_string()
+            } else if rate >= 80 {
+                format!("{}%", rate).yellow().to_string()
+            } else {
+                format!("{}%", rate).red().to_string()
+            };
+
+            TrendRow {
+                category: trend.category.clone(),
+                bar,
+                rate: rate_display,
+            }
+        })
+        .collect();
+
+    println!("{}", HexTable::new(&rows));
     Ok(())
 }
 

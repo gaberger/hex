@@ -9,7 +9,9 @@ use clap::Subcommand;
 use colored::Colorize;
 use serde_json::Value;
 use std::path::Path;
+use tabled::Tabled;
 
+use crate::fmt::{HexTable, status_badge, truncate as fmt_truncate};
 use crate::nexus_client::NexusClient;
 use crate::session::{DevSession, DevSessionSummary, SessionStatus};
 
@@ -50,19 +52,33 @@ async fn list_sessions() -> Result<()> {
     }
     println!("{}", "hex dev — Sessions".cyan().bold());
     println!();
-    println!(
-        "  {:<38} {:<12} {:<10} {:<8} {}",
-        "ID", "Status", "Phase", "Cost", "Feature"
-    );
-    println!("  {}", "─".repeat(100));
-    for s in &sessions {
-        let cost = format!("${:.4}", s.total_cost_usd);
-        let desc = truncate(&s.feature_description, 50);
-        println!(
-            "  {:<38} {:<12} {:<10} {:<8} {}",
-            s.id, format!("{}", s.status), format!("{}", s.current_phase), cost, desc
-        );
+
+    #[derive(Tabled)]
+    struct SessionRow {
+        #[tabled(rename = "ID")]
+        id: String,
+        #[tabled(rename = "Status")]
+        status: String,
+        #[tabled(rename = "Phase")]
+        phase: String,
+        #[tabled(rename = "Cost")]
+        cost: String,
+        #[tabled(rename = "Feature")]
+        feature: String,
     }
+
+    let rows: Vec<SessionRow> = sessions
+        .iter()
+        .map(|s| SessionRow {
+            id: s.id.clone(),
+            status: status_badge(&format!("{}", s.status)),
+            phase: format!("{}", s.current_phase),
+            cost: format!("${:.4}", s.total_cost_usd),
+            feature: fmt_truncate(&s.feature_description, 50),
+        })
+        .collect();
+
+    println!("{}", HexTable::new(&rows));
     println!();
     println!("  Run `hex report show <id>` for a full audit report.");
     Ok(())
@@ -189,20 +205,27 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
             println!("  Steps:  {}", info.total_steps);
             println!("  Tiers:  {}", info.tier_summary);
             println!();
-            println!(
-                "  {:<8} {:<6} {:<50} {}",
-                "Step", "Tier", "Description", "Adapter"
-            );
-            println!("  {}", "─".repeat(90));
-            for step in &info.steps {
-                println!(
-                    "  {:<8} T{:<5} {:<50} {}",
-                    step.id,
-                    step.tier,
-                    truncate(&step.description, 50),
-                    step.adapter
-                );
+
+            #[derive(Tabled)]
+            struct StepRow {
+                #[tabled(rename = "Step")]
+                id: String,
+                #[tabled(rename = "Tier")]
+                tier: String,
+                #[tabled(rename = "Description")]
+                description: String,
+                #[tabled(rename = "Adapter")]
+                adapter: String,
             }
+
+            let step_rows: Vec<StepRow> = info.steps.iter().map(|step| StepRow {
+                id: step.id.clone(),
+                tier: format!("T{}", step.tier),
+                description: truncate(&step.description, 50),
+                adapter: step.adapter.clone(),
+            }).collect();
+
+            println!("{}", HexTable::new(&step_rows));
         }
         None => println!("  {}", "No workplan generated (skipped or failed)".dimmed()),
     }
@@ -219,24 +242,24 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
             println!("  Tasks:    {}/{} completed", info.tasks_completed, info.tasks_total);
             if !info.tasks.is_empty() {
                 println!();
-                println!(
-                    "  {:<10} {:<12} {:<50}",
-                    "Task", "Status", "Title"
-                );
-                println!("  {}", "─".repeat(75));
-                for task in &info.tasks {
-                    let status_colored = match task.status.as_str() {
-                        "completed" => "completed".green().to_string(),
-                        "in_progress" => "in_progress".yellow().to_string(),
-                        _ => task.status.dimmed().to_string(),
-                    };
-                    println!(
-                        "  {:<10} {:<12} {}",
-                        &task.id[..8.min(task.id.len())],
-                        status_colored,
-                        truncate(&task.title, 50)
-                    );
+
+                #[derive(Tabled)]
+                struct TaskRow {
+                    #[tabled(rename = "Task")]
+                    id: String,
+                    #[tabled(rename = "Status")]
+                    status: String,
+                    #[tabled(rename = "Title")]
+                    title: String,
                 }
+
+                let task_rows: Vec<TaskRow> = info.tasks.iter().map(|task| TaskRow {
+                    id: task.id[..8.min(task.id.len())].to_string(),
+                    status: status_badge(&task.status),
+                    title: truncate(&task.title, 50),
+                }).collect();
+
+                println!("{}", HexTable::new(&task_rows));
             }
         }
         None => println!("  {}", "No swarm created (skipped or failed)".dimmed()),
@@ -358,26 +381,33 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
     if !agent_calls.is_empty() {
         println!();
         println!("{}", "── Agent Reports ─────────────────────────────────────────────".dimmed());
-        println!(
-            "  {:<16} {:<12} {:>8} {:>8}  {}",
-            "Agent", "Status", "Time", "Cost", "Objective"
-        );
-        println!("  {}", "─".repeat(75));
-        for call in &agent_calls {
-            let role = call.phase.strip_prefix("agent-").unwrap_or(&call.phase);
-            let status_colored = match call.status.as_str() {
-                "ok" => "ok".green().to_string(),
-                "error" => "FAIL".red().to_string(),
-                _ => call.status.clone(),
-            };
-            let duration = format!("{:.1}s", call.duration_ms as f64 / 1000.0);
-            let cost = call.cost_usd.map(|c| format!("${:.4}", c)).unwrap_or_else(|| "—".into());
-            let objective = call.detail.as_deref().unwrap_or("—");
-            println!(
-                "  {:<16} {:<12} {:>8} {:>8}  {}",
-                role, status_colored, duration, cost, truncate(objective, 40)
-            );
+
+        #[derive(Tabled)]
+        struct AgentRow {
+            #[tabled(rename = "Agent")]
+            agent: String,
+            #[tabled(rename = "Status")]
+            status: String,
+            #[tabled(rename = "Time")]
+            time: String,
+            #[tabled(rename = "Cost")]
+            cost: String,
+            #[tabled(rename = "Objective")]
+            objective: String,
         }
+
+        let agent_rows: Vec<AgentRow> = agent_calls.iter().map(|call| {
+            let role = call.phase.strip_prefix("agent-").unwrap_or(&call.phase);
+            AgentRow {
+                agent: role.to_string(),
+                status: status_badge(&call.status),
+                time: format!("{:.1}s", call.duration_ms as f64 / 1000.0),
+                cost: call.cost_usd.map(|c| format!("${:.4}", c)).unwrap_or_else(|| "—".into()),
+                objective: truncate(call.detail.as_deref().unwrap_or("—"), 40),
+            }
+        }).collect();
+
+        println!("{}", HexTable::new(&agent_rows));
     }
 
     // ── Git Changes ─────────────────────────────────────────
@@ -423,40 +453,47 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
     if session.tool_calls.is_empty() {
         println!("  {}", "No tool calls recorded (session predates tracking or ran in TUI mode)".dimmed());
     } else {
-        println!(
-            "  {:<12} {:<10} {:<35} {:<22} {:>7} {:>8} {:>7}",
-            "Timestamp", "Phase", "Tool", "Model", "Tokens", "Cost", "Time"
-        );
-        println!("  {}", "─".repeat(105));
-        for call in &session.tool_calls {
-            let ts = call.timestamp.get(11..19).unwrap_or(&call.timestamp);
+        #[derive(Tabled)]
+        struct ToolCallRow {
+            #[tabled(rename = "Time")]
+            timestamp: String,
+            #[tabled(rename = "Phase")]
+            phase: String,
+            #[tabled(rename = "Tool")]
+            tool: String,
+            #[tabled(rename = "Model")]
+            model: String,
+            #[tabled(rename = "Tokens")]
+            tokens: String,
+            #[tabled(rename = "Cost")]
+            cost: String,
+            #[tabled(rename = "Duration")]
+            duration: String,
+            #[tabled(rename = "Status")]
+            status: String,
+        }
+
+        let tool_rows: Vec<ToolCallRow> = session.tool_calls.iter().map(|call| {
+            let ts = call.timestamp.get(11..19).unwrap_or(&call.timestamp).to_string();
             let model = call.model.as_deref().unwrap_or("—");
             let model_short = if model.len() > 20 {
                 &model[model.len()-20..]
             } else {
                 model
             };
-            let tokens = call.tokens.map(|t| format!("{}", t)).unwrap_or_else(|| "—".into());
-            let cost = call.cost_usd.map(|c| format!("${:.4}", c)).unwrap_or_else(|| "—".into());
-            let duration = format!("{:.1}s", call.duration_ms as f64 / 1000.0);
-            let status_colored = match call.status.as_str() {
-                "ok" => call.status.green().to_string(),
-                "error" => call.status.red().to_string(),
-                "retry" => call.status.yellow().to_string(),
-                _ => call.status.clone(),
-            };
-            println!(
-                "  {:<12} {:<10} {:<35} {:<22} {:>7} {:>8} {:>7}  {}",
-                ts,
-                call.phase,
-                truncate(&call.tool, 35),
-                model_short,
-                tokens,
-                cost,
-                duration,
-                status_colored,
-            );
-        }
+            ToolCallRow {
+                timestamp: ts,
+                phase: call.phase.clone(),
+                tool: truncate(&call.tool, 35),
+                model: model_short.to_string(),
+                tokens: call.tokens.map(|t| format!("{}", t)).unwrap_or_else(|| "—".into()),
+                cost: call.cost_usd.map(|c| format!("${:.4}", c)).unwrap_or_else(|| "—".into()),
+                duration: format!("{:.1}s", call.duration_ms as f64 / 1000.0),
+                status: status_badge(&call.status),
+            }
+        }).collect();
+
+        println!("{}", HexTable::new(&tool_rows));
         println!();
         let ok_count = session.tool_calls.iter().filter(|c| c.status == "ok").count();
         let err_count = session.tool_calls.iter().filter(|c| c.status == "error").count();

@@ -2,6 +2,9 @@ use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
 use colored::Colorize;
+use tabled::Tabled;
+
+use crate::fmt::{status_badge, truncate, HexTable};
 
 #[derive(Subcommand)]
 pub enum AdrAction {
@@ -160,6 +163,50 @@ fn extract_title(path: &Path, content: &str) -> String {
         .to_string()
 }
 
+// ── Tabled row structs ──────────────────────────────────────────────────
+
+#[derive(Tabled)]
+struct AdrListRow {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "Status")]
+    status: String,
+    #[tabled(rename = "Enforcement")]
+    enforcement: String,
+    #[tabled(rename = "Title")]
+    title: String,
+}
+
+#[derive(Tabled)]
+struct AdrStatusRow {
+    #[tabled(rename = "Status")]
+    status: String,
+    #[tabled(rename = "Count")]
+    count: usize,
+}
+
+#[derive(Tabled)]
+struct AdrSearchRow {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "Status")]
+    status: String,
+    #[tabled(rename = "Title")]
+    title: String,
+    #[tabled(rename = "Context")]
+    context: String,
+}
+
+#[derive(Tabled)]
+struct AdrAbandonedRow {
+    #[tabled(rename = "")]
+    indicator: String,
+    #[tabled(rename = "Title")]
+    title: String,
+    #[tabled(rename = "Status")]
+    status: String,
+}
+
 async fn list() -> anyhow::Result<()> {
     let adr_dir = find_adr_dir().ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
     let adrs = collect_adrs(&adr_dir).await?;
@@ -172,41 +219,30 @@ async fn list() -> anyhow::Result<()> {
     println!("{} Architecture Decision Records", "\u{2b21}".cyan());
     println!();
 
-    // Header
-    println!(
-        "  {:<16} {:<12} {:<14} {}",
-        "ID".bold(),
-        "Status".bold(),
-        "Enforcement".bold(),
-        "Title".bold()
-    );
-    println!("  {}", "\u{2500}".repeat(84).dimmed());
+    let rows: Vec<AdrListRow> = adrs
+        .iter()
+        .map(|(path, content)| {
+            let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("???");
+            let id = extract_adr_id(filename);
+            let status = parse_adr_status(content);
+            let title = extract_title(path, content);
+            let enforced = parse_enforced_by(content);
 
-    for (path, content) in &adrs {
-        let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("???");
-        // Extract ADR-NNN or ADR-YYMMDDHHMM prefix from filename
-        let id = extract_adr_id(filename);
-        let status = parse_adr_status(content);
-        let title = extract_title(path, content);
-        let enforced = parse_enforced_by(content);
+            let enforcement = match &enforced {
+                Some(_) => "\u{2713} enforced".green().to_string(),
+                None => "\u{2014} honor system".dimmed().to_string(),
+            };
 
-        let status_colored = match status {
-            "accepted" => status.green().to_string(),
-            "proposed" => status.yellow().to_string(),
-            "deprecated" => status.red().to_string(),
-            "abandoned" => status.red().dimmed().to_string(),
-            "superseded" => status.blue().to_string(),
-            _ => status.dimmed().to_string(),
-        };
+            AdrListRow {
+                id,
+                status: status_badge(status),
+                enforcement,
+                title: truncate(&title, 60),
+            }
+        })
+        .collect();
 
-        let enforcement_display = match &enforced {
-            Some(_) => "\u{2713} enforced".green().to_string(),
-            None => "\u{2014} honor system".dimmed().to_string(),
-        };
-
-        println!("  {:<16} {:<21} {:<23} {}", id, status_colored, enforcement_display, title);
-    }
-
+    println!("{}", HexTable::new(&rows));
     println!();
     println!("  {} ADR(s) total", adrs.len());
     Ok(())
@@ -226,20 +262,17 @@ async fn status() -> anyhow::Result<()> {
     println!();
 
     let statuses = ["proposed", "accepted", "deprecated", "superseded", "abandoned", "unknown"];
-    for s in &statuses {
-        if let Some(&count) = counts.get(s) {
-            let colored_status = match *s {
-                "accepted" => s.green().to_string(),
-                "proposed" => s.yellow().to_string(),
-                "deprecated" => s.red().to_string(),
-                "abandoned" => s.red().dimmed().to_string(),
-                "superseded" => s.blue().to_string(),
-                _ => s.dimmed().to_string(),
-            };
-            println!("  {:<21} {}", colored_status, count);
-        }
-    }
+    let rows: Vec<AdrStatusRow> = statuses
+        .iter()
+        .filter_map(|s| {
+            counts.get(s).map(|&count| AdrStatusRow {
+                status: status_badge(s),
+                count,
+            })
+        })
+        .collect();
 
+    println!("{}", HexTable::compact(&rows));
     println!();
     println!("  {} total", adrs.len());
     Ok(())
@@ -282,15 +315,22 @@ async fn search(query: &str) -> anyhow::Result<()> {
     if matches.is_empty() {
         println!("  {}", "No matches found".dimmed());
     } else {
-        for (path, title, status, context) in &matches {
-            let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("???");
-            println!("  {} [{}]", title.bold(), status);
-            println!("  {}", filename.dimmed());
-            for line in context {
-                println!("    {}", line.dimmed());
-            }
-            println!();
-        }
+        let rows: Vec<AdrSearchRow> = matches
+            .iter()
+            .map(|(path, title, status, context)| {
+                let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("???");
+                let id = extract_adr_id(filename);
+                AdrSearchRow {
+                    id,
+                    status: status_badge(status),
+                    title: truncate(title, 50),
+                    context: truncate(&context.join(" | "), 60),
+                }
+            })
+            .collect();
+
+        println!("{}", HexTable::new(&rows));
+        println!();
         println!("  {} match(es)", matches.len());
     }
 
@@ -379,29 +419,36 @@ async fn abandoned() -> anyhow::Result<()> {
     println!("{} Stale/Abandoned ADR Detection", "\u{2b21}".cyan());
     println!();
 
-    let mut found = 0;
-    for (path, content) in &adrs {
-        let status = parse_adr_status(content);
-        let title = extract_title(path, content);
+    let rows: Vec<AdrAbandonedRow> = adrs
+        .iter()
+        .filter_map(|(path, content)| {
+            let status = parse_adr_status(content);
+            let title = extract_title(path, content);
 
-        // Flag ADRs that are proposed but possibly stale, or explicitly abandoned
-        let is_stale = status == "proposed" || status == "abandoned";
-        if is_stale {
-            let indicator = if status == "abandoned" {
-                "\u{2717}".red()
+            let is_stale = status == "proposed" || status == "abandoned";
+            if is_stale {
+                let indicator = if status == "abandoned" {
+                    "\u{2717}".red().to_string()
+                } else {
+                    "?".yellow().to_string()
+                };
+                Some(AdrAbandonedRow {
+                    indicator,
+                    title: truncate(&title, 60),
+                    status: status_badge(status),
+                })
             } else {
-                "?".yellow()
-            };
-            println!("  {} {} [{}]", indicator, title, status);
-            found += 1;
-        }
-    }
+                None
+            }
+        })
+        .collect();
 
-    if found == 0 {
+    if rows.is_empty() {
         println!("  {}", "No abandoned or stale ADRs found".green());
     } else {
+        println!("{}", HexTable::compact(&rows));
         println!();
-        println!("  {} ADR(s) need attention", found);
+        println!("  {} ADR(s) need attention", rows.len());
     }
 
     Ok(())

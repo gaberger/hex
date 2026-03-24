@@ -10,6 +10,7 @@ use tracing_subscriber::EnvFilter;
 
 pub mod assets;
 mod commands;
+pub mod fmt;
 pub(crate) mod nexus_client;
 pub mod pipeline;
 pub mod prompts;

@@ -354,15 +354,8 @@ async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
 
     println!("{} Agents ({})", "\u{2b21}".cyan(), agents.len());
     println!();
-    println!(
-        "  {:<38} {:<16} {:<10} {:<18} {}",
-        "ID".bold(),
-        "NAME".bold(),
-        "STATUS".bold(),
-        "SWARM".bold(),
-        "TASKS".bold(),
-    );
-    println!("  {}", "\u{2500}".repeat(100).dimmed());
+
+    let mut rows: Vec<AgentRow> = Vec::new();
 
     for agent in &agents {
         // ADR-058: hex_agent table uses `id` as primary key
@@ -372,14 +365,6 @@ async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
 
         let name = agent["name"].as_str().unwrap_or("?");
         let status = agent["status"].as_str().unwrap_or("?");
-
-        let status_colored = match status {
-            "online" | "active" | "connected" | "running" => status.green().to_string(),
-            "idle" | "spawning" => status.yellow().to_string(),
-            "offline" | "disconnected" | "failed" => status.red().to_string(),
-            "stale" | "completed" => status.dimmed().to_string(),
-            _ => status.to_string(),
-        };
 
         // Show [local] tag for auto-spawned agents (ADR-037)
         let name_display = if name.contains("(local)") {
@@ -400,22 +385,21 @@ async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
         let (swarm_display, task_display) = if let Some((swarm_name, _pending, completed, total)) =
             agent_swarm_map.get(id)
         {
-            let swarm_short = if swarm_name.len() > 16 {
-                format!("{}…", &swarm_name[..15])
-            } else {
-                swarm_name.clone()
-            };
-            let tasks = format!("{}/{} done", completed, total);
-            (swarm_short, tasks)
+            (truncate(swarm_name, 16), format!("{}/{} done", completed, total))
         } else {
-            ("—".dimmed().to_string(), "—".dimmed().to_string())
+            ("\u{2014}".dimmed().to_string(), "\u{2014}".dimmed().to_string())
         };
 
-        println!(
-            "  {:<50} {:<16} {:<19} {:<18} {}",
-            id_display, name_display, status_colored, swarm_display, task_display,
-        );
+        rows.push(AgentRow {
+            id: id_display,
+            name: name_display,
+            status: status_badge(status),
+            swarm: swarm_display,
+            tasks: task_display,
+        });
     }
+
+    println!("{}", HexTable::new(&rows));
 
     Ok(())
 }
@@ -471,14 +455,8 @@ async fn list_from_local_sessions() -> anyhow::Result<()> {
         format!("{} sessions", sessions.len()).yellow(),
     );
     println!();
-    println!(
-        "  {:<14} {:<24} {:<12} {}",
-        "ID".bold(),
-        "SESSION".bold(),
-        "STATUS".bold(),
-        "REGISTERED".bold(),
-    );
-    println!("  {}", "\u{2500}".repeat(70).dimmed());
+
+    let mut rows: Vec<LocalSessionRow> = Vec::new();
 
     for session in &sessions {
         let id = session["agentId"].as_str().unwrap_or("?");
@@ -492,9 +470,9 @@ async fn list_from_local_sessions() -> anyhow::Result<()> {
 
         // Show a compact timestamp (strip date if today, keep time)
         let time_display = if registered.len() >= 16 {
-            &registered[11..16] // HH:MM
+            registered[11..16].to_string() // HH:MM
         } else {
-            registered
+            registered.to_string()
         };
 
         // Infer liveness: check if session file was modified recently (within 2 min)
@@ -510,25 +488,29 @@ async fn list_from_local_sessions() -> anyhow::Result<()> {
                             .duration_since(modified)
                             .unwrap_or_default();
                         if age.as_secs() < 120 {
-                            "recent".green().to_string()
+                            "recent".to_string()
                         } else if age.as_secs() < 3600 {
-                            "stale".yellow().to_string()
+                            "stale".to_string()
                         } else {
-                            "old".dimmed().to_string()
+                            "old".to_string()
                         }
                     } else {
-                        "unknown".dimmed().to_string()
+                        "unknown".to_string()
                     }
                 }
-                Err(_) => "unknown".dimmed().to_string(),
+                Err(_) => "unknown".to_string(),
             }
         };
 
-        println!(
-            "  {:<14} {:<24} {:<21} {}",
-            id_short, session_id, status, time_display,
-        );
+        rows.push(LocalSessionRow {
+            id: id_short.to_string(),
+            session: session_id.to_string(),
+            status: status_badge(&status),
+            registered: time_display,
+        });
     }
+
+    println!("{}", HexTable::new(&rows));
 
     println!();
     println!(
@@ -920,6 +902,7 @@ async fn audit() -> anyhow::Result<()> {
     // 3. Cross-reference: is each commit's hash or message mentioned in any task result?
     let mut tracked = 0u32;
     let mut untracked = 0u32;
+    let mut rows: Vec<AuditRow> = Vec::new();
 
     for (hash, msg) in &commits {
         let is_tracked = task_results.iter().any(|result| {
@@ -929,14 +912,25 @@ async fn audit() -> anyhow::Result<()> {
         });
 
         if is_tracked {
-            println!("  {} {} {}", "\u{2713}".green(), hash.yellow(), msg);
+            rows.push(AuditRow {
+                icon: "\u{2713}".green().to_string(),
+                hash: hash.yellow().to_string(),
+                message: msg.to_string(),
+                tracking: "tracked".green().to_string(),
+            });
             tracked += 1;
         } else {
-            println!("  {} {} {} {}", "\u{2717}".red(), hash.yellow(), msg, "(untracked)".red());
+            rows.push(AuditRow {
+                icon: "\u{2717}".red().to_string(),
+                hash: hash.yellow().to_string(),
+                message: msg.to_string(),
+                tracking: "untracked".red().to_string(),
+            });
             untracked += 1;
         }
     }
 
+    println!("{}", HexTable::compact(&rows));
     println!();
     println!(
         "  {} tracked, {} untracked (of {} AI commits)",

@@ -10,7 +10,9 @@ use std::path::Path;
 use clap::Subcommand;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
+use tabled::Tabled;
 
+use crate::fmt::{HexTable, status_badge, truncate, progress};
 use crate::nexus_client::NexusClient;
 
 #[derive(Subcommand)]
@@ -171,6 +173,64 @@ impl Workplan {
                 .count()
         }
     }
+}
+
+// ── Tabled row types ───────────────────────────────────────────────────
+
+#[derive(Tabled)]
+struct PlanRow {
+    #[tabled(rename = "Status")]
+    status: String,
+    #[tabled(rename = "Title")]
+    title: String,
+    #[tabled(rename = "ADR")]
+    adr: String,
+    #[tabled(rename = "Progress")]
+    progress: String,
+    #[tabled(rename = "Priority")]
+    priority: String,
+}
+
+#[derive(Tabled)]
+struct StepRow {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "Description")]
+    description: String,
+    #[tabled(rename = "Adapter")]
+    adapter: String,
+    #[tabled(rename = "Tier")]
+    tier: String,
+    #[tabled(rename = "Status")]
+    status: String,
+    #[tabled(rename = "Deps")]
+    deps: String,
+}
+
+#[derive(Tabled)]
+struct ExecutionRow {
+    #[tabled(rename = "Status")]
+    status: String,
+    #[tabled(rename = "Feature")]
+    feature: String,
+    #[tabled(rename = "Phase")]
+    phase: String,
+    #[tabled(rename = "Progress")]
+    progress_col: String,
+}
+
+#[derive(Tabled)]
+struct HistoryRow {
+    #[tabled(rename = "Status")]
+    status: String,
+    #[tabled(rename = "Feature")]
+    feature: String,
+    #[tabled(rename = "Tasks")]
+    tasks: String,
+    #[tabled(rename = "Started")]
+    started: String,
+    #[tabled(rename = "ID")]
+    id: String,
 }
 
 pub async fn run(action: PlanAction) -> anyhow::Result<()> {
@@ -385,6 +445,8 @@ async fn list_plans() -> anyhow::Result<()> {
     );
     println!();
 
+    let mut rows: Vec<PlanRow> = Vec::new();
+
     for entry in &entries {
         let path = entry.path();
         let name = path.file_name().unwrap().to_string_lossy();
@@ -397,60 +459,72 @@ async fn list_plans() -> anyhow::Result<()> {
                         let done = plan.completed_tasks();
                         let title = {
                             let dt = plan.display_title();
-                            if dt.is_empty() { name.to_string() } else { dt.to_string() }
+                            if dt.is_empty() { name.to_string() } else { truncate(&dt.to_string(), 40) }
                         };
 
-                        let adr_tag = if plan.adr.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" [{}]", plan.adr.dimmed())
-                        };
-
-                        let progress = if total == 0 {
+                        let progress_str = if total == 0 {
                             "(no tasks)".dimmed().to_string()
-                        } else if done == total {
-                            format!("{}/{} {}", done, total, "\u{2713}".green())
                         } else {
-                            format!("{}/{}", done, total)
+                            progress(done as u32, total as u32)
                         };
 
-                        let priority_tag = if plan.priority.is_empty() {
+                        let adr_display = if plan.adr.is_empty() {
+                            "\u{2014}".dimmed().to_string()
+                        } else {
+                            plan.adr.clone()
+                        };
+
+                        let priority_display = if plan.priority.is_empty() {
                             String::new()
                         } else {
-                            format!(" {}", plan.priority.red())
+                            plan.priority.red().to_string()
                         };
 
-                        let status_icon = match plan.status.as_str() {
-                            "done" => "\u{2713}".green(),
-                            "in_progress" => "\u{25cf}".yellow(),
-                            "superseded" => "\u{2192}".dimmed(),
-                            "planned" => "\u{25cb}".dimmed(),
-                            _ => "\u{25cb}".dimmed(),
-                        };
-
-                        let status_tag = if plan.status.is_empty() {
-                            String::new()
+                        let status_display = if plan.status.is_empty() {
+                            "\u{2014}".dimmed().to_string()
                         } else {
-                            let colored = match plan.status.as_str() {
-                                "done" => plan.status.green().to_string(),
-                                "in_progress" => plan.status.yellow().to_string(),
-                                "superseded" => plan.status.dimmed().to_string(),
-                                _ => plan.status.dimmed().to_string(),
-                            };
-                            format!(" [{}]", colored)
+                            status_badge(&plan.status)
                         };
 
-                        println!("  {} {}{}{} {}{}", status_icon, title, adr_tag, status_tag, progress, priority_tag);
+                        rows.push(PlanRow {
+                            status: status_display,
+                            title,
+                            adr: adr_display,
+                            progress: progress_str,
+                            priority: priority_display,
+                        });
                     } else {
-                        println!("  {} {} (parse error)", "\u{25cb}".dimmed(), name);
+                        rows.push(PlanRow {
+                            status: "\u{25cb}".dimmed().to_string(),
+                            title: format!("{} (parse error)", name),
+                            adr: String::new(),
+                            progress: String::new(),
+                            priority: String::new(),
+                        });
                     }
                 }
-                Err(_) => println!("  {} {} (read error)", "\u{25cb}".dimmed(), name),
+                Err(_) => {
+                    rows.push(PlanRow {
+                        status: "\u{25cb}".dimmed().to_string(),
+                        title: format!("{} (read error)", name),
+                        adr: String::new(),
+                        progress: String::new(),
+                        priority: String::new(),
+                    });
+                }
             }
         } else {
-            println!("  {} {} (markdown)", "\u{25cb}".dimmed(), name);
+            rows.push(PlanRow {
+                status: "\u{25cb}".dimmed().to_string(),
+                title: format!("{} (markdown)", name),
+                adr: String::new(),
+                progress: String::new(),
+                priority: String::new(),
+            });
         }
     }
+
+    println!("{}", HexTable::new(&rows));
 
     Ok(())
 }
@@ -496,26 +570,23 @@ async fn show_plan_file(path: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    for step in &plan.steps {
-        let icon = match step.status.as_str() {
-            "completed" => "\u{2713}".green(),
-            "in_progress" => "\u{25cf}".yellow(),
-            _ => "\u{25cb}".dimmed(),
-        };
+    let rows: Vec<StepRow> = plan.steps.iter().map(|step| {
         let deps = if step.dependencies.is_empty() {
-            String::new()
+            "\u{2014}".dimmed().to_string()
         } else {
-            format!(" (deps: {})", step.dependencies.join(", "))
+            step.dependencies.join(", ")
         };
-        println!(
-            "  {} [{}] {}{}",
-            icon,
-            step.id,
-            step.description,
-            deps.dimmed(),
-        );
-        println!("     adapter: {} | tier: {}", step.adapter, step.tier);
-    }
+        StepRow {
+            id: step.id.clone(),
+            description: truncate(&step.description, 50),
+            adapter: step.adapter.clone(),
+            tier: step.tier.to_string(),
+            status: status_badge(&step.status),
+            deps,
+        }
+    }).collect();
+
+    println!("{}", HexTable::new(&rows));
 
     Ok(())
 }
@@ -555,29 +626,29 @@ async fn show_active_executions() -> anyhow::Result<()> {
     );
     println!();
 
-    for exec in &active {
+    let rows: Vec<ExecutionRow> = active.iter().map(|exec| {
         let id = exec["id"].as_str().unwrap_or("?");
         let status = exec["status"].as_str().unwrap_or("?");
-        let feature = exec["feature"].as_str().unwrap_or("");
+        let feature_val = exec["feature"].as_str().unwrap_or("");
         let phase = exec["currentPhase"].as_str().unwrap_or("?");
         let completed = exec["completedPhases"].as_u64().unwrap_or(0);
         let total = exec["totalPhases"].as_u64().unwrap_or(0);
 
-        let status_icon = if status == "running" {
-            "\u{25cf}".yellow()
-        } else {
-            "\u{25a0}".dimmed()
-        };
-
-        let label = if feature.is_empty() {
+        let label = if feature_val.is_empty() {
             id.to_string()
         } else {
-            format!("{} ({})", feature, &id[..8.min(id.len())])
+            format!("{} ({})", feature_val, &id[..8.min(id.len())])
         };
 
-        println!("  {} {} [{}] phase: {} ({}/{})",
-            status_icon, label, status, phase, completed, total);
-    }
+        ExecutionRow {
+            status: status_badge(status),
+            feature: label,
+            phase: phase.to_string(),
+            progress_col: progress(completed as u32, total as u32),
+        }
+    }).collect();
+
+    println!("{}", HexTable::new(&rows));
 
     Ok(())
 }
@@ -610,34 +681,30 @@ async fn show_execution_history() -> anyhow::Result<()> {
     );
     println!();
 
-    for exec in &executions {
+    let rows: Vec<HistoryRow> = executions.iter().map(|exec| {
         let id = exec["id"].as_str().unwrap_or("?");
         let status = exec["status"].as_str().unwrap_or("?");
-        let feature = exec["feature"].as_str().unwrap_or("");
+        let feature_val = exec["feature"].as_str().unwrap_or("");
         let started = exec["startedAt"].as_str().unwrap_or("?");
         let tasks_done = exec["completedTasks"].as_u64().unwrap_or(0);
         let tasks_total = exec["totalTasks"].as_u64().unwrap_or(0);
 
-        let status_icon = match status {
-            "completed" => "\u{2713}".green(),
-            "running" => "\u{25cf}".yellow(),
-            "paused" => "\u{25a0}".dimmed(),
-            "failed" => "\u{2717}".red(),
-            _ => "\u{25cb}".dimmed(),
-        };
-
-        let label = if feature.is_empty() {
+        let label = if feature_val.is_empty() {
             id[..8.min(id.len())].to_string()
         } else {
-            feature.to_string()
+            feature_val.to_string()
         };
 
-        println!(
-            "  {} {} [{}] tasks: {}/{} started: {}",
-            status_icon, label, status, tasks_done, tasks_total, started
-        );
-        println!("    id: {}", id.dimmed());
-    }
+        HistoryRow {
+            status: status_badge(status),
+            feature: label,
+            tasks: progress(tasks_done as u32, tasks_total as u32),
+            started: started.to_string(),
+            id: id.dimmed().to_string(),
+        }
+    }).collect();
+
+    println!("{}", HexTable::new(&rows));
 
     Ok(())
 }

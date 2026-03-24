@@ -35,6 +35,8 @@ rust-embed = "8"
 # TUI for `hex dev` (ADR-2603232005)
 ratatui = "0.29"
 crossterm = "0.28"
+# Structured CLI table output (ADR-2603241226)
+tabled = "0.17"
 
 [dev-dependencies]
 tempfile = "3"

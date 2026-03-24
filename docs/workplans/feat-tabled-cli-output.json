@@ -1,0 +1,71 @@
+{
+  "title": "Feature: Structured CLI Table Output via tabled",
+  "feature": "tabled-cli-output",
+  "language": "rust",
+  "status": "planned",
+  "adr": "ADR-2603241226",
+  "description": "Add tabled crate and shared fmt module. Migrate all manual println table formatting to derive-based structured tables with consistent hex branding.",
+  "priority": "medium",
+  "superseded_by": "",
+  "created_at": "2026-03-24T12:26:00.000000+00:00",
+  "phases": [
+    {
+      "name": "Foundation",
+      "description": "Add tabled dependency and create shared fmt module",
+      "steps": ["step-1"]
+    },
+    {
+      "name": "ADR Commands",
+      "description": "Migrate adr list/status/search/abandoned",
+      "steps": ["step-2"]
+    },
+    {
+      "name": "Agent + Task Commands",
+      "description": "Migrate agent list/info, task list, plan list",
+      "steps": ["step-3"]
+    },
+    {
+      "name": "Status + Misc Commands",
+      "description": "Migrate status, inference, test trends, git branches",
+      "steps": ["step-4"]
+    }
+  ],
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Add tabled dependency to hex-cli/Cargo.toml. Create hex-cli/src/fmt.rs with: HexTable wrapper that applies consistent styling, compact/default/status themes via tabled::settings, helper functions for colored status badges and truncation.",
+      "adapter": "secondary/fmt",
+      "tier": 0,
+      "dependencies": [],
+      "status": "pending",
+      "files": ["hex-cli/Cargo.toml", "hex-cli/src/fmt.rs", "hex-cli/src/main.rs"]
+    },
+    {
+      "id": "step-2",
+      "description": "Migrate hex-cli/src/commands/adr.rs: replace manual println tables in list/status/search/abandoned with #[derive(Tabled)] row structs rendered through HexTable.",
+      "adapter": "primary/cli",
+      "tier": 1,
+      "dependencies": ["step-1"],
+      "status": "pending",
+      "files": ["hex-cli/src/commands/adr.rs"]
+    },
+    {
+      "id": "step-3",
+      "description": "Migrate hex-cli/src/commands/agent.rs (agent list/info), plan.rs (plan list/status), and any task list output to use Tabled derives.",
+      "adapter": "primary/cli",
+      "tier": 1,
+      "dependencies": ["step-1"],
+      "status": "pending",
+      "files": ["hex-cli/src/commands/agent.rs", "hex-cli/src/commands/plan.rs"]
+    },
+    {
+      "id": "step-4",
+      "description": "Migrate hex-cli/src/commands/inference.rs, test.rs, stdb.rs, git_cmd.rs, and report.rs table output to use Tabled derives.",
+      "adapter": "primary/cli",
+      "tier": 1,
+      "dependencies": ["step-1"],
+      "status": "pending",
+      "files": ["hex-cli/src/commands/inference.rs", "hex-cli/src/commands/test.rs", "hex-cli/src/commands/stdb.rs", "hex-cli/src/commands/git_cmd.rs", "hex-cli/src/commands/report.rs"]
+    }
+  ]
+}
