@@ -287,12 +287,24 @@ impl TuiApp {
                     let result = match first_attempt {
                         Ok(r) => Ok(r),
                         Err(e) if Self::is_retryable(&e) => {
-                            eprintln!("         RETRY: {:#}", e);
+                            // If credits exhausted, fall back to free model
+                            let err_str = format!("{:#}", e);
+                            let free_model = if err_str.contains("insufficient credits") || err_str.contains("402") {
+                                let fm = crate::pipeline::model_selection::free_fallback_for(
+                                    crate::pipeline::model_selection::TaskType::Reasoning
+                                );
+                                eprintln!("         FALLBACK: credits exhausted, switching to free model: {}", fm);
+                                Some(fm.to_string())
+                            } else {
+                                eprintln!("         RETRY: {:#}", e);
+                                None
+                            };
                             std::thread::sleep(Duration::from_secs(5));
                             let adr_phase = AdrPhase::from_env();
+                            let retry_model = free_model.as_deref().or(model_override);
                             let retry_fut = adr_phase.execute(
                                 &self.session.feature_description,
-                                model_override,
+                                retry_model,
                                 provider_pref,
                             );
                             if let Ok(handle) = &rt {
@@ -388,13 +400,24 @@ impl TuiApp {
                     let result = match first_attempt {
                         Ok(r) => Ok(r),
                         Err(e) if Self::is_retryable(&e) => {
-                            eprintln!("         RETRY: {:#}", e);
+                            let err_str = format!("{:#}", e);
+                            let free_model = if err_str.contains("insufficient credits") || err_str.contains("402") {
+                                let fm = crate::pipeline::model_selection::free_fallback_for(
+                                    crate::pipeline::model_selection::TaskType::StructuredOutput
+                                );
+                                eprintln!("         FALLBACK: credits exhausted, switching to free model: {}", fm);
+                                Some(fm.to_string())
+                            } else {
+                                eprintln!("         RETRY: {:#}", e);
+                                None
+                            };
                             std::thread::sleep(Duration::from_secs(5));
                             let wp_phase = WorkplanPhase::from_env();
+                            let retry_model = free_model.as_deref().or(model_override);
                             let retry_fut = wp_phase.execute(
                                 &adr_path,
                                 &self.session.feature_description,
-                                model_override,
+                                retry_model,
                                 provider_pref,
                             );
                             if let Ok(handle) = &rt {
@@ -629,23 +652,34 @@ impl TuiApp {
                     let result = match first_attempt {
                         Ok(r) => Ok(r),
                         Err(e) if Self::is_retryable(&e) => {
-                            eprintln!("         RETRY: {:#}", e);
+                            let err_str = format!("{:#}", e);
+                            let free_model = if err_str.contains("insufficient credits") || err_str.contains("402") {
+                                let fm = crate::pipeline::model_selection::free_fallback_for(
+                                    crate::pipeline::model_selection::TaskType::CodeGeneration
+                                );
+                                eprintln!("         FALLBACK: credits exhausted, switching to free model: {}", fm);
+                                Some(fm.to_string())
+                            } else {
+                                eprintln!("         RETRY: {:#}", e);
+                                None
+                            };
                             std::thread::sleep(Duration::from_secs(5));
                             let retry_phase = CodePhase::from_env();
+                            let retry_model_ref = free_model.as_deref().or(model_override);
                             let retry_async = async {
                                 if use_tracked {
                                     retry_phase.execute_all_tracked(
                                         &workplan_data,
                                         &task_id_map,
                                         agent_id.as_deref(),
-                                        model_override,
+                                        retry_model_ref,
                                         provider_pref,
                                     ).await
                                 } else {
                                     retry_phase.execute_all(
                                         &workplan_data,
                                         swarm_id.as_deref(),
-                                        model_override,
+                                        retry_model_ref,
                                         provider_pref,
                                     ).await
                                 }
