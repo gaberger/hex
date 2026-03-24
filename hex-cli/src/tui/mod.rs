@@ -55,6 +55,20 @@ pub enum TaskStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Overlay mode for debug/log keyboard shortcuts
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayMode {
+    /// Normal view — task list or gate dialog.
+    None,
+    /// Show inference log (prompt/response history).
+    Log,
+    /// Show debug info (session state, phase details).
+    Debug,
+}
+
+// ---------------------------------------------------------------------------
 // TuiApp
 // ---------------------------------------------------------------------------
 
@@ -97,6 +111,11 @@ pub struct TuiApp {
     pub loaded_workplan: Option<WorkplanData>,
     /// Pending gate action to be processed on the next tick.
     pending_gate_action: Option<GateResult>,
+    /// Whether the current phase needs to be executed on the next tick.
+    /// Set to `true` on construction and after each gate resolution.
+    needs_phase_run: bool,
+    /// Overlay mode for debug/log views (keyboard shortcuts `d` and `l`).
+    overlay: OverlayMode,
 }
 
 impl TuiApp {
@@ -149,6 +168,8 @@ impl TuiApp {
             code_gate_index: 0,
             loaded_workplan: None,
             pending_gate_action: None,
+            needs_phase_run: true, // start pipeline on first tick
+            overlay: OverlayMode::None,
         }
     }
 
@@ -287,31 +308,54 @@ impl TuiApp {
                     let result = match first_attempt {
                         Ok(r) => Ok(r),
                         Err(e) if Self::is_retryable(&e) => {
-                            // If credits exhausted, fall back to free model
                             let err_str = format!("{:#}", e);
-                            let free_model = if err_str.contains("insufficient credits") || err_str.contains("402") {
-                                let fm = crate::pipeline::model_selection::free_fallback_for(
+                            let is_credits = err_str.contains("insufficient credits") || err_str.contains("402");
+                            if is_credits {
+                                // Iterate through fallback chain
+                                let chain = crate::pipeline::model_selection::fallback_chain_for(
                                     crate::pipeline::model_selection::TaskType::Reasoning
                                 );
-                                eprintln!("         FALLBACK: credits exhausted, switching to free model: {}", fm);
-                                Some(fm.to_string())
+                                let mut last_result: Result<_, anyhow::Error> = Err(e);
+                                for (i, fallback_model) in chain.iter().skip(1).enumerate() {
+                                    let backoff = if fallback_model.contains(":free") || *fallback_model == "openrouter/free" { 15 } else { 5 };
+                                    eprintln!("         FALLBACK [{}]: trying {} ({}s backoff)", i + 1, fallback_model, backoff);
+                                    std::thread::sleep(Duration::from_secs(backoff));
+                                    let adr_phase = AdrPhase::from_env();
+                                    let retry_fut = adr_phase.execute(
+                                        &self.session.feature_description,
+                                        Some(*fallback_model),
+                                        provider_pref,
+                                    );
+                                    let attempt = if let Ok(handle) = &rt {
+                                        tokio::task::block_in_place(|| handle.block_on(retry_fut))
+                                    } else {
+                                        let tmp_rt = tokio::runtime::Runtime::new()?;
+                                        tmp_rt.block_on(retry_fut)
+                                    };
+                                    match attempt {
+                                        Ok(r) => { last_result = Ok(r); break; }
+                                        Err(e) => { eprintln!("         FALLBACK [{}]: failed — {:#}", i + 1, e); last_result = Err(e); }
+                                    }
+                                }
+                                if last_result.is_err() {
+                                    eprintln!("         ALL MODELS EXHAUSTED: fallback chain depleted for ADR phase");
+                                }
+                                last_result
                             } else {
                                 eprintln!("         RETRY: {:#}", e);
-                                None
-                            };
-                            std::thread::sleep(Duration::from_secs(5));
-                            let adr_phase = AdrPhase::from_env();
-                            let retry_model = free_model.as_deref().or(model_override);
-                            let retry_fut = adr_phase.execute(
-                                &self.session.feature_description,
-                                retry_model,
-                                provider_pref,
-                            );
-                            if let Ok(handle) = &rt {
-                                tokio::task::block_in_place(|| handle.block_on(retry_fut))
-                            } else {
-                                let tmp_rt = tokio::runtime::Runtime::new()?;
-                                tmp_rt.block_on(retry_fut)
+                                std::thread::sleep(Duration::from_secs(5));
+                                let adr_phase = AdrPhase::from_env();
+                                let retry_fut = adr_phase.execute(
+                                    &self.session.feature_description,
+                                    model_override,
+                                    provider_pref,
+                                );
+                                if let Ok(handle) = &rt {
+                                    tokio::task::block_in_place(|| handle.block_on(retry_fut))
+                                } else {
+                                    let tmp_rt = tokio::runtime::Runtime::new()?;
+                                    tmp_rt.block_on(retry_fut)
+                                }
                             }
                         }
                         Err(e) => Err(e),
@@ -401,30 +445,54 @@ impl TuiApp {
                         Ok(r) => Ok(r),
                         Err(e) if Self::is_retryable(&e) => {
                             let err_str = format!("{:#}", e);
-                            let free_model = if err_str.contains("insufficient credits") || err_str.contains("402") {
-                                let fm = crate::pipeline::model_selection::free_fallback_for(
+                            let is_credits = err_str.contains("insufficient credits") || err_str.contains("402");
+                            if is_credits {
+                                let chain = crate::pipeline::model_selection::fallback_chain_for(
                                     crate::pipeline::model_selection::TaskType::StructuredOutput
                                 );
-                                eprintln!("         FALLBACK: credits exhausted, switching to free model: {}", fm);
-                                Some(fm.to_string())
+                                let mut last_result: Result<_, anyhow::Error> = Err(e);
+                                for (i, fallback_model) in chain.iter().skip(1).enumerate() {
+                                    let backoff = if fallback_model.contains(":free") || *fallback_model == "openrouter/free" { 15 } else { 5 };
+                                    eprintln!("         FALLBACK [{}]: trying {} ({}s backoff)", i + 1, fallback_model, backoff);
+                                    std::thread::sleep(Duration::from_secs(backoff));
+                                    let wp_phase = WorkplanPhase::from_env();
+                                    let retry_fut = wp_phase.execute(
+                                        &adr_path,
+                                        &self.session.feature_description,
+                                        Some(*fallback_model),
+                                        provider_pref,
+                                    );
+                                    let attempt = if let Ok(handle) = &rt {
+                                        tokio::task::block_in_place(|| handle.block_on(retry_fut))
+                                    } else {
+                                        let tmp_rt = tokio::runtime::Runtime::new()?;
+                                        tmp_rt.block_on(retry_fut)
+                                    };
+                                    match attempt {
+                                        Ok(r) => { last_result = Ok(r); break; }
+                                        Err(e) => { eprintln!("         FALLBACK [{}]: failed — {:#}", i + 1, e); last_result = Err(e); }
+                                    }
+                                }
+                                if last_result.is_err() {
+                                    eprintln!("         ALL MODELS EXHAUSTED: fallback chain depleted for workplan phase");
+                                }
+                                last_result
                             } else {
                                 eprintln!("         RETRY: {:#}", e);
-                                None
-                            };
-                            std::thread::sleep(Duration::from_secs(5));
-                            let wp_phase = WorkplanPhase::from_env();
-                            let retry_model = free_model.as_deref().or(model_override);
-                            let retry_fut = wp_phase.execute(
-                                &adr_path,
-                                &self.session.feature_description,
-                                retry_model,
-                                provider_pref,
-                            );
-                            if let Ok(handle) = &rt {
-                                tokio::task::block_in_place(|| handle.block_on(retry_fut))
-                            } else {
-                                let tmp_rt = tokio::runtime::Runtime::new()?;
-                                tmp_rt.block_on(retry_fut)
+                                std::thread::sleep(Duration::from_secs(5));
+                                let wp_phase = WorkplanPhase::from_env();
+                                let retry_fut = wp_phase.execute(
+                                    &adr_path,
+                                    &self.session.feature_description,
+                                    model_override,
+                                    provider_pref,
+                                );
+                                if let Ok(handle) = &rt {
+                                    tokio::task::block_in_place(|| handle.block_on(retry_fut))
+                                } else {
+                                    let tmp_rt = tokio::runtime::Runtime::new()?;
+                                    tmp_rt.block_on(retry_fut)
+                                }
                             }
                         }
                         Err(e) => Err(e),
@@ -608,22 +676,31 @@ impl TuiApp {
                         );
                     }
 
+                    // Resolve output_dir for scaffold generation
+                    let scaffold_dir = if self.config.output_dir.is_empty() || self.config.output_dir == "." {
+                        None
+                    } else {
+                        Some(self.config.output_dir.as_str())
+                    };
+
                     let first_attempt = if let Ok(handle) = &rt {
                         tokio::task::block_in_place(|| handle.block_on(async {
                             if use_tracked {
-                                code_phase.execute_all_tracked(
+                                code_phase.execute_all_tracked_in(
                                     &workplan_data,
                                     &task_id_map,
                                     agent_id.as_deref(),
                                     model_override,
                                     provider_pref,
+                                    scaffold_dir,
                                 ).await
                             } else {
-                                code_phase.execute_all(
+                                code_phase.execute_all_in(
                                     &workplan_data,
                                     swarm_id.as_deref(),
                                     model_override,
                                     provider_pref,
+                                    scaffold_dir,
                                 ).await
                             }
                         }))
@@ -631,19 +708,21 @@ impl TuiApp {
                         let tmp_rt = tokio::runtime::Runtime::new()?;
                         tmp_rt.block_on(async {
                             if use_tracked {
-                                code_phase.execute_all_tracked(
+                                code_phase.execute_all_tracked_in(
                                     &workplan_data,
                                     &task_id_map,
                                     agent_id.as_deref(),
                                     model_override,
                                     provider_pref,
+                                    scaffold_dir,
                                 ).await
                             } else {
-                                code_phase.execute_all(
+                                code_phase.execute_all_in(
                                     &workplan_data,
                                     swarm_id.as_deref(),
                                     model_override,
                                     provider_pref,
+                                    scaffold_dir,
                                 ).await
                             }
                         })
@@ -653,42 +732,79 @@ impl TuiApp {
                         Ok(r) => Ok(r),
                         Err(e) if Self::is_retryable(&e) => {
                             let err_str = format!("{:#}", e);
-                            let free_model = if err_str.contains("insufficient credits") || err_str.contains("402") {
-                                let fm = crate::pipeline::model_selection::free_fallback_for(
+                            let is_credits = err_str.contains("insufficient credits") || err_str.contains("402");
+                            if is_credits {
+                                let chain = crate::pipeline::model_selection::fallback_chain_for(
                                     crate::pipeline::model_selection::TaskType::CodeGeneration
                                 );
-                                eprintln!("         FALLBACK: credits exhausted, switching to free model: {}", fm);
-                                Some(fm.to_string())
+                                let mut last_result: Result<_, anyhow::Error> = Err(e);
+                                for (i, fallback_model) in chain.iter().skip(1).enumerate() {
+                                    let backoff = if fallback_model.contains(":free") || *fallback_model == "openrouter/free" { 15 } else { 5 };
+                                    eprintln!("         FALLBACK [{}]: trying {} ({}s backoff)", i + 1, fallback_model, backoff);
+                                    std::thread::sleep(Duration::from_secs(backoff));
+                                    let retry_phase = CodePhase::from_env();
+                                    let fallback_ref: Option<&str> = Some(*fallback_model);
+                                    let retry_async = async {
+                                        if use_tracked {
+                                            retry_phase.execute_all_tracked(
+                                                &workplan_data,
+                                                &task_id_map,
+                                                agent_id.as_deref(),
+                                                fallback_ref,
+                                                provider_pref,
+                                            ).await
+                                        } else {
+                                            retry_phase.execute_all(
+                                                &workplan_data,
+                                                swarm_id.as_deref(),
+                                                fallback_ref,
+                                                provider_pref,
+                                            ).await
+                                        }
+                                    };
+                                    let attempt = if let Ok(handle) = &rt {
+                                        tokio::task::block_in_place(|| handle.block_on(retry_async))
+                                    } else {
+                                        let tmp_rt = tokio::runtime::Runtime::new()?;
+                                        tmp_rt.block_on(retry_async)
+                                    };
+                                    match attempt {
+                                        Ok(r) => { last_result = Ok(r); break; }
+                                        Err(e) => { eprintln!("         FALLBACK [{}]: failed — {:#}", i + 1, e); last_result = Err(e); }
+                                    }
+                                }
+                                if last_result.is_err() {
+                                    eprintln!("         ALL MODELS EXHAUSTED: fallback chain depleted for code phase");
+                                }
+                                last_result
                             } else {
                                 eprintln!("         RETRY: {:#}", e);
-                                None
-                            };
-                            std::thread::sleep(Duration::from_secs(5));
-                            let retry_phase = CodePhase::from_env();
-                            let retry_model_ref = free_model.as_deref().or(model_override);
-                            let retry_async = async {
-                                if use_tracked {
-                                    retry_phase.execute_all_tracked(
-                                        &workplan_data,
-                                        &task_id_map,
-                                        agent_id.as_deref(),
-                                        retry_model_ref,
-                                        provider_pref,
-                                    ).await
+                                std::thread::sleep(Duration::from_secs(5));
+                                let retry_phase = CodePhase::from_env();
+                                let retry_async = async {
+                                    if use_tracked {
+                                        retry_phase.execute_all_tracked(
+                                            &workplan_data,
+                                            &task_id_map,
+                                            agent_id.as_deref(),
+                                            model_override,
+                                            provider_pref,
+                                        ).await
+                                    } else {
+                                        retry_phase.execute_all(
+                                            &workplan_data,
+                                            swarm_id.as_deref(),
+                                            model_override,
+                                            provider_pref,
+                                        ).await
+                                    }
+                                };
+                                if let Ok(handle) = &rt {
+                                    tokio::task::block_in_place(|| handle.block_on(retry_async))
                                 } else {
-                                    retry_phase.execute_all(
-                                        &workplan_data,
-                                        swarm_id.as_deref(),
-                                        retry_model_ref,
-                                        provider_pref,
-                                    ).await
+                                    let tmp_rt = tokio::runtime::Runtime::new()?;
+                                    tmp_rt.block_on(retry_async)
                                 }
-                            };
-                            if let Ok(handle) = &rt {
-                                tokio::task::block_in_place(|| handle.block_on(retry_async))
-                            } else {
-                                let tmp_rt = tokio::runtime::Runtime::new()?;
-                                tmp_rt.block_on(retry_async)
                             }
                         }
                         Err(e) => Err(e),
@@ -914,9 +1030,61 @@ impl TuiApp {
         // 1. Pipeline bar
         pipeline_bar::render(frame, chunks[0], &self.session);
 
-        // 2. Task list (or gate dialog)
+        // 2. Task list, gate dialog, or overlay
         if let Some(ref gate) = self.gate {
             gate::render(frame, chunks[1], gate);
+        } else if self.overlay == OverlayMode::Debug {
+            let debug_info = format!(
+                "Session: {}\nPhase: {}\nStatus: {}\nSwarm: {}\n\
+                 ADR: {}\nWorkplan: {}\nCompleted steps: {}\n\
+                 Cost: ${:.4} | Tokens: {} | Budget: {}\n\n[d] dismiss",
+                self.session.id,
+                self.session.current_phase,
+                self.session.status,
+                self.session.swarm_id.as_deref().unwrap_or("none"),
+                self.session.adr_path.as_deref().unwrap_or("none"),
+                self.session.workplan_path.as_deref().unwrap_or("none"),
+                self.session.completed_steps.len(),
+                self.budget.total_cost_usd,
+                self.budget.total_tokens,
+                self.budget.budget_limit.map(|l| format!("${:.2}", l)).unwrap_or_else(|| "unlimited".into()),
+            );
+            let block = ratatui::widgets::Block::default()
+                .title(" Debug ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Magenta));
+            let paragraph = ratatui::widgets::Paragraph::new(debug_info)
+                .block(block)
+                .style(Style::default().fg(Color::White));
+            frame.render_widget(paragraph, chunks[1]);
+        } else if self.overlay == OverlayMode::Log {
+            let log_text = if self.session.tool_calls.is_empty() {
+                "No inference calls yet.\n\n[l] dismiss".to_string()
+            } else {
+                let mut text = String::new();
+                for tc in self.session.tool_calls.iter().rev().take(20) {
+                    text.push_str(&format!(
+                        "[{}] {} model={} tokens={} cost=${} {}\n",
+                        tc.phase,
+                        tc.status,
+                        tc.model.as_deref().unwrap_or("-"),
+                        tc.tokens.unwrap_or(0),
+                        tc.cost_usd.map(|c| format!("{:.4}", c)).unwrap_or_else(|| "-".into()),
+                        tc.detail.as_deref().unwrap_or(""),
+                    ));
+                }
+                text.push_str("\n[l] dismiss");
+                text
+            };
+            let block = ratatui::widgets::Block::default()
+                .title(" Inference Log ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue));
+            let paragraph = ratatui::widgets::Paragraph::new(log_text)
+                .block(block)
+                .style(Style::default().fg(Color::White))
+                .wrap(ratatui::widgets::Wrap { trim: false });
+            frame.render_widget(paragraph, chunks[1]);
         } else {
             task_list::render(frame, chunks[1], &self.tasks, self.task_scroll);
         }
@@ -973,13 +1141,45 @@ impl TuiApp {
                 }
             }
             KeyCode::Char('m') => {
-                // Cycle model (stub — would show model picker)
+                // Model picker — not available at gate, toggle overlay otherwise
+                if self.gate.is_none() {
+                    // Show available model info as a gate overlay
+                    let model_info = format!(
+                        "Current model: {}\nProvider: {}\n\n\
+                         Override with: hex dev start <desc> --model <model-id>\n\
+                         Examples:\n  deepseek/deepseek-r1\n  meta-llama/llama-4-maverick\n  \
+                         qwen/qwen3-coder:free\n\nPress any key to dismiss.",
+                        self.model, self.provider,
+                    );
+                    self.gate = Some(GateDialog {
+                        title: "Model Info".into(),
+                        content: model_info,
+                    });
+                }
             }
             KeyCode::Char('d') => {
-                // Toggle debug view (stub)
+                // Toggle debug overlay — show session state
+                if self.overlay == OverlayMode::Debug {
+                    self.overlay = OverlayMode::None;
+                } else {
+                    self.overlay = OverlayMode::Debug;
+                }
             }
             KeyCode::Char('l') => {
-                // Toggle log view (stub)
+                // Toggle log overlay — show inference log
+                if self.overlay == OverlayMode::Log {
+                    self.overlay = OverlayMode::None;
+                } else {
+                    self.overlay = OverlayMode::Log;
+                }
+            }
+            KeyCode::Esc => {
+                // Dismiss overlays and info gates
+                if self.overlay != OverlayMode::None {
+                    self.overlay = OverlayMode::None;
+                } else if self.gate.as_ref().map(|g| g.title == "Model Info").unwrap_or(false) {
+                    self.gate = None;
+                }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.task_scroll > 0 {
@@ -991,14 +1191,298 @@ impl TuiApp {
                     self.task_scroll += 1;
                 }
             }
-            _ => {}
+            _ => {
+                // Dismiss info-only gates (Model Info) on any key
+                if self.gate.as_ref().map(|g| g.title == "Model Info").unwrap_or(false) {
+                    self.gate = None;
+                }
+            }
         }
     }
 
     // -- tick ---------------------------------------------------------------
 
     fn tick(&mut self) {
-        // Future: poll pipeline progress, update task statuses, etc.
+        // 1. Process any pending gate action from a keypress
+        if let Some(action) = self.pending_gate_action.take() {
+            let advanced = self.process_gate_action(action.clone());
+            // After any gate action (approve, retry, skip), re-trigger phase run.
+            // For Retry, the phase method cleared its result so it re-runs.
+            self.needs_phase_run = true;
+            // If we advanced and have more code steps to review, show the next gate
+            if advanced
+                && self.session.current_phase == PipelinePhase::Code
+                && self.code_gate_index < self.code_results.len()
+            {
+                self.show_code_step_gate(self.code_gate_index);
+                self.needs_phase_run = false; // wait for gate resolution
+            }
+            return;
+        }
+
+        // 2. Don't advance if gate is showing, paused, or quitting
+        if self.gate.is_some() || self.paused || self.should_quit {
+            return;
+        }
+
+        // 3. Don't re-run if not needed
+        if !self.needs_phase_run {
+            return;
+        }
+        self.needs_phase_run = false;
+
+        // 4. Skip phases the mode says to skip
+        if !self.config.mode.should_run_phase(self.session.current_phase) {
+            info!(phase = %self.session.current_phase, "skipping phase per mode");
+            self.advance_to_next_phase();
+            self.needs_phase_run = true;
+            return;
+        }
+
+        // 5. Run the current phase (blocks during inference call)
+        let handle = match tokio::runtime::Handle::try_current() {
+            Ok(h) => h,
+            Err(_) => {
+                error!("no tokio runtime — cannot run phase");
+                return;
+            }
+        };
+
+        match self.session.current_phase {
+            PipelinePhase::Adr => {
+                let result =
+                    tokio::task::block_in_place(|| handle.block_on(self.run_adr_phase()));
+                if let Err(e) = result {
+                    error!(error = %e, "ADR phase error");
+                }
+            }
+            PipelinePhase::Workplan => {
+                let result =
+                    tokio::task::block_in_place(|| handle.block_on(self.run_workplan_phase()));
+                if let Err(e) = result {
+                    error!(error = %e, "Workplan phase error");
+                }
+            }
+            PipelinePhase::Swarm => {
+                let result =
+                    tokio::task::block_in_place(|| handle.block_on(self.run_swarm_phase()));
+                if let Err(e) = result {
+                    error!(error = %e, "Swarm phase error");
+                }
+                // Swarm has no gate — auto-advance to Code
+                if self.gate.is_none() {
+                    self.needs_phase_run = true;
+                }
+            }
+            PipelinePhase::Code => {
+                let result =
+                    tokio::task::block_in_place(|| handle.block_on(self.run_code_phase()));
+                if let Err(e) = result {
+                    error!(error = %e, "Code phase error");
+                }
+                // Show first step gate (run_code_phase populates code_results)
+                if !self.code_results.is_empty() && self.gate.is_none() {
+                    self.code_gate_index = 0;
+                    self.show_code_step_gate(0);
+                }
+            }
+            PipelinePhase::Validate => {
+                let result =
+                    tokio::task::block_in_place(|| handle.block_on(self.run_validate_phase()));
+                if let Err(e) = result {
+                    error!(error = %e, "Validate phase error");
+                }
+            }
+            PipelinePhase::Commit => {
+                self.run_commit_phase();
+            }
+        }
+
+        // 6. Auto-approve if gate was suppressed (Quick mode skips some gates)
+        if self.gate.is_none() && !self.should_quit {
+            self.auto_approve_if_needed();
+        }
+    }
+
+    /// Dispatch a gate action to the handler for the current phase.
+    /// Returns `true` if the phase advanced.
+    fn process_gate_action(&mut self, action: GateResult) -> bool {
+        match self.session.current_phase {
+            PipelinePhase::Adr => self.handle_adr_gate(action),
+            PipelinePhase::Workplan => self.handle_workplan_gate(action),
+            PipelinePhase::Code => self.handle_code_gate(action),
+            PipelinePhase::Validate => self.handle_validate_gate(action),
+            PipelinePhase::Commit => self.handle_commit_gate(action),
+            _ => false,
+        }
+    }
+
+    /// Advance to the next pipeline phase (used when skipping).
+    fn advance_to_next_phase(&mut self) {
+        let next = match self.session.current_phase {
+            PipelinePhase::Adr => PipelinePhase::Workplan,
+            PipelinePhase::Workplan => PipelinePhase::Swarm,
+            PipelinePhase::Swarm => PipelinePhase::Code,
+            PipelinePhase::Code => PipelinePhase::Validate,
+            PipelinePhase::Validate => PipelinePhase::Commit,
+            PipelinePhase::Commit => {
+                self.session.status = SessionStatus::Completed;
+                self.should_quit = true;
+                return;
+            }
+        };
+        let _ = self.session.update_phase(next);
+    }
+
+    /// Auto-approve the current phase when its gate was suppressed
+    /// (e.g. Quick mode skips ADR/Workplan gates).
+    fn auto_approve_if_needed(&mut self) {
+        match self.session.current_phase {
+            PipelinePhase::Adr if self.adr_result.is_some() => {
+                self.handle_adr_gate(GateResult::Approved);
+                self.needs_phase_run = true;
+            }
+            PipelinePhase::Workplan if self.workplan_result.is_some() => {
+                self.handle_workplan_gate(GateResult::Approved);
+                self.needs_phase_run = true;
+            }
+            PipelinePhase::Code if !self.code_results.is_empty() => {
+                // Auto-approve all code steps
+                while self.code_gate_index < self.code_results.len() {
+                    self.handle_code_gate(GateResult::Approved);
+                }
+                self.needs_phase_run = true;
+            }
+            PipelinePhase::Validate if self.validate_result.is_some() => {
+                self.handle_validate_gate(GateResult::Approved);
+                self.needs_phase_run = true;
+            }
+            _ => {}
+        }
+    }
+
+    /// Show a gate dialog for a specific code step by index.
+    fn show_code_step_gate(&mut self, index: usize) {
+        if index >= self.code_results.len() {
+            return;
+        }
+        let result = &self.code_results[index];
+        let step_desc = self
+            .loaded_workplan
+            .as_ref()
+            .and_then(|wp| wp.steps.iter().find(|s| s.id == result.step_id))
+            .map(|s| s.description.as_str())
+            .unwrap_or("");
+
+        let file_label = result.file_path.as_deref().unwrap_or("(unspecified)");
+        let preview = if result.content.len() > 2000 {
+            format!(
+                "{}...\n\n[truncated — {} total bytes]",
+                &result.content[..2000],
+                result.content.len()
+            )
+        } else {
+            result.content.clone()
+        };
+        let gate_content = format!(
+            "Step {}/{}: {} — {}\nFile: {}\nModel: {} | Tokens: {} | Cost: ${:.4} | {:.1}s\n\n{}",
+            index + 1,
+            self.code_results.len(),
+            result.step_id,
+            step_desc,
+            file_label,
+            result.model_used,
+            result.tokens,
+            result.cost_usd,
+            result.duration_ms as f64 / 1000.0,
+            preview,
+        );
+        self.gate = Some(GateDialog {
+            title: format!("Code Review ({}/{})", index + 1, self.code_results.len()),
+            content: gate_content,
+        });
+    }
+
+    // -- Commit phase integration -----------------------------------------------
+
+    /// Run the commit phase — show a summary of all generated files and diffs.
+    fn run_commit_phase(&mut self) {
+        self.upsert_task(TaskItem {
+            id: "commit-review".into(),
+            description: "Review generated files for commit".into(),
+            status: TaskStatus::Active,
+            duration_secs: None,
+        });
+
+        // Build a summary of what was generated
+        let mut summary = String::new();
+        summary.push_str(&format!("Feature: {}\n", self.session.feature_description));
+        summary.push_str(&format!(
+            "Total cost: ${:.4} | Tokens: {}\n\n",
+            self.budget.total_cost_usd, self.budget.total_tokens,
+        ));
+
+        if let Some(ref adr_path) = self.session.adr_path {
+            summary.push_str(&format!("  ADR:      {}\n", adr_path));
+        }
+        if let Some(ref wp_path) = self.session.workplan_path {
+            summary.push_str(&format!("  Workplan: {}\n", wp_path));
+        }
+        if !self.session.completed_steps.is_empty() {
+            summary.push_str(&format!(
+                "  Code:     {} step(s) completed\n",
+                self.session.completed_steps.len()
+            ));
+            for step in &self.session.completed_steps {
+                summary.push_str(&format!("            - {}\n", step));
+            }
+        }
+
+        summary.push_str("\n[a] mark complete  [e] open shell  [q] quit (session saved)");
+
+        self.show_gate("Commit Review".into(), summary);
+
+        self.upsert_task(TaskItem {
+            id: "commit-review".into(),
+            description: "Review generated files for commit".into(),
+            status: TaskStatus::Completed,
+            duration_secs: None,
+        });
+    }
+
+    /// Process a gate action for the Commit phase.
+    fn handle_commit_gate(&mut self, action: GateResult) -> bool {
+        match action {
+            GateResult::Approved => {
+                info!("pipeline complete — session marked as completed");
+                self.session.status = SessionStatus::Completed;
+                self.should_quit = true;
+                true
+            }
+            GateResult::Edited(_) => {
+                // Drop to shell so the user can inspect files, run git, etc.
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
+                info!(shell = %shell, "opening shell for manual review");
+
+                let _ = disable_raw_mode();
+                let _ = io::stdout().execute(LeaveAlternateScreen);
+
+                println!("Dropping to shell — type 'exit' to return to hex dev.");
+                let _ = std::process::Command::new(&shell).status();
+
+                let _ = io::stdout().execute(EnterAlternateScreen);
+                let _ = enable_raw_mode();
+
+                // Re-show the commit gate
+                self.run_commit_phase();
+                false
+            }
+            GateResult::Skip | GateResult::Retry => {
+                self.session.status = SessionStatus::Completed;
+                self.should_quit = true;
+                true
+            }
+        }
     }
 
     // -- public helpers for pipeline phases to call -------------------------

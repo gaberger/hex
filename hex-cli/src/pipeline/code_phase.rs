@@ -552,6 +552,37 @@ impl CodePhase {
         model_override: Option<&str>,
         provider_pref: Option<&str>,
     ) -> Result<Vec<CodeStepResult>> {
+        self.execute_all_tracked_in(workplan, task_id_map, agent_id, model_override, provider_pref, None).await
+    }
+
+    /// Execute code generation with full HexFlo task tracking, optionally
+    /// scaffolding the `output_dir` first.
+    ///
+    /// If `output_dir` is `Some`, a project scaffold is generated (when no
+    /// `package.json` / `Cargo.toml` exists yet) before any code steps run.
+    pub async fn execute_all_tracked_in(
+        &self,
+        workplan: &WorkplanData,
+        task_id_map: &HashMap<String, String>,
+        agent_id: Option<&str>,
+        model_override: Option<&str>,
+        provider_pref: Option<&str>,
+        output_dir: Option<&str>,
+    ) -> Result<Vec<CodeStepResult>> {
+        // ── Pre-step scaffold ──────────────────────────────────────────
+        if let Some(dir) = output_dir {
+            let language = self.infer_workplan_language(workplan);
+            match generate_scaffold(dir, &language, &workplan.title) {
+                Ok(files) if !files.is_empty() => {
+                    info!(count = files.len(), dir = %dir, "scaffold generated before tracked code phase");
+                }
+                Ok(_) => { /* already scaffolded or unknown language */ }
+                Err(e) => {
+                    warn!(error = %e, "scaffold generation failed (non-fatal, continuing)");
+                }
+            }
+        }
+
         let mut results = Vec::new();
 
         let mut sorted_steps = workplan.steps.clone();
@@ -723,32 +754,80 @@ impl CodePhase {
     /// Infer the target file path from a workplan step.
     ///
     /// Uses the step's layer/adapter/port fields to construct a plausible path.
+    /// Falls back to tier-based inference from the step description when layer
+    /// fields are missing.
     fn infer_target_file(&self, step: &WorkplanStep) -> Option<String> {
         // If the step description mentions a specific file path, try to extract it
         if let Some(path) = extract_file_path_from_description(&step.description) {
             return Some(path);
         }
 
-        // Otherwise infer from layer + adapter fields
-        let layer = step.layer.as_deref()?;
-        let adapter = step.adapter.as_deref();
+        // Try layer + adapter fields first
+        if let Some(layer) = step.layer.as_deref() {
+            let adapter = step.adapter.as_deref();
+            let result = match layer {
+                "domain" => Some(format!("src/core/domain/{}.ts", step.id)),
+                "ports" => {
+                    let port_name = step.port.as_deref().unwrap_or(&step.id);
+                    Some(format!("src/core/ports/{}.ts", port_name))
+                }
+                "usecases" => Some(format!("src/core/usecases/{}.ts", step.id)),
+                "adapters/primary" => {
+                    let name = adapter.unwrap_or(&step.id);
+                    Some(format!("src/adapters/primary/{}.ts", name))
+                }
+                "adapters/secondary" => {
+                    let name = adapter.unwrap_or(&step.id);
+                    Some(format!("src/adapters/secondary/{}.ts", name))
+                }
+                "integration" => Some(format!("tests/integration/{}.test.ts", step.id)),
+                _ => None,
+            };
+            if result.is_some() {
+                return result;
+            }
+        }
 
-        match layer {
-            "domain" => Some(format!("src/core/domain/{}.ts", step.id)),
-            "ports" => {
-                let port_name = step.port.as_deref().unwrap_or(&step.id);
-                Some(format!("src/core/ports/{}.ts", port_name))
+        // Fallback: infer from tier + description keywords
+        let slug = slug_from_description(&step.description);
+        let ext = "ts"; // default; language-aware callers can override
+        let desc_lower = step.description.to_lowercase();
+
+        match step.tier {
+            0 => {
+                // Tier 0: domain or ports
+                if desc_lower.contains("port")
+                    || desc_lower.contains("interface")
+                    || desc_lower.contains("contract")
+                {
+                    Some(format!("src/core/ports/{}.{}", slug, ext))
+                } else {
+                    // entity, value-object, domain logic
+                    Some(format!("src/core/domain/{}.{}", slug, ext))
+                }
             }
-            "usecases" => Some(format!("src/core/usecases/{}.ts", step.id)),
-            "adapters/primary" => {
-                let name = adapter.unwrap_or(&step.id);
-                Some(format!("src/adapters/primary/{}.ts", name))
+            1 => {
+                // Tier 1: secondary adapters
+                let name = step.adapter.as_deref().map(|a| a.to_string()).unwrap_or_else(|| slug.clone());
+                Some(format!("src/adapters/secondary/{}.{}", name, ext))
             }
-            "adapters/secondary" => {
-                let name = adapter.unwrap_or(&step.id);
-                Some(format!("src/adapters/secondary/{}.ts", name))
+            2 => {
+                // Tier 2: primary adapters
+                let name = step.adapter.as_deref().map(|a| a.to_string()).unwrap_or_else(|| slug.clone());
+                Some(format!("src/adapters/primary/{}.{}", name, ext))
             }
-            "integration" => Some(format!("tests/integration/{}.test.ts", step.id)),
+            3 => {
+                // Tier 3: use cases
+                Some(format!("src/core/usecases/{}.{}", slug, ext))
+            }
+            4 => {
+                // Tier 4: composition root
+                Some(format!("src/composition-root.{}", ext))
+            }
+            5 => {
+                // Tier 5: integration tests
+                Some(format!("tests/integration/{}.test.{}", slug, ext))
+            }
             _ => None,
         }
     }
@@ -966,6 +1045,32 @@ fn extract_code(content: &str, language: &str) -> String {
 
     // No fences found — return as-is (the prompt asks for raw code)
     trimmed.to_string()
+}
+
+/// Extract a kebab-case slug from a step description.
+///
+/// Takes the first 2-3 meaningful words (skipping common verbs/articles) and
+/// joins them with hyphens. Falls back to "step" if nothing useful is found.
+fn slug_from_description(description: &str) -> String {
+    const STOP_WORDS: &[&str] = &[
+        "a", "an", "the", "and", "or", "for", "to", "in", "of", "with",
+        "create", "implement", "add", "build", "write", "define", "set", "up",
+        "setup", "make", "generate", "update", "use", "using", "via", "from",
+    ];
+
+    let words: Vec<String> = description
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase())
+        .filter(|w| !STOP_WORDS.contains(&w.as_str()) && w.len() > 1)
+        .take(3)
+        .collect();
+
+    if words.is_empty() {
+        "step".to_string()
+    } else {
+        words.join("-")
+    }
 }
 
 /// Try to extract a file path from a step description.
@@ -1187,5 +1292,39 @@ mod tests {
         let files = generate_scaffold(dir_str, "typescript", "nested test").unwrap();
         assert_eq!(files.len(), 2);
         assert!(dir.join("package.json").exists());
+    }
+
+    // ── slug_from_description tests ──────────────────────────────────
+
+    #[test]
+    fn slug_basic() {
+        assert_eq!(slug_from_description("Implement user authentication service"), "user-authentication-service");
+    }
+
+    #[test]
+    fn slug_skips_stop_words() {
+        assert_eq!(slug_from_description("Create the database port interface"), "database-port-interface");
+    }
+
+    #[test]
+    fn slug_empty_description() {
+        assert_eq!(slug_from_description(""), "step");
+    }
+
+    #[test]
+    fn slug_only_stop_words() {
+        assert_eq!(slug_from_description("add the"), "step");
+    }
+
+    #[test]
+    fn slug_special_chars() {
+        assert_eq!(slug_from_description("Build HTTP/REST adapter (primary)"), "http-rest-adapter");
+    }
+
+    #[test]
+    fn slug_limits_to_three_words() {
+        let slug = slug_from_description("Implement complex multi-layer domain entity validation logic");
+        let word_count = slug.split('-').count();
+        assert!(word_count <= 3, "slug should have at most 3 words, got: {}", slug);
     }
 }

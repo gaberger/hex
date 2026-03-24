@@ -533,9 +533,9 @@ impl ValidatePhase {
 
         let grade = match score {
             90..=100 => 'A',
-            75..=89 => 'B',
-            60..=74 => 'C',
-            40..=59 => 'D',
+            80..=89 => 'B',
+            70..=79 => 'C',
+            60..=69 => 'D',
             _ => 'F',
         };
 
@@ -776,9 +776,9 @@ impl ValidatePhase {
 
         let grade = match score {
             90..=100 => 'A',
-            75..=89 => 'B',
-            60..=74 => 'C',
-            40..=59 => 'D',
+            80..=89 => 'B',
+            70..=79 => 'C',
+            60..=69 => 'D',
             _ => 'F',
         };
 
@@ -943,10 +943,11 @@ impl ValidatePhase {
             .await
             .context("GET /api/analyze failed")?;
 
-        let score = resp["score"]
-            .as_f64()
-            .map(|s| (s * 100.0) as u32)
-            .unwrap_or(0);
+        let raw_score = resp["score"]
+            .as_u64()
+            .unwrap_or(0) as u32;
+        // Normalize: the API returns 0–100, but guard against basis-point values (e.g. 8700 → 87)
+        let score = if raw_score > 100 { raw_score / 100 } else { raw_score };
 
         let files_analyzed = resp["files_analyzed"].as_u64().unwrap_or(0);
 

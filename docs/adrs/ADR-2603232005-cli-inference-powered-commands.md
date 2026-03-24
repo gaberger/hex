@@ -1,6 +1,6 @@
 # ADR-2603232005: Self-Sufficient hex-agent with TUI
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-23
 **Drivers:** hex has the full development pipeline (ADR → Workplan → Swarm → Code → Validate), inference provider management (OpenRouter, Ollama, vLLM), RL model selection, and architecture enforcement — but it delegates all generative work to external AI agents (Claude Code, opencode). hex should be self-sufficient: a complete AI-assisted development environment that uses its own inference providers to do real work, with zero dependency on any external AI tool.
 **Supersedes:** None (extends ADR-2603231600, ADR-030, ADR-031, ADR-027)
@@ -279,18 +279,21 @@ Session state:
 
 | Phase | Description | Status |
 |-------|------------|--------|
-| P1 | Inference client in hex-agent (calls hex-nexus `/api/chat/completions`) | Pending |
-| P2 | Prompt templates in `hex-cli/assets/prompts/` with `{{placeholder}}` expansion | Pending |
-| P3 | `hex dev` command scaffold + ratatui TUI (pipeline bar, controls, status) | Pending |
-| P4 | ADR generation phase — context assembly, prompt, gate UX, file write | Pending |
-| P5 | Workplan generation phase — structured output, JSON schema validation | Pending |
-| P6 | Auto swarm init + task creation from workplan steps | Pending |
-| P7 | Code generation phase — per-step context, diff display, file write | Pending |
-| P8 | Validation phase — `hex analyze` integration, violation fix loop | Pending |
-| P9 | Session persistence + `--resume` | Pending |
-| P10 | `--quick`, `--auto`, `--dry-run` modes | Pending |
-| P11 | RL task type wiring for per-phase model selection | Pending |
-| P12 | Cost tracking + budget caps in TUI status bar | Pending |
+| P1 | Inference client in hex-agent (calls hex-nexus `/api/chat/completions`) | Done |
+| P2 | Prompt templates in `hex-cli/assets/prompts/` with `{{placeholder}}` expansion | Done |
+| P3 | `hex dev` command scaffold + ratatui TUI (pipeline bar, controls, status) | Done |
+| P4 | ADR generation phase — context assembly, prompt, gate UX, file write | Done |
+| P5 | Workplan generation phase — structured output, JSON schema validation | Done |
+| P6 | Auto swarm init + task creation from workplan steps | Done |
+| P7 | Code generation phase — per-step context, diff display, file write | Done |
+| P8 | Validation phase — `hex analyze` integration, violation fix loop | Done |
+| P9 | Session persistence + `--resume` | Done |
+| P10 | `--quick`, `--auto`, `--dry-run` modes | Done |
+| P11 | RL task type wiring for per-phase model selection | Done |
+| P12 | Cost tracking + budget caps in TUI status bar | Done |
+| P13 | Interactive TUI event loop — tick drives pipeline, gate actions wired | Done |
+| P14 | Commit phase — summary review, shell drop, session completion | Done |
+| P15 | Keyboard overlays — `d` debug, `l` log, `m` model info, `Esc` dismiss | Done |
 
 ## References
 
