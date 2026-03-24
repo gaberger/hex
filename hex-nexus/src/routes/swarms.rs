@@ -6,7 +6,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::ports::state::IStatePort;
+use crate::ports::state::{IStatePort, StateError};
 use crate::state::SharedState;
 
 // ── Request types (formerly in persistence.rs) ──────────
@@ -35,6 +35,19 @@ pub struct UpdateTaskRequest {
     pub status: Option<String>,
     pub result: Option<String>,
     pub agent_id: Option<String>,
+    /// CAS version — must match current task.version (ADR-2603241900).
+    /// Omit to skip version check (legacy / force-assign).
+    pub version: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FailSwarmRequest {
+    #[serde(default = "default_fail_reason")]
+    pub reason: String,
+}
+
+fn default_fail_reason() -> String {
+    "manually failed".to_string()
 }
 
 // ── Helpers ─────────────────────────────────────────────
@@ -175,6 +188,24 @@ pub async fn complete_swarm(
     Ok(Json(json!({ "ok": true, "id": id })))
 }
 
+/// POST /api/swarms/:id/fail — mark a swarm as failed
+pub async fn fail_swarm(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+    Json(body): Json<FailSwarmRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+    port.swarm_fail(&id, &body.reason).await.map_err(state_err)?;
+
+    let _ = state.ws_tx.send(crate::state::WsEnvelope {
+        topic: "hexflo".into(),
+        event: "swarm_failed".into(),
+        data: json!({ "id": id, "reason": body.reason }),
+    });
+
+    Ok(Json(json!({ "ok": true, "id": id })))
+}
+
 /// POST /api/swarms/:id/tasks — create a new task in a swarm
 pub async fn create_task(
     State(state): State<SharedState>,
@@ -218,11 +249,18 @@ pub async fn update_task(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let port = state_port(&state)?;
 
-    // Apply agent assignment if provided
+    // Apply agent assignment if provided (CAS: pass version if supplied)
     if let Some(ref agent_id) = body.agent_id {
-        port.swarm_task_assign(&task_id, agent_id)
+        port.swarm_task_assign(&task_id, agent_id, body.version)
             .await
-            .map_err(state_err)?;
+            .map_err(|e| {
+                // Surface CAS conflicts as 409 rather than 500
+                if matches!(e, StateError::Conflict(_)) {
+                    (StatusCode::CONFLICT, Json(json!({ "error": format!("{}", e) })))
+                } else {
+                    state_err(e)
+                }
+            })?;
     }
 
     // Apply status change
@@ -309,6 +347,32 @@ pub async fn get_task_by_id(
         "completedAt": task.completed_at,
         "swarmStatus": swarm_status,
     })))
+}
+
+/// GET /api/agents/:id/swarm — get the swarm owned by this agent (if any)
+pub async fn get_agent_swarm(
+    State(state): State<SharedState>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+    match port.swarm_owned_by_agent(&agent_id).await.map_err(state_err)? {
+        Some(swarm) => Ok(Json(serde_json::to_value(swarm).unwrap_or_default())),
+        None => Err((StatusCode::NOT_FOUND, Json(json!({ "error": "No active swarm owned by agent" })))),
+    }
+}
+
+/// POST /api/swarms/:id/transfer — transfer swarm ownership to a new agent
+pub async fn transfer_swarm(
+    State(state): State<SharedState>,
+    Path(swarm_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let new_owner = body.get("new_owner_agent_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({ "error": "new_owner_agent_id required" }))))?;
+    let port = state_port(&state)?;
+    port.swarm_transfer(&swarm_id, new_owner).await.map_err(state_err)?;
+    Ok(Json(json!({ "ok": true, "swarmId": swarm_id, "newOwnerAgentId": new_owner })))
 }
 
 /// GET /api/work-items/incomplete — all in-flight work across all swarms

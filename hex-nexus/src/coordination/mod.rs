@@ -148,6 +148,8 @@ impl HexFlo {
             name: name.to_string(),
             topology: topo,
             status: "active".to_string(),
+            owner_agent_id: agent_id.to_string(),
+            created_by: agent_id.to_string(),
             created_at: now.clone(),
             updated_at: now,
         };
@@ -247,7 +249,7 @@ impl HexFlo {
 
         let (status, assigned_agent) = if let Some(aid) = agent_id {
             self.state
-                .swarm_task_assign(&id, aid)
+                .swarm_task_assign(&id, aid, None)
                 .await
                 .map_err(|e| e.to_string())?;
             ("assigned".to_string(), aid.to_string())
@@ -263,6 +265,8 @@ impl HexFlo {
             agent_id: assigned_agent,
             result: String::new(),
             depends_on: depends_on.to_string(),
+            version: 0,
+            claimed_by: String::new(),
             created_at: now,
             completed_at: String::new(),
         })
@@ -275,7 +279,7 @@ impl HexFlo {
         agent_id: &str,
     ) -> Result<(), String> {
         self.state
-            .swarm_task_assign(task_id, agent_id)
+            .swarm_task_assign(task_id, agent_id, None)
             .await
             .map_err(|e| e.to_string())?;
 
