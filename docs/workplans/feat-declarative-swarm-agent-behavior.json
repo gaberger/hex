@@ -1,0 +1,121 @@
+{
+  "title": "Feature: Declarative Swarm Agent Behavior — YAML-driven supervisor",
+  "feature": "declarative-agents",
+  "language": "rust",
+  "status": "planned",
+  "adr": "ADR-2603240130",
+  "description": "Parse the 14 existing agent YAML definitions into AgentDefinition structs and drive all supervisor behavior from them: model selection, context assembly with L1/L2/L3 levels, TDD workflow phases, feedback loop gates, quality thresholds, and swarm composition.",
+  "priority": "high",
+  "superseded_by": "",
+  "created_at": "2026-03-24T01:30:00.000000+00:00",
+  "phases": [
+    {
+      "name": "YAML Parsing",
+      "description": "Parse agent YAMLs into typed Rust structs",
+      "steps": ["step-1", "step-2"]
+    },
+    {
+      "name": "Model + Context from YAML",
+      "description": "Replace hardcoded model selection and context assembly",
+      "steps": ["step-3", "step-4"]
+    },
+    {
+      "name": "Workflow + Feedback from YAML",
+      "description": "TDD phases and compile/lint/test gates from YAML",
+      "steps": ["step-5", "step-6"]
+    },
+    {
+      "name": "Swarm Composition",
+      "description": "Swarm definition as YAML with agent roles and objectives",
+      "steps": ["step-7"]
+    },
+    {
+      "name": "Integration",
+      "description": "Wire into supervisor, remove hardcoded behavior",
+      "steps": ["step-8", "step-9"]
+    }
+  ],
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Add serde_yaml dependency to hex-cli. Define AgentDefinition, ModelConfig, ContextConfig (with LoadStrategy and TokenBudget), WorkflowConfig (with Phase and Gate), FeedbackLoopConfig (with GateConfig), QualityThresholds, InputSpec, OutputSpec structs. All with Deserialize. Match the exact schema of the existing YAML files (hex-coder.yml as reference).",
+      "adapter": "secondary/yaml",
+      "tier": 0,
+      "dependencies": [],
+      "status": "pending",
+      "files": ["hex-cli/Cargo.toml", "hex-cli/src/pipeline/agent_def.rs"]
+    },
+    {
+      "id": "step-2",
+      "description": "Implement AgentDefinition::load_all() — reads all *.yml from hex-cli/assets/agents/hex/hex/ via rust-embed, parses each with serde_yaml, returns HashMap<String, AgentDefinition>. Handle parse errors gracefully (warn and skip malformed YAMLs). AgentDefinition::load(name) for loading a specific agent. Unit tests parsing hex-coder.yml.",
+      "adapter": "secondary/yaml",
+      "tier": 1,
+      "dependencies": ["step-1"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/agent_def.rs"]
+    },
+    {
+      "id": "step-3",
+      "description": "Replace hardcoded model selection in supervisor with YAML-driven selection. Map YAML model names (sonnet/haiku/opus) to OpenRouter model IDs. Implement upgrade logic: if iteration > threshold from YAML upgrade_condition, switch to upgrade_to model. Fallback chain: preferred → fallback → openrouter/free.",
+      "adapter": "primary/tui",
+      "tier": 2,
+      "dependencies": ["step-2"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/supervisor.rs", "hex-cli/src/pipeline/model_selection.rs"]
+    },
+    {
+      "id": "step-4",
+      "description": "Replace hardcoded context assembly with YAML load_strategy. Implement L1 (AST summary via hex summarize), L2 (function signatures only), L3 (full file content). Respect token_budget.allocation per category. Resolve {{target_adapter}} and {{current_edit_file}} placeholders from workplan step. Build AgentContext from YAML strategy instead of files_for_tier().",
+      "adapter": "primary/tui",
+      "tier": 2,
+      "dependencies": ["step-2"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/supervisor.rs"]
+    },
+    {
+      "id": "step-5",
+      "description": "Implement YAML workflow phases in supervisor. For hex-coder: pre_validate (boundary check gate) → red (generate failing tests) → green (minimal implementation) → refactor (clean up) → test_coverage_gate. Each phase reads steps from YAML. Blocking gates prevent advancement. on_fail instructions passed to fixer.",
+      "adapter": "primary/tui",
+      "tier": 3,
+      "dependencies": ["step-3", "step-4"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/supervisor.rs"]
+    },
+    {
+      "id": "step-6",
+      "description": "Implement YAML feedback loop in supervisor. Read gates (compile/lint/test) from YAML with language-specific commands (tsc/eslint/vitest for TS, cargo check/clippy/test for Rust). Respect timeout_ms per gate. Use on_fail text as instructions for fixer context. Implement on_max_iterations escalation (switch to better model or report to coordinator).",
+      "adapter": "primary/tui",
+      "tier": 3,
+      "dependencies": ["step-5"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/supervisor.rs"]
+    },
+    {
+      "id": "step-7",
+      "description": "Create swarm composition YAML format: hex-cli/assets/swarms/dev-pipeline.yml defining which agents participate, their cardinality (per step/file/tier/swarm), parallelism rules, objective list, and max iterations. Parse into SwarmComposition struct. Supervisor reads this to configure the agent pipeline instead of hardcoded dispatch.",
+      "adapter": "secondary/yaml",
+      "tier": 2,
+      "dependencies": ["step-2"],
+      "status": "pending",
+      "files": ["hex-cli/assets/swarms/dev-pipeline.yml", "hex-cli/src/pipeline/agent_def.rs"]
+    },
+    {
+      "id": "step-8",
+      "description": "Wire YAML-driven behavior into Supervisor. Replace hardcoded execute_agent/dispatch_agent with YAML-driven dispatch: load agent def → select model from YAML → build context from YAML load_strategy → run workflow phases from YAML → apply feedback loop gates from YAML → check quality thresholds from YAML. Remove hardcoded match arms.",
+      "adapter": "primary/tui",
+      "tier": 3,
+      "dependencies": ["step-5", "step-6", "step-7"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/supervisor.rs"]
+    },
+    {
+      "id": "step-9",
+      "description": "Quality thresholds from YAML. Read test_coverage, max_lint_warnings, max_file_lines, max_function_lines, max_cyclomatic_complexity from agent YAML. Apply in quality gate evaluation. Report which thresholds passed/failed. Different agents can have different thresholds (reviewer stricter than coder).",
+      "adapter": "primary/tui",
+      "tier": 3,
+      "dependencies": ["step-8"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/objectives.rs", "hex-cli/src/pipeline/supervisor.rs"]
+    }
+  ]
+}
