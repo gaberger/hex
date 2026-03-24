@@ -1599,14 +1599,24 @@ impl TuiApp {
             duration_secs: None,
         });
 
-        // Build a summary of what was generated
+        // Build a full report summary
         let mut summary = String::new();
-        summary.push_str(&format!("Feature: {}\n", self.session.feature_description));
+
+        // Header
+        if let Some(ref pid) = self.session.project_id {
+            summary.push_str(&format!("Project:  {}\n", pid));
+        }
+        summary.push_str(&format!("Session:  {}\n", &self.session.id[..8.min(self.session.id.len())]));
+        if let Some(ref aid) = self.session.agent_id {
+            summary.push_str(&format!("Agent:    {}\n", &aid[..8.min(aid.len())]));
+        }
+        summary.push_str(&format!("Feature:  {}\n", self.session.feature_description));
         summary.push_str(&format!(
-            "Total cost: ${:.4} | Tokens: {}\n\n",
+            "Cost:     ${:.4} ({} tokens)\n\n",
             self.budget.total_cost_usd, self.budget.total_tokens,
         ));
 
+        // Artifacts
         if let Some(ref adr_path) = self.session.adr_path {
             summary.push_str(&format!("  ADR:      {}\n", adr_path));
         }
@@ -1615,11 +1625,39 @@ impl TuiApp {
         }
         if !self.session.completed_steps.is_empty() {
             summary.push_str(&format!(
-                "  Code:     {} step(s) completed\n",
+                "  Code:     {} step(s)\n",
                 self.session.completed_steps.len()
             ));
-            for step in &self.session.completed_steps {
-                summary.push_str(&format!("            - {}\n", step));
+        }
+
+        // Quality gate
+        if let Some(ref qr) = self.session.quality_result {
+            summary.push_str(&format!(
+                "\n  Quality:  {} ({}/100)\n",
+                qr.grade, qr.score
+            ));
+            let compile = if qr.compile_pass { "PASS" } else { "FAIL" };
+            summary.push_str(&format!("  Compile:  {} ({})\n", compile, qr.compile_language));
+            summary.push_str(&format!(
+                "  Tests:    {}/{} passing\n",
+                qr.tests_passed, qr.tests_passed + qr.tests_failed
+            ));
+            if qr.violations_found > 0 {
+                summary.push_str(&format!("  Violations: {}\n", qr.violations_found));
+            }
+        }
+
+        // Agent reports
+        let agent_calls: Vec<_> = self.session.tool_calls.iter()
+            .filter(|c| c.phase.starts_with("agent-"))
+            .collect();
+        if !agent_calls.is_empty() {
+            summary.push_str("\n  Agents:\n");
+            for call in &agent_calls {
+                let role = call.phase.strip_prefix("agent-").unwrap_or(&call.phase);
+                let status = if call.status == "ok" { "✓" } else { "✗" };
+                let dur = format!("{:.1}s", call.duration_ms as f64 / 1000.0);
+                summary.push_str(&format!("    {} {:<14} {}\n", status, role, dur));
             }
         }
 
