@@ -131,6 +131,10 @@ pub struct TuiApp {
     ui_tx: tokio::sync::mpsc::UnboundedSender<messages::UiMessage>,
     /// Read-only UI state rebuilt from messages (ADR-2603241500).
     ui_state: messages::UiState,
+    /// Ticker incremented every tick — drives spinner animation in render().
+    phase_elapsed_ticker: u8,
+    /// Currently running phase task (for future async phase execution).
+    phase_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl TuiApp {
@@ -199,6 +203,8 @@ impl TuiApp {
             ui_rx,
             ui_tx,
             ui_state,
+            phase_elapsed_ticker: 0,
+            phase_handle: None,
         }
     }
 
@@ -237,6 +243,38 @@ impl TuiApp {
             }
             // Drain messages from phase workers (ADR-2603241500).
             while let Ok(msg) = self.ui_rx.try_recv() {
+                // Sync session data from phase workers before applying to UI state.
+                match &msg {
+                    messages::UiMessage::SessionUpdate {
+                        adr_path,
+                        workplan_path,
+                        swarm_id,
+                        completed_steps,
+                        quality_result,
+                    } => {
+                        if let Some(ref p) = adr_path {
+                            self.session.adr_path = Some(p.clone());
+                        }
+                        if let Some(ref p) = workplan_path {
+                            self.session.workplan_path = Some(p.clone());
+                        }
+                        if let Some(ref s) = swarm_id {
+                            self.session.swarm_id = Some(s.clone());
+                        }
+                        if let Some(ref steps) = completed_steps {
+                            self.session.completed_steps = steps.clone();
+                        }
+                        if let Some(ref qr) = quality_result {
+                            self.session.quality_result = Some(qr.clone());
+                        }
+                        let _ = self.session.save();
+                    }
+                    messages::UiMessage::CostUpdate { cost_usd, tokens } => {
+                        self.session.total_cost_usd = *cost_usd;
+                        self.session.total_tokens = *tokens;
+                    }
+                    _ => {}
+                }
                 self.ui_state.apply(msg);
             }
 
@@ -1191,8 +1229,8 @@ impl TuiApp {
             ])
             .split(inner);
 
-        // 1. Pipeline bar
-        pipeline_bar::render(frame, chunks[0], &self.session);
+        // 1. Pipeline bar — use rich UiState-driven rendering
+        pipeline_bar::render_rich(frame, chunks[0], &self.ui_state, self.phase_elapsed_ticker);
 
         // 2. Task list, gate dialog, or overlay
         if let Some(ref gate) = self.gate {
@@ -1250,22 +1288,49 @@ impl TuiApp {
                 .wrap(ratatui::widgets::Wrap { trim: false });
             frame.render_widget(paragraph, chunks[1]);
         } else if let Some(phase) = self.running_phase {
+            let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let spinner = spinner_frames[(self.phase_elapsed_ticker as usize) % spinner_frames.len()];
             let elapsed = self.phase_started
                 .map(|s| s.elapsed().as_secs())
                 .unwrap_or(0);
-            let dots = ".".repeat((elapsed as usize % 3) + 1);
+
+            // Build progress detail from ui_state if available
+            let progress_detail = self.ui_state.current_progress
+                .as_deref()
+                .unwrap_or("working...");
+
+            // Show agent reports if any
+            let agent_lines: String = self.ui_state.agent_reports.iter().rev().take(5).map(|r| {
+                format!("  {} {} — {} ({:.1}s)\n",
+                    if r.status == "done" { "\u{2713}" } else { "\u{25cb}" },
+                    r.role, r.detail.as_deref().unwrap_or(""), r.duration_ms as f64 / 1000.0)
+            }).collect();
+
+            let total_elapsed = self.ui_state.elapsed();
+            let total_elapsed_str = if total_elapsed.as_secs() >= 60 {
+                format!("{}m{}s", total_elapsed.as_secs() / 60, total_elapsed.as_secs() % 60)
+            } else {
+                format!("{}s", total_elapsed.as_secs())
+            };
+
             let msg = format!(
-                "Running {} phase{}\n\n\
+                "{} Running {} phase ({}s)\n\
+                 {}\n\n\
                  Session:  {}\n\
-                 Feature:  {}\n\
+                 Total elapsed: {}\n\
                  Steps completed: {}\n\
-                 Cost:     ${:.4}",
+                 Cost: ${:.4}  |  Tokens: {}\n\
+                 {}",
+                spinner,
                 phase,
-                dots,
-                self.session.id,
-                self.session.feature_description,
+                elapsed,
+                progress_detail,
+                &self.session.id[..8.min(self.session.id.len())],
+                total_elapsed_str,
                 self.session.completed_steps.len(),
-                self.budget.total_cost_usd,
+                self.ui_state.cost_usd.max(self.budget.total_cost_usd),
+                self.ui_state.tokens.max(self.budget.total_tokens),
+                if agent_lines.is_empty() { String::new() } else { format!("\nAgents:\n{}", agent_lines) },
             );
             let block = Block::default()
                 .title(" Pipeline ")
@@ -1393,6 +1458,20 @@ impl TuiApp {
     // -- tick ---------------------------------------------------------------
 
     fn tick(&mut self) {
+        // Increment spinner/animation ticker
+        self.phase_elapsed_ticker = self.phase_elapsed_ticker.wrapping_add(1);
+
+        // Poll running phase handle (for future async phase execution)
+        if let Some(ref handle) = self.phase_handle {
+            if handle.is_finished() {
+                self.phase_handle = None;
+                self.running_phase = None;
+                self.phase_started = None;
+                self.needs_phase_run = true;
+            }
+            return; // Phase still running — don't start another
+        }
+
         // 1. Process any pending gate action from a keypress
         if let Some(action) = self.pending_gate_action.take() {
             let advanced = self.process_gate_action(action.clone());
@@ -1430,26 +1509,65 @@ impl TuiApp {
                 }
             };
 
-            match self.session.current_phase {
+            let phase = self.session.current_phase;
+            let phase_start = Instant::now();
+
+            // Notify ui_state that phase has started
+            let _ = self.ui_tx.send(messages::UiMessage::PhaseStarted { phase });
+
+            match phase {
                 PipelinePhase::Adr => {
                     let result =
                         tokio::task::block_in_place(|| handle.block_on(self.run_adr_phase()));
-                    if let Err(e) = result {
+                    if let Err(ref e) = result {
                         error!(error = %e, "ADR phase error");
+                        let _ = self.ui_tx.send(messages::UiMessage::PhaseError {
+                            phase,
+                            error: format!("{:#}", e),
+                        });
+                    }
+                    if result.is_ok() {
+                        let _ = self.ui_tx.send(messages::UiMessage::PhaseDone {
+                            phase,
+                            duration: phase_start.elapsed(),
+                            detail: self.session.adr_path.clone(),
+                        });
                     }
                 }
                 PipelinePhase::Workplan => {
                     let result =
                         tokio::task::block_in_place(|| handle.block_on(self.run_workplan_phase()));
-                    if let Err(e) = result {
+                    if let Err(ref e) = result {
                         error!(error = %e, "Workplan phase error");
+                        let _ = self.ui_tx.send(messages::UiMessage::PhaseError {
+                            phase,
+                            error: format!("{:#}", e),
+                        });
+                    }
+                    if result.is_ok() {
+                        let _ = self.ui_tx.send(messages::UiMessage::PhaseDone {
+                            phase,
+                            duration: phase_start.elapsed(),
+                            detail: self.session.workplan_path.clone(),
+                        });
                     }
                 }
                 PipelinePhase::Swarm => {
                     let result =
                         tokio::task::block_in_place(|| handle.block_on(self.run_swarm_phase()));
-                    if let Err(e) = result {
+                    if let Err(ref e) = result {
                         error!(error = %e, "Swarm phase error");
+                        let _ = self.ui_tx.send(messages::UiMessage::PhaseError {
+                            phase,
+                            error: format!("{:#}", e),
+                        });
+                    }
+                    if result.is_ok() {
+                        let _ = self.ui_tx.send(messages::UiMessage::PhaseDone {
+                            phase,
+                            duration: phase_start.elapsed(),
+                            detail: self.session.swarm_id.clone(),
+                        });
                     }
                     // Swarm has no gate — auto-advance to Code
                     if self.gate.is_none() {
@@ -1459,8 +1577,19 @@ impl TuiApp {
                 PipelinePhase::Code => {
                     let result =
                         tokio::task::block_in_place(|| handle.block_on(self.run_code_phase()));
-                    if let Err(e) = result {
+                    if let Err(ref e) = result {
                         error!(error = %e, "Code phase error");
+                        let _ = self.ui_tx.send(messages::UiMessage::PhaseError {
+                            phase,
+                            error: format!("{:#}", e),
+                        });
+                    }
+                    if result.is_ok() {
+                        let _ = self.ui_tx.send(messages::UiMessage::PhaseDone {
+                            phase,
+                            duration: phase_start.elapsed(),
+                            detail: Some(format!("{} steps", self.code_results.len())),
+                        });
                     }
                     // Show first step gate (run_code_phase populates code_results)
                     if !self.code_results.is_empty() && self.gate.is_none() {
@@ -1471,14 +1600,36 @@ impl TuiApp {
                 PipelinePhase::Validate => {
                     let result =
                         tokio::task::block_in_place(|| handle.block_on(self.run_validate_phase()));
-                    if let Err(e) = result {
+                    if let Err(ref e) = result {
                         error!(error = %e, "Validate phase error");
+                        let _ = self.ui_tx.send(messages::UiMessage::PhaseError {
+                            phase,
+                            error: format!("{:#}", e),
+                        });
+                    }
+                    if result.is_ok() {
+                        let _ = self.ui_tx.send(messages::UiMessage::PhaseDone {
+                            phase,
+                            duration: phase_start.elapsed(),
+                            detail: None,
+                        });
                     }
                 }
                 PipelinePhase::Commit => {
                     self.run_commit_phase();
+                    let _ = self.ui_tx.send(messages::UiMessage::PhaseDone {
+                        phase,
+                        duration: phase_start.elapsed(),
+                        detail: None,
+                    });
                 }
             }
+
+            // Send cost update after each phase
+            let _ = self.ui_tx.send(messages::UiMessage::CostUpdate {
+                cost_usd: self.budget.total_cost_usd,
+                tokens: self.budget.total_tokens,
+            });
 
             self.running_phase = None;
             self.phase_started = None;
