@@ -133,6 +133,7 @@ fn clean_sessions() -> Result<()> {
 }
 
 async fn resume_latest() -> Result<()> {
+    crate::commands::nexus::ensure_nexus_running().await?;
     let session = DevSession::load_latest()?;
     match session {
         Some(s) => {
@@ -146,6 +147,7 @@ async fn resume_latest() -> Result<()> {
 }
 
 async fn resume_by_id(id: &str) -> Result<()> {
+    crate::commands::nexus::ensure_nexus_running().await?;
     let session = DevSession::load(id)?;
 
     // Completed/failed sessions can't be resumed — show summary instead
@@ -197,6 +199,8 @@ async fn start_session(
     budget: f64,
     dir: String,
 ) -> Result<()> {
+    // Ensure hex-nexus is running (with agent) — required for the dev pipeline
+    crate::commands::nexus::ensure_nexus_running().await?;
     let output_dir = if dir.is_empty() {
         // Auto-generate: examples/<slug>/
         let slug = description
