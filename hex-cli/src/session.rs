@@ -130,6 +130,9 @@ pub struct DevSession {
     /// Inference provider preference (persisted for resume).
     #[serde(default)]
     pub provider: Option<String>,
+    /// Project ID from nexus registration (best-effort).
+    #[serde(default)]
+    pub project_id: Option<String>,
 }
 
 impl DevSession {
@@ -157,6 +160,7 @@ impl DevSession {
             quality_result: None,
             output_dir: None,
             provider: None,
+            project_id: resolve_project_id(),
         }
     }
 
@@ -405,6 +409,15 @@ fn resolve_agent_id() -> Option<String> {
     }
 
     None
+}
+
+/// Resolve the project ID from `.hex/project.json` (written by `hex init` / nexus registration).
+fn resolve_project_id() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    let project_json = cwd.join(".hex/project.json");
+    let content = fs::read_to_string(&project_json).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
+    parsed["id"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string())
 }
 
 // ---------------------------------------------------------------------------

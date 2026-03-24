@@ -122,6 +122,9 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
         "Status: ".white().bold(),
         colorize_status(&session.status)
     );
+    if let Some(ref project_id) = session.project_id {
+        println!("  {}  {}", "Project:".white().bold(), project_id.dimmed());
+    }
     if let Some(ref agent_id) = session.agent_id {
         println!("  {}  {}", "Agent:  ".white().bold(), agent_id.dimmed());
     }
@@ -818,6 +821,7 @@ fn print_json_report(
             "steps_completed": session.completed_steps,
             "models": session.model_selections,
             "agent_id": session.agent_id,
+            "project_id": session.project_id,
         }
     });
 

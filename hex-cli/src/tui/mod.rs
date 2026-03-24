@@ -907,7 +907,15 @@ impl TuiApp {
                     };
                     let language = "typescript"; // inferred from project
 
-                    let supervisor = Supervisor::new(&output_dir, language);
+                    let shared_session = std::sync::Arc::new(std::sync::Mutex::new(
+                        self.session.clone(),
+                    ));
+                    let supervisor = Supervisor::new(&output_dir, language)
+                        .with_tracking(
+                            self.session.swarm_id.clone(),
+                            self.session.agent_id.clone(),
+                        )
+                        .with_session(shared_session.clone());
 
                     println!("         supervisor: {} tiers, {} steps",
                         workplan_data.steps.iter().map(|s| s.tier).max().unwrap_or(0) + 1,
@@ -922,6 +930,13 @@ impl TuiApp {
                         let tmp_rt = tokio::runtime::Runtime::new()?;
                         tmp_rt.block_on(supervisor_fut)
                     };
+
+                    // Sync back tool_calls and cost from supervisor's session clone
+                    if let Ok(sup_session) = shared_session.lock() {
+                        self.session.tool_calls = sup_session.tool_calls.clone();
+                        self.session.total_cost_usd = sup_session.total_cost_usd;
+                        self.session.total_tokens = sup_session.total_tokens;
+                    }
 
                     match result {
                         Ok(sr) => {
