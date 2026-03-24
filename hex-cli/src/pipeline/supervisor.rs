@@ -14,8 +14,8 @@ use std::time::Instant;
 use anyhow::{Context as _, Result};
 use tracing::{debug, info, warn};
 
-use crate::nexus_client::NexusClient;
 use crate::pipeline::agents::{DocumenterAgent, ReviewerAgent, TesterAgent, UxReviewerAgent};
+use crate::pipeline::cli_runner::CliRunner;
 use crate::pipeline::code_phase::CodePhase;
 use crate::pipeline::fix_agent::{FixAgent, FixTaskInput};
 use crate::pipeline::objectives::{
@@ -590,22 +590,16 @@ impl Supervisor {
         iteration: u32,
     ) -> Option<String> {
         let swarm_id = self.swarm_id.as_ref()?;
-        let client = NexusClient::new(self.nexus_url.clone());
+        let runner = CliRunner::new();
         let title = format!("{}: {} [iteration {}]", role, objective, iteration);
-        let body = serde_json::json!({ "title": title });
-        let path = format!("/api/swarms/{}/tasks", swarm_id);
-        match client.post(&path, &body).await {
+        match runner.task_create(swarm_id, &title) {
             Ok(resp) => {
                 let task_id = resp["id"].as_str().map(|s| s.to_string());
                 if let Some(ref tid) = task_id {
-                    // PATCH to in_progress with agent_id
-                    let mut patch = serde_json::json!({ "status": "in_progress" });
+                    // Assign to current agent if we have an agent_id
                     if let Some(ref aid) = self.agent_id {
-                        patch["agent_id"] = serde_json::json!(aid);
+                        let _ = runner.run(&["task", "assign", tid, aid]);
                     }
-                    let _ = client
-                        .patch(&format!("/api/swarms/tasks/{}", tid), &patch)
-                        .await;
                     debug!(task_id = %tid, role, "created HexFlo tracking task");
                 }
                 task_id
@@ -619,15 +613,9 @@ impl Supervisor {
 
     /// Mark a HexFlo task as completed with a result summary (best-effort).
     async fn complete_tracking_task(&self, task_id: &str, result_summary: &str) {
-        let client = NexusClient::new(self.nexus_url.clone());
-        let body = serde_json::json!({
-            "status": "completed",
-            "result": &result_summary[..result_summary.len().min(200)],
-        });
-        if let Err(e) = client
-            .patch(&format!("/api/swarms/tasks/{}", task_id), &body)
-            .await
-        {
+        let runner = CliRunner::new();
+        let truncated = &result_summary[..result_summary.len().min(200)];
+        if let Err(e) = runner.task_complete(task_id, Some(truncated)) {
             debug!(error = %e, task_id, "failed to complete HexFlo tracking task (non-blocking)");
         }
     }

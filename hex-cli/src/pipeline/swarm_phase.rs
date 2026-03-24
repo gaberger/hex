@@ -7,10 +7,9 @@
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use serde_json::json;
 use tracing::{debug, info, warn};
 
-use crate::nexus_client::NexusClient;
+use crate::pipeline::cli_runner::CliRunner;
 use crate::pipeline::workplan_phase::{WorkplanData, WorkplanStep};
 
 // ── Result type ──────────────────────────────────────────────────────────
@@ -32,25 +31,23 @@ pub struct SwarmPhaseResult {
 
 /// Executes the swarm initialization phase of the `hex dev` pipeline.
 ///
-/// Creates a HexFlo swarm and one task per workplan step via hex-nexus
-/// REST API. No inference calls — pure coordination.
+/// Creates a HexFlo swarm and one task per workplan step via the hex CLI
+/// (CliRunner). No inference calls — pure coordination.
 pub struct SwarmPhase {
-    client: NexusClient,
+    runner: CliRunner,
 }
 
 impl SwarmPhase {
-    /// Create a new phase with the standard nexus URL resolution.
+    /// Create a new phase using the default CliRunner.
     pub fn from_env() -> Self {
         Self {
-            client: NexusClient::from_env(),
+            runner: CliRunner::new(),
         }
     }
 
-    /// Create a new phase pointing at an explicit nexus URL.
-    pub fn new(nexus_url: &str) -> Self {
-        Self {
-            client: NexusClient::new(nexus_url.to_string()),
-        }
+    /// Create a new phase (nexus_url ignored — kept for API compat).
+    pub fn new(_nexus_url: &str) -> Self {
+        Self::from_env()
     }
 
     /// Execute the swarm initialization phase.
@@ -68,20 +65,14 @@ impl SwarmPhase {
 
         // ── 1. Generate swarm name ───────────────────────────────────────
         let swarm_name = generate_swarm_name(feature_description);
+        let topology = workplan.topology.as_deref().unwrap_or("hex-pipeline");
         debug!(swarm_name = %swarm_name, "derived swarm name from feature description");
 
-        // ── 2. Create swarm via POST /api/swarms ─────────────────────────
-        let create_body = json!({
-            "name": swarm_name,
-            "topology": workplan.topology.as_deref().unwrap_or("hex-pipeline"),
-            "projectId": "hex-intf",
-        });
-
+        // ── 2. Create swarm via `hex swarm init` ─────────────────────────
         let swarm_resp = self
-            .client
-            .post("/api/swarms", &create_body)
-            .await
-            .context("POST /api/swarms failed — is hex-nexus running?")?;
+            .runner
+            .swarm_init(&swarm_name, topology)
+            .context("hex swarm init failed — is hex-nexus running?")?;
 
         let swarm_id = swarm_resp["id"]
             .as_str()
@@ -102,12 +93,7 @@ impl SwarmPhase {
                 title
             };
 
-            let task_body = json!({
-                "title": title,
-            });
-
-            let task_path = format!("/api/swarms/{}/tasks", swarm_id);
-            match self.client.post(&task_path, &task_body).await {
+            match self.runner.task_create(&swarm_id, &title) {
                 Ok(task_resp) => {
                     let task_id = task_resp["id"]
                         .as_str()
@@ -129,14 +115,13 @@ impl SwarmPhase {
         let duration_ms = start.elapsed().as_millis() as u64;
 
         // ── 4. Build tier summary from step IDs ────────────────────────────
-        let topology_used = workplan.topology.as_deref().unwrap_or("hex-pipeline");
         let tier_counts = count_tasks_per_tier(&workplan.steps);
 
         info!(
             swarm_id = %swarm_id,
-            topology = %topology_used,
+            topology = %topology,
             tasks = task_ids.len(),
-            "swarm={swarm_id} topology={topology_used} tasks={}",
+            "swarm={swarm_id} topology={topology} tasks={}",
             task_ids.len(),
         );
         for (tier, count, label) in &tier_counts {

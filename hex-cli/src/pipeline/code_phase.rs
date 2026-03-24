@@ -364,6 +364,7 @@ echo "Starting application..."
 /// Executes the code generation phase of the `hex dev` pipeline.
 pub struct CodePhase {
     client: NexusClient,
+    runner: crate::pipeline::CliRunner,
     selector: ModelSelector,
 }
 
@@ -372,6 +373,7 @@ impl CodePhase {
     pub fn from_env() -> Self {
         Self {
             client: NexusClient::from_env(),
+            runner: crate::pipeline::CliRunner::new(),
             selector: ModelSelector::from_env(),
         }
     }
@@ -380,6 +382,7 @@ impl CodePhase {
     pub fn new(nexus_url: &str) -> Self {
         Self {
             client: NexusClient::new(nexus_url.to_string()),
+            runner: crate::pipeline::CliRunner::new(),
             selector: ModelSelector::new(nexus_url),
         }
     }
@@ -591,16 +594,13 @@ impl CodePhase {
         for step in &sorted_steps {
             let hexflo_task_id = task_id_map.get(&step.id);
 
-            // Mark task as in_progress with agent_id (best-effort)
+            // Mark task as in_progress with agent_id (best-effort, via CLI)
             if let Some(task_id) = hexflo_task_id {
-                let mut body = json!({ "status": "in_progress" });
+                let mut args = vec!["task", "assign", task_id.as_str()];
                 if let Some(aid) = agent_id {
-                    body["agent_id"] = json!(aid);
+                    args.push(aid);
                 }
-                let _ = self.client.patch(
-                    &format!("/api/swarms/tasks/{}", task_id),
-                    &body,
-                ).await;
+                let _ = self.runner.run_raw(&args);
             }
 
             match self
@@ -608,7 +608,7 @@ impl CodePhase {
                 .await
             {
                 Ok(result) => {
-                    // Mark task as completed with result summary
+                    // Mark task as completed with result summary (via CLI)
                     if let Some(task_id) = hexflo_task_id {
                         let summary = format!(
                             "Generated {} ({} tokens, ${:.4})",
@@ -616,21 +616,15 @@ impl CodePhase {
                             result.tokens,
                             result.cost_usd,
                         );
-                        let _ = self.client.patch(
-                            &format!("/api/swarms/tasks/{}", task_id),
-                            &json!({ "status": "completed", "result": summary }),
-                        ).await;
+                        let _ = self.runner.task_complete(task_id, Some(&summary));
                     }
                     results.push(result);
                 }
                 Err(e) => {
                     warn!(step_id = %step.id, error = %e, "code generation failed for step");
-                    // Mark task as failed (best-effort)
+                    // Mark task as failed (best-effort, via CLI)
                     if let Some(task_id) = hexflo_task_id {
-                        let _ = self.client.patch(
-                            &format!("/api/swarms/tasks/{}", task_id),
-                            &json!({ "status": "failed", "result": format!("Error: {}", e) }),
-                        ).await;
+                        let _ = self.runner.task_complete(task_id, Some(&format!("Error: {}", e)));
                     }
                 }
             }
@@ -958,23 +952,22 @@ impl CodePhase {
     /// Update a HexFlo task status via the nexus REST API (best-effort).
     async fn update_task_status(
         &self,
-        swarm_id: &str,
+        _swarm_id: &str,
         step_id: &str,
         status: &str,
         result: Option<&str>,
     ) {
-        let path = format!("/api/swarms/{}/tasks/{}", swarm_id, step_id);
-        let mut body = json!({ "status": status });
-        if let Some(r) = result {
-            body["result"] = json!(r);
-        }
-        if let Err(e) = self.client.patch(&path, &body).await {
+        let res: anyhow::Result<()> = match status {
+            "completed" | "failed" => self.runner.task_complete(step_id, result).map(|_| ()),
+            "in_progress" => self.runner.run_raw(&["task", "assign", step_id]).map(|_| ()),
+            _ => self.runner.task_complete(step_id, result).map(|_| ()),
+        };
+        if let Err(e) = res {
             debug!(
                 error = %e,
-                swarm_id = %swarm_id,
                 step_id = %step_id,
                 status = %status,
-                "failed to update HexFlo task status (non-fatal)"
+                "failed to update HexFlo task status via CLI (non-fatal)"
             );
         }
     }

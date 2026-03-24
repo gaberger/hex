@@ -14,6 +14,7 @@ use serde_json::json;
 use tracing::{info, warn};
 
 use crate::nexus_client::NexusClient;
+use crate::pipeline::cli_runner::CliRunner;
 use crate::pipeline::model_selection::{ModelSelector, TaskType};
 use crate::prompts::PromptTemplate;
 
@@ -996,17 +997,12 @@ fn extract_error_file(error_output: &str, output_dir: &str) -> Option<String> {
 // ── Internal helpers ────────────────────────────────────────────────
 
 impl ValidatePhase {
-    /// Fetch and parse architecture analysis from hex-nexus.
+    /// Fetch and parse architecture analysis via `hex analyze --json` (CliRunner).
     async fn fetch_analysis(&self) -> Result<AnalysisResult> {
-        let path = format!(
-            "/api/analyze?path={}",
-            urlencoding(&self.project_path)
-        );
-        let resp = self
-            .client
-            .get(&path)
-            .await
-            .context("GET /api/analyze failed")?;
+        let runner = CliRunner::new();
+        let resp = runner
+            .analyze(&self.project_path)
+            .context("hex analyze failed")?;
 
         let raw_score = resp["score"]
             .as_u64()
@@ -1017,7 +1013,7 @@ impl ValidatePhase {
         let files_analyzed = resp["files_analyzed"].as_u64().unwrap_or(0);
 
         // Extract violations from the response.
-        // Expected shape: { violations: [{ message: "...", file: "...", ... }] }
+        // `hex analyze --json` returns: { violations: [{ message, file, rule }], boundary_errors: [...] }
         let violations: Vec<String> = if let Some(arr) = resp["violations"].as_array() {
             arr.iter()
                 .filter_map(|v| {
@@ -1041,6 +1037,24 @@ impl ValidatePhase {
         } else {
             vec![]
         };
+
+        // Also include boundary_errors if present
+        if let Some(arr) = resp["boundary_errors"].as_array() {
+            let mut violations = violations;
+            for be in arr {
+                if let Some(msg) = be.as_str() {
+                    violations.push(format!("boundary: {}", msg));
+                } else if let Some(msg) = be["message"].as_str() {
+                    let file = be["file"].as_str().unwrap_or("unknown");
+                    violations.push(format!("{}: boundary: {}", file, msg));
+                }
+            }
+            return Ok(AnalysisResult {
+                score,
+                files_analyzed,
+                violations,
+            });
+        }
 
         Ok(AnalysisResult {
             score,
