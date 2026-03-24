@@ -1,44 +1,49 @@
 {
-  "title": "Feature: Swarm Agent Personalities — specialized roles with context-aware prompting",
+  "title": "Feature: Swarm Agent Personalities — specialized roles with goal-driven objective loop",
   "feature": "agent-personalities",
   "language": "rust",
   "status": "planned",
   "adr": "ADR-2603240104",
-  "description": "Build 6 specialized agent roles (coder, reviewer, tester, documenter, UX, fixer) with context-aware prompts, supervisor orchestration, and per-role performance tracking.",
+  "description": "Build 6 specialized agent roles (coder, reviewer, tester, documenter, UX, fixer) with context-aware prompts, goal-driven objective loop that re-evaluates ALL objectives after every action, supervisor orchestration with parallel agent execution, and per-role performance tracking.",
   "priority": "high",
   "superseded_by": "",
   "created_at": "2026-03-24T01:04:00.000000+00:00",
   "phases": [
     {
       "name": "Agent Prompts",
-      "description": "System prompt templates for each agent role",
+      "description": "System prompt templates for each agent role with role-specific context placeholders",
       "steps": ["step-1"]
     },
     {
+      "name": "Objective System",
+      "description": "Objective enum, evaluators, and dependency graph for parallel execution",
+      "steps": ["step-2", "step-3"]
+    },
+    {
       "name": "Context Assembly",
-      "description": "AgentContext struct and supervisor context builders",
-      "steps": ["step-2"]
+      "description": "AgentContext struct and supervisor context builders per role",
+      "steps": ["step-4"]
     },
     {
       "name": "Agent Implementations",
-      "description": "Each specialized agent as a pipeline component",
-      "steps": ["step-3", "step-4", "step-5", "step-6"]
+      "description": "Each specialized agent as a pipeline component with structured output",
+      "steps": ["step-5", "step-6", "step-7", "step-8"]
     },
     {
-      "name": "Supervisor",
-      "description": "Orchestration logic driving the agent pipeline per tier",
-      "steps": ["step-7"]
+      "name": "Supervisor + Loop",
+      "description": "Goal-driven loop that assigns agents based on unmet objectives",
+      "steps": ["step-9", "step-10"]
     },
     {
       "name": "Integration",
-      "description": "Wire into hex dev + performance tracking",
-      "steps": ["step-8", "step-9"]
+      "description": "Wire into hex dev, HexFlo task tracking, performance metrics",
+      "steps": ["step-11", "step-12", "step-13"]
     }
   ],
   "steps": [
     {
       "id": "step-1",
-      "description": "Create 6 agent prompt templates: agent-coder.md (code gen with step+ports+rules context), agent-reviewer.md (review checklist with severity+fix suggestions), agent-tester.md (test gen with London school patterns), agent-documenter.md (README+API docs from ADR+code), agent-ux.md (UX review checklist for CLI/API/frontend), agent-fixer.md (issue resolution with upstream output context).",
+      "description": "Create 6 agent prompt templates in hex-cli/assets/prompts/: agent-coder.md (step+ports+rules+existing code context), agent-reviewer.md (source+port+review checklist with severity levels), agent-tester.md (source+port+London school patterns+Deps pattern), agent-documenter.md (ADR+all files+workplan+port surface), agent-ux.md (adapter code+UX checklist for CLI/API/frontend), agent-fixer.md (issue+source+port+fix template with upstream agent output). Each template has role-specific {{placeholders}}.",
       "adapter": "secondary/prompts",
       "tier": 0,
       "dependencies": [],
@@ -54,79 +59,113 @@
     },
     {
       "id": "step-2",
-      "description": "Create AgentContext struct (prompt_template, source_files, port_interfaces, boundary_rules, workplan_step, upstream_output, metadata) and Supervisor struct with context builder methods: build_coder_context, build_reviewer_context, build_tester_context, build_documenter_context, build_ux_context, build_fixer_context. Each builder assembles the exact data that agent needs.",
+      "description": "Define Objective enum (CodeGenerated, CodeCompiles, TestsPass, ReviewPasses, ArchitectureGradeA, UxReviewPasses, DocsGenerated) and ObjectiveState struct (met, detail, blocking_issues). Define objective_dependencies() function returning which objectives must be met before others can be evaluated (e.g., CodeCompiles before TestsPass).",
+      "adapter": "primary/tui",
+      "tier": 0,
+      "dependencies": [],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/objectives.rs"]
+    },
+    {
+      "id": "step-3",
+      "description": "Implement objective evaluators. Each Objective gets an evaluate() method that checks current state: CodeCompiles runs tsc/cargo check, TestsPass runs bun test/cargo test, ReviewPasses checks for review result file, ArchitectureGradeA calls GET /api/analyze, DocsGenerated checks README.md exists. Returns ObjectiveState with blocking_issues for the fixer. evaluate_all() runs all evaluators and returns the full state vector.",
+      "adapter": "primary/tui",
+      "tier": 1,
+      "dependencies": ["step-2"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/objectives.rs"]
+    },
+    {
+      "id": "step-4",
+      "description": "Create AgentContext struct (prompt_template, source_files, port_interfaces, boundary_rules, workplan_step, upstream_output, metadata) and context builder methods on Supervisor: build_coder_context (step+ports+existing code), build_reviewer_context (source+port+checklist), build_tester_context (source+port+test patterns), build_documenter_context (ADR+all files+workplan), build_ux_context (adapter code+UX checklist), build_fixer_context (issue+source+fix template). Each builder reads actual files from output_dir.",
       "adapter": "primary/tui",
       "tier": 1,
       "dependencies": ["step-1"],
       "status": "pending",
-      "files": [
-        "hex-cli/src/pipeline/supervisor.rs"
-      ]
+      "files": ["hex-cli/src/pipeline/supervisor.rs"]
     },
     {
-      "id": "step-3",
-      "description": "Implement hex-reviewer agent. Takes source file + port interface + review checklist. Returns structured ReviewResult: verdict (PASS/NEEDS_FIXES), issues[] with severity/file/line/description/fix. Uses deepseek-r1 for reasoning. Parses LLM response into structured format.",
+      "id": "step-5",
+      "description": "Implement hex-reviewer agent. Takes AgentContext, calls inference with agent-reviewer.md template, parses structured ReviewResult: verdict (PASS/NEEDS_FIXES), issues[] with severity (critical/warning/info), file, line, description, fix_suggestion. Uses deepseek-r1 for reasoning. Writes review result to output_dir/.hex-review/<step-id>.json.",
       "adapter": "secondary/agent",
       "tier": 2,
-      "dependencies": ["step-2"],
+      "dependencies": ["step-4"],
       "status": "pending",
       "files": ["hex-cli/src/pipeline/agents/reviewer.rs"]
     },
     {
-      "id": "step-4",
-      "description": "Implement hex-tester agent. Takes source file + port contract + test patterns. Generates test file following London school (no mock.module, Deps pattern). Runs tests via compile_check + run_tests. Returns TestAgentResult: test_file_path, pass/fail counts, output.",
+      "id": "step-6",
+      "description": "Implement hex-tester agent. Takes AgentContext, calls inference with agent-tester.md template, generates test file following London school (no mock.module, Deps pattern injection). Writes test to output_dir/tests/. Then runs compile_check + run_tests. Returns TestAgentResult: test_file_path, pass/fail counts, failure output for fixer context.",
       "adapter": "secondary/agent",
       "tier": 2,
-      "dependencies": ["step-2"],
+      "dependencies": ["step-4"],
       "status": "pending",
       "files": ["hex-cli/src/pipeline/agents/tester.rs"]
     },
     {
-      "id": "step-5",
-      "description": "Implement hex-documenter agent. Takes ADR + all source files + workplan + port interfaces. Generates comprehensive README.md (overview, architecture diagram, quick start, API reference, development guide), inline JSDoc/rustdoc on public functions, and CHANGELOG entry.",
+      "id": "step-7",
+      "description": "Implement hex-documenter agent. Takes AgentContext with ADR + all source files + workplan + port interfaces. Generates: README.md (overview from ADR, hex architecture diagram, quick start with install/run/test commands, API reference from port interfaces, development guide). Also generates inline JSDoc/rustdoc by reading each public file and adding doc comments. Uses llama-4-maverick (fast structured output).",
       "adapter": "secondary/agent",
       "tier": 2,
-      "dependencies": ["step-2"],
+      "dependencies": ["step-4"],
       "status": "pending",
       "files": ["hex-cli/src/pipeline/agents/documenter.rs"]
     },
     {
-      "id": "step-6",
-      "description": "Implement hex-ux agent. Takes adapter code + user description + UX checklist. Reviews CLI (help text, flags, error messages), API (response shapes, HTTP status, pagination), and frontend (keyboard nav, contrast, responsive). Returns UxReviewResult with issues and recommendations. Only runs when workplan has tier 2 adapters.",
+      "id": "step-8",
+      "description": "Implement hex-ux agent. Takes AgentContext with adapter code + user description. Reviews: CLI (help text, consistent flags, error messages with suggestions), API (consistent response shapes, proper HTTP status codes, pagination, error format), Frontend (keyboard navigation, color contrast, responsive). Returns UxReviewResult with issues + recommendations. Only activated when workplan has tier 2 primary adapters. Uses deepseek-r1 for UX reasoning.",
       "adapter": "secondary/agent",
       "tier": 2,
-      "dependencies": ["step-2"],
+      "dependencies": ["step-4"],
       "status": "pending",
       "files": ["hex-cli/src/pipeline/agents/ux_reviewer.rs"]
     },
     {
-      "id": "step-7",
-      "description": "Implement Supervisor orchestration in supervisor.rs. Per-tier pipeline: coder (parallel) → reviewer + tester (parallel) → analyzer → ux (if applicable) → documenter (final tier only) → fixer (if any issues) → re-validate. Max 2 fix rounds per agent. Creates HexFlo tasks for each agent assignment.",
+      "id": "step-9",
+      "description": "Implement the goal-driven objective loop in Supervisor::run_tier(). For each tier: (1) evaluate_all objectives, (2) find first unmet objective, (3) determine which agent can fix it (CodeCompiles→fixer, TestsPass→tester or fixer, ReviewPasses→reviewer or fixer, etc.), (4) build context for that agent, (5) execute agent, (6) re-evaluate ALL objectives (not just the one fixed), (7) repeat until all met or max_iterations reached. Max 5 iterations per tier.",
       "adapter": "primary/tui",
       "tier": 3,
-      "dependencies": ["step-3", "step-4", "step-5", "step-6"],
+      "dependencies": ["step-3", "step-5", "step-6", "step-7", "step-8"],
       "status": "pending",
       "files": ["hex-cli/src/pipeline/supervisor.rs"]
     },
     {
-      "id": "step-8",
-      "description": "Wire Supervisor into hex dev. Replace direct code_phase + validate_phase calls in headless runner with Supervisor::run(). In --auto mode, all agents run without gates. In interactive mode, gate after review (show issues). In --quick mode, skip reviewer + documenter + ux.",
+      "id": "step-10",
+      "description": "Add parallel agent execution within the objective loop. When multiple unmet objectives are independent (no dependency edge between them), run their agents in parallel. Example: ReviewPasses + UxReviewPasses can run concurrently. Use the objective dependency graph from step-2 to determine parallelism. Execute parallel agents via tokio::join!.",
       "adapter": "primary/tui",
       "tier": 3,
-      "dependencies": ["step-7"],
+      "dependencies": ["step-9"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/supervisor.rs"]
+    },
+    {
+      "id": "step-11",
+      "description": "Wire Supervisor into hex dev headless + TUI modes. Replace direct code_phase + validate_phase in run_headless() with Supervisor::run(workplan, output_dir, config). In --auto: all agents run without gates. In interactive: gate after review (show issues), gate after test failures. In --quick: skip reviewer + documenter + UX, only coder + compile + analyze.",
+      "adapter": "primary/tui",
+      "tier": 3,
+      "dependencies": ["step-9"],
       "status": "pending",
       "files": ["hex-cli/src/tui/mod.rs"]
     },
     {
-      "id": "step-9",
-      "description": "Track per-role performance in SpacetimeDB. Extend model_performance table with agent_role field. Record success/failure per role per model. Dashboard shows per-role success rates. RL learns which models are best for reviewing vs coding vs testing.",
+      "id": "step-12",
+      "description": "Create HexFlo tasks for each agent assignment. Each agent execution creates a swarm task with agent_role, context_hash, upstream_tasks. Task status tracks: assigned → running → completed/failed. Dashboard shows per-agent task stream with role colors. hex report shows agent assignments per tier.",
       "adapter": "secondary/spacetimedb",
       "tier": 3,
-      "dependencies": ["step-7"],
+      "dependencies": ["step-9"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/supervisor.rs", "hex-nexus/src/routes/quality.rs"]
+    },
+    {
+      "id": "step-13",
+      "description": "Track per-role performance in SpacetimeDB. Extend model_performance with agent_role field. Record success/failure/iterations per role per model. Dashboard: per-role success rate chart. RL learns which models are best for reviewing vs coding vs testing. hex report --summary shows aggregate role performance.",
+      "adapter": "secondary/spacetimedb",
+      "tier": 3,
+      "dependencies": ["step-12"],
       "status": "pending",
       "files": [
         "spacetime-modules/hexflo-coordination/src/lib.rs",
-        "hex-nexus/src/routes/quality.rs"
+        "hex-cli/src/commands/report.rs"
       ]
     }
   ]

@@ -180,32 +180,131 @@ success_criteria:
 output_format: Complete corrected file
 ```
 
-### 2. Supervisor Orchestration
+### 2. Supervisor Orchestration — Goal-Driven Objective Loop
 
-The supervisor drives the agent pipeline per tier:
+The supervisor doesn't run agents in a fixed sequence. It defines **objectives** and loops until all are met. Fixing one issue can break another, so ALL objectives are re-evaluated after every action.
+
+#### Objectives
+
+```rust
+pub enum Objective {
+    CodeGenerated,          // All workplan steps have code files
+    CodeCompiles,           // tsc --noEmit / cargo check passes
+    TestsPass,              // bun test / cargo test passes (test files exist + pass)
+    ReviewPasses,           // Zero critical issues from hex-reviewer
+    ArchitectureGradeA,     // hex analyze score >= 90, zero violations
+    UxReviewPasses,         // Zero critical UX issues (if tier 2 adapters exist)
+    DocsGenerated,          // README.md + API docs exist (final tier only)
+}
+```
+
+#### Loop Logic
 
 ```
-For each tier in workplan:
-  1. ASSIGN hex-coder tasks (parallel within tier)
-     → Wait for all code steps to complete
+supervisor.run(workplan, output_dir):
+  objectives = [CodeGenerated, CodeCompiles, TestsPass,
+                ReviewPasses, ArchitectureGradeA, UxReviewPasses, DocsGenerated]
 
-  2. ASSIGN hex-reviewer (parallel per file)
-     → If NEEDS_FIXES: assign hex-fixer, then re-review (max 2 rounds)
+  for tier in workplan.tiers():
+    tier_objectives = filter_objectives_for_tier(objectives, tier)
+    iteration = 0
+    max_iterations = 5  // safety cap
 
-  3. ASSIGN hex-tester (parallel per file)
-     → If tests fail: assign hex-fixer, then re-test (max 2 rounds)
+    while not all_met(tier_objectives) and iteration < max_iterations:
+      iteration += 1
 
-  4. ASSIGN hex-analyzer (one task for whole tier)
-     → If violations: assign hex-fixer per violation, re-analyze
+      // Evaluate current state of ALL objectives
+      state = evaluate_all(tier_objectives, output_dir)
 
-  5. If tier has UI/CLI/API: ASSIGN hex-ux
-     → If critical issues: assign hex-fixer, re-review
+      // Find the first unmet objective and assign the right agent
+      for objective in tier_objectives:
+        if not state[objective].met:
+          match objective:
+            CodeGenerated       → assign hex-coder (parallel per step)
+            CodeCompiles        → assign hex-fixer (compile errors as context)
+            TestsPass           → if no tests: assign hex-tester
+                                  else: assign hex-fixer (test failures as context)
+            ReviewPasses        → if no review: assign hex-reviewer
+                                  else: assign hex-fixer (review issues as context)
+            ArchitectureGradeA  → assign hex-fixer (violations as context)
+            UxReviewPasses      → if no ux review: assign hex-ux
+                                  else: assign hex-fixer (UX issues as context)
+            DocsGenerated       → assign hex-documenter
 
-  6. If final tier: ASSIGN hex-documenter
-     → Generate README, API docs, inline comments
+          // After agent completes, re-evaluate ALL objectives
+          // (fixing compile error might break tests, fixing boundary
+          //  violation might break compilation, etc.)
+          break  // restart the objective loop from the top
 
-  7. Quality gate: all agents passed? → advance to next tier
+    // Tier complete — report which objectives met/unmet
+    report_tier_status(tier, state)
 ```
+
+#### Why Re-Evaluate Everything
+
+Traditional pipeline: `code → compile → test → analyze → done`
+Problem: Fixing a compile error might introduce a boundary violation. Fixing a boundary violation might break tests.
+
+Goal-driven loop: After EVERY fix, re-check ALL objectives. The supervisor always knows the true state.
+
+```
+Example:
+  Iteration 1: CodeGenerated ✓, CodeCompiles ✗ (3 errors)
+    → hex-fixer fixes compile errors
+  Iteration 2: CodeGenerated ✓, CodeCompiles ✓, TestsPass ✗ (no tests)
+    → hex-tester generates tests
+  Iteration 3: CodeGenerated ✓, CodeCompiles ✓, TestsPass ✗ (2 fail)
+    → hex-fixer fixes test failures
+  Iteration 4: CodeGenerated ✓, CodeCompiles ✗ (fix broke an import)
+    → hex-fixer fixes compile error
+  Iteration 5: All ✓ → advance to next tier
+```
+
+#### Objective Evaluation
+
+```rust
+pub struct ObjectiveState {
+    pub objective: Objective,
+    pub met: bool,
+    pub detail: String,       // "3/5 tests passing", "Score 87/100"
+    pub blocking_issues: Vec<String>,  // specific errors to fix
+}
+
+impl Supervisor {
+    fn evaluate_all(&self, objectives: &[Objective], dir: &str) -> Vec<ObjectiveState> {
+        objectives.iter().map(|obj| {
+            match obj {
+                Objective::CodeCompiles => {
+                    let result = validate_phase.compile_check(dir, language);
+                    ObjectiveState {
+                        objective: obj.clone(),
+                        met: result.pass,
+                        detail: format!("{} errors", result.errors.len()),
+                        blocking_issues: result.errors.iter()
+                            .map(|e| format!("{}:{}: {}", e.file, e.line, e.message))
+                            .collect(),
+                    }
+                }
+                Objective::TestsPass => { /* run tests, parse output */ }
+                Objective::ArchitectureGradeA => { /* hex analyze, check score */ }
+                // ... each objective has its own evaluator
+            }
+        }).collect()
+    }
+}
+```
+
+#### Parallel Agents Within Objectives
+
+When multiple objectives are unmet simultaneously and don't conflict, agents can run in parallel:
+
+```
+CodeCompiles ✗ + TestsPass ✗ → can't parallelize (tests need compilation)
+ReviewPasses ✗ + UxReviewPasses ✗ → CAN parallelize (independent reviews)
+CodeCompiles ✗ + DocsGenerated ✗ → can't parallelize (docs need working code)
+```
+
+The supervisor uses a dependency graph between objectives to determine parallelism.
 
 ### 3. Context Assembly per Agent
 
