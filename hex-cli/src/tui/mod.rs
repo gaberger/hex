@@ -117,6 +117,13 @@ pub struct TuiApp {
     needs_phase_run: bool,
     /// Overlay mode for debug/log views (keyboard shortcuts `d` and `l`).
     overlay: OverlayMode,
+    /// The phase currently being executed (set before blocking call for render feedback).
+    running_phase: Option<PipelinePhase>,
+    /// When the current phase started (for elapsed-time display).
+    phase_started: Option<Instant>,
+    /// Set to `true` after `running_phase` is assigned; the actual blocking call
+    /// happens on the *next* tick so render() gets one frame to show the status.
+    phase_ready_to_run: bool,
 }
 
 impl TuiApp {
@@ -171,6 +178,9 @@ impl TuiApp {
             pending_gate_action: None,
             needs_phase_run: true, // start pipeline on first tick
             overlay: OverlayMode::None,
+            running_phase: None,
+            phase_started: None,
+            phase_ready_to_run: false,
         }
     }
 
@@ -1216,6 +1226,32 @@ impl TuiApp {
                 .style(Style::default().fg(Color::White))
                 .wrap(ratatui::widgets::Wrap { trim: false });
             frame.render_widget(paragraph, chunks[1]);
+        } else if let Some(phase) = self.running_phase {
+            let elapsed = self.phase_started
+                .map(|s| s.elapsed().as_secs())
+                .unwrap_or(0);
+            let dots = ".".repeat((elapsed as usize % 3) + 1);
+            let msg = format!(
+                "Running {} phase{}\n\n\
+                 Session:  {}\n\
+                 Feature:  {}\n\
+                 Steps completed: {}\n\
+                 Cost:     ${:.4}",
+                phase,
+                dots,
+                self.session.id,
+                self.session.feature_description,
+                self.session.completed_steps.len(),
+                self.budget.total_cost_usd,
+            );
+            let block = Block::default()
+                .title(" Pipeline ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow));
+            let paragraph = ratatui::widgets::Paragraph::new(msg)
+                .block(block)
+                .style(Style::default().fg(Color::White));
+            frame.render_widget(paragraph, chunks[1]);
         } else {
             task_list::render(frame, chunks[1], &self.tasks, self.task_scroll);
         }
@@ -1356,13 +1392,88 @@ impl TuiApp {
             return;
         }
 
-        // 3. Don't re-run if not needed
+        // 3. Second tick — running_phase is set and render() has drawn it;
+        //    now execute the blocking phase call.
+        if self.running_phase.is_some() && self.phase_ready_to_run {
+            self.phase_ready_to_run = false;
+
+            let handle = match tokio::runtime::Handle::try_current() {
+                Ok(h) => h,
+                Err(_) => {
+                    error!("no tokio runtime — cannot run phase");
+                    self.running_phase = None;
+                    self.phase_started = None;
+                    return;
+                }
+            };
+
+            match self.session.current_phase {
+                PipelinePhase::Adr => {
+                    let result =
+                        tokio::task::block_in_place(|| handle.block_on(self.run_adr_phase()));
+                    if let Err(e) = result {
+                        error!(error = %e, "ADR phase error");
+                    }
+                }
+                PipelinePhase::Workplan => {
+                    let result =
+                        tokio::task::block_in_place(|| handle.block_on(self.run_workplan_phase()));
+                    if let Err(e) = result {
+                        error!(error = %e, "Workplan phase error");
+                    }
+                }
+                PipelinePhase::Swarm => {
+                    let result =
+                        tokio::task::block_in_place(|| handle.block_on(self.run_swarm_phase()));
+                    if let Err(e) = result {
+                        error!(error = %e, "Swarm phase error");
+                    }
+                    // Swarm has no gate — auto-advance to Code
+                    if self.gate.is_none() {
+                        self.needs_phase_run = true;
+                    }
+                }
+                PipelinePhase::Code => {
+                    let result =
+                        tokio::task::block_in_place(|| handle.block_on(self.run_code_phase()));
+                    if let Err(e) = result {
+                        error!(error = %e, "Code phase error");
+                    }
+                    // Show first step gate (run_code_phase populates code_results)
+                    if !self.code_results.is_empty() && self.gate.is_none() {
+                        self.code_gate_index = 0;
+                        self.show_code_step_gate(0);
+                    }
+                }
+                PipelinePhase::Validate => {
+                    let result =
+                        tokio::task::block_in_place(|| handle.block_on(self.run_validate_phase()));
+                    if let Err(e) = result {
+                        error!(error = %e, "Validate phase error");
+                    }
+                }
+                PipelinePhase::Commit => {
+                    self.run_commit_phase();
+                }
+            }
+
+            self.running_phase = None;
+            self.phase_started = None;
+
+            // Auto-approve if gate was suppressed (Quick mode skips some gates)
+            if self.gate.is_none() && !self.should_quit {
+                self.auto_approve_if_needed();
+            }
+            return;
+        }
+
+        // 4. Don't re-run if not needed
         if !self.needs_phase_run {
             return;
         }
         self.needs_phase_run = false;
 
-        // 4. Skip phases the mode says to skip
+        // 5. Skip phases the mode says to skip
         if !self.config.mode.should_run_phase(self.session.current_phase) {
             info!(phase = %self.session.current_phase, "skipping phase per mode");
             self.advance_to_next_phase();
@@ -1370,69 +1481,12 @@ impl TuiApp {
             return;
         }
 
-        // 5. Run the current phase (blocks during inference call)
-        let handle = match tokio::runtime::Handle::try_current() {
-            Ok(h) => h,
-            Err(_) => {
-                error!("no tokio runtime — cannot run phase");
-                return;
-            }
-        };
-
-        match self.session.current_phase {
-            PipelinePhase::Adr => {
-                let result =
-                    tokio::task::block_in_place(|| handle.block_on(self.run_adr_phase()));
-                if let Err(e) = result {
-                    error!(error = %e, "ADR phase error");
-                }
-            }
-            PipelinePhase::Workplan => {
-                let result =
-                    tokio::task::block_in_place(|| handle.block_on(self.run_workplan_phase()));
-                if let Err(e) = result {
-                    error!(error = %e, "Workplan phase error");
-                }
-            }
-            PipelinePhase::Swarm => {
-                let result =
-                    tokio::task::block_in_place(|| handle.block_on(self.run_swarm_phase()));
-                if let Err(e) = result {
-                    error!(error = %e, "Swarm phase error");
-                }
-                // Swarm has no gate — auto-advance to Code
-                if self.gate.is_none() {
-                    self.needs_phase_run = true;
-                }
-            }
-            PipelinePhase::Code => {
-                let result =
-                    tokio::task::block_in_place(|| handle.block_on(self.run_code_phase()));
-                if let Err(e) = result {
-                    error!(error = %e, "Code phase error");
-                }
-                // Show first step gate (run_code_phase populates code_results)
-                if !self.code_results.is_empty() && self.gate.is_none() {
-                    self.code_gate_index = 0;
-                    self.show_code_step_gate(0);
-                }
-            }
-            PipelinePhase::Validate => {
-                let result =
-                    tokio::task::block_in_place(|| handle.block_on(self.run_validate_phase()));
-                if let Err(e) = result {
-                    error!(error = %e, "Validate phase error");
-                }
-            }
-            PipelinePhase::Commit => {
-                self.run_commit_phase();
-            }
-        }
-
-        // 6. Auto-approve if gate was suppressed (Quick mode skips some gates)
-        if self.gate.is_none() && !self.should_quit {
-            self.auto_approve_if_needed();
-        }
+        // 6. First tick for a new phase — set running state and return
+        //    immediately so render() draws the "Running..." message before
+        //    the next tick actually blocks.
+        self.running_phase = Some(self.session.current_phase);
+        self.phase_started = Some(Instant::now());
+        self.phase_ready_to_run = true;
     }
 
     /// Dispatch a gate action to the handler for the current phase.
