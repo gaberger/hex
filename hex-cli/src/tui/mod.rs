@@ -1643,11 +1643,11 @@ impl TuiApp {
                 Ok(())
             }
             Err(e) => {
-                error!(error = %e, "ADR generation failed");
+                error!(error = format!("{:#}", e), "ADR generation failed");
                 self.show_gate(
                     "ADR Error".into(),
                     format!(
-                        "ADR generation failed:\n\n{}\n\nPress [r] to retry, [s] to skip.",
+                        "ADR generation failed:\n\n{:#}\n\nPress [r] to retry, [s] to skip.",
                         e
                     ),
                 );
@@ -1863,11 +1863,11 @@ impl TuiApp {
                 Ok(())
             }
             Err(e) => {
-                error!(error = %e, "Workplan generation failed");
+                error!(error = format!("{:#}", e), "Workplan generation failed");
                 self.show_gate(
                     "Workplan Error".into(),
                     format!(
-                        "Workplan generation failed:\n\n{}\n\nPress [r] to retry, [s] to skip.",
+                        "Workplan generation failed:\n\n{:#}\n\nPress [r] to retry, [s] to skip.",
                         e
                     ),
                 );
@@ -2256,11 +2256,11 @@ impl TuiApp {
                     self.code_results.push(result);
                 }
                 Err(e) => {
-                    error!(error = %e, step_id = %step.id, "code generation failed for step");
+                    error!(error = format!("{:#}", e), step_id = %step.id, "code generation failed for step");
                     self.show_gate(
                         "Code Error".into(),
                         format!(
-                            "Code generation failed for step '{}':\n\n{}\n\nPress [r] to retry, [s] to skip.",
+                            "Code generation failed for step '{}':\n\n{:#}\n\nPress [r] to retry, [s] to skip.",
                             step.id, e
                         ),
                     );
