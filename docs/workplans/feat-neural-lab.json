@@ -1,0 +1,176 @@
+{
+  "id": "feat-neural-lab",
+  "title": "Feature: Neural Network Encoding in SpacetimeDB WASM — autonomous research loop with scheduled reducers",
+  "specs": "docs/specs/neural-lab.json",
+  "adr": "ADR-2603241230",
+  "created": "2026-03-24",
+  "status": "in_progress",
+  "topology": "pipeline",
+  "budget": "~80000 tokens",
+  "language": "rust",
+  "priority": "high",
+  "description": "Implement the neural-lab SpacetimeDB WASM module that encodes neural network architecture as transactional state, manages experiment lifecycle with keep/discard branching, and runs autonomous research loops via scheduled reducers. Integrates with hex-nexus for GPU dispatch, fleet-state for node management, and rl-engine for mutation strategy learning.",
+
+  "phases": [
+    {
+      "name": "WASM Module — Tables & Core Reducers",
+      "description": "Create the neural-lab WASM module with all tables (NetworkConfig, LayerSpec, Experiment, ResearchFrontier, MutationStrategy) and core reducers for config and experiment CRUD",
+      "steps": ["step-1", "step-2", "step-3"]
+    },
+    {
+      "name": "Scheduled Reducers — Autonomous Loop",
+      "description": "Implement the server-side autonomous research loop: research_loop_tick, stale cleanup, frontier consolidation, mutation strategy updates",
+      "steps": ["step-4", "step-5"]
+    },
+    {
+      "name": "hex-nexus — REST API & WebSocket Bridge",
+      "description": "Add hex-nexus REST endpoints and WebSocket subscription bridge for experiment dispatch and weight checkpoint management",
+      "steps": ["step-6", "step-7"]
+    },
+    {
+      "name": "hex-cli — Commands & MCP Tools",
+      "description": "Add CLI commands and MCP tool wrappers for neural-lab operations",
+      "steps": ["step-8", "step-9"]
+    },
+    {
+      "name": "Integration & Validation",
+      "description": "End-to-end integration tests, dashboard wiring, and validation against behavioral specs",
+      "steps": ["step-10", "step-11"]
+    }
+  ],
+
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Create the `neural-lab` WASM module crate under spacetime-modules/neural-lab/. Set up Cargo.toml with spacetimedb dependency (matching workspace version). Define all 5 tables in src/lib.rs:\n\n- NetworkConfig: id (unique), name, parent_id, n_layer (u32), n_head (u32), n_kv_head (u32), n_embd (u32), vocab_size (u32), sequence_len (u32), window_pattern (String), activation (String), optimizer_config (String/JSON), total_batch_size (u32), time_budget_secs (u32), created_at (String), created_by (String), status (String: candidate|active|archived)\n- LayerSpec: id (unique), config_id, layer_index (u32), attention_type (String), window_size (u32), use_value_embeddings (String), resid_lambda (String), x0_lambda (String)\n- Experiment: id (unique), config_id, swarm_id, hypothesis, mutation_diff (JSON String), status (String: queued|training|evaluating|kept|discarded|failed), val_bpb (String), baseline_bpb (String), improvement_bpb (String), train_loss_final (String), tokens_processed (u64), wall_time_secs (u32), gpu_node_id (String), git_branch (String), git_commit (String), started_at (String), completed_at (String), error_message (String), lineage_name (String)\n- ResearchFrontier: id (unique), lineage_name, best_config_id, best_experiment_id, best_val_bpb (String), total_experiments (u32), total_kept (u32), total_discarded (u32), updated_at (String)\n- MutationStrategy: id (unique), strategy_name (String: widen|deepen|attention|optimizer|activation|random), selection_weight (String/float), total_tried (u32), total_kept (u32), success_rate (String/float), last_used_at (String)\n\nAdd module to spacetime-modules/Cargo.toml workspace members. Verify it compiles with `cargo build -p neural-lab`.",
+      "layer": "adapters/secondary",
+      "adapter": "spacetimedb",
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/neural-lab/wasm-tables",
+      "done_condition": "`cargo build -p neural-lab` succeeds with all 5 tables defined and zero warnings"
+    },
+    {
+      "id": "step-2",
+      "description": "Implement config CRUD reducers in neural-lab/src/lib.rs:\n\n- `config_create(ctx, name, parent_id, n_layer, n_head, n_kv_head, n_embd, vocab_size, sequence_len, window_pattern, activation, optimizer_config, total_batch_size, time_budget_secs, created_by)`: Validates field ranges (n_layer > 0, n_embd > 0, vocab_size >= 256, time_budget_secs >= 60). If parent_id is non-empty, verifies parent exists. Generates UUID via ctx. Sets status='candidate', created_at=now. Inserts row. Covers S01, S02, S14.\n\n- `config_activate(ctx, config_id)`: Sets status='active' (only one active per lineage — archive others).\n\n- `config_archive(ctx, config_id)`: Sets status='archived'.\n\n- `layer_spec_create(ctx, config_id, layer_index, attention_type, window_size, use_value_embeddings, resid_lambda, x0_lambda)`: Creates per-layer override. Validates config_id exists.\n\nUse spacetimedb::Table trait for filter_by/insert/delete. Follow existing patterns from rl-engine and hexflo-coordination modules.",
+      "layer": "adapters/secondary",
+      "adapter": "spacetimedb",
+      "port": null,
+      "dependencies": ["step-1"],
+      "tier": 0,
+      "specs": ["S01", "S02", "S14"],
+      "worktree_branch": "feat/neural-lab/wasm-tables",
+      "done_condition": "config_create reducer validates inputs, creates rows with UUID and timestamp, and config lineage (parent_id) works correctly. cargo build succeeds."
+    },
+    {
+      "id": "step-3",
+      "description": "Implement experiment lifecycle reducers:\n\n- `experiment_create(ctx, config_id, hypothesis, mutation_diff, lineage_name)`: Inserts Experiment with status='queued'. Looks up ResearchFrontier for lineage_name to set baseline_bpb (empty string if first experiment). Generates UUID. Covers S03, S10.\n\n- `experiment_start(ctx, experiment_id, gpu_node_id)`: Sets status='training', started_at=now, gpu_node_id. Validates experiment exists and status='queued'. Covers S03.\n\n- `experiment_complete(ctx, experiment_id, val_bpb, train_loss_final, tokens_processed, wall_time_secs, git_commit)`: Core keep/discard logic. Parses val_bpb and baseline_bpb as f64. If baseline_bpb is empty (first experiment) OR val_bpb < baseline_bpb → status='kept', update ResearchFrontier. Else → status='discarded'. Computes improvement_bpb = baseline - val_bpb. Sets completed_at=now. Covers S04, S05, S10.\n\n- `experiment_fail(ctx, experiment_id, error_message)`: Sets status='failed', error_message, completed_at=now. Does NOT touch ResearchFrontier. Covers S08.\n\n- `frontier_get(ctx, lineage_name)`: Helper to read ResearchFrontier row (used internally by other reducers).\n\nAll reducers must handle the 'first experiment in lineage' edge case (S10) where no frontier exists yet — create one.",
+      "layer": "adapters/secondary",
+      "adapter": "spacetimedb",
+      "port": null,
+      "dependencies": ["step-2"],
+      "tier": 0,
+      "specs": ["S03", "S04", "S05", "S08", "S10"],
+      "worktree_branch": "feat/neural-lab/wasm-tables",
+      "done_condition": "All experiment reducers compile. Keep/discard logic correctly compares val_bpb to baseline. First-experiment edge case creates new frontier. Failed experiments don't touch frontier."
+    },
+    {
+      "id": "step-4",
+      "description": "Implement the autonomous research loop via scheduled reducers:\n\n- `research_loop_tick(ctx, _)`: Scheduled every 30 seconds via `#[reducer(repeat = 30s)]` (or SpacetimeDB's schedule_reducer pattern). Logic:\n  1. Count experiments with status='queued' for each active lineage\n  2. If count < MIN_QUEUE_DEPTH (const = 3), auto-generate mutations:\n     a. Read ResearchFrontier to get best_config_id\n     b. Read MutationStrategy table, select strategy with highest selection_weight (weighted random using ctx timestamp as seed)\n     c. Generate a new NetworkConfig variant by applying the strategy (deterministic: 'widen' → n_embd += 128, 'deepen' → n_layer += 2, 'attention' → rotate window_pattern, 'optimizer' → adjust lr by ±10%, 'activation' → cycle through relu_squared/gelu/swiglu)\n     d. Call config_create + experiment_create internally\n  3. Check for experiments with status='training' where started_at + time_budget_secs * 1.5 < now → mark as timed_out (call experiment_fail). Covers S06, S09.\n\n- `stale_experiment_cleanup(ctx, _)`: Scheduled every 5 minutes. Finds experiments in 'training' status where started_at + time_budget_secs * 2 < now. Marks as failed. Covers S09.\n\n- `frontier_consolidate(ctx, _)`: Scheduled every 10 minutes. For each lineage, recomputes ResearchFrontier from all 'kept' experiments by finding the minimum val_bpb. Covers S07.\n\nNote: SpacetimeDB scheduled reducers use `schedule_reducer` or `#[reducer(init)]` with `schedule_at`. Check the SpacetimeDB SDK version in workspace for exact syntax.",
+      "layer": "adapters/secondary",
+      "adapter": "spacetimedb",
+      "port": null,
+      "dependencies": ["step-3"],
+      "tier": 1,
+      "specs": ["S06", "S07", "S09"],
+      "worktree_branch": "feat/neural-lab/wasm-scheduled",
+      "done_condition": "Scheduled reducers compile. research_loop_tick generates mutation candidates when queue is low. stale_experiment_cleanup reclaims timed-out experiments. frontier_consolidate recomputes best."
+    },
+    {
+      "id": "step-5",
+      "description": "Implement mutation strategy learning:\n\n- `mutation_strategy_init(ctx)`: Called once (via init reducer). Seeds MutationStrategy table with 6 rows: widen, deepen, attention, optimizer, activation, random — each with selection_weight='1.0' (uniform), total_tried=0, total_kept=0.\n\n- `mutation_strategy_update(ctx, _)`: Scheduled every 15 minutes. For each strategy:\n  1. Count experiments that used this strategy (by parsing mutation_diff JSON for strategy field)\n  2. Count how many were 'kept'\n  3. Compute success_rate = kept / tried (or 1.0 if tried == 0)\n  4. Update selection_weight using softmax-like weighting: weight = success_rate + EXPLORATION_BONUS / (1 + total_tried)\n  5. Normalize weights so they sum to 1.0\n  This implements a multi-armed bandit (UCB1-like) for mutation selection. Covers S15.\n\n- Add `strategy` field to mutation_diff JSON convention so experiments can be traced back to their strategy.",
+      "layer": "adapters/secondary",
+      "adapter": "spacetimedb",
+      "port": null,
+      "dependencies": ["step-4"],
+      "tier": 1,
+      "specs": ["S15"],
+      "worktree_branch": "feat/neural-lab/wasm-scheduled",
+      "done_condition": "MutationStrategy table is seeded on init. mutation_strategy_update recomputes weights based on experiment outcomes. UCB1-like exploration bonus prevents strategy starvation."
+    },
+    {
+      "id": "step-6",
+      "description": "Add hex-nexus REST API endpoints for neural-lab. In hex-nexus/src/ add a new `neural_lab.rs` module (or extend existing routing):\n\n- `GET /api/neural-lab/configs` — list all NetworkConfigs (with optional ?status= and ?lineage= filters)\n- `GET /api/neural-lab/configs/:id` — get single config with its LayerSpecs\n- `POST /api/neural-lab/configs` — create config (delegates to config_create reducer via SpacetimeDB client)\n- `GET /api/neural-lab/experiments` — list experiments (with ?lineage=, ?status= filters, paginated, sorted by created_at desc)\n- `GET /api/neural-lab/experiments/:id` — get single experiment with full detail\n- `POST /api/neural-lab/experiments` — create experiment (delegates to experiment_create reducer)\n- `PATCH /api/neural-lab/experiments/:id/start` — start experiment (delegates to experiment_start)\n- `PATCH /api/neural-lab/experiments/:id/complete` — complete experiment (delegates to experiment_complete)\n- `PATCH /api/neural-lab/experiments/:id/fail` — fail experiment (delegates to experiment_fail)\n- `GET /api/neural-lab/frontier/:lineage` — get ResearchFrontier with best config and recent experiments. Covers S12.\n- `GET /api/neural-lab/strategies` — list MutationStrategy entries with current weights\n\nFollow existing hex-nexus routing patterns (axum Router, JSON responses). All write endpoints delegate to SpacetimeDB reducers — hex-nexus never writes state directly (ADR-046).",
+      "layer": "adapters/primary",
+      "adapter": "rest-api",
+      "port": null,
+      "dependencies": ["step-3"],
+      "tier": 2,
+      "specs": ["S12"],
+      "worktree_branch": "feat/neural-lab/nexus-api",
+      "done_condition": "All REST endpoints return correct JSON. Write operations delegate to SpacetimeDB reducers. GET /api/neural-lab/frontier/:lineage returns best config, val_bpb, and experiment counts."
+    },
+    {
+      "id": "step-7",
+      "description": "Implement the hex-nexus WebSocket subscription bridge for experiment dispatch:\n\n1. Subscribe to the neural-lab Experiment table via SpacetimeDB WebSocket client\n2. On insert with status='queued':\n   a. Query fleet-state module for available GPU nodes (status='online', sufficient VRAM)\n   b. Select best node (least loaded or round-robin)\n   c. Call experiment_start reducer with selected gpu_node_id\n   d. Dispatch training job to GPU node (HTTP POST to node's training endpoint with config + checkpoint path)\n3. On update to status='training' with wall_time > time_budget * 1.2:\n   a. Log warning for slow experiment\n4. Weight checkpoint management:\n   a. On experiment_complete with status='kept': copy checkpoint to ~/.hex/neural-lab/checkpoints/{lineage}/{experiment_id}.pt\n   b. On status='discarded': schedule checkpoint for deletion (30-min grace period)\n   c. Periodic cleanup: remove checkpoints for discarded experiments older than 1 hour\n\nCovers S11.",
+      "layer": "adapters/secondary",
+      "adapter": "spacetimedb-subscription",
+      "port": null,
+      "dependencies": ["step-6"],
+      "tier": 2,
+      "specs": ["S11"],
+      "worktree_branch": "feat/neural-lab/nexus-api",
+      "done_condition": "hex-nexus subscribes to Experiment table. When status='queued' appears, a GPU node is selected and experiment_start is called. Weight checkpoints are archived for kept experiments and cleaned up for discarded ones."
+    },
+    {
+      "id": "step-8",
+      "description": "Add hex-cli commands for neural-lab operations. In hex-cli/src/ add a `neural_lab` subcommand group:\n\n- `hex neural-lab config create [--name NAME] [--parent ID] [--n-layer N] [--n-head N] [--n-embd N] [--vocab-size N] [--window-pattern PATTERN] [--activation ACT]` — creates config via REST API\n- `hex neural-lab config list [--status STATUS] [--lineage NAME]` — lists configs in table format\n- `hex neural-lab experiment create --config ID --hypothesis TEXT [--lineage NAME]` — creates experiment\n- `hex neural-lab experiments [--lineage NAME] [--status STATUS] [--json]` — lists experiments in table format with keep/discard/failed indicators. Covers S13.\n- `hex neural-lab frontier [LINEAGE]` — shows frontier summary: best val_bpb, config details, experiment counts, improvement trend\n- `hex neural-lab strategies` — shows mutation strategy table with weights and success rates\n- `hex neural-lab start-loop [--lineage NAME]` — activates the autonomous research loop for a lineage (sets a config to 'active' status which research_loop_tick picks up)\n- `hex neural-lab stop-loop [--lineage NAME]` — archives the active config, pausing the loop\n\nAll commands delegate to hex-nexus REST API. Support --json flag for machine-readable output (following ADR-2603241126 CLI patterns).",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "port": null,
+      "dependencies": ["step-6"],
+      "tier": 2,
+      "specs": ["S13"],
+      "worktree_branch": "feat/neural-lab/cli",
+      "done_condition": "All hex neural-lab commands parse arguments, call REST API, and display formatted output. --json flag works. hex neural-lab experiments shows keep/discard table."
+    },
+    {
+      "id": "step-9",
+      "description": "Add MCP tool wrappers in hex-cli's MCP server for neural-lab operations. Following existing pattern where MCP tools delegate to the same REST endpoints as CLI:\n\n- `hex_neural_lab_config_create` — wraps POST /api/neural-lab/configs\n- `hex_neural_lab_config_list` — wraps GET /api/neural-lab/configs\n- `hex_neural_lab_experiment_create` — wraps POST /api/neural-lab/experiments\n- `hex_neural_lab_experiment_list` — wraps GET /api/neural-lab/experiments\n- `hex_neural_lab_frontier` — wraps GET /api/neural-lab/frontier/:lineage\n- `hex_neural_lab_strategies` — wraps GET /api/neural-lab/strategies\n- `hex_neural_lab_loop_start` — activates loop for a lineage\n- `hex_neural_lab_loop_stop` — pauses loop for a lineage\n\nRegister tools in MCP tool registry. Each tool returns JSON matching the REST API response format.",
+      "layer": "adapters/primary",
+      "adapter": "mcp",
+      "port": null,
+      "dependencies": ["step-8"],
+      "tier": 2,
+      "specs": [],
+      "worktree_branch": "feat/neural-lab/cli",
+      "done_condition": "All MCP tools registered and callable. Each tool returns well-formed JSON. Tool names follow hex_neural_lab_* convention."
+    },
+    {
+      "id": "step-10",
+      "description": "End-to-end integration test for the full experiment lifecycle:\n\n1. Publish neural-lab module to SpacetimeDB (test instance)\n2. Create a NetworkConfig via REST API\n3. Create an experiment via REST API\n4. Simulate experiment_start (GPU node picks up) via REST API\n5. Simulate experiment_complete with val_bpb improvement → verify status='kept', frontier updated\n6. Create second experiment, complete with regression → verify status='discarded', frontier unchanged\n7. Verify research_loop_tick creates new experiments when queue is low (wait 30s or trigger manually)\n8. Verify stale_experiment_cleanup marks timed-out experiments as failed\n9. Verify frontier_consolidate recomputes correctly after manual state manipulation\n10. Verify CLI commands display correct data for all of the above\n\nCovers S01-S13 end-to-end.",
+      "layer": "integration",
+      "adapter": "test",
+      "port": null,
+      "dependencies": ["step-7", "step-8", "step-9"],
+      "tier": 3,
+      "specs": ["S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09", "S10", "S11", "S12", "S13"],
+      "worktree_branch": "feat/neural-lab/integration",
+      "done_condition": "Full experiment lifecycle works end-to-end: config → experiment → keep/discard → frontier update. Scheduled reducers fire correctly. CLI + REST API return correct data. All 13 happy-path and edge-case specs pass."
+    },
+    {
+      "id": "step-11",
+      "description": "Wire neural-lab data into hex-dashboard (hex-nexus/assets/):\n\n1. Add a 'Research Lab' page/section to the dashboard navigation\n2. Experiment timeline chart: val_bpb over time, colored by kept (green) / discarded (red) / failed (gray)\n3. Architecture lineage tree: visual tree of configs showing parent→child relationships\n4. Frontier leaderboard: table of lineages ranked by best_val_bpb\n5. Mutation strategy pie chart: current selection weights\n6. Real-time updates via SpacetimeDB WebSocket subscription (same pattern as existing dashboard panels)\n\nUse Solid.js + TailwindCSS following existing dashboard patterns. This step requires `cargo build -p hex-nexus` after asset changes (rust-embed).",
+      "layer": "adapters/primary",
+      "adapter": "dashboard",
+      "port": null,
+      "dependencies": ["step-10"],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/neural-lab/dashboard",
+      "done_condition": "Dashboard shows Research Lab section with experiment timeline, lineage tree, frontier leaderboard, and strategy weights. Real-time updates work via WebSocket. cargo build -p hex-nexus succeeds with new assets."
+    }
+  ]
+}

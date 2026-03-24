@@ -4,7 +4,7 @@
   "specs": "docs/specs/registration-lifecycle-gaps.json",
   "adr": "ADR-065",
   "created": "2026-03-22",
-  "status": "planned",
+  "status": "done",
   "topology": "pipeline",
   "budget": "~20000 tokens",
   "steps": [

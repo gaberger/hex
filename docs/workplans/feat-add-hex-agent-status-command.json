@@ -2,7 +2,7 @@
   "title": "Plan: add hex agent status command",
   "feature": "",
   "language": "typescript",
-  "status": "planned",
+  "status": "done",
   "steps": [
     {
       "id": "step-1",
@@ -12,7 +12,7 @@
       "dependencies": [
         "ports"
       ],
-      "status": "pending"
+      "status": "completed"
     }
   ],
   "phases": [],

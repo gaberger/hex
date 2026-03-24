@@ -2,6 +2,7 @@
   "id": "feat-persistent-agent-coordination",
   "title": "Persistent Agent Coordination via SpacetimeDB",
   "adr": "ADR-2603241230",
+  "status": "done",
   "description": "Replace inline agent function calls with persistent worker processes that coordinate through SpacetimeDB. Agents heartbeat, pick up tasks from a queue, and communicate via shared memory.",
   "steps": [
     {

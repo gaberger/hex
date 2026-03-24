@@ -4,7 +4,7 @@
   "specs": null,
   "adr": "ADR-2603231700",
   "created": "2026-03-23",
-  "status": "pending",
+  "status": "planned",
   "status_note": "Critical — without this, all swarm features bypass worktree isolation",
   "topology": "pipeline",
   "budget": "~40000 tokens",

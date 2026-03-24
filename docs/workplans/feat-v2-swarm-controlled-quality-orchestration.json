@@ -2,7 +2,7 @@
   "title": "Feature: v2 Swarm-Controlled Quality Orchestration — HexFlo drives compile/test/analyze/fix loop",
   "feature": "swarm-quality-v2",
   "language": "rust",
-  "status": "planned",
+  "status": "done",
   "adr": "ADR-2603232340",
   "description": "Migrate quality loop from embedded validate_phase.rs logic to HexFlo swarm-controlled orchestration. Each quality gate and fix attempt becomes a tracked swarm task with agent assignment, cost tracking, and dashboard visibility. Swarm topology encodes hex architecture rules (tier ordering, parallel within tier, gate after each tier).",
   "priority": "high",

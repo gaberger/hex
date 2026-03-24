@@ -4,7 +4,7 @@
   "specs": "docs/specs/swarm-gate-pre-agent-enforcement.json",
   "adr": "ADR-2603232000",
   "created": "2026-03-23",
-  "status": "planned",
+  "status": "done",
   "topology": "pipeline",
   "budget": "~25000 tokens",
   "steps": [

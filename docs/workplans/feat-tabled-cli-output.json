@@ -2,7 +2,7 @@
   "title": "Feature: Structured CLI Table Output via tabled",
   "feature": "tabled-cli-output",
   "language": "rust",
-  "status": "planned",
+  "status": "done",
   "adr": "ADR-2603241226",
   "description": "Add tabled crate and shared fmt module. Migrate all manual println table formatting to derive-based structured tables with consistent hex branding.",
   "priority": "medium",

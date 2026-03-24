@@ -2,7 +2,7 @@
   "title": "Feature: Self-Sufficient hex-agent with TUI — OpenRouter-powered development pipeline",
   "feature": "hex-dev-tui",
   "language": "rust",
-  "status": "planned",
+  "status": "done",
   "adr": "ADR-2603232005",
   "description": "Make hex-agent a complete AAIDE by adding an inference client, prompt templates, and a ratatui TUI that drives the full pipeline (ADR → Workplan → Swarm → Code → Validate) using OpenRouter as the primary provider.",
   "priority": "high",

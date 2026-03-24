@@ -2,6 +2,7 @@
   "id": "feat-tui-cli-surrogate",
   "title": "TUI CLI Surrogate + Pipeline Traceability",
   "adr": "ADR-2603241126",
+  "status": "done",
   "description": "Replace direct REST calls in TUI pipeline with hex CLI subprocess calls. Establish project_id as root of all traceability.",
   "steps": [
     {

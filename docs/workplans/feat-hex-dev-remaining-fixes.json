@@ -2,7 +2,7 @@
   "title": "Feature: hex dev remaining fixes — free model chain, grade normalization, scaffold path, file paths",
   "feature": "hex-dev-fixes",
   "language": "rust",
-  "status": "planned",
+  "status": "done",
   "adr": "ADR-2603232340",
   "description": "Fix the 5 remaining issues preventing hex dev from completing a full end-to-end pipeline with free models and correct quality grading.",
   "priority": "critical",

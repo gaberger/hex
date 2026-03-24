@@ -4,7 +4,7 @@
   "specs": "docs/specs/openrouter-inference-integration.json",
   "adr": "ADR-2603231600",
   "created": "2026-03-23",
-  "status": "pending",
+  "status": "done",
   "status_note": "",
   "topology": "pipeline",
   "budget": "~55000 tokens",

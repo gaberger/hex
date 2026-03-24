@@ -2,7 +2,7 @@
   "title": "Feature: Tool Call Tracking in SpacetimeDB — dual-write, dashboard feed, cost aggregation",
   "feature": "tool-call-tracking",
   "language": "rust",
-  "status": "planned",
+  "status": "done",
   "adr": "ADR-2603232230",
   "description": "Store hex dev tool calls in SpacetimeDB for cross-machine persistence, dashboard visibility, and cost aggregation. Dual-write from local session files + nexus REST.",
   "priority": "medium",

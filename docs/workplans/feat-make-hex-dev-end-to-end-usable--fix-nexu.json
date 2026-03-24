@@ -2,7 +2,7 @@
   "title": "Feature: Make hex dev end-to-end usable — timeout fixes, model routing, error handling, test run",
   "feature": "hex-dev-usability",
   "language": "rust",
-  "status": "planned",
+  "status": "done",
   "adr": "ADR-2603232005",
   "description": "Fix the remaining issues preventing hex dev from completing a full ADR → Workplan → Swarm → Code → Validate pipeline in auto mode.",
   "priority": "high",

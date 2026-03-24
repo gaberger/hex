@@ -4,7 +4,7 @@
   "specs": null,
   "adr": "ADR-2603221500",
   "created": "2026-03-22",
-  "status": "planned",
+  "status": "done",
   "topology": "pipeline",
   "budget": "~25000 tokens",
   "steps": [

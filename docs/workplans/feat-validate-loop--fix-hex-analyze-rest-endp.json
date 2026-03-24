@@ -2,7 +2,7 @@
   "title": "Feature: Quality Loop — compile, test, hex analyze, fix until Grade A",
   "feature": "validate-loop",
   "language": "rust",
-  "status": "planned",
+  "status": "done",
   "adr": "ADR-2603232340",
   "description": "Replace single-pass validate with iterative quality loop: compile check → test runner → hex analyze → auto-fix → retry until Grade A (score >= 90, zero violations).",
   "priority": "critical",
