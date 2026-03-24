@@ -28,6 +28,8 @@ dialoguer = "0.11"
 gethostname = "0.4"
 # ADR compliance rule loading (ADR-045)
 toml = "0.8"
+# Agent/swarm YAML definitions (ADR-2603240130)
+serde_yaml = "0.9"
 # Embedded asset bundle (ADR-2603221522)
 rust-embed = "8"
 # TUI for `hex dev` (ADR-2603232005)

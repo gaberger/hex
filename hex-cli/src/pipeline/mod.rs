@@ -1,6 +1,7 @@
 //! Pipeline utilities for `hex dev` — per-phase model selection and RL integration.
 
 pub mod adr_phase;
+pub mod agent_def;
 pub mod agents;
 pub mod budget;
 pub mod cli_runner;
@@ -13,6 +14,7 @@ pub mod quality_agent;
 pub mod supervisor;
 pub mod swarm_phase;
 pub mod validate_phase;
+pub mod workflow_engine;
 pub mod workplan_phase;
 
 pub use cli_runner::CliRunner;

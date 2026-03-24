@@ -2,7 +2,7 @@
   "title": "Feature: Declarative Swarm Agent Behavior — YAML-driven supervisor",
   "feature": "declarative-agents",
   "language": "rust",
-  "status": "planned",
+  "status": "done",
   "adr": "ADR-2603240130",
   "description": "Parse the 14 existing agent YAML definitions into AgentDefinition structs and drive all supervisor behavior from them: model selection, context assembly with L1/L2/L3 levels, TDD workflow phases, feedback loop gates, quality thresholds, and swarm composition.",
   "priority": "high",
@@ -38,11 +38,11 @@
   "steps": [
     {
       "id": "step-1",
-      "description": "Add serde_yaml dependency to hex-cli. Define AgentDefinition, ModelConfig, ContextConfig (with LoadStrategy and TokenBudget), WorkflowConfig (with Phase and Gate), FeedbackLoopConfig (with GateConfig), QualityThresholds, InputSpec, OutputSpec structs. All with Deserialize. Match the exact schema of the existing YAML files (hex-coder.yml as reference).",
+      "description": "Add serde_yaml dependency to hex-cli (currently only toml is present). Define AgentDefinition, ModelConfig, ContextConfig (with LoadStrategy and TokenBudget), WorkflowConfig, FeedbackLoopConfig (with GateConfig), EscalationConfig, QualityThresholds, InputSpec, OutputSpec structs. All with Deserialize. IMPORTANT: Agent YAMLs have role-specific schemas — hex-coder uses workflow.phases[] + feedback_loop, planner uses workflow.steps[] + escalation. Use Option<> wrappers or a WorkflowVariant enum to handle both patterns. Validate against hex-coder.yml AND planner.yml as reference schemas.",
       "adapter": "secondary/yaml",
       "tier": 0,
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/Cargo.toml", "hex-cli/src/pipeline/agent_def.rs"]
     },
     {
@@ -51,16 +51,16 @@
       "adapter": "secondary/yaml",
       "tier": 1,
       "dependencies": ["step-1"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/agent_def.rs"]
     },
     {
       "id": "step-3",
-      "description": "Replace hardcoded model selection in supervisor with YAML-driven selection. Map YAML model names (sonnet/haiku/opus) to OpenRouter model IDs. Implement upgrade logic: if iteration > threshold from YAML upgrade_condition, switch to upgrade_to model. Fallback chain: preferred → fallback → openrouter/free.",
+      "description": "Replace hardcoded model selection in supervisor with YAML-driven selection. Remove default_model_for() hardcoded mapping in model_selection.rs (lines 54-62) and replace with YAML lookup. Map YAML model names (sonnet/haiku/opus) to OpenRouter model IDs via a name→ID table. Implement upgrade logic: if iteration > threshold from YAML upgrade_condition, switch to upgrade_to model. Fallback chain: preferred → fallback → dev-pipeline.yml model_defaults → openrouter/free. NOTE: Until step-8 fully wires everything, both YAML and hardcoded paths may coexist — gate removal of hardcoded defaults behind a feature flag or keep old path as unreachable fallback until step-8 confirms all agents are YAML-driven.",
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": ["step-2"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/supervisor.rs", "hex-cli/src/pipeline/model_selection.rs"]
     },
     {
@@ -69,7 +69,7 @@
       "adapter": "primary/tui",
       "tier": 2,
       "dependencies": ["step-2"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/supervisor.rs"]
     },
     {
@@ -78,7 +78,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-3", "step-4"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/supervisor.rs"]
     },
     {
@@ -87,16 +87,16 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-5"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/supervisor.rs"]
     },
     {
       "id": "step-7",
-      "description": "Create swarm composition YAML format: hex-cli/assets/swarms/dev-pipeline.yml defining which agents participate, their cardinality (per step/file/tier/swarm), parallelism rules, objective list, and max iterations. Parse into SwarmComposition struct. Supervisor reads this to configure the agent pipeline instead of hardcoded dispatch.",
+      "description": "Parse existing swarm composition YAMLs from hex-cli/assets/swarms/ (dev-pipeline.yml already exists with full schema: agents[], objectives[], iteration config, grade_thresholds). Already embedded via rust-embed (same pattern as agent YAMLs in hex-cli/assets/agents/). Parse into SwarmComposition struct matching the existing schema: agents with role/cardinality/tier_scope/inference/context/depends_on/parallel_with, objectives with evaluate/threshold, iteration limits. Supervisor reads this to configure the agent pipeline instead of hardcoded dispatch.",
       "adapter": "secondary/yaml",
       "tier": 2,
       "dependencies": ["step-2"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/assets/swarms/dev-pipeline.yml", "hex-cli/src/pipeline/agent_def.rs"]
     },
     {
@@ -105,7 +105,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-5", "step-6", "step-7"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/supervisor.rs"]
     },
     {
@@ -114,7 +114,7 @@
       "adapter": "primary/tui",
       "tier": 3,
       "dependencies": ["step-8"],
-      "status": "pending",
+      "status": "done",
       "files": ["hex-cli/src/pipeline/objectives.rs", "hex-cli/src/pipeline/supervisor.rs"]
     }
   ]

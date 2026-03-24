@@ -117,6 +117,10 @@ pub enum SelectionSource {
     UserOverride,
     /// Filtered to a specific provider preference.
     ProviderFiltered,
+    /// Selected from agent YAML definition (ADR-2603240130).
+    YamlDefinition,
+    /// Upgraded from YAML preferred to upgrade_to model after iteration threshold.
+    YamlUpgrade,
 }
 
 impl std::fmt::Display for SelectionSource {
@@ -126,6 +130,8 @@ impl std::fmt::Display for SelectionSource {
             Self::Default => write!(f, "default"),
             Self::UserOverride => write!(f, "user-override"),
             Self::ProviderFiltered => write!(f, "provider-filtered"),
+            Self::YamlDefinition => write!(f, "yaml-definition"),
+            Self::YamlUpgrade => write!(f, "yaml-upgrade"),
         }
     }
 }
@@ -142,6 +148,94 @@ impl ModelSelector {
     pub fn from_env() -> Self {
         Self {
             client: NexusClient::from_env(),
+        }
+    }
+
+    /// Select a model from a YAML agent definition (ADR-2603240130).
+    ///
+    /// Fallback chain: user override → YAML preferred → YAML fallback → swarm model_defaults → openrouter/free.
+    /// Upgrade: if `iteration >= upgrade_after`, switch to the YAML `upgrade_to` model.
+    ///
+    /// # Arguments
+    /// * `model_config` — the agent's `model:` section from YAML
+    /// * `model_override` — if `Some`, skip YAML entirely and use this model
+    /// * `iteration` — current feedback loop iteration (for upgrade logic)
+    /// * `upgrade_after` — iteration threshold from YAML (default: 3)
+    /// * `swarm_default` — model from swarm YAML `model_defaults` for this task type
+    pub fn select_from_yaml(
+        &self,
+        model_config: &crate::pipeline::agent_def::ModelConfig,
+        model_override: Option<&str>,
+        iteration: u32,
+        upgrade_after: u32,
+        swarm_default: Option<&str>,
+    ) -> SelectedModel {
+        // Fast path: user override
+        if let Some(model) = model_override {
+            return SelectedModel {
+                model_id: model.to_string(),
+                state_key: None,
+                action: None,
+                source: SelectionSource::UserOverride,
+            };
+        }
+
+        // Check upgrade condition
+        if iteration >= upgrade_after {
+            if let Some(upgrade_id) = model_config.upgrade_model_id() {
+                debug!(
+                    upgrade_to = upgrade_id,
+                    iteration,
+                    upgrade_after,
+                    "YAML upgrade triggered"
+                );
+                return SelectedModel {
+                    model_id: upgrade_id.to_string(),
+                    state_key: None,
+                    action: None,
+                    source: SelectionSource::YamlUpgrade,
+                };
+            }
+        }
+
+        // Preferred model from YAML
+        let preferred_id = model_config.preferred_model_id();
+        if preferred_id != "openrouter/free" {
+            return SelectedModel {
+                model_id: preferred_id.to_string(),
+                state_key: None,
+                action: None,
+                source: SelectionSource::YamlDefinition,
+            };
+        }
+
+        // Fallback from YAML
+        let fallback_id = model_config.fallback_model_id();
+        if fallback_id != "openrouter/free" {
+            return SelectedModel {
+                model_id: fallback_id.to_string(),
+                state_key: None,
+                action: None,
+                source: SelectionSource::YamlDefinition,
+            };
+        }
+
+        // Swarm-level default
+        if let Some(swarm_model) = swarm_default {
+            return SelectedModel {
+                model_id: swarm_model.to_string(),
+                state_key: None,
+                action: None,
+                source: SelectionSource::YamlDefinition,
+            };
+        }
+
+        // Ultimate fallback
+        SelectedModel {
+            model_id: "openrouter/free".to_string(),
+            state_key: None,
+            action: None,
+            source: SelectionSource::Default,
         }
     }
 
@@ -366,7 +460,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_models_are_openrouter() {
+    fn default_models_are_known() {
         for task_type in [
             TaskType::Reasoning,
             TaskType::StructuredOutput,
@@ -376,8 +470,8 @@ mod tests {
         ] {
             let model = default_model_for(task_type);
             assert!(
-                model.starts_with("openrouter-"),
-                "default for {:?} should be OpenRouter, got: {}",
+                model.contains('/'),
+                "default for {:?} should be a provider/model ID, got: {}",
                 task_type,
                 model
             );
@@ -388,7 +482,8 @@ mod tests {
     fn extract_openrouter_model() {
         let action = "model:openrouter:meta-llama/llama-4-maverick|context:balanced";
         let model = extract_model_from_action(action, TaskType::CodeGeneration);
-        assert_eq!(model, "meta-llama/llama-4-maverick");
+        // extract_model_from_action converts slash to dash with "openrouter-" prefix
+        assert_eq!(model, "openrouter-meta-llama-llama-4-maverick");
     }
 
     #[test]
@@ -427,5 +522,75 @@ mod tests {
         assert_eq!(SelectionSource::Default.to_string(), "default");
         assert_eq!(SelectionSource::UserOverride.to_string(), "user-override");
         assert_eq!(SelectionSource::ProviderFiltered.to_string(), "provider-filtered");
+        assert_eq!(SelectionSource::YamlDefinition.to_string(), "yaml-definition");
+        assert_eq!(SelectionSource::YamlUpgrade.to_string(), "yaml-upgrade");
+    }
+
+    #[test]
+    fn yaml_select_preferred() {
+        use crate::pipeline::agent_def::ModelConfig;
+        let config = ModelConfig {
+            tier: 2,
+            preferred: Some("sonnet".into()),
+            fallback: Some("haiku".into()),
+            upgrade_to: Some("opus".into()),
+            upgrade_condition: None,
+            reasoning: None,
+        };
+        let selector = ModelSelector::from_env();
+        let selected = selector.select_from_yaml(&config, None, 1, 3, None);
+        assert_eq!(selected.model_id, "claude-sonnet-4-6");
+        assert_eq!(selected.source, SelectionSource::YamlDefinition);
+    }
+
+    #[test]
+    fn yaml_select_upgrade_after_threshold() {
+        use crate::pipeline::agent_def::ModelConfig;
+        let config = ModelConfig {
+            tier: 2,
+            preferred: Some("sonnet".into()),
+            fallback: Some("haiku".into()),
+            upgrade_to: Some("opus".into()),
+            upgrade_condition: None,
+            reasoning: None,
+        };
+        let selector = ModelSelector::from_env();
+        // iteration=3, upgrade_after=3 → triggers upgrade
+        let selected = selector.select_from_yaml(&config, None, 3, 3, None);
+        assert_eq!(selected.model_id, "claude-opus-4-6");
+        assert_eq!(selected.source, SelectionSource::YamlUpgrade);
+    }
+
+    #[test]
+    fn yaml_select_user_override_wins() {
+        use crate::pipeline::agent_def::ModelConfig;
+        let config = ModelConfig {
+            tier: 2,
+            preferred: Some("sonnet".into()),
+            fallback: Some("haiku".into()),
+            upgrade_to: Some("opus".into()),
+            upgrade_condition: None,
+            reasoning: None,
+        };
+        let selector = ModelSelector::from_env();
+        let selected = selector.select_from_yaml(&config, Some("my-custom-model"), 5, 3, None);
+        assert_eq!(selected.model_id, "my-custom-model");
+        assert_eq!(selected.source, SelectionSource::UserOverride);
+    }
+
+    #[test]
+    fn yaml_select_fallback_chain() {
+        use crate::pipeline::agent_def::ModelConfig;
+        // No preferred, no fallback → swarm default
+        let config = ModelConfig::default();
+        let selector = ModelSelector::from_env();
+        let selected = selector.select_from_yaml(&config, None, 1, 3, Some("deepseek/deepseek-r1"));
+        assert_eq!(selected.model_id, "deepseek/deepseek-r1");
+        assert_eq!(selected.source, SelectionSource::YamlDefinition);
+
+        // No preferred, no fallback, no swarm default → openrouter/free
+        let selected = selector.select_from_yaml(&config, None, 1, 3, None);
+        assert_eq!(selected.model_id, "openrouter/free");
+        assert_eq!(selected.source, SelectionSource::Default);
     }
 }

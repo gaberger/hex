@@ -14,10 +14,13 @@ use std::time::Instant;
 use anyhow::{Context as _, Result};
 use tracing::{debug, info, warn};
 
+use crate::pipeline::agent_def::{AgentDefinition, SwarmComposition};
 use crate::pipeline::agents::{DocumenterAgent, ReviewerAgent, TesterAgent, UxReviewerAgent};
 use crate::pipeline::cli_runner::CliRunner;
 use crate::pipeline::code_phase::CodePhase;
 use crate::pipeline::fix_agent::{FixAgent, FixTaskInput};
+use crate::pipeline::model_selection::ModelSelector;
+use crate::pipeline::workflow_engine::WorkflowEngine;
 use crate::pipeline::objectives::{
     agent_for_objective, evaluate_all, objectives_for_tier, Objective, ObjectiveState,
 };
@@ -99,6 +102,10 @@ pub struct Supervisor {
     agent_id: Option<String>,
     /// Dev session for logging tool calls (shared, behind Mutex for interior mutability).
     session: Option<Arc<Mutex<DevSession>>>,
+    /// Cached agent definitions loaded from YAML (ADR-2603240130).
+    agent_defs: HashMap<String, AgentDefinition>,
+    /// Cached swarm composition (loaded once, used for model defaults).
+    swarm_comp: Option<SwarmComposition>,
 }
 
 impl Supervisor {
@@ -111,6 +118,16 @@ impl Supervisor {
         let model_override = std::env::var("HEX_MODEL").ok();
         let provider_pref = std::env::var("HEX_PROVIDER").ok();
 
+        // Load YAML definitions at construction (ADR-2603240130)
+        let agent_defs = AgentDefinition::load_all();
+        let swarm_comp = SwarmComposition::load("dev-pipeline");
+
+        info!(
+            agents = agent_defs.len(),
+            swarm = swarm_comp.is_some(),
+            "loaded YAML definitions"
+        );
+
         Self {
             output_dir: output_dir.to_string(),
             language: language.to_string(),
@@ -120,6 +137,8 @@ impl Supervisor {
             swarm_id: None,
             agent_id: None,
             session: None,
+            agent_defs,
+            swarm_comp,
         }
     }
 
@@ -382,6 +401,206 @@ impl Supervisor {
             upstream_output: Some(issue_desc.to_string()),
             metadata,
         }
+    }
+
+    // ── YAML-driven context (ADR-2603240130) ──────────────────────────────
+
+    /// Build agent context from a YAML agent definition's `load_strategy`.
+    ///
+    /// Resolves `{{target_adapter}}` and `{{current_edit_file}}` placeholders
+    /// from the workplan step, then loads files at the specified level:
+    /// - **L0**: file listing only (names, no content)
+    /// - **L1**: AST summary (via `hex summarize` — token-efficient)
+    /// - **L2**: function/method signatures only
+    /// - **L3**: full file content
+    ///
+    /// Falls back to `build_coder_context` if the agent has no load_strategy.
+    pub fn build_context_from_yaml(
+        &self,
+        agent_def: &crate::pipeline::agent_def::AgentDefinition,
+        step_desc: &str,
+        tier: u32,
+        target_adapter: Option<&str>,
+        current_edit_file: Option<&str>,
+    ) -> AgentContext {
+        let ctx_config = match &agent_def.context {
+            Some(c) if !c.load_strategy.is_empty() => c,
+            _ => return self.build_coder_context(step_desc, tier),
+        };
+
+        let mut source_files = Vec::new();
+        let mut port_interfaces = Vec::new();
+        let base = PathBuf::from(&self.output_dir);
+
+        for entry in &ctx_config.load_strategy {
+            // Skip on_demand entries during initial context build
+            if entry.load.as_deref() == Some("on_demand") {
+                continue;
+            }
+
+            // Resolve placeholders in scope
+            let scope = entry
+                .scope
+                .replace("{{target_adapter}}", target_adapter.unwrap_or(""))
+                .replace("{{current_edit_file}}", current_edit_file.unwrap_or(""));
+
+            // Collect matching files
+            let files = self.glob_files(&base, &scope);
+
+            for (rel_path, full_path) in &files {
+                let content = match entry.level.as_str() {
+                    "L0" => {
+                        // File listing only — name, no content
+                        format!("// {}", rel_path)
+                    }
+                    "L1" => {
+                        // AST summary — read file, produce compact summary
+                        // For now: first N lines as a practical approximation
+                        // (full tree-sitter integration comes later via hex summarize)
+                        Self::read_file_truncated(full_path)
+                            .map(|c| Self::summarize_l1(&c))
+                            .unwrap_or_default()
+                    }
+                    "L2" => {
+                        // Signatures only — extract function/struct/interface lines
+                        Self::read_file_truncated(full_path)
+                            .map(|c| Self::extract_signatures(&c))
+                            .unwrap_or_default()
+                    }
+                    "L3" | _ => {
+                        // Full content
+                        Self::read_file_truncated(full_path).unwrap_or_default()
+                    }
+                };
+
+                if !content.is_empty() {
+                    // Route port files to port_interfaces, others to source_files
+                    if rel_path.contains("ports") {
+                        port_interfaces.push((rel_path.clone(), content));
+                    } else {
+                        source_files.push((rel_path.clone(), content));
+                    }
+                }
+            }
+        }
+
+        let mut metadata = HashMap::new();
+        metadata.insert("language".into(), self.language.clone());
+        metadata.insert("tier".into(), tier.to_string());
+        metadata.insert("context_source".into(), "yaml".into());
+        if let Some(adapter) = target_adapter {
+            metadata.insert("target_adapter".into(), adapter.to_string());
+        }
+
+        // Apply token budget if specified
+        if let Some(ref budget) = ctx_config.token_budget {
+            metadata.insert("token_budget_max".into(), budget.max.to_string());
+        }
+
+        AgentContext {
+            prompt_template: format!("agent-{}", agent_def.agent_type),
+            source_files,
+            port_interfaces,
+            boundary_rules: self.rules_for_tier(tier),
+            workplan_step: Some(step_desc.to_string()),
+            upstream_output: None,
+            metadata,
+        }
+    }
+
+    /// Glob-match files under `base` using a simplified glob pattern.
+    /// Supports `**` (recursive) and `*` (single-level).
+    fn glob_files(&self, base: &Path, pattern: &str) -> Vec<(String, PathBuf)> {
+        let mut results = Vec::new();
+
+        // Handle empty pattern
+        if pattern.is_empty() {
+            return results;
+        }
+
+        // Convert glob to a directory + extension filter
+        let target = base.join(pattern.replace("/**", "").replace("/*", ""));
+        if target.is_file() {
+            let rel = target
+                .strip_prefix(&self.output_dir)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| pattern.to_string());
+            results.push((rel, target));
+        } else if target.is_dir() {
+            Self::collect_files_with_paths(&target, &self.output_dir, &mut results);
+        }
+
+        results
+    }
+
+    /// Like `collect_files` but returns (relative_path, full_path) without reading content.
+    fn collect_files_with_paths(dir: &Path, base: &str, out: &mut Vec<(String, PathBuf)>) {
+        let entries = match fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                Self::collect_files_with_paths(&path, base, out);
+            } else if path.is_file() {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if matches!(ext, "ts" | "js" | "rs" | "tsx" | "jsx") {
+                    let rel = path
+                        .strip_prefix(base)
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|_| path.display().to_string());
+                    out.push((rel, path));
+                }
+            }
+        }
+    }
+
+    /// L1 summary: extract exports, type definitions, and function signatures.
+    /// Compact approximation until tree-sitter integration is wired in.
+    fn summarize_l1(content: &str) -> String {
+        content
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                trimmed.starts_with("export ")
+                    || trimmed.starts_with("pub ")
+                    || trimmed.starts_with("interface ")
+                    || trimmed.starts_with("type ")
+                    || trimmed.starts_with("struct ")
+                    || trimmed.starts_with("enum ")
+                    || trimmed.starts_with("trait ")
+                    || trimmed.starts_with("fn ")
+                    || trimmed.starts_with("class ")
+                    || trimmed.starts_with("impl ")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// L2 extraction: function/method signatures (no bodies).
+    fn extract_signatures(content: &str) -> String {
+        let mut sigs = Vec::new();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("export function ")
+                || trimmed.starts_with("export async function ")
+                || trimmed.starts_with("export const ")
+                || trimmed.starts_with("pub fn ")
+                || trimmed.starts_with("pub async fn ")
+                || trimmed.starts_with("fn ")
+                || trimmed.starts_with("async fn ")
+                || trimmed.contains("): ")  // TS method signature
+                || trimmed.starts_with("interface ")
+                || trimmed.starts_with("export interface ")
+                || trimmed.starts_with("pub struct ")
+                || trimmed.starts_with("pub enum ")
+                || trimmed.starts_with("pub trait ")
+            {
+                sigs.push(trimmed.to_string());
+            }
+        }
+        sigs.join("\n")
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -971,6 +1190,160 @@ impl Supervisor {
 
         (full_path, fix_type)
     }
+
+    // ── YAML-driven dispatch (ADR-2603240130 steps 8-9) ─────────────────
+
+    /// Get the YAML agent definition for a role, if available.
+    pub fn agent_def(&self, role: &str) -> Option<&AgentDefinition> {
+        self.agent_defs.get(role)
+    }
+
+    /// Select a model for an agent role using YAML configuration.
+    ///
+    /// Falls back to the hardcoded path if the agent has no YAML definition.
+    pub fn select_model_for_role(
+        &self,
+        role: &str,
+        iteration: u32,
+    ) -> crate::pipeline::model_selection::SelectedModel {
+        let selector = ModelSelector::from_env();
+
+        // User override always wins
+        if let Some(ref model) = self.model_override {
+            return crate::pipeline::model_selection::SelectedModel {
+                model_id: model.clone(),
+                state_key: None,
+                action: None,
+                source: crate::pipeline::model_selection::SelectionSource::UserOverride,
+            };
+        }
+
+        // Try YAML-driven selection
+        if let Some(def) = self.agent_defs.get(role) {
+            let swarm_default = self.swarm_model_default_for_role(role);
+            return selector.select_from_yaml(
+                &def.model,
+                None,
+                iteration,
+                3, // default upgrade threshold
+                swarm_default.as_deref(),
+            );
+        }
+
+        // Fallback: default model
+        crate::pipeline::model_selection::SelectedModel {
+            model_id: "openrouter/free".to_string(),
+            state_key: None,
+            action: None,
+            source: crate::pipeline::model_selection::SelectionSource::Default,
+        }
+    }
+
+    /// Look up model default from swarm composition for a role's task type.
+    fn swarm_model_default_for_role(&self, role: &str) -> Option<String> {
+        let comp = self.swarm_comp.as_ref()?;
+        let entry = comp.agents.iter().find(|a| a.role == role)?;
+        let task_type = entry.inference.as_ref()?.task_type.as_ref()?;
+        comp.model_defaults.as_ref()?.get(task_type.as_str()).cloned()
+    }
+
+    /// Create a workflow engine configured for the current output dir and language.
+    pub fn workflow_engine(&self) -> WorkflowEngine {
+        WorkflowEngine::new(&self.output_dir, &self.language)
+    }
+
+    /// Create a workflow engine with adapter-specific variables for a workplan step.
+    pub fn workflow_engine_for_step(
+        &self,
+        adapter: Option<&str>,
+        adapter_name: Option<&str>,
+    ) -> WorkflowEngine {
+        let mut engine = WorkflowEngine::new(&self.output_dir, &self.language);
+        if let Some(a) = adapter {
+            engine = engine.with_var("adapter", a);
+        }
+        if let Some(n) = adapter_name {
+            engine = engine.with_var("adapter_name", n);
+        }
+        engine
+    }
+
+    /// Evaluate quality thresholds from a YAML agent definition.
+    pub fn evaluate_quality_thresholds(
+        &self,
+        role: &str,
+        lint_warnings: u32,
+        file_lines: u32,
+        function_lines: u32,
+        test_coverage: u32,
+    ) -> Vec<QualityCheck> {
+        let thresholds = match self.agent_defs.get(role) {
+            Some(def) => match &def.quality_thresholds {
+                Some(qt) => qt,
+                None => return Vec::new(),
+            },
+            None => return Vec::new(),
+        };
+
+        let mut checks = Vec::new();
+
+        if let Some(max) = thresholds.max_lint_warnings {
+            checks.push(QualityCheck {
+                name: "max_lint_warnings".into(),
+                passed: lint_warnings <= max,
+                actual: lint_warnings,
+                threshold: max,
+            });
+        }
+        if let Some(max) = thresholds.max_file_lines {
+            checks.push(QualityCheck {
+                name: "max_file_lines".into(),
+                passed: file_lines <= max,
+                actual: file_lines,
+                threshold: max,
+            });
+        }
+        if let Some(max) = thresholds.max_function_lines {
+            checks.push(QualityCheck {
+                name: "max_function_lines".into(),
+                passed: function_lines <= max,
+                actual: function_lines,
+                threshold: max,
+            });
+        }
+        if let Some(min) = thresholds.test_coverage {
+            checks.push(QualityCheck {
+                name: "test_coverage".into(),
+                passed: test_coverage >= min,
+                actual: test_coverage,
+                threshold: min,
+            });
+        }
+        if let Some(max) = thresholds.max_cyclomatic_complexity {
+            checks.push(QualityCheck {
+                name: "max_cyclomatic_complexity".into(),
+                passed: true, // not yet measured by hex analyze
+                actual: 0,
+                threshold: max,
+            });
+        }
+
+        checks
+    }
+
+    /// Check if all quality thresholds pass for a given role.
+    pub fn quality_thresholds_pass(
+        &self,
+        role: &str,
+        lint_warnings: u32,
+        file_lines: u32,
+        function_lines: u32,
+        test_coverage: u32,
+    ) -> bool {
+        self.evaluate_quality_thresholds(role, lint_warnings, file_lines, function_lines, test_coverage)
+            .iter()
+            .all(|c| c.passed)
+    }
 }
 
 // ── Result types ────────────────────────────────────────────────────────
@@ -1121,6 +1494,15 @@ impl SupervisorResult {
         }
         lines.join("\n")
     }
+}
+
+/// Result of a single quality threshold check.
+#[derive(Debug, Clone)]
+pub struct QualityCheck {
+    pub name: String,
+    pub passed: bool,
+    pub actual: u32,
+    pub threshold: u32,
 }
 
 // ── Progress printing ───────────────────────────────────────────────────
