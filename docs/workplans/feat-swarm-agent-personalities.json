@@ -1,0 +1,133 @@
+{
+  "title": "Feature: Swarm Agent Personalities — specialized roles with context-aware prompting",
+  "feature": "agent-personalities",
+  "language": "rust",
+  "status": "planned",
+  "adr": "ADR-2603240104",
+  "description": "Build 6 specialized agent roles (coder, reviewer, tester, documenter, UX, fixer) with context-aware prompts, supervisor orchestration, and per-role performance tracking.",
+  "priority": "high",
+  "superseded_by": "",
+  "created_at": "2026-03-24T01:04:00.000000+00:00",
+  "phases": [
+    {
+      "name": "Agent Prompts",
+      "description": "System prompt templates for each agent role",
+      "steps": ["step-1"]
+    },
+    {
+      "name": "Context Assembly",
+      "description": "AgentContext struct and supervisor context builders",
+      "steps": ["step-2"]
+    },
+    {
+      "name": "Agent Implementations",
+      "description": "Each specialized agent as a pipeline component",
+      "steps": ["step-3", "step-4", "step-5", "step-6"]
+    },
+    {
+      "name": "Supervisor",
+      "description": "Orchestration logic driving the agent pipeline per tier",
+      "steps": ["step-7"]
+    },
+    {
+      "name": "Integration",
+      "description": "Wire into hex dev + performance tracking",
+      "steps": ["step-8", "step-9"]
+    }
+  ],
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Create 6 agent prompt templates: agent-coder.md (code gen with step+ports+rules context), agent-reviewer.md (review checklist with severity+fix suggestions), agent-tester.md (test gen with London school patterns), agent-documenter.md (README+API docs from ADR+code), agent-ux.md (UX review checklist for CLI/API/frontend), agent-fixer.md (issue resolution with upstream output context).",
+      "adapter": "secondary/prompts",
+      "tier": 0,
+      "dependencies": [],
+      "status": "pending",
+      "files": [
+        "hex-cli/assets/prompts/agent-coder.md",
+        "hex-cli/assets/prompts/agent-reviewer.md",
+        "hex-cli/assets/prompts/agent-tester.md",
+        "hex-cli/assets/prompts/agent-documenter.md",
+        "hex-cli/assets/prompts/agent-ux.md",
+        "hex-cli/assets/prompts/agent-fixer.md"
+      ]
+    },
+    {
+      "id": "step-2",
+      "description": "Create AgentContext struct (prompt_template, source_files, port_interfaces, boundary_rules, workplan_step, upstream_output, metadata) and Supervisor struct with context builder methods: build_coder_context, build_reviewer_context, build_tester_context, build_documenter_context, build_ux_context, build_fixer_context. Each builder assembles the exact data that agent needs.",
+      "adapter": "primary/tui",
+      "tier": 1,
+      "dependencies": ["step-1"],
+      "status": "pending",
+      "files": [
+        "hex-cli/src/pipeline/supervisor.rs"
+      ]
+    },
+    {
+      "id": "step-3",
+      "description": "Implement hex-reviewer agent. Takes source file + port interface + review checklist. Returns structured ReviewResult: verdict (PASS/NEEDS_FIXES), issues[] with severity/file/line/description/fix. Uses deepseek-r1 for reasoning. Parses LLM response into structured format.",
+      "adapter": "secondary/agent",
+      "tier": 2,
+      "dependencies": ["step-2"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/agents/reviewer.rs"]
+    },
+    {
+      "id": "step-4",
+      "description": "Implement hex-tester agent. Takes source file + port contract + test patterns. Generates test file following London school (no mock.module, Deps pattern). Runs tests via compile_check + run_tests. Returns TestAgentResult: test_file_path, pass/fail counts, output.",
+      "adapter": "secondary/agent",
+      "tier": 2,
+      "dependencies": ["step-2"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/agents/tester.rs"]
+    },
+    {
+      "id": "step-5",
+      "description": "Implement hex-documenter agent. Takes ADR + all source files + workplan + port interfaces. Generates comprehensive README.md (overview, architecture diagram, quick start, API reference, development guide), inline JSDoc/rustdoc on public functions, and CHANGELOG entry.",
+      "adapter": "secondary/agent",
+      "tier": 2,
+      "dependencies": ["step-2"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/agents/documenter.rs"]
+    },
+    {
+      "id": "step-6",
+      "description": "Implement hex-ux agent. Takes adapter code + user description + UX checklist. Reviews CLI (help text, flags, error messages), API (response shapes, HTTP status, pagination), and frontend (keyboard nav, contrast, responsive). Returns UxReviewResult with issues and recommendations. Only runs when workplan has tier 2 adapters.",
+      "adapter": "secondary/agent",
+      "tier": 2,
+      "dependencies": ["step-2"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/agents/ux_reviewer.rs"]
+    },
+    {
+      "id": "step-7",
+      "description": "Implement Supervisor orchestration in supervisor.rs. Per-tier pipeline: coder (parallel) → reviewer + tester (parallel) → analyzer → ux (if applicable) → documenter (final tier only) → fixer (if any issues) → re-validate. Max 2 fix rounds per agent. Creates HexFlo tasks for each agent assignment.",
+      "adapter": "primary/tui",
+      "tier": 3,
+      "dependencies": ["step-3", "step-4", "step-5", "step-6"],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/supervisor.rs"]
+    },
+    {
+      "id": "step-8",
+      "description": "Wire Supervisor into hex dev. Replace direct code_phase + validate_phase calls in headless runner with Supervisor::run(). In --auto mode, all agents run without gates. In interactive mode, gate after review (show issues). In --quick mode, skip reviewer + documenter + ux.",
+      "adapter": "primary/tui",
+      "tier": 3,
+      "dependencies": ["step-7"],
+      "status": "pending",
+      "files": ["hex-cli/src/tui/mod.rs"]
+    },
+    {
+      "id": "step-9",
+      "description": "Track per-role performance in SpacetimeDB. Extend model_performance table with agent_role field. Record success/failure per role per model. Dashboard shows per-role success rates. RL learns which models are best for reviewing vs coding vs testing.",
+      "adapter": "secondary/spacetimedb",
+      "tier": 3,
+      "dependencies": ["step-7"],
+      "status": "pending",
+      "files": [
+        "spacetime-modules/hexflo-coordination/src/lib.rs",
+        "hex-nexus/src/routes/quality.rs"
+      ]
+    }
+  ]
+}
