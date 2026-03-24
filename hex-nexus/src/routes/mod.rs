@@ -22,6 +22,7 @@ pub mod rl;
 pub mod secrets;
 pub mod sessions;
 pub mod swarms;
+pub mod neural_lab;
 pub mod test_sessions;
 pub mod openapi;
 pub mod ws;
@@ -493,6 +494,23 @@ pub fn build_router(state: SharedState) -> Router {
             .patch(swarms::update_task_by_id)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/work-items/incomplete", get(swarms::get_incomplete_work))
+        // Neural Lab (architecture search)
+        .route("/api/neural-lab/configs", get(neural_lab::list_configs)
+            .post(neural_lab::create_config)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/neural-lab/configs/{id}", get(neural_lab::get_config))
+        .route("/api/neural-lab/experiments", get(neural_lab::list_experiments)
+            .post(neural_lab::create_experiment)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/neural-lab/experiments/{id}", get(neural_lab::get_experiment))
+        .route("/api/neural-lab/experiments/{id}/start", patch(neural_lab::start_experiment)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/neural-lab/experiments/{id}/complete", patch(neural_lab::complete_experiment)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/neural-lab/experiments/{id}/fail", patch(neural_lab::fail_experiment)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/neural-lab/frontier/{lineage}", get(neural_lab::get_frontier))
+        .route("/api/neural-lab/strategies", get(neural_lab::list_strategies))
         // Quality Gate & Fix Task routes (Swarm Gate Enforcement)
         .route("/api/hexflo/quality-gate", post(quality::create_quality_gate)
             .get(quality::list_quality_gates)

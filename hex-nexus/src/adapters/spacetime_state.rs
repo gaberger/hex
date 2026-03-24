@@ -1277,6 +1277,94 @@ mod real {
             Ok(())
         }
 
+        // ── Neural Lab (architecture search) ──────────────
+
+        async fn neural_lab_config_list(&self, status: Option<&str>) -> Result<Vec<serde_json::Value>, StateError> {
+            const DB: &str = "neural-lab";
+            let sql = match status {
+                Some(s) => format!("SELECT * FROM network_config WHERE status = '{}'", s),
+                None => "SELECT * FROM network_config".to_string(),
+            };
+            self.query_table_on(DB, &sql).await
+        }
+
+        async fn neural_lab_config_get(&self, id: &str) -> Result<Option<serde_json::Value>, StateError> {
+            const DB: &str = "neural-lab";
+            let sql = format!("SELECT * FROM network_config WHERE id = '{}'", id);
+            let rows = self.query_table_on(DB, &sql).await?;
+            Ok(rows.into_iter().next())
+        }
+
+        async fn neural_lab_config_create(&self, args: serde_json::Value) -> Result<serde_json::Value, StateError> {
+            const DB: &str = "neural-lab";
+            self.call_reducer_on(DB, "config_create", args).await
+        }
+
+        async fn neural_lab_layer_specs(&self, config_id: &str) -> Result<Vec<serde_json::Value>, StateError> {
+            const DB: &str = "neural-lab";
+            let sql = format!("SELECT * FROM layer_spec WHERE config_id = '{}' ORDER BY layer_index", config_id);
+            self.query_table_on(DB, &sql).await
+        }
+
+        async fn neural_lab_experiment_list(&self, lineage: Option<&str>, status: Option<&str>) -> Result<Vec<serde_json::Value>, StateError> {
+            const DB: &str = "neural-lab";
+            let mut sql = "SELECT * FROM experiment".to_string();
+            let mut conditions = Vec::new();
+            if let Some(l) = lineage {
+                conditions.push(format!("lineage_name = '{}'", l));
+            }
+            if let Some(s) = status {
+                conditions.push(format!("status = '{}'", s));
+            }
+            if !conditions.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&conditions.join(" AND "));
+            }
+            self.query_table_on(DB, &sql).await
+        }
+
+        async fn neural_lab_experiment_get(&self, id: &str) -> Result<Option<serde_json::Value>, StateError> {
+            const DB: &str = "neural-lab";
+            let sql = format!("SELECT * FROM experiment WHERE id = '{}'", id);
+            let rows = self.query_table_on(DB, &sql).await?;
+            Ok(rows.into_iter().next())
+        }
+
+        async fn neural_lab_experiment_create(&self, args: serde_json::Value) -> Result<serde_json::Value, StateError> {
+            const DB: &str = "neural-lab";
+            self.call_reducer_on(DB, "experiment_create", args).await
+        }
+
+        async fn neural_lab_experiment_start(&self, id: &str, gpu_node_id: &str) -> Result<(), StateError> {
+            const DB: &str = "neural-lab";
+            self.call_reducer_on(DB, "experiment_start", serde_json::json!([id, gpu_node_id])).await?;
+            Ok(())
+        }
+
+        async fn neural_lab_experiment_complete(&self, args: serde_json::Value) -> Result<(), StateError> {
+            const DB: &str = "neural-lab";
+            self.call_reducer_on(DB, "experiment_complete", args).await?;
+            Ok(())
+        }
+
+        async fn neural_lab_experiment_fail(&self, id: &str, error_message: &str) -> Result<(), StateError> {
+            const DB: &str = "neural-lab";
+            self.call_reducer_on(DB, "experiment_fail", serde_json::json!([id, error_message])).await?;
+            Ok(())
+        }
+
+        async fn neural_lab_frontier_get(&self, lineage: &str) -> Result<Option<serde_json::Value>, StateError> {
+            const DB: &str = "neural-lab";
+            let sql = format!("SELECT * FROM research_frontier WHERE lineage_name = '{}'", lineage);
+            let rows = self.query_table_on(DB, &sql).await?;
+            Ok(rows.into_iter().next())
+        }
+
+        async fn neural_lab_strategies_list(&self) -> Result<Vec<serde_json::Value>, StateError> {
+            const DB: &str = "neural-lab";
+            self.query_table_on(DB, "SELECT * FROM mutation_strategy").await
+        }
+
         // ── Subscriptions ───────────────────────────────
         // SpacetimeDB forwards table change callbacks through this channel
 
@@ -1422,6 +1510,19 @@ mod stub {
         async fn inbox_query(&self, _: &str, _: Option<u8>, _: bool) -> Result<Vec<InboxNotification>, StateError> { Err(Self::err()) }
         async fn inbox_acknowledge(&self, _: u64, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn inbox_expire(&self, _: u64) -> Result<u32, StateError> { Err(Self::err()) }
+        // ── Neural Lab (architecture search) ──────────────
+        async fn neural_lab_config_list(&self, _: Option<&str>) -> Result<Vec<serde_json::Value>, StateError> { Err(Self::err()) }
+        async fn neural_lab_config_get(&self, _: &str) -> Result<Option<serde_json::Value>, StateError> { Err(Self::err()) }
+        async fn neural_lab_config_create(&self, _: serde_json::Value) -> Result<serde_json::Value, StateError> { Err(Self::err()) }
+        async fn neural_lab_layer_specs(&self, _: &str) -> Result<Vec<serde_json::Value>, StateError> { Err(Self::err()) }
+        async fn neural_lab_experiment_list(&self, _: Option<&str>, _: Option<&str>) -> Result<Vec<serde_json::Value>, StateError> { Err(Self::err()) }
+        async fn neural_lab_experiment_get(&self, _: &str) -> Result<Option<serde_json::Value>, StateError> { Err(Self::err()) }
+        async fn neural_lab_experiment_create(&self, _: serde_json::Value) -> Result<serde_json::Value, StateError> { Err(Self::err()) }
+        async fn neural_lab_experiment_start(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn neural_lab_experiment_complete(&self, _: serde_json::Value) -> Result<(), StateError> { Err(Self::err()) }
+        async fn neural_lab_experiment_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn neural_lab_frontier_get(&self, _: &str) -> Result<Option<serde_json::Value>, StateError> { Err(Self::err()) }
+        async fn neural_lab_strategies_list(&self) -> Result<Vec<serde_json::Value>, StateError> { Err(Self::err()) }
         fn subscribe(&self) -> broadcast::Receiver<StateEvent> { self.event_tx.subscribe() }
     }
 }

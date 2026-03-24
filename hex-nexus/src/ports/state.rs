@@ -719,6 +719,20 @@ pub trait IStatePort: Send + Sync {
     async fn inbox_acknowledge(&self, notification_id: u64, agent_id: &str) -> Result<(), StateError>;
     async fn inbox_expire(&self, max_age_secs: u64) -> Result<u32, StateError>;
 
+    // ── Neural Lab (architecture search) ──────────────
+    async fn neural_lab_config_list(&self, status: Option<&str>) -> Result<Vec<serde_json::Value>, StateError>;
+    async fn neural_lab_config_get(&self, id: &str) -> Result<Option<serde_json::Value>, StateError>;
+    async fn neural_lab_config_create(&self, args: serde_json::Value) -> Result<serde_json::Value, StateError>;
+    async fn neural_lab_layer_specs(&self, config_id: &str) -> Result<Vec<serde_json::Value>, StateError>;
+    async fn neural_lab_experiment_list(&self, lineage: Option<&str>, status: Option<&str>) -> Result<Vec<serde_json::Value>, StateError>;
+    async fn neural_lab_experiment_get(&self, id: &str) -> Result<Option<serde_json::Value>, StateError>;
+    async fn neural_lab_experiment_create(&self, args: serde_json::Value) -> Result<serde_json::Value, StateError>;
+    async fn neural_lab_experiment_start(&self, id: &str, gpu_node_id: &str) -> Result<(), StateError>;
+    async fn neural_lab_experiment_complete(&self, args: serde_json::Value) -> Result<(), StateError>;
+    async fn neural_lab_experiment_fail(&self, id: &str, error_message: &str) -> Result<(), StateError>;
+    async fn neural_lab_frontier_get(&self, lineage: &str) -> Result<Option<serde_json::Value>, StateError>;
+    async fn neural_lab_strategies_list(&self) -> Result<Vec<serde_json::Value>, StateError>;
+
     // ── Subscriptions (real-time sync) ──────────────
     fn subscribe(&self) -> broadcast::Receiver<StateEvent>;
 }
