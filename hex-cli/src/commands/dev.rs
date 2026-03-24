@@ -241,6 +241,23 @@ async fn start_session(
         }
     };
 
+    // ── Ensure agent is registered ──────────────────────────────────
+    // If no agent session file exists, register with nexus now.
+    // This writes ~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json.
+    let project_path = std::path::PathBuf::from(&output_dir)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(&output_dir));
+    let project_name = project_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("hex-project");
+    if DevSession::new("probe").agent_id.is_none() {
+        let _ = crate::commands::hook::register_session_agent(
+            &project_path,
+            project_name,
+        ).await;
+    }
+
     let config = DevConfig::from_args(
         description.clone(),
         quick,
@@ -252,6 +269,7 @@ async fn start_session(
         output_dir.clone(),
     );
 
+    // Create session AFTER agent registration so agent_id is resolved
     let mut session = DevSession::new(&description);
     if !model.is_empty() {
         session.model_selections.insert("default".into(), model);

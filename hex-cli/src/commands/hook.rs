@@ -282,7 +282,10 @@ fn ensure_agent_hook(project_dir: &std::path::Path) {
 
 /// Register this Claude Code session as an agent with hex-nexus (ADR-048).
 /// Extended with lifecycle state tracking (ADR-050).
-async fn register_session_agent(project_dir: &PathBuf, project_name: &str) -> Result<()> {
+/// Register this Claude session as an agent with hex-nexus.
+/// Writes `~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json` with the agent_id.
+/// Called by session-start hook and by `hex dev start` (Phase 0).
+pub async fn register_session_agent(project_dir: &PathBuf, project_name: &str) -> Result<()> {
     let session_id = std::env::var("CLAUDE_SESSION_ID").unwrap_or_default();
     let model = std::env::var("CLAUDE_MODEL").unwrap_or_else(|_| "unknown".to_string());
     let hostname = gethostname::gethostname()
