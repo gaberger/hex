@@ -9,7 +9,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tracing::{debug, warn};
+use anyhow::{Context as _, Result};
+use tracing::{debug, info, warn};
+
+use crate::pipeline::agents::{DocumenterAgent, ReviewerAgent, TesterAgent, UxReviewerAgent};
+use crate::pipeline::code_phase::CodePhase;
+use crate::pipeline::fix_agent::{FixAgent, FixTaskInput};
+use crate::pipeline::objectives::{
+    agent_for_objective, evaluate_all, objectives_for_tier, Objective, ObjectiveState,
+};
+use crate::pipeline::workplan_phase::{WorkplanData, WorkplanStep};
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -354,6 +363,486 @@ impl Supervisor {
             4
         }
     }
+
+    // ── Goal-driven objective loop ──────────────────────────────────────
+
+    /// Run all tiers in order, returning a [`SupervisorResult`] with per-tier outcomes.
+    pub async fn run(
+        &self,
+        workplan: &WorkplanData,
+        adr_content: &str,
+    ) -> Result<SupervisorResult> {
+        let workplan_summary = format!("{} — {}", workplan.id, workplan.title);
+
+        // Group steps by tier
+        let max_tier = workplan.steps.iter().map(|s| s.tier as u32).max().unwrap_or(0);
+        let mut tier_results: Vec<(u32, TierResult)> = Vec::new();
+
+        for tier in 0..=max_tier {
+            let steps: Vec<&WorkplanStep> = workplan
+                .steps
+                .iter()
+                .filter(|s| s.tier as u32 == tier)
+                .collect();
+
+            if steps.is_empty() {
+                continue;
+            }
+
+            let is_final_tier = tier == max_tier;
+            let has_ui_adapters = steps.iter().any(|s| {
+                s.adapter
+                    .as_deref()
+                    .map(|a| a.contains("primary"))
+                    .unwrap_or(false)
+                    || s.layer
+                        .as_deref()
+                        .map(|l| l.contains("primary"))
+                        .unwrap_or(false)
+            });
+
+            println!("\n━━━ Tier {} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", tier);
+            println!("  Steps: {}", steps.len());
+            println!("  UI adapters: {}", if has_ui_adapters { "yes" } else { "no" });
+            println!("  Final tier: {}", if is_final_tier { "yes" } else { "no" });
+
+            let result = self
+                .run_tier(
+                    tier,
+                    &steps,
+                    has_ui_adapters,
+                    is_final_tier,
+                    adr_content,
+                    &workplan_summary,
+                )
+                .await?;
+
+            let passed = matches!(&result, TierResult::AllPassed { .. });
+            tier_results.push((tier, result));
+
+            if !passed {
+                info!(tier, "tier did not fully pass — continuing to next tier");
+            }
+        }
+
+        Ok(SupervisorResult { tier_results })
+    }
+
+    /// Run a single tier's objective loop: evaluate all objectives, fix unmet
+    /// ones via the appropriate agent, re-evaluate, repeat until all pass or
+    /// `MAX_ITERATIONS` is reached.
+    pub async fn run_tier(
+        &self,
+        tier: u32,
+        workplan_steps: &[&WorkplanStep],
+        has_ui_adapters: bool,
+        is_final_tier: bool,
+        adr_content: &str,
+        workplan_summary: &str,
+    ) -> Result<TierResult> {
+        const MAX_ITERATIONS: u32 = 5;
+
+        let objectives = objectives_for_tier(tier, has_ui_adapters, is_final_tier);
+
+        // Track which objectives have had a prior agent result (for fixer vs primary agent selection)
+        let mut prior_results: HashMap<Objective, bool> = HashMap::new();
+
+        for iteration in 1..=MAX_ITERATIONS {
+            // Evaluate ALL objectives from scratch each iteration
+            let states = evaluate_all(
+                &objectives,
+                &[],  // fresh evaluation each time
+                &self.output_dir,
+                &self.language,
+                &self.nexus_url,
+            )
+            .await;
+
+            // Print progress
+            print_iteration_progress(tier, iteration, &states);
+
+            // Check if all objectives are met
+            if states.iter().all(|s| s.met || s.skip_reason.is_some()) {
+                println!(
+                    "  [tier {}] iteration {}: all objectives met ✓",
+                    tier, iteration
+                );
+                return Ok(TierResult::AllPassed {
+                    iterations: iteration,
+                    states,
+                });
+            }
+
+            // Find first unmet objective (in priority order — objectives list is ordered)
+            let unmet_state = states
+                .iter()
+                .find(|s| !s.met && s.skip_reason.is_none());
+
+            let unmet_state = match unmet_state {
+                Some(s) => s,
+                None => {
+                    // All are met or skipped — should have been caught above
+                    return Ok(TierResult::AllPassed {
+                        iterations: iteration,
+                        states,
+                    });
+                }
+            };
+
+            let obj = unmet_state.objective;
+            let has_prior = *prior_results.get(&obj).unwrap_or(&false);
+            let agent_role = agent_for_objective(obj, has_prior);
+
+            println!(
+                "  → {}: addressing {} ...",
+                agent_role, obj
+            );
+
+            // Build context and execute the appropriate agent
+            self.execute_agent(
+                agent_role,
+                tier,
+                unmet_state,
+                workplan_steps,
+                adr_content,
+                workplan_summary,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "agent {} failed for objective {} (tier {}, iteration {})",
+                    agent_role, obj, tier, iteration
+                )
+            })?;
+
+            // Mark that this objective now has a prior result
+            prior_results.insert(obj, true);
+        }
+
+        // Final evaluation after max iterations
+        let final_states = evaluate_all(
+            &objectives,
+            &[],
+            &self.output_dir,
+            &self.language,
+            &self.nexus_url,
+        )
+        .await;
+
+        println!(
+            "  [tier {}] max iterations ({}) reached",
+            tier, MAX_ITERATIONS
+        );
+        print_iteration_progress(tier, MAX_ITERATIONS, &final_states);
+
+        Ok(TierResult::MaxIterations {
+            iterations: MAX_ITERATIONS,
+            states: final_states,
+        })
+    }
+
+    /// Dispatch to the right agent based on role string.
+    async fn execute_agent(
+        &self,
+        role: &str,
+        tier: u32,
+        state: &ObjectiveState,
+        workplan_steps: &[&WorkplanStep],
+        adr_content: &str,
+        workplan_summary: &str,
+    ) -> Result<()> {
+        let model_override = self.model_override.as_deref();
+        let provider_pref = self.provider_pref.as_deref();
+
+        match role {
+            "hex-coder" => {
+                let phase = CodePhase::from_env();
+                // Execute code generation for each workplan step in this tier
+                for step in workplan_steps {
+                    // Build a minimal WorkplanData for the step
+                    let step_workplan = WorkplanData {
+                        id: "supervisor-tier".into(),
+                        title: workplan_summary.to_string(),
+                        specs: None,
+                        adr: None,
+                        created: None,
+                        status: None,
+                        status_note: None,
+                        topology: None,
+                        budget: None,
+                        steps: vec![(*step).clone()],
+                        merge_order: None,
+                        risk_register: None,
+                        success_criteria: None,
+                        dependencies: None,
+                    };
+                    phase
+                        .execute_step(step, &step_workplan, model_override, provider_pref)
+                        .await
+                        .with_context(|| format!("code phase step {} failed", step.id))?;
+                }
+            }
+            "hex-reviewer" => {
+                let agent = ReviewerAgent::from_env();
+                let target_file = self.first_source_file_for_tier(tier);
+                let context = self.build_reviewer_context(&target_file);
+                let result = agent
+                    .execute(&context, model_override, provider_pref)
+                    .await
+                    .context("reviewer agent failed")?;
+                // Write review output so evaluate_review_passes can pick it up
+                let review_dir = PathBuf::from(&self.output_dir).join(".hex-review");
+                let _ = fs::create_dir_all(&review_dir);
+                let review_json = serde_json::json!({
+                    "verdict": result.verdict,
+                    "issues": result.issues.iter().map(|i| serde_json::json!({
+                        "severity": i.severity,
+                        "message": i.description,
+                        "location": i.location,
+                        "recommendation": i.recommendation,
+                    })).collect::<Vec<_>>(),
+                });
+                let review_path = review_dir.join(format!("review-tier{}.json", tier));
+                fs::write(&review_path, serde_json::to_string_pretty(&review_json)?)
+                    .with_context(|| format!("writing review to {}", review_path.display()))?;
+                info!(verdict = %result.verdict, issues = result.issues.len(), "review complete");
+            }
+            "hex-tester" => {
+                let agent = TesterAgent::from_env();
+                let target_file = self.first_source_file_for_tier(tier);
+                let context = self.build_tester_context(&target_file);
+                let result = agent
+                    .execute(&context, model_override, provider_pref)
+                    .await
+                    .context("tester agent failed")?;
+                // Write test file to the suggested path
+                let test_path = PathBuf::from(&self.output_dir).join(&result.suggested_path);
+                if let Some(parent) = test_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                fs::write(&test_path, &result.test_content)
+                    .with_context(|| format!("writing test to {}", test_path.display()))?;
+                info!(path = %result.suggested_path, "test file written");
+            }
+            "hex-documenter" => {
+                let agent = DocumenterAgent::from_env();
+                let context = self.build_documenter_context(adr_content, workplan_summary);
+                let _result = agent
+                    .execute(&context, &self.output_dir, model_override, provider_pref)
+                    .await
+                    .context("documenter agent failed")?;
+                info!("documentation generated");
+            }
+            "hex-ux" => {
+                let agent = UxReviewerAgent::from_env();
+                let target_file = self.first_source_file_for_tier(tier);
+                let context = self.build_ux_context(&target_file, workplan_summary);
+                let result = agent
+                    .execute(&context, &self.output_dir, model_override, provider_pref)
+                    .await
+                    .context("ux reviewer agent failed")?;
+                // Write UX review output
+                let ux_dir = PathBuf::from(&self.output_dir).join(".hex-ux-review");
+                let _ = fs::create_dir_all(&ux_dir);
+                let ux_json = serde_json::json!({
+                    "verdict": result.verdict,
+                    "issues": result.issues.iter().map(|i| serde_json::json!({
+                        "severity": i.severity,
+                        "message": i.description,
+                        "recommendation": i.recommendation,
+                        "user_impact": i.user_impact,
+                    })).collect::<Vec<_>>(),
+                });
+                let ux_path = ux_dir.join(format!("ux-review-tier{}.json", tier));
+                fs::write(&ux_path, serde_json::to_string_pretty(&ux_json)?)
+                    .with_context(|| format!("writing ux review to {}", ux_path.display()))?;
+                info!(verdict = %result.verdict, issues = result.issues.len(), "ux review complete");
+            }
+            "hex-fixer" => {
+                let agent = FixAgent::from_env();
+                let (target_file, fix_type) =
+                    self.infer_fix_target(tier, &state.objective, &state.blocking_issues);
+                let input = FixTaskInput {
+                    fix_type,
+                    target_file,
+                    error_context: state.blocking_issues.join("\n"),
+                    language: self.language.clone(),
+                    output_dir: self.output_dir.clone(),
+                };
+                let result = agent
+                    .execute(input, model_override, provider_pref)
+                    .await
+                    .context("fix agent failed")?;
+                info!(
+                    status = %result.status,
+                    file = %result.file_path,
+                    "fix agent complete"
+                );
+            }
+            other => {
+                warn!(role = other, "unknown agent role — skipping");
+            }
+        }
+        Ok(())
+    }
+
+    /// Find the first source file path for a given tier (for reviewer/tester targeting).
+    fn first_source_file_for_tier(&self, tier: u32) -> String {
+        let files = self.files_for_tier(tier);
+        files
+            .first()
+            .map(|(path, _)| path.clone())
+            .unwrap_or_else(|| format!("src/unknown-tier{}.ts", tier))
+    }
+
+    /// Infer fix target file and fix_type from the objective and blocking issues.
+    fn infer_fix_target(
+        &self,
+        tier: u32,
+        objective: &Objective,
+        blocking_issues: &[String],
+    ) -> (String, String) {
+        // Try to extract a file path from the first blocking issue
+        let target_file = blocking_issues
+            .first()
+            .and_then(|issue| {
+                // Look for patterns like "path/to/file.ts:42:" or "path/to/file.ts: message"
+                let parts: Vec<&str> = issue.splitn(2, ':').collect();
+                let candidate = parts.first().unwrap_or(&"").trim();
+                if candidate.contains('.') && (candidate.contains('/') || candidate.contains('\\'))
+                {
+                    // Looks like a file path — resolve it
+                    let full_path = PathBuf::from(&self.output_dir).join(candidate);
+                    if full_path.exists() {
+                        Some(full_path.display().to_string())
+                    } else {
+                        Some(candidate.to_string())
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| self.first_source_file_for_tier(tier));
+
+        let fix_type = match objective {
+            Objective::CodeCompiles => "compile".to_string(),
+            Objective::TestsPass => "test".to_string(),
+            Objective::ArchitectureGradeA => "violation".to_string(),
+            Objective::ReviewPasses | Objective::UxReviewPasses => "violation".to_string(),
+            _ => "compile".to_string(),
+        };
+
+        let full_path = if Path::new(&target_file).is_absolute() {
+            target_file
+        } else {
+            PathBuf::from(&self.output_dir)
+                .join(&target_file)
+                .display()
+                .to_string()
+        };
+
+        (full_path, fix_type)
+    }
+}
+
+// ── Result types ────────────────────────────────────────────────────────
+
+/// Outcome of running a single tier's objective loop.
+#[derive(Debug, Clone)]
+pub enum TierResult {
+    /// All objectives were met within the iteration budget.
+    AllPassed {
+        iterations: u32,
+        states: Vec<ObjectiveState>,
+    },
+    /// Max iterations reached with some objectives still unmet.
+    MaxIterations {
+        iterations: u32,
+        states: Vec<ObjectiveState>,
+    },
+}
+
+impl TierResult {
+    /// Whether all objectives passed.
+    pub fn passed(&self) -> bool {
+        matches!(self, TierResult::AllPassed { .. })
+    }
+
+    /// The final objective states.
+    pub fn states(&self) -> &[ObjectiveState] {
+        match self {
+            TierResult::AllPassed { states, .. } => states,
+            TierResult::MaxIterations { states, .. } => states,
+        }
+    }
+
+    /// Number of iterations used.
+    pub fn iterations(&self) -> u32 {
+        match self {
+            TierResult::AllPassed { iterations, .. } => *iterations,
+            TierResult::MaxIterations { iterations, .. } => *iterations,
+        }
+    }
+}
+
+/// Outcome of running all tiers.
+#[derive(Debug)]
+pub struct SupervisorResult {
+    pub tier_results: Vec<(u32, TierResult)>,
+}
+
+impl SupervisorResult {
+    /// True if every tier passed all objectives.
+    pub fn all_passed(&self) -> bool {
+        self.tier_results.iter().all(|(_, r)| r.passed())
+    }
+
+    /// Summary string suitable for printing.
+    pub fn summary(&self) -> String {
+        let mut lines = Vec::new();
+        for (tier, result) in &self.tier_results {
+            let status = if result.passed() { "PASS" } else { "INCOMPLETE" };
+            let met = result
+                .states()
+                .iter()
+                .filter(|s| s.met || s.skip_reason.is_some())
+                .count();
+            let total = result.states().len();
+            lines.push(format!(
+                "  Tier {}: {} ({}/{} objectives, {} iterations)",
+                tier,
+                status,
+                met,
+                total,
+                result.iterations()
+            ));
+        }
+        lines.join("\n")
+    }
+}
+
+// ── Progress printing ───────────────────────────────────────────────────
+
+/// Print a single iteration's objective status line.
+fn print_iteration_progress(tier: u32, iteration: u32, states: &[ObjectiveState]) {
+    let parts: Vec<String> = states
+        .iter()
+        .map(|s| {
+            if s.skip_reason.is_some() {
+                format!("{} ⊘", s.objective)
+            } else if s.met {
+                format!("{} ✓", s.objective)
+            } else {
+                let detail = if s.detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", s.detail)
+                };
+                format!("{} ✗{}", s.objective, detail)
+            }
+        })
+        .collect();
+    println!("  [tier {}] iteration {}: {}", tier, iteration, parts.join(", "));
 }
 
 #[cfg(test)]

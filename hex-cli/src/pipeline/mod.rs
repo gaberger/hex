@@ -33,5 +33,5 @@ pub use objectives::{
     agent_for_objective, can_evaluate, dependencies, objectives_for_tier, parallelizable,
     Objective, ObjectiveState,
 };
-pub use supervisor::{AgentContext, Supervisor};
+pub use supervisor::{AgentContext, Supervisor, SupervisorResult, TierResult};
 pub use workplan_phase::{WorkplanPhase, WorkplanPhaseResult};
