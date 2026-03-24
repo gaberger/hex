@@ -252,10 +252,24 @@ pub async fn project_report(
         None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "State port not available" }))),
     };
 
-    // 1. Resolve project — exact ID, then exact name/basename, then prefix match
+    // 1. Resolve project — special keywords, then exact ID, name/basename, then prefix match
     let project = {
-        let by_id = sp.project_get(&id).await.unwrap_or(None);
-        let by_find = if by_id.is_none() { sp.project_find(&id).await.unwrap_or(None) } else { None };
+        // "latest" → most recently registered project (highest registered_at)
+        let resolved_id: std::borrow::Cow<str> = if id == "latest" {
+            let all = sp.project_list().await.unwrap_or_default();
+            match all.into_iter().max_by_key(|p| p.registered_at) {
+                Some(p) => std::borrow::Cow::Owned(p.id),
+                None => {
+                    return (StatusCode::NOT_FOUND, Json(json!({ "error": "No projects registered" })));
+                }
+            }
+        } else {
+            std::borrow::Cow::Borrowed(&id)
+        };
+        let id = resolved_id.as_ref();
+
+        let by_id = sp.project_get(id).await.unwrap_or(None);
+        let by_find = if by_id.is_none() { sp.project_find(id).await.unwrap_or(None) } else { None };
         let by_prefix = if by_id.is_none() && by_find.is_none() {
             // Prefix/substring match against name and root_path basename
             let all = sp.project_list().await.unwrap_or_default();
