@@ -244,6 +244,18 @@ async fn start_session(
         config.mode,
     );
 
+    // Detect TTY — fall back to headless if no terminal available
+    if config.mode.needs_tty() && !std::io::stdout().is_terminal() {
+        println!(
+            "{} No TTY detected — running in headless (auto) mode",
+            "⚠".yellow(),
+        );
+        let mut config = config;
+        config.mode = crate::pipeline::DevMode::Auto;
+        let app = TuiApp::with_config(session, config);
+        return app.run();
+    }
+
     let app = TuiApp::with_config(session, config);
     app.run()?;
     Ok(())
