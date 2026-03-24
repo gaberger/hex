@@ -1,0 +1,122 @@
+{
+  "id": "feat-tui-cli-surrogate",
+  "title": "TUI CLI Surrogate + Pipeline Traceability",
+  "adr": "ADR-2603241126",
+  "description": "Replace direct REST calls in TUI pipeline with hex CLI subprocess calls. Establish project_id as root of all traceability.",
+  "steps": [
+    {
+      "id": "step-1",
+      "tier": 0,
+      "description": "Add --json output mode to hex task create, hex task complete, hex analyze, and hex inference complete commands",
+      "adapter": "cli",
+      "acceptance": [
+        "hex task create <swarm_id> <title> --json returns {\"id\": \"...\", \"status\": \"pending\"}",
+        "hex task complete <id> <result> --json returns {\"id\": \"...\", \"status\": \"completed\"}",
+        "hex analyze <path> --json returns {\"score\": N, \"violations\": [...]}",
+        "All commands exit 0 on success, non-zero on failure with JSON error on stderr"
+      ]
+    },
+    {
+      "id": "step-2",
+      "tier": 0,
+      "description": "Create CliRunner utility in hex-cli/src/pipeline/ that wraps subprocess calls to the hex binary with JSON parsing",
+      "adapter": "pipeline",
+      "acceptance": [
+        "CliRunner::new() locates hex binary (same binary, argv[0] or PATH lookup)",
+        "CliRunner::run(args) -> Result<serde_json::Value> executes and parses JSON stdout",
+        "Timeout of 30s per command, configurable",
+        "Errors include stderr content for debugging"
+      ]
+    },
+    {
+      "id": "step-3",
+      "tier": 1,
+      "description": "Replace supervisor.rs direct REST calls with CliRunner: create_tracking_task, complete_tracking_task",
+      "adapter": "pipeline",
+      "acceptance": [
+        "create_tracking_task uses hex task create instead of POST /api/swarms/{id}/tasks",
+        "complete_tracking_task uses hex task complete instead of PATCH /api/swarms/tasks/{id}",
+        "Agent ID is passed via --agent-id flag",
+        "Tasks show correct status in hex report latest"
+      ]
+    },
+    {
+      "id": "step-4",
+      "tier": 1,
+      "description": "Replace code_phase.rs task tracking REST calls with CliRunner",
+      "adapter": "pipeline",
+      "acceptance": [
+        "execute_all_tracked_in uses hex task complete for each step",
+        "Task status updates appear in swarm status",
+        "Quick mode code phase still tracks tasks correctly"
+      ]
+    },
+    {
+      "id": "step-5",
+      "tier": 1,
+      "description": "Replace validate_phase.rs fetch_analysis with hex analyze --json",
+      "adapter": "pipeline",
+      "acceptance": [
+        "ValidatePhase uses hex analyze <output_dir> --json instead of GET /api/analyze",
+        "Architecture score (0-100) flows into quality_result on the session",
+        "Violations list populates the report"
+      ]
+    },
+    {
+      "id": "step-6",
+      "tier": 1,
+      "description": "Replace swarm_phase.rs task creation with hex task create --json",
+      "adapter": "pipeline",
+      "acceptance": [
+        "SwarmPhase uses hex swarm init and hex task create instead of direct POST",
+        "task_id_map populated from CLI JSON responses",
+        "Project ID included in swarm creation"
+      ]
+    },
+    {
+      "id": "step-7",
+      "tier": 2,
+      "description": "Wire quality_result into session from supervisor run — populate score, grade, compile/test results",
+      "adapter": "tui",
+      "acceptance": [
+        "After supervisor.run(), session.quality_result is populated with score/grade/compile/test data",
+        "hex report latest shows numerical score and grade in Quality Gate section",
+        "Quality gate section shows compile status, test counts, and violation counts"
+      ]
+    },
+    {
+      "id": "step-8",
+      "tier": 2,
+      "description": "Update report.rs to fetch project metadata from hex project list --json for older sessions without project_id",
+      "adapter": "cli",
+      "acceptance": [
+        "Report shows project_id for all sessions (new and old)",
+        "Falls back to hex project list when session.project_id is None",
+        "JSON report includes project_id field"
+      ]
+    },
+    {
+      "id": "step-9",
+      "tier": 3,
+      "description": "Add swarm agent report sections to audit report — reviewer findings, test results, UX issues, documentation status",
+      "adapter": "cli",
+      "acceptance": [
+        "Report has 'Agent Reports' section after Quality Gate",
+        "Shows per-agent: role, objective addressed, duration, pass/fail, summary",
+        "At least reviewer, tester, documenter, UX agent results visible when supervisor ran"
+      ]
+    },
+    {
+      "id": "step-10",
+      "tier": 4,
+      "description": "Integration test: run hex dev start --quick with a simple feature and verify full report traceability",
+      "adapter": "integration",
+      "acceptance": [
+        "hex dev start 'test feature' --quick completes successfully",
+        "hex report latest shows: project_id, session_id, swarm_id, all tasks completed",
+        "All tool calls logged with model, tokens, cost",
+        "Quality gate shows numerical score from hex analyze"
+      ]
+    }
+  ]
+}
