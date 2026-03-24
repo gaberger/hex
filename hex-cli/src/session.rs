@@ -362,7 +362,7 @@ fn resolve_agent_id() -> Option<String> {
         let agent_file = sessions_dir.join(format!("agent-{}.json", claude_session));
         if let Ok(data) = fs::read_to_string(&agent_file) {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
-                if let Some(id) = parsed["agent_id"].as_str() {
+                if let Some(id) = parsed.get("agent_id").or_else(|| parsed.get("agentId")).and_then(|v| v.as_str()) {
                     return Some(id.to_string());
                 }
             }
@@ -388,7 +388,7 @@ fn resolve_agent_id() -> Option<String> {
         if let Some((_, path)) = newest {
             if let Ok(data) = fs::read_to_string(&path) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
-                    if let Some(id) = parsed["agent_id"].as_str() {
+                    if let Some(id) = parsed.get("agent_id").or_else(|| parsed.get("agentId")).and_then(|v| v.as_str()) {
                         return Some(id.to_string());
                     }
                 }
