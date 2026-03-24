@@ -160,31 +160,40 @@ Templates use `{{placeholders}}` filled at runtime:
 
 The RL engine (ADR-031) selects models per phase automatically:
 
-**OpenRouter is the primary provider.** It gives access to the best open-source and commercial models without managing GPUs or multiple accounts. The RL engine selects the best OpenRouter model per phase:
+**OpenRouter is the primary provider.** It gives access to the best open-source and commercial models without managing GPUs or multiple accounts. The RL engine selects the best OpenRouter model per phase.
 
-| Phase | Task Type | OpenRouter Primary | Fallback |
-|-------|-----------|-------------------|----------|
-| ADR | `reasoning` | `deepseek/deepseek-r1` ($0.55/M) | `qwen/qwen3-235b` → Ollama |
-| Workplan | `structured_output` | `meta-llama/llama-4-maverick` ($0.25/M) | `qwen/qwen3-235b` → Ollama |
-| Code | `code_generation` | `meta-llama/llama-4-maverick` ($0.25/M) | `deepseek/deepseek-r1` → Ollama |
-| Tests | `code_generation` | `meta-llama/llama-4-maverick` ($0.25/M) | Same as code |
-| Fix violations | `code_edit` | `deepseek/deepseek-r1` ($0.55/M) | `meta-llama/llama-4-scout` → Ollama |
+#### Three-Tier Fallback Chain
 
-Cost example: A typical `hex dev` session generating an ADR + workplan + 4 code files ≈ **$0.05–$0.30** via OpenRouter. Compare to Opus at ~$15/M output tokens.
+Each phase has a fallback chain: **paid model → free model → Ollama**. If a paid model fails (402 insufficient credits, 429 rate limit), hex automatically falls back to a free-tier model. If free models are also rate-limited, Ollama provides the offline last resort.
 
-The RL engine learns from outcomes — if a model produces code that passes `hex analyze` on first try, its reward increases for that task type. Over time, hex learns which OpenRouter models work best for your codebase.
+| Phase | Task Type | Paid (default) | Free fallback | Offline fallback |
+|-------|-----------|---------------|---------------|-----------------|
+| ADR | `reasoning` | `deepseek/deepseek-r1` | `qwen/qwen3-next-80b-a3b-instruct:free` → `nvidia/nemotron-3-super-120b-a12b:free` → `openai/gpt-oss-120b:free` | Ollama |
+| Workplan | `structured_output` | `meta-llama/llama-4-maverick` | `nvidia/nemotron-3-super-120b-a12b:free` → `qwen/qwen3-next-80b-a3b-instruct:free` | Ollama |
+| Code | `code_generation` | `meta-llama/llama-4-maverick` | `qwen/qwen3-coder:free` → `nvidia/nemotron-3-super-120b-a12b:free` | Ollama |
+| Fix | `code_edit` | `deepseek/deepseek-r1` | `qwen/qwen3-next-80b-a3b-instruct:free` → `qwen/qwen3-coder:free` | Ollama |
 
-Ollama is the **offline fallback**, not the default. When OpenRouter is unavailable or the user explicitly wants local:
+#### Cost Tiers
+
+| Tier | Cost | Quality | When Used |
+|------|------|---------|-----------|
+| **Paid** | $0.008/app | Best | Default — credits available |
+| **Free** | $0.000/app | Good | Credits exhausted — auto-fallback |
+| **Offline** | $0.000/app | Varies | No internet — Ollama local models |
+
+A typical `hex dev` session: **$0.008 with paid models, $0.000 with free models**. The pipeline works the same either way.
+
+The RL engine learns from outcomes across all tiers — if a free model produces code that passes `hex analyze` on first try, its reward increases for that task type. Over time, hex learns which models (paid or free) work best for your codebase.
 
 ```bash
-# Default: OpenRouter (RL picks the model)
-hex dev "add response caching"
+# Default: paid models with free fallback
+hex dev start "add response caching" --auto
 
-# Force a specific OpenRouter model
-hex dev "feature" --model openrouter-deepseek-deepseek-r1
+# Force a specific free model
+hex dev start "feature" --model "qwen/qwen3-coder:free"
 
 # Force local (offline mode)
-hex dev "feature" --provider ollama
+hex dev start "feature" --provider ollama
 ```
 
 ### 7. Standalone Binary — Zero External Dependencies

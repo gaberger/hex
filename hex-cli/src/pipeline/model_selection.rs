@@ -60,6 +60,51 @@ fn default_model_for(task_type: TaskType) -> &'static str {
     }
 }
 
+/// Free-tier fallback models when paid models fail (402/insufficient credits).
+/// These have lower rate limits but zero cost.
+pub fn free_fallback_for(task_type: TaskType) -> &'static str {
+    match task_type {
+        TaskType::Reasoning => "qwen/qwen3-next-80b-a3b-instruct:free",
+        TaskType::StructuredOutput => "nvidia/nemotron-3-super-120b-a12b:free",
+        TaskType::CodeGeneration => "qwen/qwen3-coder:free",
+        TaskType::CodeEdit => "qwen/qwen3-next-80b-a3b-instruct:free",
+        TaskType::General => "nvidia/nemotron-3-super-120b-a12b:free",
+    }
+}
+
+/// Ordered fallback chain for a task type.
+/// Tries paid model first, then free alternatives.
+pub fn fallback_chain_for(task_type: TaskType) -> Vec<&'static str> {
+    match task_type {
+        TaskType::Reasoning => vec![
+            "deepseek/deepseek-r1",
+            "qwen/qwen3-next-80b-a3b-instruct:free",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "openai/gpt-oss-120b:free",
+        ],
+        TaskType::StructuredOutput => vec![
+            "meta-llama/llama-4-maverick",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "qwen/qwen3-next-80b-a3b-instruct:free",
+        ],
+        TaskType::CodeGeneration => vec![
+            "meta-llama/llama-4-maverick",
+            "qwen/qwen3-coder:free",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+        ],
+        TaskType::CodeEdit => vec![
+            "deepseek/deepseek-r1",
+            "qwen/qwen3-next-80b-a3b-instruct:free",
+            "qwen/qwen3-coder:free",
+        ],
+        TaskType::General => vec![
+            "meta-llama/llama-4-maverick",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "openai/gpt-oss-120b:free",
+        ],
+    }
+}
+
 // ── RL response types ────────────────────────────────────────────────────
 
 /// Response from `POST /api/rl/action`.
