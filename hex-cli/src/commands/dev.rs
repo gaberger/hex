@@ -201,6 +201,8 @@ async fn start_session(
 ) -> Result<()> {
     // Ensure hex-nexus is running (with agent) — required for the dev pipeline
     crate::commands::nexus::ensure_nexus_running().await?;
+
+    // ── Determine output directory ────────────────────────────────────
     let output_dir = if dir.is_empty() {
         // Auto-generate: examples/<slug>/
         let slug = description
@@ -208,7 +210,6 @@ async fn start_session(
             .chars()
             .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
             .collect::<String>();
-        // Collapse repeated hyphens and trim
         let slug = slug
             .split('-')
             .filter(|s| !s.is_empty())
@@ -219,6 +220,25 @@ async fn start_session(
         format!("examples/{}", slug)
     } else {
         dir
+    };
+
+    // ── Ensure project is initialized in the output directory ─────────
+    // project_id is the root of all traceability: session → swarm → tasks → agents
+    std::fs::create_dir_all(&output_dir)?;
+    let project_id = match read_project_id_in(&output_dir) {
+        Some(id) => id,
+        None => {
+            println!(
+                "{} Initializing hex project in {}...",
+                "⬡".yellow(),
+                output_dir,
+            );
+            crate::commands::init::run_init_in(&output_dir, &description).await?;
+            read_project_id_in(&output_dir).ok_or_else(|| anyhow::anyhow!(
+                "hex init completed but .hex/project.json still missing in {}",
+                output_dir,
+            ))?
+        }
     };
 
     let config = DevConfig::from_args(
@@ -238,6 +258,7 @@ async fn start_session(
     }
     session.output_dir = Some(output_dir.clone());
     session.provider = Some(config.provider.clone());
+    session.project_id = Some(project_id.clone());
     session.save()?;
 
     println!(
@@ -288,6 +309,14 @@ async fn launch_tui(session: DevSession, config: DevConfig) -> Result<()> {
     let app = TuiApp::with_config(session, config);
     app.run()?;
     Ok(())
+}
+
+/// Read project_id from `.hex/project.json` in the given directory.
+fn read_project_id_in(dir: &str) -> Option<String> {
+    let project_json = std::path::Path::new(dir).join(".hex/project.json");
+    let content = std::fs::read_to_string(project_json).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
+    parsed["id"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string())
 }
 
 /// Print a read-only summary for completed/failed sessions.

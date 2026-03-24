@@ -440,6 +440,48 @@ fn create_dir_if_missing(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Lightweight init for `hex dev` — creates `.hex/project.json` and registers
+/// with nexus. Skips interview, MCP config, claude settings, and scaffolding.
+/// This ensures every dev session has a project_id for traceability.
+pub async fn run_init_in(dir: &str, name: &str) -> Result<()> {
+    let target = PathBuf::from(dir);
+    fs::create_dir_all(&target)?;
+
+    let hex_dir = target.join(".hex");
+    if hex_dir.join("project.json").exists() {
+        // Already initialized — nothing to do
+        return Ok(());
+    }
+
+    let project_name = if name.is_empty() {
+        target
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "hex-project".to_string())
+    } else {
+        name.to_string()
+    };
+
+    create_project_json(&target, &project_name)?;
+
+    // Best-effort nexus registration — non-fatal if nexus is unavailable
+    match register_project_in_nexus(&target, &project_name).await {
+        Ok(id) => {
+            println!(
+                "  {} Project registered: {} ({})",
+                "\u{2713}".green(),
+                project_name,
+                id,
+            );
+        }
+        Err(e) => {
+            tracing::debug!("Project registration skipped (non-fatal): {e}");
+        }
+    }
+
+    Ok(())
+}
+
 /// ADR-065 P4: Register project in SpacetimeDB via nexus so it appears in the
 /// dashboard immediately. If nexus is offline, silently skip — the project will
 /// be registered on first agent connect (ADR-065 P1).
