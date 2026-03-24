@@ -1,0 +1,111 @@
+{
+  "id": "feat-tui-async-channels",
+  "title": "TUI Async Channel Architecture",
+  "adr": "ADR-2603241500",
+  "status": "pending",
+  "description": "Refactor hex dev TUI from blocking tick() to async channel pattern. Phases run on tokio tasks, communicate with UI via mpsc. Render loop never blocks.",
+  "steps": [
+    {
+      "id": "step-1",
+      "tier": 0,
+      "description": "Define UiMessage enum (PhaseStarted, PhaseProgress, PhaseDone, PhaseError, GateRequested, TaskUpdate, CostUpdate, AgentReport) and UserAction enum (Approve, Retry, Skip, Quit, Shell). Define UiState struct with PhaseStatus per phase, current_progress, gate, agent_reports, cost/tokens.",
+      "adapter": "tui",
+      "acceptance": [
+        "UiMessage and UserAction enums compile",
+        "UiState struct holds all render data",
+        "PhaseStatus enum: Pending, Running{started_at,detail}, Done{duration}, Failed{error}"
+      ]
+    },
+    {
+      "id": "step-2",
+      "tier": 0,
+      "description": "Create mpsc channels in TuiApp: ui_tx/ui_rx (UiMessage), action_tx/action_rx (UserAction). Wire into TuiApp::with_config(). Render loop reads from ui_rx with try_recv() (non-blocking).",
+      "adapter": "tui",
+      "acceptance": [
+        "TuiApp holds Sender<UiMessage> and Receiver<UiMessage>",
+        "Render loop calls ui_rx.try_recv() every tick",
+        "No blocking — try_recv returns immediately"
+      ]
+    },
+    {
+      "id": "step-3",
+      "tier": 1,
+      "description": "Extract ADR phase into standalone async fn: takes ui_tx + session data (feature_description, output_dir, provider, model), sends PhaseStarted/Progress/PhaseDone messages. Remove ADR logic from tick().",
+      "adapter": "tui",
+      "acceptance": [
+        "run_adr_phase is a standalone async fn (not &mut self)",
+        "Spawned via tokio::spawn from tick()",
+        "Sends UiMessage::PhaseStarted, PhaseProgress, PhaseDone",
+        "UI renders progress while ADR phase runs"
+      ]
+    },
+    {
+      "id": "step-4",
+      "tier": 1,
+      "description": "Extract Workplan + Swarm + Code + Validate + Commit phases into standalone async fns. Each sends messages via ui_tx. tick() becomes a dispatcher that spawns the right phase task.",
+      "adapter": "tui",
+      "acceptance": [
+        "All 6 phases are standalone async fns",
+        "tick() is <50 lines: check channel, spawn next phase, handle keys",
+        "No block_in_place calls remain in the event loop"
+      ]
+    },
+    {
+      "id": "step-5",
+      "tier": 2,
+      "description": "Phase workers send Progress messages during execution: 'step 3/6 — secondary adapter', 'compiling...', 'running tests...'. UI renders these in the main area with elapsed time.",
+      "adapter": "tui",
+      "acceptance": [
+        "Code phase sends Progress for each step (N/M)",
+        "Validate phase sends Progress for compile, test, analyze",
+        "Supervisor sends Progress for each agent dispatch",
+        "UI shows progress string with elapsed seconds"
+      ]
+    },
+    {
+      "id": "step-6",
+      "tier": 2,
+      "description": "Gate handling via channels. Phase worker sends GateRequested, then waits on a oneshot::channel<UserAction>. UI shows gate dialog, user presses key, UserAction sent back. Worker resumes.",
+      "adapter": "tui",
+      "acceptance": [
+        "GateRequested message includes oneshot::Sender<UserAction>",
+        "UI renders gate dialog with [a]pprove [r]etry [s]kip options",
+        "Key press sends UserAction through oneshot channel",
+        "Worker receives action and continues (approve/retry/skip)"
+      ]
+    },
+    {
+      "id": "step-7",
+      "tier": 3,
+      "description": "Agent report streaming. Supervisor workers send AgentReport messages as each agent completes. UI renders live agent status table (role, status, duration).",
+      "adapter": "tui",
+      "acceptance": [
+        "AgentReport messages arrive during Code phase",
+        "UI renders agent table with ✓/✗/◐ per role",
+        "Updates in real-time as agents complete"
+      ]
+    },
+    {
+      "id": "step-8",
+      "tier": 3,
+      "description": "Animated pipeline bar with per-phase elapsed time, spinner for running phase, ✓/✗ for completed/failed. Status bar shows live cost/tokens/elapsed.",
+      "adapter": "tui",
+      "acceptance": [
+        "Pipeline bar shows: [✓ ADR 1.2s] [✓ Plan 2.1s] [◐ Code 38s]",
+        "Spinner animates on running phase (◐ cycles)",
+        "Status bar updates cost/tokens every tick"
+      ]
+    },
+    {
+      "id": "step-9",
+      "tier": 4,
+      "description": "Integration test: run hex dev with a mock inference endpoint, verify UI stays responsive (key events processed) during a 5s simulated inference call.",
+      "adapter": "integration",
+      "acceptance": [
+        "UI renders at least 10 frames during a 5s phase",
+        "Quit key (q) works while phase is running",
+        "Phase completion triggers gate dialog within 200ms"
+      ]
+    }
+  ]
+}
