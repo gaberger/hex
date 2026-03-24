@@ -48,34 +48,30 @@ impl std::fmt::Display for TaskType {
 
 // ── Defaults ─────────────────────────────────────────────────────────────
 
-/// Default model: OpenRouter auto-router picks the best model per request.
-/// Falls back to task-specific models if auto isn't available.
+/// Default: cheap, fast models for each task type (~$0.008/app).
+/// openrouter/auto is NOT used as default — it picks expensive frontier models
+/// like Gemini 3 Pro ($0.05/step). Specific cheap models are better for cost control.
 fn default_model_for(task_type: TaskType) -> &'static str {
-    // openrouter/auto lets OpenRouter pick the best model for each request
-    // based on prompt content, context length, and cost optimization.
-    // See: https://openrouter.ai/docs/guides/routing/routers/auto-router
     match task_type {
-        TaskType::Reasoning => "openrouter/auto",
-        TaskType::StructuredOutput => "openrouter/auto",
-        TaskType::CodeGeneration => "openrouter/auto",
-        TaskType::CodeEdit => "openrouter/auto",
-        TaskType::General => "openrouter/auto",
+        TaskType::Reasoning => "deepseek/deepseek-r1",
+        TaskType::StructuredOutput => "meta-llama/llama-4-maverick",
+        TaskType::CodeGeneration => "meta-llama/llama-4-maverick",
+        TaskType::CodeEdit => "deepseek/deepseek-r1",
+        TaskType::General => "meta-llama/llama-4-maverick",
     }
 }
 
 /// Free-tier fallback: `openrouter/free` routes to the best free model.
 /// Used when paid credits are exhausted (402/insufficient credits).
 pub fn free_fallback_for(_task_type: TaskType) -> &'static str {
-    // openrouter/free lets OpenRouter pick the best FREE model per request.
-    // No per-task-type selection needed — OpenRouter handles it.
     "openrouter/free"
 }
 
 /// Ordered fallback chain: auto (paid) → free → specific free models → ollama.
-pub fn fallback_chain_for(_task_type: TaskType) -> Vec<&'static str> {
+pub fn fallback_chain_for(task_type: TaskType) -> Vec<&'static str> {
     vec![
-        "openrouter/auto",  // Best paid model (OpenRouter picks)
-        "openrouter/free",  // Best free model (OpenRouter picks)
+        default_model_for(task_type),  // Cheap specific model (~$0.001/step)
+        "openrouter/free",             // Best free model (OpenRouter picks)
     ]
 }
 
