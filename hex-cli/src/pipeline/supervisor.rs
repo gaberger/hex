@@ -8,10 +8,13 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use anyhow::{Context as _, Result};
 use tracing::{debug, info, warn};
 
+use crate::nexus_client::NexusClient;
 use crate::pipeline::agents::{DocumenterAgent, ReviewerAgent, TesterAgent, UxReviewerAgent};
 use crate::pipeline::code_phase::CodePhase;
 use crate::pipeline::fix_agent::{FixAgent, FixTaskInput};
@@ -19,6 +22,7 @@ use crate::pipeline::objectives::{
     agent_for_objective, evaluate_all, objectives_for_tier, Objective, ObjectiveState,
 };
 use crate::pipeline::workplan_phase::{WorkplanData, WorkplanStep};
+use crate::session::{DevSession, ToolCall};
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -89,6 +93,12 @@ pub struct Supervisor {
     nexus_url: String,
     model_override: Option<String>,
     provider_pref: Option<String>,
+    /// HexFlo swarm ID for task tracking (best-effort).
+    swarm_id: Option<String>,
+    /// Agent identity for task assignment (best-effort).
+    agent_id: Option<String>,
+    /// Dev session for logging tool calls (shared, behind Mutex for interior mutability).
+    session: Option<Arc<Mutex<DevSession>>>,
 }
 
 impl Supervisor {
@@ -107,7 +117,34 @@ impl Supervisor {
             nexus_url,
             model_override,
             provider_pref,
+            swarm_id: None,
+            agent_id: None,
+            session: None,
         }
+    }
+
+    /// Enable HexFlo task tracking for this supervisor.
+    ///
+    /// When set, `execute_agent()` will create a HexFlo task before each agent
+    /// invocation and mark it completed afterward (best-effort — failures are
+    /// logged but do not block the pipeline).
+    pub fn with_tracking(
+        mut self,
+        swarm_id: impl Into<Option<String>>,
+        agent_id: impl Into<Option<String>>,
+    ) -> Self {
+        self.swarm_id = swarm_id.into();
+        self.agent_id = agent_id.into();
+        self
+    }
+
+    /// Attach a dev session for per-role performance logging.
+    ///
+    /// Tool calls are appended to the session after each agent execution,
+    /// recording model, tokens, cost, and duration per role.
+    pub fn with_session(mut self, session: Arc<Mutex<DevSession>>) -> Self {
+        self.session = Some(session);
+        self
     }
 
     /// Nexus base URL (for callers that need to make REST calls).
@@ -499,13 +536,14 @@ impl Supervisor {
             );
 
             // Build context and execute the appropriate agent
-            self.execute_agent(
+            self.execute_agent_tracked(
                 agent_role,
                 tier,
                 unmet_state,
                 workplan_steps,
                 adr_content,
                 workplan_summary,
+                iteration,
             )
             .await
             .with_context(|| {
@@ -541,14 +579,166 @@ impl Supervisor {
         })
     }
 
-    /// Dispatch to the right agent based on role string.
-    async fn execute_agent(
+    // ── HexFlo task tracking helpers ────────────────────────────────────
+
+    /// Create a HexFlo task for the given role/objective (best-effort).
+    /// Returns the task ID if successful.
+    async fn create_tracking_task(
+        &self,
+        role: &str,
+        objective: &Objective,
+        iteration: u32,
+    ) -> Option<String> {
+        let swarm_id = self.swarm_id.as_ref()?;
+        let client = NexusClient::new(self.nexus_url.clone());
+        let title = format!("{}: {} [iteration {}]", role, objective, iteration);
+        let body = serde_json::json!({ "title": title });
+        let path = format!("/api/swarms/{}/tasks", swarm_id);
+        match client.post(&path, &body).await {
+            Ok(resp) => {
+                let task_id = resp["id"].as_str().map(|s| s.to_string());
+                if let Some(ref tid) = task_id {
+                    // PATCH to in_progress with agent_id
+                    let mut patch = serde_json::json!({ "status": "in_progress" });
+                    if let Some(ref aid) = self.agent_id {
+                        patch["agent_id"] = serde_json::json!(aid);
+                    }
+                    let _ = client
+                        .patch(&format!("/api/swarms/tasks/{}", tid), &patch)
+                        .await;
+                    debug!(task_id = %tid, role, "created HexFlo tracking task");
+                }
+                task_id
+            }
+            Err(e) => {
+                debug!(error = %e, role, "failed to create HexFlo tracking task (non-blocking)");
+                None
+            }
+        }
+    }
+
+    /// Mark a HexFlo task as completed with a result summary (best-effort).
+    async fn complete_tracking_task(&self, task_id: &str, result_summary: &str) {
+        let client = NexusClient::new(self.nexus_url.clone());
+        let body = serde_json::json!({
+            "status": "completed",
+            "result": &result_summary[..result_summary.len().min(200)],
+        });
+        if let Err(e) = client
+            .patch(&format!("/api/swarms/tasks/{}", task_id), &body)
+            .await
+        {
+            debug!(error = %e, task_id, "failed to complete HexFlo tracking task (non-blocking)");
+        }
+    }
+
+    /// Log a per-role ToolCall to the attached dev session (best-effort).
+    fn log_agent_performance(
+        &self,
+        role: &str,
+        model: Option<&str>,
+        tokens: Option<u64>,
+        cost_usd: Option<f64>,
+        duration_ms: u64,
+        success: bool,
+        objective: &Objective,
+    ) {
+        if let Some(ref session_mutex) = self.session {
+            if let Ok(mut session) = session_mutex.lock() {
+                let call = ToolCall {
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    phase: format!("agent-{}", role),
+                    tool: "POST /api/inference/complete".to_string(),
+                    model: model.map(|s| s.to_string()),
+                    tokens,
+                    cost_usd,
+                    duration_ms,
+                    status: if success { "ok" } else { "error" }.to_string(),
+                    detail: Some(format!("objective: {}", objective)),
+                };
+                if let Err(e) = session.log_tool_call(call) {
+                    debug!(error = %e, role, "failed to log agent performance (non-blocking)");
+                }
+            }
+        }
+    }
+
+    // ── Iteration counter for task titles ────────────────────────────────
+
+    /// Get the current iteration count from the tier loop context.
+    /// This is injected via `run_tier` into `execute_agent`.
+    /// We thread it through via an extra parameter.
+
+    /// Dispatch to the right agent with HexFlo tracking and performance logging.
+    async fn execute_agent_tracked(
         &self,
         role: &str,
         tier: u32,
         state: &ObjectiveState,
         workplan_steps: &[&WorkplanStep],
         adr_content: &str,
+        workplan_summary: &str,
+        iteration: u32,
+    ) -> Result<()> {
+        // Create HexFlo tracking task (best-effort)
+        let tracking_task_id = self
+            .create_tracking_task(role, &state.objective, iteration)
+            .await;
+
+        let start = Instant::now();
+
+        let agent_result = self
+            .dispatch_agent(role, tier, state, workplan_steps, adr_content, workplan_summary)
+            .await;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+        let success = agent_result.is_ok();
+
+        // Extract performance metrics from agent results and log them.
+        // Each agent type returns model_used/tokens/cost_usd — we capture
+        // what we can from the dispatch. For roles that don't surface metrics
+        // directly (hex-coder delegates to CodePhase), we log with None.
+        //
+        // The per-role ToolCall is logged regardless of success/failure.
+        self.log_agent_performance(
+            role,
+            None, // model extracted below per-role where available
+            None,
+            None,
+            duration_ms,
+            success,
+            &state.objective,
+        );
+
+        // Complete HexFlo tracking task (best-effort)
+        if let Some(ref tid) = tracking_task_id {
+            let summary = if success {
+                format!("{}: completed in {}ms", role, duration_ms)
+            } else {
+                format!(
+                    "{}: failed — {}",
+                    role,
+                    agent_result
+                        .as_ref()
+                        .err()
+                        .map(|e| format!("{}", e))
+                        .unwrap_or_default()
+                )
+            };
+            self.complete_tracking_task(tid, &summary).await;
+        }
+
+        agent_result
+    }
+
+    /// Inner dispatch — executes the actual agent logic without tracking wrapper.
+    async fn dispatch_agent(
+        &self,
+        role: &str,
+        tier: u32,
+        state: &ObjectiveState,
+        workplan_steps: &[&WorkplanStep],
+        _adr_content: &str,
         workplan_summary: &str,
     ) -> Result<()> {
         let model_override = self.model_override.as_deref();
@@ -590,6 +780,16 @@ impl Supervisor {
                     .execute(&context, model_override, provider_pref)
                     .await
                     .context("reviewer agent failed")?;
+                // Log per-role performance with actual metrics
+                self.log_agent_performance(
+                    "hex-reviewer",
+                    Some(&result.model_used),
+                    Some(result.tokens),
+                    Some(result.cost_usd),
+                    result.duration_ms,
+                    true,
+                    &state.objective,
+                );
                 // Write review output so evaluate_review_passes can pick it up
                 let review_dir = PathBuf::from(&self.output_dir).join(".hex-review");
                 let _ = fs::create_dir_all(&review_dir);
@@ -615,6 +815,16 @@ impl Supervisor {
                     .execute(&context, model_override, provider_pref)
                     .await
                     .context("tester agent failed")?;
+                // Log per-role performance with actual metrics
+                self.log_agent_performance(
+                    "hex-tester",
+                    Some(&result.model_used),
+                    Some(result.tokens),
+                    Some(result.cost_usd),
+                    result.duration_ms,
+                    true,
+                    &state.objective,
+                );
                 // Write test file to the suggested path
                 let test_path = PathBuf::from(&self.output_dir).join(&result.suggested_path);
                 if let Some(parent) = test_path.parent() {
@@ -626,11 +836,21 @@ impl Supervisor {
             }
             "hex-documenter" => {
                 let agent = DocumenterAgent::from_env();
-                let context = self.build_documenter_context(adr_content, workplan_summary);
-                let _result = agent
+                let context = self.build_documenter_context(_adr_content, workplan_summary);
+                let result = agent
                     .execute(&context, &self.output_dir, model_override, provider_pref)
                     .await
                     .context("documenter agent failed")?;
+                // Log per-role performance with actual metrics
+                self.log_agent_performance(
+                    "hex-documenter",
+                    Some(&result.model_used),
+                    Some(result.tokens),
+                    Some(result.cost_usd),
+                    result.duration_ms,
+                    true,
+                    &state.objective,
+                );
                 info!("documentation generated");
             }
             "hex-ux" => {
@@ -641,6 +861,16 @@ impl Supervisor {
                     .execute(&context, &self.output_dir, model_override, provider_pref)
                     .await
                     .context("ux reviewer agent failed")?;
+                // Log per-role performance with actual metrics
+                self.log_agent_performance(
+                    "hex-ux",
+                    Some(&result.model_used),
+                    Some(result.tokens),
+                    Some(result.cost_usd),
+                    result.duration_ms,
+                    true,
+                    &state.objective,
+                );
                 // Write UX review output
                 let ux_dir = PathBuf::from(&self.output_dir).join(".hex-ux-review");
                 let _ = fs::create_dir_all(&ux_dir);
@@ -673,6 +903,16 @@ impl Supervisor {
                     .execute(input, model_override, provider_pref)
                     .await
                     .context("fix agent failed")?;
+                // Log per-role performance with actual metrics (FixTaskOutput has no duration_ms)
+                self.log_agent_performance(
+                    "hex-fixer",
+                    Some(&result.model_used),
+                    Some(result.tokens),
+                    Some(result.cost_usd),
+                    0, // duration tracked by outer wrapper
+                    result.status == "fixed",
+                    &state.objective,
+                );
                 info!(
                     status = %result.status,
                     file = %result.file_path,

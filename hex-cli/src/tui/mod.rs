@@ -27,6 +27,7 @@ use tracing::{error, info, warn};
 use crate::pipeline::adr_phase::{AdrPhase, AdrPhaseResult};
 use crate::pipeline::budget::{BudgetStatus, BudgetTracker};
 use crate::pipeline::code_phase::{CodePhase, CodeStepResult};
+use crate::pipeline::supervisor::Supervisor;
 use crate::pipeline::swarm_phase::{SwarmPhase, SwarmPhaseResult};
 use crate::pipeline::validate_phase::{ValidatePhase, ValidateResult};
 use crate::pipeline::workplan_phase::{WorkplanPhase, WorkplanPhaseResult, WorkplanData, workplan_summary};
@@ -633,11 +634,250 @@ impl TuiApp {
                     }
                 }
                 PipelinePhase::Code => {
-                    // Load workplan for code generation
+                    // ── Quick mode: direct code_phase (no supervisor) ────
+                    if self.config.mode == DevMode::Quick {
+                        // Load workplan for code generation
+                        let workplan_path = match &self.session.workplan_path {
+                            Some(p) => p.clone(),
+                            None => {
+                                eprintln!("         SKIP: no workplan path — cannot generate code");
+                                continue;
+                            }
+                        };
+
+                        let workplan_data = match std::fs::read_to_string(&workplan_path) {
+                            Ok(content) => match serde_json::from_str::<WorkplanData>(&content) {
+                                Ok(wp) => wp,
+                                Err(e) => {
+                                    eprintln!("         ERROR: failed to parse workplan: {:#}", e);
+                                    continue;
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("         ERROR: failed to read workplan: {:#}", e);
+                                continue;
+                            }
+                        };
+
+                        let code_phase = CodePhase::from_env();
+                        let model_override = if self.config.model.is_empty() {
+                            None
+                        } else {
+                            Some(self.config.model.as_str())
+                        };
+                        let provider_pref = if self.config.provider.is_empty() {
+                            None
+                        } else {
+                            Some(self.config.provider.as_str())
+                        };
+
+                        // Use tracked execution when we have a task_id_map (from swarm phase)
+                        let task_id_map = self.task_id_map.clone();
+                        let agent_id = self.session.agent_id.clone();
+                        let swarm_id = self.session.swarm_id.clone();
+                        let use_tracked = !task_id_map.is_empty();
+                        if use_tracked {
+                            info!(
+                                task_count = task_id_map.len(),
+                                agent_id = ?agent_id,
+                                "using tracked execution with task_id_map"
+                            );
+                        }
+
+                        // Resolve output_dir for scaffold generation
+                        let scaffold_dir = if self.config.output_dir.is_empty() || self.config.output_dir == "." {
+                            None
+                        } else {
+                            Some(self.config.output_dir.as_str())
+                        };
+
+                        let first_attempt = if let Ok(handle) = &rt {
+                            tokio::task::block_in_place(|| handle.block_on(async {
+                                if use_tracked {
+                                    code_phase.execute_all_tracked_in(
+                                        &workplan_data,
+                                        &task_id_map,
+                                        agent_id.as_deref(),
+                                        model_override,
+                                        provider_pref,
+                                        scaffold_dir,
+                                    ).await
+                                } else {
+                                    code_phase.execute_all_in(
+                                        &workplan_data,
+                                        swarm_id.as_deref(),
+                                        model_override,
+                                        provider_pref,
+                                        scaffold_dir,
+                                    ).await
+                                }
+                            }))
+                        } else {
+                            let tmp_rt = tokio::runtime::Runtime::new()?;
+                            tmp_rt.block_on(async {
+                                if use_tracked {
+                                    code_phase.execute_all_tracked_in(
+                                        &workplan_data,
+                                        &task_id_map,
+                                        agent_id.as_deref(),
+                                        model_override,
+                                        provider_pref,
+                                        scaffold_dir,
+                                    ).await
+                                } else {
+                                    code_phase.execute_all_in(
+                                        &workplan_data,
+                                        swarm_id.as_deref(),
+                                        model_override,
+                                        provider_pref,
+                                        scaffold_dir,
+                                    ).await
+                                }
+                            })
+                        };
+
+                        let result = match first_attempt {
+                            Ok(r) => Ok(r),
+                            Err(e) if Self::is_retryable(&e) => {
+                                let err_str = format!("{:#}", e);
+                                let is_credits = err_str.contains("insufficient credits") || err_str.contains("402");
+                                if is_credits {
+                                    let chain = crate::pipeline::model_selection::fallback_chain_for(
+                                        crate::pipeline::model_selection::TaskType::CodeGeneration
+                                    );
+                                    let mut last_result: Result<_, anyhow::Error> = Err(e);
+                                    for (i, fallback_model) in chain.iter().skip(1).enumerate() {
+                                        let backoff = if fallback_model.contains(":free") || *fallback_model == "openrouter/free" { 15 } else { 5 };
+                                        eprintln!("         FALLBACK [{}]: trying {} ({}s backoff)", i + 1, fallback_model, backoff);
+                                        std::thread::sleep(Duration::from_secs(backoff));
+                                        let retry_phase = CodePhase::from_env();
+                                        let fallback_ref: Option<&str> = Some(*fallback_model);
+                                        let retry_async = async {
+                                            if use_tracked {
+                                                retry_phase.execute_all_tracked(
+                                                    &workplan_data,
+                                                    &task_id_map,
+                                                    agent_id.as_deref(),
+                                                    fallback_ref,
+                                                    provider_pref,
+                                                ).await
+                                            } else {
+                                                retry_phase.execute_all(
+                                                    &workplan_data,
+                                                    swarm_id.as_deref(),
+                                                    fallback_ref,
+                                                    provider_pref,
+                                                ).await
+                                            }
+                                        };
+                                        let attempt = if let Ok(handle) = &rt {
+                                            tokio::task::block_in_place(|| handle.block_on(retry_async))
+                                        } else {
+                                            let tmp_rt = tokio::runtime::Runtime::new()?;
+                                            tmp_rt.block_on(retry_async)
+                                        };
+                                        match attempt {
+                                            Ok(r) => { last_result = Ok(r); break; }
+                                            Err(e) => { eprintln!("         FALLBACK [{}]: failed — {:#}", i + 1, e); last_result = Err(e); }
+                                        }
+                                    }
+                                    if last_result.is_err() {
+                                        eprintln!("         ALL MODELS EXHAUSTED: fallback chain depleted for code phase");
+                                    }
+                                    last_result
+                                } else {
+                                    eprintln!("         RETRY: {:#}", e);
+                                    std::thread::sleep(Duration::from_secs(5));
+                                    let retry_phase = CodePhase::from_env();
+                                    let retry_async = async {
+                                        if use_tracked {
+                                            retry_phase.execute_all_tracked(
+                                                &workplan_data,
+                                                &task_id_map,
+                                                agent_id.as_deref(),
+                                                model_override,
+                                                provider_pref,
+                                            ).await
+                                        } else {
+                                            retry_phase.execute_all(
+                                                &workplan_data,
+                                                swarm_id.as_deref(),
+                                                model_override,
+                                                provider_pref,
+                                            ).await
+                                        }
+                                    };
+                                    if let Ok(handle) = &rt {
+                                        tokio::task::block_in_place(|| handle.block_on(retry_async))
+                                    } else {
+                                        let tmp_rt = tokio::runtime::Runtime::new()?;
+                                        tmp_rt.block_on(retry_async)
+                                    }
+                                }
+                            }
+                            Err(e) => Err(e),
+                        };
+
+                        match result {
+                            Ok(results) => {
+                                // Log each code step individually
+                                for step in &results {
+                                    let _ = self.session.log_tool_call(ToolCall {
+                                        timestamp: chrono::Utc::now().to_rfc3339(),
+                                        phase: "code".into(),
+                                        tool: "POST /api/inference/complete".into(),
+                                        model: Some(step.model_used.clone()),
+                                        tokens: Some(step.tokens),
+                                        cost_usd: Some(step.cost_usd),
+                                        duration_ms: step.duration_ms,
+                                        status: "ok".into(),
+                                        detail: Some(step.step_id.clone()),
+                                    });
+                                }
+                                // Log a summary for the entire code phase
+                                let total_tokens: u64 = results.iter().map(|s| s.tokens).sum();
+                                let total_cost: f64 = results.iter().map(|s| s.cost_usd).sum();
+                                let total_duration: u64 = results.iter().map(|s| s.duration_ms).sum();
+                                let _ = self.session.log_tool_call(ToolCall {
+                                    timestamp: chrono::Utc::now().to_rfc3339(),
+                                    phase: "code_summary".into(),
+                                    tool: "execute_all".into(),
+                                    model: None,
+                                    tokens: Some(total_tokens),
+                                    cost_usd: Some(total_cost),
+                                    duration_ms: total_duration,
+                                    status: "ok".into(),
+                                    detail: Some(format!("{} steps", results.len())),
+                                });
+                                self.handle_code_headless(&results)?;
+                            }
+                            Err(e) => {
+                                let _ = self.session.log_tool_call(ToolCall {
+                                    timestamp: chrono::Utc::now().to_rfc3339(),
+                                    phase: "code".into(),
+                                    tool: "POST /api/inference/complete".into(),
+                                    model: None,
+                                    tokens: None,
+                                    cost_usd: None,
+                                    duration_ms: 0,
+                                    status: "error".into(),
+                                    detail: Some(format!("{:#}", e)),
+                                });
+                                eprintln!("         ERROR: {:#}", e);
+                            }
+                        }
+                        continue; // Quick mode: Code done, skip to next phase
+                    }
+
+                    // ── Auto / Interactive mode: Supervisor handles Code + Validate ──
+                    // The Supervisor runs all tiers (coder, reviewer, tester, analyzer,
+                    // fixer, documenter) within run_tier(), replacing the separate Code
+                    // and Validate phases with a unified objective loop.
+
                     let workplan_path = match &self.session.workplan_path {
                         Some(p) => p.clone(),
                         None => {
-                            eprintln!("         SKIP: no workplan path — cannot generate code");
+                            eprintln!("         SKIP: no workplan path — cannot run supervisor");
                             continue;
                         }
                     };
@@ -656,203 +896,61 @@ impl TuiApp {
                         }
                     };
 
-                    let code_phase = CodePhase::from_env();
-                    let model_override = if self.config.model.is_empty() {
-                        None
-                    } else {
-                        Some(self.config.model.as_str())
-                    };
-                    let provider_pref = if self.config.provider.is_empty() {
-                        None
-                    } else {
-                        Some(self.config.provider.as_str())
-                    };
+                    let adr_content = self.session.adr_path.as_ref()
+                        .and_then(|p| std::fs::read_to_string(p).ok())
+                        .unwrap_or_default();
 
-                    // Use tracked execution when we have a task_id_map (from swarm phase)
-                    let task_id_map = self.task_id_map.clone();
-                    let agent_id = self.session.agent_id.clone();
-                    let swarm_id = self.session.swarm_id.clone();
-                    let use_tracked = !task_id_map.is_empty();
-                    if use_tracked {
-                        info!(
-                            task_count = task_id_map.len(),
-                            agent_id = ?agent_id,
-                            "using tracked execution with task_id_map"
-                        );
-                    }
-
-                    // Resolve output_dir for scaffold generation
-                    let scaffold_dir = if self.config.output_dir.is_empty() || self.config.output_dir == "." {
-                        None
+                    let output_dir = if self.config.output_dir.is_empty() || self.config.output_dir == "." {
+                        ".".to_string()
                     } else {
-                        Some(self.config.output_dir.as_str())
+                        self.config.output_dir.clone()
                     };
+                    let language = "typescript"; // inferred from project
 
-                    let first_attempt = if let Ok(handle) = &rt {
-                        tokio::task::block_in_place(|| handle.block_on(async {
-                            if use_tracked {
-                                code_phase.execute_all_tracked_in(
-                                    &workplan_data,
-                                    &task_id_map,
-                                    agent_id.as_deref(),
-                                    model_override,
-                                    provider_pref,
-                                    scaffold_dir,
-                                ).await
-                            } else {
-                                code_phase.execute_all_in(
-                                    &workplan_data,
-                                    swarm_id.as_deref(),
-                                    model_override,
-                                    provider_pref,
-                                    scaffold_dir,
-                                ).await
-                            }
-                        }))
+                    let supervisor = Supervisor::new(&output_dir, language);
+
+                    println!("         supervisor: {} tiers, {} steps",
+                        workplan_data.steps.iter().map(|s| s.tier).max().unwrap_or(0) + 1,
+                        workplan_data.steps.len(),
+                    );
+
+                    let supervisor_fut = supervisor.run(&workplan_data, &adr_content);
+
+                    let result = if let Ok(handle) = &rt {
+                        tokio::task::block_in_place(|| handle.block_on(supervisor_fut))
                     } else {
                         let tmp_rt = tokio::runtime::Runtime::new()?;
-                        tmp_rt.block_on(async {
-                            if use_tracked {
-                                code_phase.execute_all_tracked_in(
-                                    &workplan_data,
-                                    &task_id_map,
-                                    agent_id.as_deref(),
-                                    model_override,
-                                    provider_pref,
-                                    scaffold_dir,
-                                ).await
-                            } else {
-                                code_phase.execute_all_in(
-                                    &workplan_data,
-                                    swarm_id.as_deref(),
-                                    model_override,
-                                    provider_pref,
-                                    scaffold_dir,
-                                ).await
-                            }
-                        })
-                    };
-
-                    let result = match first_attempt {
-                        Ok(r) => Ok(r),
-                        Err(e) if Self::is_retryable(&e) => {
-                            let err_str = format!("{:#}", e);
-                            let is_credits = err_str.contains("insufficient credits") || err_str.contains("402");
-                            if is_credits {
-                                let chain = crate::pipeline::model_selection::fallback_chain_for(
-                                    crate::pipeline::model_selection::TaskType::CodeGeneration
-                                );
-                                let mut last_result: Result<_, anyhow::Error> = Err(e);
-                                for (i, fallback_model) in chain.iter().skip(1).enumerate() {
-                                    let backoff = if fallback_model.contains(":free") || *fallback_model == "openrouter/free" { 15 } else { 5 };
-                                    eprintln!("         FALLBACK [{}]: trying {} ({}s backoff)", i + 1, fallback_model, backoff);
-                                    std::thread::sleep(Duration::from_secs(backoff));
-                                    let retry_phase = CodePhase::from_env();
-                                    let fallback_ref: Option<&str> = Some(*fallback_model);
-                                    let retry_async = async {
-                                        if use_tracked {
-                                            retry_phase.execute_all_tracked(
-                                                &workplan_data,
-                                                &task_id_map,
-                                                agent_id.as_deref(),
-                                                fallback_ref,
-                                                provider_pref,
-                                            ).await
-                                        } else {
-                                            retry_phase.execute_all(
-                                                &workplan_data,
-                                                swarm_id.as_deref(),
-                                                fallback_ref,
-                                                provider_pref,
-                                            ).await
-                                        }
-                                    };
-                                    let attempt = if let Ok(handle) = &rt {
-                                        tokio::task::block_in_place(|| handle.block_on(retry_async))
-                                    } else {
-                                        let tmp_rt = tokio::runtime::Runtime::new()?;
-                                        tmp_rt.block_on(retry_async)
-                                    };
-                                    match attempt {
-                                        Ok(r) => { last_result = Ok(r); break; }
-                                        Err(e) => { eprintln!("         FALLBACK [{}]: failed — {:#}", i + 1, e); last_result = Err(e); }
-                                    }
-                                }
-                                if last_result.is_err() {
-                                    eprintln!("         ALL MODELS EXHAUSTED: fallback chain depleted for code phase");
-                                }
-                                last_result
-                            } else {
-                                eprintln!("         RETRY: {:#}", e);
-                                std::thread::sleep(Duration::from_secs(5));
-                                let retry_phase = CodePhase::from_env();
-                                let retry_async = async {
-                                    if use_tracked {
-                                        retry_phase.execute_all_tracked(
-                                            &workplan_data,
-                                            &task_id_map,
-                                            agent_id.as_deref(),
-                                            model_override,
-                                            provider_pref,
-                                        ).await
-                                    } else {
-                                        retry_phase.execute_all(
-                                            &workplan_data,
-                                            swarm_id.as_deref(),
-                                            model_override,
-                                            provider_pref,
-                                        ).await
-                                    }
-                                };
-                                if let Ok(handle) = &rt {
-                                    tokio::task::block_in_place(|| handle.block_on(retry_async))
-                                } else {
-                                    let tmp_rt = tokio::runtime::Runtime::new()?;
-                                    tmp_rt.block_on(retry_async)
-                                }
-                            }
-                        }
-                        Err(e) => Err(e),
+                        tmp_rt.block_on(supervisor_fut)
                     };
 
                     match result {
-                        Ok(results) => {
-                            // Log each code step individually
-                            for step in &results {
-                                let _ = self.session.log_tool_call(ToolCall {
-                                    timestamp: chrono::Utc::now().to_rfc3339(),
-                                    phase: "code".into(),
-                                    tool: "POST /api/inference/complete".into(),
-                                    model: Some(step.model_used.clone()),
-                                    tokens: Some(step.tokens),
-                                    cost_usd: Some(step.cost_usd),
-                                    duration_ms: step.duration_ms,
-                                    status: "ok".into(),
-                                    detail: Some(step.step_id.clone()),
-                                });
-                            }
-                            // Log a summary for the entire code phase
-                            let total_tokens: u64 = results.iter().map(|s| s.tokens).sum();
-                            let total_cost: f64 = results.iter().map(|s| s.cost_usd).sum();
-                            let total_duration: u64 = results.iter().map(|s| s.duration_ms).sum();
+                        Ok(sr) => {
                             let _ = self.session.log_tool_call(ToolCall {
                                 timestamp: chrono::Utc::now().to_rfc3339(),
-                                phase: "code_summary".into(),
-                                tool: "execute_all".into(),
+                                phase: "supervisor".into(),
+                                tool: "supervisor::run".into(),
                                 model: None,
-                                tokens: Some(total_tokens),
-                                cost_usd: Some(total_cost),
-                                duration_ms: total_duration,
-                                status: "ok".into(),
-                                detail: Some(format!("{} steps", results.len())),
+                                tokens: None,
+                                cost_usd: None,
+                                duration_ms: 0,
+                                status: if sr.all_passed() { "ok".into() } else { "warn".into() },
+                                detail: Some(sr.summary()),
                             });
-                            self.handle_code_headless(&results)?;
+
+                            if sr.all_passed() {
+                                println!("         All tiers passed!\n{}", sr.summary());
+                            } else {
+                                println!("         Some tiers did not reach full pass:\n{}", sr.summary());
+                            }
+
+                            // Supervisor covers both Code and Validate — skip Validate phase
+                            self.session.update_phase(PipelinePhase::Commit)?;
                         }
                         Err(e) => {
                             let _ = self.session.log_tool_call(ToolCall {
                                 timestamp: chrono::Utc::now().to_rfc3339(),
-                                phase: "code".into(),
-                                tool: "POST /api/inference/complete".into(),
+                                phase: "supervisor".into(),
+                                tool: "supervisor::run".into(),
                                 model: None,
                                 tokens: None,
                                 cost_usd: None,
@@ -860,11 +958,18 @@ impl TuiApp {
                                 status: "error".into(),
                                 detail: Some(format!("{:#}", e)),
                             });
-                            eprintln!("         ERROR: {:#}", e);
+                            eprintln!("         Supervisor error: {:#}", e);
                         }
                     }
                 }
                 PipelinePhase::Validate => {
+                    // In Auto/Interactive mode, the Supervisor already handled validation
+                    // during the Code phase. Only run the standalone validate for Quick mode.
+                    if self.config.mode != DevMode::Quick {
+                        println!("         (handled by supervisor in Code phase)");
+                        continue;
+                    }
+
                     let validate_phase = ValidatePhase::from_env();
                     let model_override = if self.config.model.is_empty() {
                         None
