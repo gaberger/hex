@@ -183,6 +183,11 @@ impl TuiApp {
             return self.run_headless();
         }
 
+        // Redirect tracing to a log file so it doesn't bleed into the TUI.
+        // The global subscriber was already installed in main(), so we install
+        // a thread-local override that writes to ~/.hex/hex-dev.log.
+        let _log_guard = redirect_tracing_to_file();
+
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         stdout.execute(EnterAlternateScreen)?;
@@ -1687,7 +1692,8 @@ impl TuiApp {
                     self.adr_result = None;
                     true
                 } else {
-                    warn!("ADR approved but no result available");
+                    // No result (error gate) — treat approve as retry
+                    info!("ADR approve on error gate — treating as retry");
                     false
                 }
             }
@@ -1905,7 +1911,7 @@ impl TuiApp {
                     self.workplan_result = None;
                     true
                 } else {
-                    warn!("Workplan approved but no result available");
+                    info!("Workplan approve on error gate — treating as retry");
                     false
                 }
             }
@@ -2688,4 +2694,39 @@ fn simple_diff(original: &str, fixed: &str) -> String {
     } else {
         diff
     }
+}
+
+/// Redirect tracing output to `~/.hex/hex-dev.log` so it doesn't bleed
+/// into the ratatui alternate screen.  Returns a guard that, when dropped,
+/// restores the default subscriber.  If the file can't be opened the
+/// tracing output is sent to a sink (suppressed).
+fn redirect_tracing_to_file() -> tracing::subscriber::DefaultGuard {
+    use tracing_subscriber::fmt;
+    use tracing_subscriber::prelude::*;
+
+    let log_path = dirs::home_dir()
+        .map(|h| h.join(".hex").join("hex-dev.log"))
+        .unwrap_or_else(|| std::path::PathBuf::from("hex-dev.log"));
+
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let writer: Box<dyn io::Write + Send> = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        Ok(file) => Box::new(file),
+        Err(_) => Box::new(io::sink()),
+    };
+
+    let subscriber = tracing_subscriber::registry().with(
+        fmt::layer()
+            .with_writer(std::sync::Mutex::new(writer))
+            .with_ansi(false)
+            .with_target(false),
+    );
+
+    tracing::subscriber::set_default(subscriber)
 }
