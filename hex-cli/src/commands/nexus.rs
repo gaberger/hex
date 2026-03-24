@@ -55,8 +55,8 @@ pub enum NexusAction {
         /// Auth token for dashboard/chat access
         #[arg(short, long)]
         token: Option<String>,
-        /// Don't auto-spawn default agent
-        #[arg(long)]
+        /// Don't auto-spawn default agent (DEPRECATED — agent always starts)
+        #[arg(long, hide = true)]
         no_agent: bool,
     },
     /// Stop the hex-nexus daemon
@@ -232,6 +232,22 @@ fn try_start_spacetimedb(bin: &str, args: &[&str], stdout: &std::fs::File, stder
     }
 }
 
+/// Ensure hex-nexus is running (with an agent). If not running, auto-start it
+/// on the default port. Used by `hex dev` to guarantee nexus is available.
+pub async fn ensure_nexus_running() -> anyhow::Result<()> {
+    let port = read_port();
+    let nexus = crate::nexus_client::NexusClient::new(format!("http://127.0.0.1:{}", port));
+    if nexus.ensure_running().await.is_ok() {
+        return Ok(());
+    }
+    println!(
+        "{} hex-nexus not running — auto-starting on port {}...",
+        "\u{2b21}".yellow(),
+        port
+    );
+    start(port, "127.0.0.1", None, false).await
+}
+
 pub async fn run(action: NexusAction) -> anyhow::Result<()> {
     match action {
         NexusAction::Start { port, bind, token, no_agent } => start(port, &bind, token.as_deref(), no_agent).await,
@@ -241,7 +257,7 @@ pub async fn run(action: NexusAction) -> anyhow::Result<()> {
     }
 }
 
-async fn start(port: u16, bind: &str, token: Option<&str>, no_agent: bool) -> anyhow::Result<()> {
+async fn start(port: u16, bind: &str, token: Option<&str>, _no_agent: bool) -> anyhow::Result<()> {
     let pid_path = pid_file();
 
     // Check if already running
@@ -460,78 +476,75 @@ async fn start(port: u16, bind: &str, token: Option<&str>, no_agent: bool) -> an
         // auto_register_project has its own 2s wait + retry logic.
         auto_register_project(&nexus, &project_dir).await;
 
-        // Auto-start default hex-agent (ADR-037)
-        if !no_agent {
-            if let Some(agent_bin) = find_agent_binary() {
+        // Auto-start default hex-agent (ADR-037) — always starts
+        if let Some(agent_bin) = find_agent_binary() {
+            // Query nexus for registered inference endpoints to pass to agent
+            let mut cmd = std::process::Command::new(&agent_bin);
+            cmd.args(["--hub-url", &nexus_url, "--project-dir", &project_dir]);
 
-                // Query nexus for registered inference endpoints to pass to agent
-                let mut cmd = std::process::Command::new(&agent_bin);
-                cmd.args(["--hub-url", &nexus_url, "--project-dir", &project_dir]);
-
-                // Forward inference provider config as env vars
-                if let Ok(resp) = nexus.get("/api/inference/endpoints").await {
-                    let resp: serde_json::Value = resp;
-                    if let Some(eps) = resp.get("endpoints").and_then(|v| v.as_array()) {
-                        for ep in eps {
-                            let provider = ep["provider"].as_str().unwrap_or("");
-                            let url = ep["url"].as_str().unwrap_or("");
-                            let model = ep["model"].as_str().unwrap_or("");
-                            match provider {
-                                "ollama" => {
-                                    cmd.env("HEX_OLLAMA_HOST", url);
-                                    cmd.env("HEX_OLLAMA_MODEL", model);
-                                    cmd.args(["--model", model]);
-                                }
-                                "vllm" | "openai_compat" | "openai-compatible" => {
-                                    cmd.env("HEX_INFERENCE_URL", format!("{}/v1", url));
-                                    cmd.env("HEX_INFERENCE_MODEL", model);
-                                    cmd.args(["--model", model]);
-                                }
-                                _ => {}
+            // Forward inference provider config as env vars
+            if let Ok(resp) = nexus.get("/api/inference/endpoints").await {
+                let resp: serde_json::Value = resp;
+                if let Some(eps) = resp.get("endpoints").and_then(|v| v.as_array()) {
+                    for ep in eps {
+                        let provider = ep["provider"].as_str().unwrap_or("");
+                        let url = ep["url"].as_str().unwrap_or("");
+                        let model = ep["model"].as_str().unwrap_or("");
+                        match provider {
+                            "ollama" => {
+                                cmd.env("HEX_OLLAMA_HOST", url);
+                                cmd.env("HEX_OLLAMA_MODEL", model);
+                                cmd.args(["--model", model]);
                             }
+                            "vllm" | "openai_compat" | "openai-compatible" => {
+                                cmd.env("HEX_INFERENCE_URL", format!("{}/v1", url));
+                                cmd.env("HEX_INFERENCE_MODEL", model);
+                                cmd.args(["--model", model]);
+                            }
+                            _ => {}
                         }
                     }
                 }
+            }
 
-                // Also forward ANTHROPIC_API_KEY if available
-                if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-                    cmd.env("ANTHROPIC_API_KEY", key);
-                }
+            // Also forward ANTHROPIC_API_KEY if available
+            if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+                cmd.env("ANTHROPIC_API_KEY", key);
+            }
 
-                match cmd
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                {
-                    Ok(child) => {
-                        let agent_pid = child.id();
-                        println!(
-                            "{} hex-agent started (PID {}) \u{2014} project: {}",
-                            "\u{2b21}".green(),
-                            agent_pid,
-                            project_dir
-                        );
+            match cmd
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                Ok(child) => {
+                    let agent_pid = child.id();
+                    println!(
+                        "{} hex-agent started (PID {}) \u{2014} project: {}",
+                        "\u{2b21}".green(),
+                        agent_pid,
+                        project_dir
+                    );
 
-                        // Register this agent in the unified hex_agent table (ADR-058)
-                        let hostname = gethostname::gethostname().to_string_lossy().to_string();
-                        let agent_name = format!("nexus-agent-{}", &hostname);
-                        let reg_body = serde_json::json!({
-                            "name": agent_name,
-                            "host": hostname,
-                            "project_dir": project_dir,
-                            "session_id": format!("nexus-{}", agent_pid),
+                    // Register this agent in the unified hex_agent table (ADR-058)
+                    let hostname = gethostname::gethostname().to_string_lossy().to_string();
+                    let agent_name = format!("nexus-agent-{}", &hostname);
+                    let reg_body = serde_json::json!({
+                        "name": agent_name,
+                        "host": hostname,
+                        "project_dir": project_dir,
+                        "session_id": format!("nexus-{}", agent_pid),
+                    });
+                    let _ = nexus.post("/api/hex-agents/connect", &reg_body).await
+                        .map(|_| {
+                            tracing::debug!("Nexus agent registered as {}", agent_name);
+                        })
+                        .map_err(|e| {
+                            tracing::debug!("Nexus agent registration failed (non-fatal): {e}");
                         });
-                        let _ = nexus.post("/api/hex-agents/connect", &reg_body).await
-                            .map(|_| {
-                                tracing::debug!("Nexus agent registered as {}", agent_name);
-                            })
-                            .map_err(|e| {
-                                tracing::debug!("Nexus agent registration failed (non-fatal): {e}");
-                            });
-                    }
-                    Err(e) => {
-                        tracing::debug!("hex-agent failed to start: {e}");
-                    }
+                }
+                Err(e) => {
+                    tracing::debug!("hex-agent failed to start: {e}");
                 }
             }
         }
