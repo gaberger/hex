@@ -1339,10 +1339,45 @@ impl Supervisor {
                             success_criteria: None,
                             dependencies: None,
                         };
-                        let result = phase
-                            .execute_step(step, &step_workplan, effective_model, provider_pref)
-                            .await
-                            .with_context(|| format!("code phase step {} failed", step.id))?;
+
+                        // Gate behind HEX_PHASE_MODE env var (default = "single" to avoid 3x cost)
+                        let phase_mode = std::env::var("HEX_PHASE_MODE")
+                            .unwrap_or_else(|_| "single".to_string());
+
+                        let result = if phase_mode == "tdd" {
+                            // Run red → green → refactor in sequence, passing accumulated output forward
+                            let mut accumulated: Option<String> = None;
+                            let mut last_result: Option<crate::pipeline::code_phase::CodeStepResult> = None;
+                            for wf_phase in workflow.phases.iter().filter(|p| p.id != "pre_validate") {
+                                match phase
+                                    .execute_step_for_phase(
+                                        step,
+                                        wf_phase,
+                                        &step_workplan,
+                                        effective_model,
+                                        provider_pref,
+                                        accumulated.as_deref(),
+                                    )
+                                    .await
+                                {
+                                    Ok(r) => {
+                                        accumulated = Some(r.content.clone());
+                                        last_result = Some(r);
+                                    }
+                                    Err(e) => {
+                                        warn!(error = %e, phase = %wf_phase.id, "phase inference failed — stopping phase loop");
+                                        break;
+                                    }
+                                }
+                            }
+                            last_result.ok_or_else(|| anyhow::anyhow!("all TDD phases failed for step {}", step.id))?
+                        } else {
+                            // Default: single inference call (current behaviour, no 3x cost)
+                            phase
+                                .execute_step(step, &step_workplan, effective_model, provider_pref)
+                                .await
+                                .with_context(|| format!("code phase step {} failed", step.id))?
+                        };
 
                         // Write generated code to disk
                         if let Some(ref rel_path) = result.file_path {
