@@ -1307,6 +1307,22 @@ impl Supervisor {
 
                     // Execute code generation for each workplan step
                     for step in workplan_steps {
+                        // Build YAML-driven context for this step (ADR-2603240130 S03)
+                        let target_adapter = step.adapter.as_deref();
+                        let _yaml_ctx = self.build_context_from_yaml(
+                            agent_def.as_ref().unwrap(),
+                            &step.description,
+                            tier,
+                            target_adapter,
+                            None,
+                        );
+                        debug!(
+                            context_source = %_yaml_ctx.metadata.get("context_source").map(|s| s.as_str()).unwrap_or("fallback"),
+                            source_files = _yaml_ctx.source_files.len(),
+                            port_interfaces = _yaml_ctx.port_interfaces.len(),
+                            "YAML context assembled for hex-coder step"
+                        );
+
                         let step_workplan = WorkplanData {
                             id: "supervisor-tier".into(),
                             title: workplan_summary.to_string(),
@@ -1429,6 +1445,22 @@ impl Supervisor {
                         "hex-coder model selected from YAML (fallback path)"
                     );
                     for step in workplan_steps {
+                        // Build YAML-driven context for this step (ADR-2603240130 S03)
+                        let target_adapter = step.adapter.as_deref();
+                        let _yaml_ctx = self.build_context_from_yaml(
+                            agent_def.as_ref().unwrap(),
+                            &step.description,
+                            tier,
+                            target_adapter,
+                            None,
+                        );
+                        debug!(
+                            context_source = %_yaml_ctx.metadata.get("context_source").map(|s| s.as_str()).unwrap_or("fallback"),
+                            source_files = _yaml_ctx.source_files.len(),
+                            port_interfaces = _yaml_ctx.port_interfaces.len(),
+                            "YAML context assembled for hex-coder step"
+                        );
+
                         let step_workplan = WorkplanData {
                             id: "supervisor-tier".into(),
                             title: workplan_summary.to_string(),

@@ -4,7 +4,7 @@ use http::StatusCode;
 use rust_embed::Embed;
 
 #[derive(Embed)]
-#[folder = "assets/dist/"]
+#[folder = "assets/"]
 struct DashboardAssets;
 
 pub async fn serve_index() -> Response {
