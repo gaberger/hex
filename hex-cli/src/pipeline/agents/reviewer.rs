@@ -119,9 +119,25 @@ impl ReviewerAgent {
             .await.context("model selection failed for reviewer")?;
         info!(model = %selected.model_id, source = %selected.source, "selected model for review");
 
-        let user_message = "Review the code for architecture violations, quality issues, \
+        // Include prior review issues so the reviewer builds on previous findings
+        // rather than re-discovering the same issues or losing progress.
+        let user_message = if let Some(ref prior) = context.upstream_output {
+            format!(
+                "Review the code for architecture violations, quality issues, \
+                 and adherence to hex boundary rules.\n\n\
+                 PRIOR REVIEW CONTEXT — these issues were flagged in a previous iteration. \
+                 Verify whether each has been resolved, and look for any new issues:\n{}\n\n\
+                 Respond with JSON: \
+                 {{\"verdict\": \"PASS\" or \"NEEDS_FIXES\", \
+                 \"issues\": [{{\"severity\", \"description\", \"location\", \"recommendation\"}}]}}",
+                prior
+            )
+        } else {
+            "Review the code for architecture violations, quality issues, \
              and adherence to hex boundary rules. Respond with JSON:\n\
-             {\"verdict\": \"PASS\" or \"NEEDS_FIXES\", \"issues\": [{\"severity\", \"description\", \"location\", \"recommendation\"}]}";
+             {\"verdict\": \"PASS\" or \"NEEDS_FIXES\", \"issues\": [{\"severity\", \"description\", \"location\", \"recommendation\"}]}"
+            .to_string()
+        };
 
         let start = Instant::now();
         let body = json!({
@@ -150,6 +166,13 @@ impl ReviewerAgent {
         let (verdict, issues) = parse_review(&raw_content);
 
         info!(verdict = %verdict, issues = issues.len(), model = %model_used, tokens, cost_usd, duration_ms, "reviewer agent complete");
+
+        // Feed result back to the RL / neural engine so it learns which models
+        // produce PASS verdicts on review tasks (neural learning loop).
+        let success = verdict == "PASS";
+        let _ = self.selector
+            .report_outcome(&selected, TaskType::Reasoning, success, cost_usd, duration_ms)
+            .await;
 
         Ok(ReviewResult { verdict, issues, model_used, tokens, cost_usd, duration_ms })
     }

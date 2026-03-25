@@ -64,8 +64,20 @@ pub async fn inference_complete(
                 Ok(providers) if !providers.is_empty() => {
                     // Find the provider that matches the requested model
                     let matched = if let Some(ref requested_model) = body.model {
+                        // 1. Exact model match
                         providers.iter().find(|p| {
                             p.models_json.contains(requested_model.as_str())
+                        })
+                        // 2. For OpenRouter-format IDs (e.g. "google/gemini-2.0-flash-001"),
+                        //    route through any registered openrouter provider with a key.
+                        .or_else(|| {
+                            if requested_model.contains('/') {
+                                providers.iter().find(|p| {
+                                    p.provider_type == "openrouter" && !p.api_key_ref.is_empty()
+                                })
+                            } else {
+                                None
+                            }
                         })
                     } else {
                         None
@@ -135,11 +147,72 @@ pub async fn inference_complete(
         }
         match super::chat::call_inference_endpoint(&ep, &messages).await {
             Ok(resp) => Ok(resp),
+            Err(ref e) if e.contains("insufficient credits") || e.contains("402") || e.contains("rate limited") || e.contains("429") => {
+                // OpenRouter out of credits — retry with a registered :free provider.
+                tracing::warn!(provider = %ep.provider, model = %ep.model, "insufficient credits — retrying with registered :free provider");
+                let free_providers: Vec<_> = if let Some(ref stdb) = state.inference_stdb {
+                    stdb.list_providers().await.ok()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|p| p.provider_type == "openrouter" && p.models_json.contains(":free"))
+                        .collect()
+                } else {
+                    vec![]
+                };
+                // Try each :free provider in order until one succeeds.
+                let mut fallback_result: Result<_, String> = Err("no :free providers registered".to_string());
+                for fp in &free_providers {
+                    let free_model = fp.models_json
+                        .trim_start_matches('[').trim_end_matches(']')
+                        .split(',').next().unwrap_or(&fp.models_json)
+                        .trim().trim_matches('"').to_string();
+                    // Resolve the secret key ref (same logic as the main path).
+                    let resolved_key = if fp.api_key_ref.starts_with("sk-") {
+                        fp.api_key_ref.clone()
+                    } else {
+                        let key_ref = &fp.api_key_ref;
+                        if let Ok(val) = std::env::var(key_ref) {
+                            val
+                        } else if let Some(ref stdb) = state.spacetime_secrets {
+                            stdb.vault_get(key_ref).await.ok()
+                                .flatten()
+                                .unwrap_or_else(|| fp.api_key_ref.clone())
+                        } else {
+                            fp.api_key_ref.clone()
+                        }
+                    };
+                    let free_ep = crate::routes::secrets::InferenceEndpointEntry {
+                        id: fp.provider_id.clone(),
+                        url: fp.base_url.clone(),
+                        provider: fp.provider_type.clone(),
+                        model: free_model.clone(),
+                        status: "unknown".into(),
+                        requires_auth: !fp.api_key_ref.is_empty(),
+                        secret_key: resolved_key,
+                        health_checked_at: fp.last_health_check.clone(),
+                    };
+                    match super::chat::call_inference_endpoint(&free_ep, &messages).await {
+                        Ok(resp) => { fallback_result = Ok(resp); break; }
+                        Err(e2) => {
+                            tracing::warn!(model = %free_model, error = %e2, ":free provider failed — trying next");
+                            fallback_result = Err(format!("{} failed: {}", free_model, e2));
+                        }
+                    }
+                }
+                fallback_result.map_err(|e| e)
+            }
             Err(e) => {
                 tracing::warn!(provider = %ep.provider, error = %e, "Inference endpoint failed, trying Anthropic fallback");
-                // Fallback to Anthropic
+                // Fallback to Anthropic only if the key looks like a real Anthropic key.
                 if let Some(ref api_key) = state.anthropic_api_key {
-                    super::chat::call_anthropic(api_key, &messages).await
+                    if api_key.starts_with("sk-ant-") {
+                        super::chat::call_anthropic(api_key, &messages).await
+                    } else {
+                        Err(format!(
+                            "{} failed: {}; Anthropic key is not configured (got non-Anthropic key in ANTHROPIC_API_KEY)",
+                            ep.provider, e
+                        ))
+                    }
                 } else {
                     Err(format!(
                         "{} failed: {}; no Anthropic fallback configured",

@@ -1714,7 +1714,31 @@ impl Supervisor {
             "hex-reviewer" => {
                 let agent = ReviewerAgent::from_env();
                 let target_file = self.first_source_file_for_tier(tier);
-                let context = self.build_reviewer_context(&target_file);
+
+                // Carry forward issues from the previous review iteration so the
+                // reviewer doesn't re-find already-known problems or lose progress.
+                let prior_issues: Option<String> = {
+                    let review_path = PathBuf::from(&self.output_dir)
+                        .join(".hex-review")
+                        .join("review-latest.json");
+                    fs::read_to_string(&review_path).ok().and_then(|raw| {
+                        let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+                        let issues = v["issues"].as_array()?;
+                        if issues.is_empty() { return None; }
+                        let lines: Vec<String> = issues.iter().filter_map(|i| {
+                            let msg = i["message"].as_str().unwrap_or_default();
+                            let sev = i["severity"].as_str().unwrap_or("minor");
+                            if msg.is_empty() { None } else { Some(format!("[{}] {}", sev, msg)) }
+                        }).collect();
+                        if lines.is_empty() { None } else {
+                            Some(format!("Previously flagged (verify if resolved):\n{}", lines.join("\n")))
+                        }
+                    })
+                };
+
+                let mut context = self.build_reviewer_context(&target_file);
+                context.upstream_output = prior_issues;
+
                 let reviewer_selected = self.select_model_for_role("hex-reviewer", 0);
                 let reviewer_model_id = reviewer_selected.model_id.clone();
                 let reviewer_model: Option<&str> = model_override.or(Some(&reviewer_model_id));

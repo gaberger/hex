@@ -53,15 +53,42 @@ impl std::fmt::Display for TaskType {
 /// like Gemini 3 Pro ($0.05/step). Specific cheap models are better for cost control.
 fn default_model_for(task_type: TaskType) -> &'static str {
     match task_type {
-        // Flash 2.0: fast (~5-10s), cheap, good at structured JSON — ideal for review loops
-        TaskType::Reasoning => "google/gemini-2.0-flash-001",
-        // Llama 4 Maverick: fast, cheap, good structured output
-        TaskType::StructuredOutput => "meta-llama/llama-4-maverick",
-        // Llama 4 Maverick: best cost/speed for code gen
-        TaskType::CodeGeneration => "meta-llama/llama-4-maverick",
-        // Gemini Flash: fast, cheap, good at targeted code edits via OpenRouter
-        TaskType::CodeEdit => "google/gemini-2.0-flash-001",
-        TaskType::General => "meta-llama/llama-4-maverick",
+        // Llama 3.3 70B: strong reasoning, free tier, proven working
+        TaskType::Reasoning => "meta-llama/llama-3.3-70b-instruct:free",
+        // Llama 3.3 70B: consistent free tier model across all phases
+        TaskType::StructuredOutput => "meta-llama/llama-3.3-70b-instruct:free",
+        // Qwen3 Coder: code-specialized, free tier
+        TaskType::CodeGeneration => "qwen/qwen3-coder:free",
+        // Qwen3 Coder: code-specialized, good at targeted edits
+        TaskType::CodeEdit => "qwen/qwen3-coder:free",
+        // Llama 3.3 70B: general purpose, free tier
+        TaskType::General => "meta-llama/llama-3.3-70b-instruct:free",
+    }
+}
+
+/// Provider-specific model mapping for `--provider` flag.
+///
+/// Returns the best model for a given provider + task type combination.
+/// Returns `None` if the provider is unknown (caller falls back to default).
+fn provider_model_for(provider: &str, task_type: TaskType) -> Option<&'static str> {
+    match provider {
+        // For openrouter, the defaults are already OpenRouter model IDs — use them directly.
+        "openrouter" => Some(default_model_for(task_type)),
+        "anthropic" => Some(match task_type {
+            TaskType::Reasoning => "claude-sonnet-4-6",
+            TaskType::StructuredOutput => "claude-sonnet-4-6",
+            TaskType::CodeGeneration => "claude-sonnet-4-6",
+            TaskType::CodeEdit => "claude-haiku-4-5-20251001",
+            TaskType::General => "claude-haiku-4-5-20251001",
+        }),
+        "ollama" => Some(match task_type {
+            TaskType::Reasoning => "qwen3.5:27b",
+            TaskType::StructuredOutput => "qwen3.5:27b",
+            TaskType::CodeGeneration => "qwen3.5:27b",
+            TaskType::CodeEdit => "qwen3.5:9b",
+            TaskType::General => "qwen3.5:9b",
+        }),
+        _ => None,
     }
 }
 
@@ -266,20 +293,16 @@ impl ModelSelector {
             });
         }
 
-        // Provider preference: use hardcoded default filtered to that provider.
+        // Provider preference: select the best model for this provider + task type.
         if let Some(provider) = provider_preference {
-            let default = default_model_for(task_type);
-            let model_id = if default.starts_with(&format!("{}-", provider)) {
-                default.to_string()
+            let model_id = if let Some(m) = provider_model_for(provider, task_type) {
+                m.to_string()
             } else {
-                // Best-effort: prefix the provider to the default model's suffix.
-                // In practice, the caller would need a provider-specific mapping,
-                // but for now we just return the default and log a warning.
                 warn!(
                     %provider, %task_type,
-                    "provider preference set but default model is not from that provider; using default"
+                    "unknown provider preference — falling back to default model"
                 );
-                default.to_string()
+                default_model_for(task_type).to_string()
             };
             return Ok(SelectedModel {
                 model_id,
