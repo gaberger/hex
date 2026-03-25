@@ -22,12 +22,16 @@ use crate::prompts::PromptTemplate;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewIssue {
     /// Severity: `"critical"`, `"major"`, `"minor"`, `"suggestion"`.
+    #[serde(default)]
     pub severity: String,
     /// What the issue is.
+    #[serde(default)]
     pub description: String,
-    /// Line number or range (if identifiable).
+    /// Line number or range (if identifiable). LLMs often omit this field.
+    #[serde(default)]
     pub location: String,
     /// How to fix it.
+    #[serde(default)]
     pub recommendation: String,
 }
 
@@ -91,17 +95,19 @@ impl ReviewerAgent {
 
         tpl_context.insert("language".to_string(), language);
         tpl_context.insert("review_target".to_string(), review_target);
-        tpl_context.insert("boundary_rules".to_string(), context.boundary_rules.clone());
+        // Match template placeholder names: source_file, port_interface, architecture_rules, review_checklist
+        tpl_context.insert("architecture_rules".to_string(), context.boundary_rules.clone());
+        tpl_context.insert("review_checklist".to_string(), String::new());
 
         let source_listing: String = context.source_files.iter()
             .map(|(path, content)| format!("### {}\n```\n{}\n```", path, content))
             .collect::<Vec<_>>().join("\n\n");
-        tpl_context.insert("source_files".to_string(), source_listing);
+        tpl_context.insert("source_file".to_string(), source_listing);
 
         let port_listing: String = context.port_interfaces.iter()
             .map(|(path, content)| format!("### {}\n```\n{}\n```", path, content))
             .collect::<Vec<_>>().join("\n\n");
-        tpl_context.insert("port_interfaces".to_string(), port_listing);
+        tpl_context.insert("port_interface".to_string(), port_listing);
 
         let template = PromptTemplate::load("agent-reviewer")
             .context("loading agent-reviewer prompt template")?;

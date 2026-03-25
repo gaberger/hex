@@ -109,9 +109,14 @@ impl CliRunner {
         self.run(&["analyze", path])
     }
 
-    /// `hex swarm init <name> <topology> --json`
+    /// `hex swarm init <name> --topology <topology> --json`
     pub fn swarm_init(&self, name: &str, topology: &str) -> Result<Value> {
-        self.run(&["swarm", "init", name, topology])
+        self.run(&["swarm", "init", name, "--topology", topology])
+    }
+
+    /// `hex swarm cleanup --force` — close stale/completed swarms before creating a new one.
+    pub fn swarm_cleanup(&self) -> Result<Value> {
+        self.run(&["swarm", "cleanup", "--force"])
     }
 }
 

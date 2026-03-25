@@ -77,17 +77,18 @@ impl TesterAgent {
 
         tpl_context.insert("language".to_string(), language.clone());
         tpl_context.insert("test_target".to_string(), test_target.clone());
-        tpl_context.insert("boundary_rules".to_string(), context.boundary_rules.clone());
+        // Match template placeholder names: source_file, port_interface, test_patterns
+        tpl_context.insert("test_patterns".to_string(), context.boundary_rules.clone());
 
         let source_listing: String = context.source_files.iter()
             .map(|(path, content)| format!("### {}\n```\n{}\n```", path, content))
             .collect::<Vec<_>>().join("\n\n");
-        tpl_context.insert("source_files".to_string(), source_listing);
+        tpl_context.insert("source_file".to_string(), source_listing);
 
         let port_listing: String = context.port_interfaces.iter()
             .map(|(path, content)| format!("### {}\n```\n{}\n```", path, content))
             .collect::<Vec<_>>().join("\n\n");
-        tpl_context.insert("port_interfaces".to_string(), port_listing);
+        tpl_context.insert("port_interface".to_string(), port_listing);
 
         let template = PromptTemplate::load("agent-tester")
             .context("loading agent-tester prompt template")?;
@@ -99,11 +100,29 @@ impl TesterAgent {
             .await.context("model selection failed for tester")?;
         info!(model = %selected.model_id, source = %selected.source, "selected model for test generation");
 
+        let lang_reminder = if language == "rust" {
+            " IMPORTANT for Rust: this is an integration test in tests/ (a separate crate). \
+             NEVER use `use super::*`. NEVER call `main()` directly. \
+             Test public functions by name, or use std::process::Command with env!(\"CARGO_BIN_EXE_<name>\") to run the binary.".to_string()
+        } else if language == "typescript" || language == "ts" {
+            // Compute the correct relative import path from the test file to the source file.
+            let suggested = derive_test_path(&test_target, &language);
+            let import_path = compute_ts_import_path(&suggested, &test_target);
+            format!(
+                " IMPORTANT: The test file will be written to `{}`. \
+                 Import the source using this exact path: `{}` (with .js extension). \
+                 Count directory levels carefully — do NOT use `./` to import from src/ when the test is under tests/.",
+                suggested, import_path
+            )
+        } else {
+            String::new()
+        };
+
         let user_message = format!(
-            "Generate comprehensive unit tests for `{}`. \
+            "Generate comprehensive tests for `{}`. \
              Use London-school mock-first patterns with dependency injection (no mock.module()). \
-             Output ONLY the test file content.",
-            test_target
+             Output ONLY the test file content.{}",
+            test_target, lang_reminder
         );
 
         let start = Instant::now();
@@ -141,6 +160,38 @@ impl TesterAgent {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
+/// Compute the relative import path from a TypeScript test file to its source file.
+///
+/// Example: test at `tests/unit/domain/foo.test.ts`, source at `src/core/domain/foo.ts`
+/// → `../../../src/core/domain/foo.js`
+fn compute_ts_import_path(test_path: &str, source_path: &str) -> String {
+    use std::path::Path;
+
+    let test_dir = Path::new(test_path).parent().unwrap_or(Path::new("."));
+    let test_depth = test_dir.components().count();
+
+    // Build "../" * test_depth then append source path with .js extension
+    let ups = "../".repeat(test_depth);
+    let source_with_js = if let Some(stem) = Path::new(source_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+    {
+        let parent = Path::new(source_path)
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or("");
+        if parent.is_empty() {
+            format!("{}.js", stem)
+        } else {
+            format!("{}/{}.js", parent, stem)
+        }
+    } else {
+        source_path.to_string()
+    };
+
+    format!("{}{}", ups, source_with_js)
+}
+
 fn strip_code_fences(s: &str) -> String {
     let trimmed = s.trim();
     if trimmed.starts_with("```") {
@@ -155,22 +206,28 @@ fn strip_code_fences(s: &str) -> String {
 }
 
 fn derive_test_path(source_path: &str, language: &str) -> String {
-    let ext = match language { "rust" => "rs", _ => "ts" };
-    let test_suffix = match language { "rust" => "_test", _ => ".test" };
-
-    let stripped = source_path
-        .strip_prefix("src/").unwrap_or(source_path)
-        .strip_prefix("core/").unwrap_or(source_path);
-
-    let stem = std::path::Path::new(stripped)
-        .file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-    let parent = std::path::Path::new(stripped)
-        .parent().and_then(|p| p.to_str()).unwrap_or("");
-
-    if parent.is_empty() {
-        format!("tests/unit/{}{}.{}", stem, test_suffix, ext)
-    } else {
-        format!("tests/unit/{}/{}{}.{}", parent, stem, test_suffix, ext)
+    match language {
+        "rust" => {
+            // Rust integration tests live in tests/ at the Cargo.toml root.
+            // Cargo discovers any *.rs file directly under tests/ automatically.
+            let stem = std::path::Path::new(source_path)
+                .file_stem().and_then(|s| s.to_str()).unwrap_or("main");
+            format!("tests/{}_test.rs", stem)
+        }
+        _ => {
+            let stripped = source_path
+                .strip_prefix("src/").unwrap_or(source_path)
+                .strip_prefix("core/").unwrap_or(source_path);
+            let stem = std::path::Path::new(stripped)
+                .file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+            let parent = std::path::Path::new(stripped)
+                .parent().and_then(|p| p.to_str()).unwrap_or("");
+            if parent.is_empty() {
+                format!("tests/unit/{}.test.ts", stem)
+            } else {
+                format!("tests/unit/{}/{}.test.ts", parent, stem)
+            }
+        }
     }
 }
 
@@ -187,7 +244,7 @@ mod tests {
     #[test]
     fn derive_path_rust() {
         let path = derive_test_path("src/main.rs", "rust");
-        assert_eq!(path, "tests/unit/main_test.rs");
+        assert_eq!(path, "tests/main_test.rs");
     }
 
     #[test]

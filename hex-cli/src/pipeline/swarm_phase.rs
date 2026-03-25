@@ -68,7 +68,10 @@ impl SwarmPhase {
         let topology = workplan.topology.as_deref().unwrap_or("hex-pipeline");
         debug!(swarm_name = %swarm_name, "derived swarm name from feature description");
 
-        // ── 2. Create swarm via `hex swarm init` ─────────────────────────
+        // ── 2. Clean up any stale swarms, then create new one ────────────
+        // Ignore cleanup errors (nexus may have no stale swarms to clean).
+        let _ = self.runner.swarm_cleanup();
+
         let swarm_resp = self
             .runner
             .swarm_init(&swarm_name, topology)

@@ -278,6 +278,19 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             nexus.get("/api/swarms/active").await.map_err(|e| e.to_string())
         }
 
+        "hex_hexflo_swarm_complete" => {
+            let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.patch(&format!("/api/swarms/{}", id), &serde_json::json!({}))
+                .await.map_err(|e| e.to_string())
+        }
+
+        "hex_hexflo_swarm_fail" => {
+            let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let reason = args.get("reason").and_then(|v| v.as_str()).unwrap_or("manually failed");
+            nexus.post(&format!("/api/swarms/{}/fail", id), &serde_json::json!({ "reason": reason }))
+                .await.map_err(|e| e.to_string())
+        }
+
         // ── Tasks ──
         "hex_hexflo_task_create" => {
             let swarm_id = args.get("swarm_id").and_then(|v| v.as_str()).unwrap_or("");

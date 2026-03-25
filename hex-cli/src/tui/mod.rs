@@ -976,7 +976,7 @@ impl TuiApp {
                     } else {
                         self.config.output_dir.clone()
                     };
-                    let language = "typescript"; // inferred from project
+                    let language = infer_language_from_workplan(&workplan_data, &self.config.description);
 
                     let shared_session = std::sync::Arc::new(std::sync::Mutex::new(
                         self.session.clone(),
@@ -3053,6 +3053,39 @@ impl TuiApp {
 }
 
 // ── Helpers (module-level) ──────────────────────────────────────────────
+
+/// Infer programming language from workplan title and step descriptions.
+/// Scans for language-specific keywords; defaults to "typescript".
+fn infer_language_from_workplan(workplan: &crate::pipeline::workplan_phase::WorkplanData, user_description: &str) -> &'static str {
+    // Check user-supplied description first — it's authoritative.
+    let user_desc = user_description.to_lowercase();
+    if user_desc.contains("rust") || user_desc.contains("cargo") || user_desc.contains(".rs") {
+        return "rust";
+    }
+    if user_desc.contains("python") || user_desc.contains(".py") || user_desc.contains("pip") {
+        return "python";
+    }
+    if user_desc.contains("golang") || user_desc.contains("go lang") || user_desc.contains("go module") {
+        return "go";
+    }
+
+    // Fall back to scanning workplan title + step descriptions.
+    let mut text = workplan.title.to_lowercase();
+    for step in &workplan.steps {
+        text.push(' ');
+        text.push_str(&step.description.to_lowercase());
+    }
+    if text.contains("rust") || text.contains("cargo") || text.contains(".rs") || text.contains("cargo.toml") {
+        return "rust";
+    }
+    if text.contains("python") || text.contains(".py") || text.contains("pip") || text.contains("pyproject") {
+        return "python";
+    }
+    if text.contains("go lang") || text.contains("golang") || text.contains("go module") || text.contains("go.mod") {
+        return "go";
+    }
+    "typescript"
+}
 
 /// Generate a simple line-based diff summary (first 30 changed lines).
 fn simple_diff(original: &str, fixed: &str) -> String {

@@ -392,7 +392,6 @@ impl ValidatePhase {
         let candidates: Vec<(&str, Vec<&str>, &str)> = match language {
             "typescript" => vec![
                 ("bun", vec!["test"], "bun.lockb"),
-                ("bun", vec!["test"], "package.json"),
                 ("npx", vec!["vitest", "run"], "package.json"),
             ],
             "rust" => vec![("cargo", vec!["test"], "Cargo.toml")],
@@ -1315,16 +1314,47 @@ fn urlencoding(s: &str) -> String {
 /// Parse compile errors from combined stdout+stderr.
 fn parse_compile_errors(output: &str, language: &str) -> Vec<CompileError> {
     let mut errors = Vec::new();
+
+    if language == "rust" {
+        // Rust compiler emits multi-line diagnostics; the file path is on the
+        // " --> src/main.rs:10:5" line that follows the "error[...]: ..." line.
+        let lines: Vec<&str> = output.lines().collect();
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i];
+            let is_error = line.starts_with("error") || line.contains("error[E");
+            if is_error {
+                let message = line.to_string();
+                // Look ahead for the " --> file:line:col" line
+                let mut file = "src/main.rs".to_string();
+                let mut line_num: Option<u32> = None;
+                for j in (i + 1)..(i + 5).min(lines.len()) {
+                    let next = lines[j].trim();
+                    if let Some(rest) = next.strip_prefix("-->") {
+                        let loc = rest.trim();
+                        let parts: Vec<&str> = loc.splitn(3, ':').collect();
+                        if !parts.is_empty() && !parts[0].is_empty() {
+                            file = parts[0].to_string();
+                        }
+                        if parts.len() >= 2 {
+                            line_num = parts[1].parse::<u32>().ok();
+                        }
+                        break;
+                    }
+                }
+                errors.push(CompileError { file, line: line_num, message });
+            }
+            i += 1;
+        }
+        return errors;
+    }
+
     for line in output.lines() {
         let is_error = match language {
             "typescript" => {
                 // TypeScript errors: "src/foo.ts(10,5): error TS2345: ..."
                 // or "error TS" anywhere in the line
                 line.contains("error TS") || line.contains(": error ")
-            }
-            "rust" => {
-                // Rust errors: "error[E0308]: ..." or "error: ..."
-                line.starts_with("error") || line.contains("error[E")
             }
             _ => line.contains("error"),
         };
@@ -1334,7 +1364,6 @@ fn parse_compile_errors(output: &str, language: &str) -> Vec<CompileError> {
 
         let (file, line_num, message) = match language {
             "typescript" => parse_ts_error_line(line),
-            "rust" => parse_rust_error_line(line),
             _ => ("unknown".to_string(), None, line.to_string()),
         };
         errors.push(CompileError {
@@ -1369,6 +1398,7 @@ fn parse_ts_error_line(line: &str) -> (String, Option<u32>, String) {
 }
 
 /// Parse a Rust error line like `error[E0308]: mismatched types`
+#[allow(dead_code)]
 fn parse_rust_error_line(line: &str) -> (String, Option<u32>, String) {
     // Rust errors don't always include file info on the error line itself;
     // the file info is on the subsequent " --> src/foo.rs:10:5" line.

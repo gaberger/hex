@@ -53,10 +53,14 @@ impl std::fmt::Display for TaskType {
 /// like Gemini 3 Pro ($0.05/step). Specific cheap models are better for cost control.
 fn default_model_for(task_type: TaskType) -> &'static str {
     match task_type {
-        TaskType::Reasoning => "deepseek/deepseek-r1",
+        // Flash 2.0: fast (~5-10s), cheap, good at structured JSON — ideal for review loops
+        TaskType::Reasoning => "google/gemini-2.0-flash-001",
+        // Llama 4 Maverick: fast, cheap, good structured output
         TaskType::StructuredOutput => "meta-llama/llama-4-maverick",
+        // Llama 4 Maverick: best cost/speed for code gen
         TaskType::CodeGeneration => "meta-llama/llama-4-maverick",
-        TaskType::CodeEdit => "deepseek/deepseek-r1",
+        // Gemini Flash: fast, cheap, good at targeted code edits via OpenRouter
+        TaskType::CodeEdit => "google/gemini-2.0-flash-001",
         TaskType::General => "meta-llama/llama-4-maverick",
     }
 }
@@ -374,14 +378,20 @@ impl ModelSelector {
         //   base    = 1.0 on success, -0.5 on failure
         //   cost    = -cost_usd * 10 (penalize expensive models)
         //   speed   = bonus for fast responses (< 5s = +0.2, < 15s = +0.1)
+        // Reward = accuracy (primary) + speed bonus (secondary) - cost penalty.
+        // Accuracy matters most: success/failure is the main signal.
+        // Speed bonus uses realistic LLM latency thresholds (not 5s which no LLM hits).
+        // Cost penalty is light — cheap fast models should win over cheap slow ones.
         let base = if success { 1.0 } else { -0.5 };
-        let cost_penalty = -cost_usd * 10.0;
-        let speed_bonus = if duration_ms < 5_000 {
-            0.2
-        } else if duration_ms < 15_000 {
-            0.1
+        let cost_penalty = -cost_usd * 5.0; // lighter penalty — speed matters more than cost
+        let speed_bonus = if duration_ms < 10_000 {
+            0.3 // very fast (<10s): strong bonus
+        } else if duration_ms < 20_000 {
+            0.2 // fast (<20s): good bonus
+        } else if duration_ms < 45_000 {
+            0.1 // acceptable (<45s): small bonus
         } else {
-            0.0
+            -0.2 // slow (>45s): penalty — pipeline throughput suffers
         };
         let reward = (base + cost_penalty + speed_bonus).clamp(-1.0, 1.0);
 
@@ -497,14 +507,14 @@ mod tests {
     fn extract_model_fallback_to_default() {
         let action = "context:conservative";
         let model = extract_model_from_action(action, TaskType::Reasoning);
-        assert_eq!(model, "deepseek/deepseek-r1");
+        assert_eq!(model, "google/gemini-2.0-flash-001");
     }
 
     #[test]
     fn extract_model_unknown_variant_falls_back() {
         let action = "model:unknown_thing|context:balanced";
         let model = extract_model_from_action(action, TaskType::CodeEdit);
-        assert_eq!(model, "deepseek/deepseek-r1");
+        assert_eq!(model, "google/gemini-2.0-flash-001");
     }
 
     #[test]

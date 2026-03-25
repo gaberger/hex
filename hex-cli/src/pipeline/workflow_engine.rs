@@ -196,6 +196,10 @@ impl WorkflowEngine {
         // Resolve placeholders in command
         let resolved_cmd = self.resolve_placeholders(&command);
 
+        // For lint/test gates: if the resolved path argument doesn't exist on
+        // disk, fall back to scanning the whole project so we still get signal.
+        let resolved_cmd = self.fallback_gate_path_if_missing(&gate.name, &resolved_cmd);
+
         info!(gate = %gate.name, cmd = %resolved_cmd, "running feedback gate");
 
         let _timeout = if gate.timeout_ms > 0 {
@@ -236,10 +240,19 @@ impl WorkflowEngine {
                     combined
                 };
 
-                let success = output.status.success();
+                // "No test files found" from vitest/jest is a skip, not a failure.
+                // The test gate should only block when tests exist but fail.
+                let no_tests_yet = !output.status.success()
+                    && (truncated.contains("No test files found")
+                        || truncated.contains("no test files found"));
+                let success = output.status.success() || no_tests_yet;
 
                 if success {
-                    info!(gate = %gate.name, duration_ms, "gate passed ✓");
+                    if no_tests_yet {
+                        info!(gate = %gate.name, duration_ms, "gate skipped ⊘ (no test files yet)");
+                    } else {
+                        info!(gate = %gate.name, duration_ms, "gate passed ✓");
+                    }
                 } else {
                     warn!(
                         gate = %gate.name,
@@ -301,10 +314,30 @@ impl WorkflowEngine {
             if iteration == max {
                 // Max iterations reached — check escalation
                 if let Some(ref esc) = feedback.on_max_iterations {
+                    // Collect last failed gate name and errors for template resolution
+                    let last_results = all_iterations.last();
+                    let last_failed = last_results
+                        .and_then(|r| r.iter().rev().find(|g| !g.success));
+                    let last_gate_name = last_failed
+                        .map(|g| g.gate_name.as_str())
+                        .unwrap_or("unknown");
+                    let last_errors = last_failed
+                        .map(|g| g.output.chars().take(500).collect::<String>())
+                        .unwrap_or_default();
+
+                    // Temporarily inject these vars for placeholder resolution
+                    let mut engine_with_vars = WorkflowEngine::new(&self.work_dir, &self.language);
+                    for (k, v) in &self.vars {
+                        engine_with_vars = engine_with_vars.with_var(k, v);
+                    }
+                    engine_with_vars = engine_with_vars
+                        .with_var("last_failed_gate", last_gate_name)
+                        .with_var("last_errors", &last_errors);
+
                     let msg = esc
                         .message
                         .as_ref()
-                        .map(|m| self.resolve_placeholders(m));
+                        .map(|m| engine_with_vars.resolve_placeholders(m));
 
                     warn!(
                         action = %esc.action,
@@ -316,6 +349,98 @@ impl WorkflowEngine {
         }
 
         (all_iterations, false, None)
+    }
+
+    // ── Gate Path Fallback ──────────────────────────────────────────────
+
+    /// For lint/test gates, if the path argument in the resolved command points
+    /// to a directory or file that doesn't exist, substitute a safe fallback:
+    ///   - lint gates  → scan `src/` broadly
+    ///   - test gates  → discover test files under `tests/` with glob
+    ///
+    /// This handles the case where `{{adapter}}` resolves to a layer name
+    /// (e.g. `domain`) that doesn't correspond to an actual `src/adapters/domain/`
+    /// path — e.g., when running a standalone CLI project with code in `src/core/`.
+    fn fallback_gate_path_if_missing(&self, gate_name: &str, cmd: &str) -> String {
+        use std::path::Path;
+
+        // Only applies to lint and test gates.
+        if gate_name != "lint" && gate_name != "test" {
+            return cmd.to_string();
+        }
+
+        let work_path = Path::new(&self.work_dir);
+
+        match gate_name {
+            "lint" => {
+                // Pattern: `npx eslint <path> ...` or `golangci-lint run ... <path>...`
+                // Extract the first path-like token after the tool name.
+                if let Some(missing) = self.find_missing_path_in_cmd(cmd, work_path) {
+                    let fallback = if self.language == "typescript" {
+                        cmd.replace(&missing, "src/")
+                    } else {
+                        return cmd.to_string(); // non-TS: don't guess
+                    };
+                    warn!(
+                        original = %cmd,
+                        fallback = %fallback,
+                        "lint gate path not found — falling back to src/"
+                    );
+                    return fallback;
+                }
+            }
+            "test" => {
+                // Pattern: `npx vitest run <file>` or `go test ... <file>`
+                // If the file doesn't exist, switch to globbing the tests/ dir.
+                if let Some(missing) = self.find_missing_path_in_cmd(cmd, work_path) {
+                    let fallback = if self.language == "typescript" {
+                        // Run all tests under tests/ instead of a specific file.
+                        cmd.replace(&missing, "tests/")
+                            // vitest run <dir> works; drop --reporter json to avoid
+                            // json parse issues when running the whole suite.
+                            .replace(" --reporter json", "")
+                    } else {
+                        return cmd.to_string();
+                    };
+                    warn!(
+                        original = %cmd,
+                        fallback = %fallback,
+                        "test gate path not found — falling back to tests/"
+                    );
+                    return fallback;
+                }
+            }
+            _ => {}
+        }
+
+        cmd.to_string()
+    }
+
+    /// Scan the tokens of `cmd` for the first one that looks like a relative
+    /// path and doesn't exist under `work_dir`. Returns the missing path token.
+    fn find_missing_path_in_cmd(&self, cmd: &str, work_dir: &std::path::Path) -> Option<String> {
+        // Skip the first token (the tool binary itself).
+        let tokens: Vec<&str> = cmd.split_whitespace().collect();
+        for token in tokens.iter().skip(1) {
+            // Skip flags
+            if token.starts_with('-') {
+                continue;
+            }
+            // Must look like a path (contains '/' or ends with common extensions)
+            let looks_like_path = token.contains('/')
+                || token.ends_with(".ts")
+                || token.ends_with(".go")
+                || token.ends_with(".rs");
+            if !looks_like_path {
+                continue;
+            }
+            // Check existence
+            let full = work_dir.join(token);
+            if !full.exists() {
+                return Some((*token).to_string());
+            }
+        }
+        None
     }
 
     // ── Placeholder Resolution ──────────────────────────────────────────

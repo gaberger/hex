@@ -111,12 +111,16 @@ pub fn generate_scaffold(
   "type": "module",
   "scripts": {{
     "build": "tsc",
-    "test": "bun test",
-    "start": "bun run src/main.ts"
+    "test": "npx vitest run",
+    "start": "node dist/main.js"
   }},
   "devDependencies": {{
     "typescript": "^5.0.0",
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.0.0",
+    "vitest": "^2.0.0",
+    "eslint": "^9.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0"
   }}
 }}"#,
                 slug
@@ -129,6 +133,7 @@ pub fn generate_scaffold(
     "moduleResolution": "NodeNext",
     "strict": true,
     "esModuleInterop": true,
+    "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": "src",
     "declaration": true
@@ -149,6 +154,19 @@ pub fn generate_scaffold(
             ];
             generate_readme(dir, feature_name, language, &mut files)?;
             generate_start_script(dir, feature_name, language, &mut files)?;
+
+            // Install dependencies so that `tsc` and test runners work immediately.
+            info!(dir = %dir.display(), "running npm install for TypeScript project");
+            let npm_ok = std::process::Command::new("npm")
+                .arg("install")
+                .current_dir(dir)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if !npm_ok {
+                warn!(dir = %dir.display(), "npm install failed — compile checks may not work");
+            }
+
             info!(files = ?files, "TypeScript scaffold generated");
             Ok(files)
         }
@@ -168,7 +186,15 @@ name = "{}"
 version = "0.1.0"
 edition = "2021"
 
+# Standalone workspace — prevents Cargo from merging with any parent workspace
+[workspace]
+
 [dependencies]
+clap = {{ version = "4", features = ["derive"] }}
+serde = {{ version = "1", features = ["derive"] }}
+serde_json = "1"
+anyhow = "1"
+tokio = {{ version = "1", features = ["full"] }}
 "#,
                 slug
             );
@@ -225,13 +251,13 @@ fn generate_readme(
     };
 
     let start_cmd = match language {
-        "typescript" | "ts" => "bun run start",
+        "typescript" | "ts" => "node dist/main.js",
         "rust" | "rs" => "cargo run",
         _ => "./start.sh",
     };
 
     let test_cmd = match language {
-        "typescript" | "ts" => "bun test",
+        "typescript" | "ts" => "npx vitest run",
         "rust" | "rs" => "cargo test",
         _ => "echo 'no tests configured'",
     };
@@ -331,10 +357,13 @@ cd "$(dirname "$0")"
         feature_name = feature_name,
         body = match language {
             "typescript" | "ts" => r#"echo "Installing dependencies..."
-bun install 2>/dev/null || npm install
+npm install
+
+echo "Building..."
+npx tsc
 
 echo "Starting application..."
-bun run start"#,
+node dist/main.js"#,
             "rust" | "rs" => r#"echo "Building..."
 cargo build --release
 
@@ -459,7 +488,7 @@ impl CodePhase {
 
         let resp = self
             .client
-            .post("/api/inference/complete", &body)
+            .post_long("/api/inference/complete", &body)
             .await
             .context("POST /api/inference/complete failed")?;
 
@@ -759,22 +788,28 @@ impl CodePhase {
         // Try layer + adapter fields first
         if let Some(layer) = step.layer.as_deref() {
             let adapter = step.adapter.as_deref();
+            let slug = slug_from_description(&step.description);
             let result = match layer {
-                "domain" => Some(format!("src/core/domain/{}.ts", step.id)),
+                "domain" => Some(format!("src/core/domain/{}.ts", slug)),
                 "ports" => {
-                    let port_name = step.port.as_deref().unwrap_or(&step.id);
+                    let port_name = step.port.as_deref().unwrap_or_else(|| &slug);
                     Some(format!("src/core/ports/{}.ts", port_name))
                 }
-                "usecases" => Some(format!("src/core/usecases/{}.ts", step.id)),
-                "adapters/primary" => {
-                    let name = adapter.unwrap_or(&step.id);
+                "usecases" => Some(format!("src/core/usecases/{}.ts", slug)),
+                "adapters/primary" | "primary" => {
+                    let name = adapter.unwrap_or(&slug);
                     Some(format!("src/adapters/primary/{}.ts", name))
                 }
-                "adapters/secondary" => {
-                    let name = adapter.unwrap_or(&step.id);
+                "adapters/secondary" | "secondary" => {
+                    let name = adapter.unwrap_or(&slug);
                     Some(format!("src/adapters/secondary/{}.ts", name))
                 }
-                "integration" => Some(format!("tests/integration/{}.test.ts", step.id)),
+                // "integration" layer on tier 4 means composition root, not tests.
+                // Only treat it as an integration test file for tier 5+.
+                "integration" if step.tier >= 5 => {
+                    Some(format!("tests/integration/{}.test.ts", step.id))
+                }
+                "integration" => None, // fall through to tier-based logic (tier 4 → composition-root)
                 _ => None,
             };
             if result.is_some() {
