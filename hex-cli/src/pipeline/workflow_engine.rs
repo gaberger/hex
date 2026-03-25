@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use crate::pipeline::agent_def::{
-    AgentDefinition, FeedbackGate, FeedbackLoopConfig, WorkflowConfig, WorkflowPhase,
+    AgentDefinition, FeedbackGate, FeedbackLoopConfig, PhaseGate, WorkflowConfig, WorkflowPhase,
 };
 
 // ── Phase Execution ─────────────────────────────────────────────────────
@@ -171,6 +171,74 @@ impl WorkflowEngine {
             .iter()
             .map(|gate| self.run_single_gate(gate))
             .collect()
+    }
+
+    /// Run a PhaseGate (from a workflow phase) as an executable gate.
+    ///
+    /// Used by the supervisor to enforce blocking pre_validate gates before
+    /// code generation (ADR-2603240130 S01/S07).
+    ///
+    /// Since PhaseGate has no language-keyed commands, enforcement is done
+    /// by running `hex analyze` scoped to required_categories if any are set.
+    /// If no required_categories are specified, the gate passes immediately
+    /// (presence of the gate is declarative — the supervisor still logs the check).
+    pub fn run_phase_gate_pub(&self, gate: &PhaseGate) -> FeedbackGateResult {
+        let start = Instant::now();
+
+        if gate.required_categories.is_empty() {
+            // Declarative gate with no executable check — passes by default.
+            debug!(gate = %gate.name, "phase gate has no required_categories — passing");
+            return FeedbackGateResult {
+                gate_name: gate.name.clone(),
+                success: true,
+                output: "no required_categories defined — gate passed".to_string(),
+                duration_ms: 0,
+                on_fail_instructions: None,
+            };
+        }
+
+        // Run `hex analyze` to check architecture boundaries.
+        let categories_arg = gate.required_categories.join(",");
+        let output = Command::new("hex")
+            .args(["analyze", ".", "--categories", &categories_arg])
+            .current_dir(&self.work_dir)
+            .output();
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        match output {
+            Ok(out) => {
+                let success = out.status.success();
+                let combined = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                let truncated = if combined.len() > 2000 {
+                    format!("{}…(truncated)", &combined[..2000])
+                } else {
+                    combined
+                };
+
+                FeedbackGateResult {
+                    gate_name: gate.name.clone(),
+                    success,
+                    output: truncated,
+                    duration_ms,
+                    on_fail_instructions: if !success { gate.on_fail.clone() } else { None },
+                }
+            }
+            Err(e) => {
+                warn!(gate = %gate.name, error = %e, "phase gate command failed to execute");
+                FeedbackGateResult {
+                    gate_name: gate.name.clone(),
+                    success: false,
+                    output: format!("command execution error: {}", e),
+                    duration_ms,
+                    on_fail_instructions: gate.on_fail.clone(),
+                }
+            }
+        }
     }
 
     /// Run a single feedback gate (compile, lint, or test).
