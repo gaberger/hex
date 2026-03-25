@@ -335,7 +335,6 @@ enum TaskStatus {
     Pending,
     InProgress,
     Completed,
-    Failed,
 }
 
 #[test]
