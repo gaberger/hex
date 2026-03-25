@@ -315,7 +315,11 @@ fn extract_import_paths(source: &str, source_rel: &str) -> Vec<String> {
             }
         }
         // TypeScript: import ... from './adapters/...'  or  from '../adapters/...'
-        if trimmed.contains("from") && (trimmed.contains("import") || trimmed.contains("export")) {
+        // Only match lines that start with import/export to avoid false positives
+        // from string literals containing import-like text (e.g. template content).
+        if trimmed.contains("from")
+            && (trimmed.starts_with("import ") || trimmed.starts_with("export "))
+        {
             if let Some(start) = trimmed.find('\'').or_else(|| trimmed.find('"')) {
                 let rest = &trimmed[start + 1..];
                 if let Some(end) = rest.find('\'').or_else(|| rest.find('"')) {
