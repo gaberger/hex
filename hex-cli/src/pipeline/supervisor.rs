@@ -1260,6 +1260,29 @@ impl Supervisor {
                         "running YAML workflow phases for hex-coder"
                     );
 
+                    // Run pre_validate gate before code generation (ADR-2603240130 S01/S07)
+                    // Skip for tier 0 (domain/ports have no adapter boundaries to violate)
+                    if tier >= 1 {
+                        if let Some(pre_validate_phase) = workflow.phases.iter().find(|p| p.id == "pre_validate") {
+                            if let Some(ref gate) = pre_validate_phase.gate {
+                                if gate.blocking {
+                                    let gate_result = engine.run_phase_gate_pub(gate);
+                                    if !gate_result.success {
+                                        anyhow::bail!(
+                                            "pre_validate gate '{}' failed for step — aborting code generation.\n\
+                                             On-fail instructions: {}\n\
+                                             Gate output: {}",
+                                            gate.name,
+                                            gate.on_fail.as_deref().unwrap_or("(none)"),
+                                            gate_result.output
+                                        );
+                                    }
+                                    info!(gate = %gate.name, "pre_validate gate passed ✓");
+                                }
+                            }
+                        }
+                    }
+
                     // Execute structured TDD phases (pre_validate → red → green → refactor → gate)
                     let phase_results = engine.execute_phases(workflow);
                     for pr in &phase_results {

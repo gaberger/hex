@@ -220,7 +220,7 @@ pub async fn update_task(
 
     // Apply agent assignment if provided
     if let Some(ref agent_id) = body.agent_id {
-        port.swarm_task_assign(&task_id, agent_id)
+        port.swarm_task_assign(&task_id, agent_id, None)
             .await
             .map_err(state_err)?;
     }
@@ -330,4 +330,55 @@ pub async fn get_incomplete_work(
         .collect();
 
     Ok(Json(serde_json::to_value(incomplete).unwrap()))
+}
+
+/// POST /api/swarms/:id/fail — mark a swarm as failed (ADR-2603241900)
+pub async fn fail_swarm(
+    State(state): State<SharedState>,
+    Path(swarm_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+    let reason = body
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown failure");
+    port.swarm_fail(&swarm_id, reason)
+        .await
+        .map_err(state_err)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// POST /api/swarms/:id/transfer — transfer swarm ownership to a new agent (ADR-2603241900)
+pub async fn transfer_swarm(
+    State(state): State<SharedState>,
+    Path(swarm_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+    let new_owner = body
+        .get("newOwnerAgentId")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "newOwnerAgentId is required" })),
+            )
+        })?;
+    port.swarm_transfer(&swarm_id, new_owner)
+        .await
+        .map_err(state_err)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// GET /api/hex-agents/:id/swarm — get the swarm owned by the given agent (ADR-2603241900)
+pub async fn get_agent_swarm(
+    State(state): State<SharedState>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+    match port.swarm_owned_by_agent(&agent_id).await.map_err(state_err)? {
+        Some(swarm) => Ok(Json(serde_json::to_value(swarm).unwrap_or_default())),
+        None => Ok(Json(json!(null))),
+    }
 }
