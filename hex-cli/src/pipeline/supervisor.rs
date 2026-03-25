@@ -242,21 +242,23 @@ impl Supervisor {
         }
     }
 
-    /// Read a single file from disk, truncating to [`MAX_FILE_BYTES`].
+    /// Read a single file from disk, truncating to `token_budget` bytes when provided,
+    /// or falling back to [`MAX_FILE_BYTES`] (4096) when `None`.
     /// Returns `None` if the file cannot be read.
-    fn read_file_truncated(path: &Path) -> Option<String> {
+    fn read_file_truncated(path: &Path, token_budget: Option<usize>) -> Option<String> {
+        let limit = token_budget.unwrap_or(MAX_FILE_BYTES);
         match fs::read_to_string(path) {
             Ok(content) => {
-                if content.len() > MAX_FILE_BYTES {
+                if content.len() > limit {
                     debug!(
                         path = %path.display(),
                         "truncating file from {} to {} bytes",
                         content.len(),
-                        MAX_FILE_BYTES,
+                        limit,
                     );
-                    let truncated = &content[..MAX_FILE_BYTES];
+                    let truncated = &content[..limit];
                     // Find last newline to avoid cutting mid-line
-                    let end = truncated.rfind('\n').unwrap_or(MAX_FILE_BYTES);
+                    let end = truncated.rfind('\n').unwrap_or(limit);
                     Some(format!("{}\n// ... truncated ({} bytes total)", &content[..end], content.len()))
                 } else {
                     Some(content)
@@ -301,7 +303,7 @@ impl Supervisor {
                     _ => matches!(ext, "ts" | "js" | "rs" | "tsx" | "jsx"),
                 };
                 if allowed {
-                    if let Some(content) = Self::read_file_truncated(&path) {
+                    if let Some(content) = Self::read_file_truncated(&path, None) {
                         let rel = path
                             .strip_prefix(base)
                             .map(|p| p.display().to_string())
@@ -316,7 +318,7 @@ impl Supervisor {
     /// Read a single source file, returning `(relative_path, content)`.
     fn read_single_file(&self, file_path: &str) -> Vec<(String, String)> {
         let path = PathBuf::from(&self.output_dir).join(file_path);
-        match Self::read_file_truncated(&path) {
+        match Self::read_file_truncated(&path, None) {
             Some(content) => vec![(file_path.to_string(), content)],
             None => vec![],
         }
@@ -475,7 +477,9 @@ impl Supervisor {
             // Collect matching files
             let files = self.glob_files(&base, &scope);
 
-            for (rel_path, full_path) in &files {
+            let yaml_budget: Option<usize> = ctx_config.token_budget.as_ref().map(|b| b.max as usize);
+
+        for (rel_path, full_path) in &files {
                 let content = match entry.level.as_str() {
                     "L0" => {
                         // File listing only — name, no content
@@ -485,19 +489,19 @@ impl Supervisor {
                         // AST summary — read file, produce compact summary
                         // For now: first N lines as a practical approximation
                         // (full tree-sitter integration comes later via hex summarize)
-                        Self::read_file_truncated(full_path)
+                        Self::read_file_truncated(full_path, yaml_budget)
                             .map(|c| Self::summarize_l1(&c))
                             .unwrap_or_default()
                     }
                     "L2" => {
                         // Signatures only — extract function/struct/interface lines
-                        Self::read_file_truncated(full_path)
+                        Self::read_file_truncated(full_path, yaml_budget)
                             .map(|c| Self::extract_signatures(&c))
                             .unwrap_or_default()
                     }
                     "L3" | _ => {
                         // Full content
-                        Self::read_file_truncated(full_path).unwrap_or_default()
+                        Self::read_file_truncated(full_path, yaml_budget).unwrap_or_default()
                     }
                 };
 
@@ -2200,5 +2204,50 @@ mod tests {
         let ctx = sup.build_fixer_context("src/core/domain/entities.ts", "Missing export");
         assert_eq!(ctx.prompt_template, "agent-fixer");
         assert_eq!(ctx.upstream_output, Some("Missing export".into()));
+    }
+
+    /// S04: agent with token_budget.max=2000 truncates files at 2000 bytes.
+    #[test]
+    fn test_read_file_truncated_uses_token_budget() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Create a temp file with 3000 bytes of content
+        let mut tmp = NamedTempFile::new().expect("tempfile");
+        let content = "x".repeat(3000);
+        tmp.write_all(content.as_bytes()).expect("write");
+        tmp.flush().expect("flush");
+
+        // With budget=2000, output should be truncated
+        let result = Supervisor::read_file_truncated(tmp.path(), Some(2000));
+        assert!(result.is_some(), "should return Some");
+        let s = result.unwrap();
+        // The truncated string plus the trailing comment must be <= 2000 chars of original content
+        assert!(s.contains("truncated"), "should contain truncation marker");
+        // Original content prefix taken must be <= 2000 bytes
+        assert!(s.len() < 3000, "output must be shorter than original");
+
+        // With no budget (None), falls back to MAX_FILE_BYTES=4096, file fits entirely
+        let result_default = Supervisor::read_file_truncated(tmp.path(), None);
+        assert!(result_default.is_some());
+        // 3000 bytes < 4096 fallback, so no truncation
+        assert!(!result_default.unwrap().contains("truncated"), "3000-byte file should not be truncated at default 4096 limit");
+    }
+
+    /// S04: budget=2000 truncates but budget=None falls back to 4096 (no truncation for 3000-byte file).
+    #[test]
+    fn test_read_file_truncated_fallback_to_max_file_bytes() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // 5000-byte file exceeds default 4096 fallback
+        let mut tmp = NamedTempFile::new().expect("tempfile");
+        let content = "y".repeat(5000);
+        tmp.write_all(content.as_bytes()).expect("write");
+        tmp.flush().expect("flush");
+
+        let result = Supervisor::read_file_truncated(tmp.path(), None);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("truncated"), "5000-byte file should be truncated at default 4096 limit");
     }
 }
