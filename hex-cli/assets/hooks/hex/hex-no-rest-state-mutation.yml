@@ -1,0 +1,18 @@
+name: hex-no-rest-state-mutation
+description: >
+  Prevent dashboard code from mutating SpacetimeDB state via REST.
+  State mutations must go through SpacetimeDB reducers (WebSocket).
+  REST is only for filesystem operations (ADR-046).
+trigger: PostToolUse
+matcher: "Write|Edit|MultiEdit"
+condition: >
+  File is under hex-nexus/assets/src/ AND contains fetch() calls to
+  /api/projects/register, /api/projects/unregister, or any POST/DELETE
+  to /api/projects that isn't /init, /archive, or /delete (filesystem ops).
+action: warn
+message: |
+  ADR-046 violation: Dashboard code must not mutate project state via REST.
+  Use SpacetimeDB reducers instead:
+    conn.reducers.registerProject(...)  — not fetch("/api/projects/register")
+    conn.reducers.removeProject(...)    — not fetch("/api/projects/:id", DELETE)
+  REST is ONLY for filesystem side-effects (init, archive files, delete files).

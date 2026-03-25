@@ -1,0 +1,120 @@
+# hex-adr-lifecycle — ADR creation and status transition hooks
+# Enforces ADR template compliance and cross-reference integrity
+
+name: hex-adr-lifecycle
+type: on-change
+description: >
+  Validates ADR documents when they are created or modified. Ensures template
+  completeness, enforces valid status transitions, maintains bidirectional
+  cross-references between related ADRs, and flags when code changes should
+  trigger a new ADR.
+
+trigger: on-file-change
+watch_paths: ["docs/adrs/*.md"]
+blocking: true  # ADR changes are rejected if template is incomplete
+
+checks:
+  template_compliance:
+    description: "New ADRs must follow the required template"
+    trigger: file-created
+    action: |
+      When a new file is created in docs/adrs/:
+
+      Validate required sections exist (in order):
+        # ADR-NNN: Title
+        ## Status
+        ## Context
+        ## Decision
+        ## Consequences
+
+      Validate metadata:
+        - ADR number must be sequential (max existing + 1)
+        - Status must be "proposed" for new ADRs
+        - Date must be present
+
+      Template for reference:
+        # ADR-NNN: Title
+
+        ## Status
+        Proposed — YYYY-MM-DD
+
+        ## Context
+        Why this decision is needed. What problem are we solving?
+        What constraints exist?
+
+        ## Decision
+        What we decided and why. Include alternatives considered.
+
+        ## Consequences
+        What follows from this decision — both positive and negative.
+        What becomes easier? What becomes harder?
+
+  status_transitions:
+    description: "Status changes must follow valid lifecycle"
+    trigger: file-modified
+    action: |
+      Detect status change by comparing previous and current content.
+
+      Valid transitions:
+        proposed → accepted      (decision ratified)
+        proposed → deprecated    (rejected before acceptance)
+        accepted → deprecated    (decision no longer applies)
+        accepted → superseded    (replaced by a newer ADR)
+
+      Invalid transitions (BLOCK):
+        superseded → accepted    (cannot un-supersede; write new ADR)
+        deprecated → accepted    (cannot un-deprecate; write new ADR)
+        accepted → proposed      (cannot downgrade status)
+
+      On supersede:
+        1. REQUIRE "Superseded by ADR-XXX" in the old ADR
+        2. REQUIRE "Supersedes ADR-YYY" in the new ADR
+        3. Both references must be bidirectional
+
+  cross_reference_integrity:
+    description: "ADR cross-references must resolve and be bidirectional"
+    trigger: file-modified
+    action: |
+      Scan the modified ADR for references to other ADRs (pattern: ADR-\d{3}).
+
+      For each reference:
+        1. Verify the referenced ADR file exists
+        2. If the reference implies a relationship (supersedes, extends, relates-to),
+           verify the referenced ADR links back
+
+      Flag:
+        - Broken references (ADR file doesn't exist)
+        - One-directional supersede links
+        - References to deprecated ADRs without acknowledgment
+
+  code_change_adr_detection:
+    description: "Flag code changes that should have an ADR"
+    trigger: pre-commit
+    action: |
+      Scan the staged diff for changes that warrant an ADR:
+
+      Triggers for "new ADR recommended":
+        - New port interface added to src/core/ports/
+        - New adapter directory created in src/adapters/
+        - Changes to composition-root.ts wiring
+        - New external dependency added to package.json or Cargo.toml
+        - New SpacetimeDB module created in spacetime-modules/
+        - Changes to the build system (scripts/, Makefile, CI config)
+
+      For each trigger:
+        WARN (non-blocking):
+          "Consider writing ADR-NNN for this change:
+           {{description of what changed and why an ADR would help}}"
+
+output:
+  on_pass: "ADR lifecycle validated — template complete, transitions valid, references intact"
+  on_fail: |
+    ADR lifecycle violation:
+
+    {{#each violations}}
+      - {{type}}: {{description}}
+        File: {{file_path}}
+        Fix: {{suggested_fix}}
+    {{/each}}
+
+    Run `/hex-adr-create` to create a properly formatted ADR.
