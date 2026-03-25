@@ -876,7 +876,7 @@ impl ValidatePhase {
 
         let resp = self
             .client
-            .post("/api/inference/complete", &body)
+            .post_long("/api/inference/complete", &body)
             .await
             .context("POST /api/inference/complete failed for fix")?;
 
@@ -932,12 +932,6 @@ impl ValidatePhase {
             }
         }
         None
-    }
-
-    /// Read the first source file content.
-    fn read_first_source_file(&self, output_dir: &str) -> Option<String> {
-        self.find_first_source_file(output_dir)
-            .and_then(|p| std::fs::read_to_string(p).ok())
     }
 
 }
@@ -1121,7 +1115,7 @@ impl ValidatePhase {
 
         let resp = self
             .client
-            .post("/api/inference/complete", &body)
+            .post_long("/api/inference/complete", &body)
             .await
             .context("POST /api/inference/complete failed for fix")?;
 
@@ -1299,6 +1293,7 @@ fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
 }
 
 /// Minimal percent-encoding for URL query parameters.
+#[cfg(test)]
 fn urlencoding(s: &str) -> String {
     s.chars()
         .map(|c| match c {

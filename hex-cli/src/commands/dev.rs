@@ -4,6 +4,7 @@
 //! ratatui TUI for the full ADR → Plan → Code → Validate → Commit pipeline.
 
 use std::io::IsTerminal;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{bail, Result};
 use clap::Subcommand;
@@ -209,6 +210,11 @@ async fn start_session(
         dir
     };
 
+    // ── Clean up stale runs before creating the output directory ─────
+    // If the target directory (or sibling directories with the same slug prefix)
+    // exists, has no passing binary, and is older than 5 minutes, remove it.
+    cleanup_stale_runs(&output_dir);
+
     // ── Ensure project is initialized in the output directory ─────────
     // project_id is the root of all traceability: session → swarm → tasks → agents
     std::fs::create_dir_all(&output_dir)?;
@@ -314,6 +320,103 @@ async fn launch_tui(session: DevSession, config: DevConfig) -> Result<()> {
     let app = TuiApp::with_config(session, config);
     app.run()?;
     Ok(())
+}
+
+/// Remove stale output directories before starting a new run.
+///
+/// Strategy:
+/// 1. If `output_dir` itself exists, has no passing binary, and was created
+///    more than 5 minutes ago — delete it and log the cleanup.
+/// 2. Also scan the parent directory for sibling directories that share the
+///    same slug prefix (handles the "12 temperature converter" duplicate situation).
+///
+/// A directory is considered "successful" if `target/debug/<name>` or
+/// `node_modules/` exists inside it (indicating a completed build).
+fn cleanup_stale_runs(output_dir: &str) {
+    let stale_threshold = Duration::from_secs(5 * 60);
+    let path = std::path::Path::new(output_dir);
+
+    // Clean the exact target directory if stale
+    cleanup_if_stale(path, stale_threshold);
+
+    // Clean sibling directories with the same slug prefix
+    let slug = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    if slug.is_empty() {
+        return;
+    }
+
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let entries = match std::fs::read_dir(parent) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let sibling = entry.path();
+        // Skip the exact target dir (already handled above)
+        if sibling == path {
+            continue;
+        }
+        let sibling_name = sibling
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        // Match directories that share the slug as a prefix
+        if sibling_name.starts_with(slug) && sibling.is_dir() {
+            cleanup_if_stale(&sibling, stale_threshold);
+        }
+    }
+}
+
+/// Delete `dir` if it exists, has no successful build artifact, and its
+/// metadata mtime is older than `threshold`. Logs the outcome.
+fn cleanup_if_stale(dir: &std::path::Path, threshold: Duration) {
+    if !dir.exists() {
+        return;
+    }
+
+    // A successful run leaves either a compiled binary or node_modules
+    let has_binary = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|name| dir.join("target").join("debug").join(name).exists())
+        .unwrap_or(false);
+    let has_node_modules = dir.join("node_modules").exists();
+    if has_binary || has_node_modules {
+        return;
+    }
+
+    // Check age via mtime
+    let is_old = dir
+        .metadata()
+        .and_then(|m| m.modified())
+        .map(|mtime| {
+            SystemTime::now()
+                .duration_since(mtime)
+                .unwrap_or(Duration::ZERO)
+                > threshold
+        })
+        .unwrap_or(false);
+
+    if !is_old {
+        return;
+    }
+
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => println!(
+            "{} Cleaned up stale run: {}",
+            "⬡".yellow(),
+            dir.display()
+        ),
+        Err(e) => eprintln!(
+            "warn: could not remove stale run {}: {}",
+            dir.display(),
+            e
+        ),
+    }
 }
 
 /// Read project_id from `.hex/project.json` in the given directory.

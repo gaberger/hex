@@ -1,0 +1,85 @@
+{
+  "id": "feat-fix-rl-model-routing",
+  "title": "Fix RL model ID routing so Q-learning recommendations are actually used",
+  "specs": "docs/specs/fix-rl-model-routing.json",
+  "created": "2026-03-25",
+  "status": "planned",
+  "topology": "pipeline",
+  "budget": "~8000 tokens",
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Fix extract_model_from_action in hex-cli/src/pipeline/model_selection.rs: remove the 'openrouter-' prefix mangling. The function should return the raw provider/model ID (e.g. 'meta-llama/llama-4-maverick') directly from the action string, not convert slashes to dashes. Change: format!(\"openrouter-{}\", or_id.replace('/', \"-\")) → or_id.to_string()",
+      "layer": "adapters/secondary",
+      "adapter": "model-selection",
+      "port": "IModelSelector",
+      "dependencies": [],
+      "tier": 0,
+      "specs": ["S01", "S06"],
+      "worktree_branch": "feat/fix-rl-model-routing/extract-model",
+      "done_condition": "cargo test -p hex-cli passes; extract_model_from_action('model:openrouter:meta-llama/llama-4-maverick|context:balanced', CodeGeneration) == 'meta-llama/llama-4-maverick'"
+    },
+    {
+      "id": "step-2",
+      "description": "Fix stale unit test assertions in model_selection.rs: two tests (extract_model_fallback_to_default, extract_model_unknown_variant_falls_back) assert 'google/gemini-2.0-flash-001' which was the old default. Update both assertions to match the current defaults: Reasoning → 'meta-llama/llama-3.3-70b-instruct:free', CodeEdit → 'qwen/qwen3-coder:free'. Also update the extract_openrouter_model test to assert the now-correct native ID (not the mangled openrouter- form).",
+      "layer": "adapters/secondary",
+      "adapter": "model-selection",
+      "port": "IModelSelector",
+      "dependencies": ["step-1"],
+      "tier": 0,
+      "specs": ["S05", "S04"],
+      "worktree_branch": "feat/fix-rl-model-routing/extract-model",
+      "done_condition": "cargo test -p hex-cli -- model_selection passes with 0 failures; no assertion references 'google/gemini-2.0-flash-001'"
+    },
+    {
+      "id": "step-3",
+      "description": "Wire coder agent into RL outcome reporting. In hex-cli/src/pipeline/agents/ (coder.rs or whichever agent does code generation), after each inference call completes, call self.selector.report_outcome(&selected, TaskType::CodeGeneration, success, cost_usd, duration_ms). This builds a Q-table baseline even when models are YAML-selected (source != RlEngine means report_outcome is a no-op, but when RL does recommend a model the loop closes). Also check supervisor.rs hex-coder branch to ensure it calls report_outcome after code phase.",
+      "layer": "adapters/secondary",
+      "adapter": "coder-agent",
+      "port": "IModelSelector",
+      "dependencies": ["step-1"],
+      "tier": 1,
+      "specs": ["S03"],
+      "worktree_branch": "feat/fix-rl-model-routing/coder-rl",
+      "done_condition": "cargo build -p hex-cli passes; coder agent has a report_outcome call after inference; cargo test -p hex-cli passes"
+    },
+    {
+      "id": "step-4",
+      "description": "End-to-end smoke test: run 'hex dev' for a simple feature, confirm in RUST_LOG=debug output that (a) 'RL engine recommended model' log line appears with a valid provider/model ID (no openrouter- prefix), (b) inference routing succeeds for that model (no '404 model not found' or fallback to Anthropic), (c) report_outcome is logged for at least one phase. Document findings as a comment in model_selection.rs near extract_model_from_action.",
+      "layer": "integration",
+      "adapter": "pipeline-smoke",
+      "dependencies": ["step-2", "step-3"],
+      "tier": 2,
+      "specs": ["S02", "S06"],
+      "done_condition": "RUST_LOG=debug hex dev output shows source=rl-engine with a slash-format model ID that successfully routes through inference; no 'openrouter-' prefix in any log line"
+    }
+  ],
+  "mergeOrder": [
+    "step-1 (extract_model fix) → step-2 (test fixes) in same commit — both touch model_selection.rs",
+    "step-3 (coder RL wiring) parallel with step-2, depends only on step-1",
+    "step-4 (smoke test) last — validates the full chain"
+  ],
+  "riskRegister": [
+    {
+      "risk": "RL engine returns action strings with model IDs that don't match any registered provider",
+      "impact": "medium",
+      "mitigation": "inference.rs already falls back to the first provider if no model match; this is acceptable degradation. The fix makes the RL recommendation at least attempt routing."
+    },
+    {
+      "risk": "Coder agent file may not exist yet or may use a different pattern than reviewer.rs",
+      "impact": "low",
+      "mitigation": "Step 3 description says to check supervisor.rs hex-coder branch and any coder agent — read the files first before editing"
+    },
+    {
+      "risk": "Q-table has accumulated entries keyed by the mangled 'openrouter-*' action strings — after the fix, existing Q-values won't be matched",
+      "impact": "low",
+      "mitigation": "The RL engine will simply explore (epsilon-greedy) until it builds new Q-values for the corrected action format. No data migration needed — cold-start is acceptable."
+    }
+  ],
+  "successCriteria": [
+    "cargo test -p hex-cli passes with 0 failures in model_selection tests",
+    "No string matching /openrouter-[a-z]/ appears in any model_id field at runtime",
+    "RUST_LOG=debug hex dev shows at least one 'RL engine recommended model' with source=rl-engine and a valid provider/model ID",
+    "That RL-recommended model successfully routes to a registered inference provider (no fallback to Anthropic for it)"
+  ]
+}

@@ -1,0 +1,124 @@
+{
+  "id": "feat-agent-swarm-ownership",
+  "title": "Agent-Swarm Ownership Hierarchy with Conflict Detection",
+  "adr": "ADR-2603241900",
+  "status": "pending",
+  "phases": [
+    {
+      "id": "T0",
+      "title": "SpacetimeDB schema: add owner_agent_id + task CAS fields",
+      "tier": 0,
+      "depends_on": [],
+      "files": [
+        "spacetime-modules/hexflo-coordination/src/lib.rs"
+      ],
+      "tasks": [
+        "Add owner_agent_id: String to Swarm struct",
+        "Add version: u64 and claimed_by: String to SwarmTask struct",
+        "Update swarm_init reducer: read agent from hex_agent table, reject if agent.swarm_id non-empty and referenced swarm is active, set owner_agent_id = calling agent, update agent.swarm_id",
+        "Update task_assign reducer: add expected_version param, implement CAS (check version matches, status is pending, then assign atomically, increment version, set claimed_by)",
+        "Add swarm_transfer reducer: validates caller is owner, updates owner_agent_id + agent swarm_id links on both old and new owner",
+        "Keep created_by field (alias) for backward compat during migration"
+      ]
+    },
+    {
+      "id": "T1",
+      "title": "State port trait: update interfaces for CAS and ownership",
+      "tier": 0,
+      "depends_on": [],
+      "files": [
+        "hex-nexus/src/ports/state.rs"
+      ],
+      "tasks": [
+        "Update SwarmInfo struct: add owner_agent_id field",
+        "Update SwarmTaskInfo struct: add version: u64 and claimed_by fields",
+        "Update swarm_task_assign signature: add expected_version: Option<u64> param",
+        "Add ConflictError variants to StateError: VersionMismatch { expected, actual }, AlreadyClaimed { by: String }",
+        "Add swarm_transfer method to IStatePort trait",
+        "Add agent_owned_swarm(agent_id) method returning Option<SwarmInfo>"
+      ]
+    },
+    {
+      "id": "T2",
+      "title": "SQLite fallback adapter: implement CAS + ownership",
+      "tier": 1,
+      "depends_on": ["T1"],
+      "files": [
+        "hex-nexus/src/adapters/sqlite_state.rs"
+      ],
+      "tasks": [
+        "Add migration: ALTER TABLE swarms ADD COLUMN owner_agent_id TEXT NOT NULL DEFAULT ''",
+        "Add migration: ALTER TABLE swarm_tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 0",
+        "Add migration: ALTER TABLE swarm_tasks ADD COLUMN claimed_by TEXT NOT NULL DEFAULT ''",
+        "Backfill: UPDATE swarms SET owner_agent_id = created_by WHERE owner_agent_id = ''",
+        "Implement CAS in swarm_task_assign: SELECT version FOR UPDATE, compare, reject on mismatch, increment on success",
+        "Implement swarm_transfer: UPDATE swarms + UPDATE hex_agents for both old/new owner",
+        "Implement agent_owned_swarm: SELECT swarm by owner_agent_id WHERE status='active'"
+      ]
+    },
+    {
+      "id": "T3",
+      "title": "SpacetimeDB state adapter: sync new fields",
+      "tier": 1,
+      "depends_on": ["T1"],
+      "files": [
+        "hex-nexus/src/adapters/spacetimedb_state.rs"
+      ],
+      "tasks": [
+        "Update swarm deserialization to include owner_agent_id",
+        "Update task deserialization to include version + claimed_by",
+        "Pass expected_version to task_assign reducer call",
+        "Map ConflictError from reducer error strings",
+        "Add swarm_transfer delegation to reducer",
+        "Add agent_owned_swarm query via swarm table filter"
+      ]
+    },
+    {
+      "id": "T4",
+      "title": "REST routes: enforce ownership + return CAS conflict",
+      "tier": 2,
+      "depends_on": ["T2", "T3"],
+      "files": [
+        "hex-nexus/src/routes/swarms.rs"
+      ],
+      "tasks": [
+        "POST /api/swarms: read x-hex-agent-id header, call agent_owned_swarm, return 409 if already has active swarm",
+        "PATCH /api/swarms/tasks/:id (assign): read version from body, pass to state adapter, return 409 with conflict detail on CAS failure",
+        "GET /api/agents/:id/swarm: new route returning agent's owned swarm",
+        "POST /api/swarms/:id/transfer: new route delegating to swarm_transfer"
+      ]
+    },
+    {
+      "id": "T5",
+      "title": "MCP tool schema: expose version + conflict fields",
+      "tier": 2,
+      "depends_on": ["T4"],
+      "files": [
+        "hex-cli/assets/schemas/mcp-tools.json",
+        "hex-cli/src/commands/swarm.rs",
+        "hex-cli/src/commands/mcp.rs"
+      ],
+      "tasks": [
+        "hex_hexflo_task_assign: add optional expected_version param to schema",
+        "hex_hexflo_task_assign: include version and claimed_by in response schema",
+        "hex_hexflo_swarm_init: document that it rejects if agent already owns active swarm",
+        "Add hex_hexflo_swarm_transfer tool: swarm_id + new_owner_agent_id",
+        "CLI: hex swarm transfer <swarm-id> <new-agent-id> command"
+      ]
+    },
+    {
+      "id": "T6",
+      "title": "Validation: smoke test ownership + conflict scenarios",
+      "tier": 3,
+      "depends_on": ["T4", "T5"],
+      "files": [],
+      "tasks": [
+        "Verify agent can't init second swarm while first is active (409 returned)",
+        "Verify two agents racing on same task: first wins, second gets ConflictError",
+        "Verify swarm_transfer correctly moves ownership: old agent loses swarm_id, new agent gains it",
+        "Verify GET /api/agents/:id/swarm returns correct owned swarm",
+        "Verify backward compat: existing swarms without owner_agent_id get backfilled from created_by"
+      ]
+    }
+  ]
+}

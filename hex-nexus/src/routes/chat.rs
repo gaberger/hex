@@ -687,7 +687,7 @@ pub(crate) async fn call_inference_endpoint(
     messages: &[serde_json::Value],
 ) -> Result<InferenceResult, String> {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(240))
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
     let model = if ep.model.is_empty() { "default".to_string() } else { ep.model.clone() };
@@ -696,14 +696,13 @@ pub(crate) async fn call_inference_endpoint(
 
     let (url, body) = if is_openrouter {
         let url = "https://openrouter.ai/api/v1/chat/completions".to_string();
+        // Let OpenRouter choose the upstream provider — forcing specific providers
+        // (Together/Fireworks/etc.) blocks free-tier routing which uses the model
+        // creator's own infrastructure. Remove deprecated `route` field too.
         let body = json!({
             "model": model,
             "messages": messages,
             "max_tokens": 4096,
-            "provider": {
-                "order": ["Together", "Fireworks", "DeepInfra", "Lepton"],
-            },
-            "route": "fallback",
         });
         (url, body)
     } else {
@@ -835,7 +834,7 @@ pub(crate) async fn call_anthropic(
     messages: &[serde_json::Value],
 ) -> Result<InferenceResult, String> {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(240))
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
     let body = json!({

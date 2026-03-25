@@ -176,7 +176,7 @@ impl UxReviewerAgent {
 
         let resp = self
             .client
-            .post("/api/inference/complete", &body)
+            .post_long("/api/inference/complete", &body)
             .await
             .context("POST /api/inference/complete failed for UX reviewer")?;
 

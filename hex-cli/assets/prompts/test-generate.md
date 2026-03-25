@@ -41,7 +41,7 @@ Produce ONLY the complete test file content. No markdown fences, no explanation 
 3. **One concern per test**: Each test function should verify one behavior. Name tests descriptively: `test_<behavior>_when_<condition>_then_<expected>`.
 4. **Edge cases**: Include tests for error paths, empty inputs, boundary values, and invalid state transitions.
 5. **No network or filesystem in unit tests**: Use in-memory fakes for all external dependencies. Integration tests may use real resources with proper cleanup.
-6. **Rust specifics**: Use `#[cfg(test)] mod tests { ... }` for unit tests in the same file, or separate test files in `tests/`. Use `#[tokio::test]` for async tests.
+6. **Rust specifics**: Use `#[cfg(test)] mod tests { ... }` for unit tests INLINE in the source file being tested. Prefer inline tests over separate `tests/` integration test files unless testing CLI binary invocation. For CLI binary invocation tests, use `env!("CARGO_BIN_EXE_<name>")` where `<name>` is EXACTLY the value of `name` in Cargo.toml — this is provided to you as `BINARY_NAME` in the task context. Do NOT invent or shorten the name. For simple unit tests, call public functions directly rather than spawning a subprocess. Use `#[tokio::test]` for async tests. Never call `.output()` on a binary that reads from stdin — use `.stdin(Stdio::piped())`, write any required input, then call `.wait_with_output()`.
 7. **TypeScript specifics**: Use `describe`/`it` blocks. Import types with `.js` extensions. Use the project's test runner (bun test).
 8. **Arrange-Act-Assert**: Structure every test with clear setup, execution, and verification phases.
 9. **Test data builders**: For complex types, create builder functions rather than repeating construction logic.

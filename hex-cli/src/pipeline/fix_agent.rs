@@ -31,6 +31,9 @@ pub struct FixTaskInput {
     pub language: String,
     /// Directory containing the output code (used for writing the fixed file).
     pub output_dir: String,
+    /// Error outputs from previous failed fix attempts (up to 2, oldest first).
+    /// Empty on the first attempt.
+    pub prior_errors: Vec<String>,
 }
 
 /// Result of a fix attempt.
@@ -132,12 +135,26 @@ impl FixAgent {
             "test" => {
                 context.insert("test_output".to_string(), input.error_context.clone());
                 context.insert("test_file".to_string(), String::new());
-                context.insert("source_file".to_string(), input.target_file.clone());
+                // Read all source files from output_dir/src/ so the fixer can see
+                // what the code actually does (not just the test file path).
+                let source_files = read_source_files(&input.output_dir);
+                context.insert("source_file".to_string(), source_files);
             }
             "violation" => {
                 context.insert("violations".to_string(), input.error_context.clone());
             }
             _ => {} // unreachable — already bailed above
+        }
+
+        // Include prior error context if available
+        if !input.prior_errors.is_empty() {
+            let prior_section = format!(
+                "Previous fix attempts failed with these errors (most recent last):\n\n{}",
+                input.prior_errors.join("\n\n---\n\n")
+            );
+            context.insert("prior_errors".to_string(), prior_section);
+        } else {
+            context.insert("prior_errors".to_string(), String::new());
         }
 
         // ── Render prompt ────────────────────────────────────────────────
@@ -175,7 +192,7 @@ impl FixAgent {
 
         let resp = self
             .client
-            .post("/api/inference/complete", &body)
+            .post_long("/api/inference/complete", &body)
             .await
             .context("POST /api/inference/complete failed for fix")?;
 
@@ -246,6 +263,38 @@ impl FixAgent {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
+
+/// Read all `.rs` source files from `{output_dir}/src/`, truncated to 4096 bytes each.
+/// Returns a single string with each file prefixed by its relative path.
+fn read_source_files(output_dir: &str) -> String {
+    let src_dir = Path::new(output_dir).join("src");
+    if !src_dir.exists() {
+        return String::new();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&src_dir) {
+        let mut paths: Vec<std::path::PathBuf> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("rs"))
+            .collect();
+        paths.sort();
+        for path in paths {
+            let rel = path
+                .strip_prefix(output_dir)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| path.display().to_string());
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            let truncated = if content.len() > 4096 {
+                format!("{}... (truncated)", &content[..4096])
+            } else {
+                content
+            };
+            parts.push(format!("// {}\n{}", rel, truncated));
+        }
+    }
+    parts.join("\n\n")
+}
 
 /// Strip markdown code fences from inference output.
 fn strip_code_fences(s: &str) -> String {

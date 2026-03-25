@@ -25,11 +25,18 @@ pub enum SwarmAction {
     /// Show current swarm status
     Status,
     /// List all swarms
-    List,
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Mark a swarm as completed
     Complete {
         /// Swarm ID
         id: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Mark a swarm as failed
     Fail {
@@ -38,6 +45,9 @@ pub enum SwarmAction {
         /// Reason for failure
         #[arg(default_value = "manually failed")]
         reason: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Clean up stale/completed swarms (dry-run by default)
     Cleanup {
@@ -47,6 +57,9 @@ pub enum SwarmAction {
         /// Actually execute the transitions (default is dry-run)
         #[arg(long)]
         apply: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -54,10 +67,10 @@ pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
     match action {
         SwarmAction::Init { name, topology, json } => init(&name, &topology, json).await,
         SwarmAction::Status => status().await,
-        SwarmAction::List => list().await,
-        SwarmAction::Complete { id } => complete(&id).await,
-        SwarmAction::Fail { id, reason } => fail(&id, &reason).await,
-        SwarmAction::Cleanup { stale_hours, apply } => cleanup(stale_hours, apply).await,
+        SwarmAction::List { json } => list(json).await,
+        SwarmAction::Complete { id, .. } => complete(&id).await,
+        SwarmAction::Fail { id, reason, .. } => fail(&id, &reason).await,
+        SwarmAction::Cleanup { stale_hours, apply, .. } => cleanup(stale_hours, apply).await,
     }
 }
 
@@ -185,11 +198,17 @@ async fn status() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn list() -> anyhow::Result<()> {
+async fn list(json_output: bool) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
     let resp = nexus.get("/api/swarms/active").await?;
+
+    if json_output {
+        println!("{}", resp);
+        return Ok(());
+    }
+
     let swarms = resp.as_array().cloned().unwrap_or_default();
 
     if swarms.is_empty() {

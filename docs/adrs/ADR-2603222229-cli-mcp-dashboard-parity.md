@@ -41,8 +41,15 @@ Conduct a systematic parity audit across all three surfaces, document gaps, and 
 | P4 | Audit nexus REST endpoints → identify unused/undocumented routes | Pending |
 | P5 | Create remediation workplan with prioritized gaps | Pending |
 
+## Known Findings
+
+| Issue | Surface | Status |
+|-------|---------|--------|
+| `hex_adr_list` returned wrong directory, wrong IDs, missing files | MCP | Fixed 2026-03-25 (two separate implementations drifted) |
+
 ## References
 
 - ADR-019: CLI-MCP Parity
+- ADR-2603250838: CLI/MCP Shared Implementation — One Function, Two Skins (root-cause fix for drift)
 - ADR-039: Nexus Agent Control Plane
 - ADR-066: Dashboard Visibility Overhaul

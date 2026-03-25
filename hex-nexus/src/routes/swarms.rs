@@ -27,6 +27,9 @@ pub struct CreateTaskRequest {
     /// Comma-separated task IDs this task depends on (empty or absent = no deps).
     #[serde(default)]
     pub depends_on: String,
+    /// Agent to assign immediately on creation (optional).
+    #[serde(default, rename = "agentId")]
+    pub agent_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -219,13 +222,23 @@ pub async fn create_task(
         .await
         .map_err(state_err)?;
 
+    // Assign to agent immediately if provided
+    let assigned_agent = if let Some(ref aid) = body.agent_id {
+        port.swarm_task_assign(&id, aid, None)
+            .await
+            .map_err(state_err)?;
+        aid.clone()
+    } else {
+        String::new()
+    };
+
     let now = chrono::Utc::now().to_rfc3339();
     let val = json!({
         "id": id,
         "swarmId": swarm_id,
         "title": body.title,
         "status": "pending",
-        "agentId": "",
+        "agentId": assigned_agent,
         "result": "",
         "dependsOn": body.depends_on,
         "createdAt": now,

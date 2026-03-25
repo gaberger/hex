@@ -159,12 +159,23 @@ pub struct ModelConfig {
 }
 
 impl ModelConfig {
-    /// Map a YAML model name (sonnet/haiku/opus) to an OpenRouter-compatible model ID.
+    /// Map a YAML model name (sonnet/haiku/opus) to the model ID used by the inference gateway.
     ///
-    /// Uses OpenRouter vendor-namespaced IDs (anthropic/...) so they route correctly
-    /// regardless of whether the backend is Anthropic direct or OpenRouter.
-    pub fn resolve_model_id(_name: &str) -> &'static str {
-        "openai/gpt-4o-mini"
+    /// Anthropic shorthand names map to their full model IDs. OpenAI names pass through
+    /// with the `openai/` vendor prefix. Unknown names fall back to `openrouter/free`
+    /// (not gpt-4o-mini) so the caller can detect unrecognised names.
+    pub fn resolve_model_id(name: &str) -> &'static str {
+        match name {
+            // Anthropic — current generation
+            "sonnet" | "claude-sonnet" => "claude-sonnet-4-6",
+            "haiku" | "claude-haiku" => "claude-haiku-4-5-20251001",
+            "opus" | "claude-opus" => "claude-opus-4-6",
+            // OpenAI pass-through
+            "gpt-4o" => "openai/gpt-4o",
+            "gpt-4o-mini" => "openai/gpt-4o-mini",
+            // Unknown → sonnet as sensible default (NOT gpt-4o-mini)
+            _ => "openrouter/free",
+        }
     }
 
     /// Preferred model ID, resolved from YAML name.
@@ -172,7 +183,7 @@ impl ModelConfig {
         self.preferred
             .as_deref()
             .map(Self::resolve_model_id)
-            .unwrap_or("openai/gpt-4o-mini")
+            .unwrap_or("openrouter/free")
     }
 
     /// Fallback model ID, resolved from YAML name.
@@ -180,7 +191,7 @@ impl ModelConfig {
         self.fallback
             .as_deref()
             .map(Self::resolve_model_id)
-            .unwrap_or("openai/gpt-4o-mini")
+            .unwrap_or("openrouter/free")
     }
 
     /// Upgrade model ID, resolved from YAML name.

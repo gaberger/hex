@@ -245,6 +245,25 @@ async fn list() -> anyhow::Result<()> {
     println!("{}", HexTable::new(&rows));
     println!();
     println!("  {} ADR(s) total", adrs.len());
+
+    // Warn about any ADRs with unparseable status — likely wrong frontmatter format
+    let unknown: Vec<&str> = adrs
+        .iter()
+        .filter(|(_, content)| parse_adr_status(content) == "unknown")
+        .filter_map(|(path, _)| path.file_name()?.to_str())
+        .collect();
+    if !unknown.is_empty() {
+        println!();
+        println!(
+            "  {} {} ADR(s) have unparseable status — frontmatter must use `**Status:** <value>`:",
+            "\u{26a0}".yellow(),
+            unknown.len()
+        );
+        for name in &unknown {
+            println!("    {}", name.yellow());
+        }
+    }
+
     Ok(())
 }
 
@@ -481,6 +500,18 @@ mod tests {
     #[test]
     fn parse_status_missing() {
         assert_eq!(parse_adr_status("# ADR-001: No status here\n\nJust text.\n"), "unknown");
+    }
+
+    #[test]
+    fn parse_status_wrong_format_colon_outside_bold() {
+        // **Status**: Accepted  ← colon outside ** — must NOT parse (agent wrote wrong format)
+        assert_eq!(parse_adr_status("# ADR-001\n\n**Status**: Accepted\n"), "unknown");
+    }
+
+    #[test]
+    fn parse_status_bullet_prefix_not_parsed() {
+        // - **Status**: Accepted  ← bullet + colon outside — must NOT parse
+        assert_eq!(parse_adr_status("# ADR-001\n\n- **Status**: Accepted\n"), "unknown");
     }
 
     #[test]

@@ -91,9 +91,12 @@ impl CliRunner {
 
     // ── Convenience methods ──────────────────────────────────────────
 
-    /// `hex task create <swarm_id> <title> --json`
-    pub fn task_create(&self, swarm_id: &str, title: &str) -> Result<Value> {
-        self.run(&["task", "create", swarm_id, title])
+    /// `hex task create <swarm_id> <title> [--agent <id>] --json`
+    pub fn task_create(&self, swarm_id: &str, title: &str, agent_id: Option<&str>) -> Result<Value> {
+        match agent_id {
+            Some(aid) => self.run(&["task", "create", swarm_id, title, "--agent", aid]),
+            None => self.run(&["task", "create", swarm_id, title]),
+        }
     }
 
     /// `hex task complete <id> [result] --json`
@@ -128,6 +131,12 @@ impl CliRunner {
     /// `hex swarm list` — return all swarms as JSON array.
     pub fn swarm_list(&self) -> Result<Value> {
         self.run(&["swarm", "list"])
+    }
+
+    /// `hex task assign <task_id> <agent_id>`
+    /// Uses run_raw because `hex task assign` has no --json flag.
+    pub fn task_assign(&self, task_id: &str, agent_id: &str) -> Result<()> {
+        self.run_raw(&["task", "assign", task_id, agent_id]).map(|_| ())
     }
 }
 

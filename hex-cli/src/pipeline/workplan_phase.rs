@@ -180,7 +180,7 @@ impl WorkplanPhase {
 
         let resp = self
             .client
-            .post("/api/inference/complete", &body)
+            .post_long("/api/inference/complete", &body)
             .await
             .context("POST /api/inference/complete failed")?;
 
@@ -364,7 +364,7 @@ impl WorkplanPhase {
 
         let fix_resp = self
             .client
-            .post("/api/inference/complete", &fix_body)
+            .post_long("/api/inference/complete", &fix_body)
             .await
             .context("JSON fix retry: POST /api/inference/complete failed")?;
 

@@ -27,6 +27,7 @@ impl PromptTemplate {
     ///
     /// # Examples
     /// ```no_run
+    /// use hex_cli::prompts::PromptTemplate;
     /// let tmpl = PromptTemplate::load("adr-generate").unwrap();
     /// ```
     pub fn load(name: &str) -> anyhow::Result<Self> {
@@ -232,7 +233,7 @@ mod tests {
         assert!(templates.contains(&"code-generate".to_string()));
         assert!(templates.contains(&"test-generate".to_string()));
         assert!(templates.contains(&"fix-violations".to_string()));
-        assert_eq!(templates.len(), 5);
+        assert_eq!(templates.len(), 13);
     }
 
     #[test]

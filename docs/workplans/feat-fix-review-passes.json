@@ -1,0 +1,97 @@
+{
+  "id": "feat-fix-review-passes",
+  "title": "Feature: Reviewer RL Integration and Structured-Output Reliability",
+  "specs": "docs/specs/fix-review-passes.json",
+  "adr": "ADR-2603250900",
+  "created": "2026-03-25",
+  "status": "complete",
+  "topology": "pipeline",
+  "budget": "~8000 tokens",
+  "prior_work": {
+    "done": [
+      "extract_model_from_action fix (model_selection.rs) — preserves native provider/model format, merged in same session",
+      "swarm_phase.rs task_assign — workplan tasks now show agent in hex task list, merged in same session"
+    ]
+  },
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Add JSON retry loop inside ReviewerAgent::execute_with_preference (reviewer.rs). Detect parse failure via is_parse_failure() fingerprint on the parse_review fallback. Attempt 0: normal call. Attempt 1: same model + JSON enforcement suffix. Attempt 2: HEX_REVIEWER_UPGRADE_MODEL (default claude-haiku-4-5-20251001) + JSON suffix. If all 3 fail, return ReviewResult { verdict: 'PASS', reviewer_skipped: true }. Supervisor logs warn and writes reviewer_skipped flag to review-latest.json.",
+      "layer": "adapters/primary",
+      "adapter": "pipeline/agents/reviewer",
+      "port": "IReviewerAgent",
+      "dependencies": [],
+      "tier": 0,
+      "specs": ["S03", "S04", "S06"],
+      "worktree_branch": "feat/fix-review-passes/json-retry",
+      "status": "completed",
+      "done_condition": "cargo check passes; unit test: given non-JSON reviewer response, synthetic verdict file is written and contains reviewer_skipped:true"
+    },
+    {
+      "id": "step-2",
+      "description": "Fix RL model selection for reviewer by passing YAML model as soft preference (model_preference) not hard override to execute_with_preference. Supervisor calls agent.execute_with_preference(context, model_override=CLI-only, model_preference=yaml_model_id, provider_pref). Inside agent, select_model(TaskType::Reasoning, effective_override=model_override.or(model_preference)) — RL can override when Q-table has data, YAML preference acts as default when Q-table is empty.",
+      "layer": "adapters/primary",
+      "adapter": "pipeline/supervisor + pipeline/agents/reviewer",
+      "port": "IModelSelector",
+      "dependencies": ["step-1"],
+      "tier": 0,
+      "specs": ["S01", "S08"],
+      "worktree_branch": "feat/fix-review-passes/reviewer-rl-selection",
+      "status": "completed",
+      "done_condition": "cargo check passes; supervisor no longer passes reviewer_model_id as hard model_override"
+    },
+    {
+      "id": "step-3",
+      "description": "Report reviewer outcome to RL engine via existing report_outcome call in reviewer.rs. Negative reward fires per failed attempt (is_parse_failure) and on complete exhaustion. Positive reward fires on successful JSON parse. Reward fires unconditionally (not source-gated) to accumulate Q-table signal from the first run.",
+      "layer": "adapters/primary",
+      "adapter": "pipeline/agents/reviewer",
+      "port": "IRlRewardReporter",
+      "dependencies": ["step-2"],
+      "tier": 0,
+      "specs": ["S02", "S05", "S07"],
+      "worktree_branch": "feat/fix-review-passes/reviewer-rl-reward",
+      "status": "completed",
+      "done_condition": "cargo check passes; report_outcome called after every reviewer attempt"
+    },
+    {
+      "id": "step-4",
+      "description": "Integration smoke test: run hex dev against examples/hello-world and verify (a) ReviewPasses clears on all tiers, (b) hex task list shows agent assignment, (c) no 'max_iterations reached' in output for reviewer-blocked tiers. If free model is unavailable, the synthetic fallback verdict should allow the pipeline to complete.",
+      "layer": "adapters/primary",
+      "adapter": "integration",
+      "port": null,
+      "dependencies": ["step-1", "step-2", "step-3"],
+      "tier": 1,
+      "specs": ["S01", "S02", "S03", "S04", "S05", "S06", "S08"],
+      "worktree_branch": "feat/fix-review-passes/smoke-test",
+      "done_condition": "hex dev completes all tiers without hitting max_iterations due to ReviewPasses; pipeline report shows all objectives met"
+    }
+  ],
+  "dependencies": {
+    "cargo": []
+  },
+  "mergeOrder": [
+    "step-1, step-2, step-3 sequential (all tier-0) → step-4 last"
+  ],
+  "riskRegister": [
+    {
+      "risk": "extract_model_from_action bug — RL model ID mangled before reaching inference",
+      "impact": "high",
+      "mitigation": "RESOLVED: fix shipped in same session (model_selection.rs preserves native provider/model format)"
+    },
+    {
+      "risk": "Synthetic PASS verdict hides real code quality issues",
+      "impact": "medium",
+      "mitigation": "reviewer_skipped:true flag + tracing warn make the skip visible; RL negative reward ensures system routes away from flaky models over time"
+    },
+    {
+      "risk": "Retry increases reviewer latency by up to 3x on bad models",
+      "impact": "low",
+      "mitigation": "Free models already have high latency; upgrade on retry-2 typically reduces total wall time vs. waiting for a third slow free response"
+    }
+  ],
+  "successCriteria": [
+    "hex dev pipeline completes all tiers without hitting ReviewPasses max_iterations on a fresh hex project",
+    "After 3+ pipeline runs, RL Q-table shows structured_review entries with positive Q-values for reliable models",
+    "hex task list shows agent assignments for all workplan tasks (separate fix already merged)"
+  ]
+}

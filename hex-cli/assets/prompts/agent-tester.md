@@ -90,23 +90,37 @@ Each test file must include these categories:
     - For simple binaries where functions are not `pub`, test the observable behavior (run the binary as a process, or restructure logic into a library)
     - NEVER call `main()` directly — it's not exported
     - For a `main.rs`-only binary, write tests that call any `pub fn` helpers, or use `std::process::Command` to run the binary and check stdout/stderr
-    - Example for a binary with helper functions:
+    - **CRITICAL**: Use `env!("CARGO_BIN_EXE_<name>")` where `<name>` is EXACTLY the value of `name` in Cargo.toml — this is injected into your context as `BINARY_NAME`. Do NOT invent shorter aliases, strip hyphens, or guess. The wrong name causes a compile-time failure with no clear error message.
+    - Example (where `BINARY_NAME` = `my-app`):
     ```rust
     // tests/main_test.rs
-    // No `use super::*` — this is a separate crate
-    // Test public helper functions if they exist:
-    // use my_crate::convert_temperature;
-
+    use std::process::Stdio;
     #[test]
-    fn celsius_to_fahrenheit() {
-        // If no pub functions, test via process::Command
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_my-crate"))
-            .args(["25", "--from", "C", "--to", "F"])
+    fn prints_hello_world() {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_my-app"))
             .output()
             .expect("failed to run binary");
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("77"));
+        assert_eq!(stdout.trim(), "Hello, World!");
+    }
+    ```
+    - **CRITICAL — stdin binaries**: Never call `.output()` on a binary that reads from stdin — it will hang waiting for input. Instead use `.stdin(Stdio::piped())`, write any required input to the child's stdin handle, then call `.wait_with_output()`:
+    ```rust
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    #[test]
+    fn converts_celsius_to_fahrenheit() {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_my-app"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn binary");
+        child.stdin.as_mut().unwrap().write_all(b"100\n").unwrap();
+        let output = child.wait_with_output().expect("failed to wait");
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("212"));
     }
     ```
 11. **Cover the port contract completely**: Every method in the port interface must have at least one happy-path and one error-case test.

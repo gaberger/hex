@@ -195,10 +195,11 @@ pub fn agent_for_objective(obj: Objective, has_prior_result: bool) -> &'static s
         (TestsExist, _) => "hex-tester",
         (TestsPass, false) => "hex-tester",
         (TestsPass, true) => "hex-fixer",
-        // Always re-run the reviewer, never the fixer.
-        // The fixer rewrites source files wholesale (fix-violations) which can
-        // break compiling code — review issues are advisory quality feedback.
-        (ReviewPasses, _) => "hex-reviewer",
+        // First time ReviewPasses fails: run the reviewer to get structured feedback.
+        // On retry (has_prior=true): fix the critical issues found, then the supervisor
+        // resets has_prior to false so the next iteration re-reviews the fixed code.
+        (ReviewPasses, false) => "hex-reviewer",
+        (ReviewPasses, true) => "hex-fixer",
         (ArchitectureGradeA, _) => "hex-fixer",
         (UxReviewPasses, false) => "hex-ux",
         (UxReviewPasses, true) => "hex-fixer",
@@ -471,13 +472,21 @@ fn evaluate_tests_pass(output_dir: &str, language: &str, nexus_url: &str) -> Obj
                 format!("{} tests passed", result.passed),
             )
         }
-        Ok(result) if result.passed == 0 && result.failed == 0 => {
-            // No tests ran (0 suites matched) — treat as skipped, not a failure.
+        Ok(result) if result.passed == 0 && result.failed == 0 && result.pass => {
+            // Exit 0 with no tests — treat as skipped, not a failure.
             // This avoids blocking the pipeline when test files haven't been generated yet.
             ObjectiveState::met(
                 Objective::TestsPass,
                 "no tests to run (skipped)".to_string(),
             )
+        }
+        Ok(result) if result.passed == 0 && result.failed == 0 && !result.pass => {
+            // Exit non-zero with 0/0 — test compilation failed.
+            let issues = vec![format!(
+                "Test compilation failed (exit non-zero, 0 tests parsed). Output:\n{}",
+                truncate_output(&result.output, 500)
+            )];
+            ObjectiveState::unmet(Objective::TestsPass, "test compilation failed", issues)
         }
         Ok(result) => {
             let detail = format!("{}/{} tests passed", result.passed, result.passed + result.failed);
@@ -901,6 +910,7 @@ mod tests {
         assert_eq!(agent_for_objective(Objective::TestsPass, false), "hex-tester");
         assert_eq!(agent_for_objective(Objective::TestsPass, true), "hex-fixer");
         assert_eq!(agent_for_objective(Objective::ReviewPasses, false), "hex-reviewer");
+        // ReviewPasses routes to fixer on retry (fix critical issues, then re-review)
         assert_eq!(agent_for_objective(Objective::ReviewPasses, true), "hex-fixer");
     }
 

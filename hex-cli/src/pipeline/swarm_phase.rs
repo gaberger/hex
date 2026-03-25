@@ -55,10 +55,12 @@ impl SwarmPhase {
     /// # Arguments
     /// * `feature_description` - used to derive the swarm name
     /// * `workplan` - the parsed workplan whose steps become tasks
+    /// * `agent_id` - optional agent ID to assign each created task to
     pub async fn execute(
         &self,
         feature_description: &str,
         workplan: &WorkplanData,
+        agent_id: Option<&str>,
     ) -> Result<SwarmPhaseResult> {
         info!("Swarm phase: creating swarm and tasks from workplan");
         let start = Instant::now();
@@ -119,7 +121,7 @@ impl SwarmPhase {
                 title
             };
 
-            match self.runner.task_create(&swarm_id, &title) {
+            match self.runner.task_create(&swarm_id, &title, agent_id) {
                 Ok(task_resp) => {
                     let task_id = task_resp["id"]
                         .as_str()
@@ -128,7 +130,7 @@ impl SwarmPhase {
                     if task_id.is_empty() {
                         warn!(step_id = %step.id, "task created but response missing 'id'");
                     } else {
-                        debug!(step_id = %step.id, task_id = %task_id, "task created");
+                        debug!(step_id = %step.id, task_id = %task_id, agent_id = ?agent_id, "task created");
                         task_ids.push((step.id.clone(), task_id));
                     }
                 }

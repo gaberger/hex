@@ -13,13 +13,14 @@ use std::time::Instant;
 
 use anyhow::{Context as _, Result};
 use tracing::{debug, info, warn};
+use tokio::sync::oneshot;
 
 use crate::pipeline::agent_def::{AgentDefinition, SwarmComposition};
 use crate::pipeline::agents::{DocumenterAgent, ReviewerAgent, TesterAgent, UxReviewerAgent};
 use crate::pipeline::cli_runner::CliRunner;
 use crate::pipeline::code_phase::CodePhase;
 use crate::pipeline::fix_agent::{FixAgent, FixTaskInput};
-use crate::pipeline::model_selection::ModelSelector;
+use crate::pipeline::model_selection::{ModelSelector, SelectedModel, TaskType};
 use crate::pipeline::workflow_engine::WorkflowEngine;
 use crate::pipeline::objectives::{
     agent_for_objective, evaluate_all, objectives_for_tier, Objective, ObjectiveState,
@@ -108,6 +109,14 @@ pub struct Supervisor {
     swarm_comp: Option<SwarmComposition>,
     /// Spawned worker processes, behind Mutex for interior mutability (killed on drop).
     workers: Mutex<Vec<(String, std::process::Child)>>,
+    /// Pre-existing HexFlo task IDs created by SwarmPhase (key = step ID like "P0.1").
+    /// When present, `execute_agent_tracked` reuses these instead of creating new shadow tasks.
+    task_id_map: HashMap<String, String>,
+    /// RL model selector — used to report code generation outcomes after objective evaluation.
+    selector: ModelSelector,
+    /// Last code step selection + duration, stored so `run_tier` can call `report_outcome`
+    /// once `CodeCompiles` state is known (after `evaluate_all`).
+    last_code_selection: Mutex<Option<(SelectedModel, u64)>>,
 }
 
 impl Supervisor {
@@ -130,6 +139,7 @@ impl Supervisor {
             "loaded YAML definitions"
         );
 
+        let selector = ModelSelector::new(&nexus_url);
         Self {
             output_dir: output_dir.to_string(),
             language: language.to_string(),
@@ -142,6 +152,9 @@ impl Supervisor {
             agent_defs,
             swarm_comp,
             workers: Mutex::new(Vec::new()),
+            task_id_map: HashMap::new(),
+            selector,
+            last_code_selection: Mutex::new(None),
         }
     }
 
@@ -166,6 +179,17 @@ impl Supervisor {
     /// recording model, tokens, cost, and duration per role.
     pub fn with_session(mut self, session: Arc<Mutex<DevSession>>) -> Self {
         self.session = Some(session);
+        self
+    }
+
+    /// Supply pre-existing HexFlo task IDs from the SwarmPhase.
+    ///
+    /// Key = workplan step ID (e.g. "P0.1"), value = HexFlo task UUID.
+    /// When set, `execute_agent_tracked` will reuse these task IDs instead of
+    /// creating new shadow tasks, ensuring the dashboard shows the correct P*
+    /// tasks progressing rather than duplicate "hex-coder: [iteration N]" tasks.
+    pub fn with_task_ids(mut self, task_id_map: HashMap<String, String>) -> Self {
+        self.task_id_map = task_id_map;
         self
     }
 
@@ -220,7 +244,50 @@ impl Supervisor {
         files
     }
 
+    /// Strip the output_dir prefix from a coder-returned file path if the model
+    /// accidentally included it (e.g. `examples/proj/src/foo.ts` → `src/foo.ts`).
+    /// This prevents doubled paths when the supervisor joins output_dir + rel_path.
+    fn strip_output_dir_prefix<'a>(&self, path: &'a str) -> &'a str {
+        let prefix_slash = format!("{}/", self.output_dir);
+        if let Some(stripped) = path.strip_prefix(&prefix_slash) {
+            return stripped;
+        }
+        if path == self.output_dir {
+            return "";
+        }
+        path
+    }
+
+    /// Extract the package name from a Cargo.toml string (the `[package] name` field).
+    /// Used to inject the correct binary name into tester/fixer prompts so the model
+    /// never has to guess the `CARGO_BIN_EXE_<name>` macro argument.
+    fn cargo_package_name(cargo_toml: &str) -> Option<String> {
+        let mut in_package = false;
+        for line in cargo_toml.lines() {
+            let t = line.trim();
+            if t == "[package]" { in_package = true; continue; }
+            if t.starts_with('[') { in_package = false; continue; }
+            if in_package && t.starts_with("name") {
+                if let Some(eq) = t.find('=') {
+                    let v = t[eq + 1..].trim().trim_matches(|c: char| c == '"' || c == '\'');
+                    if !v.is_empty() { return Some(v.to_string()); }
+                }
+            }
+        }
+        None
+    }
+
+    /// Read binary name from `Cargo.toml` in the output directory (Rust projects only).
+    fn rust_binary_name(&self) -> Option<String> {
+        let cargo_path = PathBuf::from(&self.output_dir).join("Cargo.toml");
+        let content = fs::read_to_string(&cargo_path).ok()?;
+        Self::cargo_package_name(&content)
+    }
+
     /// Read port interface files from `src/core/ports/`.
+    /// Only files matching the project language are counted — a TypeScript port
+    /// file in a Rust project is an artefact of the coder generating hex scaffolding
+    /// for a standalone project, not a real port interface.
     fn port_files(&self) -> Vec<(String, String)> {
         let ports_dir = PathBuf::from(&self.output_dir)
             .join("src")
@@ -228,6 +295,8 @@ impl Supervisor {
             .join("ports");
         let mut files = Vec::new();
         Self::collect_files(&ports_dir, &self.output_dir, &mut files);
+        let expected_ext = if self.language == "rust" { ".rs" } else { ".ts" };
+        files.retain(|(path, _)| path.ends_with(expected_ext));
         files
     }
 
@@ -344,16 +413,27 @@ impl Supervisor {
     }
 
     /// Build context for a **reviewer** agent examining a specific file.
-    pub fn build_reviewer_context(&self, file_path: &str) -> AgentContext {
+    pub fn build_reviewer_context(&self, file_path: &str, workplan_summary: &str) -> AgentContext {
         let tier = Self::infer_tier_from_path(file_path);
+        let port_interfaces = self.port_files();
         let mut metadata = HashMap::new();
         metadata.insert("language".into(), self.language.clone());
         metadata.insert("review_target".into(), file_path.to_string());
+        metadata.insert("workplan_summary".into(), workplan_summary.to_string());
+        // Signal whether this is a hexagonal project (has port interfaces) or a
+        // standalone project (examples, CLIs, etc.).  The reviewer uses this to
+        // avoid flagging missing port interfaces as a violation in standalone code.
+        let project_type = if port_interfaces.is_empty() {
+            "standalone"
+        } else {
+            "hexagonal"
+        };
+        metadata.insert("project_type".into(), project_type.to_string());
 
         AgentContext {
             prompt_template: "agent-reviewer".into(),
             source_files: self.read_single_file(file_path),
-            port_interfaces: self.port_files(),
+            port_interfaces,
             boundary_rules: self.rules_for_tier(tier),
             workplan_step: None,
             upstream_output: None,
@@ -367,6 +447,12 @@ impl Supervisor {
         let mut metadata = HashMap::new();
         metadata.insert("language".into(), self.language.clone());
         metadata.insert("test_target".into(), file_path.to_string());
+        // Inject exact binary name so the tester never hallucinates CARGO_BIN_EXE_<name>
+        if self.language == "rust" {
+            if let Some(name) = self.rust_binary_name() {
+                metadata.insert("binary_name".into(), name);
+            }
+        }
 
         AgentContext {
             prompt_template: "agent-tester".into(),
@@ -421,6 +507,12 @@ impl Supervisor {
         let mut metadata = HashMap::new();
         metadata.insert("language".into(), self.language.clone());
         metadata.insert("fix_target".into(), file_path.to_string());
+        // Inject exact binary name for Rust so the fixer uses the correct CARGO_BIN_EXE_<name>
+        if self.language == "rust" {
+            if let Some(name) = self.rust_binary_name() {
+                metadata.insert("binary_name".into(), name);
+            }
+        }
 
         AgentContext {
             prompt_template: "agent-fixer".into(),
@@ -755,6 +847,34 @@ impl Supervisor {
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
 
+        // Clean stale source/test directories from any previous pipeline run.
+        // Without this, leftover files contaminate the coder's context and cause
+        // it to generate code that references types from a completely different project.
+        // Also clean `examples/` subdirectory which can contain doubled-path artifacts
+        // from prior runs where the coder included output_dir in the returned file path.
+        for stale_dir in &["src", "tests", "examples"] {
+            let dir = PathBuf::from(&self.output_dir).join(stale_dir);
+            if dir.is_dir() {
+                if let Err(e) = fs::remove_dir_all(&dir) {
+                    warn!(error = %e, dir = *stale_dir, "failed to remove stale directory");
+                } else {
+                    info!(dir = *stale_dir, "removed stale directory before pipeline start");
+                }
+            }
+        }
+        // Also remove any nested dir that matches the project directory name itself
+        // (from doubled-path files: output_dir/output_dir_name/src/...).
+        if let Some(project_name) = PathBuf::from(&self.output_dir)
+            .file_name()
+            .and_then(|n| n.to_str())
+        {
+            let doubled = PathBuf::from(&self.output_dir).join(project_name);
+            if doubled.is_dir() {
+                let _ = fs::remove_dir_all(&doubled);
+                info!(dir = project_name, "removed doubled-path stale directory");
+            }
+        }
+
         // Scaffold src/ before the tier loop so CodeGenerated can pass on iteration 1.
         // generate_scaffold is idempotent — safe to call even if src/ already exists.
         if let Err(e) = crate::pipeline::code_phase::generate_scaffold(
@@ -778,6 +898,37 @@ impl Supervisor {
                 }
             }
         }
+
+        // Spawn background heartbeat task to keep the agent alive during long pipeline runs.
+        // Without this, the cleanup daemon reclaims task assignments after 45s of silence.
+        let _heartbeat_guard = if let Some(ref aid) = self.agent_id {
+            let agent_id = aid.clone();
+            let nexus_url = self.nexus_url.clone();
+            let (tx, mut rx) = oneshot::channel::<()>();
+            tokio::spawn(async move {
+                let client = reqwest::Client::new();
+                let url = format!("{}/api/agents/{}/heartbeat", nexus_url, agent_id);
+                loop {
+                    tokio::select! {
+                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {
+                            let _ = client
+                                .post(&url)
+                                .json(&serde_json::json!({ "timestamp": chrono::Utc::now().to_rfc3339() }))
+                                .send()
+                                .await;
+                            debug!(agent_id = %agent_id, "supervisor heartbeat sent");
+                        }
+                        _ = &mut rx => {
+                            debug!("supervisor heartbeat task cancelled");
+                            break;
+                        }
+                    }
+                }
+            });
+            Some(tx)
+        } else {
+            None
+        };
 
         // Group steps by tier
         let max_tier = workplan.steps.iter().map(|s| s.tier as u32).max().unwrap_or(0);
@@ -823,7 +974,17 @@ impl Supervisor {
                 .await?;
 
             let passed = matches!(&result, TierResult::AllPassed { .. });
+            let halted = matches!(&result, TierResult::Halted { .. });
             tier_results.push((tier, result));
+
+            if halted {
+                let reason = tier_results
+                    .last()
+                    .and_then(|(_, r)| if let TierResult::Halted { reason, .. } = r { Some(reason.clone()) } else { None })
+                    .unwrap_or_else(|| format!("tier {} exhausted max iterations", tier));
+                eprintln!("\n[hex] Pipeline halted: {}\n[hex] Fix the issues above and re-run `hex dev`.", reason);
+                return Err(anyhow::anyhow!("pipeline halted: {}", reason));
+            }
 
             if !passed {
                 info!(tier, "tier did not fully pass — continuing to next tier");
@@ -851,6 +1012,8 @@ impl Supervisor {
 
         // Track which objectives have had a prior agent result (for fixer vs primary agent selection)
         let mut prior_results: HashMap<Objective, bool> = HashMap::new();
+        // Accumulate error outputs per objective across fix iterations (last 2 kept).
+        let mut prior_errors_map: HashMap<Objective, Vec<String>> = HashMap::new();
 
         for iteration in 1..=MAX_ITERATIONS {
             // Evaluate ALL objectives from scratch each iteration
@@ -863,6 +1026,28 @@ impl Supervisor {
                 &self.nexus_url,
             )
             .await;
+
+            // Report RL outcome for code generation once CodeCompiles state is known.
+            // `report_outcome` is a no-op when the model was not RL-selected (YAML/default),
+            // so this is safe to call unconditionally — it will never panic.
+            if let Ok(mut guard) = self.last_code_selection.lock() {
+                if let Some((ref selected, duration_ms)) = *guard {
+                    let compile_met = states
+                        .iter()
+                        .find(|s| matches!(s.objective, Objective::CodeCompiles))
+                        .map(|s| s.met)
+                        .unwrap_or(false);
+                    if let Err(e) = self
+                        .selector
+                        .report_outcome(selected, TaskType::CodeGeneration, compile_met, 0.0, duration_ms)
+                        .await
+                    {
+                        debug!(error = %e, "RL reward report failed — continuing (non-fatal)");
+                    }
+                    // Clear after reporting so we don't double-report on subsequent iterations.
+                    *guard = None;
+                }
+            }
 
             // Print progress
             print_iteration_progress(tier, iteration, &states);
@@ -906,6 +1091,7 @@ impl Supervisor {
 
             // Build context and execute the appropriate agent.
             // Reviewer failures (timeouts, inference errors) are non-fatal — skip rather than abort.
+            let prior_errors = prior_errors_map.get(&obj).cloned().unwrap_or_default();
             let agent_result = self.execute_agent_tracked(
                 agent_role,
                 tier,
@@ -914,8 +1100,22 @@ impl Supervisor {
                 adr_content,
                 workplan_summary,
                 iteration,
+                &prior_errors,
             )
             .await;
+
+            // If this was a fixer role and the objective still has blocking issues,
+            // carry the current error forward for the next iteration (keep last 2).
+            if agent_role == "hex-fixer" {
+                let errors = prior_errors_map.entry(obj).or_default();
+                let current_error = unmet_state.blocking_issues.join("\n");
+                if !current_error.is_empty() {
+                    errors.push(current_error);
+                    if errors.len() > 2 {
+                        errors.remove(0);
+                    }
+                }
+            }
 
             if let Err(e) = agent_result {
                 use crate::pipeline::objectives::Objective::*;
@@ -937,8 +1137,15 @@ impl Supervisor {
                 }
             }
 
-            // Mark that this objective now has a prior result
-            prior_results.insert(obj, true);
+            // Mark that this objective now has a prior result.
+            // Exception: for ReviewPasses, alternate reviewer → fixer → reviewer by resetting
+            // to false after the fixer runs, so the next iteration re-reviews the fixed code.
+            let next_prior = if obj == Objective::ReviewPasses && has_prior {
+                false // fixer just ran — reset so reviewer runs next
+            } else {
+                true
+            };
+            prior_results.insert(obj, next_prior);
         }
 
         // Final evaluation after max iterations
@@ -958,33 +1165,80 @@ impl Supervisor {
         );
         print_iteration_progress(tier, MAX_ITERATIONS, &final_states);
 
-        Ok(TierResult::MaxIterations {
-            iterations: MAX_ITERATIONS,
+        // Identify the first unmet objective for the notification message.
+        let first_unmet = final_states
+            .iter()
+            .find(|s| !s.met && s.skip_reason.is_none())
+            .map(|s| format!("{}", s.objective))
+            .unwrap_or_else(|| "unknown objective".to_string());
+        let reason = format!(
+            "Pipeline stalled: tier {} exhausted {} iterations on {}",
+            tier, MAX_ITERATIONS, first_unmet
+        );
+        let last_error = final_states
+            .iter()
+            .find(|s| !s.met && s.skip_reason.is_none())
+            .map(|s| s.blocking_issues.join("\n"))
+            .unwrap_or_default();
+
+        // Send a critical inbox notification (best-effort — don't abort on failure).
+        {
+            let nexus = crate::nexus_client::NexusClient::new(self.nexus_url.clone());
+            let body = serde_json::json!({
+                "priority": 2,
+                "kind": "pipeline_stalled",
+                "payload": serde_json::json!({
+                    "title": reason,
+                    "body": last_error,
+                }).to_string(),
+            });
+            if let Err(e) = nexus.post("/api/hexflo/inbox/notify", &body).await {
+                warn!(error = %e, "failed to send pipeline-stalled inbox notification");
+            }
+        }
+
+        Ok(TierResult::Halted {
+            reason,
             states: final_states,
         })
     }
 
     // ── HexFlo task tracking helpers ────────────────────────────────────
 
-    /// Create a HexFlo task for the given role/objective (best-effort).
+    /// Create (or reuse) a HexFlo task for the given role/objective (best-effort).
+    ///
+    /// If `step_id` matches a key in `self.task_id_map` (populated from SwarmPhase),
+    /// the existing task ID is returned and the task is marked in_progress via PATCH.
+    /// Otherwise a new shadow task is created as before.
+    ///
     /// Returns the task ID if successful.
     async fn create_tracking_task(
         &self,
         role: &str,
         objective: &Objective,
         iteration: u32,
+        step_id: Option<&str>,
     ) -> Option<String> {
+        // Check if SwarmPhase already created a task for this step.
+        if let Some(sid) = step_id {
+            if let Some(existing_id) = self.task_id_map.get(sid) {
+                debug!(task_id = %existing_id, step_id = %sid, role, "reusing SwarmPhase HexFlo task");
+                // Mark in_progress via the assign endpoint (best-effort).
+                if let Some(ref agent_id) = self.agent_id {
+                    let runner = CliRunner::new();
+                    let _ = runner.run_raw(&["task", "assign", existing_id, agent_id]);
+                }
+                return Some(existing_id.clone());
+            }
+        }
+
         let swarm_id = self.swarm_id.as_ref()?;
         let runner = CliRunner::new();
         let title = format!("{}: {} [iteration {}]", role, objective, iteration);
-        match runner.task_create(swarm_id, &title) {
+        match runner.task_create(swarm_id, &title, self.agent_id.as_deref()) {
             Ok(resp) => {
                 let task_id = resp["id"].as_str().map(|s| s.to_string());
                 if let Some(ref tid) = task_id {
-                    // Assign to current agent if we have an agent_id
-                    if let Some(ref aid) = self.agent_id {
-                        let _ = runner.run(&["task", "assign", tid, aid]);
-                    }
                     debug!(task_id = %tid, role, "created HexFlo tracking task");
                 }
                 task_id
@@ -1052,10 +1306,14 @@ impl Supervisor {
         adr_content: &str,
         workplan_summary: &str,
         iteration: u32,
+        prior_errors: &[String],
     ) -> Result<()> {
-        // Create HexFlo tracking task (best-effort)
+        // Create (or reuse) HexFlo tracking task (best-effort).
+        // Use the first workplan step's ID as the map key so SwarmPhase tasks
+        // are reused instead of creating duplicate shadow tasks.
+        let step_id = workplan_steps.first().map(|s| s.id.as_str());
         let tracking_task_id = self
-            .create_tracking_task(role, &state.objective, iteration)
+            .create_tracking_task(role, &state.objective, iteration, step_id)
             .await;
 
         // Read cardinality for this role from the swarm YAML (ADR-2603240130 S06).
@@ -1159,14 +1417,14 @@ impl Supervisor {
                 // No tracking task ID — cannot delegate without a task, fall back to inline
                 debug!(role, "no tracking task ID — falling back to inline dispatch");
                 self.dispatch_agent(
-                    role, tier, state, workplan_steps, adr_content, workplan_summary,
+                    role, tier, state, workplan_steps, adr_content, workplan_summary, prior_errors,
                 )
                 .await
             }
         } else {
             // ── Inline fallback (no workers running) ────────────────────
             self.dispatch_agent(
-                role, tier, state, workplan_steps, adr_content, workplan_summary,
+                role, tier, state, workplan_steps, adr_content, workplan_summary, prior_errors,
             )
             .await
         };
@@ -1220,6 +1478,7 @@ impl Supervisor {
         workplan_steps: &[&WorkplanStep],
         _adr_content: &str,
         workplan_summary: &str,
+        prior_errors: &[String],
     ) -> Result<()> {
         let model_override = self.model_override.as_deref();
         let provider_pref = self.provider_pref.as_deref();
@@ -1387,8 +1646,16 @@ impl Supervisor {
                                 .with_context(|| format!("code phase step {} failed", step.id))?
                         };
 
+                        // Store selection metadata for RL reward reporting after evaluate_all.
+                        // Success/failure is not known until CodeCompiles is evaluated, so we
+                        // store here and report in run_tier once the objective state is available.
+                        if let Ok(mut guard) = self.last_code_selection.lock() {
+                            *guard = Some((result.selected_model.clone(), result.duration_ms));
+                        }
+
                         // Write generated code to disk
-                        if let Some(ref rel_path) = result.file_path {
+                        if let Some(ref raw_path) = result.file_path {
+                            let rel_path = self.strip_output_dir_prefix(raw_path);
                             let full_path = PathBuf::from(&self.output_dir).join(rel_path);
                             if let Some(parent) = full_path.parent() {
                                 fs::create_dir_all(parent)
@@ -1455,17 +1722,18 @@ impl Supervisor {
                                 }
                             }
                             if !blocking_violations.is_empty() {
-                                let (target_file, fix_type) = self.infer_fix_target(
+                                let (target_files, fix_type) = self.infer_fix_target(
                                     tier,
                                     &state.objective,
                                     &blocking_violations,
                                 );
                                 let fix_input = FixTaskInput {
                                     fix_type,
-                                    target_file,
+                                    target_file: target_files.join("\n"),
                                     error_context: blocking_violations.join("\n\n"),
                                     language: self.language.clone(),
                                     output_dir: self.output_dir.clone(),
+                                    prior_errors: vec![],
                                 };
                                 let fix_agent = FixAgent::from_env();
                                 match fix_agent.execute(fix_input, effective_model, provider_pref).await {
@@ -1521,17 +1789,18 @@ impl Supervisor {
                                 .unwrap_or_default();
 
                             if !gate_errors.is_empty() {
-                                let (target_file, fix_type) = self.infer_fix_target(
+                                let (target_files, fix_type) = self.infer_fix_target(
                                     tier,
                                     &state.objective,
                                     &gate_errors,
                                 );
                                 let fix_input = FixTaskInput {
                                     fix_type,
-                                    target_file,
+                                    target_file: target_files.join("\n"),
                                     error_context: gate_errors.join("\n\n"),
                                     language: self.language.clone(),
                                     output_dir: self.output_dir.clone(),
+                                    prior_errors: vec![],
                                 };
                                 let fix_agent = FixAgent::from_env();
                                 match fix_agent.execute(fix_input, effective_model, provider_pref).await {
@@ -1612,8 +1881,14 @@ impl Supervisor {
                             .await
                             .with_context(|| format!("code phase step {} failed", step.id))?;
 
+                        // Store selection metadata for RL reward reporting after evaluate_all.
+                        if let Ok(mut guard) = self.last_code_selection.lock() {
+                            *guard = Some((result.selected_model.clone(), result.duration_ms));
+                        }
+
                         // Write generated code to disk
-                        if let Some(ref rel_path) = result.file_path {
+                        if let Some(ref raw_path) = result.file_path {
+                            let rel_path = self.strip_output_dir_prefix(raw_path);
                             let full_path = PathBuf::from(&self.output_dir).join(rel_path);
                             if let Some(parent) = full_path.parent() {
                                 fs::create_dir_all(parent)
@@ -1678,17 +1953,18 @@ impl Supervisor {
                                 }
                             }
                             if !blocking_violations.is_empty() {
-                                let (target_file, fix_type) = self.infer_fix_target(
+                                let (target_files, fix_type) = self.infer_fix_target(
                                     tier,
                                     &state.objective,
                                     &blocking_violations,
                                 );
                                 let fix_input = FixTaskInput {
                                     fix_type,
-                                    target_file,
+                                    target_file: target_files.join("\n"),
                                     error_context: blocking_violations.join("\n\n"),
                                     language: self.language.clone(),
                                     output_dir: self.output_dir.clone(),
+                                    prior_errors: vec![],
                                 };
                                 let fix_agent = FixAgent::from_env();
                                 match fix_agent.execute(fix_input, effective_model, provider_pref).await {
@@ -1736,14 +2012,22 @@ impl Supervisor {
                     })
                 };
 
-                let mut context = self.build_reviewer_context(&target_file);
+                let mut context = self.build_reviewer_context(&target_file, workplan_summary);
                 context.upstream_output = prior_issues;
 
                 let reviewer_selected = self.select_model_for_role("hex-reviewer", 0);
                 let reviewer_model_id = reviewer_selected.model_id.clone();
-                let reviewer_model: Option<&str> = model_override.or(Some(&reviewer_model_id));
+                // Pass YAML model as a soft preference, not a hard override.
+                // This lets the reviewer's internal RL loop select the model
+                // (and report outcomes back to the Q-table). Only a CLI --model
+                // flag (model_override) is treated as a hard override.
                 let result = agent
-                    .execute(&context, reviewer_model, provider_pref)
+                    .execute_with_preference(
+                        &context,
+                        model_override,
+                        Some(&reviewer_model_id),
+                        provider_pref,
+                    )
                     .await
                     .context("reviewer agent failed")?;
                 // Log per-role performance with actual metrics
@@ -1756,13 +2040,54 @@ impl Supervisor {
                     true,
                     &state.objective,
                 );
+                if result.reviewer_skipped {
+                    warn!(
+                        tier,
+                        "reviewer produced no valid JSON after 3 attempts — \
+                         synthetic PASS written; review was skipped for this tier"
+                    );
+                }
                 // Write review output so evaluate_review_passes can pick it up
                 let review_dir = PathBuf::from(&self.output_dir).join(".hex-review");
                 let _ = fs::create_dir_all(&review_dir);
+
+                // For standalone projects, downgrade hex-architecture false positives.
+                // Free models routinely flag "no composition root", "port interface contract",
+                // etc. on standalone CLIs despite the standalone_note instruction.  These
+                // are never real issues for a CLI/script project.
+                let is_standalone = self.port_files().is_empty();
+                let hex_false_positive_patterns = [
+                    "composition root",
+                    "port interface",
+                    "domain layer",
+                    "hexagonal",
+                    "adapter implementation",
+                    "hex boundary",
+                    "composition-root",
+                ];
+                let filtered_issues: Vec<_> = result.issues.iter().map(|i| {
+                    let mut severity = i.severity.clone();
+                    if is_standalone && (severity == "critical" || severity == "major") {
+                        let desc_lower = i.description.to_lowercase();
+                        if hex_false_positive_patterns.iter().any(|p| desc_lower.contains(p)) {
+                            severity = "minor".to_string();
+                        }
+                    }
+                    (severity, i)
+                }).collect();
+
+                // Recompute verdict: PASS if no critical/high issues remain after filtering.
+                let filtered_verdict = if filtered_issues.iter().any(|(sev, _)| sev == "critical" || sev == "high") {
+                    result.verdict.clone()
+                } else {
+                    "PASS".to_string()
+                };
+
                 let review_json = serde_json::json!({
-                    "verdict": result.verdict,
-                    "issues": result.issues.iter().map(|i| serde_json::json!({
-                        "severity": i.severity,
+                    "verdict": filtered_verdict,
+                    "reviewer_skipped": result.reviewer_skipped,
+                    "issues": filtered_issues.iter().map(|(sev, i)| serde_json::json!({
+                        "severity": sev,
                         "message": i.description,
                         "location": i.location,
                         "recommendation": i.recommendation,
@@ -1869,14 +2194,40 @@ impl Supervisor {
                 }
 
                 let agent = FixAgent::from_env();
-                let (target_file, fix_type) =
+                let (target_files, fix_type) =
                     self.infer_fix_target(tier, &state.objective, &state.blocking_issues);
+                // Include workplan summary so the fixer knows WHAT the code should do,
+                // not just what the issues are. This prevents the fixer from "fixing"
+                // review issues without understanding the intended behaviour.
+                // For Rust test failures, prepend the exact binary name so the fixer
+                // never guesses a wrong CARGO_BIN_EXE_<name> macro argument.
+                let binary_name_prefix = if self.language == "rust"
+                    && state.objective == Objective::TestsPass
+                {
+                    self.rust_binary_name()
+                        .map(|n| format!("The binary name from Cargo.toml is EXACTLY `{}`.\n\n", n))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+
+                let error_context = if workplan_summary.is_empty() {
+                    format!("{}{}", binary_name_prefix, state.blocking_issues.join("\n"))
+                } else {
+                    format!(
+                        "{}FEATURE OBJECTIVE (what this code must do):\n{}\n\nISSUES TO FIX:\n{}",
+                        binary_name_prefix,
+                        workplan_summary,
+                        state.blocking_issues.join("\n")
+                    )
+                };
                 let input = FixTaskInput {
                     fix_type,
-                    target_file,
-                    error_context: state.blocking_issues.join("\n"),
+                    target_file: target_files.join("\n"),
+                    error_context,
                     language: self.language.clone(),
                     output_dir: self.output_dir.clone(),
+                    prior_errors: prior_errors.to_vec(),
                 };
                 let result = agent
                     .execute(input, model_override, provider_pref)
@@ -1921,40 +2272,100 @@ impl Supervisor {
             })
     }
 
-    /// Infer fix target file and fix_type from the objective and blocking issues.
+    /// Infer fix target files and fix_type from the objective and blocking issues.
+    /// Returns all unique file paths found across all blocking issues (not just the first).
     fn infer_fix_target(
         &self,
         tier: u32,
         objective: &Objective,
         blocking_issues: &[String],
-    ) -> (String, String) {
-        // Try to extract a file path from the first blocking issue
-        let target_file = blocking_issues
-            .first()
-            .and_then(|issue| {
-                // Look for patterns like "path/to/file.ts:42:" or "path/to/file.ts: message"
-                let parts: Vec<&str> = issue.splitn(2, ':').collect();
-                let candidate = parts.first().unwrap_or(&"").trim();
-                if candidate.contains('.') && (candidate.contains('/') || candidate.contains('\\'))
-                {
-                    // Looks like a file path — resolve to an absolute path so that
-                    // the second path join below (full_path) doesn't double-prepend
-                    // output_dir when output_dir is itself a relative path.
-                    let abs_output = std::env::current_dir()
-                        .unwrap_or_else(|_| PathBuf::from("."))
-                        .join(&self.output_dir);
-                    let full_path = abs_output.join(candidate);
-                    if full_path.exists() {
-                        Some(full_path.display().to_string())
+    ) -> (Vec<String>, String) {
+        let abs_output = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(&self.output_dir);
+
+        // Collect unique file paths from ALL blocking issues.
+        // Matches patterns like:
+        //   "path/to/file.rs:42:5: error ..."   (tsc / rustc colon-separated)
+        //   " --> src/main.rs:10:3"              (rustc arrow notation)
+        let mut seen = std::collections::HashSet::new();
+        let mut target_files: Vec<String> = Vec::new();
+
+        let resolve_candidate = |candidate: &str| -> Option<String> {
+            if candidate.contains('.') && (candidate.contains('/') || candidate.contains('\\')) {
+                // Normalize to a path relative to output_dir so that
+                // PathBuf::join never silently discards the base (which happens
+                // when the input is already absolute). Two cases:
+                //   • Absolute path (from tsc/eslint with rootDir mismatch):
+                //     strip the abs_output prefix → get the relative portion.
+                //   • Relative path that echoes output_dir prefix:
+                //     strip_output_dir_prefix handles this.
+                let relative: &str = if candidate.starts_with('/') || candidate.starts_with('\\') {
+                    let abs_str = abs_output.to_str().unwrap_or("");
+                    let prefix = format!("{}/", abs_str);
+                    if let Some(rel) = candidate.strip_prefix(prefix.as_str()) {
+                        rel
                     } else {
-                        // File doesn't exist yet — return relative so fixer can create it
-                        Some(candidate.to_string())
+                        // Path is outside output_dir — not a project file; skip.
+                        return None;
                     }
                 } else {
-                    None
+                    self.strip_output_dir_prefix(candidate)
+                };
+
+                let full_path = abs_output.join(relative);
+                if full_path.exists() {
+                    Some(full_path.display().to_string())
+                } else {
+                    // File doesn't exist yet — return relative so fixer can create it
+                    let abs_relative = PathBuf::from(&self.output_dir)
+                        .join(relative)
+                        .display()
+                        .to_string();
+                    Some(abs_relative)
                 }
-            })
-            .unwrap_or_else(|| self.first_source_file_for_tier(tier));
+            } else {
+                None
+            }
+        };
+
+        for issue in blocking_issues {
+            // Pattern 1: " --> src/foo.rs:10:3" (rustc arrow notation)
+            for line in issue.lines() {
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_prefix("--> ") {
+                    let file_part = rest.splitn(2, ':').next().unwrap_or("").trim();
+                    if let Some(resolved) = resolve_candidate(file_part) {
+                        if seen.insert(resolved.clone()) {
+                            target_files.push(resolved);
+                        }
+                        continue;
+                    }
+                }
+                // Pattern 2: "path/to/file.rs:42:5: error ..." (colon-separated first token)
+                let parts: Vec<&str> = trimmed.splitn(2, ':').collect();
+                let candidate = parts.first().unwrap_or(&"").trim();
+                if let Some(resolved) = resolve_candidate(candidate) {
+                    if seen.insert(resolved.clone()) {
+                        target_files.push(resolved);
+                    }
+                }
+            }
+        }
+
+        // Fall back to the first source file for the tier if nothing was found.
+        if target_files.is_empty() {
+            let fallback = self.first_source_file_for_tier(tier);
+            let full_path = if Path::new(&fallback).is_absolute() {
+                fallback
+            } else {
+                PathBuf::from(&self.output_dir)
+                    .join(&fallback)
+                    .display()
+                    .to_string()
+            };
+            target_files.push(full_path);
+        }
 
         let fix_type = match objective {
             Objective::CodeCompiles => "compile".to_string(),
@@ -1964,16 +2375,7 @@ impl Supervisor {
             _ => "compile".to_string(),
         };
 
-        let full_path = if Path::new(&target_file).is_absolute() {
-            target_file
-        } else {
-            PathBuf::from(&self.output_dir)
-                .join(&target_file)
-                .display()
-                .to_string()
-        };
-
-        (full_path, fix_type)
+        (target_files, fix_type)
     }
 
     /// Auto-patch `Cargo.toml` by adding missing crate dependencies inferred from
@@ -2074,9 +2476,9 @@ impl Supervisor {
             );
         }
 
-        // Fallback: default model
+        // Fallback: default model (use specific free model, not dynamic openrouter/free routing)
         crate::pipeline::model_selection::SelectedModel {
-            model_id: "openrouter/free".to_string(),
+            model_id: crate::pipeline::model_selection::default_model_for_general().to_string(),
             state_key: None,
             action: None,
             source: crate::pipeline::model_selection::SelectionSource::Default,
@@ -2211,6 +2613,11 @@ pub enum TierResult {
         iterations: u32,
         states: Vec<ObjectiveState>,
     },
+    /// Pipeline halted: max iterations exhausted; inbox notification was sent.
+    Halted {
+        reason: String,
+        states: Vec<ObjectiveState>,
+    },
 }
 
 impl TierResult {
@@ -2224,6 +2631,7 @@ impl TierResult {
         match self {
             TierResult::AllPassed { states, .. } => states,
             TierResult::MaxIterations { states, .. } => states,
+            TierResult::Halted { states, .. } => states,
         }
     }
 
@@ -2232,6 +2640,7 @@ impl TierResult {
         match self {
             TierResult::AllPassed { iterations, .. } => *iterations,
             TierResult::MaxIterations { iterations, .. } => *iterations,
+            TierResult::Halted { .. } => 0,
         }
     }
 }

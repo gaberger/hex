@@ -1,7 +1,7 @@
 # ADR-2603241500: TUI Async Channel Architecture
 
-- **Status**: Accepted
-- **Date**: 2026-03-24
+**Status:** Accepted
+**Date:** 2026-03-24
 - **Supersedes**: ADR-2603241430 (TUI Non-Blocking Phase Execution — two-tick workaround)
 - **Relates to**: ADR-2603232005 (Self-Sufficient hex-agent with TUI)
 

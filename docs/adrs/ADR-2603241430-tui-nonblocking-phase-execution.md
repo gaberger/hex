@@ -1,7 +1,7 @@
 # ADR-2603241430: TUI Non-Blocking Phase Execution
 
-- **Status**: Accepted
-- **Date**: 2026-03-24
+**Status:** Superseded by ADR-2603241500
+**Date:** 2026-03-24
 - **Relates to**: ADR-2603232005 (Self-Sufficient hex-agent with TUI)
 
 ## Context

@@ -474,9 +474,9 @@ fn extract_model_from_action(action: &str, task_type: TaskType) -> String {
         if segment.starts_with("model:") {
             // Non-OpenRouter model from RL — map known variants.
             return match segment {
-                "model:opus" => "anthropic/claude-opus-4-6".to_string(),
-                "model:sonnet" => "anthropic/claude-sonnet-4-6".to_string(),
-                "model:haiku" => "openai/gpt-4o-mini".to_string(),
+                "model:opus" => "claude-opus-4-6".to_string(),
+                "model:sonnet" => "claude-sonnet-4-6".to_string(),
+                "model:haiku" => "claude-haiku-4-5-20251001".to_string(),
                 "model:minimax" => "MiniMax-M2.7".to_string(),
                 "model:minimax_fast" => "MiniMax-M1".to_string(),
                 "model:local" => "local".to_string(),

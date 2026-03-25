@@ -1,7 +1,7 @@
 # ADR-2603241126: TUI CLI Surrogate + Pipeline Traceability
 
-- **Status**: Accepted
-- **Date**: 2026-03-24
+**Status:** Accepted
+**Date:** 2026-03-24
 - **Relates to**: ADR-019 (CLI–MCP Parity), ADR-2603222229 (CLI/MCP/Dashboard Parity), ADR-2603232220 (Developer Audit Report), ADR-059 (Canonical Project Identity)
 
 ## Context

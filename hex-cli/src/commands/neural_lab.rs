@@ -425,18 +425,6 @@ async fn frontier(lineage: Option<&str>, json_output: bool) -> anyhow::Result<()
     Ok(())
 }
 
-/// Format parameter count with human-readable suffix (e.g. 1.2M, 350K).
-fn format_param_count(count: u64) -> String {
-    if count >= 1_000_000_000 {
-        format!("{:.1}B", count as f64 / 1_000_000_000.0)
-    } else if count >= 1_000_000 {
-        format!("{:.1}M", count as f64 / 1_000_000.0)
-    } else if count >= 1_000 {
-        format!("{:.0}K", count as f64 / 1_000.0)
-    } else {
-        format!("{}", count)
-    }
-}
 
 // ─── Strategies ──────────────────────────────────────────
 

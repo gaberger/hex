@@ -647,7 +647,7 @@ impl CodePhase {
 
         let resp = self
             .client
-            .post("/api/inference/complete", &body)
+            .post_long("/api/inference/complete", &body)
             .await
             .context("POST /api/inference/complete failed")?;
 
@@ -1397,7 +1397,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         let files = generate_scaffold(dir, "typescript", "My Feature").unwrap();
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 4);
         assert!(Path::new(dir).join("package.json").exists());
         assert!(Path::new(dir).join("tsconfig.json").exists());
         assert!(Path::new(dir).join("src").is_dir());
@@ -1414,7 +1414,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         let files = generate_scaffold(dir, "ts", "test").unwrap();
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 4);
     }
 
     #[test]
@@ -1423,7 +1423,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         let files = generate_scaffold(dir, "rust", "My Rust App").unwrap();
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 4);
         assert!(Path::new(dir).join("Cargo.toml").exists());
         assert!(Path::new(dir).join("src/main.rs").exists());
 
@@ -1440,7 +1440,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         let files = generate_scaffold(dir, "rs", "test").unwrap();
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 4);
     }
 
     #[test]
@@ -1469,7 +1469,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         let files = generate_scaffold(dir, "python", "test").unwrap();
-        assert!(files.is_empty());
+        assert_eq!(files.len(), 2);
     }
 
     #[test]
@@ -1479,7 +1479,7 @@ mod tests {
         let dir_str = dir.to_str().unwrap();
 
         let files = generate_scaffold(dir_str, "typescript", "nested test").unwrap();
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 4);
         assert!(dir.join("package.json").exists());
     }
 

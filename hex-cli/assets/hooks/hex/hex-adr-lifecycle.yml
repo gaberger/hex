@@ -28,15 +28,18 @@ checks:
         ## Consequences
 
       Validate metadata:
-        - ADR number must be sequential (max existing + 1)
-        - Status must be "proposed" for new ADRs
-        - Date must be present
+        - ADR ID must use timestamp format YYMMDDHHMM (e.g. ADR-2603221500)
+        - **Status:** line must be present and use bold-label format (not ## Status heading)
+        - Status must be "Proposed" for new ADRs
+        - **Date:** must be present in YYYY-MM-DD format
+        - **Drivers:** must be present
 
       Template for reference:
-        # ADR-NNN: Title
+        # ADR-{YYMMDDHHMM}: Title
 
-        ## Status
-        Proposed — YYYY-MM-DD
+        **Status:** Proposed
+        **Date:** YYYY-MM-DD
+        **Drivers:** What triggered this decision
 
         ## Context
         Why this decision is needed. What problem are we solving?

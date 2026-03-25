@@ -24,25 +24,25 @@ pub struct ADRDetail {
     pub content: String,
 }
 
-/// Find the ADR directory — look in current dir and common project roots.
+/// Find the ADR directory by walking upward from CWD, matching the CLI's strategy.
 fn find_adr_dir() -> Option<PathBuf> {
-    let candidates = [
-        PathBuf::from("docs/adrs"),
-        PathBuf::from("../docs/adrs"),
-        PathBuf::from("../../docs/adrs"),
-    ];
-    for c in &candidates {
-        if c.is_dir() {
-            return Some(c.clone());
-        }
-    }
+    // HEX_PROJECT_ROOT takes precedence when explicitly set
     if let Ok(root) = std::env::var("HEX_PROJECT_ROOT") {
         let p = PathBuf::from(root).join("docs/adrs");
         if p.is_dir() {
             return Some(p);
         }
     }
-    None
+    // Walk upward from CWD — same logic as hex-cli's find_adr_dir()
+    let cwd = std::env::current_dir().ok()?;
+    let mut dir = cwd.as_path();
+    loop {
+        let candidate = dir.join("docs").join("adrs");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        dir = dir.parent()?;
+    }
 }
 
 /// Parse frontmatter from ADR markdown to extract title, status, date.
@@ -107,27 +107,32 @@ fn parse_adr_frontmatter(content: &str, filename: &str) -> (String, String, Stri
     (title, status, date)
 }
 
-/// Extract the numeric ID portion from an ADR filename.
+/// Extract the full ADR ID from a filename stem, e.g. "ADR-059-foo.md" → "ADR-059",
+/// "ADR-2603221500-foo.md" → "ADR-2603221500". Matches CLI's extract_adr_id().
 fn extract_id(filename: &str) -> String {
-    filename
-        .trim_start_matches("ADR-")
-        .trim_start_matches("adr-")
-        .split('-')
-        .next()
-        .unwrap_or("000")
-        .to_string()
+    let stem = filename.trim_end_matches(".md");
+    if let Some(rest) = stem.strip_prefix("ADR-").or_else(|| stem.strip_prefix("adr-")) {
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            return format!("ADR-{}", digits);
+        }
+    }
+    stem.to_string()
 }
 
 // ── Shared helpers for directory-based ADR resolution ─────
 
-/// List all ADRs from a given directory.
+/// List all ADRs from a given directory. Matches CLI's collect_adrs() behaviour:
+/// - Only files starting with "ADR-" (skips TEMPLATE.md, README.md, etc.)
+/// - Sorted ascending by filename (same as CLI's path sort)
+/// - Full "ADR-NNN" ID format (not bare numeric)
 fn list_adrs_from_dir(dir: &StdPath) -> Vec<ADRSummary> {
     let mut adrs: Vec<ADRSummary> = Vec::new();
 
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let filename = entry.file_name().to_string_lossy().to_string();
-            if !filename.ends_with(".md") {
+            if !filename.ends_with(".md") || !filename.starts_with("ADR-") {
                 continue;
             }
 
@@ -145,8 +150,8 @@ fn list_adrs_from_dir(dir: &StdPath) -> Vec<ADRSummary> {
         }
     }
 
-    // Sort by ID descending (newest first)
-    adrs.sort_by(|a, b| b.id.cmp(&a.id));
+    // Sort ascending by filename — matches CLI sort (a.path.cmp(&b.path))
+    adrs.sort_by(|a, b| a.filename.cmp(&b.filename));
     adrs
 }
 
@@ -216,22 +221,33 @@ async fn resolve_project_path(state: &SharedState, project_id: &str) -> Result<S
 
 // ── Global ADR handlers (existing, now delegate to shared fns) ───
 
+#[derive(Deserialize)]
+pub struct AdrListQuery {
+    status: Option<String>,
+}
+
 /// GET /api/adrs — list all ADRs with metadata.
-pub async fn list_adrs() -> (StatusCode, Json<serde_json::Value>) {
+/// Optional `?status=accepted` filter matches CLI's behaviour.
+pub async fn list_adrs(
+    Query(params): Query<AdrListQuery>,
+) -> (StatusCode, Json<serde_json::Value>) {
     let dir = match find_adr_dir() {
         Some(d) => d,
         None => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({
-                    "error": "ADR directory not found",
-                    "searched": ["docs/adrs", "../docs/adrs", "../../docs/adrs"]
-                })),
+                Json(json!({ "error": "ADR directory not found (docs/adrs/ not found in any parent directory)" })),
             )
         }
     };
 
-    let adrs = list_adrs_from_dir(&dir);
+    let mut adrs = list_adrs_from_dir(&dir);
+
+    if let Some(filter) = params.status.as_deref().filter(|s| !s.is_empty()) {
+        let filter_lower = filter.to_lowercase();
+        adrs.retain(|a| a.status.to_lowercase() == filter_lower);
+    }
+
     (
         StatusCode::OK,
         Json(serde_json::to_value(&adrs).unwrap_or_default()),

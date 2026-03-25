@@ -20,6 +20,9 @@ pub enum TaskAction {
         /// Comma-separated task IDs this task depends on
         #[arg(long, default_value = "")]
         depends_on: String,
+        /// Agent to assign immediately (auto-resolved from session state if omitted)
+        #[arg(long)]
+        agent: Option<String>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -47,22 +50,28 @@ pub enum TaskAction {
 
 pub async fn run(action: TaskAction) -> anyhow::Result<()> {
     match action {
-        TaskAction::Create { swarm_id, title, depends_on, json } => create(&swarm_id, &title, &depends_on, json).await,
+        TaskAction::Create { swarm_id, title, depends_on, agent, json } => create(&swarm_id, &title, &depends_on, agent, json).await,
         TaskAction::List => list().await,
         TaskAction::Complete { id, result, json } => complete(&id, result.as_deref(), json).await,
         TaskAction::Assign { task_id, agent_id } => assign(&task_id, agent_id).await,
     }
 }
 
-async fn create(swarm_id: &str, title: &str, depends_on: &str, json_output: bool) -> anyhow::Result<()> {
+async fn create(swarm_id: &str, title: &str, depends_on: &str, agent: Option<String>, json_output: bool) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
+
+    // Auto-resolve agent_id from session state if not provided
+    let agent_id = agent.or_else(|| crate::nexus_client::read_session_agent_id());
 
     // POST to /api/swarms/{swarm_id}/tasks
     let path = format!("/api/swarms/{}/tasks", swarm_id);
     let mut body = json!({ "title": title });
     if !depends_on.is_empty() {
         body["dependsOn"] = json!(depends_on);
+    }
+    if let Some(ref aid) = agent_id {
+        body["agentId"] = json!(aid);
     }
 
     let resp = nexus.post(&path, &body).await;
@@ -244,7 +253,7 @@ async fn assign(task_id: &str, agent_id: Option<String>) -> anyhow::Result<()> {
 
     let path = format!("/api/hexflo/tasks/{}", task_id);
     nexus.patch(&path, &json!({
-        "agent_id": resolved_agent_id,
+        "agentId": resolved_agent_id,
     })).await?;
 
     println!("{} Task assigned", "\u{2b21}".green());

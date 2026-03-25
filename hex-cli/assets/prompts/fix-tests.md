@@ -73,6 +73,8 @@ Produce ONLY the corrected file content for the file at `{{file_path}}`. No mark
 
 ## Rules
 
+0. **Rust binary name**: If fixing a Rust test that uses `env!("CARGO_BIN_EXE_<name>")`, the EXACT binary name is provided in the issue description as "The binary name from Cargo.toml is EXACTLY `<name>`". Use that name verbatim — never invent or guess it. A wrong name causes compile failure.
+
 1. **Fix the right file**: Determine whether the source or the test is wrong before making changes. Do not blindly adjust test expectations to match buggy source code.
 2. **Minimal changes**: Make the smallest change that fixes the failures. Do not refactor unrelated code.
 3. **No new failures**: Your fix must not break other tests. If you suspect a fix might affect other test files, note this with a comment `// NOTE: This change may affect tests in <other-file>`.

@@ -100,10 +100,19 @@ impl TesterAgent {
             .await.context("model selection failed for tester")?;
         info!(model = %selected.model_id, source = %selected.source, "selected model for test generation");
 
+        // For Rust, the binary name must come from Cargo.toml — never guessed.
+        let binary_name = context.metadata.get("binary_name").cloned()
+            .unwrap_or_else(|| "UNKNOWN_BINARY".to_string());
+
         let lang_reminder = if language == "rust" {
-            " IMPORTANT for Rust: this is an integration test in tests/ (a separate crate). \
-             NEVER use `use super::*`. NEVER call `main()` directly. \
-             Test public functions by name, or use std::process::Command with env!(\"CARGO_BIN_EXE_<name>\") to run the binary.".to_string()
+            format!(
+                " IMPORTANT for Rust: this is an integration test in tests/ (a separate crate). \
+                 NEVER use `use super::*`. NEVER call `main()` directly. \
+                 The binary name from Cargo.toml is EXACTLY `{}`. \
+                 If using std::process::Command, use env!(\"CARGO_BIN_EXE_{}\") — no other name is valid. \
+                 Prefer testing pub helper functions directly over spawning the binary.",
+                binary_name, binary_name
+            )
         } else if language == "typescript" || language == "ts" {
             // Compute the correct relative import path from the test file to the source file.
             let suggested = derive_test_path(&test_target, &language);
@@ -133,7 +142,7 @@ impl TesterAgent {
             "max_tokens": 6144
         });
 
-        let resp = self.client.post("/api/inference/complete", &body).await
+        let resp = self.client.post_long("/api/inference/complete", &body).await
             .context("POST /api/inference/complete failed for tester")?;
         let duration_ms = start.elapsed().as_millis() as u64;
 
