@@ -6,6 +6,7 @@ use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
 use tabled::Tabled;
+use tracing::debug;
 
 use crate::fmt::{HexTable, status_badge, truncate};
 use crate::nexus_client::NexusClient;
@@ -63,6 +64,11 @@ pub enum AgentAction {
         /// Swarm ID to join (worker only processes tasks from this swarm)
         #[arg(long)]
         swarm_id: Option<String>,
+
+        /// Agent ID to use when polling for tasks (overrides auto-registered ID).
+        /// Pass the supervisor's agent ID so the worker picks up tasks the supervisor assigned.
+        #[arg(long)]
+        agent_id: Option<String>,
 
         /// Poll interval in seconds (default 5)
         #[arg(long, default_value_t = 5)]
@@ -128,8 +134,9 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
         AgentAction::Worker {
             role,
             swarm_id,
+            agent_id,
             poll_interval,
-        } => worker(&role, swarm_id, poll_interval).await,
+        } => worker(&role, swarm_id, agent_id, poll_interval).await,
     }
 }
 
@@ -328,6 +335,17 @@ async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
         std::collections::HashMap::new();
     for swarm in &swarms {
         let swarm_name = swarm["name"].as_str().unwrap_or("-");
+
+        // Associate the swarm creator/owner with this swarm
+        let owner = swarm["createdBy"].as_str()
+            .or_else(|| swarm["owner_agent_id"].as_str())
+            .unwrap_or("");
+        if !owner.is_empty() {
+            agent_swarm_map
+                .entry(owner.to_string())
+                .or_insert_with(|| (swarm_name.to_string(), 0, 0, 0));
+        }
+
         if let Some(tasks) = swarm["tasks"].as_array() {
             for task in tasks {
                 let agent_id = task["agentId"].as_str()
@@ -960,6 +978,7 @@ async fn audit() -> anyhow::Result<()> {
 async fn worker(
     role: &str,
     swarm_id: Option<String>,
+    override_agent_id: Option<String>,
     poll_interval: u64,
 ) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
@@ -980,13 +999,18 @@ async fn worker(
         "capabilities": [role],
     });
     let resp = nexus.post("/api/hex-agents/connect", &reg_body).await?;
-    let agent_id = resp["agentId"]
+    let registered_id = resp["agentId"]
         .as_str()
         .unwrap_or("")
         .to_string();
-    if agent_id.is_empty() {
+    if registered_id.is_empty() {
         anyhow::bail!("Failed to register agent — no agentId returned");
     }
+
+    // If the supervisor passed its own agent ID, use that for polling so we
+    // find tasks the supervisor assigned to itself.  We still register under
+    // our own identity for heartbeats.
+    let agent_id = override_agent_id.unwrap_or(registered_id);
 
     let short_id = &agent_id[..8.min(agent_id.len())];
     println!(
@@ -1021,19 +1045,79 @@ async fn worker(
     // Main task poll loop
     let poll_duration = std::time::Duration::from_secs(poll_interval);
     loop {
-        let query = if let Some(ref sid) = swarm_id {
-            format!(
-                "/api/swarms/tasks?agent_id={}&status=in_progress&swarm_id={}",
-                agent_id, sid
-            )
-        } else {
-            format!("/api/swarms/tasks?agent_id={}&status=in_progress", agent_id)
-        };
+        // Step 1: claim a pending task (work-stealing via /api/work-items/incomplete)
+        if let Ok(resp) = nexus.get("/api/work-items/incomplete").await {
+            if let Some(all_incomplete) = resp.as_array() {
+                for candidate in all_incomplete {
+                    // Filter: only pending tasks, and only from our swarm if specified
+                    let status = candidate["status"].as_str().unwrap_or("");
+                    if status != "pending" {
+                        continue;
+                    }
+                    if let Some(ref sid) = swarm_id {
+                        let task_swarm = candidate["swarm_id"]
+                            .as_str()
+                            .or_else(|| candidate["swarmId"].as_str())
+                            .unwrap_or("");
+                        if task_swarm != sid.as_str() {
+                            continue;
+                        }
+                    }
+                    let task_id = candidate["id"].as_str().unwrap_or("");
+                    let version = candidate["version"].as_u64().unwrap_or(0);
+                    if task_id.is_empty() {
+                        continue;
+                    }
+                    // CAS assign — if another worker beats us we get 409 and try next
+                    let assign_result = nexus
+                        .patch(
+                            &format!("/api/swarms/tasks/{}", task_id),
+                            &json!({
+                                "agent_id": agent_id,
+                                "version": version,
+                            }),
+                        )
+                        .await;
+                    if assign_result.is_ok() {
+                        debug!(task_id, "claimed pending task");
+                        break;
+                    }
+                    // 409 = race lost, try next candidate
+                }
+            }
+        }
 
-        match nexus.get(&query).await {
+        // Step 2: execute tasks assigned to this agent (pending/assigned/in_progress)
+        // Use /api/swarms/active enriched response to find our assigned tasks
+        let query = "/api/swarms/active";
+
+        match nexus.get(query).await {
             Ok(resp) => {
-                if let Some(tasks) =
-                    resp.as_array().or_else(|| resp["tasks"].as_array())
+                // /api/swarms/active returns [{id, name, tasks: [...]}, ...]
+                // Flatten all tasks from all swarms, filter to ours (pending/assigned/in_progress + our agent_id)
+                let mut all_tasks: Vec<serde_json::Value> = Vec::new();
+                let swarm_count = resp.as_array().map(|a| a.len()).unwrap_or(0);
+                println!("  [poll] {} swarms, agent_id={}", swarm_count, agent_id);
+                if let Some(swarms) = resp.as_array() {
+                    for swarm in swarms {
+                        if let Some(tasks) = swarm["tasks"].as_array() {
+                            for t in tasks {
+                                let t_agent = t["agent_id"]
+                                    .as_str()
+                                    .or_else(|| t["agentId"].as_str())
+                                    .unwrap_or("");
+                                let t_status = t["status"].as_str().unwrap_or("");
+                                println!("    task {} agent='{}' status='{}'",
+                                    t["id"].as_str().unwrap_or("?"),
+                                    t_agent, t_status);
+                                if t_agent == agent_id && matches!(t_status, "in_progress" | "pending" | "assigned") {
+                                    all_tasks.push(t.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                let tasks = &all_tasks;
                 {
                     for task in tasks {
                         let task_id = task["id"].as_str().unwrap_or("");

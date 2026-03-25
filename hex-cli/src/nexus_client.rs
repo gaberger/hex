@@ -18,6 +18,8 @@ const DEFAULT_PORT: u16 = 5555;
 pub struct NexusClient {
     base_url: String,
     http: reqwest::Client,
+    /// Long-timeout client for inference calls (code generation can take 3-5 min).
+    http_long: reqwest::Client,
     auth_token: Option<String>,
     agent_id: Option<String>,
 }
@@ -50,8 +52,12 @@ impl NexusClient {
             .timeout(Duration::from_secs(120))
             .build()
             .expect("failed to build HTTP client");
+        let http_long = reqwest::Client::builder()
+            .timeout(Duration::from_secs(300))
+            .build()
+            .expect("failed to build long-timeout HTTP client");
         let agent_id = read_session_agent_id();
-        Self { base_url, http, auth_token, agent_id }
+        Self { base_url, http, http_long, auth_token, agent_id }
     }
 
     /// Check if nexus is reachable. Returns Ok(()) or a user-friendly error.
@@ -86,6 +92,30 @@ impl NexusClient {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             bail!("GET {} returned {}: {}", path, status, body);
+        }
+
+        resp.json().await.with_context(|| format!("Failed to parse JSON from {}", path))
+    }
+
+    /// POST JSON to nexus with a 300s timeout — for inference/code-generation calls.
+    pub async fn post_long(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let mut req = self.http_long.post(&url).json(body);
+        if let Some(ref token) = self.auth_token {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+        if let Some(ref id) = self.agent_id {
+            req = req.header("x-hex-agent-id", id.as_str());
+        }
+        let resp = req
+            .send()
+            .await
+            .with_context(|| format!("POST {} failed", url))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            bail!("POST {} returned {}: {}", path, status, text);
         }
 
         resp.json().await.with_context(|| format!("Failed to parse JSON from {}", path))

@@ -141,8 +141,14 @@ async fn chat_message_broadcast_reaches_general_ws() {
     let sub_msg = json!({"type": "subscribe", "topic": "agent:broadcast:*"}).to_string();
     general_ws.send(Message::Text(sub_msg.into())).await.unwrap();
 
-    // Connect a chat client
-    let chat_url = format!("ws://{}/ws/chat", addr);
+    // Give the server time to register the subscription before the sender fires
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Connect a chat client with an explicit agent_id.
+    // This forces the server to route the message to the broadcast channel
+    // (agent route) rather than the LLM bridge, regardless of whether
+    // ANTHROPIC_API_KEY is set in the test environment.
+    let chat_url = format!("ws://{}/ws/chat?agent_id=broadcast", addr);
     let (mut chat_ws, _) = tokio_tungstenite::connect_async(&chat_url)
         .await
         .expect("chat WS connect");
@@ -150,7 +156,8 @@ async fn chat_message_broadcast_reaches_general_ws() {
     // Consume welcome
     let _ = chat_ws.next().await;
 
-    // Send a chat message (no agent_id = broadcast)
+    // Send a chat message — with agent_id=broadcast on the URL, has_agent=true
+    // so the server skips the LLM bridge and publishes to agent:broadcast:input.
     let chat_msg = json!({
         "type": "chat_message",
         "content": "Hello from test",
@@ -199,6 +206,20 @@ async fn chat_ws_invalid_json_ignored() {
 
 #[tokio::test]
 async fn chat_ws_llm_bridge_disabled_without_api_key() {
+    // Temporarily clear API key so the LLM bridge reports disabled.
+    struct EnvGuard(Option<String>);
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(v) => unsafe { std::env::set_var("ANTHROPIC_API_KEY", v) },
+                None => unsafe { std::env::remove_var("ANTHROPIC_API_KEY") },
+            }
+        }
+    }
+    let old = std::env::var("ANTHROPIC_API_KEY").ok();
+    unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
+    let _guard = EnvGuard(old);
+
     let addr = start_test_server_with_token(None).await;
 
     let url = format!("ws://{}/ws/chat", addr);

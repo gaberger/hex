@@ -75,18 +75,37 @@ async fn init(name: &str, topology: &str, json_output: bool) -> anyhow::Result<(
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    // Derive projectId from current directory (matches hex-nexus make_project_id)
+    // Resolve project ID: look up registered project matching cwd, fall back to basename
     let cwd = std::env::current_dir()?;
-    let project_name = cwd
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
+    let cwd_str = cwd.to_string_lossy().to_string();
+    let project_id = if let Ok(projects_resp) = nexus.get("/api/projects").await {
+        projects_resp["projects"]
+            .as_array()
+            .and_then(|list| {
+                list.iter().find(|p| {
+                    p["rootPath"].as_str().map(|rp| rp == cwd_str).unwrap_or(false)
+                })
+            })
+            .and_then(|p| p["id"].as_str())
+            .map(String::from)
+            .unwrap_or_else(|| {
+                cwd.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string()
+            })
+    } else {
+        cwd.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string()
+    };
 
     let resp = nexus
         .post(
             "/api/swarms",
             &json!({
-                "projectId": project_name,
+                "projectId": project_id,
                 "name": name,
                 "topology": topology,
             }),
@@ -220,16 +239,22 @@ async fn list() -> anyhow::Result<()> {
             format!("{}/{} done ({} pending)", completed, total, pending)
         };
 
+        let agent = swarm["createdBy"]
+            .as_str()
+            .or_else(|| swarm["owner_agent_id"].as_str())
+            .unwrap_or("-");
+
         rows.push(vec![
             truncate(id, 36),
             name.to_string(),
             topology.to_string(),
             status_colored,
+            truncate(agent, 20),
             task_summary,
         ]);
     }
 
-    println!("{}", pretty_table(&["ID", "Name", "Topology", "Status", "Tasks"], &rows));
+    println!("{}", pretty_table(&["ID", "Name", "Topology", "Status", "Agent", "Tasks"], &rows));
 
     Ok(())
 }
