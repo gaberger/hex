@@ -182,6 +182,50 @@ impl SwarmConfig {
             .map(|a| a.parallel_with.clone())
             .unwrap_or_default()
     }
+
+    /// Return the [`AgentCardinality`] for a given role as defined in the swarm YAML.
+    ///
+    /// Falls back to [`AgentCardinality::PerWorkplanStep`] when the role is not
+    /// found or has no explicit cardinality.
+    pub fn cardinality_for_role(&self, role: &str) -> AgentCardinality {
+        self.agents
+            .iter()
+            .find(|a| a.role == role)
+            .and_then(|a| a.cardinality.as_deref())
+            .map(AgentCardinality::from_str)
+            .unwrap_or(AgentCardinality::PerWorkplanStep)
+    }
+}
+
+// ── Agent Cardinality ────────────────────────────────────────────────────
+
+/// How many agent instances the supervisor spawns for a given role, as read
+/// from the `cardinality` field in the swarm YAML (e.g. dev-pipeline.yml).
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentCardinality {
+    /// One agent instance per workplan step (default for hex-coder).
+    PerWorkplanStep,
+    /// One agent instance per source file (hex-reviewer, hex-tester).
+    PerSourceFile,
+    /// One agent instance per tier (hex-analyzer, hex-ux).
+    PerTier,
+    /// One agent instance for the whole swarm (hex-documenter).
+    PerSwarm,
+    /// One agent instance per issue reported by an upstream agent (hex-fixer).
+    PerIssue,
+}
+
+impl AgentCardinality {
+    /// Parse a cardinality string from YAML into the typed enum.
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "per_source_file" => Self::PerSourceFile,
+            "per_tier" => Self::PerTier,
+            "per_swarm" => Self::PerSwarm,
+            "per_issue" => Self::PerIssue,
+            _ => Self::PerWorkplanStep, // default (covers "per_workplan_step" + unknown)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -229,5 +273,60 @@ mod tests {
     fn max_iterations_from_config() {
         let config = SwarmConfig::load_default();
         assert_eq!(config.max_iterations_per_tier(), 5);
+    }
+
+    #[test]
+    fn cardinality_for_known_roles() {
+        let config = SwarmConfig::load_default();
+
+        assert_eq!(
+            config.cardinality_for_role("hex-coder"),
+            AgentCardinality::PerWorkplanStep,
+            "hex-coder cardinality should be per_workplan_step"
+        );
+        assert_eq!(
+            config.cardinality_for_role("hex-reviewer"),
+            AgentCardinality::PerSourceFile,
+            "hex-reviewer cardinality should be per_source_file"
+        );
+        assert_eq!(
+            config.cardinality_for_role("hex-tester"),
+            AgentCardinality::PerSourceFile,
+            "hex-tester cardinality should be per_source_file"
+        );
+        assert_eq!(
+            config.cardinality_for_role("hex-analyzer"),
+            AgentCardinality::PerTier,
+            "hex-analyzer cardinality should be per_tier"
+        );
+        assert_eq!(
+            config.cardinality_for_role("hex-documenter"),
+            AgentCardinality::PerSwarm,
+            "hex-documenter cardinality should be per_swarm"
+        );
+        assert_eq!(
+            config.cardinality_for_role("hex-fixer"),
+            AgentCardinality::PerIssue,
+            "hex-fixer cardinality should be per_issue"
+        );
+    }
+
+    #[test]
+    fn cardinality_unknown_role_defaults_to_per_workplan_step() {
+        let config = SwarmConfig::load_default();
+        assert_eq!(
+            config.cardinality_for_role("unknown-role"),
+            AgentCardinality::PerWorkplanStep
+        );
+    }
+
+    #[test]
+    fn cardinality_from_str_all_variants() {
+        assert_eq!(AgentCardinality::from_str("per_workplan_step"), AgentCardinality::PerWorkplanStep);
+        assert_eq!(AgentCardinality::from_str("per_source_file"), AgentCardinality::PerSourceFile);
+        assert_eq!(AgentCardinality::from_str("per_tier"), AgentCardinality::PerTier);
+        assert_eq!(AgentCardinality::from_str("per_swarm"), AgentCardinality::PerSwarm);
+        assert_eq!(AgentCardinality::from_str("per_issue"), AgentCardinality::PerIssue);
+        assert_eq!(AgentCardinality::from_str("garbage"), AgentCardinality::PerWorkplanStep);
     }
 }

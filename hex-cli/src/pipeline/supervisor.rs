@@ -1058,6 +1058,10 @@ impl Supervisor {
             .create_tracking_task(role, &state.objective, iteration)
             .await;
 
+        // Read cardinality for this role from the swarm YAML (ADR-2603240130 S06).
+        let cardinality = crate::pipeline::SwarmConfig::load_default().cardinality_for_role(role);
+        info!(role = %role, cardinality = ?cardinality, "agent cardinality from swarm YAML");
+
         let start = Instant::now();
 
         // Decide: delegate to worker process or execute inline.
