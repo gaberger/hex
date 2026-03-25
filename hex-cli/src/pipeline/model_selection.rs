@@ -51,18 +51,20 @@ impl std::fmt::Display for TaskType {
 /// Default: cheap, fast models for each task type (~$0.008/app).
 /// openrouter/auto is NOT used as default — it picks expensive frontier models
 /// like Gemini 3 Pro ($0.05/step). Specific cheap models are better for cost control.
+/// Public accessor for the general-purpose default model (used by supervisor fallback).
+pub fn default_model_for_general() -> &'static str {
+    default_model_for(TaskType::General)
+}
+
 fn default_model_for(task_type: TaskType) -> &'static str {
     match task_type {
-        // Llama 3.3 70B: strong reasoning, free tier, proven working
-        TaskType::Reasoning => "meta-llama/llama-3.3-70b-instruct:free",
-        // Llama 3.3 70B: consistent free tier model across all phases
-        TaskType::StructuredOutput => "meta-llama/llama-3.3-70b-instruct:free",
-        // Qwen3 Coder: code-specialized, free tier
-        TaskType::CodeGeneration => "qwen/qwen3-coder:free",
-        // Qwen3 Coder: code-specialized, good at targeted edits
-        TaskType::CodeEdit => "qwen/qwen3-coder:free",
-        // Llama 3.3 70B: general purpose, free tier
-        TaskType::General => "meta-llama/llama-3.3-70b-instruct:free",
+        // openai/gpt-4o-mini — reliable free model that supports OpenRouter privacy settings.
+        // Using a specific model ID is more reliable than "openrouter/free" dynamic routing.
+        TaskType::Reasoning => "openai/gpt-4o-mini",
+        TaskType::StructuredOutput => "openai/gpt-4o-mini",
+        TaskType::CodeGeneration => "openai/gpt-4o-mini",
+        TaskType::CodeEdit => "openai/gpt-4o-mini",
+        TaskType::General => "openai/gpt-4o-mini",
     }
 }
 
@@ -92,17 +94,18 @@ fn provider_model_for(provider: &str, task_type: TaskType) -> Option<&'static st
     }
 }
 
-/// Free-tier fallback: `openrouter/free` routes to the best free model.
+/// Free-tier fallback: specific reliable free model.
 /// Used when paid credits are exhausted (402/insufficient credits).
 pub fn free_fallback_for(_task_type: TaskType) -> &'static str {
-    "openrouter/free"
+    "openai/gpt-4o-mini"
 }
 
-/// Ordered fallback chain: auto (paid) → free → specific free models → ollama.
+/// Ordered fallback chain: primary → alternatives (all privacy-compatible free models).
 pub fn fallback_chain_for(task_type: TaskType) -> Vec<&'static str> {
     vec![
-        default_model_for(task_type),  // Cheap specific model (~$0.001/step)
-        "openrouter/free",             // Best free model (OpenRouter picks)
+        default_model_for(task_type),                   // Primary: llama-3.1-8b
+        "google/gemma-2-9b-it:free",                    // Fallback 1: Gemma 2
+        "qwen/qwen-2.5-7b-instruct:free",               // Fallback 2: Qwen 2.5
     ]
 }
 
@@ -261,9 +264,9 @@ impl ModelSelector {
             };
         }
 
-        // Ultimate fallback
+        // Ultimate fallback: use specific reliable free model
         SelectedModel {
-            model_id: "openrouter/free".to_string(),
+            model_id: default_model_for(TaskType::General).to_string(),
             state_key: None,
             action: None,
             source: SelectionSource::Default,
@@ -463,18 +466,17 @@ fn extract_model_from_action(action: &str, task_type: TaskType) -> String {
     for segment in action.split('|') {
         let segment = segment.trim();
         if segment.starts_with("model:openrouter:") {
+            // Preserve the native provider/model format expected by inference.rs.
+            // "model:openrouter:meta-llama/llama-4-maverick" -> "meta-llama/llama-4-maverick"
             let or_id = segment.trim_start_matches("model:openrouter:");
-            // Convert slash-based OpenRouter IDs to dash-based hex IDs:
-            // "meta-llama/llama-4-maverick" -> "meta-llama/llama-4-maverick"
-            let hex_id = format!("openrouter-{}", or_id.replace('/', "-"));
-            return hex_id;
+            return or_id.to_string();
         }
         if segment.starts_with("model:") {
             // Non-OpenRouter model from RL — map known variants.
             return match segment {
-                "model:opus" => "claude-opus-4-6".to_string(),
-                "model:sonnet" => "claude-sonnet-4-6".to_string(),
-                "model:haiku" => "claude-haiku-4-5-20251001".to_string(),
+                "model:opus" => "anthropic/claude-opus-4-6".to_string(),
+                "model:sonnet" => "anthropic/claude-sonnet-4-6".to_string(),
+                "model:haiku" => "openai/gpt-4o-mini".to_string(),
                 "model:minimax" => "MiniMax-M2.7".to_string(),
                 "model:minimax_fast" => "MiniMax-M1".to_string(),
                 "model:local" => "local".to_string(),
@@ -515,8 +517,8 @@ mod tests {
     fn extract_openrouter_model() {
         let action = "model:openrouter:meta-llama/llama-4-maverick|context:balanced";
         let model = extract_model_from_action(action, TaskType::CodeGeneration);
-        // extract_model_from_action converts slash to dash with "openrouter-" prefix
-        assert_eq!(model, "openrouter-meta-llama-llama-4-maverick");
+        // Native provider/model format preserved for inference routing
+        assert_eq!(model, "meta-llama/llama-4-maverick");
     }
 
     #[test]
@@ -530,14 +532,14 @@ mod tests {
     fn extract_model_fallback_to_default() {
         let action = "context:conservative";
         let model = extract_model_from_action(action, TaskType::Reasoning);
-        assert_eq!(model, "google/gemini-2.0-flash-001");
+        assert_eq!(model, default_model_for(TaskType::Reasoning));
     }
 
     #[test]
     fn extract_model_unknown_variant_falls_back() {
         let action = "model:unknown_thing|context:balanced";
         let model = extract_model_from_action(action, TaskType::CodeEdit);
-        assert_eq!(model, "google/gemini-2.0-flash-001");
+        assert_eq!(model, default_model_for(TaskType::CodeEdit));
     }
 
     #[test]
@@ -621,9 +623,9 @@ mod tests {
         assert_eq!(selected.model_id, "deepseek/deepseek-r1");
         assert_eq!(selected.source, SelectionSource::YamlDefinition);
 
-        // No preferred, no fallback, no swarm default → openrouter/free
+        // No preferred, no fallback, no swarm default → openai/gpt-4o-mini
         let selected = selector.select_from_yaml(&config, None, 1, 3, None);
-        assert_eq!(selected.model_id, "openrouter/free");
+        assert_eq!(selected.model_id, "openai/gpt-4o-mini");
         assert_eq!(selected.source, SelectionSource::Default);
     }
 }

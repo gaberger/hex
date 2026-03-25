@@ -115,10 +115,44 @@ pub async fn inference_complete(
             None
         };
 
+    // Resolve a synthetic OpenRouter endpoint from a key that may have been placed
+    // in ANTHROPIC_API_KEY (sk-or-v1- prefix) or OPENROUTER_API_KEY.
+    let openrouter_key: Option<String> = std::env::var("OPENROUTER_API_KEY").ok().or_else(|| {
+        state.anthropic_api_key.as_ref()
+            .filter(|k| k.starts_with("sk-or-v1-"))
+            .cloned()
+    });
+
+    // Map the pseudo-model "openrouter/free" to a real, consistently-available free model.
+    // openai/gpt-4o-mini is preferred — it respects OpenRouter privacy settings.
+    let resolve_free_model = |requested: Option<&str>| -> String {
+        match requested {
+            Some(m) if m == "openrouter/free" || m.is_empty() => {
+                "openai/gpt-4o-mini".to_string()
+            }
+            Some(m) => m.to_string(),
+            None => "openai/gpt-4o-mini".to_string(),
+        }
+    };
+
+    // Normalize bare Anthropic model IDs to OpenRouter vendor-namespaced format.
+    // OpenRouter requires "anthropic/claude-sonnet-4-6", not "claude-sonnet-4-6".
+    let normalize_for_openrouter = |model: &str| -> String {
+        if model.starts_with("claude-") && !model.contains('/') {
+            format!("anthropic/{}", model)
+        } else {
+            model.to_string()
+        }
+    };
+
     let result = if let Some(mut ep) = endpoint {
-        // Apply requested model override
+        // Apply requested model override, normalizing bare Anthropic IDs for OpenRouter.
         if let Some(ref model) = body.model {
-            ep.model = model.clone();
+            ep.model = if ep.provider == "openrouter" {
+                normalize_for_openrouter(model)
+            } else {
+                model.clone()
+            };
         }
         // Resolve secret key reference to actual value from vault
         if ep.requires_auth && !ep.secret_key.is_empty() && !ep.secret_key.starts_with("sk-") {
@@ -147,9 +181,37 @@ pub async fn inference_complete(
         }
         match super::chat::call_inference_endpoint(&ep, &messages).await {
             Ok(resp) => Ok(resp),
-            Err(ref e) if e.contains("insufficient credits") || e.contains("402") || e.contains("rate limited") || e.contains("429") => {
-                // OpenRouter out of credits — retry with a registered :free provider.
-                tracing::warn!(provider = %ep.provider, model = %ep.model, "insufficient credits — retrying with registered :free provider");
+            Err(ref e) if e.contains("insufficient credits") || e.contains("402")
+                || e.contains("rate limited") || e.contains("429")
+                || e.contains("parse:") || e.contains("500") || e.contains("503")
+                || e.contains("404") || e.contains("No endpoints") || e.contains("data policy") => {
+                // OpenRouter transient failure (credits, rate limit, parse/server error),
+                // or permanent failure (404 model-not-found / data policy).
+                // For transient errors (parse/5xx), first retry the same endpoint after a
+                // brief sleep — these are often momentary network hiccups.
+                // For 404/policy errors, skip retry and go straight to fallback.
+                let is_transient = (e.contains("parse:") || e.contains("500") || e.contains("503"))
+                    && !e.contains("404") && !e.contains("No endpoints") && !e.contains("data policy");
+                if is_transient {
+                    tracing::warn!(provider = %ep.provider, model = %ep.model, error = %e,
+                        "transient endpoint error — sleeping 5s then retrying same endpoint");
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    match super::chat::call_inference_endpoint(&ep, &messages).await {
+                        Ok(resp) => return (StatusCode::OK, Json(json!({
+                            "content": resp.0, "model": resp.1,
+                            "input_tokens": resp.2, "output_tokens": resp.3,
+                        }))),
+                        Err(ref e2) => tracing::warn!(error = %e2, "retry also failed — falling through to :free providers"),
+                    }
+                }
+                // For rate-limit errors, back off before trying :free providers.
+                let is_rate_limit = e.contains("rate limited") || e.contains("429");
+                if is_rate_limit {
+                    tracing::warn!(provider = %ep.provider, model = %ep.model,
+                        "rate limited — sleeping 10s before :free retry");
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                }
+                tracing::warn!(provider = %ep.provider, model = %ep.model, "retrying with registered :free provider");
                 let free_providers: Vec<_> = if let Some(ref stdb) = state.inference_stdb {
                     stdb.list_providers().await.ok()
                         .unwrap_or_default()
@@ -160,6 +222,7 @@ pub async fn inference_complete(
                     vec![]
                 };
                 // Try each :free provider in order until one succeeds.
+                // Skip policy-blocked models immediately; back off on rate-limited ones.
                 let mut fallback_result: Result<_, String> = Err("no :free providers registered".to_string());
                 for fp in &free_providers {
                     let free_model = fp.models_json
@@ -196,23 +259,101 @@ pub async fn inference_complete(
                         Err(e2) => {
                             tracing::warn!(model = %free_model, error = %e2, ":free provider failed — trying next");
                             fallback_result = Err(format!("{} failed: {}", free_model, e2));
+                            // For rate-limited models, back off briefly before the next attempt.
+                            // Skip this delay for policy/404 errors — they won't recover with time.
+                            let is_rate_limit = e2.contains("rate limited") || e2.contains("429");
+                            let is_permanent = e2.contains("data policy") || e2.contains("guardrail")
+                                || (e2.contains("404") && !e2.contains("rate"));
+                            if is_rate_limit && !is_permanent {
+                                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                            }
+                        }
+                    }
+                }
+                // If no registered :free provider worked, try a chain of free models with the OR key.
+                if fallback_result.is_err() {
+                    if let Some(ref or_key) = openrouter_key {
+                        // Models confirmed to support this account's privacy settings.
+                        let free_candidates = [
+                            "openai/gpt-4o-mini",
+                            "arcee-ai/trinity-mini:free",
+                            "mistralai/mistral-small-3.1-24b-instruct:free",
+                            "meta-llama/llama-3.3-70b-instruct:free",
+                            "meta-llama/llama-3.2-3b-instruct:free",
+                        ];
+                        for free_model in free_candidates {
+                            tracing::info!(model = %free_model, "all :free providers exhausted — retrying with OpenRouter key + free model");
+                            let synth = crate::routes::secrets::InferenceEndpointEntry {
+                                id: "openrouter-key-free-fallback".into(),
+                                url: "https://openrouter.ai/api/v1".into(),
+                                provider: "openrouter".into(),
+                                model: free_model.to_string(),
+                                status: "unknown".into(),
+                                requires_auth: true,
+                                secret_key: or_key.clone(),
+                                health_checked_at: String::new(),
+                            };
+                            fallback_result = super::chat::call_inference_endpoint(&synth, &messages).await;
+                            if fallback_result.is_ok() {
+                                break;
+                            }
+                            tracing::warn!(model = %free_model, "free model fallback failed — trying next");
+                        }
+                    }
+                }
+                // If all free models failed, try Anthropic direct as final fallback.
+                if fallback_result.is_err() {
+                    if let Some(ref api_key) = state.anthropic_api_key {
+                        if api_key.starts_with("sk-ant-") {
+                            tracing::info!("all free providers exhausted — falling back to Anthropic direct");
+                            fallback_result = super::chat::call_anthropic(api_key, &messages).await;
                         }
                     }
                 }
                 fallback_result.map_err(|e| e)
             }
             Err(e) => {
-                tracing::warn!(provider = %ep.provider, error = %e, "Inference endpoint failed, trying Anthropic fallback");
-                // Fallback to Anthropic only if the key looks like a real Anthropic key.
+                tracing::warn!(provider = %ep.provider, error = %e, "Inference endpoint failed, trying fallback");
+                // Fallback hierarchy: Anthropic key → OpenRouter key → error.
                 if let Some(ref api_key) = state.anthropic_api_key {
                     if api_key.starts_with("sk-ant-") {
                         super::chat::call_anthropic(api_key, &messages).await
+                    } else if let Some(ref or_key) = openrouter_key {
+                        // OpenRouter key available (either from OPENROUTER_API_KEY or
+                        // detected sk-or-v1- prefix in ANTHROPIC_API_KEY).
+                        let model = normalize_for_openrouter(&resolve_free_model(body.model.as_deref()));
+                        tracing::info!(model = %model, "retrying via OpenRouter key fallback");
+                        let synth = crate::routes::secrets::InferenceEndpointEntry {
+                            id: "openrouter-key-fallback".into(),
+                            url: "https://openrouter.ai/api/v1".into(),
+                            provider: "openrouter".into(),
+                            model,
+                            status: "unknown".into(),
+                            requires_auth: true,
+                            secret_key: or_key.clone(),
+                            health_checked_at: String::new(),
+                        };
+                        super::chat::call_inference_endpoint(&synth, &messages).await
                     } else {
                         Err(format!(
-                            "{} failed: {}; Anthropic key is not configured (got non-Anthropic key in ANTHROPIC_API_KEY)",
+                            "{} failed: {}; no valid fallback key (ANTHROPIC_API_KEY contains a non-Anthropic key and OPENROUTER_API_KEY is not set)",
                             ep.provider, e
                         ))
                     }
+                } else if let Some(ref or_key) = openrouter_key {
+                    let model = normalize_for_openrouter(&resolve_free_model(body.model.as_deref()));
+                    tracing::info!(model = %model, "retrying via OpenRouter key (no Anthropic key)");
+                    let synth = crate::routes::secrets::InferenceEndpointEntry {
+                        id: "openrouter-key-fallback".into(),
+                        url: "https://openrouter.ai/api/v1".into(),
+                        provider: "openrouter".into(),
+                        model,
+                        status: "unknown".into(),
+                        requires_auth: true,
+                        secret_key: or_key.clone(),
+                        health_checked_at: String::new(),
+                    };
+                    super::chat::call_inference_endpoint(&synth, &messages).await
                 } else {
                     Err(format!(
                         "{} failed: {}; no Anthropic fallback configured",
@@ -222,7 +363,39 @@ pub async fn inference_complete(
             }
         }
     } else if let Some(ref api_key) = state.anthropic_api_key {
-        super::chat::call_anthropic(api_key, &messages).await
+        if api_key.starts_with("sk-ant-") {
+            super::chat::call_anthropic(api_key, &messages).await
+        } else if let Some(ref or_key) = openrouter_key {
+            let model = normalize_for_openrouter(&resolve_free_model(body.model.as_deref()));
+            tracing::info!(model = %model, "no registered providers — using OpenRouter key fallback");
+            let synth = crate::routes::secrets::InferenceEndpointEntry {
+                id: "openrouter-key-fallback".into(),
+                url: "https://openrouter.ai/api/v1".into(),
+                provider: "openrouter".into(),
+                model,
+                status: "unknown".into(),
+                requires_auth: true,
+                secret_key: or_key.clone(),
+                health_checked_at: String::new(),
+            };
+            super::chat::call_inference_endpoint(&synth, &messages).await
+        } else {
+            Err("No inference endpoints registered and ANTHROPIC_API_KEY contains a non-Anthropic key (set OPENROUTER_API_KEY for OpenRouter)".into())
+        }
+    } else if let Some(ref or_key) = openrouter_key {
+        let model = normalize_for_openrouter(&resolve_free_model(body.model.as_deref()));
+        tracing::info!(model = %model, "no registered providers and no ANTHROPIC_API_KEY — using OPENROUTER_API_KEY");
+        let synth = crate::routes::secrets::InferenceEndpointEntry {
+            id: "openrouter-key-fallback".into(),
+            url: "https://openrouter.ai/api/v1".into(),
+            provider: "openrouter".into(),
+            model,
+            status: "unknown".into(),
+            requires_auth: true,
+            secret_key: or_key.clone(),
+            health_checked_at: String::new(),
+        };
+        super::chat::call_inference_endpoint(&synth, &messages).await
     } else {
         Err("No inference endpoints registered and no ANTHROPIC_API_KEY set".into())
     };
