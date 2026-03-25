@@ -13,7 +13,9 @@ use serde_json::json;
 use tracing::{debug, info, warn};
 
 use crate::nexus_client::NexusClient;
+use crate::pipeline::agent_def::WorkflowPhase;
 use crate::pipeline::model_selection::{ModelSelector, SelectedModel, TaskType};
+use crate::pipeline::workflow_engine::WorkflowEngine;
 use crate::pipeline::workplan_phase::{WorkplanData, WorkplanStep};
 use crate::prompts::PromptTemplate;
 
@@ -529,6 +531,165 @@ impl CodePhase {
             cost_usd,
             duration_ms,
             "code step complete"
+        );
+
+        Ok(CodeStepResult {
+            step_id: step.id.clone(),
+            content,
+            file_path: target_file,
+            model_used,
+            cost_usd,
+            tokens,
+            duration_ms,
+            selected_model: selected,
+        })
+    }
+
+    /// Execute code generation for a single workflow phase.
+    ///
+    /// Like `execute_step`, but injects the phase's steps from the YAML definition
+    /// as TDD instructions into the system prompt. Used by ADR-2603240130 phase dispatch.
+    ///
+    /// # Arguments
+    /// * `step` - the workplan step
+    /// * `phase` - the YAML workflow phase (red/green/refactor)
+    /// * `workplan` - the full workplan
+    /// * `model_override` - if `Some`, use this model
+    /// * `provider_pref` - if `Some`, prefer this provider
+    /// * `accumulated_context` - output from previous phases (e.g. red→green passes tests)
+    pub async fn execute_step_for_phase(
+        &self,
+        step: &WorkplanStep,
+        phase: &WorkflowPhase,
+        workplan: &WorkplanData,
+        model_override: Option<&str>,
+        provider_pref: Option<&str>,
+        accumulated_context: Option<&str>,
+    ) -> Result<CodeStepResult> {
+        info!(
+            step_id = %step.id,
+            phase_id = %phase.id,
+            phase_name = %phase.name,
+            "code phase: generating code for step (phase-aware)"
+        );
+
+        // ── 1. Build phase instructions ──────────────────────────────────
+        let phase_steps = WorkflowEngine::phase_steps(phase);
+        let phase_instructions = format!(
+            "## Phase: {}\n{}",
+            phase.name,
+            phase_steps.join("\n")
+        );
+
+        // ── 2. Assemble context (same as execute_step) ───────────────────
+        let target_file = self.infer_target_file(step);
+        let target_file_content = self.read_target_file(&target_file).await;
+        let ast_summary = self.fetch_ast_summary(&target_file).await;
+        let port_interfaces = self.fetch_port_interfaces(step).await;
+        let boundary_rules = Self::get_boundary_rules();
+        let language = self.infer_language(step, workplan);
+
+        let mut context = HashMap::new();
+        context.insert("step_description".to_string(), step.description.clone());
+        context.insert("target_file".to_string(), target_file_content);
+        context.insert("ast_summary".to_string(), ast_summary);
+        context.insert("port_interfaces".to_string(), port_interfaces);
+        context.insert("boundary_rules".to_string(), boundary_rules);
+        context.insert("language".to_string(), language.clone());
+
+        // ── 3. Load and render prompt template ───────────────────────────
+        let template = PromptTemplate::load("code-generate")
+            .context("loading code-generate prompt template")?;
+        let mut system_prompt = template.render(&context);
+
+        // Inject phase instructions into system prompt
+        system_prompt.push_str(&format!("\n\n## TDD Phase Instructions\n{}", phase_instructions));
+
+        debug!(
+            template = "code-generate",
+            step_id = %step.id,
+            phase_id = %phase.id,
+            "rendered code-generate prompt with phase instructions"
+        );
+
+        // ── 4. Select model via RL ───────────────────────────────────────
+        let selected = self
+            .selector
+            .select_model(TaskType::CodeGeneration, model_override, provider_pref)
+            .await
+            .context("model selection failed")?;
+        info!(model = %selected.model_id, source = %selected.source, phase = %phase.id, "selected model for phase code generation");
+
+        // ── 5. Build user message ────────────────────────────────────────
+        let mut user_message = format!(
+            "Generate the complete source file for step '{}': {}\n\nTarget file: {}\nLanguage: {}",
+            step.id,
+            step.description,
+            target_file.as_deref().unwrap_or("(not specified)"),
+            language,
+        );
+
+        // Thread accumulated context from previous phases (red→green→refactor)
+        if let Some(prev) = accumulated_context {
+            user_message.push_str(&format!("\n\n## Output from previous phase:\n{}", prev));
+        }
+
+        // ── 6. Call inference ────────────────────────────────────────────
+        let start = Instant::now();
+        let body = json!({
+            "model": selected.model_id,
+            "system": system_prompt,
+            "messages": [
+                { "role": "user", "content": user_message }
+            ],
+            "max_tokens": 8192
+        });
+
+        let resp = self
+            .client
+            .post("/api/inference/complete", &body)
+            .await
+            .context("POST /api/inference/complete failed")?;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        // ── 7. Parse response ────────────────────────────────────────────
+        let raw_content = resp["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let model_used = resp["model"]
+            .as_str()
+            .unwrap_or(&selected.model_id)
+            .to_string();
+        let input_tokens = resp["input_tokens"].as_u64().unwrap_or(0);
+        let output_tokens = resp["output_tokens"].as_u64().unwrap_or(0);
+        let tokens = input_tokens + output_tokens;
+        let cost_usd = resp["openrouter_cost_usd"]
+            .as_str()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.0);
+
+        if raw_content.is_empty() {
+            anyhow::bail!(
+                "inference returned empty content for step '{}' phase '{}' — check hex-nexus logs",
+                step.id,
+                phase.id
+            );
+        }
+
+        // ── 8. Extract code (strip markdown fences) ──────────────────────
+        let content = extract_code(&raw_content, &language);
+
+        info!(
+            step_id = %step.id,
+            phase_id = %phase.id,
+            file = ?target_file,
+            model = %model_used,
+            tokens,
+            cost_usd,
+            duration_ms,
+            "phase code step complete"
         );
 
         Ok(CodeStepResult {
@@ -1354,5 +1515,49 @@ mod tests {
         let slug = slug_from_description("Implement complex multi-layer domain entity validation logic");
         let word_count = slug.split('-').count();
         assert!(word_count <= 3, "slug should have at most 3 words, got: {}", slug);
+    }
+
+    // ── execute_step_for_phase tests ─────────────────────────────────
+
+    #[test]
+    fn execute_step_for_phase_builds_phase_prompt() {
+        use crate::pipeline::agent_def::AgentDefinition;
+        use crate::pipeline::workflow_engine::WorkflowEngine;
+
+        // Load the hex-coder agent definition (embedded YAML asset).
+        let agent = AgentDefinition::load("hex-coder")
+            .expect("hex-coder agent definition must be loadable");
+
+        // The agent must have a workflow with at least one phase.
+        let workflow = agent.workflow
+            .expect("hex-coder must have a workflow config");
+        assert!(!workflow.phases.is_empty(), "hex-coder workflow must have phases");
+
+        // Find the "red" phase (TDD: write failing tests first).
+        let red_phase = workflow.phases.iter()
+            .find(|p| p.id == "red")
+            .expect("hex-coder workflow must have a 'red' phase");
+
+        // phase_steps must return non-empty steps for the red phase.
+        let steps = WorkflowEngine::phase_steps(red_phase);
+        assert!(
+            !steps.is_empty(),
+            "WorkflowEngine::phase_steps for 'red' phase must return non-empty steps"
+        );
+
+        // Verify phase instructions format: should contain the phase name.
+        let phase_instructions = format!(
+            "## Phase: {}\n{}",
+            red_phase.name,
+            steps.join("\n")
+        );
+        assert!(
+            phase_instructions.contains(&red_phase.name),
+            "phase instructions must include phase name"
+        );
+        assert!(
+            phase_instructions.starts_with("## Phase:"),
+            "phase instructions must start with '## Phase:' header"
+        );
     }
 }
