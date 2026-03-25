@@ -114,9 +114,19 @@ impl CliRunner {
         self.run(&["swarm", "init", name, "--topology", topology])
     }
 
-    /// `hex swarm cleanup --force` — close stale/completed swarms before creating a new one.
+    /// `hex swarm cleanup --apply` — close stale/completed swarms before creating a new one.
     pub fn swarm_cleanup(&self) -> Result<Value> {
-        self.run(&["swarm", "cleanup", "--force"])
+        self.run(&["swarm", "cleanup", "--apply"])
+    }
+
+    /// `hex swarm complete <id>` — mark a swarm as completed.
+    pub fn swarm_complete(&self, swarm_id: &str) -> Result<Value> {
+        self.run(&["swarm", "complete", swarm_id])
+    }
+
+    /// `hex swarm list` — return all swarms as JSON array.
+    pub fn swarm_list(&self) -> Result<Value> {
+        self.run(&["swarm", "list"])
     }
 }
 

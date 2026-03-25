@@ -72,10 +72,29 @@ impl SwarmPhase {
         // Ignore cleanup errors (nexus may have no stale swarms to clean).
         let _ = self.runner.swarm_cleanup();
 
-        let swarm_resp = self
-            .runner
-            .swarm_init(&swarm_name, topology)
-            .context("hex swarm init failed — is hex-nexus running?")?;
+        let swarm_resp = match self.runner.swarm_init(&swarm_name, topology) {
+            Ok(resp) => resp,
+            Err(ref e) if e.to_string().contains("already owns an active swarm") => {
+                // The agent already owns a swarm — complete it, then retry.
+                warn!("Agent already owns a swarm — completing prior swarm and retrying");
+                if let Ok(list) = self.runner.swarm_list() {
+                    if let Some(arr) = list.as_array() {
+                        for swarm in arr {
+                            let status = swarm["status"].as_str().unwrap_or("");
+                            let id = swarm["id"].as_str().unwrap_or("");
+                            if status == "active" && !id.is_empty() {
+                                debug!(swarm_id = %id, "completing prior swarm");
+                                let _ = self.runner.swarm_complete(id);
+                            }
+                        }
+                    }
+                }
+                self.runner
+                    .swarm_init(&swarm_name, topology)
+                    .context("hex swarm init failed after completing prior swarm")?
+            }
+            Err(e) => return Err(e).context("hex swarm init failed — is hex-nexus running?"),
+        };
 
         let swarm_id = swarm_resp["id"]
             .as_str()
