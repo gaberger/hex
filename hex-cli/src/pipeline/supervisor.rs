@@ -1398,6 +1398,93 @@ impl Supervisor {
                                 .with_context(|| format!("writing generated code to {}", rel_path))?;
                             info!(path = %rel_path, bytes = result.content.len(), "wrote generated code to disk");
                         }
+
+                        // Evaluate quality thresholds from hex-coder YAML (ADR-2603240130 S06)
+                        {
+                            let file_lines = result.content.lines().count() as u32;
+                            // Longest contiguous non-empty block as a proxy for max function lines
+                            let max_fn_lines = {
+                                let mut max_block = 0u32;
+                                let mut cur_block = 0u32;
+                                for line in result.content.lines() {
+                                    if !line.trim().is_empty() {
+                                        cur_block += 1;
+                                        if cur_block > max_block {
+                                            max_block = cur_block;
+                                        }
+                                    } else {
+                                        cur_block = 0;
+                                    }
+                                }
+                                max_block
+                            };
+                            let checks = self.evaluate_quality_thresholds(
+                                "hex-coder",
+                                0,
+                                file_lines,
+                                max_fn_lines,
+                                0,
+                            );
+                            let mut blocking_violations: Vec<String> = Vec::new();
+                            for check in &checks {
+                                if !check.passed {
+                                    // Blocking if max_file_lines or max_function_lines exceeded by >50%
+                                    let is_blocking = (check.name == "max_file_lines"
+                                        || check.name == "max_function_lines")
+                                        && check.actual > check.threshold * 3 / 2;
+                                    if is_blocking {
+                                        warn!(
+                                            threshold = %check.name,
+                                            value = check.actual,
+                                            limit = check.threshold,
+                                            "blocking quality violation"
+                                        );
+                                        blocking_violations.push(format!(
+                                            "Quality threshold '{}' exceeded: {} > {} (limit {}). \
+                                             Exceeds 50% over limit — file must be split.",
+                                            check.name, check.actual, check.threshold, check.threshold
+                                        ));
+                                    } else {
+                                        info!(
+                                            threshold = %check.name,
+                                            value = check.actual,
+                                            limit = check.threshold,
+                                            "quality threshold warning"
+                                        );
+                                    }
+                                }
+                            }
+                            if !blocking_violations.is_empty() {
+                                let (target_file, fix_type) = self.infer_fix_target(
+                                    tier,
+                                    &state.objective,
+                                    &blocking_violations,
+                                );
+                                let fix_input = FixTaskInput {
+                                    fix_type,
+                                    target_file,
+                                    error_context: blocking_violations.join("\n\n"),
+                                    language: self.language.clone(),
+                                    output_dir: self.output_dir.clone(),
+                                };
+                                let fix_agent = FixAgent::from_env();
+                                match fix_agent.execute(fix_input, effective_model, provider_pref).await {
+                                    Ok(fix_result) => {
+                                        info!(
+                                            status = %fix_result.status,
+                                            file = %fix_result.file_path,
+                                            "quality threshold fixer complete"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            error = %e,
+                                            "quality threshold fixer failed — step marked as needing fix"
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Run feedback loop if defined (compile → lint → test gates)
@@ -1535,6 +1622,91 @@ impl Supervisor {
                             fs::write(&full_path, &result.content)
                                 .with_context(|| format!("writing generated code to {}", rel_path))?;
                             info!(path = %rel_path, bytes = result.content.len(), "wrote generated code to disk");
+                        }
+
+                        // Evaluate quality thresholds from hex-coder YAML (ADR-2603240130 S06)
+                        {
+                            let file_lines = result.content.lines().count() as u32;
+                            let max_fn_lines = {
+                                let mut max_block = 0u32;
+                                let mut cur_block = 0u32;
+                                for line in result.content.lines() {
+                                    if !line.trim().is_empty() {
+                                        cur_block += 1;
+                                        if cur_block > max_block {
+                                            max_block = cur_block;
+                                        }
+                                    } else {
+                                        cur_block = 0;
+                                    }
+                                }
+                                max_block
+                            };
+                            let checks = self.evaluate_quality_thresholds(
+                                "hex-coder",
+                                0,
+                                file_lines,
+                                max_fn_lines,
+                                0,
+                            );
+                            let mut blocking_violations: Vec<String> = Vec::new();
+                            for check in &checks {
+                                if !check.passed {
+                                    let is_blocking = (check.name == "max_file_lines"
+                                        || check.name == "max_function_lines")
+                                        && check.actual > check.threshold * 3 / 2;
+                                    if is_blocking {
+                                        warn!(
+                                            threshold = %check.name,
+                                            value = check.actual,
+                                            limit = check.threshold,
+                                            "blocking quality violation"
+                                        );
+                                        blocking_violations.push(format!(
+                                            "Quality threshold '{}' exceeded: {} > {} (limit {}). \
+                                             Exceeds 50% over limit — file must be split.",
+                                            check.name, check.actual, check.threshold, check.threshold
+                                        ));
+                                    } else {
+                                        info!(
+                                            threshold = %check.name,
+                                            value = check.actual,
+                                            limit = check.threshold,
+                                            "quality threshold warning"
+                                        );
+                                    }
+                                }
+                            }
+                            if !blocking_violations.is_empty() {
+                                let (target_file, fix_type) = self.infer_fix_target(
+                                    tier,
+                                    &state.objective,
+                                    &blocking_violations,
+                                );
+                                let fix_input = FixTaskInput {
+                                    fix_type,
+                                    target_file,
+                                    error_context: blocking_violations.join("\n\n"),
+                                    language: self.language.clone(),
+                                    output_dir: self.output_dir.clone(),
+                                };
+                                let fix_agent = FixAgent::from_env();
+                                match fix_agent.execute(fix_input, effective_model, provider_pref).await {
+                                    Ok(fix_result) => {
+                                        info!(
+                                            status = %fix_result.status,
+                                            file = %fix_result.file_path,
+                                            "quality threshold fixer complete"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            error = %e,
+                                            "quality threshold fixer failed — step marked as needing fix"
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                 }
