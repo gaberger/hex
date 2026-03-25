@@ -114,9 +114,10 @@ impl CliRunner {
         self.run(&["swarm", "init", name, "--topology", topology])
     }
 
-    /// `hex swarm cleanup --apply` — close stale/completed swarms before creating a new one.
+    /// `hex swarm cleanup --apply --stale-hours 0` — close all active swarms before creating a new one.
+    /// stale-hours=0 treats every active swarm as stale regardless of age.
     pub fn swarm_cleanup(&self) -> Result<Value> {
-        self.run(&["swarm", "cleanup", "--apply"])
+        self.run(&["swarm", "cleanup", "--apply", "--stale-hours", "0"])
     }
 
     /// `hex swarm complete <id>` — mark a swarm as completed.

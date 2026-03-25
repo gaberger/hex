@@ -355,10 +355,24 @@ async fn cleanup(stale_hours: u64, apply: bool) -> anyhow::Result<()> {
             if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created_at) {
                 if dt < cutoff {
                     actions.push(Action {
-                        id,
-                        name,
+                        id: id.clone(),
+                        name: name.clone(),
                         transition: "fail",
                         reason: "stale — no tasks, older than cutoff".to_string(),
+                    });
+                }
+            }
+        }
+
+        // Partially-done swarms older than cutoff → complete (pipeline abandoned mid-run)
+        if total > 0 && completed > 0 && completed < total {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created_at) {
+                if dt < cutoff {
+                    actions.push(Action {
+                        id,
+                        name,
+                        transition: "complete",
+                        reason: format!("abandoned — {}/{} tasks done, older than {}h", completed, total, stale_hours),
                     });
                 }
             }

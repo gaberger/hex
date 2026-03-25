@@ -84,10 +84,14 @@ impl SwarmPhase {
                             let id = swarm["id"].as_str().unwrap_or("");
                             if status == "active" && !id.is_empty() {
                                 debug!(swarm_id = %id, "completing prior swarm");
-                                let _ = self.runner.swarm_complete(id);
+                                if let Err(e) = self.runner.swarm_complete(id) {
+                                    warn!(swarm_id = %id, error = %e, "swarm_complete failed — may be owned by a different agent");
+                                }
                             }
                         }
                     }
+                } else {
+                    warn!("swarm_list failed — cannot determine prior swarm IDs");
                 }
                 self.runner
                     .swarm_init(&swarm_name, topology)
