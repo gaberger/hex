@@ -151,7 +151,14 @@ impl TuiApp {
     }
 
     /// Construct with an explicit `DevConfig` (preferred entry point).
-    pub fn with_config(session: DevSession, config: DevConfig) -> Self {
+    pub fn with_config(mut session: DevSession, config: DevConfig) -> Self {
+        // Clear phase-output state from any previous run so stale paths cannot
+        // bypass a failed upstream phase (e.g. a 0-byte ADR from last session
+        // must not let code phase run against last session's workplan).
+        session.adr_path = None;
+        session.workplan_path = None;
+        session.swarm_id = None;
+
         let provider = config.provider.clone();
         let model = config.model.clone();
         let budget_limit = if config.budget > 0.0 {
