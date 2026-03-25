@@ -402,7 +402,7 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
                     parsed.rules
                 }
                 Err(e) => {
-                    println!(
+                    eprintln!(
                         "    {} Failed to parse adr-rules.toml: {}",
                         "\u{2717}".red(), e
                     );
@@ -412,7 +412,7 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
             Err(_) => return Vec::new(),
         }
     } else {
-        println!(
+        eprintln!(
             "    {} No .hex/adr-rules.toml found — skipping compliance check",
             "\u{25cb}".dimmed()
         );

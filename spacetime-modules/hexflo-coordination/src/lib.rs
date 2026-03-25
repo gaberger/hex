@@ -6,6 +6,8 @@ use spacetimedb::{table, reducer, ReducerContext, Table};
 // ============================================================
 
 /// A swarm — a named group of agents working on a coordinated task.
+/// Ownership: each swarm has exactly one owner agent (1:1). An agent may only
+/// have one active swarm at a time (enforced in swarm_init reducer).
 #[table(name = swarm, public)]
 #[derive(Clone, Debug)]
 pub struct Swarm {
@@ -17,13 +19,19 @@ pub struct Swarm {
     pub topology: String,
     /// Status: "active", "completed", "failed"
     pub status: String,
-    /// Agent ID that created this swarm (for ownership tracking).
+    /// Agent ID that owns this swarm (ADR-2603241900). Authoritative owner —
+    /// not just creator. Use swarm_transfer to change ownership.
+    pub owner_agent_id: String,
+    /// Kept for backward compatibility during migration; mirrors owner_agent_id.
     pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
 }
 
 /// A task within a swarm — the unit of work assigned to agents.
+/// CAS fields (ADR-2603241900): callers read `version` before assigning, then
+/// pass it to task_assign. Mismatch → ConflictError; prevents double-assignment
+/// across remote nodes without distributed locks.
 #[table(name = swarm_task, public)]
 #[derive(Clone, Debug)]
 pub struct SwarmTask {
@@ -40,6 +48,11 @@ pub struct SwarmTask {
     /// Comma-separated task IDs this task depends on (empty = no deps).
     /// SpacetimeDB doesn't support Vec in table columns, so we use CSV.
     pub depends_on: String,
+    /// Monotonic version counter — incremented on every status transition.
+    /// Used for optimistic locking in task_assign CAS.
+    pub version: u64,
+    /// Agent ID of the last claimer (for conflict error messages).
+    pub claimed_by: String,
     pub created_at: String,
     pub completed_at: String,
 }
@@ -761,16 +774,38 @@ pub fn swarm_init(
         return Err(format!("Swarm '{}' already exists", id));
     }
 
+    // ADR-2603241900: enforce 1:1 agent↔swarm ownership.
+    // An agent may not own more than one active swarm at a time.
+    if !created_by.is_empty() {
+        let already_owns = ctx.db.swarm().iter()
+            .any(|s| s.owner_agent_id == created_by && s.status == "active");
+        if already_owns {
+            return Err(format!(
+                "Agent '{}' already owns an active swarm — complete or transfer it first",
+                created_by
+            ));
+        }
+    }
+
     ctx.db.swarm().insert(Swarm {
-        id,
+        id: id.clone(),
         project_id,
         name,
         topology,
         status: "active".to_string(),
-        created_by,
+        owner_agent_id: created_by.clone(),
+        created_by: created_by.clone(),
         created_at: timestamp.clone(),
         updated_at: timestamp,
     });
+
+    // Update hex_agent.swarm_id to point at the owned swarm
+    if let Some(agent) = ctx.db.hex_agent().id().find(&created_by) {
+        ctx.db.hex_agent().id().update(HexAgent {
+            swarm_id: id,
+            ..agent
+        });
+    }
 
     Ok(())
 }
@@ -864,6 +899,8 @@ pub fn task_create(
         agent_id: String::new(),
         result: String::new(),
         depends_on,
+        version: 0,
+        claimed_by: String::new(),
         created_at: timestamp,
         completed_at: String::new(),
     });
@@ -897,19 +934,36 @@ fn dependencies_met(ctx: &ReducerContext, task: &SwarmTask) -> bool {
     true
 }
 
-/// Assign a task to an agent.
+/// Assign a task to an agent using Compare-And-Swap (ADR-2603241900).
+///
+/// `expected_version` must match `task.version` at the time of the call.
+/// Pass `u64::MAX` (18446744073709551615) to skip version check (legacy / force-assign).
+/// On mismatch → error "version_mismatch:<expected>:<actual>".
+/// If task is already claimed → error "already_claimed:<agent_id>".
 #[reducer]
 pub fn task_assign(
     ctx: &ReducerContext,
     task_id: String,
     agent_id: String,
+    expected_version: u64,
     timestamp: String,
 ) -> Result<(), String> {
     let task = ctx.db.swarm_task().id().find(&task_id)
         .ok_or_else(|| format!("Task '{}' not found", task_id))?;
 
+    // CAS version check (skip if caller passes u64::MAX)
+    if expected_version != u64::MAX && task.version != expected_version {
+        return Err(format!(
+            "version_mismatch:{}:{}",
+            expected_version, task.version
+        ));
+    }
+
     if task.status != "pending" {
-        return Err(format!("Task '{}' is not pending (status: {})", task_id, task.status));
+        return Err(format!(
+            "already_claimed:{}",
+            task.claimed_by
+        ));
     }
 
     // Check that all dependency tasks are completed before allowing assignment
@@ -921,21 +975,27 @@ pub fn task_assign(
     }
 
     let swarm_id = task.swarm_id.clone();
+    let new_version = task.version + 1;
 
     ctx.db.swarm_task().id().update(SwarmTask {
         status: "in_progress".to_string(),
         agent_id: agent_id.clone(),
+        claimed_by: agent_id.clone(),
+        version: new_version,
         completed_at: timestamp.clone(),
         ..task
     });
 
-    // ── Link agent ↔ swarm (ADR-058 relationship fix) ──────────────
-    // Update hex_agent.swarm_id so the unified registry reflects membership
+    // ── Link participant agent ↔ swarm (ADR-058) ────────────────────
+    // Note: this is participant membership, not ownership. Ownership is
+    // set in swarm_init via owner_agent_id.
     if let Some(agent) = ctx.db.hex_agent().id().find(&agent_id) {
-        ctx.db.hex_agent().id().update(HexAgent {
-            swarm_id: swarm_id.clone(),
-            ..agent
-        });
+        if agent.swarm_id.is_empty() {
+            ctx.db.hex_agent().id().update(HexAgent {
+                swarm_id: swarm_id.clone(),
+                ..agent
+            });
+        }
     }
 
     // Ensure a swarm_agent row exists for this agent in this swarm
@@ -953,6 +1013,67 @@ pub fn task_assign(
             last_heartbeat: timestamp,
         });
     }
+
+    Ok(())
+}
+
+/// Transfer swarm ownership to a new agent (ADR-2603241900).
+/// Only the current owner or a call with no owner set may transfer.
+#[reducer]
+pub fn swarm_transfer(
+    ctx: &ReducerContext,
+    swarm_id: String,
+    new_owner_agent_id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let swarm = ctx.db.swarm().id().find(&swarm_id)
+        .ok_or_else(|| format!("Swarm '{}' not found", swarm_id))?;
+
+    if swarm.status != "active" {
+        return Err(format!("Swarm '{}' is not active — cannot transfer", swarm_id));
+    }
+
+    // Verify new owner exists
+    let new_owner = ctx.db.hex_agent().id().find(&new_owner_agent_id)
+        .ok_or_else(|| format!("New owner agent '{}' not found", new_owner_agent_id))?;
+
+    // New owner must not already own an active swarm
+    let already_owns = ctx.db.swarm().iter()
+        .any(|s| s.owner_agent_id == new_owner_agent_id && s.status == "active" && s.id != swarm_id);
+    if already_owns {
+        return Err(format!(
+            "Agent '{}' already owns an active swarm — cannot receive transfer",
+            new_owner_agent_id
+        ));
+    }
+
+    let old_owner_id = swarm.owner_agent_id.clone();
+
+    // Update swarm ownership
+    ctx.db.swarm().id().update(Swarm {
+        owner_agent_id: new_owner_agent_id.clone(),
+        created_by: new_owner_agent_id.clone(),
+        updated_at: timestamp.clone(),
+        ..swarm
+    });
+
+    // Clear swarm_id on old owner (they no longer own it)
+    if !old_owner_id.is_empty() {
+        if let Some(old_owner) = ctx.db.hex_agent().id().find(&old_owner_id) {
+            if old_owner.swarm_id == swarm_id {
+                ctx.db.hex_agent().id().update(HexAgent {
+                    swarm_id: String::new(),
+                    ..old_owner
+                });
+            }
+        }
+    }
+
+    // Set swarm_id on new owner
+    ctx.db.hex_agent().id().update(HexAgent {
+        swarm_id: swarm_id,
+        ..new_owner
+    });
 
     Ok(())
 }
@@ -1010,9 +1131,12 @@ pub fn task_reclaim(
         .collect();
 
     for task in tasks {
+        let new_version = task.version + 1;
         ctx.db.swarm_task().id().update(SwarmTask {
             status: "pending".to_string(),
             agent_id: String::new(),
+            claimed_by: String::new(),
+            version: new_version,
             ..task
         });
     }

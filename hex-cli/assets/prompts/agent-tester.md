@@ -80,7 +80,33 @@ Each test file must include these categories:
 5. **One assertion per concept**: Each test should verify one behavior. Multiple assertions are fine if they verify facets of the same behavior.
 6. **Arrange-Act-Assert**: Structure every test with clear setup, execution, and verification phases.
 7. **No test interdependence**: Tests must not depend on execution order or shared mutable state.
+7a. **JavaScript number precision**: JavaScript `number` is a 64-bit float. Very large inputs do NOT produce `NaN` — they produce large floats or `Infinity`. Never `expect(result).toBeNaN()` for arithmetic operations on finite inputs. Use `expect(result).toBeFinite()` or check the actual computed value instead.
 8. **No real I/O**: Unit tests must not touch the filesystem, network, or database. Use injected test doubles.
 9. **TypeScript specifics**: Use `.js` extensions in relative imports. Use `describe`/`it` blocks. Use `vi.fn()` for mock functions.
-10. **Rust specifics**: Use `#[cfg(test)]` module or separate test file. Use `#[test]` attribute. Use `assert_eq!`, `assert!`, `assert_matches!`.
+   - **CRITICAL import path rule**: The test file lives at `tests/unit/<layer>/<file>.test.ts`. The source lives at `src/...`. You MUST calculate the correct relative path from the test file to the source file. For example, if the source is `src/core/domain/foo.ts` and the test is at `tests/unit/domain/foo.test.ts`, the import is `../../../src/core/domain/foo.js` (three levels up). Count the directory levels carefully. NEVER use `./` to import from `src/` when the test is in `tests/`.
+10. **Rust integration test specifics**: The test file lives in `tests/` at the crate root — it is a **separate crate**. This means:
+    - NEVER use `use super::*` — there is no `super` in integration tests
+    - Import the crate's public items with `use <crate_name>::*;` OR import only public functions/types by name
+    - For simple binaries where functions are not `pub`, test the observable behavior (run the binary as a process, or restructure logic into a library)
+    - NEVER call `main()` directly — it's not exported
+    - For a `main.rs`-only binary, write tests that call any `pub fn` helpers, or use `std::process::Command` to run the binary and check stdout/stderr
+    - Example for a binary with helper functions:
+    ```rust
+    // tests/main_test.rs
+    // No `use super::*` — this is a separate crate
+    // Test public helper functions if they exist:
+    // use my_crate::convert_temperature;
+
+    #[test]
+    fn celsius_to_fahrenheit() {
+        // If no pub functions, test via process::Command
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_my-crate"))
+            .args(["25", "--from", "C", "--to", "F"])
+            .output()
+            .expect("failed to run binary");
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("77"));
+    }
+    ```
 11. **Cover the port contract completely**: Every method in the port interface must have at least one happy-path and one error-case test.

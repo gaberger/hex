@@ -67,6 +67,33 @@
       }
     },
     {
+      "name": "hex_hexflo_swarm_complete",
+      "category": "swarm",
+      "description": "Mark a swarm as completed (archives it while preserving data for reporting)",
+      "route": { "method": "PATCH", "path": "/api/swarms/{id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Swarm ID to mark as completed" }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "name": "hex_hexflo_swarm_fail",
+      "category": "swarm",
+      "description": "Mark a swarm as failed with a reason (archives it while preserving data for reporting)",
+      "route": { "method": "POST", "path": "/api/swarms/{id}/fail" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Swarm ID to mark as failed" },
+          "reason": { "type": "string", "description": "Reason for failure (default: 'manually failed')" }
+        },
+        "required": ["id"]
+      }
+    },
+    {
       "name": "hex_hexflo_task_create",
       "category": "task",
       "description": "Create a task in a swarm",
@@ -96,15 +123,43 @@
     {
       "name": "hex_hexflo_task_assign",
       "category": "task",
-      "description": "Assign a task to an agent. Sets status to 'in_progress' and records the agent_id. Only works on tasks with 'pending' status.",
+      "description": "Assign a task to an agent. Sets status to 'in_progress' and records the agent_id. Only works on tasks with 'pending' status. Pass 'version' for optimistic locking (CAS) — returns 409 on conflict. Omit version to skip check (legacy).",
       "route": { "method": "PATCH", "path": "/api/hexflo/tasks/{task_id}" },
       "inputSchema": {
         "type": "object",
         "properties": {
           "task_id": { "type": "string", "description": "Task ID to assign" },
-          "agent_id": { "type": "string", "description": "Agent ID claiming this task (from hex_agent_connect registration)" }
+          "agent_id": { "type": "string", "description": "Agent ID claiming this task (from hex_agent_connect registration)" },
+          "version": { "type": "integer", "description": "Expected task version for CAS (omit to skip version check)" }
         },
         "required": ["task_id", "agent_id"]
+      }
+    },
+    {
+      "name": "hex_hexflo_swarm_transfer",
+      "category": "swarm",
+      "description": "Transfer swarm ownership to a new agent. The current owner loses the swarm; the new owner gains it. New owner must not already own an active swarm.",
+      "route": { "method": "POST", "path": "/api/swarms/{id}/transfer" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Swarm ID to transfer" },
+          "new_owner_agent_id": { "type": "string", "description": "Agent ID of the new owner" }
+        },
+        "required": ["id", "new_owner_agent_id"]
+      }
+    },
+    {
+      "name": "hex_hexflo_agent_swarm",
+      "category": "swarm",
+      "description": "Get the active swarm owned by a specific agent (if any). Returns 404 if agent has no active swarm.",
+      "route": { "method": "GET", "path": "/api/hex-agents/{id}/swarm" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Agent ID to look up owned swarm for" }
+        },
+        "required": ["id"]
       }
     },
     {

@@ -137,6 +137,18 @@ src/
   cli.ts                 # CLI entry point
   index.ts               # Library public API
 
+# ── hex-cli/assets — Embedded Templates (rust-embed, baked at compile) ─────
+#    All templates live here; hex-nexus also embeds from this directory.
+#    hex-cli/assets/ structure:
+#      agents/hex/hex/    Agent YAML definitions (14 files, deployed to .claude/agents/)
+#      skills/            Skill definitions (21+ .md files, deployed to .claude/skills/)
+#      hooks/hex/         Hook YAML definitions (boundary-check, lifecycle, etc.)
+#      helpers/           Runtime scripts (statusline, hook-handler, agent-register)
+#      swarms/            Swarm behavior YAMLs — declarative pipelines (ADR-2603240130)
+#      mcp/               MCP config + claude settings template (ADR-049)
+#      schemas/           JSON schemas (workplan, mcp-tools)
+#      templates/         Init templates (CLAUDE.md, settings)
+
 # ── Supporting ─────────────────────────────────────────────────────────────
 tests/
   unit/                  # London-school mock-first tests
@@ -416,6 +428,55 @@ Agent tool: {
 ```
 
 The `agent_id` is auto-resolved from `~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json` (written by `hex hook session-start`). The MCP tool `hex_hexflo_task_assign` also auto-resolves agent_id from this file when not explicitly provided.
+
+## Declarative Swarm Behavior (ADR-2603240130)
+
+Agent and swarm behavior is defined declaratively in YAML, not hardcoded in Rust. The supervisor reads these YAMLs at startup and drives all behavior from them.
+
+### Agent YAML Definitions (`hex-cli/assets/agents/hex/hex/`)
+
+14 agent YAMLs define: model selection (tier/preferred/fallback/upgrade), context loading (L1 AST summary, L2 signatures, L3 full source), workflow phases (TDD: red→green→refactor), feedback loop gates (compile/lint/test with on_fail instructions), quality thresholds, and input/output schemas.
+
+**Schema varies by role:**
+- **Coders** (`hex-coder.yml`): `workflow.phases[]` with blocking gates + `feedback_loop` with compile/lint/test
+- **Planners** (`planner.yml`): `workflow.steps[]` for decomposition + `escalation` conditions
+- **Reviewers/Validators**: simpler workflows, stricter quality thresholds
+
+### Swarm Behavior YAMLs (`hex-cli/assets/swarms/`)
+
+Swarm YAMLs define which agents participate, their cardinality, parallelism, and objectives:
+
+```yaml
+# hex-cli/assets/swarms/dev-pipeline.yml
+name: dev-pipeline
+topology: hex-pipeline
+agents:
+  - role: hex-coder
+    cardinality: per_workplan_step    # one agent per step
+    inference:
+      task_type: code_generation
+      model: preferred               # reads from agent YAML
+      upgrade: { after_iterations: 3, to: opus }
+  - role: hex-reviewer
+    cardinality: per_source_file
+    parallel_with: hex-tester
+objectives:
+  - id: CodeCompiles
+    evaluate: "cargo check / tsc --noEmit"
+    required: true
+  - id: TestsPass
+    evaluate: "cargo test / bun test"
+    required: true
+iteration:
+  max_per_tier: 5
+  on_max_iterations: escalate
+```
+
+Available swarm behaviors: `dev-pipeline`, `quick-fix`, `code-review`, `refactor`, `test-suite`, `documentation`, `migration`.
+
+### Embedding
+
+All templates (agents, swarms, hooks, skills, helpers, MCP config) live in `hex-cli/assets/` and are baked into both hex-cli and hex-nexus via `rust-embed` at compile time. hex-nexus extracts templates to target projects during `hex init`.
 
 ## Security
 
