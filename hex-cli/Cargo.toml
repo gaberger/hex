@@ -9,6 +9,10 @@ license.workspace = true
 name = "hex"
 path = "src/main.rs"
 
+[lib]
+name = "hex_cli"
+path = "src/lib.rs"
+
 [dependencies]
 hex-core = { path = "../hex-core" }
 clap = { version = "4", features = ["derive"] }
