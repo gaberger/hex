@@ -1,0 +1,117 @@
+{
+  "id": "wp-hello-world-rust-cli",
+  "title": "Rust CLI Hello World Implementation",
+  "specs": null,
+  "adr": "ADR-2405241200",
+  "created": "2024-05-24",
+  "status": "planned",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": "2500",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Create domain layer Greeting entity with value type constraints",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/hello-world-rust/domain",
+      "done_condition": "Greeting struct defined in domain/entities.rs with no external dependencies"
+    },
+    {
+      "id": "P0.2",
+      "description": "Create ports layer OutputPort trait for text output abstraction",
+      "layer": "ports",
+      "adapter": null,
+      "port": "OutputPort",
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/hello-world-rust/ports",
+      "done_condition": "OutputPort trait defined in ports/mod.rs accepting Greeting parameter"
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement StdoutPrinter adapter for console output",
+      "layer": "primary",
+      "adapter": "StdoutPrinter",
+      "port": "OutputPort",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 2,
+      "specs": [],
+      "worktree_branch": "feat/hello-world-rust/adapters-primary",
+      "done_condition": "StdoutPrinter struct implements OutputPort trait without external adapter imports"
+    },
+    {
+      "id": "P2.1",
+      "description": "Wire usecase logic to compose port and adapter",
+      "layer": "usecases",
+      "adapter": null,
+      "port": "OutputPort",
+      "dependencies": [
+        "P0.1",
+        "P0.2",
+        "P1.1"
+      ],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/hello-world-rust/usecases",
+      "done_condition": "usecases/mod.rs successfully composes Greeting with OutputPort interface"
+    },
+    {
+      "id": "P3.1",
+      "description": "Create composition root wiring configuration",
+      "layer": "integration",
+      "adapter": null,
+      "port": "OutputPort",
+      "dependencies": [
+        "P0.1",
+        "P0.2",
+        "P1.1",
+        "P2.1"
+      ],
+      "tier": 4,
+      "specs": [],
+      "worktree_branch": "feat/hello-world-rust/composition-root",
+      "done_condition": "Main application entry point registers adapters to ports"
+    }
+  ],
+  "mergeOrder": [
+    "domain layer merge first, then ports, then primary adapters, then usecases, finally composition root"
+  ],
+  "riskRegister": [
+    {
+      "impact": "low",
+      "mitigation": "Accept larger binary size as documentation benefit",
+      "risk": "Rust compilation overhead for simple output"
+    },
+    {
+      "impact": "medium",
+      "mitigation": "Validate hex framework cross-language support via ADR-018",
+      "risk": "TypeScript/Go build integration friction"
+    },
+    {
+      "impact": "medium",
+      "mitigation": "Use scaffolding as documented baseline for future Rust modules",
+      "risk": "Over-engineering for one-line output"
+    }
+  ],
+  "successCriteria": [
+    "Hello message prints to console via StdoutPrinter adapter",
+    "Domain Greeting entity remains isolated from output implementation",
+    "OutputPort trait enables swapping adapters without changing usecase",
+    "All layers compile without cross-layer imports violating hex boundaries"
+  ],
+  "dependencies": {
+    "cargo": [
+      "hex",
+      "serde"
+    ],
+    "npm": []
+  }
+}
