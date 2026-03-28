@@ -1,0 +1,92 @@
+{
+  "id": "wp-fibonacci-cli",
+  "title": "Fibonacci CLI Implementation",
+  "specs": "specs/fibonacci-cli.md",
+  "adr": "ADR-230315142300",
+  "created": "2023-03-15",
+  "status": "planned",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": "1 token",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Implement pure Fibonacci algorithm in domain layer",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/fibonacci/domain",
+      "done_condition": "Fibonacci algorithm passes unit tests"
+    },
+    {
+      "id": "P0.2",
+      "description": "Define CLI port interface in ports layer",
+      "layer": "ports",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 0,
+      "specs": [
+        "S02"
+      ],
+      "worktree_branch": "feat/fibonacci/ports",
+      "done_condition": "CLI port interface defined"
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement CLI adapter in primary layer",
+      "layer": "primary",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 2,
+      "specs": [
+        "S03"
+      ],
+      "worktree_branch": "feat/fibonacci/primary",
+      "done_condition": "CLI adapter passes integration tests"
+    },
+    {
+      "id": "P1.2",
+      "description": "Wire components in composition root",
+      "layer": "composition-root",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1",
+        "P0.2",
+        "P1.1"
+      ],
+      "tier": 4,
+      "specs": [
+        "S04"
+      ],
+      "worktree_branch": "feat/fibonacci/root",
+      "done_condition": "Composition root successfully wired"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P1.2"
+  ],
+  "riskRegister": [],
+  "successCriteria": [
+    "Fibonacci CLI generates sequences correctly",
+    "CLI-MCP parity achieved"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
