@@ -368,7 +368,11 @@ impl TuiApp {
                     } else {
                         Some(self.config.model.as_str())
                     };
-                    let provider_pref = if self.config.provider.is_empty() {
+                    let provider_pref = if self.config.provider.is_empty()
+                        || self.config.provider == "openrouter"
+                    {
+                        // "openrouter" is the default platform — no provider filtering,
+                        // let RL engine select the best model for the task type.
                         None
                     } else {
                         Some(self.config.provider.as_str())
@@ -505,7 +509,11 @@ impl TuiApp {
                     } else {
                         Some(self.config.model.as_str())
                     };
-                    let provider_pref = if self.config.provider.is_empty() {
+                    let provider_pref = if self.config.provider.is_empty()
+                        || self.config.provider == "openrouter"
+                    {
+                        // "openrouter" is the default platform — no provider filtering,
+                        // let RL engine select the best model for the task type.
                         None
                     } else {
                         Some(self.config.provider.as_str())
@@ -1077,7 +1085,11 @@ impl TuiApp {
                     } else {
                         Some(self.config.model.as_str())
                     };
-                    let provider_pref = if self.config.provider.is_empty() {
+                    let provider_pref = if self.config.provider.is_empty()
+                        || self.config.provider == "openrouter"
+                    {
+                        // "openrouter" is the default platform — no provider filtering,
+                        // let RL engine select the best model for the task type.
                         None
                     } else {
                         Some(self.config.provider.as_str())

@@ -1,0 +1,7 @@
+{
+  "title": "Build a simple Rust key-value store REST API",
+  "description": "Create a Rust REST API using axum that implements an in-memory key-value store. Endpoints: GET /health, GET /entries (list all), POST /entries {key, value} (create, returns 201 + Entry), GET /entries/:id (get by id, 404 if missing), DELETE /entries/:id (delete, 204 on success), GET /entries/by-key/:key (lookup by key name). Use Arc<Mutex<HashMap<String, Entry>>> for storage. Each Entry has: id (UUID v4), key (String), value (String), created_at (ISO 8601). Include unit tests for all endpoints using tower::ServiceExt::oneshot. Confirm with: cargo check && cargo test",
+  "worktree_branch": "feat/sandbox-demo/api",
+  "model_hint": "claude-sonnet-4-6",
+  "tags": ["example", "sandbox", "rust", "rest-api"]
+}
