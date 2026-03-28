@@ -556,6 +556,79 @@ hex neural-lab experiment create --hypothesis "increase n_embd 512→768"
 hex neural-lab frontier          # best config + experiment history
 ```
 
+### Haiku Preflight & Automatic Context Compaction
+
+hex implements two multi-model orchestration patterns within a single conversation turn — a cheap Haiku classifier gates whether the expensive reasoning model runs and with what context.
+
+**Startup quota check** — before building any context window, hex fires a ~50-token Haiku request to verify API connectivity and quota. Fail-fast in <500ms instead of after a 15k-token context build that then hits a 429.
+
+**Topic change detection** — on every user input, a Haiku classification call determines whether this is a continuation or a new topic. New topic → automatic context compaction (conversation summarized, history cleared, summary injected as system context) before the reasoning model sees the input. Prevents unrelated prior conversation from polluting the context budget.
+
+**Automatic compaction** — when context utilization exceeds 85%, the conversation loop compacts without user intervention. No manual `/compact` needed.
+
+```
+~200 tokens to Haiku per turn (<0.1% of total cost)
+vs. savings from avoiding bloated context on all subsequent turns
+```
+
+### OpenRouter: 300+ Models via One API Key
+
+OpenRouter is a provider-of-providers: one API key, one billing dashboard, automatic upstream failover across Together AI, Lambda, Fireworks, and others. hex treats it as a first-class inference provider with its own `ProviderKind`.
+
+```bash
+hex inference discover --provider openrouter   # sync 300+ available models into SpacetimeDB
+hex secrets set OPENROUTER_API_KEY sk-or-...   # single key for all models
+```
+
+**Recommended models for the RL selection pool:**
+
+| Model | Context | $/M in | Best for |
+|---|---|---|---|
+| `meta-llama/llama-4-maverick` | 1M | $0.25 | General coding, large context |
+| `meta-llama/llama-4-scout` | 512K | $0.15 | Summarization, batch analysis |
+| `deepseek/deepseek-r1` | 128K | $0.55 | Complex reasoning, math, security review |
+| `qwen/qwen3-235b` | 128K | $0.20 | Multilingual, structured output |
+| `google/gemini-2.5-pro` | 1M | $1.25 | Long-context analysis |
+
+OpenRouter reports actual cost per request — the inference-gateway WASM module uses this directly for budget tracking instead of estimating from token counts. The RL engine uses real cost to learn which models are worth their price per task type.
+
+**Extended fallback chain with OpenRouter:**
+```
+Complex reasoning:   Opus → OpenRouter(deepseek-r1) → Sonnet
+Code generation:     Sonnet → OpenRouter(llama-4-maverick) → MiniMax
+Budget-constrained:  OpenRouter(llama-4-scout) → Local → Haiku
+```
+
+### Grade A Quality Loop
+
+`hex dev` doesn't stop at generating code — it iterates through a quality gate until the output is provably correct.
+
+```
+Code generated
+  │
+  ├── 1. Compile check  (tsc --noEmit / cargo check)
+  │       Fail? → inference fixes compile errors → retry
+  │
+  ├── 2. Tests          (bun test / cargo test)
+  │       Fail? → inference fixes test failures → retry
+  │
+  ├── 3. hex analyze    (boundary check, cycle detection, dead exports)
+  │       Score < 90? → inference fixes violations → retry
+  │
+  └── Grade A (≥90/100, zero violations) → advance to commit
+```
+
+Each gate retries up to 3 times with specialized fix prompts (compile errors, test failures, boundary violations) and the actual error output as context — the agent sees exactly what went wrong. The loop reports cost per iteration:
+
+```
+Phase 5: Quality Gate — 3 iterations, $0.003 fix cost
+  Compile:    PASS
+  Tests:      5/5 passing
+  Analyze:    94/100 Grade A  (2 violations fixed automatically)
+```
+
+Grade B (80+) is accepted in `--auto` mode with a warning. Only interactive mode blocks on Grade A. The quality loop is currently embedded in `validate_phase.rs`; the roadmap migrates it to swarm-controlled orchestration where each fix attempt is a tracked HexFlo task.
+
 ---
 
 ## Competitive Positioning
