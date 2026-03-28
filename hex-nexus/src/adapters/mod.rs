@@ -1,3 +1,4 @@
+pub mod docker_sandbox;
 pub mod ssh_tunnel;
 pub mod ws_transport;
 pub mod spacetime_chat;

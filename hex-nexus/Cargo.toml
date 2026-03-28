@@ -57,6 +57,8 @@ git2 = { version = "0.19", features = ["vendored-libgit2"] }
 toml = "0.8"
 # Shared domain types and port traits (hex-core is the gravity center)
 hex-core = { path = "../hex-core" }
+# Docker container lifecycle for sandbox agent coordination (feat-docker-sandbox)
+bollard = "0.17"
 # SQLite for offline-first session persistence (ADR-036)
 rusqlite = { version = "0.34", features = ["bundled"], optional = true }
 # SpacetimeDB client SDK — optional, enabled via --features spacetimedb
