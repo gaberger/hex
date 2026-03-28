@@ -115,6 +115,8 @@ enum Command {
     BuildHash,
     /// Run as an MCP server over stdin/stdout (for docker sandbox agents)
     McpServer,
+    /// Run as a HexFlo task daemon — poll, execute, report (for Docker sandbox agents)
+    Daemon,
 }
 
 /// Generate a unique, human-readable agent name from the agent UUID.
@@ -181,6 +183,21 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(false);
     if matches!(&args.command, Some(Command::McpServer)) || mcp_via_env {
         run_mcp_server();
+        return Ok(());
+    }
+
+    if matches!(&args.command, Some(Command::Daemon)) {
+        use adapters::secondary::task_executor::TaskExecutor;
+        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        let executor = TaskExecutor::from_env();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_clone = shutdown.clone();
+        // Handle SIGTERM / SIGINT
+        tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.ok();
+            shutdown_clone.store(true, Ordering::SeqCst);
+        });
+        executor.run_loop(shutdown).await;
         return Ok(());
     }
 
