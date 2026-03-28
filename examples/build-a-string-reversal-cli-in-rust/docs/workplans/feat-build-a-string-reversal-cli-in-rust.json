@@ -1,0 +1,50 @@
+{
+  "id": "wp-230315-cli-reversal",
+  "title": "Implement CLI String Reversal Adapter",
+  "specs": "specs/cli-string-reversal.md",
+  "adr": "ADR-230315",
+  "created": "2023-03-15",
+  "status": "planned",
+  "status_note": "Initial workplan generation",
+  "topology": "pipeline",
+  "budget": "1 token",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Implement the full feature in src/main.rs — single-binary rust project",
+      "layer": "primary",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": null,
+      "done_condition": "src/main.rs compiles and implements the feature; Cargo.toml has correct dependencies"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P2.1",
+    "P4.1",
+    "P5.1"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Follow single-file Rust project rules strictly",
+      "risk": "Rust project structure deviation"
+    }
+  ],
+  "successCriteria": [
+    "CLI tool reverses strings correctly",
+    "Layer boundaries maintained",
+    "Tests pass"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
