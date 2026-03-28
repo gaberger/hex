@@ -62,7 +62,7 @@ async fn create(swarm_id: &str, title: &str, depends_on: &str, agent: Option<Str
     nexus.ensure_running().await?;
 
     // Auto-resolve agent_id from session state if not provided
-    let agent_id = agent.or_else(|| crate::nexus_client::read_session_agent_id());
+    let agent_id = agent.or_else(crate::nexus_client::read_session_agent_id);
 
     // POST to /api/swarms/{swarm_id}/tasks
     let path = format!("/api/swarms/{}/tasks", swarm_id);

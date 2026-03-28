@@ -84,9 +84,9 @@ fn provider_model_for(provider: &str, task_type: TaskType) -> Option<&'static st
             TaskType::General => "claude-haiku-4-5-20251001",
         }),
         "ollama" => Some(match task_type {
-            TaskType::Reasoning => "qwen3.5:27b",
-            TaskType::StructuredOutput => "qwen3.5:27b",
-            TaskType::CodeGeneration => "qwen3.5:27b",
+            TaskType::Reasoning => "qwen3.5:9b",
+            TaskType::StructuredOutput => "qwen3.5:9b",
+            TaskType::CodeGeneration => "qwen3.5:9b",
             TaskType::CodeEdit => "qwen3.5:9b",
             TaskType::General => "qwen3.5:9b",
         }),
@@ -103,7 +103,7 @@ pub fn free_fallback_for(_task_type: TaskType) -> &'static str {
 /// Ordered fallback chain: primary → alternatives (all privacy-compatible free models).
 pub fn fallback_chain_for(task_type: TaskType) -> Vec<&'static str> {
     vec![
-        default_model_for(task_type),                   // Primary: llama-3.1-8b
+        default_model_for(task_type),                   // Primary: gpt-4o-mini
         "google/gemma-2-9b-it:free",                    // Fallback 1: Gemma 2
         "qwen/qwen-2.5-7b-instruct:free",               // Fallback 2: Qwen 2.5
     ]

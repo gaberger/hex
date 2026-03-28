@@ -418,7 +418,7 @@ async fn list_from_nexus(nexus: &NexusClient) -> anyhow::Result<()> {
         });
     }
 
-    println!("{}", HexTable::new(&rows));
+    println!("{}", HexTable::render(&rows));
 
     Ok(())
 }
@@ -529,7 +529,7 @@ async fn list_from_local_sessions() -> anyhow::Result<()> {
         });
     }
 
-    println!("{}", HexTable::new(&rows));
+    println!("{}", HexTable::render(&rows));
 
     println!();
     println!(

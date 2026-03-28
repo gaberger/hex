@@ -5,6 +5,7 @@ use colored::Colorize;
 use tabled::Tabled;
 
 use crate::fmt::{status_badge, truncate, HexTable};
+use super::spec::{find_specs_dir, find_workplans_dir, collect_workplans, workplan_specs_path};
 
 #[derive(Subcommand)]
 pub enum AdrAction {
@@ -29,6 +30,11 @@ pub enum AdrAction {
     },
     /// Show the ADR schema, template, and next available number
     Schema,
+    /// Show behavioral specs linked to an ADR via workplans
+    Specs {
+        /// ADR identifier (e.g. ADR-2603240130 or partial match like 2603240130)
+        adr_id: String,
+    },
 }
 
 pub async fn run(action: AdrAction) -> anyhow::Result<()> {
@@ -39,6 +45,7 @@ pub async fn run(action: AdrAction) -> anyhow::Result<()> {
         AdrAction::Abandoned => abandoned().await,
         AdrAction::Review { adr_id, strict } => super::adr_review::run(adr_id, strict).await,
         AdrAction::Schema => schema().await,
+        AdrAction::Specs { adr_id } => specs_for_adr(&adr_id).await,
     }
 }
 
@@ -152,8 +159,8 @@ fn extract_adr_id(filename: &str) -> String {
 fn extract_title(path: &Path, content: &str) -> String {
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("# ") {
-            return trimmed[2..].to_string();
+        if let Some(title) = trimmed.strip_prefix("# ") {
+            return title.to_string();
         }
     }
     // Fallback to filename
@@ -242,7 +249,7 @@ async fn list() -> anyhow::Result<()> {
         })
         .collect();
 
-    println!("{}", HexTable::new(&rows));
+    println!("{}", HexTable::render(&rows));
     println!();
     println!("  {} ADR(s) total", adrs.len());
 
@@ -348,7 +355,7 @@ async fn search(query: &str) -> anyhow::Result<()> {
             })
             .collect();
 
-        println!("{}", HexTable::new(&rows));
+        println!("{}", HexTable::render(&rows));
         println!();
         println!("  {} match(es)", matches.len());
     }
@@ -468,6 +475,170 @@ async fn abandoned() -> anyhow::Result<()> {
         println!("{}", HexTable::compact(&rows));
         println!();
         println!("  {} ADR(s) need attention", rows.len());
+    }
+
+    Ok(())
+}
+
+// ── Spec-linkage types ───────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct SpecFile {
+    feature: String,
+    #[serde(default)]
+    description: String,
+    specs: Vec<SpecScenario>,
+}
+
+#[derive(serde::Deserialize)]
+struct SpecScenario {
+    id: String,
+    #[serde(default)]
+    category: String,
+    description: String,
+    #[serde(default)]
+    negative_spec: bool,
+}
+
+#[derive(Tabled)]
+struct SpecRow {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "Cat")]
+    category: String,
+    #[tabled(rename = "Neg")]
+    neg: String,
+    #[tabled(rename = "Description")]
+    description: String,
+}
+
+/// `hex adr specs <adr-id>` — find specs linked to an ADR through workplans.
+async fn specs_for_adr(adr_id: &str) -> anyhow::Result<()> {
+    let workplans_dir = find_workplans_dir()
+        .ok_or_else(|| anyhow::anyhow!("No docs/workplans/ directory found"))?;
+    let all_wps = collect_workplans(&workplans_dir).await?;
+
+    let query = adr_id.to_uppercase();
+
+    // Find workplans that reference this ADR
+    let linked: Vec<_> = all_wps
+        .iter()
+        .filter(|(_, wp)| wp.adr.to_uppercase().contains(&query))
+        .collect();
+
+    println!("{} Specs linked to {}", "\u{2b21}".cyan(), adr_id.bold());
+    println!();
+
+    if linked.is_empty() {
+        println!(
+            "  {} No workplan references ADR '{}'",
+            "\u{26a0}".yellow(),
+            adr_id
+        );
+        println!();
+        println!(
+            "  {} Workplans link specs to ADRs via the `\"adr\"` field in docs/workplans/*.json",
+            "\u{2139}".dimmed()
+        );
+        return Ok(());
+    }
+
+    // Find project root for resolving relative spec paths
+    let project_root = workplans_dir
+        .parent()  // docs/
+        .and_then(|p| p.parent())  // project root
+        .map(|p| p.to_path_buf());
+
+    for (wp_path, wp) in &linked {
+        let wp_name = wp_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&wp.id);
+
+        println!(
+            "  {} workplan: {}",
+            "\u{25b6}".green(),
+            wp_name.bold()
+        );
+        if !wp.title.is_empty() {
+            println!("    {}", wp.title.dimmed());
+        }
+
+        // Resolve and load the linked spec file
+        let spec_path_val = match &wp.specs {
+            Some(v) => v.clone(),
+            None => {
+                println!("    {} (no specs field in workplan)", "\u{2014}".dimmed());
+                println!();
+                continue;
+            }
+        };
+
+        let spec_rel = match workplan_specs_path(&spec_path_val) {
+            Some(p) => p,
+            None => {
+                println!("    {} (specs field is not a path string)", "\u{2014}".dimmed());
+                println!();
+                continue;
+            }
+        };
+
+        println!("    spec: {}", spec_rel.dimmed());
+        println!();
+
+        // Try to load the spec file
+        let spec_abs = project_root
+            .as_ref()
+            .map(|root| root.join(&spec_rel))
+            .filter(|p| p.exists());
+
+        // Also try find_specs_dir() + filename
+        let spec_abs = spec_abs.or_else(|| {
+            find_specs_dir().map(|d| {
+                let fname = Path::new(&spec_rel).file_name()?;
+                Some(d.join(fname))
+            }).flatten()
+        });
+
+        match spec_abs {
+            Some(abs) if abs.exists() => {
+                let raw = tokio::fs::read_to_string(&abs).await?;
+                match serde_json::from_str::<SpecFile>(&raw) {
+                    Ok(spec) => {
+                        println!(
+                            "    {} — {} ({} scenarios)",
+                            spec.feature.bold(),
+                            spec.description.dimmed(),
+                            spec.specs.len()
+                        );
+                        println!();
+
+                        let rows: Vec<SpecRow> = spec.specs.iter().map(|s| SpecRow {
+                            id: s.id.clone(),
+                            category: s.category.clone(),
+                            neg: if s.negative_spec { "\u{2212}".red().to_string() } else { String::new() },
+                            description: truncate(&s.description, 55),
+                        }).collect();
+
+                        println!("{}", HexTable::compact(&rows));
+                        println!();
+                        println!(
+                            "    {} Run `hex spec show {}` for Given/When/Then detail",
+                            "\u{2139}".dimmed(),
+                            spec.feature
+                        );
+                    }
+                    Err(e) => {
+                        println!("    {} Failed to parse spec: {}", "\u{2717}".red(), e);
+                    }
+                }
+            }
+            _ => {
+                println!("    {} Spec file not found at '{}'", "\u{26a0}".yellow(), spec_rel);
+            }
+        }
+
+        println!();
     }
 
     Ok(())

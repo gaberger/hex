@@ -160,6 +160,7 @@ pub async fn run(action: NeuralLabAction) -> anyhow::Result<()> {
 
 // ─── Config Commands ─────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn config_create(
     name: Option<String>,
     parent: Option<String>,

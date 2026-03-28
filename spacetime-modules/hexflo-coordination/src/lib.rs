@@ -885,7 +885,7 @@ pub fn task_create(
     if !depends_on.is_empty() {
         for dep_id in depends_on.split(',') {
             let dep_id = dep_id.trim();
-            if !dep_id.is_empty() && ctx.db.swarm_task().id().find(&dep_id.to_string()).is_none() {
+            if !dep_id.is_empty() && ctx.db.swarm_task().id().find(dep_id.to_string()).is_none() {
                 return Err(format!("Dependency task '{}' not found", dep_id));
             }
         }
@@ -919,7 +919,7 @@ fn dependencies_met(ctx: &ReducerContext, task: &SwarmTask) -> bool {
         if dep_id.is_empty() {
             continue;
         }
-        match ctx.db.swarm_task().id().find(&dep_id.to_string()) {
+        match ctx.db.swarm_task().id().find(dep_id.to_string()) {
             Some(dep_task) => {
                 if dep_task.status != "completed" {
                     return false;
@@ -1071,7 +1071,7 @@ pub fn swarm_transfer(
 
     // Set swarm_id on new owner
     ctx.db.hex_agent().id().update(HexAgent {
-        swarm_id: swarm_id,
+        swarm_id,
         ..new_owner
     });
 

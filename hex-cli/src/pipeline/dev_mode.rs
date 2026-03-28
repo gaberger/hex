@@ -104,6 +104,7 @@ impl DevConfig {
     ///
     /// The boolean flags are mutually exclusive in priority:
     /// `dry_run` > `auto` > `quick` > `interactive` (default).
+    #[allow(clippy::too_many_arguments)]
     pub fn from_args(
         description: String,
         quick: bool,

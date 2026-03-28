@@ -459,7 +459,7 @@ async fn list_plans() -> anyhow::Result<()> {
                         let done = plan.completed_tasks();
                         let title = {
                             let dt = plan.display_title();
-                            if dt.is_empty() { name.to_string() } else { truncate(&dt.to_string(), 40) }
+                            if dt.is_empty() { name.to_string() } else { truncate(dt, 40) }
                         };
 
                         let progress_str = if total == 0 {
@@ -524,7 +524,7 @@ async fn list_plans() -> anyhow::Result<()> {
         }
     }
 
-    println!("{}", HexTable::new(&rows));
+    println!("{}", HexTable::render(&rows));
 
     Ok(())
 }
@@ -586,7 +586,7 @@ async fn show_plan_file(path: &Path) -> anyhow::Result<()> {
         }
     }).collect();
 
-    println!("{}", HexTable::new(&rows));
+    println!("{}", HexTable::render(&rows));
 
     Ok(())
 }
@@ -648,7 +648,7 @@ async fn show_active_executions() -> anyhow::Result<()> {
         }
     }).collect();
 
-    println!("{}", HexTable::new(&rows));
+    println!("{}", HexTable::render(&rows));
 
     Ok(())
 }
@@ -704,7 +704,7 @@ async fn show_execution_history() -> anyhow::Result<()> {
         }
     }).collect();
 
-    println!("{}", HexTable::new(&rows));
+    println!("{}", HexTable::render(&rows));
 
     Ok(())
 }

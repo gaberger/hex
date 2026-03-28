@@ -379,6 +379,9 @@ async fn handle_chat_ws(
                         hub_url: None,
                         hub_token: None,
                         secret_keys: vec![],
+                        prompt: None,
+                        worktree_branch: None,
+                        wait_for_completion: false,
                     };
                     let spawn_result = if let Some(ref mgr) = state2.agent_manager {
                         mgr.spawn_agent(config).await
@@ -596,6 +599,12 @@ async fn llm_bridge(
         }),
     });
 
+    // Update context pressure tracker
+    {
+        let mut tracker = state.context_pressure.lock().await;
+        tracker.record(input_tokens);
+    }
+
     // Persist to SpacetimeDB (fire-and-forget — never block chat)
     {
         let inference_stdb = state.inference_stdb.clone();
@@ -686,13 +695,26 @@ pub(crate) async fn call_inference_endpoint(
     ep: &crate::routes::secrets::InferenceEndpointEntry,
     messages: &[serde_json::Value],
 ) -> Result<InferenceResult, String> {
+    let is_openrouter = ep.provider == "openrouter"
+        || ep.url.contains("openrouter.ai");
+
+    // Local providers (Ollama, vLLM) need a much longer timeout — cold model
+    // load can take 5-10 minutes for large quantised weights. Remote APIs
+    // (OpenRouter, Anthropic) are faster and capped at 4 minutes.
+    let inference_timeout = if ep.provider == "ollama" || ep.provider == "vllm"
+        || (!is_openrouter && !ep.url.contains("anthropic.com") && !ep.url.starts_with("https://api."))
+    {
+        Duration::from_secs(600)
+    } else {
+        Duration::from_secs(240)
+    };
+
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(240))
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(inference_timeout)
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
     let model = if ep.model.is_empty() { "default".to_string() } else { ep.model.clone() };
-    let is_openrouter = ep.provider == "openrouter"
-        || ep.url.contains("openrouter.ai");
 
     let (url, body) = if is_openrouter {
         let url = "https://openrouter.ai/api/v1/chat/completions".to_string();
@@ -829,25 +851,78 @@ pub(crate) async fn call_inference_endpoint(
 }
 
 /// Call Anthropic API directly
+/// Inject Anthropic prompt-caching breakpoints into messages before sending.
+///
+/// Marks the system prompt and the first user message's content as cacheable.
+/// This eliminates redundant token spend on repeated inference calls within the
+/// same TDD feedback loop — the static prefix (system + context files) is sent
+/// once and cached; only new turns are charged at full rate.
+///
+/// The `anthropic-beta: prompt-caching-2024-07-31` header must accompany these requests.
+/// For non-Anthropic providers this function is not called.
+fn inject_cache_controls(messages: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut out = messages.to_vec();
+    // Mark the first user message's content as a cache breakpoint. This is the
+    // message that typically carries all static context (port interfaces, files).
+    for msg in out.iter_mut() {
+        if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
+            match msg.get("content") {
+                Some(serde_json::Value::String(s)) => {
+                    let text = s.clone();
+                    msg["content"] = json!([{
+                        "type": "text",
+                        "text": text,
+                        "cache_control": { "type": "ephemeral" }
+                    }]);
+                }
+                Some(serde_json::Value::Array(blocks)) if !blocks.is_empty() => {
+                    let mut blocks = blocks.clone();
+                    if let Some(last) = blocks.last_mut() {
+                        if last.get("cache_control").is_none() {
+                            last["cache_control"] = json!({ "type": "ephemeral" });
+                        }
+                    }
+                    msg["content"] = serde_json::Value::Array(blocks);
+                }
+                _ => {}
+            }
+            break; // only the first user message
+        }
+    }
+    out
+}
+
 pub(crate) async fn call_anthropic(
     api_key: &str,
     messages: &[serde_json::Value],
 ) -> Result<InferenceResult, String> {
     let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(240))
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+
+    let cached_messages = inject_cache_controls(messages);
+
+    // System prompt uses the array format so Anthropic can cache the static prefix.
+    let system_block = json!([{
+        "type": "text",
+        "text": "You are a helpful AI assistant integrated into the hex architecture dashboard. Be concise and helpful.",
+        "cache_control": { "type": "ephemeral" }
+    }]);
+
     let body = json!({
         "model": "claude-sonnet-4-20250514",
         "max_tokens": 4096,
-        "system": "You are a helpful AI assistant integrated into the hex architecture dashboard. Be concise and helpful.",
-        "messages": messages,
+        "system": system_block,
+        "messages": cached_messages,
     });
 
     let resp = client
         .post("https://api.anthropic.com/v1/messages")
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
+        .header("anthropic-beta", "prompt-caching-2024-07-31")
         .header("content-type", "application/json")
         .json(&body)
         .send()
@@ -870,6 +945,11 @@ pub(crate) async fn call_anthropic(
     let model = data["model"].as_str().unwrap_or("unknown").to_string();
     let input_tokens = data["usage"]["input_tokens"].as_u64().unwrap_or(0);
     let output_tokens = data["usage"]["output_tokens"].as_u64().unwrap_or(0);
+    let cache_read = data["usage"]["cache_read_input_tokens"].as_u64().unwrap_or(0);
+    let cache_created = data["usage"]["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+    if cache_read > 0 || cache_created > 0 {
+        tracing::debug!(cache_read_tokens = cache_read, cache_created_tokens = cache_created, "anthropic prompt cache stats");
+    }
     Ok((content, model, input_tokens, output_tokens, String::new()))
 }
 

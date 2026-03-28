@@ -73,10 +73,17 @@ pub struct SpawnConfig {
     pub hub_url: Option<String>,
     pub hub_token: Option<String>,
     /// Secret key names to grant to this agent (ADR-026).
-    /// hex-hub resolves these from its own environment and injects
-    /// the values as env vars into the child process.
     #[serde(default)]
     pub secret_keys: Vec<String>,
+    /// Task prompt to send via stdin — the agent receives this as its first message.
+    pub prompt: Option<String>,
+    /// Git branch name for worktree isolation (ADR-004).
+    /// If set, a worktree is created at `../hex-worktrees/<branch>` before spawning.
+    pub worktree_branch: Option<String>,
+    /// If true, block until the child process exits and return error on non-zero exit.
+    /// Used by workplan execution. Ad-hoc spawns default to false (fire-and-forget).
+    #[serde(default)]
+    pub wait_for_completion: bool,
 }
 
 // ── Conversion helpers ─────────────────────────────────
@@ -173,18 +180,55 @@ impl AgentManager {
     /// Spawn a hex-agent child process. Registers it via the state port.
     pub async fn spawn_agent(
         &self,
-        config: SpawnConfig,
+        mut config: SpawnConfig,
     ) -> Result<AgentInstance, String> {
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let agent_name = config.agent_name.unwrap_or_else(|| "hex-agent".to_string());
         let model = config.model.unwrap_or_else(|| "default".to_string());
 
+        // ADR-004: Create git worktree for isolation if branch is specified.
+        if let Some(ref branch) = config.worktree_branch {
+            let project_path = std::path::Path::new(&config.project_dir);
+            let worktree_parent = project_path.parent().unwrap_or(project_path);
+            let branch_safe = branch.replace('/', "-");
+            let worktree_path = worktree_parent.join(format!("hex-worktrees-{}", branch_safe));
+
+            if !worktree_path.exists() {
+                let result = tokio::process::Command::new("git")
+                    .args([
+                        "-C", &config.project_dir,
+                        "worktree", "add",
+                        &worktree_path.to_string_lossy(),
+                        "-b", branch,
+                    ])
+                    .output()
+                    .await;
+
+                match result {
+                    Ok(out) if out.status.success() => {
+                        tracing::info!(branch = %branch, path = %worktree_path.display(), "Created worktree");
+                        config.project_dir = worktree_path.to_string_lossy().to_string();
+                    }
+                    Ok(out) => {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        tracing::warn!(branch = %branch, err = %stderr, "Worktree creation failed — using project_dir");
+                    }
+                    Err(e) => {
+                        tracing::warn!(branch = %branch, err = %e, "git worktree add failed — using project_dir");
+                    }
+                }
+            } else {
+                tracing::debug!(branch = %branch, "Worktree already exists, reusing");
+                config.project_dir = worktree_path.to_string_lossy().to_string();
+            }
+        }
+
         // Build command arguments for hex-agent binary
         let mut cmd = tokio::process::Command::new("hex-agent");
         cmd.arg("--project-dir").arg(&config.project_dir);
         cmd.arg("--model").arg(&model);
-        cmd.arg("--agent-name").arg(&agent_name);
+        cmd.arg("--agent").arg(&agent_name);
 
         if let Some(ref hub_url) = config.hub_url {
             cmd.arg("--hub-url").arg(hub_url);
@@ -237,8 +281,39 @@ impl AgentManager {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let child = cmd.spawn().map_err(|e| format!("Failed to spawn hex-agent: {}", e))?;
+        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn hex-agent: {}", e))?;
         let pid = child.id().unwrap_or(0);
+
+        // Write task prompt to stdin then close the pipe so the agent sees EOF.
+        if let Some(ref prompt) = config.prompt {
+            if let Some(mut stdin) = child.stdin.take() {
+                use tokio::io::AsyncWriteExt;
+                let _ = stdin.write_all(prompt.as_bytes()).await;
+                // stdin drops here, closing the pipe
+            }
+        }
+
+        // If wait_for_completion, block until child exits and surface non-zero exit as error.
+        if config.wait_for_completion {
+            let exit_status = child
+                .wait()
+                .await
+                .map_err(|e| format!("Failed to wait for hex-agent: {}", e))?;
+
+            if !exit_status.success() {
+                self.state_port
+                    .agent_update_status(&id, PortAgentStatus::Failed, None)
+                    .await
+                    .ok();
+                return Err(format!("hex-agent exited with {}", exit_status));
+            }
+
+            // Mark completed before returning the instance.
+            self.state_port
+                .agent_update_status(&id, PortAgentStatus::Completed, None)
+                .await
+                .ok();
+        }
 
         let instance = AgentInstance {
             id: id.clone(),
@@ -458,6 +533,70 @@ impl AgentManager {
         }
 
         Ok(dead_agents)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── SpawnConfig serde ────────────────────────────────────────────────────
+
+    /// JSON without `waitForCompletion` must deserialize with the field defaulting to false.
+    /// This ensures workplan JSON produced before the field existed continues to work.
+    #[test]
+    fn spawn_config_wait_for_completion_defaults_false() {
+        let json = r#"{
+            "projectDir": "/tmp/proj",
+            "model": null,
+            "agentName": null,
+            "hubUrl": null,
+            "hubToken": null,
+            "secretKeys": []
+        }"#;
+        let config: SpawnConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.wait_for_completion, "waitForCompletion should default to false");
+    }
+
+    /// JSON with `waitForCompletion: true` must round-trip correctly.
+    #[test]
+    fn spawn_config_wait_for_completion_explicit_true() {
+        let json = r#"{
+            "projectDir": "/tmp/proj",
+            "model": null,
+            "agentName": null,
+            "hubUrl": null,
+            "hubToken": null,
+            "secretKeys": [],
+            "waitForCompletion": true
+        }"#;
+        let config: SpawnConfig = serde_json::from_str(json).unwrap();
+        assert!(config.wait_for_completion);
+    }
+
+    /// The prompt field is optional and absent JSON must produce None.
+    #[test]
+    fn spawn_config_prompt_defaults_none() {
+        let json = r#"{"projectDir": "/tmp/p", "model": null, "agentName": null,
+                        "hubUrl": null, "hubToken": null, "secretKeys": []}"#;
+        let config: SpawnConfig = serde_json::from_str(json).unwrap();
+        assert!(config.prompt.is_none());
+    }
+
+    /// worktreeBranch round-trips as Some when provided.
+    #[test]
+    fn spawn_config_worktree_branch_round_trips() {
+        let json = r#"{
+            "projectDir": "/tmp/p",
+            "model": null,
+            "agentName": null,
+            "hubUrl": null,
+            "hubToken": null,
+            "secretKeys": [],
+            "worktreeBranch": "feat/my-feature/p1.1"
+        }"#;
+        let config: SpawnConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.worktree_branch.as_deref(), Some("feat/my-feature/p1.1"));
     }
 }
 

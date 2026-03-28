@@ -16,6 +16,11 @@ model:
   reasoning: >
     Planning requires architectural reasoning, dependency analysis, and task decomposition.
     This is high-complexity work that benefits from Opus-level reasoning.
+  quantization:
+    default: q8          # Q8 minimum — planning requires high fidelity reasoning
+    minimum: q4          # Never below Q4 for architectural decisions
+    on_complexity_high: cloud  # Critical planning always escalates to cloud
+    on_failure: cloud    # No degraded-quality planning allowed
 
 context:
   load_on_start:
@@ -41,6 +46,11 @@ context:
   token_budget:
     max: 80000
     reserved_response: 20000
+    pressure:
+      warn_at_pct: 70
+      compress_at_pct: 80
+      block_at_pct: 90
+      relief: escalate
 
 constraints:
   - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP planning, save workplan state, acknowledge via hex inbox ack, and inform the user. This overrides all other work."

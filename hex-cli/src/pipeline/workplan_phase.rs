@@ -256,7 +256,7 @@ impl WorkplanPhase {
 
         // Re-serialize the parsed data to get clean, validated JSON
         let content = serde_json::to_string_pretty(&parsed)
-            .unwrap_or_else(|_| json_str);
+            .unwrap_or(json_str);
 
         Ok(WorkplanPhaseResult {
             content,

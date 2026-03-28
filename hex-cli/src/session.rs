@@ -228,10 +228,7 @@ impl DevSession {
             {
                 continue;
             }
-            if best
-                .as_ref()
-                .map_or(true, |b| session.updated_at > b.updated_at)
-            {
+            if best.as_ref().is_none_or(|b| session.updated_at > b.updated_at) {
                 best = Some(session);
             }
         }
@@ -393,7 +390,7 @@ fn resolve_agent_id() -> Option<String> {
             if name.starts_with("agent-") && name.ends_with(".json") {
                 if let Ok(meta) = path.metadata() {
                     if let Ok(modified) = meta.modified() {
-                        if newest.as_ref().map_or(true, |(t, _)| modified > *t) {
+                        if newest.as_ref().is_none_or(|(t, _)| modified > *t) {
                             newest = Some((modified, path.clone()));
                         }
                     }

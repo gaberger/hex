@@ -591,7 +591,7 @@ impl Supervisor {
                             .map(|c| Self::extract_signatures(&c))
                             .unwrap_or_default()
                     }
-                    "L3" | _ => {
+                    _ => {
                         // Full content
                         Self::read_file_truncated(full_path, yaml_budget).unwrap_or_default()
                     }
@@ -616,9 +616,15 @@ impl Supervisor {
             metadata.insert("target_adapter".into(), adapter.to_string());
         }
 
-        // Apply token budget if specified
+        // Apply token budget and pressure thresholds if specified
         if let Some(ref budget) = ctx_config.token_budget {
             metadata.insert("token_budget_max".into(), budget.max.to_string());
+            if let Some(ref p) = budget.pressure {
+                metadata.insert("pressure_warn_pct".into(), p.warn_at_pct.to_string());
+                metadata.insert("pressure_compress_pct".into(), p.compress_at_pct.to_string());
+                metadata.insert("pressure_block_pct".into(), p.block_at_pct.to_string());
+                metadata.insert("pressure_relief".into(), p.relief.clone());
+            }
         }
 
         AgentContext {
@@ -1030,22 +1036,31 @@ impl Supervisor {
             // Report RL outcome for code generation once CodeCompiles state is known.
             // `report_outcome` is a no-op when the model was not RL-selected (YAML/default),
             // so this is safe to call unconditionally — it will never panic.
-            if let Ok(mut guard) = self.last_code_selection.lock() {
-                if let Some((ref selected, duration_ms)) = *guard {
-                    let compile_met = states
-                        .iter()
-                        .find(|s| matches!(s.objective, Objective::CodeCompiles))
-                        .map(|s| s.met)
-                        .unwrap_or(false);
-                    if let Err(e) = self
-                        .selector
-                        .report_outcome(selected, TaskType::CodeGeneration, compile_met, 0.0, duration_ms)
-                        .await
-                    {
-                        debug!(error = %e, "RL reward report failed — continuing (non-fatal)");
-                    }
-                    // Clear after reporting so we don't double-report on subsequent iterations.
+            let rl_report = if let Ok(mut guard) = self.last_code_selection.lock() {
+                let result = if let Some((ref selected, duration_ms)) = *guard {
+                    Some((selected.clone(), duration_ms))
+                } else {
+                    None
+                };
+                if result.is_some() {
                     *guard = None;
+                }
+                result
+            } else {
+                None
+            };
+            if let Some((selected, duration_ms)) = rl_report {
+                let compile_met = states
+                    .iter()
+                    .find(|s| matches!(s.objective, Objective::CodeCompiles))
+                    .map(|s| s.met)
+                    .unwrap_or(false);
+                if let Err(e) = self
+                    .selector
+                    .report_outcome(&selected, TaskType::CodeGeneration, compile_met, 0.0, duration_ms)
+                    .await
+                {
+                    debug!(error = %e, "RL reward report failed — continuing (non-fatal)");
                 }
             }
 
@@ -1260,6 +1275,7 @@ impl Supervisor {
     }
 
     /// Log a per-role ToolCall to the attached dev session (best-effort).
+    #[allow(clippy::too_many_arguments)]
     fn log_agent_performance(
         &self,
         role: &str,
@@ -1295,8 +1311,9 @@ impl Supervisor {
     /// Get the current iteration count from the tier loop context.
     /// This is injected via `run_tier` into `execute_agent`.
     /// We thread it through via an extra parameter.
-
+    ///
     /// Dispatch to the right agent with HexFlo tracking and performance logging.
+    #[allow(clippy::too_many_arguments)]
     async fn execute_agent_tracked(
         &self,
         role: &str,
@@ -1325,6 +1342,7 @@ impl Supervisor {
         // Decide: delegate to worker process or execute inline.
         // Worker delegation is currently disabled — task_assign/task_status
         // plumbing is not fully wired end-to-end, so we always execute inline.
+        #[allow(clippy::overly_complex_bool_expr)]
         let agent_result = if false && self.has_worker_for_role(role) {
             // ── Worker delegation path ──────────────────────────────────
             // Assign the task to the worker via nexus (worker picks it up
@@ -1470,6 +1488,7 @@ impl Supervisor {
     }
 
     /// Inner dispatch — executes the actual agent logic without tracking wrapper.
+    #[allow(clippy::too_many_arguments)]
     async fn dispatch_agent(
         &self,
         role: &str,
@@ -2303,12 +2322,8 @@ impl Supervisor {
                 let relative: &str = if candidate.starts_with('/') || candidate.starts_with('\\') {
                     let abs_str = abs_output.to_str().unwrap_or("");
                     let prefix = format!("{}/", abs_str);
-                    if let Some(rel) = candidate.strip_prefix(prefix.as_str()) {
-                        rel
-                    } else {
-                        // Path is outside output_dir — not a project file; skip.
-                        return None;
-                    }
+                    // Path is outside output_dir — not a project file; skip.
+                    candidate.strip_prefix(prefix.as_str())?
                 } else {
                     self.strip_output_dir_prefix(candidate)
                 };
@@ -2334,7 +2349,7 @@ impl Supervisor {
             for line in issue.lines() {
                 let trimmed = line.trim();
                 if let Some(rest) = trimmed.strip_prefix("--> ") {
-                    let file_part = rest.splitn(2, ':').next().unwrap_or("").trim();
+                    let file_part = rest.split(':').next().unwrap_or("").trim();
                     if let Some(resolved) = resolve_candidate(file_part) {
                         if seen.insert(resolved.clone()) {
                             target_files.push(resolved);
@@ -2694,10 +2709,10 @@ impl SupervisorResult {
 
         // Parse violation count from architecture detail (e.g. "Score 87/100" or "2 violations")
         let violations_found = arch_state
-            .and_then(|s| {
-                if s.met { return Some(0); }
+            .map(|s| {
+                if s.met { return 0; }
                 // Try to extract number from blocking_issues count
-                Some(s.blocking_issues.len() as u32)
+                s.blocking_issues.len() as u32
             })
             .unwrap_or(0);
 
@@ -2893,5 +2908,163 @@ mod tests {
         let result = Supervisor::read_file_truncated(tmp.path(), None);
         assert!(result.is_some());
         assert!(result.unwrap().contains("truncated"), "5000-byte file should be truncated at default 4096 limit");
+    }
+
+    /// S05: load_strategy entries with `load: on_demand` are excluded from the
+    /// initial context build; entries without `load` (or with `load: startup`) are included.
+    #[test]
+    fn test_build_context_from_yaml_skips_on_demand_entries() {
+        use crate::pipeline::agent_def::{
+            AgentDefinition, ContextConfig, LoadStrategyEntry, TokenBudget,
+        };
+        use std::collections::HashMap;
+        use tempfile::TempDir;
+
+        // Create a temp project dir with two files
+        let tmp = TempDir::new().expect("tempdir");
+        let ports_dir = tmp.path().join("ports");
+        std::fs::create_dir_all(&ports_dir).expect("mkdir ports");
+
+        let port_file = ports_dir.join("iport.ts");
+        std::fs::write(&port_file, "export interface IPort { doThing(): void; }").expect("write port");
+
+        let edit_file = tmp.path().join("active_edit.ts");
+        std::fs::write(&edit_file, "SECRET_ON_DEMAND_CONTENT").expect("write edit file");
+
+        // Build an AgentDefinition with one normal entry and one on_demand entry
+        let agent_def = AgentDefinition {
+            name: "test-coder".into(),
+            agent_type: "coder".into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            model: Default::default(),
+            context: Some(ContextConfig {
+                load_strategy: vec![
+                    LoadStrategyEntry {
+                        level: "L1".into(),
+                        scope: "ports/**".into(),
+                        purpose: None,
+                        load: None, // startup (default) — should be loaded
+                    },
+                    LoadStrategyEntry {
+                        level: "L3".into(),
+                        scope: "active_edit.ts".into(),
+                        purpose: None,
+                        load: Some("on_demand".into()), // must be skipped
+                    },
+                ],
+                load_on_start: vec![],
+                load_on_demand: vec![],
+                token_budget: Some(TokenBudget {
+                    max: 100000,
+                    reserved_response: 20000,
+                    allocation: HashMap::new(),
+                    pressure: None,
+                }),
+            }),
+            constraints: vec![],
+            tools: None,
+            inputs: HashMap::new(),
+            outputs: HashMap::new(),
+            workflow: None,
+            escalation: None,
+            quality_thresholds: None,
+        };
+
+        let sup = Supervisor::new(tmp.path().to_str().unwrap(), "typescript");
+        let ctx = sup.build_context_from_yaml(&agent_def, "test step", 1, None, None);
+
+        // The port file (normal entry) should appear in context
+        let all_content: String = ctx
+            .source_files
+            .iter()
+            .chain(ctx.port_interfaces.iter())
+            .map(|(_, c)| c.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            all_content.contains("IPort"),
+            "normal L1 entry should be loaded into context"
+        );
+        assert!(
+            !all_content.contains("SECRET_ON_DEMAND_CONTENT"),
+            "on_demand entry must not appear in initial context build"
+        );
+    }
+
+    /// P6 integration: build_context_from_yaml with a pressure block emits
+    /// all four pressure metadata keys into the returned AgentContext.
+    #[test]
+    fn test_pressure_metadata_emitted_from_yaml() {
+        use crate::pipeline::agent_def::{
+            AgentDefinition, ContextConfig, LoadStrategyEntry, PressureConfig, TokenBudget,
+        };
+        use std::collections::HashMap;
+
+        let agent_def = AgentDefinition {
+            name: "test-coder".into(),
+            agent_type: "coder".into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            model: Default::default(),
+            context: Some(ContextConfig {
+                load_strategy: vec![
+                    LoadStrategyEntry {
+                        level: "L1".into(),
+                        scope: "ports/**".into(),
+                        purpose: None,
+                        load: None,
+                    },
+                ],
+                load_on_start: vec![],
+                load_on_demand: vec![],
+                token_budget: Some(TokenBudget {
+                    max: 100_000,
+                    reserved_response: 20_000,
+                    allocation: HashMap::new(),
+                    pressure: Some(PressureConfig {
+                        warn_at_pct: 70,
+                        compress_at_pct: 80,
+                        block_at_pct: 90,
+                        relief: "summarize_history".into(),
+                    }),
+                }),
+            }),
+            constraints: vec![],
+            tools: None,
+            inputs: HashMap::new(),
+            outputs: HashMap::new(),
+            workflow: None,
+            escalation: None,
+            quality_thresholds: None,
+        };
+
+        let sup = Supervisor::new("/tmp/nonexistent", "typescript");
+        let ctx = sup.build_context_from_yaml(&agent_def, "step", 1, None, None);
+
+        assert_eq!(ctx.metadata.get("pressure_warn_pct").map(String::as_str), Some("70"));
+        assert_eq!(ctx.metadata.get("pressure_compress_pct").map(String::as_str), Some("80"));
+        assert_eq!(ctx.metadata.get("pressure_block_pct").map(String::as_str), Some("90"));
+        assert_eq!(ctx.metadata.get("pressure_relief").map(String::as_str), Some("summarize_history"));
+    }
+
+    /// P6 integration: hex-coder.yml round-trip — pressure metadata present in
+    /// context built from the embedded YAML.
+    #[test]
+    fn test_hex_coder_yaml_pressure_metadata_round_trip() {
+        use crate::pipeline::agent_def::AgentDefinition;
+
+        let def = AgentDefinition::load("hex-coder").expect("hex-coder.yml must parse");
+        let sup = Supervisor::new("/tmp/nonexistent", "typescript");
+        let ctx = sup.build_context_from_yaml(&def, "implement IPort", 1, None, None);
+
+        // Pressure metadata from hex-coder.yml (warn=70, compress=80, block=90)
+        assert_eq!(ctx.metadata.get("pressure_warn_pct").map(String::as_str), Some("70"),
+            "hex-coder pressure warn threshold should be in context metadata");
+        assert_eq!(ctx.metadata.get("pressure_relief").map(String::as_str), Some("summarize_history"),
+            "hex-coder pressure relief strategy should be in context metadata");
+        // Budget max is also present
+        assert_eq!(ctx.metadata.get("token_budget_max").map(String::as_str), Some("100000"));
     }
 }

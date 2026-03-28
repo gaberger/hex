@@ -156,40 +156,83 @@ async fn status() -> anyhow::Result<()> {
 }
 
 async fn list() -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
+    // ── Known env-var secrets ────────────────────────────────
+    let known_keys = [
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "HEX_HUB_SECRET",
+        "SPACETIMEDB_TOKEN",
+    ];
 
-    let resp = nexus.get("/secrets/grants").await?;
-    let grants = resp
-        .get("grants")
-        .and_then(|g| g.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    if grants.is_empty() {
-        println!("{} No active secret grants", "\u{2b21}".dimmed());
-        return Ok(());
+    println!("{} Known secrets", "\u{2b21}".cyan());
+    println!();
+    println!("  {}", "Environment:".bold());
+    for key in &known_keys {
+        let present = std::env::var(key).is_ok();
+        let indicator = if present { "\u{2713}".green() } else { "\u{2717}".red() };
+        println!("    {} {}", indicator, key);
     }
 
-    println!("{} Secret grants ({})", "\u{2b21}".cyan(), grants.len());
+    // ── Vault keys from nexus ────────────────────────────────
     println!();
+    let nexus = NexusClient::from_env();
+    match nexus.get("/api/secrets/vault").await {
+        Ok(resp) => {
+            let keys = resp.get("keys").and_then(|k| k.as_array()).cloned().unwrap_or_default();
+            println!("  {}", "Vault (SpacetimeDB):".bold());
+            if keys.is_empty() {
+                println!("    {} No secrets stored", "\u{25cb}".dimmed());
+            } else {
+                for k in &keys {
+                    if let Some(name) = k.as_str() {
+                        println!("    {} {}", "\u{2713}".green(), name);
+                    }
+                }
+            }
+        }
+        Err(_) => {
+            println!("  Vault: {} (hex-nexus not running)", "unavailable".dimmed());
+        }
+    }
 
-    let rows: Vec<Vec<String>> = grants.iter().map(|grant| {
-        let agent = grant["agentId"].as_str().unwrap_or("-");
-        let key = grant["secretKey"].as_str().unwrap_or("-");
-        let purpose = grant["purpose"].as_str().unwrap_or("-");
-        let claimed = grant["claimed"].as_bool().unwrap_or(false);
-        let expires = grant["expiresAt"].as_str().unwrap_or("-");
-        vec![
-            truncate(agent, 20),
-            key.to_string(),
-            truncate(purpose, 15),
-            bool_badge(claimed),
-            truncate(expires, 19),
-        ]
-    }).collect();
+    // ── Active grants from nexus (best-effort) ───────────────
+    println!();
+    let nexus = NexusClient::from_env();
+    match nexus.get("/secrets/grants").await {
+        Ok(resp) => {
+            let grants = resp
+                .get("grants")
+                .and_then(|g| g.as_array())
+                .cloned()
+                .unwrap_or_default();
 
-    println!("{}", pretty_table(&["Agent", "Key", "Purpose", "Claimed", "Expires"], &rows));
+            if grants.is_empty() {
+                println!("{} No active secret grants", "\u{2b21}".dimmed());
+            } else {
+                println!("{} Secret grants ({})", "\u{2b21}".cyan(), grants.len());
+                println!();
+                let rows: Vec<Vec<String>> = grants.iter().map(|grant| {
+                    let agent = grant["agentId"].as_str().unwrap_or("-");
+                    let key = grant["secretKey"].as_str().unwrap_or("-");
+                    let purpose = grant["purpose"].as_str().unwrap_or("-");
+                    let claimed = grant["claimed"].as_bool().unwrap_or(false);
+                    let expires = grant["expiresAt"].as_str().unwrap_or("-");
+                    vec![
+                        truncate(agent, 20),
+                        key.to_string(),
+                        truncate(purpose, 15),
+                        bool_badge(claimed),
+                        truncate(expires, 19),
+                    ]
+                }).collect();
+                println!("{}", pretty_table(&["Agent", "Key", "Purpose", "Claimed", "Expires"], &rows));
+            }
+        }
+        Err(_) => {
+            println!("{} Grants unavailable (hex-nexus not running)", "\u{2b21}".dimmed());
+        }
+    }
 
     Ok(())
 }

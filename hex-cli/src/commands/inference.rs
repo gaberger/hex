@@ -31,6 +31,10 @@ pub enum InferenceAction {
         /// Provider ID (auto-generated if omitted)
         #[arg(long)]
         id: Option<String>,
+        /// Quantization level: q2, q3, q4, q8, fp16, cloud.
+        /// Auto-detected from Ollama model name if omitted (e.g. ':q4_k_m' → q4).
+        #[arg(long)]
+        quantization: Option<String>,
     },
     /// List registered inference providers
     List,
@@ -60,8 +64,8 @@ pub enum InferenceAction {
 
 pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
     match action {
-        InferenceAction::Add { provider_type, url, model, key, id } => {
-            add_provider(&provider_type, &url, model.as_deref(), key.as_deref(), id.as_deref()).await
+        InferenceAction::Add { provider_type, url, model, key, id, quantization } => {
+            add_provider(&provider_type, &url, model.as_deref(), key.as_deref(), id.as_deref(), quantization.as_deref()).await
         }
         InferenceAction::List => list_providers().await,
         InferenceAction::Test { target } => test_provider(&target).await,
@@ -81,6 +85,7 @@ async fn add_provider(
     model: Option<&str>,
     key: Option<&str>,
     id: Option<&str>,
+    quantization: Option<&str>,
 ) -> anyhow::Result<()> {
     let provider_id = id.unwrap_or(provider_type);
     let model_name = model.unwrap_or(match provider_type {
@@ -134,10 +139,49 @@ async fn add_provider(
 
     let models_json = serde_json::to_string(&discovered_models).unwrap_or_else(|_| format!("[\"{}\"]", model_name));
 
+    // Resolve quantization level (ADR-2603271000):
+    // 1. Explicit --quantization flag
+    // 2. Auto-detect from model name GGUF tag
+    // 3. Default: "cloud" for API providers, "q4" for local
+    let resolved_quantization: Option<String> = match quantization {
+        Some(q) => {
+            // Validate the provided value
+            if q.parse::<hex_core::QuantizationLevel>().is_err() {
+                println!("  {} Unknown quantization level '{}'. Valid values: q2, q3, q4, q8, fp16, cloud", "!".yellow(), q);
+                println!("  Defaulting to q4.");
+                Some("q4".to_string())
+            } else {
+                Some(q.to_string())
+            }
+        }
+        None => {
+            match provider_type {
+                "ollama" | "vllm" => {
+                    match hex_core::QuantizationLevel::detect_from_model_name(model_name) {
+                        Some(level) => {
+                            println!("  {} Detected quantization: {} (from model name)", "ℹ".cyan(), level);
+                            Some(level.to_string())
+                        }
+                        None => {
+                            println!("  {} Could not detect quantization from model name '{}'; defaulting to q4.", "!".yellow(), model_name);
+                            println!("  Use --quantization to set explicitly.");
+                            Some("q4".to_string())
+                        }
+                    }
+                }
+                "openrouter" => {
+                    println!("  {} Cloud API provider — quantization: cloud", "ℹ".cyan());
+                    Some("cloud".to_string())
+                }
+                _ => None,
+            }
+        }
+    };
+
     // Register with nexus if running
     let client = NexusClient::from_env();
     if client.ensure_running().await.is_ok() {
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "id": provider_id,
             "provider": provider_type,
             "url": url.trim_end_matches('/'),
@@ -146,6 +190,10 @@ async fn add_provider(
             "requires_auth": key.is_some(),
             "secret_key": key.unwrap_or(""),
         });
+        if let Some(ref q) = resolved_quantization {
+            body["quantization"] = serde_json::Value::String(q.clone());
+        }
+        let body = body;
 
         match client.post("/api/inference/register", &body).await {
             Ok(_) => println!("  {} Registered with hex-nexus", "✓".green()),
@@ -161,6 +209,9 @@ async fn add_provider(
     println!("  Type:  {}", provider_type);
     println!("  URL:   {}", url);
     println!("  Model: {}", model_name);
+    if let Some(ref q) = resolved_quantization {
+        println!("  Quant: {}", q);
+    }
     println!();
     println!("Use with hex-agent:");
     println!("  HEX_OLLAMA_HOST={} HEX_OLLAMA_MODEL={} hex-agent --project-dir .", url, model_name);
@@ -220,8 +271,12 @@ async fn list_providers() -> anyhow::Result<()> {
                         let url = p.get("url").and_then(|v| v.as_str()).unwrap_or("?");
                         let model = p.get("model").and_then(|v| v.as_str()).unwrap_or("default");
                         let status = p.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let quant = p.get("quantizationLevel").and_then(|v| v.as_str()).unwrap_or("?");
+                        let quality = p.get("qualityScore").and_then(|v| v.as_f64())
+                            .map(|f| format!(" q={:.2}", f))
+                            .unwrap_or_default();
                         let icon = if status == "healthy" || status == "ok" { "●".green() } else { "○".yellow() };
-                        println!("  {} {} ({}) — {} [model: {}]", icon, id, provider, url, model);
+                        println!("  {} {} ({}) — {} [model: {}] [quant: {}{}]", icon, id, provider, url, model, quant, quality);
                     }
                 } else {
                     println!("  No providers registered in nexus.");
@@ -602,9 +657,8 @@ async fn remove_provider(provider_id: &str) -> anyhow::Result<()> {
     let client = NexusClient::from_env();
     client.ensure_running().await?;
 
-    match client.post(
-        &format!("/api/inference/providers/{}/remove", provider_id),
-        &serde_json::json!({}),
+    match client.delete(
+        &format!("/api/inference/endpoints/{}", provider_id),
     ).await {
         Ok(_) => println!("{} Removed provider: {}", "✓".green(), provider_id),
         Err(e) => println!("{} Failed to remove: {}", "✗".red(), e),

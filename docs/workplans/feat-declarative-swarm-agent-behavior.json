@@ -4,6 +4,7 @@
   "language": "rust",
   "status": "done",
   "adr": "ADR-2603240130",
+  "specs": "docs/specs/declarative-swarm-agents.json",
   "description": "Parse the 14 existing agent YAML definitions into AgentDefinition structs and drive all supervisor behavior from them: model selection, context assembly with L1/L2/L3 levels, TDD workflow phases, feedback loop gates, quality thresholds, and swarm composition.",
   "priority": "high",
   "superseded_by": "",

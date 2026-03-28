@@ -177,6 +177,7 @@ fn config_from_session(session: &DevSession) -> DevConfig {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn start_session(
     description: String,
     quick: bool,

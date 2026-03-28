@@ -607,6 +607,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/secrets/grants", get(secrets::list_grants))
         .route("/api/secrets/health", get(secrets::secrets_health))
         // Vault (ADR-026) — secret value storage
+        .route("/api/secrets/vault", get(secrets::vault_list))
         .route("/api/secrets/vault", post(secrets::vault_set)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/secrets/vault/{key}", get(secrets::vault_get))

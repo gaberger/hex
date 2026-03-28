@@ -18,7 +18,7 @@ const DEFAULT_PORT: u16 = 5555;
 pub struct NexusClient {
     base_url: String,
     http: reqwest::Client,
-    /// Long-timeout client for inference calls (code generation can take 3-5 min).
+    /// Long-timeout client for inference calls (local models can take 5-10 min to load+respond).
     http_long: reqwest::Client,
     auth_token: Option<String>,
     agent_id: Option<String>,
@@ -53,7 +53,7 @@ impl NexusClient {
             .build()
             .expect("failed to build HTTP client");
         let http_long = reqwest::Client::builder()
-            .timeout(Duration::from_secs(300))
+            .timeout(Duration::from_secs(600))
             .build()
             .expect("failed to build long-timeout HTTP client");
         let agent_id = read_session_agent_id();

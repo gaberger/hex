@@ -142,12 +142,10 @@ impl DocumenterAgent {
         info!(model = %selected.model_id, source = %selected.source, "selected model for documenter");
 
         // ── 4. Call inference ────────────────────────────────────────────
-        let user_message = format!(
-            "Generate a comprehensive README.md for this project. \
+        let user_message = "Generate a comprehensive README.md for this project. \
              Include: overview (from the ADR), architecture diagram (mermaid), \
              quick start instructions, API reference (from port interfaces), \
-             and development guide."
-        );
+             and development guide.".to_string();
 
         let start = Instant::now();
         let body = json!({

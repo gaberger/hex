@@ -154,15 +154,13 @@ impl UxReviewerAgent {
         info!(model = %selected.model_id, source = %selected.source, "selected model for UX review");
 
         // ── 4. Call inference ────────────────────────────────────────────
-        let user_message = format!(
-            "Review the primary adapter code for UX quality. \
+        let user_message = "Review the primary adapter code for UX quality. \
              Respond with a JSON object containing:\n\
              - \"verdict\": \"PASS\" or \"NEEDS_FIXES\"\n\
              - \"issues\": array of objects with keys: severity, description, recommendation, user_impact\n\
              \n\
              Severity levels: critical, major, minor, suggestion.\n\
-             If there are no issues, return verdict PASS with an empty issues array."
-        );
+             If there are no issues, return verdict PASS with an empty issues array.".to_string();
 
         let start = Instant::now();
         let body = json!({

@@ -49,6 +49,11 @@ context:
   token_budget:
     max: 60000
     reserved_response: 15000
+    pressure:
+      warn_at_pct: 65
+      compress_at_pct: 75
+      block_at_pct: 85
+      relief: escalate
 
 constraints:
   - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP all coordination, save swarm state to HexFlo memory, acknowledge via hex inbox ack, and inform the user. This overrides all other work."

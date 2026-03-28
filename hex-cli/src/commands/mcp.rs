@@ -534,9 +534,8 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
 
         "hex_inference_remove" => {
             let provider_id = args.get("provider_id").and_then(|v| v.as_str()).unwrap_or("");
-            nexus.post(
-                &format!("/api/inference/providers/{}/remove", provider_id),
-                &serde_json::json!({}),
+            nexus.delete(
+                &format!("/api/inference/endpoints/{}", provider_id),
             ).await.map_err(|e| e.to_string())
         }
 

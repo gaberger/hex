@@ -41,6 +41,10 @@ pub struct SpawnRequest {
     pub hub_token: Option<String>,
     /// Secret key names to inject into the agent process (ADR-026).
     pub secret_keys: Option<Vec<String>>,
+    /// Task prompt sent to the agent via stdin.
+    pub prompt: Option<String>,
+    /// Git branch for worktree isolation (ADR-004). Created if absent.
+    pub worktree_branch: Option<String>,
 }
 
 /// POST /api/agents/spawn — spawn a new hex-agent process
@@ -71,6 +75,9 @@ pub async fn spawn_agent(
         hub_url: body.hub_url,
         hub_token: body.hub_token,
         secret_keys: body.secret_keys.unwrap_or_default(),
+        prompt: body.prompt,
+        worktree_branch: body.worktree_branch,
+        wait_for_completion: false,
     };
 
     match mgr.spawn_agent(config).await {

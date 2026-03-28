@@ -19,9 +19,11 @@ use crate::assets::Assets;
 // ── Custom Deserializers ────────────────────────────────────────────────
 
 /// Deserialize `constraints` which can be:
+///
 /// - Vec<String> (hex-coder, planner)
 /// - Vec<Map> with structured constraint entries (adr-reviewer)
 /// - Map<String, Value> (rust-refactorer)
+///
 /// All are normalized to Vec<String> by stringifying non-string entries.
 fn deserialize_constraints<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
@@ -255,7 +257,7 @@ pub struct LoadOnDemandEntry {
     pub trigger: Option<String>,
 }
 
-/// Token budget — max tokens and per-category allocation.
+/// Token budget — max tokens, per-category allocation, and pressure thresholds.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TokenBudget {
     #[serde(default)]
@@ -265,7 +267,34 @@ pub struct TokenBudget {
     /// Named allocations (e.g. "port_interfaces": 5000).
     #[serde(default)]
     pub allocation: HashMap<String, u64>,
+    /// Context window pressure thresholds. If absent, global defaults apply.
+    #[serde(default)]
+    pub pressure: Option<PressureConfig>,
 }
+
+/// Declarative pressure thresholds for an agent's context window
+/// (ADR-2603281000 P5). Read by the supervisor and passed as metadata
+/// so the inference layer can enforce them without hard-coded values.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PressureConfig {
+    /// Emit a hex inbox warning at this percentage (default: 70).
+    #[serde(default = "default_warn_pct")]
+    pub warn_at_pct: u8,
+    /// Trigger prompt compression at this percentage (default: 80).
+    #[serde(default = "default_compress_pct")]
+    pub compress_at_pct: u8,
+    /// Block the next inference call at this percentage (default: 90).
+    #[serde(default = "default_block_pct")]
+    pub block_at_pct: u8,
+    /// Strategy when block threshold is hit (default: "summarize_history").
+    #[serde(default = "default_relief")]
+    pub relief: String,
+}
+
+fn default_warn_pct() -> u8 { 70 }
+fn default_compress_pct() -> u8 { 80 }
+fn default_block_pct() -> u8 { 90 }
+fn default_relief() -> String { "summarize_history".into() }
 
 // ── Tools Config ────────────────────────────────────────────────────────
 
@@ -919,5 +948,37 @@ mod tests {
         assert_eq!(ModelConfig::resolve_model_id("sonnet"), "claude-sonnet-4-6");
         assert_eq!(ModelConfig::resolve_model_id("haiku"), "claude-haiku-4-5-20251001");
         assert_eq!(ModelConfig::resolve_model_id("unknown"), "openrouter/free");
+    }
+
+    /// P5: hex-coder.yml pressure block deserializes correctly.
+    #[test]
+    fn hex_coder_pressure_config_parsed() {
+        let def = AgentDefinition::load("hex-coder").expect("hex-coder.yml should parse");
+        let budget = def.context
+            .as_ref().expect("context")
+            .token_budget.as_ref().expect("token_budget");
+        let pressure = budget.pressure.as_ref().expect("pressure block should be present");
+        assert_eq!(pressure.warn_at_pct, 70);
+        assert_eq!(pressure.compress_at_pct, 80);
+        assert_eq!(pressure.block_at_pct, 90);
+        assert_eq!(pressure.relief, "summarize_history");
+    }
+
+    /// P5: pressure defaults apply when block is absent.
+    #[test]
+    fn pressure_config_defaults() {
+        let yaml = r#"
+token_budget:
+  max: 50000
+  reserved_response: 10000
+"#;
+        let budget: TokenBudget = serde_yaml::from_str(yaml).expect("parse");
+        assert!(budget.pressure.is_none(), "absent pressure block → None");
+        // Defaults kick in when constructing PressureConfig explicitly
+        let p: PressureConfig = serde_yaml::from_str("{}").expect("empty pressure");
+        assert_eq!(p.warn_at_pct, 70);
+        assert_eq!(p.compress_at_pct, 80);
+        assert_eq!(p.block_at_pct, 90);
+        assert_eq!(p.relief, "summarize_history");
     }
 }

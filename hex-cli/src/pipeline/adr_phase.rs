@@ -178,11 +178,11 @@ impl AdrPhase {
                     let lines: Vec<String> = arr
                         .iter()
                         .take(20) // limit to recent 20 for token efficiency
-                        .filter_map(|adr| {
+                        .map(|adr| {
                             let id = adr["id"].as_str().unwrap_or("???");
                             let title = adr["title"].as_str().unwrap_or("untitled");
                             let status = adr["status"].as_str().unwrap_or("unknown");
-                            Some(format!("- {} — {} ({})", id, title, status))
+                            format!("- {} — {} ({})", id, title, status)
                         })
                         .collect();
                     if lines.is_empty() {
@@ -289,10 +289,10 @@ impl AdrPhase {
                     let lines: Vec<String> = arr
                         .iter()
                         .take(5)
-                        .filter_map(|adr| {
+                        .map(|adr| {
                             let id = adr["id"].as_str().unwrap_or("???");
                             let title = adr["title"].as_str().unwrap_or("untitled");
-                            Some(format!("- {} — {}", id, title))
+                            format!("- {} — {}", id, title)
                         })
                         .collect();
                     if lines.is_empty() {

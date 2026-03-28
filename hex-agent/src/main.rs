@@ -96,6 +96,10 @@ struct Args {
     /// Ollama host URL (default: http://127.0.0.1:11434)
     #[arg(long, default_value = "http://127.0.0.1:11434")]
     ollama_host: String,
+
+    /// One-shot task prompt — skips the interactive REPL, sends this message, then exits.
+    #[arg(long)]
+    prompt: Option<String>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -586,6 +590,13 @@ async fn main() -> anyhow::Result<()> {
         models
     });
 
+    // One-shot mode: --prompt bypasses hub entirely — just run the prompt and exit.
+    if args.prompt.is_some() {
+        let cli = CliAdapter::new(Box::new(conversation))
+            .with_system_prompt(system_prompt.clone());
+        return cli.run(args.prompt).await;
+    }
+
     // Decide mode: hub-managed or interactive CLI
     if let (Some(hub_url), Some(hub_token)) = (&args.hub_url, &args.hub_token) {
         use ports::hub::{HubClientPort, HubMessage};
@@ -931,8 +942,9 @@ async fn main() -> anyhow::Result<()> {
         project_dir.display()
     );
 
-    let cli = CliAdapter::new(Box::new(conversation));
-    cli.run().await?;
+    let cli = CliAdapter::new(Box::new(conversation))
+        .with_system_prompt(system_prompt);
+    cli.run(args.prompt).await?;
 
     Ok(())
 }

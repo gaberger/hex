@@ -16,7 +16,7 @@ use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Extended session state file (ADR-050).
 /// Persisted to ~/.hex/sessions/agent-{sessionId}.json
@@ -108,7 +108,7 @@ fn nexus_client(timeout_secs: u64) -> Result<reqwest::Client> {
 /// Check lifecycle enforcement mode for this project.
 /// Default is "mandatory" — all hex projects enforce the ADR → workplan → code pipeline.
 /// Set "lifecycle_enforcement": "advisory" in .hex/project.json to downgrade to warnings only.
-fn enforcement_mode(project_dir: &PathBuf) -> &'static str {
+fn enforcement_mode(project_dir: &Path) -> &'static str {
     let project_json = project_dir.join(".hex/project.json");
     if let Ok(content) = std::fs::read_to_string(&project_json) {
         if let Ok(project) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -162,7 +162,7 @@ pub async fn run(event: HookEvent) -> Result<()> {
 
 // ── Event handlers ───────────────────────────────────────────────────
 
-async fn session_start(project_dir: &PathBuf) -> Result<()> {
+async fn session_start(project_dir: &Path) -> Result<()> {
     let project_json = project_dir.join(".hex/project.json");
 
     if !project_json.exists() {
@@ -285,7 +285,7 @@ fn ensure_agent_hook(project_dir: &std::path::Path) {
 /// Register this Claude session as an agent with hex-nexus.
 /// Writes `~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json` with the agent_id.
 /// Called by session-start hook and by `hex dev start` (Phase 0).
-pub async fn register_session_agent(project_dir: &PathBuf, project_name: &str) -> Result<()> {
+pub async fn register_session_agent(project_dir: &Path, project_name: &str) -> Result<()> {
     let session_id = std::env::var("CLAUDE_SESSION_ID").unwrap_or_default();
     let model = std::env::var("CLAUDE_MODEL").unwrap_or_else(|_| "unknown".to_string());
     let hostname = gethostname::gethostname()
@@ -559,7 +559,7 @@ async fn deregister_session_agent() -> Result<()> {
     Ok(())
 }
 
-async fn pre_edit(project_dir: &PathBuf) -> Result<()> {
+async fn pre_edit(project_dir: &Path) -> Result<()> {
     let tool_input = std::env::var("TOOL_INPUT").unwrap_or_default();
 
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
@@ -819,7 +819,7 @@ async fn pre_bash() -> Result<()> {
     Ok(())
 }
 
-async fn route(project_dir: &PathBuf) -> Result<()> {
+async fn route(project_dir: &Path) -> Result<()> {
     let tool_input = std::env::var("TOOL_INPUT").unwrap_or_default();
 
     // ADR-050: Send heartbeat on every user interaction
@@ -884,7 +884,7 @@ async fn route(project_dir: &PathBuf) -> Result<()> {
 
 // ── Boundary validation ──────────────────────────────────────────────
 
-fn validate_boundary_edit(project_dir: &PathBuf, file_path: &str) -> Result<()> {
+fn validate_boundary_edit(project_dir: &Path, file_path: &str) -> Result<()> {
     let rel = file_path
         .strip_prefix(project_dir.to_string_lossy().as_ref())
         .unwrap_or(file_path)
@@ -905,7 +905,7 @@ fn validate_boundary_edit(project_dir: &PathBuf, file_path: &str) -> Result<()> 
 /// ADR-050: Check if file being edited falls within the workplan's declared adapter boundary.
 /// Loads the workplan JSON, extracts declared `files` from all tasks, and warns/blocks
 /// if the edit target isn't in any task's file list.
-fn validate_workplan_boundary(project_dir: &PathBuf, file_path: &str, workplan_id: &str) -> Result<()> {
+fn validate_workplan_boundary(project_dir: &Path, file_path: &str, workplan_id: &str) -> Result<()> {
     let rel = file_path
         .strip_prefix(project_dir.to_string_lossy().as_ref())
         .unwrap_or(file_path)

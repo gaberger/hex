@@ -1,3 +1,4 @@
+pub mod context_compressor;
 pub mod docker_sandbox;
 pub mod ssh_tunnel;
 pub mod ws_transport;

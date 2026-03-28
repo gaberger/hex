@@ -192,7 +192,7 @@ impl SwarmConfig {
             .iter()
             .find(|a| a.role == role)
             .and_then(|a| a.cardinality.as_deref())
-            .map(AgentCardinality::from_str)
+            .map(|s| s.parse::<AgentCardinality>().unwrap_or(AgentCardinality::PerWorkplanStep))
             .unwrap_or(AgentCardinality::PerWorkplanStep)
     }
 }
@@ -215,16 +215,17 @@ pub enum AgentCardinality {
     PerIssue,
 }
 
-impl AgentCardinality {
-    /// Parse a cardinality string from YAML into the typed enum.
-    pub fn from_str(s: &str) -> Self {
-        match s {
+impl std::str::FromStr for AgentCardinality {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
             "per_source_file" => Self::PerSourceFile,
             "per_tier" => Self::PerTier,
             "per_swarm" => Self::PerSwarm,
             "per_issue" => Self::PerIssue,
             _ => Self::PerWorkplanStep, // default (covers "per_workplan_step" + unknown)
-        }
+        })
     }
 }
 
@@ -322,11 +323,11 @@ mod tests {
 
     #[test]
     fn cardinality_from_str_all_variants() {
-        assert_eq!(AgentCardinality::from_str("per_workplan_step"), AgentCardinality::PerWorkplanStep);
-        assert_eq!(AgentCardinality::from_str("per_source_file"), AgentCardinality::PerSourceFile);
-        assert_eq!(AgentCardinality::from_str("per_tier"), AgentCardinality::PerTier);
-        assert_eq!(AgentCardinality::from_str("per_swarm"), AgentCardinality::PerSwarm);
-        assert_eq!(AgentCardinality::from_str("per_issue"), AgentCardinality::PerIssue);
-        assert_eq!(AgentCardinality::from_str("garbage"), AgentCardinality::PerWorkplanStep);
+        assert_eq!("per_workplan_step".parse::<AgentCardinality>().unwrap(), AgentCardinality::PerWorkplanStep);
+        assert_eq!("per_source_file".parse::<AgentCardinality>().unwrap(), AgentCardinality::PerSourceFile);
+        assert_eq!("per_tier".parse::<AgentCardinality>().unwrap(), AgentCardinality::PerTier);
+        assert_eq!("per_swarm".parse::<AgentCardinality>().unwrap(), AgentCardinality::PerSwarm);
+        assert_eq!("per_issue".parse::<AgentCardinality>().unwrap(), AgentCardinality::PerIssue);
+        assert_eq!("garbage".parse::<AgentCardinality>().unwrap(), AgentCardinality::PerWorkplanStep);
     }
 }

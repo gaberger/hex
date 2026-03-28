@@ -171,13 +171,10 @@ impl UiState {
             }
             UiMessage::PhaseProgress { phase, detail } => {
                 self.current_progress = Some(detail.clone());
-                if let Some((_, status)) = self.phases.iter_mut().find(|(p, _)| *p == phase) {
-                    if let PhaseStatus::Running {
-                        detail: ref mut d, ..
-                    } = status
-                    {
-                        *d = detail;
-                    }
+                if let Some((_, PhaseStatus::Running { detail: ref mut d, .. })) =
+                    self.phases.iter_mut().find(|(p, _)| *p == phase)
+                {
+                    *d = detail;
                 }
             }
             UiMessage::PhaseDone {

@@ -53,16 +53,11 @@ pub struct HexTable;
 
 impl HexTable {
     /// Rounded-border table from Tabled-derived rows.
-    pub fn new<T: Tabled>(rows: &[T]) -> String {
+    pub fn render<T: Tabled>(rows: &[T]) -> String {
         if rows.is_empty() {
             return "  (no results)".dimmed().to_string();
         }
         Table::new(rows).with(Style::rounded()).to_string()
-    }
-
-    /// Alias for [`HexTable::new`] — rounded-border table.
-    pub fn render<T: Tabled>(rows: &[T]) -> String {
-        Self::new(rows)
     }
 
     /// Borderless table from Tabled-derived rows.

@@ -1,175 +1,226 @@
-# Analysis Engine
+# Hex Project Analysis Engine
 
-The Analysis Engine provides semantic analysis capabilities for TypeScript/JavaScript codebases, enabling features like symbol lookup, type inference, and dependency mapping. This component implements the `IAnalysisPort` interface, allowing multiple analysis backends (currently TreeSitter) to be swapped interchangeably.
+The Hex Project Analysis Engine provides language-agnostic analysis capabilities for software projects, enabling deep code understanding through pluggable analyzers. This component implements the core analysis infrastructure that powers features like dependency mapping, structural analysis, and cross-language project insights.
 
-**ADR**: [docs/adrs/ADR-002-analysis-engine.md](./docs/adrs/ADR-002-analysis-engine.md)
-
-**Layers**: Ports + Adapters (Tier 2)
+This engine was motivated by [ADR-001: Analysis Engine Architecture](docs/adrs/001-analysis-engine-architecture.md) and spans the **domain** and **ports** layers of the hex architecture.
 
 ## Architecture
 
-```mermaid
-graph TB
-    Client[Editor/IDE] --> UseCase[Analysis Use Cases]
-    UseCase --> IAnalysisPort
-    IAnalysisPort -.-> TreeSitterAdapter[TreeSitter Adapter]
-    IAnalysisPort -.-> AnotherAdapter[Future Adapter]
-    
-    classDef port fill:#e1f5fe
-    classDef adapter fill:#f3e5f5
-    classDef usecase fill:#e8f5e8
-    
-    class IAnalysisPort port
-    class TreeSitterAdapter,AnotherAdapter adapter
-    class UseCase usecase
+The Analysis Engine follows a pluggable architecture where different language analyzers can be registered and used interchangeably through a common interface.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Hex Project Analysis Engine               │
+├─────────────────────────────────────────────────────────────┤
+│  Domain Layer                                               │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │  Analysis Engine                                         ││
+│  │  ┌─────────────────────────────────────────────────────┐││
+│  │  │  Port Interfaces (IAnalysisPort, IProjectAnalyzer)   │││
+│  │  └─────────────────────────────────────────────────────┘││
+│  └─────────────────────────────────────────────────────────┘│
+│                                                             │
+│  Adapters Layer                                             │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │  Language-Specific Adapters                              ││
+│  │  ┌─────────────────────────────────────────────────────┐││
+│  │  │  TreeSitterAdapter (TypeScript/JavaScript)           │││
+│  │  │  RustAnalyzerAdapter (Rust)                          │││
+│  │  │  PythonAnalyzerAdapter (Python)                      │││
+│  │  └─────────────────────────────────────────────────────┘││
+│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
 ```
 
-The Analysis Engine implements the `IAnalysisPort` interface, providing semantic analysis services to use cases. Currently, it includes a TreeSitter-based adapter for parsing and analysis. The architecture follows hex principles with clear separation between the port contract and adapter implementations.
+**Dependencies:**
+- `ports/IAnalysisPort.ts` ← contract
+- `adapters/secondary/` ← implementations
+  - `TreeSitterAdapter.ts` ← implements IAnalysisPort
+  - `RustAnalyzerAdapter.ts` ← implements IAnalysisPort
+  - `PythonAnalyzerAdapter.ts` ← implements IAnalysisPort
+- `usecases/` ← consumers
+  - `AnalyzeProject.ts` ← depends on IAnalysisPort
+
+**Tier:** 2 (Core Business Logic)  
+**Layers:** Domain, Ports
 
 ## Quick Start
 
 ### Prerequisites
-- Node.js 18+
-- TypeScript 5.0+
-- Python 3.8+ (for TreeSitter bindings)
+- Node.js 18+ or compatible runtime
+- Rust 1.60+ (for Rust analyzer)
+- Python 3.8+ (for Python analyzer)
+- Tree-sitter CLI (for language parsing)
 
 ### Installation
 ```bash
-npm install
-# Install TreeSitter language parsers
-npm run install-parsers
+npm install @hex-project/analysis-engine
 ```
 
-### Running
+### Running the Engine
+
+#### Development Mode
 ```bash
-# Development mode
+# Clone and setup
+git clone https://github.com/hex-project/analysis-engine.git
+cd analysis-engine
+npm install
+
+# Start development server
 npm run dev
 
-# Production
-npm run build
-npm start
+# Run tests
+npm test
 ```
 
-### Testing
+#### Production Usage
 ```bash
-# Run all tests
-npm test
+# Build for production
+npm run build
 
-# Run with coverage
-npm run test:coverage
+# Run analysis on a project
+node dist/cli.js analyze /path/to/project
+```
 
-# Watch mode
-npm run test:watch
+### Environment Variables
+```bash
+# Configure analysis settings
+export HEX_ANALYZER_TIMEOUT=30000
+export HEX_MAX_CONCURRENT_ANALYZERS=4
+export HEX_LOG_LEVEL=INFO
 ```
 
 ## API Reference
 
 ### IAnalysisPort Interface
 
-Located in `ports/IAnalysisPort.ts`, this interface defines the contract for analysis services.
+The core contract for all analysis adapters.
 
 ```typescript
+// File: ports/IAnalysisPort.ts
 export interface IAnalysisPort {
   /**
-   * Analyzes a TypeScript/JavaScript project and returns semantic information.
-   * @param projectPath - Path to the project directory
-   * @returns AnalysisResult containing symbols, types, and dependencies
-   * @throws AnalysisError if analysis fails
+   * Analyzes a single file and returns its AST and semantic information.
+   * @param filePath - Path to the file to analyze
+   * @param content - File content (optional, for in-memory analysis)
+   * @returns AnalysisResult containing AST, symbols, and diagnostics
    */
-  analyzeProject(projectPath: string): Promise<AnalysisResult>;
+  analyzeFile(filePath: string, content?: string): Promise<AnalysisResult>;
 
   /**
-   * Finds all references to a symbol within a project.
-   * @param projectPath - Path to the project directory
-   * @param symbolName - Name of the symbol to find
-   * @returns ReferenceInfo containing locations and usage details
+   * Analyzes an entire project directory.
+   * @param projectRoot - Root directory of the project
+   * @returns ProjectAnalysis containing all files and their analysis
    */
-  findReferences(projectPath: string, symbolName: string): Promise<ReferenceInfo[]>;
+  analyzeProject(projectRoot: string): Promise<ProjectAnalysis>;
 
   /**
-   * Gets type information for a specific symbol.
-   * @param projectPath - Path to the project directory
-   * @param symbolName - Name of the symbol
-   * @returns TypeInfo containing type details and relationships
+   * Returns supported file extensions for this analyzer.
+   * @returns Array of supported extensions (e.g., ['.ts', '.js'])
    */
-  getTypeInfo(projectPath: string, symbolName: string): Promise<TypeInfo>;
-}
-```
+  getSupportedExtensions(): string[];
 
-### AnalysisResult Type
-
-```typescript
-export interface AnalysisResult {
-  symbols: SymbolInfo[];
-  types: TypeInfo[];
-  dependencies: DependencyGraph;
-  diagnostics: Diagnostic[];
+  /**
+   * Validates if a file can be analyzed by this adapter.
+   * @param filePath - Path to validate
+   * @returns True if the file is supported
+   */
+  canAnalyze(filePath: string): boolean;
 }
 ```
 
 ### Usage Example
-
 ```typescript
-import { AnalysisEngine } from './adapters/secondary/AnalysisEngine';
-import { IAnalysisPort } from '../ports/IAnalysisPort';
+import { AnalysisEngine } from './engine/AnalysisEngine';
+import { TreeSitterAdapter } from './adapters/secondary/TreeSitterAdapter';
 
-async function main() {
-  const engine: IAnalysisPort = new AnalysisEngine();
-  
-  try {
-    const result = await engine.analyzeProject('/path/to/project');
-    console.log(`Found ${result.symbols.length} symbols`);
-  } catch (error) {
-    console.error('Analysis failed:', error);
-  }
+// Create engine and register adapter
+const engine = new AnalysisEngine();
+engine.registerAdapter(new TreeSitterAdapter());
+
+// Analyze a file
+const result = await engine.analyzeFile('/path/to/file.ts');
+console.log(result.ast);
+console.log(result.symbols);
+```
+
+### ProjectAnalysis Structure
+```typescript
+interface ProjectAnalysis {
+  files: AnalysisResult[];      // All analyzed files
+  symbols: Symbol[];            // All symbols in project
+  dependencies: DependencyGraph; // Dependency relationships
+  diagnostics: Diagnostic[];     // Analysis diagnostics
 }
-
-main();
 ```
 
 ## Development Guide
 
-### Adding New Adapters
+### Adding a New Analyzer Adapter
 
-1. Create a new adapter class implementing `IAnalysisPort`
-2. Place it in `adapters/secondary/`
-3. Export it from the adapters barrel file
-4. Add it to the engine factory in `adapters/secondary/AnalysisEngineFactory.ts`
+1. **Create the adapter class** implementing `IAnalysisPort`
+2. **Add to adapters/secondary/** directory
+3. **Register in AnalysisEngine** constructor
+4. **Write comprehensive tests** covering all interface methods
+
+```typescript
+// Example: NewLanguageAdapter.ts
+import { IAnalysisPort } from '../ports/IAnalysisPort';
+
+export class NewLanguageAdapter implements IAnalysisPort {
+  async analyzeFile(filePath: string, content?: string): Promise<AnalysisResult> {
+    // Implementation here
+  }
+
+  // Implement other required methods
+}
+```
 
 ### Testing Conventions
 
-- Use Jest with TypeScript support
-- Follow London-school testing (focused on behavior)
-- Mock dependencies using `jest.mock()`
-- Test both success and error scenarios
-- Use descriptive test names that read like specifications
+- **London-school testing**: Focus on behavior, use mocks for external dependencies
+- **Deps pattern**: All dependencies injected via constructor
+- **Test structure**:
+  ```typescript
+  describe('NewLanguageAdapter', () => {
+    let adapter: NewLanguageAdapter;
+    let mockParser: MockParser;
 
-### Hex Boundary Rules
+    beforeEach(() => {
+      mockParser = new MockParser();
+      adapter = new NewLanguageAdapter(mockParser);
+    });
 
-- Adapters can only depend on ports, never on use cases
-- Use cases can depend on ports and other use cases
-- No circular dependencies between layers
-- Keep domain logic in use cases, not in adapters
-
-### Architecture Validation
-
-```bash
-# Check for architecture violations
-npx hex analyze
-
-# Check imports (no usecase -> adapter imports)
-npx hex check-imports
-```
+    it('should analyze valid files correctly', async () => {
+      // Test implementation
+    });
+  });
+  ```
 
 ### Common Pitfalls
 
-- **Don't** put business logic in adapters
-- **Don't** import use cases from adapters
-- **Do** handle errors gracefully and return meaningful error types
-- **Do** keep adapters focused on a single analysis strategy
+1. **Hex boundary violations**: Adapters should not import from usecases or domain directly
+2. **Synchronous operations**: All analysis should be async to handle large projects
+3. **Memory leaks**: Large ASTs should be processed in streams when possible
+4. **Error handling**: Always return structured errors, never throw unexpectedly
+
+### Architecture Validation
+
+Run the hex architecture validator to ensure compliance:
+
+```bash
+npx hex analyze
+```
+
+This checks:
+- No circular dependencies
+- Layer violations
+- Missing interface implementations
+- Test coverage thresholds
 
 ## Related
 
-- [ADR-002: Analysis Engine](./docs/adrs/ADR-002-analysis-engine.md)
-- [IAnalysisPort](./ports/IAnalysisPort.ts)
-- [TreeSitter Adapter](./adapters/secondary/TreeSitterAdapter.ts)
+- [ADR-001: Analysis Engine Architecture](docs/adrs/001-analysis-engine-architecture.md)
+- [ADR-002: Language Adapter Interface Design](docs/adrs/002-language-adapter-interface-design.md)
+- [IAnalysisPort Interface](ports/IAnalysisPort.ts)
+- [Workplan: Analysis Engine Phase 1](docs/workplans/analysis-engine-phase1.md)

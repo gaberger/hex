@@ -90,32 +90,83 @@ pub struct PhaseResult {
     pub errors: Vec<String>,
 }
 
-/// Parsed workplan JSON structure (minimal — enough to drive execution).
+/// Parsed workplan JSON structure — matches workplan.schema.json exactly.
+/// Fields use schema names; legacy aliases preserved for backward compat.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Workplan {
-    pub name: Option<String>,
+    /// Schema: `id` (wp- prefix). Informational only.
+    #[serde(default)]
+    pub id: String,
+    /// Schema: `feature` — human-readable name shown in hex plan list.
+    /// Alias `name` accepted for backward compat.
+    #[serde(alias = "name")]
+    pub feature: Option<String>,
+    /// Schema: `adr` reference. Informational only.
+    #[serde(default)]
+    pub adr: String,
     pub phases: Vec<WorkplanPhase>,
 }
 
+/// Phase gate — matches schema `{type, command, blocking}`.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+pub struct WorkplanGate {
+    /// Gate type: build | typecheck | lint | test
+    #[serde(rename = "type", default)]
+    pub gate_type: String,
+    /// Shell command to run
+    pub command: String,
+    /// If true, workplan halts on gate failure
+    #[serde(default = "default_blocking")]
+    pub blocking: bool,
+}
+
+fn default_blocking() -> bool { true }
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct WorkplanPhase {
+    /// Schema: `id` e.g. "P0", "P1". Used for tracking and logging.
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub tier: Option<u32>,
     pub tasks: Vec<WorkplanTask>,
-    pub gate: Option<String>,
+    /// Schema: gate object `{type, command, blocking}`.
+    pub gate: Option<WorkplanGate>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct WorkplanTask {
-    pub title: String,
-    pub agent_name: Option<String>,
+    /// Schema: `id` e.g. "P1.1". Used as stable task identifier for state tracking.
+    #[serde(default)]
+    pub id: String,
+    /// Schema: `name` — single deliverable this task produces.
+    /// Alias `title` accepted for backward compat.
+    #[serde(alias = "title")]
+    pub name: String,
+    /// Schema: `description` — implementation details and acceptance criteria.
+    /// Passed as the prompt body to the spawned agent.
+    #[serde(default)]
+    pub description: String,
+    /// Schema: `agent` — role: hex-coder | planner | integrator | reviewer.
+    /// Alias `agentName` accepted for backward compat.
+    #[serde(alias = "agentName", alias = "agent_name")]
+    pub agent: Option<String>,
+    /// Schema: `layer` — hex architecture layer.
+    pub layer: Option<String>,
+    /// Schema: `deps` — task IDs this task depends on.
+    #[serde(default)]
+    pub deps: Vec<String>,
+    /// Schema: `files` — files this task creates or modifies.
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// Model override for this task.
     pub model: Option<String>,
+    /// Working directory override. Defaults to ".".
+    #[serde(alias = "projectDir", alias = "project_dir")]
     pub project_dir: Option<String>,
     /// Secret key names to inject into the agent process (ADR-026).
-    pub secret_keys: Option<Vec<String>>,
+    #[serde(alias = "secretKeys", alias = "secret_keys", default)]
+    pub secret_keys: Vec<String>,
 }
 
 // ── Workplan Executor ──────────────────────────────────
@@ -207,7 +258,7 @@ impl WorkplanExecutor {
             total_tasks,
             completed_tasks: 0,
             failed_tasks: 0,
-            feature: workplan.name.clone().unwrap_or_default(),
+            feature: workplan.feature.clone().unwrap_or_default(),
             project_id: String::new(),
             phase_results: Vec::new(),
             gate_results: Vec::new(),
@@ -260,8 +311,9 @@ impl WorkplanExecutor {
 
             // Track per-task status via IStatePort: mark tasks as running
             for task in &phase.tasks {
+                let task_id = if !task.id.is_empty() { task.id.clone() } else { task.name.clone() };
                 let _ = state_port.workplan_update_task(WorkplanTaskUpdate {
-                    task_id: task.title.clone(),
+                    task_id,
                     status: "running".to_string(),
                     agent_id: None,
                     result: None,
@@ -288,9 +340,9 @@ impl WorkplanExecutor {
                     }
 
                     // ADR-046: Execute phase gate if present
-                    if let Some(ref gate_cmd) = phase.gate {
-                        if !gate_cmd.is_empty() {
-                            let gate_result = Self::run_gate(gate_cmd, &phase.name).await;
+                    if let Some(ref gate) = phase.gate {
+                        if !gate.command.is_empty() {
+                            let gate_result = Self::run_gate(&gate.command, &phase.name).await;
                             // Persist gate result
                             if let Ok(Some(mut exec)) = Self::load_execution(state_port.as_ref(), &execution_id).await {
                                 exec.gate_results.push(gate_result.clone());
@@ -301,9 +353,10 @@ impl WorkplanExecutor {
                                 tracing::warn!(
                                     execution_id = %execution_id,
                                     phase = %phase.name,
-                                    gate = %gate_cmd,
-                                    "Phase gate FAILED — blocking advancement"
+                                    gate = %gate.command,
+                                    "Phase gate FAILED"
                                 );
+                                if gate.blocking {
                                 Self::mark_status(
                                     state_port.as_ref(),
                                     &execution_id,
@@ -311,6 +364,7 @@ impl WorkplanExecutor {
                                     Some(&[format!("Gate failed for phase '{}': {}", phase.name, gate_result.output)]),
                                 ).await.ok();
                                 return;
+                                }
                             }
                             tracing::info!(execution_id = %execution_id, phase = %phase.name, "Phase gate passed");
                         }
@@ -332,7 +386,7 @@ impl WorkplanExecutor {
     pub async fn execute_phase(
         state_port: &Arc<dyn IStatePort>,
         shared_state: &SharedState,
-        _workplan: &Workplan,
+        workplan: &Workplan,
         phase: &WorkplanPhase,
     ) -> Result<PhaseResult, String> {
         let mut agent_ids = Vec::new();
@@ -340,16 +394,48 @@ impl WorkplanExecutor {
         let mut handles = Vec::new();
 
         for task in &phase.tasks {
+            // Build the prompt from task name + description + files list.
+            let prompt = {
+                let mut p = format!("# Task: {}\n\n", task.name);
+                if !task.description.is_empty() {
+                    p.push_str(&task.description);
+                    p.push_str("\n\n");
+                }
+                if !task.files.is_empty() {
+                    p.push_str("## Files to create or modify\n");
+                    for f in &task.files {
+                        p.push_str(&format!("- {}\n", f));
+                    }
+                    p.push('\n');
+                }
+                if !task.deps.is_empty() {
+                    p.push_str(&format!("## Depends on: {}\n", task.deps.join(", ")));
+                }
+                p
+            };
+
+            // ADR-004: derive worktree branch from workplan id + task id.
+            let worktree_branch = if !workplan.id.is_empty() && !task.id.is_empty() {
+                let wp = workplan.id.trim_start_matches("wp-");
+                Some(format!("feat/{}/{}", wp, task.id.to_lowercase()))
+            } else {
+                None
+            };
+
             let config = SpawnConfig {
                 project_dir: task.project_dir.clone().unwrap_or_else(|| ".".to_string()),
                 model: task.model.clone(),
-                agent_name: task.agent_name.clone(),
+                agent_name: task.agent.clone(),
                 hub_url: None,
                 hub_token: None,
-                secret_keys: task.secret_keys.clone().unwrap_or_default(),
+                secret_keys: task.secret_keys.clone(),
+                prompt: Some(prompt),
+                worktree_branch,
+                wait_for_completion: true,
             };
 
-            let task_title = task.title.clone();
+            let task_id = if !task.id.is_empty() { task.id.clone() } else { task.name.clone() };
+            let task_label = format!("{}: {}", task_id, task.name);
             let sp = Arc::clone(state_port);
             let agent_mgr = shared_state.agent_manager.clone();
 
@@ -361,9 +447,8 @@ impl WorkplanExecutor {
                 };
                 match spawn_result {
                     Ok(agent) => {
-                        // Track task completion via IStatePort
                         let _ = sp.workplan_update_task(WorkplanTaskUpdate {
-                            task_id: task_title.clone(),
+                            task_id: task_id.clone(),
                             status: "completed".to_string(),
                             agent_id: Some(agent.id.clone()),
                             result: None,
@@ -371,14 +456,13 @@ impl WorkplanExecutor {
                         Ok(agent.id)
                     }
                     Err(e) => {
-                        // Track task failure via IStatePort
                         let _ = sp.workplan_update_task(WorkplanTaskUpdate {
-                            task_id: task_title.clone(),
+                            task_id: task_id.clone(),
                             status: "failed".to_string(),
                             agent_id: None,
                             result: Some(e.clone()),
                         }).await;
-                        Err(format!("Task '{}': {}", task_title, e))
+                        Err(format!("Task '{}': {}", task_label, e))
                     }
                 }
             }));
@@ -500,10 +584,17 @@ impl WorkplanExecutor {
 
                 Self::update_phase(state_port.as_ref(), &execution_id, &phase.name).await.ok();
 
-                if let Err(e) = Self::execute_phase(&state_port, &shared_state, &workplan, phase).await {
-                    tracing::error!(error = %e, "Phase failed on resume");
-                    Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&[e])).await.ok();
-                    return;
+                match Self::execute_phase(&state_port, &shared_state, &workplan, phase).await {
+                    Ok(result) if result.status == "failed" => {
+                        Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&result.errors)).await.ok();
+                        return;
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::error!(error = %e, "Phase failed on resume");
+                        Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&[e])).await.ok();
+                        return;
+                    }
                 }
             }
 

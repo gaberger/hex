@@ -17,6 +17,11 @@ model:
   upgrade_condition: >
     Upgrade to Opus when: feedback loop exceeds 3 iterations without resolution,
     or when the adapter requires complex algorithmic logic.
+  quantization:
+    default: q4          # Q4 local model for routine code generation
+    minimum: q2          # Never go below Q2 — too low for code tasks
+    on_complexity_high: q8   # Escalate to Q8 for cross-file / architectural work
+    on_failure: cloud    # Fall back to cloud after repeated provider failures
 
 context:
   load_strategy:
@@ -46,6 +51,11 @@ context:
       target_adapter: 15000
       error_context: 10000
       generation_space: 67000
+    pressure:
+      warn_at_pct: 70
+      compress_at_pct: 80
+      block_at_pct: 90
+      relief: summarize_history
 
 constraints:
   - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP coding, commit any in-progress work, acknowledge via hex inbox ack, and inform the coordinator. This overrides all other work."

@@ -78,7 +78,7 @@ async fn list_sessions() -> Result<()> {
         })
         .collect();
 
-    println!("{}", HexTable::new(&rows));
+    println!("{}", HexTable::render(&rows));
     println!();
     println!("  Run `hex report show <id>` for a full audit report.");
     Ok(())
@@ -90,9 +90,8 @@ async fn show_latest(json: bool) -> Result<()> {
     sessions.sort_by(|a, b| b.total_cost_usd.partial_cmp(&a.total_cost_usd).unwrap_or(std::cmp::Ordering::Equal));
     let latest = sessions
         .iter()
-        .filter(|s| matches!(s.status, SessionStatus::Completed) && s.total_cost_usd > 0.0)
-        .next()
-        .or_else(|| sessions.iter().filter(|s| matches!(s.status, SessionStatus::Completed)).next());
+        .find(|s| matches!(s.status, SessionStatus::Completed) && s.total_cost_usd > 0.0)
+        .or_else(|| sessions.iter().find(|s| matches!(s.status, SessionStatus::Completed)));
     match latest {
         Some(s) => show_report(&s.id, json).await,
         None => {
@@ -225,7 +224,7 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
                 adapter: step.adapter.clone(),
             }).collect();
 
-            println!("{}", HexTable::new(&step_rows));
+            println!("{}", HexTable::render(&step_rows));
         }
         None => println!("  {}", "No workplan generated (skipped or failed)".dimmed()),
     }
@@ -259,7 +258,7 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
                     title: truncate(&task.title, 50),
                 }).collect();
 
-                println!("{}", HexTable::new(&task_rows));
+                println!("{}", HexTable::render(&task_rows));
             }
         }
         None => println!("  {}", "No swarm created (skipped or failed)".dimmed()),
@@ -407,7 +406,7 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
             }
         }).collect();
 
-        println!("{}", HexTable::new(&agent_rows));
+        println!("{}", HexTable::render(&agent_rows));
     }
 
     // ── Git Changes ─────────────────────────────────────────
@@ -493,7 +492,7 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
             }
         }).collect();
 
-        println!("{}", HexTable::new(&tool_rows));
+        println!("{}", HexTable::render(&tool_rows));
         println!();
         let ok_count = session.tool_calls.iter().filter(|c| c.status == "ok").count();
         let err_count = session.tool_calls.iter().filter(|c| c.status == "error").count();

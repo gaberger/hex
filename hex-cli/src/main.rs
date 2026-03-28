@@ -20,6 +20,7 @@ pub mod tui;
 use commands::{
     adr::AdrAction,
     agent::AgentAction,
+    spec::SpecAction,
     analyze,
     dev::DevAction,
     git_cmd::GitAction,
@@ -108,6 +109,11 @@ enum Commands {
     Adr {
         #[command(subcommand)]
         action: AdrAction,
+    },
+    /// Behavioral specs (docs/specs/)
+    Spec {
+        #[command(subcommand)]
+        action: SpecAction,
     },
     /// Project registration and management
     Project {
@@ -220,6 +226,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Memory { action } => commands::memory::run(action).await,
         Commands::NeuralLab { action } => commands::neural_lab::run(action).await,
         Commands::Adr { action } => commands::adr::run(action).await,
+        Commands::Spec { action } => commands::spec::run(action).await,
         Commands::Project { action } => commands::project::run(action).await,
         Commands::Analyze { path, strict, adr_compliance, json } => {
             analyze::run(&path, strict, adr_compliance, json).await

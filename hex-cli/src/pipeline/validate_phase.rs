@@ -1009,15 +1009,15 @@ impl ValidatePhase {
         // `hex analyze --json` returns: { violations: [{ message, file, rule }], boundary_errors: [...] }
         let violations: Vec<String> = if let Some(arr) = resp["violations"].as_array() {
             arr.iter()
-                .filter_map(|v| {
+                .map(|v| {
                     let file = v["file"].as_str().unwrap_or("unknown");
                     let msg = v["message"].as_str().unwrap_or("unknown violation");
                     let rule = v["rule"].as_str().unwrap_or("");
-                    Some(if rule.is_empty() {
+                    if rule.is_empty() {
                         format!("{}: {}", file, msg)
                     } else {
                         format!("{}: {} ({})", file, msg, rule)
-                    })
+                    }
                 })
                 .collect()
         } else if let Some(count) = resp["violation_count"].as_u64() {
@@ -1323,8 +1323,8 @@ fn parse_compile_errors(output: &str, language: &str) -> Vec<CompileError> {
                 // Look ahead for the " --> file:line:col" line
                 let mut file = "src/main.rs".to_string();
                 let mut line_num: Option<u32> = None;
-                for j in (i + 1)..(i + 5).min(lines.len()) {
-                    let next = lines[j].trim();
+                for next_line in lines.get((i + 1)..(i + 5).min(lines.len())).unwrap_or(&[]) {
+                    let next = next_line.trim();
                     if let Some(rest) = next.strip_prefix("-->") {
                         let loc = rest.trim();
                         let parts: Vec<&str> = loc.splitn(3, ':').collect();

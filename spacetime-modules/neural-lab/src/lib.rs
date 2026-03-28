@@ -656,7 +656,7 @@ pub fn research_loop_tick(ctx: &ReducerContext) {
                     };
 
                     let exp_id = generate_id(ctx);
-                    let now = now_str(ctx);
+                    let _now = now_str(ctx);
                     ctx.db.experiment().insert(Experiment {
                         id: format!("{}-{}", exp_id, i),
                         config_id: best_config.id.clone(),

@@ -174,8 +174,9 @@ pub fn generate_scaffold(
         }
         "rust" | "rs" => {
             let cargo_path = dir.join("Cargo.toml");
-            if cargo_path.exists() {
-                debug!(path = %cargo_path.display(), "Cargo.toml already exists — skipping scaffold");
+            let main_path = dir.join("src").join("main.rs");
+            if cargo_path.exists() && main_path.exists() {
+                debug!(path = %cargo_path.display(), "Cargo.toml + src/main.rs already exist — skipping scaffold");
                 return Ok(vec![]);
             }
 
@@ -1088,7 +1089,7 @@ impl CodePhase {
         }
 
         // Try fetching via nexus
-        let api_path = format!("/api/analyze/summary?path=src/core/ports/");
+        let api_path = "/api/analyze/summary?path=src/core/ports/".to_string();
         match self.client.get(&api_path).await {
             Ok(val) => {
                 if let Some(summary) = val["summary"].as_str() {
@@ -1456,10 +1457,12 @@ mod tests {
     #[test]
     fn scaffold_skips_if_cargo_toml_exists() {
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().to_str().unwrap();
-        std::fs::write(Path::new(dir).join("Cargo.toml"), "[package]").unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("Cargo.toml"), "[package]").unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src").join("main.rs"), "fn main() {}").unwrap();
 
-        let files = generate_scaffold(dir, "rust", "test").unwrap();
+        let files = generate_scaffold(dir.to_str().unwrap(), "rust", "test").unwrap();
         assert!(files.is_empty());
     }
 

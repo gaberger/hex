@@ -111,13 +111,10 @@ impl PromptTemplate {
                 // Only treat as a placeholder if it looks like an identifier
                 // (alphanumeric + underscores, no spaces or special chars)
                 if !name.is_empty()
-                    && name
-                        .chars()
-                        .all(|c| c.is_alphanumeric() || c == '_')
+                    && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                    && !placeholders.contains(&name.to_string())
                 {
-                    if !placeholders.contains(&name.to_string()) {
-                        placeholders.push(name.to_string());
-                    }
+                    placeholders.push(name.to_string());
                 }
                 rest = &after_open[end + 2..];
             } else {
