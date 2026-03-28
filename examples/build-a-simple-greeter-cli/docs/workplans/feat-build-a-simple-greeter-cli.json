@@ -1,107 +1,29 @@
 {
-  "id": "wp-build-simple-greeter-cli",
-  "title": "Simple Greeter CLI Implementation",
-  "specs": "specs/cli-greeter.md",
-  "adr": "ADR-230712123456",
-  "created": "2023-07-12",
+  "id": "wp-build-a-simple-greeter-cli",
+  "title": "Plan: build a simple greeter cli",
+  "specs": null,
+  "adr": null,
+  "created": null,
   "status": "planned",
-  "status_note": null,
+  "status_note": "auto-generated fallback — LLM JSON extraction failed",
   "topology": "pipeline",
-  "budget": "2 tokens",
+  "budget": null,
   "steps": [
     {
-      "id": "P0.1",
-      "description": "Implement Greeting domain entity with greet method",
-      "layer": "domain",
-      "adapter": null,
+      "id": "step-1",
+      "description": "build a simple greeter cli",
+      "layer": "adapters/primary",
+      "adapter": "primary/cli",
       "port": null,
       "dependencies": [],
-      "tier": 0,
-      "specs": [
-        "S01"
-      ],
-      "worktree_branch": "feat/cli-greeter/domain",
-      "done_condition": "Greeting entity passes unit tests"
-    },
-    {
-      "id": "P0.2",
-      "description": "Implement ConsoleOutputPort interface with write method",
-      "layer": "ports",
-      "adapter": null,
-      "port": null,
-      "dependencies": [],
-      "tier": 0,
-      "specs": [
-        "S02"
-      ],
-      "worktree_branch": "feat/cli-greeter/ports",
-      "done_condition": "ConsoleOutputPort interface compiles"
-    },
-    {
-      "id": "P1.1",
-      "description": "Implement ConsoleAdapter that implements ConsoleOutputPort",
-      "layer": "primary",
-      "adapter": "ConsoleAdapter",
-      "port": null,
-      "dependencies": [
-        "P0.2"
-      ],
       "tier": 2,
-      "specs": [
-        "S03"
-      ],
-      "worktree_branch": "feat/cli-greeter/adapters/primary",
-      "done_condition": "ConsoleAdapter passes integration tests"
-    },
-    {
-      "id": "P2.1",
-      "description": "Implement GreetUserUseCase that uses Greeting domain and ConsoleOutputPort",
-      "layer": "usecases",
-      "adapter": null,
-      "port": null,
-      "dependencies": [
-        "P0.1",
-        "P0.2",
-        "P1.1"
-      ],
-      "tier": 3,
-      "specs": [
-        "S04"
-      ],
-      "worktree_branch": "feat/cli-greeter/usecases",
-      "done_condition": "GreetUserUseCase passes unit tests"
-    },
-    {
-      "id": "P3.1",
-      "description": "Implement composition root to initialize GreetUserUseCase with ConsoleAdapter",
-      "layer": "composition-root",
-      "adapter": null,
-      "port": null,
-      "dependencies": [
-        "P2.1"
-      ],
-      "tier": 4,
-      "specs": [
-        "S05"
-      ],
-      "worktree_branch": "feat/cli-greeter/composition-root",
-      "done_condition": "Composition root executes successfully"
+      "specs": null,
+      "worktree_branch": null,
+      "done_condition": null
     }
   ],
-  "mergeOrder": [
-    "P0.1",
-    "P0.2",
-    "P1.1",
-    "P2.1",
-    "P3.1"
-  ],
-  "riskRegister": [],
-  "successCriteria": [
-    "CLI greeter outputs personalized greetings",
-    "Hexagonal architecture boundaries maintained"
-  ],
-  "dependencies": {
-    "cargo": [],
-    "npm": []
-  }
+  "mergeOrder": null,
+  "riskRegister": null,
+  "successCriteria": null,
+  "dependencies": null
 }
