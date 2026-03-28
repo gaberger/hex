@@ -1752,7 +1752,7 @@ impl Supervisor {
                                     error_context: blocking_violations.join("\n\n"),
                                     language: self.language.clone(),
                                     output_dir: self.output_dir.clone(),
-                                    prior_errors: vec![],
+                                    prior_errors: prior_errors.to_vec(),
                                 };
                                 let fix_agent = FixAgent::from_env();
                                 match fix_agent.execute(fix_input, effective_model, provider_pref).await {
@@ -1819,7 +1819,7 @@ impl Supervisor {
                                     error_context: gate_errors.join("\n\n"),
                                     language: self.language.clone(),
                                     output_dir: self.output_dir.clone(),
-                                    prior_errors: vec![],
+                                    prior_errors: prior_errors.to_vec(),
                                 };
                                 let fix_agent = FixAgent::from_env();
                                 match fix_agent.execute(fix_input, effective_model, provider_pref).await {
@@ -1983,7 +1983,7 @@ impl Supervisor {
                                     error_context: blocking_violations.join("\n\n"),
                                     language: self.language.clone(),
                                     output_dir: self.output_dir.clone(),
-                                    prior_errors: vec![],
+                                    prior_errors: prior_errors.to_vec(),
                                 };
                                 let fix_agent = FixAgent::from_env();
                                 match fix_agent.execute(fix_input, effective_model, provider_pref).await {
