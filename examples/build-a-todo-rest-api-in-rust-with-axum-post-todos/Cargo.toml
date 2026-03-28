@@ -1,5 +1,5 @@
 [package]
-name = "implement-in-memory-todo-storage-adapter"
+name = "implement-hexagonal-rest-api-for-todo-se"
 version = "0.1.0"
 edition = "2021"
 

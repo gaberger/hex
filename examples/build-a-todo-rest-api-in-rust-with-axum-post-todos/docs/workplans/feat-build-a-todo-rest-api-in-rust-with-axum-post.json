@@ -1,13 +1,13 @@
 {
   "id": "wp-230720T1430",
-  "title": "Implement In-Memory Todo Storage Adapter",
-  "specs": "specs/in_memory_todo_adapter.md",
+  "title": "Implement Hexagonal REST API for Todo Service",
+  "specs": "specs/todo_api.md",
   "adr": "ADR-230720T1430",
   "created": "2023-07-20",
   "status": "planned",
-  "status_note": "Awaiting initial review",
-  "topology": "mixed",
-  "budget": "100 tokens",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": "medium",
   "steps": [
     {
       "id": "P0.1",
@@ -28,25 +28,15 @@
     "P0.1",
     "P0.2",
     "P1.1",
-    "P2.1"
+    "P2.1",
+    "P3.1",
+    "P4.1"
   ],
-  "riskRegister": [
-    {
-      "impact": "medium",
-      "mitigation": "Document limitations in ADR and specs",
-      "risk": "Data loss on restart"
-    },
-    {
-      "impact": "low",
-      "mitigation": "Note in documentation for future scaling considerations",
-      "risk": "Single-process limitation"
-    }
-  ],
+  "riskRegister": [],
   "successCriteria": [
-    "POST /todos creates todo with JSON body",
-    "GET /todos returns JSON array of todos",
-    "DELETE /todos/:id removes todo and returns 204",
-    "All Axum routes type-checked and linted"
+    "API endpoints respond with JSON",
+    "In-memory storage works",
+    "Hexagonal architecture enforced"
   ],
   "dependencies": {
     "cargo": [],
