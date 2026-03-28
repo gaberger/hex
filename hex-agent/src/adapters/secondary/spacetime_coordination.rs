@@ -309,3 +309,143 @@ impl ICoordinationPort for NexusCoordinationAdapter {
         Ok(())
     }
 }
+
+// ── SpacetimeCoordination startup helper ─────────────────────────────────────
+//
+// On microVM startup:
+//   1. Reads SPACETIMEDB_HOST, SPACETIMEDB_TOKEN, HEX_AGENT_ID, HEXFLO_TASK
+//   2. Registers the agent with hex-nexus (POST /api/hex-agents)
+//   3. Starts a 30-second heartbeat loop (POST /api/hex-agents/:id/heartbeat)
+//   4. Installs a SIGTERM handler that calls disconnect then notifies shutdown
+//
+// This is intentionally separate from NexusCoordinationAdapter — it owns
+// the agent lifecycle (register / heartbeat / disconnect) while the adapter
+// above owns task/swarm/memory operations.
+
+use std::sync::Arc;
+use tokio::sync::Notify;
+use tokio::time::{interval, Duration};
+
+/// Startup coordinator for hex-agent running inside a microVM or container.
+pub struct SpacetimeCoordination {
+    /// WebSocket host for SpacetimeDB (env: SPACETIMEDB_HOST).
+    /// Converted to HTTP for nexus REST calls.
+    pub host: String,
+    /// Bearer token passed to nexus (env: SPACETIMEDB_TOKEN).
+    pub token: String,
+    /// Unique agent ID for this run (env: HEX_AGENT_ID, defaults to new UUID).
+    pub agent_id: String,
+    /// Optional HexFlo task ID this agent is executing (env: HEXFLO_TASK).
+    pub task_id: Option<String>,
+}
+
+impl SpacetimeCoordination {
+    /// Construct from environment variables.
+    pub fn from_env() -> anyhow::Result<Self> {
+        Ok(Self {
+            host: std::env::var("SPACETIMEDB_HOST")
+                .unwrap_or_else(|_| "ws://localhost:3033".to_string()),
+            token: std::env::var("SPACETIMEDB_TOKEN").unwrap_or_default(),
+            agent_id: std::env::var("HEX_AGENT_ID")
+                .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string()),
+            task_id: std::env::var("HEXFLO_TASK").ok(),
+        })
+    }
+
+    /// Derive the nexus HTTP base URL from the SpacetimeDB WebSocket host.
+    ///
+    /// Converts `ws://host:3033` → `http://host:5555` and
+    ///          `wss://host:3033` → `https://host:5555`.
+    fn nexus_url(&self) -> String {
+        self.host
+            .replace("wss://", "https://")
+            .replace("ws://", "http://")
+            .split(':')
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(":")
+            + ":5555"
+    }
+
+    /// Register this agent with hex-nexus, then start the heartbeat loop and
+    /// SIGTERM handler.
+    ///
+    /// Returns a `Notify` that fires when the agent should shut down cleanly.
+    /// Callers should `await shutdown.notified()` to block until that signal.
+    pub async fn start(self: Arc<Self>) -> Arc<Notify> {
+        let shutdown = Arc::new(Notify::new());
+
+        // ── 1. Register ───────────────────────────────────────────────────────
+        let nexus = self.nexus_url();
+        let client = reqwest::Client::new();
+        let _ = client
+            .post(format!("{}/api/hex-agents", nexus))
+            .header("X-Hex-Token", &self.token)
+            .json(&serde_json::json!({
+                "agent_id": self.agent_id,
+                "task_id":  self.task_id,
+                "status":   "active",
+            }))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await;
+
+        // ── 2. Heartbeat loop (every 30 s) ────────────────────────────────────
+        {
+            let coord = self.clone();
+            tokio::spawn(async move {
+                let mut ticker = interval(Duration::from_secs(30));
+                loop {
+                    ticker.tick().await;
+                    let url = format!(
+                        "{}/api/hex-agents/{}/heartbeat",
+                        coord.nexus_url(),
+                        coord.agent_id
+                    );
+                    let _ = reqwest::Client::new()
+                        .post(&url)
+                        .header("X-Hex-Token", &coord.token)
+                        .timeout(Duration::from_secs(5))
+                        .send()
+                        .await;
+                }
+            });
+        }
+
+        // ── 3. SIGTERM handler ────────────────────────────────────────────────
+        {
+            let coord = self.clone();
+            let shutdown_tx = shutdown.clone();
+            tokio::spawn(async move {
+                #[cfg(unix)]
+                {
+                    use tokio::signal::unix::{signal, SignalKind};
+                    if let Ok(mut sig) = signal(SignalKind::terminate()) {
+                        sig.recv().await;
+                        // Disconnect cleanly before notifying shutdown.
+                        let url = format!(
+                            "{}/api/hex-agents/{}/disconnect",
+                            coord.nexus_url(),
+                            coord.agent_id
+                        );
+                        let _ = reqwest::Client::new()
+                            .post(&url)
+                            .header("X-Hex-Token", &coord.token)
+                            .timeout(Duration::from_secs(3))
+                            .send()
+                            .await;
+                        shutdown_tx.notify_one();
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    // On non-Unix platforms just wait forever; shutdown is
+                    // triggered by other means (e.g. Ctrl-C / process kill).
+                    let _ = std::future::pending::<()>().await;
+                }
+            });
+        }
+
+        shutdown
+    }
+}
