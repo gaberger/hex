@@ -1,13 +1,13 @@
 {
-  "id": "wp-hello-world-cli",
+  "id": "wp-230720T1430",
   "title": "Hello World CLI Implementation",
-  "specs": "specs/hello-world-cli.md",
-  "adr": "ADR-230315",
-  "created": "2023-03-15",
+  "specs": "specs/hello-cli.md",
+  "adr": "ADR-230720T1430",
+  "created": "2023-07-20",
   "status": "planned",
-  "status_note": "awaiting team assignment",
-  "topology": "pipeline",
-  "budget": "1.5 days",
+  "status_note": "Initial planning",
+  "topology": "mixed",
+  "budget": "100 tokens",
   "steps": [
     {
       "id": "P0.1",
@@ -26,21 +26,12 @@
   ],
   "mergeOrder": [
     "P0.1",
-    "P0.2",
-    "P1.1",
-    "P2.1"
+    "P0.2"
   ],
-  "riskRegister": [
-    {
-      "impact": "medium",
-      "mitigation": "Use module-level visibility instead of separate directories",
-      "risk": "Rust's single-file constraint may limit architecture separation"
-    }
-  ],
+  "riskRegister": [],
   "successCriteria": [
-    "cargo build succeeds",
-    "cargo test passes",
-    "CLI prints 'hello world' to stdout"
+    "CLI prints \"hello\"",
+    "No runtime errors"
   ],
   "dependencies": {
     "cargo": [],
