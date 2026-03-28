@@ -76,10 +76,10 @@ pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
 
 async fn init(name: &str, topology: &str, json_output: bool) -> anyhow::Result<()> {
     match topology {
-        "hierarchical" | "mesh" | "pipeline" => {}
+        "hierarchical" | "mesh" | "pipeline" | "mixed" => {}
         other => {
             anyhow::bail!(
-                "Unknown topology '{}'. Supported: hierarchical, mesh, pipeline",
+                "Unknown topology '{}'. Supported: hierarchical, mesh, pipeline, mixed",
                 other
             );
         }
