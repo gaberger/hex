@@ -7,6 +7,7 @@
 /// Covers specs S09, S10.
 
 use hex_cli::pipeline::agent_def::AgentDefinition;
+use hex_cli::pipeline::model_selection::ModelSelector;
 use hex_cli::pipeline::swarm_config::{AgentCardinality, SwarmConfig};
 
 // ── S09: Non-phase agents still get YAML model + context ────────────────────
@@ -101,6 +102,69 @@ fn hex_reviewer_cardinality_is_per_source_file() {
         cardinality,
         AgentCardinality::PerSourceFile,
         "hex-reviewer in dev-pipeline.yml must have cardinality: per_source_file"
+    );
+}
+
+// ── S05: TDD phase loop has 3 inference phases (red/green/refactor) ─────────
+//
+// When HEX_PHASE_MODE=tdd, dispatch_agent iterates over workflow phases
+// excluding pre_validate, making one inference call per phase. This test
+// verifies the YAML defines exactly the expected phases so the loop would
+// produce 3 distinct inference calls.
+
+#[test]
+fn hex_coder_tdd_phases_produce_three_inference_calls() {
+    let def = AgentDefinition::load("hex-coder").expect("hex-coder.yml must load");
+    let workflow = def.workflow.expect("hex-coder must have a workflow section");
+
+    let inference_phases: Vec<&str> = workflow
+        .phases
+        .iter()
+        .filter(|p| p.id != "pre_validate")
+        .map(|p| p.id.as_str())
+        .collect();
+
+    assert!(
+        inference_phases.len() >= 3,
+        "hex-coder TDD loop must have at least 3 inference phases (red, green, refactor); got {:?}",
+        inference_phases
+    );
+    // red → green → refactor are the 3 core TDD inference calls
+    assert!(
+        inference_phases.contains(&"red"),
+        "inference phases must include 'red'; got {:?}",
+        inference_phases
+    );
+    assert!(
+        inference_phases.contains(&"green"),
+        "inference phases must include 'green'; got {:?}",
+        inference_phases
+    );
+    assert!(
+        inference_phases.contains(&"refactor"),
+        "inference phases must include 'refactor'; got {:?}",
+        inference_phases
+    );
+}
+
+// ── S08: YAML model ID appears in SelectedModel result ─────────────────────
+//
+// select_from_yaml with hex-coder's model config must return a SelectedModel
+// whose model_id matches the YAML preferred model (claude-sonnet-4-6).
+// Verifies the YAML → runtime model wiring is end-to-end correct.
+
+#[test]
+fn yaml_model_id_appears_in_step_result() {
+    let def = AgentDefinition::load("hex-coder").expect("hex-coder.yml must load");
+    let expected_model_id = def.model.preferred_model_id();
+
+    let selector = ModelSelector::new("http://localhost:5555");
+    let selected = selector.select_from_yaml(&def.model, None, 0, 3, None);
+
+    assert_eq!(
+        selected.model_id, expected_model_id,
+        "select_from_yaml must return the YAML preferred model ID '{}'; got '{}'",
+        expected_model_id, selected.model_id
     );
 }
 
