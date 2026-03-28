@@ -1,17 +1,17 @@
 {
-  "id": "wp-cli-hello-world",
-  "title": "Rust CLI Hello World Implementation",
-  "specs": "specs/cli-hello-world.md",
-  "adr": "ADR-230720001000",
-  "created": "2023-07-20",
+  "id": "wp-230315",
+  "title": "ADR-230315: Rust CLI Hello World Implementation",
+  "specs": "specs/230315.md",
+  "adr": "ADR-230315",
+  "created": "2023-03-15",
   "status": "planned",
   "status_note": "Initial planning",
   "topology": "pipeline",
-  "budget": "2 tokens",
+  "budget": "2 days",
   "steps": [
     {
       "id": "P0.1",
-      "description": "Implement HelloService domain layer with trait and implementation",
+      "description": "Implement domain entity in src/domain/lib.rs",
       "layer": "domain",
       "adapter": null,
       "port": null,
@@ -20,15 +20,15 @@
       "specs": [
         "S01"
       ],
-      "worktree_branch": "feat/cli/hello-world/domain",
-      "done_condition": "HelloService trait implemented with 'hello' method returning 'hello'"
+      "worktree_branch": "feat/230315/domain",
+      "done_condition": "cargo build --release"
     },
     {
       "id": "P0.2",
-      "description": "Create CLI port interface in ports/cli.rs",
+      "description": "Implement PrinterPort interface in src/ports/lib.rs",
       "layer": "ports",
       "adapter": null,
-      "port": "CLI",
+      "port": null,
       "dependencies": [
         "P0.1"
       ],
@@ -36,15 +36,15 @@
       "specs": [
         "S02"
       ],
-      "worktree_branch": "feat/cli/hello-world/ports",
-      "done_condition": "ports/cli.rs contains CLI trait with execute method signature"
+      "worktree_branch": "feat/230315/ports",
+      "done_condition": "cargo build --release"
     },
     {
       "id": "P1.1",
-      "description": "Develop CLI adapter in adapters/primary/cli/cli.rs",
+      "description": "Implement ConsolePrinterAdapter in src/adapters/primary/lib.rs",
       "layer": "primary",
-      "adapter": "CLI",
-      "port": "HelloServicePort",
+      "adapter": "ConsolePrinterAdapter",
+      "port": "PrinterPort",
       "dependencies": [
         "P0.2"
       ],
@@ -52,36 +52,63 @@
       "specs": [
         "S03"
       ],
-      "worktree_branch": "feat/cli/hello-world/primary",
-      "done_condition": "CLI adapter implements HelloServicePort and prints 'hello' to stdout"
+      "worktree_branch": "feat/230315/adapters/primary",
+      "done_condition": "cargo test --release"
     },
     {
-      "id": "P2.1",
-      "description": "Update composition root to wire CLI adapter",
-      "layer": "composition-root",
+      "id": "P1.2",
+      "description": "Implement HelloUseCase in src/usecases/lib.rs",
+      "layer": "usecases",
       "adapter": null,
       "port": null,
       "dependencies": [
+        "P0.2",
         "P1.1"
       ],
-      "tier": 4,
+      "tier": 3,
       "specs": [
         "S04"
       ],
-      "worktree_branch": "feat/cli/hello-world/composition-root",
-      "done_condition": "composition_root.rs includes CLI adapter in composition"
+      "worktree_branch": "feat/230315/usecases",
+      "done_condition": "cargo test --release"
+    },
+    {
+      "id": "P2.1",
+      "description": "Implement composition root in src/composition-root/lib.rs",
+      "layer": "primary",
+      "adapter": "ConsolePrinterAdapter",
+      "port": "PrinterPort",
+      "dependencies": [
+        "P0.2",
+        "P1.1",
+        "P1.2"
+      ],
+      "tier": 4,
+      "specs": [
+        "S05"
+      ],
+      "worktree_branch": "feat/230315/composition-root",
+      "done_condition": "cargo test --release"
     }
   ],
   "mergeOrder": [
     "P0.1",
     "P0.2",
     "P1.1",
+    "P1.2",
     "P2.1"
   ],
-  "riskRegister": [],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Use cargo update before each phase",
+      "risk": "Rust dependency conflicts"
+    }
+  ],
   "successCriteria": [
-    "CLI prints 'hello' when executed",
-    "No layer violations detected"
+    "Hello prints 'hello world'",
+    "All tests pass",
+    "No lints"
   ],
   "dependencies": {
     "cargo": [],
