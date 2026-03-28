@@ -319,7 +319,7 @@ mod real {
 
         async fn rl_select_action(&self, state: &RlState) -> Result<String, StateError> {
             let state_key = discretize_state(state);
-            let resp = self.call_reducer("select_action", serde_json::json!([state_key])).await?;
+            let resp = self.call_reducer_on("rl-engine", "select_action", serde_json::json!([state_key])).await?;
             // Reducer returns the selected action as a string
             let action = resp.as_str()
                 .map(String::from)
@@ -337,7 +337,7 @@ mod real {
             rate_limited: bool,
             openrouter_cost_usd: f64,
         ) -> Result<(), StateError> {
-            self.call_reducer("record_reward", serde_json::json!([
+            self.call_reducer_on("rl-engine", "record_reward", serde_json::json!([
                 state_key, action, reward, next_state_key, rate_limited, openrouter_cost_usd
             ])).await?;
             Ok(())
@@ -379,7 +379,7 @@ mod real {
             content: &str,
             confidence: f64,
         ) -> Result<String, StateError> {
-            let resp = self.call_reducer("store_pattern", serde_json::json!([
+            let resp = self.call_reducer_on("rl-engine", "store_pattern", serde_json::json!([
                 category, content, confidence
             ])).await?;
             // Return the pattern ID from the response, or generate one
@@ -437,7 +437,7 @@ mod real {
         }
 
         async fn pattern_decay_all(&self) -> Result<u32, StateError> {
-            self.call_reducer("decay_patterns", serde_json::json!([])).await?;
+            self.call_reducer_on("rl-engine", "decay_patterns", serde_json::json!([])).await?;
             // The reducer doesn't return a count; query how many patterns remain
             let rows = self.query_table("SELECT COUNT(*) AS cnt FROM rl_pattern").await?;
             let count = rows.first()
