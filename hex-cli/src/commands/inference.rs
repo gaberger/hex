@@ -302,8 +302,13 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
         format!("http://{}:11434", target)
     };
 
+    // Tags probe uses a short timeout; inference probe uses a longer one
+    // since large models (27B+) may need time to load from disk on first call.
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    let http_infer = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
         .build()?;
 
     // Test Ollama /api/tags
@@ -312,7 +317,9 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
     match http.get(&ollama_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             println!("  {} Ollama responding at {}", "✓".green(), url);
-            let mut first_local_model: Option<String> = None;
+            // Collect local models sorted smallest-first so the probe uses the
+            // quickest-to-load model rather than the largest one.
+            let mut local_models: Vec<(u64, String)> = Vec::new();
             if let Ok(body) = resp.json::<serde_json::Value>().await {
                 if let Some(models) = body.get("models").and_then(|m| m.as_array()) {
                     println!("  {} {} model(s) available:", "ℹ".cyan(), models.len());
@@ -320,19 +327,20 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
                         let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("?");
                         let size = m.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
                         let gb = size as f64 / 1_073_741_824.0;
-                        // Skip cloud/remote models for inference test
                         let is_local = m.get("remote_model").is_none() && size > 0;
-                        if is_local && first_local_model.is_none() {
-                            first_local_model = Some(name.to_string());
+                        if is_local {
+                            local_models.push((size, name.to_string()));
                         }
                         println!("    - {} ({:.1}GB){}", name, gb,
                             if !is_local { " [cloud]" } else { "" });
                     }
                 }
             }
+            local_models.sort_by_key(|(size, _)| *size);
+            let test_model_opt = local_models.into_iter().next().map(|(_, n)| n);
 
-            // Quick inference test using first available local model
-            if let Some(ref test_model) = first_local_model {
+            // Quick inference test using smallest available local model
+            if let Some(ref test_model) = test_model_opt {
                 println!();
                 println!("  {} Running inference test with {}...", "→".cyan(), test_model);
                 let chat_url = format!("{}/api/chat", url.trim_end_matches('/'));
@@ -343,7 +351,7 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
                 });
 
                 let start = std::time::Instant::now();
-                match http.post(&chat_url).json(&test_body).send().await {
+                match http_infer.post(&chat_url).json(&test_body).send().await {
                     Ok(resp) if resp.status().is_success() => {
                         let latency = start.elapsed().as_millis();
                         println!("  {} Inference OK — {} responded in {}ms", "✓".green(), test_model, latency);
