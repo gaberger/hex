@@ -1,0 +1,48 @@
+{
+  "id": "wp-230720001",
+  "title": "Word Counter CLI Implementation",
+  "specs": "specs/cli-word-counter.md",
+  "adr": "ADR-230720001",
+  "created": "2023-07-20",
+  "status": "planned",
+  "status_note": "Initial planning",
+  "topology": "mixed",
+  "budget": "2 days",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Implement the full feature in src/main.rs — single-binary rust project",
+      "layer": "primary",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": null,
+      "done_condition": "src/main.rs compiles and implements the feature; Cargo.toml has correct dependencies"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P1.1"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Start with minimal functionality and expand incrementally",
+      "risk": "CLI implementation complexity"
+    }
+  ],
+  "successCriteria": [
+    "CLI command implemented",
+    "Word counting logic validated",
+    "ADR-019 parity requirement met"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
