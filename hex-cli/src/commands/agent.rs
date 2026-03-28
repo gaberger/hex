@@ -55,6 +55,8 @@ pub enum AgentAction {
     Fleet,
     /// Audit recent commits against HexFlo task tracking (ADR-2603221939)
     Audit,
+    /// Evict dead/stale agents from the registry
+    Evict,
     /// Run as a persistent agent worker for a specific role
     Worker {
         /// Agent role (hex-coder, hex-tester, hex-reviewer, hex-documenter, hex-ux, hex-fixer)
@@ -130,6 +132,7 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
         } => spawn_remote(&target, project_dir, source_dir).await,
         AgentAction::Disconnect { agent_id } => disconnect(&agent_id).await,
         AgentAction::Fleet => fleet().await,
+        AgentAction::Evict => evict().await,
         AgentAction::Audit => audit().await,
         AgentAction::Worker {
             role,
@@ -820,6 +823,16 @@ async fn disconnect(agent_id: &str) -> anyhow::Result<()> {
     println!("{} Agent disconnected", "\u{2b21}".green());
     println!("  Agent ID: {}", agent_id);
 
+    Ok(())
+}
+
+async fn evict() -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+    let body = serde_json::json!({});
+    let result = nexus.post("/api/hex-agents/evict", &body).await?;
+    let evicted = result.get("evicted").and_then(|v| v.as_u64()).unwrap_or(0);
+    println!("{} Evicted {} dead agent(s)", "\u{2b21}".green(), evicted);
     Ok(())
 }
 

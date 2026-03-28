@@ -749,9 +749,16 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
         }
 
         "hex_agent_info" => {
-            let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("");
-            nexus.get(&format!("/api/hex-agents/{}", agent_id))
-                .await.map_err(|e| e.to_string())
+            let agent_id = args.get("agent_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .or_else(resolve_session_agent_id);
+            match agent_id {
+                Some(id) => nexus.get(&format!("/api/hex-agents/{}", id))
+                    .await.map_err(|e| e.to_string()),
+                None => Err("No agent_id provided and no session agent found. Run hex hook session-start first.".to_string()),
+            }
         }
 
         "hex_agent_audit" => {
