@@ -1,13 +1,13 @@
 {
-  "id": "wp-build-a-todo-list-rest-api",
-  "title": "Plan: build a todo list REST API in rust with axum",
-  "specs": null,
-  "adr": null,
-  "created": null,
+  "id": "wp-rest-api-axum",
+  "title": "REST API Implementation with Axum",
+  "specs": "specs/rest-api-axum.md",
+  "adr": "ADR-230920T1430",
+  "created": "2023-09-20",
   "status": "planned",
-  "status_note": "auto-generated fallback — LLM JSON extraction failed",
-  "topology": "pipeline",
-  "budget": null,
+  "status_note": "Initial workplan draft",
+  "topology": "mixed",
+  "budget": "token: 5",
   "steps": [
     {
       "id": "P0.1",
@@ -17,13 +17,41 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": null,
+      "specs": [
+        "S01"
+      ],
       "worktree_branch": null,
       "done_condition": "src/main.rs compiles and implements the feature; Cargo.toml has correct dependencies"
     }
   ],
-  "mergeOrder": null,
-  "riskRegister": null,
-  "successCriteria": null,
-  "dependencies": null
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P1.2",
+    "P2.1",
+    "P3.1"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Pair programming with Axum expert",
+      "risk": "Axum learning curve"
+    },
+    {
+      "impact": "low",
+      "mitigation": "Version-controlled migrations",
+      "risk": "SQLite schema changes"
+    }
+  ],
+  "successCriteria": [
+    "API responds to GET /todos with 200 OK",
+    "API creates todo items via POST /todos",
+    "API returns 404 for non-existent todos",
+    "All tests pass in CI pipeline"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
 }
