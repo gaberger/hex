@@ -1,13 +1,13 @@
 {
-  "id": "wp-build-todo-api",
-  "title": "Build TodoList REST API with Axum",
-  "specs": "specs/todo-api.md",
-  "adr": "ADR-231005",
-  "created": "2023-10-05",
+  "id": "wp-build-a-todo-list-rest-api",
+  "title": "Plan: build a todo list REST API in rust with axum",
+  "specs": null,
+  "adr": null,
+  "created": null,
   "status": "planned",
-  "status_note": "Initial planning completed",
+  "status_note": "auto-generated fallback — LLM JSON extraction failed",
   "topology": "pipeline",
-  "budget": "2 token",
+  "budget": null,
   "steps": [
     {
       "id": "P0.1",
@@ -17,43 +17,13 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": [
-        "S01"
-      ],
+      "specs": null,
       "worktree_branch": null,
       "done_condition": "src/main.rs compiles and implements the feature; Cargo.toml has correct dependencies"
     }
   ],
-  "mergeOrder": [
-    "P0.1",
-    "P0.2",
-    "P1.1",
-    "P1.2",
-    "P2.1"
-  ],
-  "riskRegister": [
-    {
-      "impact": "medium",
-      "mitigation": "Start with minimal CRUD endpoints",
-      "risk": "Axum integration complexity"
-    },
-    {
-      "impact": "low",
-      "mitigation": "Use migrations from day one",
-      "risk": "SQLite schema changes"
-    }
-  ],
-  "successCriteria": [
-    "API endpoints return 200 OK for all CRUD operations",
-    "Domain layer tests pass with 100% coverage",
-    "Composition root successfully wires all dependencies"
-  ],
-  "dependencies": {
-    "cargo": [
-      "axum",
-      "sqlx",
-      "sqlx-postgres"
-    ],
-    "npm": []
-  }
+  "mergeOrder": null,
+  "riskRegister": null,
+  "successCriteria": null,
+  "dependencies": null
 }
