@@ -1,0 +1,55 @@
+{
+  "id": "wp-230720T1430",
+  "title": "Implement In-Memory Todo Storage Adapter",
+  "specs": "specs/in_memory_todo_adapter.md",
+  "adr": "ADR-230720T1430",
+  "created": "2023-07-20",
+  "status": "planned",
+  "status_note": "Awaiting initial review",
+  "topology": "mixed",
+  "budget": "100 tokens",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Implement the full feature in src/main.rs — single-binary rust project",
+      "layer": "primary",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": null,
+      "done_condition": "src/main.rs compiles and implements the feature; Cargo.toml has correct dependencies"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P2.1"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Document limitations in ADR and specs",
+      "risk": "Data loss on restart"
+    },
+    {
+      "impact": "low",
+      "mitigation": "Note in documentation for future scaling considerations",
+      "risk": "Single-process limitation"
+    }
+  ],
+  "successCriteria": [
+    "POST /todos creates todo with JSON body",
+    "GET /todos returns JSON array of todos",
+    "DELETE /todos/:id removes todo and returns 204",
+    "All Axum routes type-checked and linted"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
