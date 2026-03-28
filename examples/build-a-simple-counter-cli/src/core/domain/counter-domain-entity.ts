@@ -1,0 +1,1 @@
+const empty:Counter = { count: 0 };
