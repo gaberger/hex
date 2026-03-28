@@ -31,6 +31,12 @@ pub struct InferenceProviderRow {
     pub healthy: u8,
     pub last_health_check: String,
     pub avg_latency_ms: u64,
+    /// Quantization tier (e.g. "q4", "fp16", "cloud"). Default "q4" for local, "cloud" for APIs.
+    pub quantization_level: String,
+    /// Context window size in tokens. 0 = unknown.
+    pub context_window: u32,
+    /// Quality score from Neural Lab calibration (0.0–1.0). -1.0 = uncalibrated.
+    pub quality_score: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +89,9 @@ impl SpacetimeInferenceClient {
         models_json: &str,
         rate_limit_rpm: u32,
         rate_limit_tpm: u64,
+        quantization_level: &str,
+        context_window: u32,
+        quality_score: f32,
     ) -> Result<(), String> {
         self.call_reducer(
             "register_provider",
@@ -94,6 +103,9 @@ impl SpacetimeInferenceClient {
                 models_json,
                 rate_limit_rpm,
                 rate_limit_tpm,
+                quantization_level,
+                context_window,
+                quality_score,
             ]),
         )
         .await
@@ -195,9 +207,15 @@ impl SpacetimeInferenceClient {
                 // rate_limit_rpm, rate_limit_tpm, current_rpm, current_tpm,
                 // healthy, last_health_check, avg_latency_ms
                 if cols.len() >= 12 {
+                    let provider_type = str_col(cols, 1);
+                    // Derive default quantization: cloud APIs are "cloud", local providers are "q4"
+                    let default_quant = match provider_type.as_str() {
+                        "openrouter" | "anthropic" | "openai" | "gemini" => "cloud",
+                        _ => "q4",
+                    };
                     providers.push(InferenceProviderRow {
                         provider_id: str_col(cols, 0),
-                        provider_type: str_col(cols, 1),
+                        provider_type,
                         base_url: str_col(cols, 2),
                         api_key_ref: str_col(cols, 3),
                         models_json: str_col(cols, 4),
@@ -208,6 +226,19 @@ impl SpacetimeInferenceClient {
                         healthy: cols.get(9).and_then(|v| v.as_u64()).unwrap_or(0) as u8,
                         last_health_check: str_col(cols, 10),
                         avg_latency_ms: u64_col(cols, 11),
+                        // Columns 12-14 added in ADR-2603271000; graceful fallback for existing rows
+                        quantization_level: if cols.len() > 12 {
+                            let s = str_col(cols, 12);
+                            if s.is_empty() { default_quant.to_string() } else { s }
+                        } else {
+                            default_quant.to_string()
+                        },
+                        context_window: if cols.len() > 13 { u32_col(cols, 13) } else { 0 },
+                        quality_score: if cols.len() > 14 {
+                            cols.get(14).and_then(|v| v.as_f64()).map(|f| f as f32).unwrap_or(-1.0)
+                        } else {
+                            -1.0
+                        },
                     });
                 }
             }

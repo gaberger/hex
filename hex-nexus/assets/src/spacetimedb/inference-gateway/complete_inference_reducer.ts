@@ -20,5 +20,6 @@ export default {
   cacheWriteTokens: __t.u64(),
   latencyMs: __t.u64(),
   costUsd: __t.string(),
+  openrouterCostUsd: __t.string(),
   createdAt: __t.string(),
 };

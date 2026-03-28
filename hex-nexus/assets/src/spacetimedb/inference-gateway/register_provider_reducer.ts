@@ -18,4 +18,7 @@ export default {
   modelsJson: __t.string(),
   rateLimitRpm: __t.u32(),
   rateLimitTpm: __t.u64(),
+  quantizationLevel: __t.string(),
+  contextWindow: __t.u32(),
+  qualityScore: __t.f32(),
 };

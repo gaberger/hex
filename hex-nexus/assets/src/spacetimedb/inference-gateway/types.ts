@@ -34,6 +34,9 @@ export const InferenceProvider = __t.object("InferenceProvider", {
   healthy: __t.u8(),
   lastHealthCheck: __t.string(),
   avgLatencyMs: __t.u64(),
+  quantizationLevel: __t.string(),
+  contextWindow: __t.u32(),
+  qualityScore: __t.f32(),
 });
 export type InferenceProvider = __Infer<typeof InferenceProvider>;
 
@@ -67,6 +70,7 @@ export const InferenceResponse = __t.object("InferenceResponse", {
   cacheWriteTokens: __t.u64(),
   latencyMs: __t.u64(),
   costUsd: __t.string(),
+  openrouterCostUsd: __t.string(),
   createdAt: __t.string(),
 });
 export type InferenceResponse = __Infer<typeof InferenceResponse>;

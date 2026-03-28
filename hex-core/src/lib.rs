@@ -15,6 +15,7 @@
 
 pub mod domain;
 pub mod ports;
+pub mod quantization;
 pub mod rules;
 
 // ── Infrastructure Constants ──────────────────────────────
@@ -79,6 +80,8 @@ pub fn stdb_database_for_module(module_name: &str) -> &str {
 /// Re-export commonly used types at the crate root.
 pub use domain::agents::{AgentConstraints, AgentDefinition, AgentMetrics};
 pub use domain::messages::{ContentBlock, ConversationState, Message, Role, StopReason};
-pub use domain::tokens::{TokenBudget, TokenPartition, TokenUsage};
+pub use domain::tokens::{ContextPressure, PressureLevel, TokenBudget, TokenPartition, TokenUsage};
+pub use ports::context_compressor::IContextCompressorPort;
 pub use domain::tools::{ToolCall, ToolDefinition, ToolInputSchema, ToolResult};
 pub use domain::workplan::{PhaseGate, TaskStatus, Workplan, WorkplanPhase, WorkplanTask};
+pub use quantization::QuantizationLevel;

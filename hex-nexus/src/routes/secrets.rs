@@ -69,6 +69,11 @@ pub struct InferenceRegisterRequest {
     pub requires_auth: Option<bool>,
     #[serde(alias = "secret_key")]
     pub secret_key: Option<String>,
+    /// Quantization level (e.g. "q2", "q4", "fp16", "cloud").
+    /// Auto-detected from Ollama model name if omitted. Defaults to "cloud" for API providers.
+    pub quantization: Option<String>,
+    /// Context window size in tokens.
+    pub context_window: Option<u32>,
 }
 
 /// In-memory inference endpoint entry.
@@ -103,6 +108,22 @@ pub async fn vault_set(
     match stdb.vault_store(&body.key, &body.value).await {
         Ok(()) => (StatusCode::OK, Json(json!({ "stored": body.key, "backend": "spacetimedb" }))),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": format!("Failed: {}", e) }))),
+    }
+}
+
+pub async fn vault_list(
+    State(state): State<SharedState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let stdb = match &state.spacetime_secrets {
+        Some(s) => s,
+        None => return no_backend(),
+    };
+    match stdb.vault_list().await {
+        Ok(map) => {
+            let keys: Vec<&str> = map.keys().map(|k| k.as_str()).collect();
+            (StatusCode::OK, Json(json!({ "keys": keys, "count": keys.len() })))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
     }
 }
 
@@ -277,12 +298,37 @@ pub async fn register_inference(
     let models_json = body.models_json
         .unwrap_or_else(|| serde_json::json!([body.model]).to_string());
 
+    // Resolve quantization level (ADR-2603271000):
+    // 1. Explicit --quantization flag
+    // 2. Auto-detect from model name GGUF tag
+    // 3. Default: "cloud" for API providers, "q4" for local
+    let quantization_level = body.quantization
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            if body.provider == "ollama" || body.provider == "vllm" {
+                hex_core::QuantizationLevel::detect_from_model_name(&body.model)
+                    .map(|q| q.to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| match body.provider.as_str() {
+            "openrouter" => "cloud".to_string(),
+            _ => "q4".to_string(),
+        });
+
     match stdb_client.register_provider(
         &body.id, provider_type, &body.url,
         &body.secret_key.unwrap_or_default(),
         &models_json, 60, 100_000,
+        &quantization_level, 0, -1.0,
     ).await {
-        Ok(()) => (StatusCode::CREATED, Json(json!({ "id": body.id }))),
+        Ok(()) => (StatusCode::CREATED, Json(json!({
+            "id": body.id,
+            "quantization_level": quantization_level,
+        }))),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
     }
 }
@@ -308,6 +354,9 @@ pub async fn list_inference(
                     "healthCheckedAt": p.last_health_check,
                     "avgLatencyMs": p.avg_latency_ms,
                     "rateLimitRpm": p.rate_limit_rpm,
+                    "quantizationLevel": p.quantization_level,
+                    "contextWindow": p.context_window,
+                    "qualityScore": if p.quality_score < 0.0 { serde_json::Value::Null } else { json!(p.quality_score) },
                 })
             }).collect();
             (StatusCode::OK, Json(json!({ "endpoints": list, "source": "spacetimedb" })))

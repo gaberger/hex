@@ -16,6 +16,8 @@ pub use hex_core;
 
 pub mod adapters;
 pub mod analysis;
+pub mod complexity;
+pub mod quant_router;
 pub mod cleanup;
 pub mod coordination;
 pub mod daemon;
@@ -140,6 +142,26 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             hub_id,
         );
         if client.connect().await {
+            // Resolve API keys: vault first, then env fallback.
+            // This allows keys stored via `hex secrets vault set` to work without
+            // requiring environment variables to be set on the host.
+            use crate::ports::secret_grant::ISecretGrantPort;
+            let anthropic_key = client.vault_get("ANTHROPIC_API_KEY").await
+                .ok().flatten()
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+            let openrouter_key = client.vault_get("OPENROUTER_API_KEY").await
+                .ok().flatten()
+                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok());
+
+            if anthropic_key.is_some() {
+                tracing::info!("ANTHROPIC_API_KEY resolved from vault");
+                app_state.anthropic_api_key = anthropic_key;
+            }
+            if openrouter_key.is_some() {
+                tracing::info!("OPENROUTER_API_KEY resolved from vault");
+                app_state.openrouter_api_key = openrouter_key;
+            }
+
             app_state.spacetime_secrets = Some(Arc::new(client));
             tracing::info!("SpacetimeDB secret broker integration active");
         } else {

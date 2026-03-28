@@ -23,5 +23,6 @@ export default __t.row({
   cacheWriteTokens: __t.u64().name("cache_write_tokens"),
   latencyMs: __t.u64().name("latency_ms"),
   costUsd: __t.string().name("cost_usd"),
+  openrouterCostUsd: __t.string().name("openrouter_cost_usd"),
   createdAt: __t.string().name("created_at"),
 });

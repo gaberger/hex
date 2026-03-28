@@ -11,6 +11,7 @@
 //!   hex test --e2e        # E2E browser tests via agent-browser
 //!   hex test --all        # Everything including service startup
 
+use std::cmp::Reverse;
 use std::process::Command;
 use std::time::Instant;
 
@@ -690,15 +691,25 @@ async fn run_inference_tests(r: &mut TestResults) {
     }
 
     // Check Anthropic — optional, not a failure if missing
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        r.check("Anthropic API key configured", true);
+    // Falls back to vault if env var not set
+    let anthropic_key_available = if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+        true
+    } else {
+        let base = nexus_base_url();
+        http.get(format!("{}/api/secrets/vault/ANTHROPIC_API_KEY", base))
+            .send().await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+    };
+    if anthropic_key_available {
+        r.check("Anthropic API key configured (vault)", true);
     } else {
         r.skip("Anthropic API key not set (optional)");
     }
 
     // Check nexus-registered providers (from SpacetimeDB)
     let base = nexus_base_url();
-    let providers_ok = http.get(format!("{}/api/inference/providers", base)).send().await
+    let providers_ok = http.get(format!("{}/api/inference/endpoints", base)).send().await
         .map(|r| r.status().is_success())
         .unwrap_or(false);
     if providers_ok {
@@ -898,6 +909,30 @@ async fn register_test_agent(http: &reqwest::Client, base: &str) -> Option<Strin
 
 // ── Lint Checks ────────────────────────────────────
 
+/// Find the hex project root — the directory that contains both `Cargo.toml`
+/// and a `spacetime-modules/` subdirectory. Tries the hex binary location
+/// first (reliable), then walks up from CWD as a fallback.
+fn locate_workspace_root() -> Option<std::path::PathBuf> {
+    // Primary: hex binary lives at <root>/target/debug/hex — go up 3 levels.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+            if root.join("spacetime-modules").is_dir() {
+                return Some(root.to_path_buf());
+            }
+        }
+    }
+    // Fallback: walk up from CWD looking for a dir with spacetime-modules/.
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        if dir.join("spacetime-modules").is_dir() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 fn run_lint_checks(r: &mut TestResults) {
     println!("{}", "── Lint ──".cyan());
     r.set_category("lint");
@@ -910,10 +945,14 @@ fn run_lint_checks(r: &mut TestResults) {
         .unwrap_or(false);
     r.check("cargo clippy (workspace)", clippy_ok);
 
-    // SpacetimeDB modules clippy
+    // SpacetimeDB modules clippy — resolve dir relative to workspace root so
+    // this works regardless of the CWD from which `hex` is invoked.
+    let stdb_dir = locate_workspace_root()
+        .map(|p| p.join("spacetime-modules"))
+        .unwrap_or_else(|| std::path::PathBuf::from("spacetime-modules"));
     let stdb_clippy_ok = Command::new("cargo")
         .args(["clippy", "--workspace", "--", "-D", "warnings"])
-        .current_dir("spacetime-modules")
+        .current_dir(&stdb_dir)
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
@@ -1021,7 +1060,9 @@ async fn run_e2e_tests(r: &mut TestResults) {
 // ── Dashboard Tests ─────────────────────────────────
 
 fn run_dashboard_tests(r: &mut TestResults) {
-    let assets_dir = std::path::Path::new("hex-nexus/assets");
+    let assets_dir = locate_workspace_root()
+        .map(|p| p.join("hex-nexus/assets"))
+        .unwrap_or_else(|| std::path::PathBuf::from("hex-nexus/assets"));
     if !assets_dir.join("package.json").exists() {
         r.skip("Dashboard tests (no package.json)");
         return;
@@ -1029,7 +1070,7 @@ fn run_dashboard_tests(r: &mut TestResults) {
 
     let ok = Command::new("npx")
         .args(["vitest", "run", "--reporter=verbose"])
-        .current_dir("hex-nexus/assets")
+        .current_dir(&assets_dir)
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
@@ -1088,7 +1129,8 @@ async fn run_parity_tests(r: &mut TestResults) {
         let tools: serde_json::Value =
             serde_json::from_str(&content).unwrap_or(serde_json::json!([]));
 
-        if let Some(tool_array) = tools.as_array() {
+        let tools_node = if tools.is_array() { &tools } else { &tools["tools"] };
+        if let Some(tool_array) = tools_node.as_array() {
             let tool_names: Vec<String> = tool_array
                 .iter()
                 .filter_map(|t| t["name"].as_str().map(|s| s.to_string()))
@@ -1235,7 +1277,7 @@ async fn run_history() -> anyhow::Result<()> {
         })
         .collect();
 
-    println!("{}", HexTable::new(&rows));
+    println!("{}", HexTable::render(&rows));
     Ok(())
 }
 
@@ -1278,7 +1320,7 @@ fn load_sessions_from_local(limit: usize) -> Option<Vec<TestSessionRecord>> {
         .collect();
 
     // Sort by filename descending (YYYY-MM-DD.jsonl — newest first)
-    entries.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    entries.sort_by_key(|e| Reverse(e.file_name()));
 
     let mut sessions = Vec::new();
     for entry in entries {
@@ -1397,7 +1439,7 @@ async fn run_trends() -> anyhow::Result<()> {
         })
         .collect();
 
-    println!("{}", HexTable::new(&rows));
+    println!("{}", HexTable::render(&rows));
     Ok(())
 }
 
@@ -1511,7 +1553,7 @@ fn load_sessions_with_results(limit: usize) -> Option<Vec<TestSessionWithResults
         })
         .collect();
 
-    entries.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    entries.sort_by_key(|e| Reverse(e.file_name()));
 
     let mut sessions = Vec::new();
     for entry in entries {
@@ -1548,21 +1590,28 @@ fn cargo_test(crate_name: &str, extra: Option<&str>) -> bool {
     if let Some(flag) = extra {
         cmd.arg(flag);
     }
+    if let Some(root) = locate_workspace_root() {
+        cmd.current_dir(root);
+    }
     cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 
 fn cargo_check(crate_name: &str) -> bool {
-    Command::new("cargo")
-        .args(["check", "-p", crate_name])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    let mut cmd = Command::new("cargo");
+    cmd.args(["check", "-p", crate_name]);
+    if let Some(root) = locate_workspace_root() {
+        cmd.current_dir(root);
+    }
+    cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 
 fn cargo_test_spacetime(module: &str) -> bool {
+    let stdb_dir = locate_workspace_root()
+        .map(|p| p.join("spacetime-modules"))
+        .unwrap_or_else(|| std::path::PathBuf::from("spacetime-modules"));
     Command::new("cargo")
         .args(["test", "-p", module, "--quiet"])
-        .current_dir("spacetime-modules")
+        .current_dir(stdb_dir)
         .status()
         .map(|s| s.success())
         .unwrap_or(false)

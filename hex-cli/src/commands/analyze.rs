@@ -53,6 +53,7 @@ pub async fn run(path: &str, strict: bool, adr_compliance_only: bool, json_outpu
         print_check("docs/adrs/", has_docs_adrs);
 
         // Check hex architecture layers using hex_core boundary types
+        let mut layer_file_counts: Vec<(&str, usize)> = Vec::new();
         if has_src {
             println!();
             println!("  {}", "Hex layers:".bold());
@@ -60,7 +61,20 @@ pub async fn run(path: &str, strict: bool, adr_compliance_only: bool, json_outpu
             for (dir, label, expected_layer) in LAYER_DIRS {
                 let layer_path = root.join("src").join(dir);
                 let exists = layer_path.is_dir();
-                print_check(label, exists);
+                let file_count = if exists {
+                    collect_source_files(&layer_path).len()
+                } else {
+                    0
+                };
+
+                // Print with file count
+                let indicator = if exists { "\u{2713}".green() } else { "\u{2717}".red() };
+                if exists {
+                    println!("    {} {} ({} files)", indicator, label, file_count);
+                } else {
+                    println!("    {} {}", indicator, label);
+                }
+                layer_file_counts.push((label, file_count));
 
                 // Verify boundary::detect_layer agrees with our expectation
                 if exists {
@@ -82,38 +96,50 @@ pub async fn run(path: &str, strict: bool, adr_compliance_only: bool, json_outpu
         }
 
         // Offline boundary check: scan for obvious violations without nexus
+        let local_violations = if has_src {
+            scan_local_violations(&root)
+        } else {
+            Vec::new()
+        };
+
+        // Count total source files across the project
+        let mut total_files = 0usize;
         if has_src {
-            let violations = scan_local_violations(&root);
-            if !violations.is_empty() {
-                println!();
-                println!(
-                    "  {} Local boundary violations ({})",
-                    "\u{26a0}".yellow(),
-                    violations.len()
-                );
-                for v in &violations {
-                    println!(
-                        "    {} {} -> {} ({})",
-                        "\u{2717}".red(),
-                        v.source_file,
-                        v.imported_path,
-                        v.rule,
-                    );
-                }
+            total_files += collect_source_files(&root.join("src")).len();
+        }
+        for subdir in &["hex-nexus/src", "hex-cli/src", "hex-core/src", "hex-agent/src"] {
+            let sub = root.join(subdir);
+            if sub.is_dir() {
+                total_files += collect_source_files(&sub).len();
             }
         }
 
-        // Try nexus for full boundary analysis
         println!();
-        let nexus = NexusClient::from_env();
-        if nexus.ensure_running().await.is_ok() {
-            // Register/push project to get analysis
-            let _project_name = root
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown");
+        println!("  {}", "Boundary analysis:".bold());
+        println!("    {} {} source files scanned", "\u{2023}".dimmed(), total_files);
+        if local_violations.is_empty() {
+            println!("    {} 0 boundary violations", "\u{2713}".green());
+        } else {
+            println!(
+                "    {} {} boundary violation(s)",
+                "\u{26a0}".yellow(),
+                local_violations.len()
+            );
+            for v in &local_violations {
+                println!(
+                    "      {} {} \u{2192} {} ({})",
+                    "\u{2717}".red(),
+                    v.source_file,
+                    v.imported_path,
+                    v.rule,
+                );
+            }
+        }
 
-            // Query project health if registered
+        // Try nexus for full boundary analysis + nexus-computed score
+        let nexus = NexusClient::from_env();
+        let mut nexus_score: Option<u64> = None;
+        if nexus.ensure_running().await.is_ok() {
             match nexus.get("/api/projects").await {
                 Ok(resp) => {
                     if let Some(projects) = resp.get("projects").and_then(|p| p.as_array()) {
@@ -127,60 +153,57 @@ pub async fn run(path: &str, strict: bool, adr_compliance_only: bool, json_outpu
                         if let Some(project) = matching {
                             let pid = project["id"].as_str().unwrap_or("-");
                             println!(
-                                "  {} Project registered in nexus: {}",
+                                "    {} Nexus: project registered ({})",
                                 "\u{2713}".green(),
                                 pid
                             );
-
-                            // Get health data
                             let health_path = format!("/api/{}/health", pid);
                             if let Ok(health) = nexus.get(&health_path).await {
-                                if let Some(score) = health["score"].as_u64() {
-                                    let grade = match score {
-                                        90..=100 => format!("A ({})", score).green().to_string(),
-                                        80..=89 => format!("B ({})", score).yellow().to_string(),
-                                        _ => format!("C ({})", score).red().to_string(),
-                                    };
-                                    println!("  Grade: {}", grade);
-                                }
-                                if let Some(violations) = health["violations"].as_u64() {
-                                    let v = if violations == 0 {
-                                        "0".green().to_string()
-                                    } else {
-                                        violations.to_string().red().to_string()
-                                    };
-                                    println!("  Boundary violations: {}", v);
+                                nexus_score = health["score"].as_u64();
+                                if let Some(boundary_count) = health["violations"].as_u64() {
+                                    if boundary_count > 0 {
+                                        println!(
+                                            "    {} Nexus boundary violations: {}",
+                                            "\u{26a0}".yellow(),
+                                            boundary_count.to_string().red()
+                                        );
+                                    }
                                 }
                             }
-                        } else {
-                            println!(
-                                "  {} Project not registered in nexus — start nexus for full analysis",
-                                "\u{25cb}".dimmed()
-                            );
-                            println!(
-                                "  {} hex nexus start",
-                                "\u{2192}".dimmed()
-                            );
                         }
                     }
                 }
-                Err(_) => {
-                    println!(
-                        "  {} Could not query nexus for full analysis",
-                        "\u{25cb}".dimmed()
-                    );
-                }
+                Err(_) => {}
             }
         } else {
             println!(
-                "  {} Full boundary analysis requires hex-nexus",
-                "\u{2192}".dimmed()
-            );
-            println!(
-                "  {} Start with: hex nexus start",
-                "\u{2192}".dimmed()
+                "    {} Nexus offline — run {} for deep analysis",
+                "\u{25cb}".dimmed(),
+                "hex nexus start".dimmed()
             );
         }
+
+        // Compute final score and grade (nexus score takes precedence if available)
+        let score = nexus_score.unwrap_or_else(|| {
+            let v = local_violations.len() as u64;
+            if v == 0 { 100 } else { 100u64.saturating_sub(v * 10) }
+        });
+        let (letter, score_colored) = match score {
+            95..=100 => ("A+", format!("{}", score).bright_green().to_string()),
+            90..=94  => ("A",  format!("{}", score).green().to_string()),
+            80..=89  => ("B",  format!("{}", score).yellow().to_string()),
+            70..=79  => ("C",  format!("{}", score).yellow().to_string()),
+            60..=69  => ("D",  format!("{}", score).red().to_string()),
+            _        => ("F",  format!("{}", score).bright_red().to_string()),
+        };
+
+        println!();
+        println!(
+            "  {} Architecture grade: {} — score {}/100",
+            "\u{2b21}".cyan(),
+            letter.bold(),
+            score_colored,
+        );
     }
 
     // ADR compliance check (ADR-045) — runs locally, no nexus needed

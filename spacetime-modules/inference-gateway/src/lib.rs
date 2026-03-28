@@ -99,6 +99,12 @@ pub struct InferenceProvider {
     /// ISO 8601 timestamp
     pub last_health_check: String,
     pub avg_latency_ms: u64,
+    /// Quantization tier: "q2", "q3", "q4", "q8", "fp16", "cloud" (ADR-2603271000)
+    pub quantization_level: String,
+    /// Context window in tokens (0 = unknown)
+    pub context_window: u32,
+    /// Quality score 0.0-1.0 (-1.0 = unknown)
+    pub quality_score: f32,
 }
 
 // ─── Agent Budget ───────────────────────────────────────────────────────────
@@ -397,6 +403,9 @@ pub fn register_provider(
     models_json: String,
     rate_limit_rpm: u32,
     rate_limit_tpm: u64,
+    quantization_level: String,
+    context_window: u32,
+    quality_score: f32,
 ) -> Result<(), String> {
     validate_provider_type(&provider_type)?;
 
@@ -411,6 +420,9 @@ pub fn register_provider(
                 models_json,
                 rate_limit_rpm,
                 rate_limit_tpm,
+                quantization_level,
+                context_window,
+                quality_score,
                 ..existing
             });
     } else {
@@ -427,6 +439,9 @@ pub fn register_provider(
             healthy: 0,
             last_health_check: String::new(),
             avg_latency_ms: 0,
+            quantization_level,
+            context_window,
+            quality_score,
         });
     }
 

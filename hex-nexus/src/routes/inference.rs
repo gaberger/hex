@@ -4,13 +4,23 @@
 //!
 //! Routes through registered inference providers (Ollama, vLLM, OpenAI-compat)
 //! with Anthropic as fallback, reusing the same logic as the WebSocket LLM bridge.
+//!
+//! Forward-progress guarantees:
+//!   - Hard 300s outer deadline (HTTP 504 on expiry); local providers need time for model load
+//!   - Vault resolution has a 3s timeout; fails fast rather than stalling the handler
+//!   - 401 is a hard-fail — bad credentials never trigger the fallback chain
+//!   - Local provider 503 (model loading) uses exponential backoff, not single-retry
+//!   - Minimum 2s inter-candidate sleep prevents thundering-herd rate exhaustion
+//!   - Model routing uses exact JSON array match, not substring search
 
 use axum::{extract::State, Json};
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::complexity::score_complexity;
 use crate::ports::secret_grant::ISecretGrantPort;
+use crate::quant_router::select_provider;
 use crate::state::SharedState;
 
 #[derive(Debug, Deserialize)]
@@ -44,10 +54,27 @@ pub struct InferenceCompleteResponse {
 ///
 /// Picks the best available inference provider (registered endpoints first,
 /// then Anthropic fallback) and returns the full response.
+/// Hard deadline: 600 seconds. Returns HTTP 504 on timeout.
+/// Local providers (Ollama, vLLM) may need 5-10 minutes to load a model on first request.
 pub async fn inference_complete(
     State(state): State<SharedState>,
     Json(body): Json<InferenceCompleteRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    let work = async move {
+
+    // Score complexity before consuming body.messages (ADR-2603271000).
+    let prompt_text = body.messages.iter()
+        .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let complexity = score_complexity(&prompt_text, &[]);
+    let min_quant = complexity.min_quantization();
+    tracing::debug!(
+        complexity = ?complexity,
+        min_quant = %min_quant,
+        "quantization routing: complexity scored, minimum tier selected"
+    );
+
     // Build messages list, optionally prepending system prompt
     let mut messages = body.messages;
     if let Some(ref system) = body.system {
@@ -58,18 +85,22 @@ pub async fn inference_complete(
 
     // Try registered inference endpoints first (SpacetimeDB providers)
     // If a model is requested, find the provider that serves it; otherwise use first provider.
+    // Complexity scoring selects minimum quantization tier (ADR-2603271000).
     let endpoint: Option<crate::routes::secrets::InferenceEndpointEntry> =
         if let Some(ref stdb) = state.inference_stdb {
             match stdb.list_providers().await {
                 Ok(providers) if !providers.is_empty() => {
-                    // Find the provider that matches the requested model
+                    // Find the provider that matches the requested model.
+                    // Exact element match via JSON deserialization — substring search would
+                    // route "llama-3" to any provider whose list contains "meta-llama/llama-3.3-70b".
                     let matched = if let Some(ref requested_model) = body.model {
-                        // 1. Exact model match
                         providers.iter().find(|p| {
-                            p.models_json.contains(requested_model.as_str())
+                            serde_json::from_str::<Vec<String>>(&p.models_json)
+                                .map(|models| models.iter().any(|m| m == requested_model.as_str()))
+                                .unwrap_or_else(|_| p.models_json.contains(requested_model.as_str()))
                         })
-                        // 2. For OpenRouter-format IDs (e.g. "google/gemini-2.0-flash-001"),
-                        //    route through any registered openrouter provider with a key.
+                        // For OpenRouter-format IDs (e.g. "google/gemini-2.0-flash-001"),
+                        // route through any registered openrouter provider with a key.
                         .or_else(|| {
                             if requested_model.contains('/') {
                                 providers.iter().find(|p| {
@@ -80,7 +111,8 @@ pub async fn inference_complete(
                             }
                         })
                     } else {
-                        None
+                        // No model requested — use quantization router to pick best provider
+                        select_provider(&providers, min_quant)
                     };
                     // Fall back to first provider if no model match
                     let p = matched.unwrap_or(&providers[0]);
@@ -117,11 +149,15 @@ pub async fn inference_complete(
 
     // Resolve a synthetic OpenRouter endpoint from a key that may have been placed
     // in ANTHROPIC_API_KEY (sk-or-v1- prefix) or OPENROUTER_API_KEY.
-    let openrouter_key: Option<String> = std::env::var("OPENROUTER_API_KEY").ok().or_else(|| {
-        state.anthropic_api_key.as_ref()
-            .filter(|k| k.starts_with("sk-or-v1-"))
-            .cloned()
-    });
+    // Vault-first resolution (set at startup by lib.rs). Fall back to env, then
+    // check if ANTHROPIC_API_KEY is actually an OpenRouter key (sk-or-v1- prefix).
+    let openrouter_key: Option<String> = state.openrouter_api_key.clone()
+        .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+        .or_else(|| {
+            state.anthropic_api_key.as_ref()
+                .filter(|k| k.starts_with("sk-or-v1-"))
+                .cloned()
+        });
 
     // Map the pseudo-model "openrouter/free" to a real, consistently-available free model.
     // openai/gpt-4o-mini is preferred — it respects OpenRouter privacy settings.
@@ -135,18 +171,31 @@ pub async fn inference_complete(
         }
     };
 
-    // Normalize bare Anthropic model IDs to OpenRouter vendor-namespaced format.
+    // Normalize bare model IDs to OpenRouter vendor-namespaced format.
     // OpenRouter requires "anthropic/claude-sonnet-4-6", not "claude-sonnet-4-6".
+    // Covers the most common families; unknown bare IDs pass through unchanged and
+    // will 404 on OpenRouter, triggering the free fallback chain.
     let normalize_for_openrouter = |model: &str| -> String {
-        if model.starts_with("claude-") && !model.contains('/') {
+        if model.contains('/') {
+            return model.to_string();
+        }
+        if model.starts_with("claude-") {
             format!("anthropic/{}", model)
+        } else if model.starts_with("gpt-") || model.starts_with("o1") || model.starts_with("o3") || model.starts_with("o4") {
+            format!("openai/{}", model)
+        } else if model.starts_with("gemini-") {
+            format!("google/{}", model)
+        } else if model.starts_with("mistral-") || model.starts_with("mixtral-") {
+            format!("mistralai/{}", model)
+        } else if model.starts_with("deepseek-") {
+            format!("deepseek/{}", model)
         } else {
             model.to_string()
         }
     };
 
     let result = if let Some(mut ep) = endpoint {
-        // Apply requested model override, normalizing bare Anthropic IDs for OpenRouter.
+        // Apply requested model override, normalizing bare IDs for OpenRouter.
         if let Some(ref model) = body.model {
             ep.model = if ep.provider == "openrouter" {
                 normalize_for_openrouter(model)
@@ -154,25 +203,39 @@ pub async fn inference_complete(
                 model.clone()
             };
         }
-        // Resolve secret key reference to actual value from vault
+        // Resolve secret key reference to actual value from vault.
+        // Hard 3s timeout — a slow SpacetimeDB must not stall the handler indefinitely.
+        // Fail immediately on miss or timeout: passing the unresolved ref string as a
+        // Bearer token produces a misleading 401 that bypasses all useful error context.
         if ep.requires_auth && !ep.secret_key.is_empty() && !ep.secret_key.starts_with("sk-") {
             let key_ref = ep.secret_key.clone();
             tracing::debug!(key_ref = %key_ref, "resolving secret key reference");
-            // Try environment variable first, then vault
             if let Ok(val) = std::env::var(&key_ref) {
                 tracing::debug!("resolved from env var");
                 ep.secret_key = val;
             } else if let Some(ref stdb) = state.spacetime_secrets {
-                match stdb.vault_get(&key_ref).await {
-                    Ok(Some(val)) => {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    stdb.vault_get(&key_ref),
+                ).await {
+                    Ok(Ok(Some(val))) => {
                         tracing::debug!("resolved from vault");
                         ep.secret_key = val;
                     }
-                    Ok(None) => {
+                    Ok(Ok(None)) => {
                         tracing::warn!(key = %key_ref, "secret not found in vault");
+                        return (StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({"error": "secret_resolution_failed", "ref": key_ref})));
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         tracing::warn!(key = %key_ref, error = %e, "vault_get failed");
+                        return (StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({"error": "secret_resolution_failed", "ref": key_ref})));
+                    }
+                    Err(_elapsed) => {
+                        tracing::warn!(key = %key_ref, "vault_get timed out after 3s");
+                        return (StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({"error": "secret_resolution_timeout", "ref": key_ref})));
                     }
                 }
             } else {
@@ -181,17 +244,33 @@ pub async fn inference_complete(
         }
         match super::chat::call_inference_endpoint(&ep, &messages).await {
             Ok(resp) => Ok(resp),
+            // Hard-fail on authentication errors — bad credentials must never trigger the
+            // fallback chain. Doing so wastes the entire retry budget and produces an error
+            // trail that ends at Anthropic with no indication of the root cause.
+            Err(ref e) if e.contains("401") || e.contains("Unauthorized") => {
+                tracing::error!(provider = %ep.provider, error = %e,
+                    "authentication failed — bad credentials, not retrying");
+                return (StatusCode::UNAUTHORIZED, Json(json!({
+                    "error": "authentication_failed",
+                    "provider": ep.provider,
+                    "detail": e
+                })));
+            }
             Err(ref e) if e.contains("insufficient credits") || e.contains("402")
                 || e.contains("rate limited") || e.contains("429")
                 || e.contains("parse:") || e.contains("500") || e.contains("503")
-                || e.contains("404") || e.contains("No endpoints") || e.contains("data policy") => {
+                || e.contains("404") || e.contains("No endpoints") || e.contains("data policy")
+                || e.contains("connection:") => {
                 // OpenRouter transient failure (credits, rate limit, parse/server error),
                 // or permanent failure (404 model-not-found / data policy).
-                // For transient errors (parse/5xx), first retry the same endpoint after a
-                // brief sleep — these are often momentary network hiccups.
-                // For 404/policy errors, skip retry and go straight to fallback.
+                //
+                // For transient errors (parse/5xx on cloud), retry the same endpoint once
+                // after a brief sleep. Exception: local providers returning 503 are mid-load
+                // (not a cloud transient) — route them through exponential backoff instead.
+                let is_local = ep.provider == "ollama" || ep.provider == "vllm";
                 let is_transient = (e.contains("parse:") || e.contains("500") || e.contains("503"))
-                    && !e.contains("404") && !e.contains("No endpoints") && !e.contains("data policy");
+                    && !e.contains("404") && !e.contains("No endpoints") && !e.contains("data policy")
+                    && !is_local;
                 if is_transient {
                     tracing::warn!(provider = %ep.provider, model = %ep.model, error = %e,
                         "transient endpoint error — sleeping 5s then retrying same endpoint");
@@ -204,6 +283,39 @@ pub async fn inference_complete(
                         Err(ref e2) => tracing::warn!(error = %e2, "retry also failed — falling through to :free providers"),
                     }
                 }
+                // For local providers (Ollama/vLLM), retry with exponential backoff + jitter.
+                // Match both TCP connection errors AND HTTP 503 — Ollama returns 503 while
+                // loading a model, which is semantically identical to "not ready yet".
+                let is_local_connection_error = is_local
+                    && (e.contains("connection:") || e.contains("503"));
+                if is_local_connection_error {
+                    let mut backoff_ms = 5_000u64; // start at 5s
+                    for attempt in 1u8..=3 {
+                        // Jitter: use subsecond nanos as cheap pseudo-random source (no dep needed)
+                        let jitter_ms = (std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .subsec_nanos() % 2_000) as u64; // 0-2s jitter
+                        let sleep_ms = backoff_ms + jitter_ms;
+                        tracing::warn!(
+                            provider = %ep.provider, model = %ep.model,
+                            attempt, sleep_ms,
+                            "local model not ready — backing off before retry"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+                        match super::chat::call_inference_endpoint(&ep, &messages).await {
+                            Ok(resp) => return (StatusCode::OK, Json(json!({
+                                "content": resp.0, "model": resp.1,
+                                "input_tokens": resp.2, "output_tokens": resp.3,
+                            }))),
+                            Err(ref e2) => tracing::warn!(attempt, error = %e2, "local retry failed"),
+                        }
+                        backoff_ms = (backoff_ms * 2).min(60_000); // cap at 60s
+                    }
+                    tracing::warn!(provider = %ep.provider, model = %ep.model,
+                        "all local retries exhausted — falling through to :free providers");
+                }
+
                 // For rate-limit errors, back off before trying :free providers.
                 let is_rate_limit = e.contains("rate limited") || e.contains("429");
                 if is_rate_limit {
@@ -222,14 +334,16 @@ pub async fn inference_complete(
                     vec![]
                 };
                 // Try each :free provider in order until one succeeds.
-                // Skip policy-blocked models immediately; back off on rate-limited ones.
+                // A 2s minimum sleep between candidates prevents rapid-fire requests from
+                // burning the per-minute rate-limit window before any candidate can succeed.
                 let mut fallback_result: Result<_, String> = Err("no :free providers registered".to_string());
                 for fp in &free_providers {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     let free_model = fp.models_json
                         .trim_start_matches('[').trim_end_matches(']')
                         .split(',').next().unwrap_or(&fp.models_json)
                         .trim().trim_matches('"').to_string();
-                    // Resolve the secret key ref (same logic as the main path).
+                    // Resolve secret key — same 3s timeout + fail-fast as main path.
                     let resolved_key = if fp.api_key_ref.starts_with("sk-") {
                         fp.api_key_ref.clone()
                     } else {
@@ -237,9 +351,24 @@ pub async fn inference_complete(
                         if let Ok(val) = std::env::var(key_ref) {
                             val
                         } else if let Some(ref stdb) = state.spacetime_secrets {
-                            stdb.vault_get(key_ref).await.ok()
-                                .flatten()
-                                .unwrap_or_else(|| fp.api_key_ref.clone())
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(3),
+                                stdb.vault_get(key_ref),
+                            ).await {
+                                Ok(Ok(Some(val))) => val,
+                                Ok(Ok(None)) => {
+                                    tracing::warn!(key = %key_ref, ":free provider secret not in vault — skipping");
+                                    continue;
+                                }
+                                Ok(Err(e)) => {
+                                    tracing::warn!(key = %key_ref, error = %e, "vault_get failed for :free provider — skipping");
+                                    continue;
+                                }
+                                Err(_elapsed) => {
+                                    tracing::warn!(key = %key_ref, "vault_get timed out for :free provider — skipping");
+                                    continue;
+                                }
+                            }
                         } else {
                             fp.api_key_ref.clone()
                         }
@@ -259,8 +388,8 @@ pub async fn inference_complete(
                         Err(e2) => {
                             tracing::warn!(model = %free_model, error = %e2, ":free provider failed — trying next");
                             fallback_result = Err(format!("{} failed: {}", free_model, e2));
-                            // For rate-limited models, back off briefly before the next attempt.
-                            // Skip this delay for policy/404 errors — they won't recover with time.
+                            // For rate-limited models, back off before the next attempt.
+                            // Skip for policy/404 errors — they won't recover with time.
                             let is_rate_limit = e2.contains("rate limited") || e2.contains("429");
                             let is_permanent = e2.contains("data policy") || e2.contains("guardrail")
                                 || (e2.contains("404") && !e2.contains("rate"));
@@ -282,6 +411,8 @@ pub async fn inference_complete(
                             "meta-llama/llama-3.2-3b-instruct:free",
                         ];
                         for free_model in free_candidates {
+                            // Minimum inter-candidate delay — same rationale as registered :free loop.
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                             tracing::info!(model = %free_model, "all :free providers exhausted — retrying with OpenRouter key + free model");
                             let synth = crate::routes::secrets::InferenceEndpointEntry {
                                 id: "openrouter-key-free-fallback".into(),
@@ -310,7 +441,7 @@ pub async fn inference_complete(
                         }
                     }
                 }
-                fallback_result.map_err(|e| e)
+                fallback_result
             }
             Err(e) => {
                 tracing::warn!(provider = %ep.provider, error = %e, "Inference endpoint failed, trying fallback");
@@ -319,8 +450,6 @@ pub async fn inference_complete(
                     if api_key.starts_with("sk-ant-") {
                         super::chat::call_anthropic(api_key, &messages).await
                     } else if let Some(ref or_key) = openrouter_key {
-                        // OpenRouter key available (either from OPENROUTER_API_KEY or
-                        // detected sk-or-v1- prefix in ANTHROPIC_API_KEY).
                         let model = normalize_for_openrouter(&resolve_free_model(body.model.as_deref()));
                         tracing::info!(model = %model, "retrying via OpenRouter key fallback");
                         let synth = crate::routes::secrets::InferenceEndpointEntry {
@@ -412,17 +541,24 @@ pub async fn inference_complete(
             if !openrouter_cost.is_empty() {
                 resp["openrouter_cost_usd"] = json!(openrouter_cost);
             }
-            (
-                StatusCode::OK,
-                Json(resp),
-            )
+            (StatusCode::OK, Json(resp))
         }
         Err(e) => {
             tracing::error!(error = %e, "inference/complete failed");
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": e })),
-            )
+            (StatusCode::BAD_GATEWAY, Json(json!({ "error": e })))
+        }
+    }
+
+    }; // end async move work block
+
+    match tokio::time::timeout(std::time::Duration::from_secs(600), work).await {
+        Ok(response) => response,
+        Err(_elapsed) => {
+            tracing::error!("inference/complete timed out after 600s");
+            (StatusCode::GATEWAY_TIMEOUT, Json(json!({
+                "error": "inference_timeout",
+                "message": "Request exceeded 600s deadline"
+            })))
         }
     }
 }

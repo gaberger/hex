@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::coordination::HexFlo;
 use crate::orchestration::agent_manager::AgentManager;
+use crate::orchestration::context_pressure::ContextPressureTracker;
 use crate::orchestration::workplan_executor::WorkplanExecutor;
 use crate::ports::session::ISessionPort;
 use crate::ports::state::IStatePort;
@@ -29,6 +30,7 @@ pub struct AppState {
     pub auth_token: Option<String>,
     pub fleet: FleetManager,
     pub anthropic_api_key: Option<String>,
+    pub openrouter_api_key: Option<String>,
     // Port-backed orchestration services (ADR-025 Phase 2)
     pub agent_manager: Option<Arc<AgentManager>>,
     pub workplan_executor: OnceLock<Arc<WorkplanExecutor>>,
@@ -45,6 +47,8 @@ pub struct AppState {
     // Session persistence (ADR-036 / ADR-042 P2.5) — chat conversation history
     // SpacetimeDB primary, SQLite fallback
     pub session_port: Option<Arc<dyn ISessionPort>>,
+    // Context window pressure tracker (ADR-2603281000 P1)
+    pub context_pressure: Arc<Mutex<ContextPressureTracker>>,
 }
 
 impl AppState {
@@ -63,6 +67,7 @@ impl AppState {
             auth_token,
             fleet: FleetManager::new(),
             anthropic_api_key,
+            openrouter_api_key: None,
             agent_manager: None,
             workplan_executor: OnceLock::new(),
             spacetime_secrets: None,
@@ -71,6 +76,7 @@ impl AppState {
             inference_stdb: None,
             chat_stdb: None,
             session_port: None,
+            context_pressure: Arc::new(Mutex::new(ContextPressureTracker::new())),
         }
     }
 

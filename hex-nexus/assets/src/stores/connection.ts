@@ -273,7 +273,7 @@ export function initConnections() {
   // Clear stale tokens after module schema changes (e.g., spacetime publish --clear-database).
   // The SDK caches tokens in localStorage; stale tokens cause DataView deserialization crashes.
   // TODO: Replace with schema version check once SDK supports it.
-  const SCHEMA_VERSION = "8"; // Bump when re-publishing any module with --clear-database
+  const SCHEMA_VERSION = "9"; // Bump when re-publishing any module with --clear-database
   if (localStorage.getItem("stdb_schema_version") !== SCHEMA_VERSION) {
     Object.keys(localStorage)
       .filter((k) => k.startsWith(TOKEN_KEY_PREFIX))

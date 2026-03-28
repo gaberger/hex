@@ -23,4 +23,7 @@ export default __t.row({
   healthy: __t.u8(),
   lastHealthCheck: __t.string().name("last_health_check"),
   avgLatencyMs: __t.u64().name("avg_latency_ms"),
+  quantizationLevel: __t.string().name("quantization_level"),
+  contextWindow: __t.u32().name("context_window"),
+  qualityScore: __t.f32().name("quality_score"),
 });
