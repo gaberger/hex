@@ -1,17 +1,17 @@
 {
-  "id": "wp-230720T1430",
-  "title": "Implement Hexagonal REST API for Todo Service",
-  "specs": "specs/todo_api.md",
-  "adr": "ADR-230720T1430",
-  "created": "2023-07-20",
+  "id": "wp-230615123456",
+  "title": "Implement Todo REST API with Hexagonal Layers",
+  "specs": "ADR-230615123456",
+  "adr": "ADR-230615123456",
+  "created": "2023-06-15",
   "status": "planned",
-  "status_note": null,
+  "status_note": "Initial workplan generation",
   "topology": "pipeline",
   "budget": "medium",
   "steps": [
     {
       "id": "P0.1",
-      "description": "Implement the full feature in src/main.rs — single-binary rust project",
+      "description": "Implement the full feature in src/main.rs — single-binary rust project\n\nFeature requirements: build a todo REST API in Rust with axum: POST /todos to create, GET /todos to list, DELETE /todos/:id to remove. In-memory storage, JSON responses.",
       "layer": "primary",
       "adapter": null,
       "port": null,
@@ -21,7 +21,7 @@
         "S01"
       ],
       "worktree_branch": null,
-      "done_condition": "src/main.rs compiles and implements the feature; Cargo.toml has correct dependencies"
+      "done_condition": "src/main.rs compiles and fully implements: build a todo REST API in Rust with axum: POST /todos to create, GET /todos to list, DELETE /todos/:id to remove. In-memory storage, JSON responses.; Cargo.toml has correct dependencies"
     }
   ],
   "mergeOrder": [
@@ -29,14 +29,25 @@
     "P0.2",
     "P1.1",
     "P2.1",
-    "P3.1",
-    "P4.1"
+    "P3.1"
   ],
-  "riskRegister": [],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Document data loss on restart in ADR-230615123456",
+      "risk": "In-memory storage limitation"
+    },
+    {
+      "impact": "low",
+      "mitigation": "Include onboarding documentation in PR comments",
+      "risk": "Initial setup complexity"
+    }
+  ],
   "successCriteria": [
-    "API endpoints respond with JSON",
-    "In-memory storage works",
-    "Hexagonal architecture enforced"
+    "API endpoints POST/GET/DELETE /todos return JSON responses",
+    "All layers compile without warnings",
+    "In-memory storage implementation passes unit tests",
+    "Composition root wires all components correctly"
   ],
   "dependencies": {
     "cargo": [],

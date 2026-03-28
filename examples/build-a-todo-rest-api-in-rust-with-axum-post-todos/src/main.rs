@@ -1,6 +1,12 @@
+use std::sync::{Arc, Mutex, RwLock};
 use std::collections::HashMap;
 use std::time::Duration;
+use std::env;
 use anyhow::{Result, anyhow};
+use axum::{Router, routing::get, extract::State, http::StatusCode, response::IntoResponse, Json};
+use serde_json::json;
+use tokio::sync::{Arc, Mutex, RwLock};
+use tokio::time::Instant;
 
 #[derive(Debug, Clone)]
 struct Config {
@@ -28,12 +34,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn create_server(config: &Config) -> Result<Server> {
+async fn create_server(config: &Config) -> Result<Server> {
     let health = Health {
         status: "OK".to_string(),
         uptime: Duration::ZERO,
     };
-    Ok(Server { config, health })
+    Ok(Server { config: config.clone(), health })
 }
 
 struct Server {
@@ -43,7 +49,7 @@ struct Server {
 
 impl Server {
     async fn start(self) -> Result<()> {
-        let config = self.config.clone();
+        let config = Arc::new(Mutex::new(self.config));
         let health = Arc::new(Mutex::new(self.health));
 
         let app = Router::new()
@@ -54,35 +60,35 @@ impl Server {
                 State(Arc::new(RwLock::new(config))),
             );
 
-        println!("🚀 {} v{} listening on port {}", config.name, config.version, config.port);
-        println!("✅ Health check endpoint: http://localhost:{}", config.port);
-        println!("✅ Config endpoint: http://localhost:{}/config", config.port);
+        println!("🚀 {} v{} listening on port {}", config.lock().unwrap().name, config.lock().unwrap().version, 3000);
+        println!("✅ Health check endpoint: http://localhost:3000");
+        println!("✅ Config endpoint: http://localhost:3000/config");
         Ok(())
     }
 }
 
 async fn root_handler(State(state): State<Config>) -> impl IntoResponse {
-    (StatusCode::OK, Json(serde_json::json!({
+    (StatusCode::OK, Json(json!({
         "message": "Welcome to the API",
         "service": state.name,
         "version": state.version
     })))
 }
 
-async fn health_handler(State(state): State<Config>) -> impl IntoResponse {
+async fn health_handler(State(_state): State<Config>) -> impl IntoResponse {
     let start = Duration::from_secs(match get_start_time() {
         Some(t) => t,
         None => 0,
     });
-    let uptime = tokio::time::Instant::now() - start;
-    (StatusCode::OK, Json(serde_json::json!({
+    let uptime = Instant::now().duration_since(Instant::now() - start);
+    (StatusCode::OK, Json(json!({
         "status": "OK",
-        "uptime": format!("{} seconds", uptime.as_secs()))
+        "uptime": format!("{} seconds", uptime.as_secs())
     })))
 }
 
 async fn config_handler(State(state): State<Config>) -> impl IntoResponse {
-    (StatusCode::OK, Json(serde_json::json!({
+    (StatusCode::OK, Json(json!({
         "name": state.name,
         "port": state.port,
         "version": state.version
@@ -91,19 +97,4 @@ async fn config_handler(State(state): State<Config>) -> impl IntoResponse {
 
 fn get_start_time() -> Option<u64> {
     std::env::var("START_TIME").ok().and_then(|s| s.parse().ok())
-}
-
-#[derive(Debug, Clone)]
-struct StartInfo {
-    name: String,
-    version: String,
-}
-
-impl StartInfo {
-    fn new(name: &str, version: &str) -> StartInfo {
-        StartInfo {
-            name: name.to_string(),
-            version: version.to_string(),
-        }
-    }
 }

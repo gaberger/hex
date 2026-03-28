@@ -1,5 +1,5 @@
 [package]
-name = "implement-hexagonal-rest-api-for-todo-se"
+name = "implement-todo-rest-api-with-hexagonal-l"
 version = "0.1.0"
 edition = "2021"
 
