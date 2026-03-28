@@ -25,6 +25,7 @@ pub mod swarms;
 pub mod neural_lab;
 pub mod test_sessions;
 pub mod openapi;
+pub mod sandbox;
 pub mod ws;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
@@ -555,6 +556,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/rl/patterns/{id}/reinforce", post(rl::reinforce_pattern)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/rl/decay", post(rl::decay_patterns))
+        // Docker sandbox agent lifecycle (ADR-docker-sandbox)
+        .route("/api/agents/sandbox/spawn", post(sandbox::spawn_agent)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/agents/sandbox/:agent_id", delete(sandbox::stop_agent))
         // Agent orchestration
         .route("/api/agents/spawn", post(orchestration::spawn_agent)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
