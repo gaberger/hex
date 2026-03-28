@@ -1,0 +1,54 @@
+{
+  "id": "wp-cli-palindrome-checker",
+  "title": "CLI Palindrome Checker Implementation",
+  "specs": "specs/cli-palindrome-checker.md",
+  "adr": "ADR-230920T1430",
+  "created": "2023-09-20",
+  "status": "planned",
+  "status_note": "Initial planning complete",
+  "topology": "pipeline",
+  "budget": "3 tokens",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Implement the full feature in src/main.rs — single-binary rust project",
+      "layer": "primary",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": null,
+      "done_condition": "src/main.rs compiles and implements the feature; Cargo.toml has correct dependencies"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P2.1",
+    "P4.1"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Strict adherence to layer boundaries enforced during code review",
+      "risk": "Cross-layer dependencies"
+    },
+    {
+      "impact": "low",
+      "mitigation": "Use of trait objects for adapter composition",
+      "risk": "Rust implementation complexity"
+    }
+  ],
+  "successCriteria": [
+    "CLI tool accepts string input and returns palindrome check result",
+    "No cross-layer dependencies detected",
+    "All tests pass in Rust environment"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
