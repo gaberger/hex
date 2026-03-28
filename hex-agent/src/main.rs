@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use adapters::primary::cli::CliAdapter;
 use adapters::primary::migrate::ConfigMigrator;
+use adapters::primary::mcp_server::run_mcp_server;
 use adapters::secondary::anthropic::AnthropicAdapter;
 use adapters::secondary::context_manager::ContextManagerAdapter;
 use adapters::secondary::tools::ToolExecutorAdapter;
@@ -108,6 +109,8 @@ enum Command {
     },
     /// Print the build hash and exit
     BuildHash,
+    /// Run as an MCP server over stdin/stdout (for docker sandbox agents)
+    McpServer,
 }
 
 /// Generate a unique, human-readable agent name from the agent UUID.
@@ -164,6 +167,16 @@ async fn main() -> anyhow::Result<()> {
 
     if let Some(Command::BuildHash) = &args.command {
         println!("{}", env!("HEX_AGENT_BUILD_HASH"));
+        return Ok(());
+    }
+
+    // MCP server mode: JSON-RPC over stdin/stdout for docker sandbox agents.
+    // Activated by `hex-agent mcp-server` subcommand OR the HEX_MCP_SERVER=1 env var.
+    let mcp_via_env = std::env::var("HEX_MCP_SERVER")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false);
+    if matches!(&args.command, Some(Command::McpServer)) || mcp_via_env {
+        run_mcp_server();
         return Ok(());
     }
 
