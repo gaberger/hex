@@ -1,0 +1,52 @@
+# Docker AI Sandbox configuration for hex-agent containers.
+# Consumed by hex-nexus DockerSandboxAdapter (ADR-2603282000).
+version: "1"
+
+image: hex-agent:latest
+
+# Resource limits per container
+resources:
+  cpu: "1.0"
+  memory: "512m"
+  pids: 64
+
+# Network policy -- allowlist only
+network:
+  mode: custom
+  allow:
+    - host: host.docker.internal
+      port: 5555
+      protocol: tcp
+      reason: hex-nexus coordination API
+    - host: host.docker.internal
+      port: 3033
+      protocol: tcp
+      reason: SpacetimeDB WebSocket
+    - host: openrouter.ai
+      port: 443
+      protocol: tcp
+      reason: inference (OpenRouter)
+    - host: api.anthropic.com
+      port: 443
+      protocol: tcp
+      reason: inference (Anthropic direct)
+  deny_by_default: true
+
+# Volume mounts (worktree path injected at runtime by DockerSandboxAdapter)
+volumes:
+  - source: "${WORKTREE_PATH}"
+    target: /workspace
+    readonly: false
+
+# Labels applied to every container
+labels:
+  hex.managed: "true"
+  hex.component: "agent"
+  hex.adr: "ADR-2603282000"
+
+# Startup health check
+healthcheck:
+  test: ["CMD", "hex-agent", "--version"]
+  interval: 10s
+  timeout: 5s
+  retries: 3
