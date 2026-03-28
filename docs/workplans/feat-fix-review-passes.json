@@ -4,13 +4,13 @@
   "specs": "docs/specs/fix-review-passes.json",
   "adr": "ADR-2603250900",
   "created": "2026-03-25",
-  "status": "complete",
+  "status": "done",
   "topology": "pipeline",
   "budget": "~8000 tokens",
   "prior_work": {
     "done": [
-      "extract_model_from_action fix (model_selection.rs) — preserves native provider/model format, merged in same session",
-      "swarm_phase.rs task_assign — workplan tasks now show agent in hex task list, merged in same session"
+      "extract_model_from_action fix (model_selection.rs) \u2014 preserves native provider/model format, merged in same session",
+      "swarm_phase.rs task_assign \u2014 workplan tasks now show agent in hex task list, merged in same session"
     ]
   },
   "steps": [
@@ -22,22 +22,31 @@
       "port": "IReviewerAgent",
       "dependencies": [],
       "tier": 0,
-      "specs": ["S03", "S04", "S06"],
+      "specs": [
+        "S03",
+        "S04",
+        "S06"
+      ],
       "worktree_branch": "feat/fix-review-passes/json-retry",
-      "status": "completed",
+      "status": "done",
       "done_condition": "cargo check passes; unit test: given non-JSON reviewer response, synthetic verdict file is written and contains reviewer_skipped:true"
     },
     {
       "id": "step-2",
-      "description": "Fix RL model selection for reviewer by passing YAML model as soft preference (model_preference) not hard override to execute_with_preference. Supervisor calls agent.execute_with_preference(context, model_override=CLI-only, model_preference=yaml_model_id, provider_pref). Inside agent, select_model(TaskType::Reasoning, effective_override=model_override.or(model_preference)) — RL can override when Q-table has data, YAML preference acts as default when Q-table is empty.",
+      "description": "Fix RL model selection for reviewer by passing YAML model as soft preference (model_preference) not hard override to execute_with_preference. Supervisor calls agent.execute_with_preference(context, model_override=CLI-only, model_preference=yaml_model_id, provider_pref). Inside agent, select_model(TaskType::Reasoning, effective_override=model_override.or(model_preference)) \u2014 RL can override when Q-table has data, YAML preference acts as default when Q-table is empty.",
       "layer": "adapters/primary",
       "adapter": "pipeline/supervisor + pipeline/agents/reviewer",
       "port": "IModelSelector",
-      "dependencies": ["step-1"],
+      "dependencies": [
+        "step-1"
+      ],
       "tier": 0,
-      "specs": ["S01", "S08"],
+      "specs": [
+        "S01",
+        "S08"
+      ],
       "worktree_branch": "feat/fix-review-passes/reviewer-rl-selection",
-      "status": "completed",
+      "status": "done",
       "done_condition": "cargo check passes; supervisor no longer passes reviewer_model_id as hard model_override"
     },
     {
@@ -46,11 +55,17 @@
       "layer": "adapters/primary",
       "adapter": "pipeline/agents/reviewer",
       "port": "IRlRewardReporter",
-      "dependencies": ["step-2"],
+      "dependencies": [
+        "step-2"
+      ],
       "tier": 0,
-      "specs": ["S02", "S05", "S07"],
+      "specs": [
+        "S02",
+        "S05",
+        "S07"
+      ],
       "worktree_branch": "feat/fix-review-passes/reviewer-rl-reward",
-      "status": "completed",
+      "status": "done",
       "done_condition": "cargo check passes; report_outcome called after every reviewer attempt"
     },
     {
@@ -59,22 +74,35 @@
       "layer": "adapters/primary",
       "adapter": "integration",
       "port": null,
-      "dependencies": ["step-1", "step-2", "step-3"],
+      "dependencies": [
+        "step-1",
+        "step-2",
+        "step-3"
+      ],
       "tier": 1,
-      "specs": ["S01", "S02", "S03", "S04", "S05", "S06", "S08"],
+      "specs": [
+        "S01",
+        "S02",
+        "S03",
+        "S04",
+        "S05",
+        "S06",
+        "S08"
+      ],
       "worktree_branch": "feat/fix-review-passes/smoke-test",
-      "done_condition": "hex dev completes all tiers without hitting max_iterations due to ReviewPasses; pipeline report shows all objectives met"
+      "done_condition": "hex dev completes all tiers without hitting max_iterations due to ReviewPasses; pipeline report shows all objectives met",
+      "status": "done"
     }
   ],
   "dependencies": {
     "cargo": []
   },
   "mergeOrder": [
-    "step-1, step-2, step-3 sequential (all tier-0) → step-4 last"
+    "step-1, step-2, step-3 sequential (all tier-0) \u2192 step-4 last"
   ],
   "riskRegister": [
     {
-      "risk": "extract_model_from_action bug — RL model ID mangled before reaching inference",
+      "risk": "extract_model_from_action bug \u2014 RL model ID mangled before reaching inference",
       "impact": "high",
       "mitigation": "RESOLVED: fix shipped in same session (model_selection.rs preserves native provider/model format)"
     },
