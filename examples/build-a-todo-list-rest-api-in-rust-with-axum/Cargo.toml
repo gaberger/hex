@@ -1,5 +1,5 @@
 [package]
-name = "plan-build-a-todo-list-rest-api-in-rust"
+name = "build-todolist-rest-api-with-axum"
 version = "0.1.0"
 edition = "2021"
 

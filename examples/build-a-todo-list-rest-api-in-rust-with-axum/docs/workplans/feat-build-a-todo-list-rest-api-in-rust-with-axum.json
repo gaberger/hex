@@ -1,29 +1,59 @@
 {
-  "id": "wp-build-a-todo-list-rest-api",
-  "title": "Plan: build a todo list REST API in rust with axum",
-  "specs": null,
-  "adr": null,
-  "created": null,
+  "id": "wp-build-todo-api",
+  "title": "Build TodoList REST API with Axum",
+  "specs": "specs/todo-api.md",
+  "adr": "ADR-231005",
+  "created": "2023-10-05",
   "status": "planned",
-  "status_note": "auto-generated fallback — LLM JSON extraction failed",
+  "status_note": "Initial planning completed",
   "topology": "pipeline",
-  "budget": null,
+  "budget": "2 token",
   "steps": [
     {
-      "id": "step-1",
-      "description": "build a todo list REST API in rust with axum",
-      "layer": "adapters/primary",
-      "adapter": "primary/cli",
+      "id": "P0.1",
+      "description": "Implement the full feature in src/main.rs — single-binary rust project",
+      "layer": "primary",
+      "adapter": null,
       "port": null,
       "dependencies": [],
-      "tier": 2,
-      "specs": null,
+      "tier": 0,
+      "specs": [
+        "S01"
+      ],
       "worktree_branch": null,
-      "done_condition": null
+      "done_condition": "src/main.rs compiles and implements the feature; Cargo.toml has correct dependencies"
     }
   ],
-  "mergeOrder": null,
-  "riskRegister": null,
-  "successCriteria": null,
-  "dependencies": null
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P1.2",
+    "P2.1"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Start with minimal CRUD endpoints",
+      "risk": "Axum integration complexity"
+    },
+    {
+      "impact": "low",
+      "mitigation": "Use migrations from day one",
+      "risk": "SQLite schema changes"
+    }
+  ],
+  "successCriteria": [
+    "API endpoints return 200 OK for all CRUD operations",
+    "Domain layer tests pass with 100% coverage",
+    "Composition root successfully wires all dependencies"
+  ],
+  "dependencies": {
+    "cargo": [
+      "axum",
+      "sqlx",
+      "sqlx-postgres"
+    ],
+    "npm": []
+  }
 }
