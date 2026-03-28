@@ -1,48 +1,56 @@
 {
   "id": "feat-declarative-swarm-agents",
-  "title": "Feature: Complete ADR-2603240130 — Declarative Swarm Agent Behavior from YAML",
+  "title": "Feature: Complete ADR-2603240130 \u2014 Declarative Swarm Agent Behavior from YAML",
   "specs": "docs/specs/declarative-swarm-agents.json",
   "adr": "ADR-2603240130",
   "created": "2026-03-24",
-  "status": "in_progress",
+  "status": "done",
   "topology": "pipeline",
   "budget": "~35000 tokens",
   "prior_work": {
     "done": [
-      "agent_def.rs — full AgentDefinition serde structs (ModelConfig, ContextConfig, WorkflowConfig, FeedbackLoopConfig, QualityThresholds, TokenBudget)",
-      "model_selection.rs — select_from_yaml() with preferred/fallback/upgrade logic + full test coverage",
-      "workflow_engine.rs — execute_phases(), run_feedback_gates(), run_feedback_loop() with placeholder resolution",
-      "supervisor.rs — select_model_for_role(), build_context_from_yaml(), workflow_engine_for_step(), evaluate_quality_thresholds()",
-      "supervisor.rs — YAML model selection wired for hex-coder (both branches), hex-reviewer, hex-tester",
-      "supervisor.rs — feedback gate failure → FixAgent → retry gates",
-      "hex-cli/assets/agents/hex/hex/ — 14 agent YAML files present",
-      "hex-cli/assets/swarms/dev-pipeline.yml — complete swarm composition YAML"
+      "agent_def.rs \u2014 full AgentDefinition serde structs (ModelConfig, ContextConfig, WorkflowConfig, FeedbackLoopConfig, QualityThresholds, TokenBudget)",
+      "model_selection.rs \u2014 select_from_yaml() with preferred/fallback/upgrade logic + full test coverage",
+      "workflow_engine.rs \u2014 execute_phases(), run_feedback_gates(), run_feedback_loop() with placeholder resolution",
+      "supervisor.rs \u2014 select_model_for_role(), build_context_from_yaml(), workflow_engine_for_step(), evaluate_quality_thresholds()",
+      "supervisor.rs \u2014 YAML model selection wired for hex-coder (both branches), hex-reviewer, hex-tester",
+      "supervisor.rs \u2014 feedback gate failure \u2192 FixAgent \u2192 retry gates",
+      "hex-cli/assets/agents/hex/hex/ \u2014 14 agent YAML files present",
+      "hex-cli/assets/swarms/dev-pipeline.yml \u2014 complete swarm composition YAML"
     ]
   },
   "steps": [
     {
       "id": "step-1",
-      "description": "Add execute_step_for_phase() to CodePhase — phase-aware inference that accepts a phase name and injects the phase's YAML steps into the system prompt as TDD instructions. Phases: pre_validate (boundary check only, no inference), red (write failing tests), green (write implementation), refactor (clean up).",
+      "description": "Add execute_step_for_phase() to CodePhase \u2014 phase-aware inference that accepts a phase name and injects the phase's YAML steps into the system prompt as TDD instructions. Phases: pre_validate (boundary check only, no inference), red (write failing tests), green (write implementation), refactor (clean up).",
       "layer": "adapters/secondary",
       "adapter": "code-phase",
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": ["S02", "S08"],
+      "specs": [
+        "S02",
+        "S08"
+      ],
       "worktree_branch": "feat/declarative-swarm-agents/code-phase",
-      "done_condition": "cargo check passes; CodePhase::execute_step_for_phase compiles and has unit test for prompt injection"
+      "done_condition": "cargo check passes; CodePhase::execute_step_for_phase compiles and has unit test for prompt injection",
+      "status": "done"
     },
     {
       "id": "step-2",
-      "description": "Wire pre_validate gate enforcement in dispatch_agent for hex-coder: before any inference call, run the boundary_check gate from the workflow engine. If the gate fails (blocking=true), set the step as failed and return early — do not proceed to code generation.",
+      "description": "Wire pre_validate gate enforcement in dispatch_agent for hex-coder: before any inference call, run the boundary_check gate from the workflow engine. If the gate fails (blocking=true), set the step as failed and return early \u2014 do not proceed to code generation.",
       "layer": "adapters/secondary",
       "adapter": "supervisor",
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": ["S01", "S07"],
+      "specs": [
+        "S01",
+        "S07"
+      ],
       "worktree_branch": "feat/declarative-swarm-agents/pre-validate",
-      "done_condition": "cargo check passes; test that a failing boundary_check gate prevents execute_step from being called"
+      "done_condition": "cargo check passes; test that a failing boundary_check gate prevents execute_step from being called",
+      "status": "done"
     },
     {
       "id": "step-3",
@@ -52,9 +60,13 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": ["S03", "S09"],
+      "specs": [
+        "S03",
+        "S09"
+      ],
       "worktree_branch": "feat/declarative-swarm-agents/yaml-context",
-      "done_condition": "cargo check passes; AgentContext.metadata contains context_source=yaml for hex-coder steps"
+      "done_condition": "cargo check passes; AgentContext.metadata contains context_source=yaml for hex-coder steps",
+      "status": "done"
     },
     {
       "id": "step-4",
@@ -62,23 +74,35 @@
       "layer": "adapters/secondary",
       "adapter": "supervisor",
       "port": null,
-      "dependencies": ["step-3"],
+      "dependencies": [
+        "step-3"
+      ],
       "tier": 1,
-      "specs": ["S04"],
+      "specs": [
+        "S04"
+      ],
       "worktree_branch": "feat/declarative-swarm-agents/token-budget",
-      "done_condition": "cargo check passes; unit test: agent with token_budget.max=2000 truncates files at 2000 bytes"
+      "done_condition": "cargo check passes; unit test: agent with token_budget.max=2000 truncates files at 2000 bytes",
+      "status": "done"
     },
     {
       "id": "step-5",
-      "description": "Wire phase-driven inference in dispatch_agent for hex-coder: replace the single execute_step call with sequential per-phase calls using execute_step_for_phase() from step-1. Phases: pre_validate (skip inference, gate only) → red → green → refactor. Each phase call gets the phase steps from YAML injected as system prompt context.",
+      "description": "Wire phase-driven inference in dispatch_agent for hex-coder: replace the single execute_step call with sequential per-phase calls using execute_step_for_phase() from step-1. Phases: pre_validate (skip inference, gate only) \u2192 red \u2192 green \u2192 refactor. Each phase call gets the phase steps from YAML injected as system prompt context.",
       "layer": "adapters/secondary",
       "adapter": "supervisor",
       "port": null,
-      "dependencies": ["step-1", "step-2"],
+      "dependencies": [
+        "step-1",
+        "step-2"
+      ],
       "tier": 1,
-      "specs": ["S02", "S08"],
+      "specs": [
+        "S02",
+        "S08"
+      ],
       "worktree_branch": "feat/declarative-swarm-agents/phase-dispatch",
-      "done_condition": "cargo check passes; integration test shows 3 distinct inference calls (red/green/refactor) in trace logs for a coder step"
+      "done_condition": "cargo check passes; integration test shows 3 distinct inference calls (red/green/refactor) in trace logs for a coder step",
+      "status": "done"
     },
     {
       "id": "step-6",
@@ -86,11 +110,16 @@
       "layer": "adapters/secondary",
       "adapter": "supervisor",
       "port": null,
-      "dependencies": ["step-5"],
+      "dependencies": [
+        "step-5"
+      ],
       "tier": 2,
-      "specs": ["S05"],
+      "specs": [
+        "S05"
+      ],
       "worktree_branch": "feat/declarative-swarm-agents/quality-thresholds",
-      "done_condition": "cargo check passes; evaluate_quality_thresholds called in hex-coder dispatch after code write; violations logged with tracing::warn"
+      "done_condition": "cargo check passes; evaluate_quality_thresholds called in hex-coder dispatch after code write; violations logged with tracing::warn",
+      "status": "done"
     },
     {
       "id": "step-7",
@@ -98,11 +127,16 @@
       "layer": "adapters/secondary",
       "adapter": "supervisor",
       "port": null,
-      "dependencies": ["step-3"],
+      "dependencies": [
+        "step-3"
+      ],
       "tier": 2,
-      "specs": ["S06"],
+      "specs": [
+        "S06"
+      ],
       "worktree_branch": "feat/declarative-swarm-agents/cardinality",
-      "done_condition": "cargo check passes; SwarmComposition::cardinality_for_role() returns correct enum variant; supervisor reads and logs cardinality for each role"
+      "done_condition": "cargo check passes; SwarmComposition::cardinality_for_role() returns correct enum variant; supervisor reads and logs cardinality for each role",
+      "status": "done"
     },
     {
       "id": "step-8",
@@ -110,11 +144,19 @@
       "layer": "integration",
       "adapter": null,
       "port": null,
-      "dependencies": ["step-5", "step-6", "step-7"],
+      "dependencies": [
+        "step-5",
+        "step-6",
+        "step-7"
+      ],
       "tier": 3,
-      "specs": ["S09", "S10"],
+      "specs": [
+        "S09",
+        "S10"
+      ],
       "worktree_branch": "feat/declarative-swarm-agents/integration-test",
-      "done_condition": "cargo test declarative_swarm_test passes; test verifies YAML model ID appears in step result"
+      "done_condition": "cargo test declarative_swarm_test passes; test verifies YAML model ID appears in step result",
+      "status": "done"
     }
   ],
   "dependencies": {
@@ -122,7 +164,7 @@
     "npm": []
   },
   "mergeOrder": [
-    "step-1, step-2, step-3 — parallel (independent tier-0 changes to different functions)",
+    "step-1, step-2, step-3 \u2014 parallel (independent tier-0 changes to different functions)",
     "step-4 after step-3 (reads context config from same agent def)",
     "step-5 after step-1 + step-2 (requires execute_step_for_phase + pre_validate gate)",
     "step-6 after step-5 (quality check runs after phase-driven code gen)",
@@ -131,7 +173,7 @@
   ],
   "riskRegister": [
     {
-      "risk": "Phase-driven inference (step-5) triples inference call count per step — token cost increases 3x for hex-coder",
+      "risk": "Phase-driven inference (step-5) triples inference call count per step \u2014 token cost increases 3x for hex-coder",
       "impact": "medium",
       "mitigation": "Gate phase dispatch behind a feature flag (HEX_PHASE_MODE=tdd|single); default to single until cost/quality tradeoff is validated"
     },
@@ -154,7 +196,7 @@
   "successCriteria": [
     "hex dev <feature> uses the model from hex-coder.yml preferred field (verified in trace logs)",
     "Three distinct OpenRouter inference calls appear per code step (red/green/refactor) when HEX_PHASE_MODE=tdd",
-    "A boundary violation in a Tier-1 step causes pre_validate to abort code gen — no wasted inference call",
+    "A boundary violation in a Tier-1 step causes pre_validate to abort code gen \u2014 no wasted inference call",
     "Feedback gate failure (compile error) triggers FixAgent and gates re-run once after fix",
     "cargo test passes with zero new failures after all steps are merged"
   ]
