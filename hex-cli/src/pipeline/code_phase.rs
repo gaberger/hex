@@ -77,6 +77,75 @@ fn to_feature_slug(name: &str) -> String {
     truncated.to_string()
 }
 
+/// Remove a stale output directory before starting a fresh pipeline run.
+///
+/// Deletes `output_dir` when ALL of the following are true:
+/// - The directory exists.
+/// - No passing binary is present (`target/debug/<slug>` for Rust, `dist/` for TS).
+/// - The directory's last-modified time is more than 5 minutes in the past.
+///
+/// Directories that are fresh (< 5 min) or that already contain a successful
+/// build artifact are left untouched.  A successful previous run (binary
+/// present) is also kept so `hex dev` can skip re-generation.
+pub fn cleanup_stale_output_dir(output_dir: &str, feature_name: &str) {
+    let dir = std::path::Path::new(output_dir);
+    if !dir.exists() {
+        return;
+    }
+
+    // --- freshness gate: skip if modified within the last 5 minutes ---------
+    let stale = dir
+        .metadata()
+        .and_then(|m| m.modified())
+        .map(|mtime| {
+            mtime
+                .elapsed()
+                .map(|age| age.as_secs() > 300)
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
+    if !stale {
+        debug!(
+            dir = %output_dir,
+            "output dir is fresh (<5 min) — skipping stale cleanup"
+        );
+        return;
+    }
+
+    // --- binary gate: keep dirs that have a successful build artifact --------
+    let slug = to_feature_slug(feature_name);
+
+    // Rust: target/debug/<slug> or target/release/<slug>
+    let rust_debug = dir.join("target").join("debug").join(&slug);
+    let rust_release = dir.join("target").join("release").join(&slug);
+    // TypeScript: dist/ directory with at least one .js file
+    let ts_dist_has_js = {
+        let dist = dir.join("dist");
+        dist.exists()
+            && std::fs::read_dir(&dist)
+                .map(|mut rd| rd.any(|e| {
+                    e.map(|e| e.path().extension().map_or(false, |x| x == "js"))
+                        .unwrap_or(false)
+                }))
+                .unwrap_or(false)
+    };
+
+    if rust_debug.exists() || rust_release.exists() || ts_dist_has_js {
+        debug!(
+            dir = %output_dir,
+            "output dir has passing build artifact — skipping stale cleanup"
+        );
+        return;
+    }
+
+    // --- all checks passed: delete the stale directory ----------------------
+    info!(dir = %output_dir, "Cleaned up stale run: {}", output_dir);
+    if let Err(e) = std::fs::remove_dir_all(dir) {
+        warn!(dir = %output_dir, error = %e, "failed to remove stale output dir (non-fatal)");
+    }
+}
+
 /// Generate a minimal project scaffold in `output_dir` so that compile checks
 /// and test runners have something to work with before code generation runs.
 ///
@@ -763,8 +832,9 @@ impl CodePhase {
         provider_pref: Option<&str>,
         output_dir: Option<&str>,
     ) -> Result<Vec<CodeStepResult>> {
-        // ── Pre-step scaffold ──────────────────────────────────────────
+        // ── Pre-step stale cleanup + scaffold ─────────────────────────
         if let Some(dir) = output_dir {
+            cleanup_stale_output_dir(dir, &workplan.title);
             let language = self.infer_workplan_language(workplan);
             match generate_scaffold(dir, &language, &workplan.title) {
                 Ok(files) if !files.is_empty() => {
@@ -837,8 +907,9 @@ impl CodePhase {
         provider_pref: Option<&str>,
         output_dir: Option<&str>,
     ) -> Result<Vec<CodeStepResult>> {
-        // ── Pre-step scaffold ──────────────────────────────────────────
+        // ── Pre-step stale cleanup + scaffold ─────────────────────────
         if let Some(dir) = output_dir {
+            cleanup_stale_output_dir(dir, &workplan.title);
             let language = self.infer_workplan_language(workplan);
             match generate_scaffold(dir, &language, &workplan.title) {
                 Ok(files) if !files.is_empty() => {
