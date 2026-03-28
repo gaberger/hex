@@ -426,6 +426,138 @@ All 14 agents are defined in YAML (`hex-cli/assets/agents/hex/hex/`), deployed t
 
 ---
 
+## Advanced Capabilities
+
+### Context Pipeline Compression
+
+Long multi-phase pipeline runs accumulate context: prior phase outputs, file reads, tool results, error recovery loops. hex implements a full compression pipeline so agents never silently degrade when context fills.
+
+```
+70% pressure → hex inbox warning
+80% pressure → PromptCompressor activates
+90% pressure → inference blocked, relief strategy executes
+```
+
+| Mechanism | Effect |
+|---|---|
+| `ContextPressureTracker` — running token estimate per session | Agents know how full their context window is |
+| Tiered context loading (`load: always / on_demand / active_edit`) | ~60% reduction in initial context load for hex-coder |
+| `PromptCompressor` — 3:1 prose compression, code blocks preserved verbatim | Extends effective budget 2–3× on validate/integrate phases |
+| Anthropic `cache_control: ephemeral` on static context sections | Up to 90% token savings on repeated TDD feedback loop calls |
+
+Configurable per agent in YAML:
+```yaml
+token_budget:
+  max: 100000
+  pressure:
+    warn_at_pct: 70
+    compress_at_pct: 80
+    block_at_pct: 90
+    relief: summarize_history   # or: drop_oldest | escalate
+```
+
+### RL-Driven Model Selection
+
+hex-nexus runs a Q-learning engine that learns the optimal model and context strategy per task type across sessions.
+
+```
+State:  task_type + codebase_size + agent_count + token_usage + rate_limited
+Action: model (Haiku / Sonnet / MiniMax / Opus / Local) + context strategy
+Reward: success(+1.0) + fast_bonus − rate_limit_penalty − token_cost
+```
+
+Fallback chain (triggered on 429, with RL penalty applied):
+```
+Opus → Sonnet → MiniMax → MiniMaxFast → Haiku → Local → error
+```
+
+Self-optimizing: learns which models get rate-limited, which task types need Opus, which run free locally. Improves over sessions with no manual tuning.
+
+### Quantization-Aware Inference Routing
+
+Quantization level is a first-class routing dimension. A 2-bit local model handles scaffolding; cloud handles cross-file reasoning.
+
+| Tier | Bits | Memory (7B) | Typical use |
+|---|---|---|---|
+| Q2 | 2 | ~2 GB | Scaffolding, formatting, docstrings |
+| Q4 | 4 | ~4.5 GB | General coding, test generation (default local) |
+| Q8 | 8 | ~8 GB | Complex reasoning, security review |
+| FP16 | 16 | ~14 GB | Cross-file planning, novel architecture |
+| Cloud | — | — | Frontier tasks (Anthropic / OpenAI) |
+
+Agent YAMLs declare quantization policy:
+```yaml
+inference:
+  quantization:
+    default: q4
+    minimum: q2
+    on_complexity_high: q8
+    on_failure: cloud
+```
+
+**Neural Lab calibration** runs benchmark suites through Q2→Cloud using `validation-judge` as oracle, then writes measured `quality_score` back to each provider record. Routing uses real scores, not tier assumptions.
+
+### Encrypted Secrets Vault
+
+Secrets are encrypted at rest (AES-256-GCM), zeroed from heap on drop (`ZeroizeOnDrop`), and never stored as raw values in SpacetimeDB.
+
+```
+SpacetimeDB stores:  vault:ANTHROPIC_API_KEY   ← reference only
+SQLite stores:       AES-256-GCM ciphertext    ← key from ~/.hex/vault.key (mode 0600)
+In-process:          Zeroizing<String>         ← zeroed after use
+```
+
+Every agent access is scoped, time-limited, and single-use. Grant claims appear in real-time on every connected dashboard client via SpacetimeDB WebSocket:
+
+```bash
+hex secrets grant <agent-id> ANTHROPIC_API_KEY   # creates TTL-scoped grant
+# agent claims once via authenticated channel → grant marked claimed instantly across all clients
+hex secrets revoke <grant-id>                    # invalidates immediately
+```
+
+Frontier providers registered with key references, never raw values:
+```bash
+hex inference add anthropic --model claude-sonnet-4-6 --key-ref ANTHROPIC_API_KEY
+hex inference add openai    --model gpt-4o           --key-ref OPENAI_API_KEY --fallback anthropic
+```
+
+### Goal-Driven Supervisor Loop
+
+The supervisor defines **objectives** and loops until all are met, re-evaluating everything after every agent action — because fixing a compile error can introduce a boundary violation, and fixing a violation can break tests.
+
+```
+Objectives: CodeGenerated · CodeCompiles · TestsPass · ReviewPasses · ArchitectureGradeA · UxReviewPasses · DocsGenerated
+
+Iteration 1: CodeCompiles ✗ (3 errors)   → hex-fixer
+Iteration 2: TestsPass ✗ (no tests)      → hex-tester
+Iteration 3: TestsPass ✗ (2 fail)        → hex-fixer
+Iteration 4: CodeCompiles ✗ (fix broke import) → hex-fixer
+Iteration 5: All ✓ → advance to next tier
+```
+
+Independent objectives (ReviewPasses + UxReviewPasses) run in parallel. Specialized agents per objective: `hex-coder`, `hex-reviewer`, `hex-tester`, `hex-documenter`, `hex-ux`, `hex-analyzer`, `hex-fixer` — each with role-specific context and model selection.
+
+### Neural Lab: Autonomous Architecture Research
+
+Neural Lab encodes neural network architecture as transactional SpacetimeDB state and runs an autonomous experiment loop via **scheduled WASM reducers** — no external orchestrator required.
+
+```
+NetworkConfig (architecture as state)
+    ↓ experiment_create
+Experiment (queued → training → evaluating → kept/discarded)
+    ↓ research_loop_tick() runs inside WASM every 30s
+ResearchFrontier (best known config per lineage, updated atomically)
+```
+
+The WASM module auto-generates mutation candidates (widen, deepen, attention, optimizer, activation) from the current frontier, dispatches training to GPU fleet nodes via hex-nexus subscription, and updates the frontier when results arrive. Multi-agent research swarms run N mutations in parallel — linear speedup over serial experiment loops. RL-engine Q-values drive mutation strategy selection.
+
+```bash
+hex neural-lab experiment create --hypothesis "increase n_embd 512→768"
+hex neural-lab frontier          # best config + experiment history
+```
+
+---
+
 ## Competitive Positioning
 
 SPECkit and BAML address real sub-problems in AI-assisted development. hex either incorporates those sub-problems or assumes them solved, and addresses the layer above.
