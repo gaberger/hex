@@ -335,11 +335,11 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
             if let Some(ref test_model) = first_local_model {
                 println!();
                 println!("  {} Running inference test with {}...", "→".cyan(), test_model);
-                let chat_url = format!("{}/v1/chat/completions", url.trim_end_matches('/'));
+                let chat_url = format!("{}/api/chat", url.trim_end_matches('/'));
                 let test_body = serde_json::json!({
                     "model": test_model,
                     "messages": [{"role": "user", "content": "Reply with just the word 'ok'"}],
-                    "max_tokens": 10,
+                    "stream": false,
                 });
 
                 let start = std::time::Instant::now();
