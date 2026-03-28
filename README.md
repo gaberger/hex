@@ -1,341 +1,318 @@
-# hex — AI-Assisted Integrated Development Environment (AAIDE)
+<div align="center">
 
-**hex** enforces hexagonal architecture as a hard constraint on every AI agent, coordinates multi-agent swarms natively through a real-time SpacetimeDB backbone, and gates every commit behind automated compile, lint, test, and semantic validation checks.
+<img src="assets/hex-icon.png" alt="hex" width="96" />
 
-It is not a deployable application. It is a framework and CLI toolchain installed into target projects. Architecture compliance is not advisory — it is enforced at the point of code generation, commit, and merge.
+# hex
 
-[![Build](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/hex-project/hex-intf)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange)](https://www.rust-lang.org/)
-[![SpacetimeDB](https://img.shields.io/badge/spacetimedb-required-red)](https://spacetimedb.com/)
+### AI-Assisted Integrated Development Environment
 
----
+**Hexagonal architecture enforcement · Native swarm coordination · Specs-first pipeline**
 
-## Table of Contents
+[![Build](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square)](https://github.com/gaberger/hex)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+[![SpacetimeDB](https://img.shields.io/badge/spacetimedb-required-red?style=flat-square)](https://spacetimedb.com/)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![Agents](https://img.shields.io/badge/agents-14-purple?style=flat-square)](hex-cli/assets/agents/hex/hex/)
 
-1. [What is hex?](#1-what-is-hex)
-2. [System Architecture](#2-system-architecture)
-3. [Hexagonal Architecture Enforcement](#3-hexagonal-architecture-enforcement)
-4. [Specs-First Development Pipeline](#4-specs-first-development-pipeline)
-5. [HexFlo Swarm Coordination](#5-hexflo-swarm-coordination)
-6. [Quick Start](#6-quick-start)
-7. [CLI Reference](#7-cli-reference)
-8. [Agent Fleet](#8-agent-fleet)
-9. [Competitive Positioning](#9-competitive-positioning)
-10. [Contributing](#10-contributing)
+<br/>
 
----
+*hex is not a linter. It is not a prompt framework. It is an enforcement runtime for AI agents —
+one that makes architectural violations impossible rather than merely detectable.*
 
-## 1. What is hex?
+<br/>
 
-### The Problem
+![hex dashboard](assets/hex-dashboard.png)
 
-AI coding agents fail at scale in predictable ways:
+*The hex dashboard: real-time architecture health, agent fleet, swarm task graph, and dependency visualization*
 
-- **Context explosion**: Without boundaries, an agent needs the entire codebase in context to make a safe change. At any non-trivial project size this is expensive, slow, and produces hallucinated cross-cutting changes.
-- **Boundary violations**: Agents generate code that imports across layer boundaries — usecases calling adapters directly, adapters importing other adapters — destroying the architectural invariants that make a codebase maintainable.
-- **Unvalidated output**: Generated code may compile but still violate behavioral specs, skip tests, or introduce regressions. Without a blocking validation gate, bad code reaches main.
-- **No coordination**: Multiple agents working in parallel on the same working tree produce merge conflicts. There is no mechanism to assign work, track completion, or recover from a failed agent.
-- **Architectural drift**: Projects lose their intended structure over time. Linters catch style; they do not enforce that a secondary adapter is not importing a primary adapter.
-
-### The Solution
-
-hex treats hexagonal architecture as a hard execution constraint, not a convention:
-
-1. **Boundary enforcement at import level**: `hex analyze` uses tree-sitter to parse every import in the codebase and verify it does not cross a layer boundary. Violations fail the build.
-2. **Worktree-per-adapter isolation**: Each parallel agent operates in its own git worktree, scoped to a single adapter boundary. Agents cannot conflict because they cannot touch each other's files.
-3. **Mandatory specs-first pipeline**: No code is written without a machine-readable behavioral spec. No code is merged without passing a semantic validation gate.
-4. **Native swarm coordination**: HexFlo (built into hex-nexus in Rust, backed by SpacetimeDB) tracks task state, monitors agent heartbeats, and reclaims work from dead agents — with no external dependencies.
-
-### Key Insight
-
-Architecture enforcement in hex is not a linter that runs after the fact. It is a pre-execution constraint that shapes what agents are allowed to generate in the first place. Agents receive a workplan scoped to one adapter boundary. They never see — and cannot import from — code outside that boundary. The boundary violation cannot happen because the agent never had the context to create it.
+</div>
 
 ---
 
-## 2. System Architecture
+## The Origin: Hexagonal Architecture
 
-hex consists of five deployment units. SpacetimeDB must be running for any hex operation that involves state, coordination, or real-time visibility.
+In 2005, Alistair Cockburn published the **Ports & Adapters** pattern — what he called "hexagonal architecture." The insight was simple and profound: an application should be equally driveable by users, programs, tests, or batch scripts, and should work in isolation from its eventual runtime devices and databases. You achieve this by separating the *application core* (domain + ports) from the *infrastructure* (adapters) through explicit typed interfaces.
+
+For human developers, this is a design discipline enforced by code review. For AI agents, it is catastrophically easy to violate. An agent given a large codebase in context will find the shortest path to a working change — and that path almost always crosses a boundary.
+
+**hex takes Cockburn's pattern and makes it a hard execution constraint.** Not a linter. Not a convention. A constraint: agents are scoped to one adapter boundary, given only the port interfaces they must satisfy, and their output is verified before it can reach main.
+
+---
+
+## From Ruflo to HexFlo
+
+hex's multi-agent coordination has a lineage worth knowing.
+
+**Ruflo** (built on `claude-flow`) was the first coordination layer: an external registry and tracking system that assigned tasks to agents, persisted state between sessions, and provided the swarm primitives (`swarm_init`, `task_create`, `task_complete`) that proved the model worked. It was the proof of concept.
+
+**HexFlo** is the native evolution. Built in Rust, embedded directly in `hex-nexus`, backed by SpacetimeDB's WASM transactional runtime. Same mental model as ruflo — swarms, tasks, agents, memory — but with zero external dependencies, real-time WebSocket state sync across every connected client, dead-agent reclamation at the heartbeat level, and a fleet dashboard that shows you everything in one place.
+
+The shift from ruflo to HexFlo was the shift from *tracking coordination externally* to *making coordination a first-class infrastructure concern*.
+
+---
+
+## Why hex Exists
+
+<table>
+<tr>
+<td width="50%">
+
+**The problem with AI agents at scale**
+
+- Context explosion: agents need the whole codebase to make safe changes
+- Boundary drift: agents find the shortest path, not the correct path
+- No coordination: parallel agents on a shared working tree produce conflicts
+- No validation: generated code compiles but violates behavioral specs
+- No memory: each session starts blind — architectural decisions get re-litigated
+
+</td>
+<td width="50%">
+
+**What hex provides**
+
+- Adapter-scoped context: agents see only what they need to change
+- Hard boundary enforcement: `hex analyze` rejects violations at commit time
+- Worktree isolation: one git worktree per agent, merge in dependency order
+- Blocking validation gate: `validation-judge` (Opus) must pass before merge
+- SpacetimeDB memory: swarm state, task history, and agent memory persist across sessions
+
+</td>
+</tr>
+</table>
+
+> [!IMPORTANT]
+> hex enforces architecture at the point of **code generation**, not after. An agent scoped to a secondary adapter boundary cannot import from another adapter because it never had that code in context. The violation cannot be written because the context for writing it was never provided.
+
+---
+
+## System Architecture
+
+hex is five components working in concert. SpacetimeDB is the backbone — everything else is a client.
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Developer Workflow                          │
-│    hex CLI (hex-cli)  ←→  Claude Code (MCP: hex mcp)               │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │ REST API (port 5555)
-┌────────────────────────────▼────────────────────────────────────────┐
-│                        hex-nexus daemon                             │
-│   ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐ │
-│   │  HexFlo      │  │  arch        │  │  hex-dashboard           │ │
-│   │  (swarm      │  │  analysis    │  │  (Solid.js + Tailwind,   │ │
-│   │   coord)     │  │  tree-sitter │  │   served at :5555)       │ │
-│   └──────┬───────┘  └──────────────┘  └──────────────────────────┘ │
-│          │ WebSocket / REST                                          │
-└──────────┼──────────────────────────────────────────────────────────┘
-           │
-┌──────────▼──────────────────────────────────────────────────────────┐
-│                         SpacetimeDB (REQUIRED)                      │
-│   18 WASM modules: hexflo-coordination, agent-registry,             │
-│   inference-gateway, workplan-state, chat-relay, fleet-state,       │
-│   architecture-enforcer, + 11 more                                  │
-│   ─────────────────────────────────────────────────────             │
-│   Fallback: SQLite (~/.hex/hub.db) when SpacetimeDB unavailable     │
-└─────────────────────────────────────────────────────────────────────┘
+  ╔══════════════════════════════════════════════════════════╗
+  ║            Developer Interface                           ║
+  ║   hex CLI  ──────────────────────  Claude Code (MCP)     ║
+  ╚══════════════════════════╤═══════════════════════════════╝
+                             │  REST (port 5555)
+  ╔══════════════════════════▼═══════════════════════════════╗
+  ║                   hex-nexus daemon                       ║
+  ║                                                          ║
+  ║   ┌────────────┐  ┌──────────────┐  ┌────────────────┐  ║
+  ║   │  HexFlo    │  │  tree-sitter │  │  hex-dashboard │  ║
+  ║   │  (swarm    │  │  arch        │  │  Solid.js      │  ║
+  ║   │   coord)   │  │  analysis)   │  │  :5555         │  ║
+  ║   └─────┬──────┘  └──────────────┘  └────────────────┘  ║
+  ╚═════════╪════════════════════════════════════════════════╝
+            │  WebSocket  ▲  real-time subscriptions
+  ╔═════════▼═════════════╪════════════════════════════════╗
+  ║              SpacetimeDB  ★ REQUIRED ★                 ║
+  ║                                                        ║
+  ║  18 WASM modules — transactional, zero-copy state      ║
+  ║  hexflo-coordination · agent-registry · workplan-state ║
+  ║  inference-gateway · chat-relay · fleet-state          ║
+  ║  architecture-enforcer · + 11 more                     ║
+  ║                                                        ║
+  ║  Fallback: SQLite (~/.hex/hub.db) when offline         ║
+  ╚════════════════════════════════════════════════════════╝
 
-┌─────────────────────────────────────────────────────────────────────┐
-│                      hex-agent (per developer machine)              │
-│   Skills · Hooks · ADRs · Workplans · YAML agent definitions        │
-│   Enforcement runtime for AI agents (local or remote)               │
-└─────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────┐
-│                      Inference Layer                                │
-│   inference-gateway WASM + hex-nexus HTTP bridge                    │
-│   Providers: Anthropic · OpenAI · Ollama · OpenRouter · vLLM        │
-└─────────────────────────────────────────────────────────────────────┘
+  ╔═════════════════════════╗   ╔══════════════════════════╗
+  ║  hex-agent              ║   ║  Inference Layer         ║
+  ║  (per developer machine)║   ║                          ║
+  ║  Skills · Hooks · ADRs  ║   ║  inference-gateway WASM  ║
+  ║  Workplans · 14 agents  ║   ║  Anthropic · OpenAI      ║
+  ║  YAML-declarative       ║   ║  Ollama · OpenRouter     ║
+  ╚═════════════════════════╝   ╚══════════════════════════╝
 ```
 
-### SpacetimeDB — Coordination Backbone (REQUIRED)
+### The Five Units
 
-SpacetimeDB is the transactional state backbone for hex. All clients — CLI, dashboard, agents — connect via WebSocket and receive real-time state updates without polling. 18 WASM modules provide reducers for swarm coordination, agent lifecycle, inference routing, workplan state, chat relay, and architecture enforcement.
-
-**Critical limitation**: WASM modules cannot access the filesystem, spawn processes, or make network calls. This constraint is why hex-nexus exists as a separate daemon.
-
-SpacetimeDB must be running. hex-nexus will not start without it (SQLite is available as a fallback for offline/single-node operation per ADR-025, but the full coordination surface requires SpacetimeDB).
-
-### hex-nexus — Filesystem Bridge Daemon
-
-hex-nexus is a Rust daemon (axum, port 5555) that bridges SpacetimeDB with the host OS. It is the component that actually reads and writes files, runs architecture analysis, manages git worktrees, syncs repository config into SpacetimeDB tables on startup (ADR-044), and serves the dashboard frontend (baked into the binary via `rust-embed`).
-
-The REST API exposed by hex-nexus is the single backend used by both the CLI and the MCP server. Every `hex` command and every `mcp__hex__*` tool delegates to this API.
-
-### hex-agent — Architecture Enforcement Runtime
-
-hex-agent must be present on any machine running hex development agents. It provides the runtime environment: slash-command skills, pre/post operation hooks for boundary validation and pattern training, YAML-defined agent roles, HexFlo dispatchers, and quality gate feedback loops (compile → lint → test).
-
-### hex-dashboard — Developer Control Plane
-
-A Solid.js + TailwindCSS single-page application served at `http://localhost:5555`. It provides multi-project management with live freshness indicators, agent fleet control with heartbeat monitoring, architecture health scores with violation breakdown, command dispatch to any connected project, and inference monitoring (model requests, token consumption). All data arrives via SpacetimeDB WebSocket subscriptions — no polling.
-
-### Inference Layer
-
-The `inference-gateway` WASM module routes LLM requests; hex-nexus performs the actual HTTP calls. The layer is model-agnostic: Anthropic, OpenAI, Ollama, OpenRouter, vLLM, and any OpenAI-compatible endpoint are all supported. Model selection is per-swarm, with configurable tier (haiku/sonnet/opus), fallback, and upgrade-after-N-iterations rules.
+| Unit | Language | Role |
+|---|---|---|
+| **SpacetimeDB** | WASM (Rust) | Real-time coordination backbone. 18 modules. All state lives here. |
+| **hex-nexus** | Rust (axum) | Filesystem bridge. Runs analysis, manages git, serves dashboard. Port 5555. |
+| **hex-agent** | YAML + Rust hooks | Architecture enforcement runtime. Lives on the developer's machine. |
+| **hex-dashboard** | Solid.js + Tailwind | Control plane. Multi-project, real-time, zero polling. |
+| **Inference** | WASM + Rust bridge | Model-agnostic LLM routing. WASM for logic, nexus for HTTP. |
 
 ---
 
-## 3. Hexagonal Architecture Enforcement
+## Hexagonal Architecture Enforcement
 
-### Layer Rules
+### The Layer Contract
 
-hex enforces a strict dependency hierarchy. These rules are checked on every commit via hooks and on demand via `hex analyze`:
+```
+        ┌─────────────────────────────────────┐
+        │           composition-root.ts        │  ← only file that sees everything
+        └──────────────────┬──────────────────┘
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+        ┌──────────┐ ┌──────────┐ ┌──────────┐
+        │ adapters │ │ adapters │ │ usecases │
+        │ primary/ │ │secondary/│ │          │
+        └────┬─────┘ └────┬─────┘ └────┬─────┘
+             │             │            │
+             └──────┬──────┘            │
+                    ▼                   ▼
+               ┌─────────┐        ┌─────────┐
+               │  ports/ │◀───────│  ports/ │
+               └────┬────┘        └─────────┘
+                    ▼
+               ┌─────────┐
+               │ domain/ │  ← zero external deps
+               └─────────┘
+```
 
-| Layer | May import from |
+| Layer | May import |
 |---|---|
 | `domain/` | `domain/` only |
 | `ports/` | `domain/` only |
 | `usecases/` | `domain/`, `ports/` |
 | `adapters/primary/` | `ports/` only |
 | `adapters/secondary/` | `ports/` only |
-| `composition-root.ts` | All layers (single DI point) |
+| **Adapters may NEVER import other adapters** | |
 
-**Adapters must never import other adapters.** Cross-adapter coupling is the most common architectural failure in AI-generated code and is unconditionally rejected.
+`hex analyze` runs tree-sitter over every source file, builds the full import graph, and rejects any edge that crosses a layer boundary. This runs on every commit via pre-commit hook. There is no warning mode — violations fail the build.
 
-### What `hex analyze` Checks
+<details>
+<summary>What hex analyze checks</summary>
 
 ```bash
-hex analyze <path>              # Full analysis
-hex analyze <path> --strict     # Warnings become errors
-hex analyze <path> --json       # Structured output for CI
-hex analyze <path> --adr-compliance-only
+hex analyze <path>              # full boundary + cycle + dead-export check
+hex analyze <path> --strict     # warnings become errors
+hex analyze <path> --json       # structured output for CI
 ```
 
-The analyzer runs tree-sitter over every source file and builds a dependency graph. It checks:
+- **Boundary violations** — every import classified by source/target layer
+- **Cycle detection** — circular deps within and across layers, full path reported
+- **Dead exports** — exported symbols never imported anywhere
+- **ADR compliance** — deprecated API patterns flagged per recorded ADRs
 
-1. **Boundary validation**: Every import is classified by source layer and target layer. Any import that violates the table above is reported as a violation.
-2. **Cycle detection**: Circular dependencies within and across layers are detected and reported with the full cycle path.
-3. **Dead export detection**: Exported symbols that are never imported are reported as unused debt.
-4. **ADR compliance** (ADR-054): Code patterns that violate specific ADRs (deprecated APIs, disallowed constructs) are flagged.
-
-Output is color-coded PASS/FAIL in the CLI, structured JSON in `--json` mode, and a live score ring on the dashboard.
-
-### Dependency Tier Table
-
-Tiers determine agent execution order in a swarm. Lower tiers have no dependencies and can run immediately; higher tiers wait for their dependencies to complete.
-
-| Tier | Layer | Depends on | Parallel |
-|---|---|---|---|
-| 0 | Domain + Ports | Nothing | No (serial) |
-| 1 | Secondary adapters | Tier 0 | Yes |
-| 2 | Primary adapters | Tier 0 | Yes |
-| 3 | Use cases | Tiers 0–2 | Yes |
-| 4 | Composition root | Tiers 0–3 | No (serial) |
-| 5 | Integration tests | Everything | No (serial) |
-
-### Why This Matters for AI Agents
-
-The tier structure makes parallel agent execution safe. Two agents working on independent secondary adapters (Tier 1) cannot produce merge conflicts because they operate in separate git worktrees and their code has no shared imports. The ports layer (Tier 0) defines the compile-time contracts both adapters must satisfy — the boundary violation literally cannot compile even if an agent attempts it.
-
-Token efficiency follows directly: an agent scoped to one adapter boundary needs to load only that adapter's port interface and its own implementation files. Tree-sitter AST summaries (L0–L3) reduce context further — a function signature costs ~20 tokens instead of 200+.
+</details>
 
 ---
 
-## 4. Specs-First Development Pipeline
+## Specs-First Development Pipeline
 
-Every feature follows a mandatory 7-phase pipeline. No phase may be skipped or reordered.
+No code is written without a behavioral spec. No code merges without passing semantic validation. These are not conventions — they are enforced pipeline gates.
 
 ```
-  ┌──────────┐    ┌──────────┐    ┌───────────┐    ┌──────────┐
-  │  SPECS   │───▶│   PLAN   │───▶│ WORKTREES │───▶│   CODE   │
-  │ Phase 1  │    │ Phase 2  │    │  Phase 3  │    │ Phase 4  │
-  └──────────┘    └──────────┘    └───────────┘    └──┬───────┘
-                                                       │
-  ┌──────────┐    ┌──────────┐    ┌───────────┐       │
-  │ FINALIZE │◀───│INTEGRATE │◀───│ VALIDATE  │◀──────┘
-  │ Phase 7  │    │ Phase 6  │    │  Phase 5  │
-  └──────────┘    └──────────┘    └───────────┘
-                                  (BLOCKING GATE)
+  Phase 1         Phase 2         Phase 3         Phase 4
+ ┌─────────┐     ┌─────────┐     ┌──────────┐     ┌─────────┐
+ │  SPECS  │────▶│  PLAN   │────▶│WORKTREES │────▶│  CODE   │
+ │         │     │         │     │          │     │(parallel│
+ │spec-    │     │planner  │     │one per   │     │ per tier│
+ │writer   │     │agent    │     │adapter   │     │ agent)  │
+ └─────────┘     └─────────┘     └──────────┘     └────┬────┘
+                                                        │
+  Phase 7         Phase 6         Phase 5               │
+ ┌─────────┐     ┌─────────┐     ┌──────────┐          │
+ │FINALIZE │◀────│INTEGRATE│◀────│ VALIDATE │◀─────────┘
+ │         │     │         │     │          │
+ │cleanup  │     │merge in │     │BLOCKING  │
+ │worktrees│     │dep order│     │GATE      │
+ └─────────┘     └─────────┘     └──────────┘
+                                 validation-judge
+                                 (Opus required)
 ```
 
-| Phase | Agent | Input | Output | Gate |
-|---|---|---|---|---|
-| 1. SPECS | `behavioral-spec-writer` | Requirements (text, screenshot, video) | `docs/specs/{feature}.json` | Readable by domain expert |
-| 2. PLAN | `planner` | Specs JSON | `docs/workplans/feat-{feature}.json` | 2–4 adapter-bounded steps |
-| 3. WORKTREES | `feature-workflow.sh` | Workplan JSON | One git worktree per adapter | All worktrees created and checked out |
-| 4. CODE | `hex-coder` (parallel per tier) | Workplan step + port interfaces | Source + unit tests | Tests pass, no lint errors |
-| 5. VALIDATE | `validation-judge` | Code + tests + specs | PASS/FAIL report | **BLOCKING — must pass to proceed** |
-| 6. INTEGRATE | `integrator` | Code in worktrees | Merged to main in dependency order | Full test suite passes |
-| 7. FINALIZE | Operator | Merged code | Worktrees removed, report generated | All artifacts documented |
+### The Worktree Pattern
 
-### Worktree-Per-Adapter Pattern
-
-Each adapter boundary gets its own git worktree, named `feat/<feature>/<adapter>`. Agents work inside their worktree in isolation. There are no shared working trees between parallel agents. Merge order follows the dependency tier table: domain → ports → secondary adapters → primary adapters → use cases → integration tests.
+Each adapter boundary gets an isolated git worktree. Agents cannot see — or conflict with — other agents' work. Merge order follows the dependency tier table.
 
 ```bash
-# Worktree lifecycle
-./scripts/feature-workflow.sh setup <feature-name>    # Create worktrees from workplan
-./scripts/feature-workflow.sh status <feature-name>   # Show progress
-./scripts/feature-workflow.sh merge <feature-name>    # Merge in dependency order
-./scripts/feature-workflow.sh cleanup <feature-name>  # Remove worktrees + branches
+./scripts/feature-workflow.sh setup my-feature   # creates worktrees from workplan
+./scripts/feature-workflow.sh status my-feature  # live progress
+./scripts/feature-workflow.sh merge my-feature   # merge in tier order
+./scripts/feature-workflow.sh cleanup my-feature # remove worktrees + branches
 ```
 
-### Validation Judge: The Blocking Gate
-
-Phase 5 runs the `validation-judge` agent (Opus-tier model required). It checks whether the generated code matches the behavioral spec from Phase 1, whether tests are semantically meaningful (not just coverage-padding), and whether architecture is sound. There is no bypass. A FAIL verdict stops the pipeline; the swarm re-enters Phase 4.
+| Tier | Layer | Parallel? |
+|---|---|---|
+| 0 | Domain + Ports | No — everything depends on these |
+| 1 | Secondary adapters | Yes — isolated per worktree |
+| 2 | Primary adapters | Yes — isolated per worktree |
+| 3 | Use cases | Yes — after tiers 0–2 |
+| 4 | Composition root | No — wires everything |
+| 5 | Integration tests | No — full suite |
 
 ---
 
-## 5. HexFlo Swarm Coordination
+## HexFlo: Native Swarm Coordination
 
-HexFlo is the native Rust coordination layer built into hex-nexus (ADR-027). It replaces any external coordination dependency. State is persisted in SpacetimeDB via the `hexflo-coordination` WASM module, with SQLite fallback for offline operation.
+HexFlo is the direct successor to ruflo — the same coordination model (swarms, tasks, agents, memory, heartbeats) rebuilt as a first-class Rust component inside hex-nexus, backed by SpacetimeDB for real-time multi-client state sync.
 
 ### Task State Machine
 
 ```
-Task:  pending ──▶ in_progress ──▶ completed
-                        │
-                        └──▶ dead (reclaimed after agent timeout)
+Task:   pending ──▶ in_progress ──▶ completed
+                         │
+                         └──▶ reclaimed (agent dead after 120s)
 
-Agent: registered ──▶ active ──▶ stale (45s no heartbeat)
-                                    │
-                                    └──▶ dead (120s) → tasks reclaimed
+Agent:  registered ──▶ active ──▶ stale (45s) ──▶ dead (120s)
+                                                      │
+                                                tasks returned to pending ◀─┘
 ```
 
-### Heartbeat Protocol
-
-Agents send a heartbeat on every user interaction via `hex hook route`. The hub marks agents stale after 45 seconds and dead after 120 seconds. Dead agent tasks are automatically returned to `pending` and reassigned. This means a crashed or disconnected agent never blocks a swarm indefinitely.
-
-### API Surface
-
-| Operation | CLI | REST | MCP Tool |
-|---|---|---|---|
-| Initialize swarm | `hex swarm init <name>` | `POST /api/swarms` | `mcp__hex__hex_hexflo_swarm_init` |
-| Swarm status | `hex swarm status` | `GET /api/swarms` | `mcp__hex__hex_hexflo_swarm_status` |
-| Create task | `hex task create <swarm-id> <title>` | `POST /api/swarms/:id/tasks` | `mcp__hex__hex_hexflo_task_create` |
-| Complete task | `hex task complete <id>` | `PATCH /api/swarms/tasks/:id` | `mcp__hex__hex_hexflo_task_complete` |
-| Store memory | `hex memory store <key> <value>` | `POST /api/hexflo/memory` | `mcp__hex__hex_hexflo_memory_store` |
-| Retrieve memory | `hex memory get <key>` | `GET /api/hexflo/memory/:key` | `mcp__hex__hex_hexflo_memory_retrieve` |
-| Search memory | `hex memory search <query>` | `GET /api/hexflo/memory/search` | `mcp__hex__hex_hexflo_memory_search` |
-
-### Spawning Agents with Task Tracking
-
-Include `HEXFLO_TASK:{task_id}` in the agent prompt. The `subagent-start` and `subagent-stop` hooks read this from stdin and automatically call the HexFlo API to transition task state.
+### Spawning an Agent with Task Tracking
 
 ```typescript
-// Spawn a background coder agent with task tracking
+// Include HEXFLO_TASK:{id} — hooks auto-transition task state via the HexFlo API
 Agent({
   prompt: `HEXFLO_TASK:88bb424c-591a-482e-ac4f-55969549b7cf
-Implement the FileSystemAdapter for the IFileSystemPort interface.
-Work in worktree: hex-worktrees-feat-example-p1.1/
-Port interface: src/ports/IFileSystemPort.ts`,
+Implement IFileSystemPort secondary adapter.
+Worktree: hex-worktrees-feat-example-p1.1/
+Port: src/ports/IFileSystemPort.ts`,
   subagent_type: "general-purpose",
-  mode: "bypassPermissions",   // REQUIRED for background file writes
+  mode: "bypassPermissions",  // REQUIRED — acceptEdits silently blocks background writes
   run_in_background: true
 })
 ```
 
-Background agents **must** use `mode: "bypassPermissions"`. Using `mode: "acceptEdits"` silently denies all file writes when no user is present to approve them.
+> [!WARNING]
+> Always use `mode: "bypassPermissions"` for background agents. `acceptEdits` requires a human present to approve each write — background agents will silently produce no output.
 
-### Swarm Topologies
+### Memory Across Sessions
 
-| Topology | Strategy | Best For |
-|---|---|---|
-| `hierarchical` | Leader coordinates workers | Feature development across tiers |
-| `mesh` | Peer-to-peer | Parallel independent tasks |
-| `adaptive` | Starts mesh, promotes leader when needed | Unknown workload shape |
+HexFlo provides scoped persistent memory backed by SpacetimeDB (SQLite fallback). State survives process restarts, reconnects, and session boundaries.
 
-### Declarative Agent Behavior
-
-Agent behavior is defined in YAML, not hardcoded in Rust. The 14 agent definitions in `hex-cli/assets/agents/hex/hex/` specify model selection (tier, preferred, fallback, upgrade threshold), context loading (L0–L3 AST summaries), workflow phases (TDD: red → green → refactor), feedback loop gates (compile → lint → test with `on_fail` instructions), and quality thresholds.
+```bash
+hex memory store "feature/auth/decision" "Using JWT, not sessions — see ADR-031"
+hex memory get "feature/auth/decision"
+hex memory search "auth"
+```
 
 ---
 
-## 6. Quick Start
+## Quick Start
 
-### Prerequisites
-
-- **SpacetimeDB** — must be running before `hex nexus start`
-- **Rust 1.75+** — for building hex-cli and hex-nexus
-- **Bun** — for the TypeScript library and dashboard
-- **tree-sitter-cli** — for grammar-based analysis
-
-### Install hex CLI
+> [!NOTE]
+> SpacetimeDB must be running before `hex nexus start`. hex-nexus will not start without it.
 
 ```bash
-# Build from source
-git clone https://github.com/hex-project/hex-intf.git
-cd hex-intf
+# 1. Build hex CLI
+git clone https://github.com/gaberger/hex.git
+cd hex
 cargo build -p hex-cli --release
-# Add target/release/hex to your PATH
+export PATH="$PWD/target/release:$PATH"
 
-# Verify installation
-hex --version
-```
-
-### Initialize a Project
-
-```bash
-# Start SpacetimeDB first
+# 2. Start SpacetimeDB
 hex stdb start
 
-# Start the hex-nexus daemon
+# 3. Start hex-nexus daemon
 hex nexus start
 
-# Verify daemon health
-hex nexus status
-
-# Initialize hex in an existing project
+# 4. Initialize hex in your project
 hex init /path/to/your/project
 
-# Check architecture health
+# 5. Check architecture health
 hex analyze /path/to/your/project
 
-# Open the dashboard
+# 6. Open the dashboard
 open http://localhost:5555
 ```
 
-### Start the MCP Server (Claude Code integration)
-
-Add to your Claude Code settings:
+### Claude Code Integration
 
 ```json
 {
@@ -348,212 +325,178 @@ Add to your Claude Code settings:
 }
 ```
 
-All `mcp__hex__*` tools are now available in Claude Code.
+All `mcp__hex__*` tools are now available in Claude Code and map 1:1 to CLI commands.
 
 ---
 
-## 7. CLI Reference
+## CLI Reference
 
-All commands are served by the `hex` Rust binary. MCP tools map 1:1 to CLI commands via the hex-nexus REST API.
-
-### Daemon & SpacetimeDB
+<details>
+<summary>Daemon & infrastructure</summary>
 
 | Command | Description |
 |---|---|
 | `hex stdb start` | Start local SpacetimeDB instance |
-| `hex stdb status` | Check SpacetimeDB health |
+| `hex stdb status` | Check SpacetimeDB connectivity |
 | `hex nexus start` | Start hex-nexus daemon (port 5555) |
-| `hex nexus status` | Check daemon health and SpacetimeDB connectivity |
-| `hex nexus logs` | Stream daemon logs |
+| `hex nexus status` | Daemon health + SpacetimeDB connectivity |
+| `hex status` | Project status overview |
 
-### Architecture Analysis
+</details>
 
-| Command | Description |
-|---|---|
-| `hex analyze <path>` | Full architecture health check (boundaries, cycles, dead exports) |
-| `hex analyze <path> --strict` | Promote warnings to errors |
-| `hex analyze <path> --json` | Structured output for CI |
-| `hex enforce mode` | Check current enforcement mode |
-| `hex enforce list` | List all enforcement rules |
-
-### Swarm Coordination
+<details>
+<summary>Architecture analysis</summary>
 
 | Command | Description |
 |---|---|
-| `hex swarm init <name> [topology]` | Initialize a swarm |
-| `hex swarm status` | Show active swarms with task/agent counts |
-| `hex task create <swarm-id> <title>` | Create a task |
-| `hex task list [--swarm <id>]` | List tasks with status |
-| `hex task complete <id> [result]` | Mark task completed |
-| `hex memory store <key> <value>` | Store key-value (persists across sessions) |
-| `hex memory get <key>` | Retrieve value |
+| `hex analyze <path>` | Full boundary, cycle, dead-export check |
+| `hex analyze <path> --strict` | Warnings become errors |
+| `hex analyze <path> --json` | Structured CI output |
+| `hex enforce list` | Show all enforcement rules |
+| `hex enforce mode` | Show current mode |
+
+</details>
+
+<details>
+<summary>Swarm coordination</summary>
+
+| Command | Description |
+|---|---|
+| `hex swarm init <name> [topology]` | Initialize swarm |
+| `hex swarm status` | Active swarms + task/agent counts |
+| `hex task create <swarm-id> <title>` | Create task |
+| `hex task list` | All tasks with status |
+| `hex task complete <id>` | Mark completed |
+| `hex memory store <key> <value>` | Persist memory |
+| `hex memory get <key>` | Retrieve memory |
 | `hex memory search <query>` | Search memory |
 
-### Architecture Decision Records
+</details>
+
+<details>
+<summary>Pipeline & workplans</summary>
 
 | Command | Description |
 |---|---|
-| `hex adr list` | List all ADRs with status |
-| `hex adr status <id>` | Show ADR detail |
-| `hex adr search <query>` | Search ADRs by keyword |
-| `hex adr abandoned` | Find stale ADRs |
-
-### Agent Management
-
-| Command | Description |
-|---|---|
-| `hex agent list` | List all registered agents |
-| `hex agent info <id>` | Show agent details |
-| `hex inbox list` | Check agent notification inbox |
-| `hex inbox notify <agent-id> --kind <type>` | Send notification |
-| `hex inbox ack <notification-id>` | Acknowledge notification |
-
-### Workplans & Pipeline
-
-| Command | Description |
-|---|---|
-| `hex plan list` | List all workplans |
-| `hex plan status <file>` | Show workplan detail |
-| `hex plan execute <file>` | Run workplan end-to-end |
 | `hex spec write` | Start behavioral spec writer |
+| `hex plan list` | List workplans |
+| `hex plan execute <file>` | Run workplan end-to-end |
+| `hex plan status <file>` | Show workplan detail |
 | `hex dev` | Interactive TUI development pipeline |
 
-### Git & Worktrees
+</details>
+
+<details>
+<summary>ADRs, agents, inference, secrets</summary>
 
 | Command | Description |
 |---|---|
-| `hex worktree create <name>` | Create git worktree |
-| `hex worktree list` | List active worktrees |
-| `hex worktree merge <name>` | Merge worktree to main |
-| `hex worktree remove <name>` | Delete worktree |
-| `hex git status` | Show git status for project |
+| `hex adr list` | All ADRs with status |
+| `hex adr search <query>` | Search by keyword |
+| `hex adr abandoned` | Find stale ADRs |
+| `hex agent list` | Registered agents |
+| `hex inbox list` | Notification inbox |
+| `hex inference add` | Register LLM endpoint |
+| `hex inference discover` | Scan LAN for endpoints |
+| `hex secrets vault set <key> <val>` | Store secret |
+| `hex secrets grant <agent> <key>` | Grant agent access |
 
-### Inference
-
-| Command | Description |
-|---|---|
-| `hex inference add <id> --url <url> --model <name>` | Register inference endpoint |
-| `hex inference list` | Show registered endpoints |
-| `hex inference test <id>` | Test endpoint connectivity |
-| `hex inference discover` | Scan LAN for inference endpoints |
-
-### Secrets
-
-| Command | Description |
-|---|---|
-| `hex secrets status` | Show secrets backend status |
-| `hex secrets vault set <key> <value>` | Store secret |
-| `hex secrets grant <agent-id> <key>` | Grant agent access to secret |
-| `hex secrets revoke <grant-id>` | Revoke access |
+</details>
 
 ---
 
-## 8. Agent Fleet
+## Agent Fleet
 
-All 14 agents are defined in YAML (`hex-cli/assets/agents/hex/hex/`) and deployed to `.claude/agents/` on `hex init`. Each agent has a defined boundary — agents decline work outside that boundary.
+All 14 agents are defined in YAML (`hex-cli/assets/agents/hex/hex/`), deployed to `.claude/agents/` on `hex init`. Each agent is boundary-scoped and will decline work outside its defined role.
 
-| Agent | Role | When to Use | Model |
-|---|---|---|---|
-| `hex-coder` | Code generator | Writing production code within one adapter boundary (TDD, London school) | Sonnet / Haiku fallback / Opus upgrade |
-| `planner` | Task decomposer | Breaking requirements into adapter-bounded workplan steps | Sonnet / Haiku fallback |
-| `behavioral-spec-writer` | Spec generator | Writing acceptance specs before any code is generated | Sonnet / Haiku fallback |
-| `validation-judge` | Quality gate keeper | Semantic validation after code generation — BLOCKING gate | Opus required |
-| `feature-developer` | Lifecycle orchestrator | Running the full 7-phase pipeline for a feature | Opus coordinator |
-| `swarm-coordinator` | Swarm driver | Spawning and monitoring parallel hex-coder agents via HexFlo | Sonnet |
-| `integrator` | Merge coordinator | Merging worktrees in dependency order and running full test suite | Sonnet |
-| `dead-code-analyzer` | Debt detector | Finding dead exports, unused ports, and boundary violations | Haiku |
-| `dependency-analyst` | Tech recommender | Analyzing dependencies and recommending tech stack | Sonnet |
-| `scaffold-validator` | Readiness checker | Verifying generated projects are actually runnable | Sonnet |
-| `adr-reviewer` | ADR enforcer | Reviewing code changes for ADR compliance and deprecated API usage | Sonnet |
-| `status-monitor` | Progress tracker | Real-time swarm monitoring, heartbeat tracking, duration estimates | Haiku |
-| `rust-refactorer` | Code improver | Refactoring Rust code for readability, performance, and clippy compliance | Sonnet |
-| `dev-tracker` | Session tracker | Maintaining audit trail of commits vs task completions | Haiku |
-
----
-
-## 9. Competitive Positioning
-
-### Where hex Fits vs. SPECkit and BAML
-
-SPECkit and BAML both address real problems in AI-assisted development. They solve sub-problems that hex either incorporates or assumes solved. Understanding the division of scope clarifies when each tool applies.
-
-**SPECkit** (GitHub's open-source SDD toolkit) imposes a documentation-first discipline through structured markdown templates and slash commands (`/speckit.specify`, `/speckit.plan`, `/speckit.tasks`). It works with any CLI-based agent and has minimal adoption friction. It covers what hex calls Phase 1 (behavioral specs) and part of Phase 2 (planning) — and stops there. SPECkit has no runtime, no architecture analysis, no coordination backend, no worktree isolation, and no validation gate. Compliance with the spec it produces is on the honor system.
-
-**BAML** (BoundaryML) is a DSL for defining typed LLM functions. It provides compile-time guarantees on prompt inputs and outputs, resilient parsing of freeform LLM responses, and multi-provider retry/fallback routing. It solves the function-level reliability problem extremely well. It has no concept of multi-agent coordination, project architecture, task graphs, or the development lifecycle. It is analogous to hex's typed inference port and adapter — the piece of the stack that makes LLM calls reliable — without the surrounding architecture that connects inference to the rest of a codebase.
-
-hex operates at a different level of abstraction than either. It incorporates a specs-first workflow (covering SPECkit's territory) and typed inference (covering BAML's territory), and adds the enforcement and coordination layer that neither competitor provides.
-
-### Feature Comparison Matrix
-
-| Feature | hex | SPECkit | BAML |
-|---|---|---|---|
-| Spec-first development | Yes — machine-readable JSON | Yes — markdown templates | No |
-| Structured LLM output / type safety | Via typed port interfaces | No | Yes — core product |
-| Multi-provider LLM routing | Yes (inference-gateway WASM) | Agent-dependent | Yes (retry/fallback/rotation) |
-| Static architecture enforcement | Yes — tree-sitter boundary analysis | No | No |
-| Hexagonal layer isolation at import level | Hard rule, checked on every commit | Spec document only | Not applicable |
-| Multi-agent swarm coordination | Yes — HexFlo, SpacetimeDB, task graph | Prompt-based role switching | No |
-| Git worktree isolation per agent | Yes (ADR-004) | No | No |
-| Task state machine with dead-agent reclamation | Yes (45s stale / 120s dead) | No | No |
-| Validation gate before merge | Yes (validation-judge, blocking) | No | No |
-| Token-efficient AST code summaries | Yes (tree-sitter L0–L3) | No | No |
-| Fleet management dashboard | Yes (real-time, multi-project) | No | No |
-| MCP server integration | Yes (all commands) | Yes (AGENTS.md convention) | Yes (ActionRunner) |
-| Persistent memory across sessions | Yes (HexFlo memory, SpacetimeDB/SQLite) | No | No |
-| Spec → workplan → code → validate → merge as one workflow | Yes | Partial (no validate/merge) | No |
-| YAML-declarative agent + swarm behavior | Yes (14 agent YAMLs, 7 swarm YAMLs) | Partial (AGENTS.md) | No |
-| SpacetimeDB real-time coordination backbone | Yes (18 WASM modules) | No | No |
-| Open source | Yes | Yes (MIT) | Yes (Apache 2.0) |
-
-### Narrative Summary
-
-SPECkit is what hex's `behavioral-spec-writer` agent produces as Phase 1 output — the beginning of the pipeline, not the whole pipeline. BAML is what hex's typed inference port and adapter provide — reliable structured LLM calls — without the surrounding architecture and coordination layer.
-
-hex's unique territory is the **enforcement and coordination layer**: static architecture analysis that catches violations before merge, worktree-isolated parallel agents that cannot conflict, a real-time coordination backbone with dead-agent reclamation, and a blocking semantic validation gate. Neither SPECkit nor BAML has anything analogous to `hex analyze`, HexFlo task reclamation, or the SpacetimeDB coordination backend.
-
-The trade-off is real: hex requires more infrastructure (SpacetimeDB, hex-nexus daemon) and more initial learning investment than either competitor. The payoff is the only guarantee in this comparison that architectural compliance is verified at the point of merge.
+| Agent | Role | Model |
+|---|---|---|
+| `hex-coder` | Production code within one adapter boundary, TDD loop | Sonnet → Opus (after 3 iterations) |
+| `planner` | Decompose requirements into adapter-bounded workplan steps | Sonnet |
+| `behavioral-spec-writer` | Machine-readable acceptance specs before any code | Sonnet |
+| `validation-judge` | Semantic validation gate — BLOCKING, no bypass | **Opus required** |
+| `feature-developer` | Orchestrate the full 7-phase pipeline | Opus |
+| `swarm-coordinator` | Spawn and monitor parallel hex-coder agents via HexFlo | Sonnet |
+| `integrator` | Merge worktrees in dependency order, run full suite | Sonnet |
+| `dead-code-analyzer` | Dead exports, unused ports, boundary violations | Haiku |
+| `dependency-analyst` | Tech stack analysis and runtime recommendations | Sonnet |
+| `scaffold-validator` | Verify generated projects are actually runnable | Sonnet |
+| `adr-reviewer` | Review code for ADR compliance and deprecated APIs | Sonnet |
+| `rust-refactorer` | Rust code quality, clippy compliance, performance | Sonnet |
+| `status-monitor` | Real-time swarm progress, heartbeat tracking | Haiku |
+| `dev-tracker` | Audit trail — commits vs task completions | Haiku |
 
 ---
 
-## 10. Contributing
+## Competitive Positioning
 
-hex follows the same specs-first pipeline for its own development that it enforces on consumer projects.
+SPECkit and BAML address real sub-problems in AI-assisted development. hex either incorporates those sub-problems or assumes them solved, and addresses the layer above.
 
-### Before Writing Code
+| Capability | hex | SPECkit | BAML |
+|---|:---:|:---:|:---:|
+| Specs-first workflow | ✅ JSON behavioral specs | ✅ Markdown templates | ❌ |
+| Typed structured LLM output | ✅ via port interfaces | ❌ | ✅ core product |
+| Multi-provider LLM routing + fallback | ✅ | agent-dependent | ✅ |
+| Static architecture boundary enforcement | ✅ tree-sitter, hard fail | ❌ | ❌ |
+| Hexagonal layer isolation at import level | ✅ every commit | ❌ | ❌ |
+| Multi-agent swarm coordination | ✅ HexFlo + SpacetimeDB | ❌ | ❌ |
+| Git worktree isolation per agent | ✅ ADR-004 | ❌ | ❌ |
+| Dead-agent task reclamation | ✅ 45s stale / 120s dead | ❌ | ❌ |
+| Semantic validation gate before merge | ✅ validation-judge blocking | ❌ | ❌ |
+| Token-efficient AST summaries | ✅ tree-sitter L0–L3 | ❌ | ❌ |
+| Fleet management dashboard | ✅ real-time, multi-project | ❌ | ❌ |
+| Persistent session memory | ✅ SpacetimeDB / SQLite | ❌ | ❌ |
+| MCP server integration | ✅ | ✅ AGENTS.md | ✅ ActionRunner |
+| YAML-declarative agent behavior | ✅ 14 agents, 7 swarms | partial | ❌ |
+| Open source | ✅ | ✅ MIT | ✅ Apache 2.0 |
 
-1. **Check for an existing ADR**: `hex adr search <topic>`. Every architectural decision has an ADR in `docs/adrs/`. Read it before touching the affected code.
-2. **Write a behavioral spec first**: `hex spec write`. The spec is the contract. Code that does not match the spec fails Phase 5.
-3. **Create a workplan**: `hex plan` or use the `planner` agent. The workplan decomposes the feature into adapter-bounded steps with dependency tiers.
+**The honest summary:**
 
-### Development Workflow
+- **SPECkit** covers Phase 1 of the hex pipeline — specs and planning — with minimal friction. hex's `behavioral-spec-writer` agent produces the same artifacts. SPECkit stops at the spec; hex treats the spec as the beginning.
+- **BAML** solves the function-level reliability problem for LLM calls extremely well. hex's typed inference port and adapter cover the same ground. BAML has no concept of project architecture, agent coordination, or the development lifecycle.
+- **hex's unique territory** — static boundary enforcement, worktree-per-agent isolation, dead-agent task reclamation, and the blocking semantic validation gate — is not addressed by either.
+
+The trade-off is real: hex requires more infrastructure (SpacetimeDB running, hex-nexus daemon) than either competitor. The payoff is the only guarantee in this comparison that architectural compliance is verified at the point of merge.
+
+---
+
+## Contributing
+
+hex follows the same specs-first pipeline for its own development.
 
 ```bash
-# Build Rust components (use debug builds during iteration)
+# Before writing code
+hex adr search <topic>          # check for existing ADR
+hex spec write                  # write behavioral spec first
+hex plan                        # decompose into workplan
+
+# Build (use debug during iteration)
 cargo build -p hex-cli
 cargo build -p hex-nexus
+bun run build                   # TypeScript library
+bun test                        # all tests
 
-# Build TypeScript library
-bun run build
-
-# Run all tests
-bun test
-
-# Architecture check (must pass before committing)
+# Must pass before commit
 hex analyze .
 ```
 
-### Key Constraints for Contributors
+**Key constraints:**
+- Hexagonal rules are enforced — `hex analyze .` must pass
+- TypeScript: all relative imports use `.js` extensions (NodeNext resolution)
+- Tests: no `mock.module()` — use dependency injection via the Deps pattern (ADR-014)
+- No `.env` commits — use `hex secrets vault` for secrets
+- Every new port, adapter, or external dependency requires an ADR first
 
-- **Hexagonal architecture rules are enforced** — `hex analyze .` must pass. Cross-adapter imports will be rejected.
-- **All relative imports in TypeScript must use `.js` extensions** (NodeNext module resolution).
-- **Do not use `mock.module()` in tests** — use dependency injection via the Deps pattern (ADR-014).
-- **Do not commit `.env` files** — use `.env.example` and load secrets via `hex secrets vault`.
-- **Every new port, adapter, or external dependency requires an ADR** before implementation begins.
+**Reference:**
+- [`CLAUDE.md`](CLAUDE.md) — authoritative system design and behavioral rules
+- [`docs/adrs/`](docs/adrs/) — all Architecture Decision Records
+- [`docs/specs/`](docs/specs/) — behavioral specifications
+- [`docs/workplans/`](docs/workplans/) — active feature workplans
 
-### Reference Documents
+---
 
-- `CLAUDE.md` — authoritative system design, behavioral rules, and file organization
-- `docs/adrs/` — 37 Architecture Decision Records documenting every significant design choice
-- `docs/specs/` — behavioral specifications for implemented features
-- `docs/workplans/` — workplan artifacts for features in progress
-- `docs/analysis/` — adversarial review reports with lessons learned
+<div align="center">
+
+Built on [Alistair Cockburn's Ports & Adapters pattern](https://alistair.cockburn.us/hexagonal-architecture/) · Coordination lineage from [ruflo](https://github.com/ruvnet/claude-flow) → HexFlo
+
+</div>
