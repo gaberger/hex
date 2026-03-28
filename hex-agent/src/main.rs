@@ -116,7 +116,20 @@ enum Command {
     /// Run as an MCP server over stdin/stdout (for docker sandbox agents)
     McpServer,
     /// Run as a HexFlo task daemon — poll, execute, report (for Docker sandbox agents)
-    Daemon,
+    Daemon {
+        /// Agent ID assigned by hex-nexus at spawn (overrides HEX_AGENT_ID env var)
+        #[arg(long)]
+        agent_id: Option<String>,
+        /// HexFlo task ID to claim (overrides HEX_SWARM_ID env var)
+        #[arg(long)]
+        task_id: Option<String>,
+        /// hex-nexus host (overrides NEXUS_HOST env var, default: host.docker.internal)
+        #[arg(long)]
+        nexus_host: Option<String>,
+        /// hex-nexus port (overrides NEXUS_PORT env var, default: 5555)
+        #[arg(long)]
+        nexus_port: Option<String>,
+    },
 }
 
 /// Generate a unique, human-readable agent name from the agent UUID.
@@ -186,13 +199,17 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if matches!(&args.command, Some(Command::Daemon)) {
+    if let Some(Command::Daemon { agent_id, task_id, nexus_host, nexus_port }) = &args.command {
         use adapters::secondary::task_executor::TaskExecutor;
         use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        // CLI args override env vars — set them so TaskExecutor::from_env() picks them up
+        if let Some(id) = agent_id { std::env::set_var("HEX_AGENT_ID", id); }
+        if let Some(id) = task_id  { std::env::set_var("HEX_SWARM_ID", id); }
+        if let Some(h)  = nexus_host { std::env::set_var("NEXUS_HOST", h); }
+        if let Some(p)  = nexus_port { std::env::set_var("NEXUS_PORT", p); }
         let executor = TaskExecutor::from_env();
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = shutdown.clone();
-        // Handle SIGTERM / SIGINT
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.ok();
             shutdown_clone.store(true, Ordering::SeqCst);

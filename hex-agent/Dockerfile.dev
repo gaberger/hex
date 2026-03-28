@@ -1,0 +1,32 @@
+# Development image: copies pre-built hex-agent binary from local target/release.
+# Requires: cargo build -p hex-agent --release  (run before docker build)
+#
+# Usage:
+#   cargo build -p hex-agent --release
+#   docker build -f hex-agent/Dockerfile.dev -t hex-agent:latest .
+#   docker run \
+#     -v /path/to/project:/workspace \
+#     -e HEX_AGENT_ID=<agent-id> \
+#     -e HEX_SWARM_ID=<swarm-id> \
+#     --add-host host.docker.internal:host-gateway \
+#     hex-agent:latest daemon
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY target/release/hex-agent /usr/local/bin/hex-agent
+
+# Workspace is bind-mounted at runtime
+WORKDIR /workspace
+
+ENV NEXUS_HOST=host.docker.internal
+ENV NEXUS_PORT=5555
+ENV RUST_LOG=info
+
+ENTRYPOINT ["hex-agent"]
+CMD ["daemon"]
