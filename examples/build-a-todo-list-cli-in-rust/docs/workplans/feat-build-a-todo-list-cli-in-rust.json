@@ -1,0 +1,101 @@
+{
+  "id": "wp-build-cli-todo",
+  "title": "Build CLI Adapter for Todo List",
+  "specs": "specs/cli-todo.md",
+  "adr": "ADR-230817123456",
+  "created": "2023-08-17",
+  "status": "planned",
+  "status_note": "Initial planning",
+  "topology": "pipeline",
+  "budget": "token budget estimate",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Define CLI port interface in `ports/cli.rs` (domain layer)",
+      "layer": "ports",
+      "adapter": "cli",
+      "port": "cli",
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "ports/cli.rs"
+      ],
+      "worktree_branch": "feat/cli/ports",
+      "done_condition": "CLI port interface defined and compiles"
+    },
+    {
+      "id": "P1.2",
+      "description": "Implement CLI adapter in `adapters/primary/cli.rs` (primary adapters layer)",
+      "layer": "primary",
+      "adapter": "cli",
+      "port": "cli",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 2,
+      "specs": [
+        "adapters/primary/cli.rs"
+      ],
+      "worktree_branch": "feat/cli/primary",
+      "done_condition": "CLI adapter implemented and passes unit tests"
+    },
+    {
+      "id": "P2.3",
+      "description": "Implement usecases in `usecases/todo.rs` (usecases layer)",
+      "layer": "usecases",
+      "adapter": null,
+      "port": "cli",
+      "dependencies": [
+        "P0.1",
+        "P1.2"
+      ],
+      "tier": 3,
+      "specs": [
+        "usecases/todo.rs"
+      ],
+      "worktree_branch": "feat/cli/usecases",
+      "done_condition": "Use cases implemented and integrated with CLI adapter"
+    },
+    {
+      "id": "P3.4",
+      "description": "Wire components in `main.rs` (composition root)",
+      "layer": "composition-root",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1",
+        "P1.2",
+        "P2.3"
+      ],
+      "tier": 4,
+      "specs": [
+        "main.rs"
+      ],
+      "worktree_branch": "feat/cli/composition",
+      "done_condition": "Composition root wired and CLI application runs"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P1.2",
+    "P2.3",
+    "P3.4"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Use dependency injection for CLI adapter wiring",
+      "risk": "CLI adapter integration complexity"
+    }
+  ],
+  "successCriteria": [
+    "CLI interface implemented and testable",
+    "Business logic decoupled from CLI implementation",
+    "Composition root successfully wired",
+    "All tests pass"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
