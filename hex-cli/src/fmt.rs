@@ -60,6 +60,11 @@ impl HexTable {
         Table::new(rows).with(Style::rounded()).to_string()
     }
 
+    /// Alias for [`HexTable::new`] — rounded-border table.
+    pub fn render<T: Tabled>(rows: &[T]) -> String {
+        Self::new(rows)
+    }
+
     /// Borderless table from Tabled-derived rows.
     pub fn compact<T: Tabled>(rows: &[T]) -> String {
         if rows.is_empty() {
