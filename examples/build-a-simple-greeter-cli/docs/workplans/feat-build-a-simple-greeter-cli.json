@@ -1,0 +1,155 @@
+{
+  "id": "wp-greeter-cli",
+  "title": "Greeter CLI Implementation",
+  "specs": "specs/greeter-cli.md",
+  "adr": "ADR-230315",
+  "created": "2023-03-15",
+  "status": "planned",
+  "status_note": "Initial planning",
+  "topology": "pipeline",
+  "budget": "3-5 days",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Create GreetingUseCase with execute method returning personalized greeting",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/greeter-cli/domain",
+      "done_condition": "GreetingUseCase passes unit tests"
+    },
+    {
+      "id": "P0.2",
+      "description": "Define UserInputPort interface for stdin input",
+      "layer": "ports",
+      "adapter": null,
+      "port": "UserInputPort",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 0,
+      "specs": [
+        "S02"
+      ],
+      "worktree_branch": "feat/greeter-cli/ports",
+      "done_condition": "UserInputPort interface implemented in ports layer"
+    },
+    {
+      "id": "P0.3",
+      "description": "Define OutputPort interface for stdout output",
+      "layer": "ports",
+      "adapter": null,
+      "port": "OutputPort",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 0,
+      "specs": [
+        "S03"
+      ],
+      "worktree_branch": "feat/greeter-cli/ports",
+      "done_condition": "OutputPort interface implemented in ports layer"
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement CLIInputAdapter reading from stdin",
+      "layer": "primary",
+      "adapter": "CLIInputAdapter",
+      "port": "UserInputPort",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [
+        "S04"
+      ],
+      "worktree_branch": "feat/greeter-cli/primary",
+      "done_condition": "CLIInputAdapter passes integration test with GreetingUseCase"
+    },
+    {
+      "id": "P1.2",
+      "description": "Implement CLIGreetingAdapter writing to stdout",
+      "layer": "primary",
+      "adapter": "CLIGreetingAdapter",
+      "port": "OutputPort",
+      "dependencies": [
+        "P0.3"
+      ],
+      "tier": 1,
+      "specs": [
+        "S05"
+      ],
+      "worktree_branch": "feat/greeter-cli/primary",
+      "done_condition": "CLIGreetingAdapter passes integration test with GreetingUseCase"
+    },
+    {
+      "id": "P1.3",
+      "description": "Create composition-root.ts to wire adapters to ports",
+      "layer": "composition-root",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P1.1",
+        "P1.2"
+      ],
+      "tier": 4,
+      "specs": [
+        "S06"
+      ],
+      "worktree_branch": "feat/greeter-cli/composition-root",
+      "done_condition": "Composition root successfully binds adapters to ports"
+    },
+    {
+      "id": "P2.1",
+      "description": "Implement MCP compatibility layer for CLI integration",
+      "layer": "integration",
+      "adapter": "MCPAdapter",
+      "port": null,
+      "dependencies": [
+        "P1.3"
+      ],
+      "tier": 5,
+      "specs": [
+        "S07"
+      ],
+      "worktree_branch": "feat/greeter-cli/integration",
+      "done_condition": "MCP integration passes end-to-end tests"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P0.3",
+    "P1.1",
+    "P1.2",
+    "P1.3",
+    "P2.1"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Use existing MCP adapter patterns for stdin/stdout handling",
+      "risk": "CLI adapter implementation complexity"
+    },
+    {
+      "impact": "high",
+      "mitigation": "Implement composition root with thorough unit tests",
+      "risk": "Dependency injection configuration errors"
+    }
+  ],
+  "successCriteria": [
+    "CLI tool accepts user input and produces personalized greeting",
+    "All hexagonal architecture layers implemented correctly",
+    "MCP integration passes end-to-end tests",
+    "No cross-layer coupling in implementation"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
