@@ -78,6 +78,11 @@ pub fn stdb_database_for_module(module_name: &str) -> &str {
 }
 
 /// Re-export commonly used types at the crate root.
+pub use domain::sandbox::{AgentTask, SandboxConfig, SandboxError, SpawnResult};
+// Note: ToolCall and ToolResult are re-exported from domain::tools below; sandbox types
+// are available via domain::sandbox::{ToolCall, ToolResult} for sandbox-specific usage.
+pub use ports::agent_runtime::IAgentRuntimePort;
+pub use ports::sandbox::ISandboxPort;
 pub use domain::agents::{AgentConstraints, AgentDefinition, AgentMetrics};
 pub use domain::messages::{ContentBlock, ConversationState, Message, Role, StopReason};
 pub use domain::tokens::{ContextPressure, PressureLevel, TokenBudget, TokenPartition, TokenUsage};

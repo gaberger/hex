@@ -3,6 +3,7 @@ pub mod api_optimization;
 pub mod enforcement;
 pub mod hooks;
 pub mod messages;
+pub mod sandbox;
 pub mod secret_grant;
 pub mod skills;
 pub mod tokens;
