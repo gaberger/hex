@@ -7,6 +7,7 @@
 **Hexagonal architecture enforcement · Native swarm coordination · Specs-first pipeline**
 
 [![Build](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square)](https://github.com/gaberger/hex)
+[![Status](https://img.shields.io/badge/status-alpha-yellow?style=flat-square)](https://github.com/gaberger/hex/releases)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![SpacetimeDB](https://img.shields.io/badge/spacetimedb-required-red?style=flat-square)](https://spacetimedb.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
@@ -14,38 +15,32 @@
 
 <br/>
 
-*hex is not a linter. It is not a prompt framework. It is an enforcement runtime for AI agents —
-one that makes architectural violations impossible rather than merely detectable.*
-
-<br/>
-
-![hex dashboard](assets/hex-dashboard.png)
-
-*The hex dashboard: real-time architecture health, agent fleet, swarm task graph, and dependency visualization*
+**hex** is an AI-Assisted Integrated Development Environment (AAIDE) for hexagonal architecture.
+It enforces architectural boundaries at code generation time, coordinates parallel AI agents
+via isolated git worktrees, and validates output against behavioral specs before any merge.
 
 </div>
 
 ---
 
-## The Origin: Hexagonal Architecture
-
-In 2005, Alistair Cockburn published the **Ports & Adapters** pattern — what he called "hexagonal architecture." The insight was simple and profound: an application should be equally driveable by users, programs, tests, or batch scripts, and should work in isolation from its eventual runtime devices and databases. You achieve this by separating the *application core* (domain + ports) from the *infrastructure* (adapters) through explicit typed interfaces.
-
-For human developers, this is a design discipline enforced by code review. For AI agents, it is catastrophically easy to violate. An agent given a large codebase in context will find the shortest path to a working change — and that path almost always crosses a boundary.
-
-**hex takes Cockburn's pattern and makes it a hard execution constraint.** Not a linter. Not a convention. A constraint: agents are scoped to one adapter boundary, given only the port interfaces they must satisfy, and their output is verified before it can reach main.
+> [!IMPORTANT]
+> hex requires **SpacetimeDB** (running) and **hex-nexus** (daemon) before any coordination or analysis features work. It also requires more setup than a linter or prompt framework. If you need a fast start with minimal infrastructure, see the [trade-off note](#the-infrastructure-trade-off) before investing time.
 
 ---
 
-## From Ruflo to HexFlo
+## Table of Contents
 
-hex's multi-agent coordination has a lineage worth knowing.
-
-**Ruflo** (built on `claude-flow`) was the first coordination layer: an external registry and tracking system that assigned tasks to agents, persisted state between sessions, and provided the swarm primitives (`swarm_init`, `task_create`, `task_complete`) that proved the model worked. It was the proof of concept.
-
-**HexFlo** is the native evolution. Built in Rust, embedded directly in `hex-nexus`, backed by SpacetimeDB's WASM transactional runtime. Same mental model as ruflo — swarms, tasks, agents, memory — but with zero external dependencies, real-time WebSocket state sync across every connected client, dead-agent reclamation at the heartbeat level, and a fleet dashboard that shows you everything in one place.
-
-The shift from ruflo to HexFlo was the shift from *tracking coordination externally* to *making coordination a first-class infrastructure concern*.
+- [Why hex Exists](#why-hex-exists)
+- [Quick Start](#quick-start)
+- [System Architecture](#system-architecture)
+- [Hexagonal Architecture Enforcement](#hexagonal-architecture-enforcement)
+- [Specs-First Development Pipeline](#specs-first-development-pipeline)
+- [HexFlo: Native Swarm Coordination](#hexflo-native-swarm-coordination)
+- [CLI Reference](#cli-reference)
+- [Agent Fleet](#agent-fleet)
+- [Advanced Capabilities](#advanced-capabilities)
+- [Competitive Positioning](#competitive-positioning)
+- [Contributing](#contributing)
 
 ---
 
@@ -80,6 +75,81 @@ The shift from ruflo to HexFlo was the shift from *tracking coordination externa
 
 > [!IMPORTANT]
 > hex enforces architecture at the point of **code generation**, not after. An agent scoped to a secondary adapter boundary cannot import from another adapter because it never had that code in context. The violation cannot be written because the context for writing it was never provided.
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+| Requirement | Version | Notes |
+|---|---|---|
+| Rust | 1.75+ | For building hex-cli and hex-nexus |
+| SpacetimeDB | 1.x | Must be running before `hex nexus start` |
+| Bun | 1.x | For the TypeScript library and tests |
+| Claude Code | any | Optional — for MCP integration only |
+| Platform | macOS, Linux | Windows: not tested |
+
+### The Infrastructure Trade-Off
+
+hex requires SpacetimeDB (coordination backbone) and hex-nexus (daemon) running alongside your development workflow. This is more infrastructure than a linter or prompt framework. The payoff: architectural compliance verified at every commit, dead-agent task reclamation, and real-time fleet visibility across projects. If your team doesn't need multi-agent coordination or architecture enforcement at the commit level, SPECkit or BAML may be a faster starting point.
+
+### Install and Run
+
+```bash
+# 1. Build hex CLI from source
+git clone https://github.com/gaberger/hex.git
+cd hex
+cargo build -p hex-cli --release
+export PATH="$PWD/target/release:$PATH"
+
+# 2. Start SpacetimeDB
+hex stdb start
+
+# 3. Start hex-nexus daemon
+hex nexus start
+
+# 4. Initialize hex in your project
+hex init /path/to/your/project
+
+# 5. Smoke test — run architecture analysis
+hex analyze /path/to/your/project
+
+# 6. Open the dashboard
+open http://localhost:5555
+```
+
+### What `hex init` adds to your project
+
+```
+your-project/
+├── .claude/
+│   ├── agents/            # 14 YAML agent definitions (hex-coder, planner, etc.)
+│   ├── skills/            # Slash commands (/hex-generate, /hex-scaffold, etc.)
+│   └── settings.json      # MCP server config (hex mcp)
+├── docs/
+│   ├── adrs/              # Architecture Decision Records directory
+│   ├── specs/             # Behavioral specs (written before code)
+│   └── workplans/         # Feature workplans
+├── scripts/
+│   └── feature-workflow.sh  # Worktree lifecycle management
+└── CLAUDE.md              # Project-specific hex rules and architecture guide
+```
+
+### Claude Code Integration
+
+```json
+{
+  "mcpServers": {
+    "hex": {
+      "command": "hex",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+All `mcp__hex__*` tools are now available in Claude Code and map 1:1 to CLI commands.
 
 ---
 
@@ -123,15 +193,17 @@ hex is five components working in concert. SpacetimeDB is the backbone — every
   ╚═════════════════════════╝   ╚══════════════════════════╝
 ```
 
-### The Five Units
+| Unit | Language | Where it runs | Required |
+|---|---|---|---|
+| **SpacetimeDB** | WASM (Rust) | Local or remote server | Yes — coordination backbone |
+| **hex-nexus** | Rust (axum) | Local daemon, port 5555 | Yes — filesystem bridge + dashboard |
+| **hex-agent** | YAML + Rust hooks | Developer's machine | Yes — enforcement runtime |
+| **hex-dashboard** | Solid.js + Tailwind | Served by nexus at :5555 | No — but recommended |
+| **Inference** | WASM + Rust bridge | Via nexus HTTP | No — needed for AI agent features |
 
-| Unit | Language | Role |
-|---|---|---|
-| **SpacetimeDB** | WASM (Rust) | Real-time coordination backbone. 18 modules. All state lives here. |
-| **hex-nexus** | Rust (axum) | Filesystem bridge. Runs analysis, manages git, serves dashboard. Port 5555. |
-| **hex-agent** | YAML + Rust hooks | Architecture enforcement runtime. Lives on the developer's machine. |
-| **hex-dashboard** | Solid.js + Tailwind | Control plane. Multi-project, real-time, zero polling. |
-| **Inference** | WASM + Rust bridge | Model-agnostic LLM routing. WASM for logic, nexus for HTTP. |
+![hex dashboard](assets/hex-dashboard.png)
+
+*Real-time architecture health, agent fleet, swarm task graph, and hexagonal dependency visualization*
 
 ---
 
@@ -161,14 +233,16 @@ hex is five components working in concert. SpacetimeDB is the backbone — every
                └─────────┘
 ```
 
-| Layer | May import |
+| Layer | May import from |
 |---|---|
 | `domain/` | `domain/` only |
 | `ports/` | `domain/` only |
 | `usecases/` | `domain/`, `ports/` |
 | `adapters/primary/` | `ports/` only |
 | `adapters/secondary/` | `ports/` only |
-| **Adapters may NEVER import other adapters** | |
+
+> [!WARNING]
+> Adapters may **never** import other adapters. Cross-adapter coupling is the most common architectural failure in AI-generated code and is unconditionally rejected by `hex analyze`.
 
 `hex analyze` runs tree-sitter over every source file, builds the full import graph, and rejects any edge that crosses a layer boundary. This runs on every commit via pre-commit hook. There is no warning mode — violations fail the build.
 
@@ -238,7 +312,7 @@ Each adapter boundary gets an isolated git worktree. Agents cannot see — or co
 
 ## HexFlo: Native Swarm Coordination
 
-HexFlo is the direct successor to ruflo — the same coordination model (swarms, tasks, agents, memory, heartbeats) rebuilt as a first-class Rust component inside hex-nexus, backed by SpacetimeDB for real-time multi-client state sync.
+HexFlo is the native Rust coordination layer built into hex-nexus, backed by SpacetimeDB for real-time multi-client state sync. It evolved from ruflo (an external claude-flow-based registry) into a first-class infrastructure component with zero external dependencies.
 
 ### Task State Machine
 
@@ -279,51 +353,6 @@ hex memory store "feature/auth/decision" "Using JWT, not sessions — see ADR-03
 hex memory get "feature/auth/decision"
 hex memory search "auth"
 ```
-
----
-
-## Quick Start
-
-> [!NOTE]
-> SpacetimeDB must be running before `hex nexus start`. hex-nexus will not start without it.
-
-```bash
-# 1. Build hex CLI
-git clone https://github.com/gaberger/hex.git
-cd hex
-cargo build -p hex-cli --release
-export PATH="$PWD/target/release:$PATH"
-
-# 2. Start SpacetimeDB
-hex stdb start
-
-# 3. Start hex-nexus daemon
-hex nexus start
-
-# 4. Initialize hex in your project
-hex init /path/to/your/project
-
-# 5. Check architecture health
-hex analyze /path/to/your/project
-
-# 6. Open the dashboard
-open http://localhost:5555
-```
-
-### Claude Code Integration
-
-```json
-{
-  "mcpServers": {
-    "hex": {
-      "command": "hex",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-All `mcp__hex__*` tools are now available in Claude Code and map 1:1 to CLI commands.
 
 ---
 
@@ -428,6 +457,8 @@ All 14 agents are defined in YAML (`hex-cli/assets/agents/hex/hex/`), deployed t
 
 ## Advanced Capabilities
 
+The following capabilities are implemented and active in hex's core pipeline.
+
 ### Context Pipeline Compression
 
 Long multi-phase pipeline runs accumulate context: prior phase outputs, file reads, tool results, error recovery loops. hex implements a full compression pipeline so agents never silently degrade when context fills.
@@ -456,47 +487,6 @@ token_budget:
     relief: summarize_history   # or: drop_oldest | escalate
 ```
 
-### RL-Driven Model Selection
-
-hex-nexus runs a Q-learning engine that learns the optimal model and context strategy per task type across sessions.
-
-```
-State:  task_type + codebase_size + agent_count + token_usage + rate_limited
-Action: model (Haiku / Sonnet / MiniMax / Opus / Local) + context strategy
-Reward: success(+1.0) + fast_bonus − rate_limit_penalty − token_cost
-```
-
-Fallback chain (triggered on 429, with RL penalty applied):
-```
-Opus → Sonnet → MiniMax → MiniMaxFast → Haiku → Local → error
-```
-
-Self-optimizing: learns which models get rate-limited, which task types need Opus, which run free locally. Improves over sessions with no manual tuning.
-
-### Quantization-Aware Inference Routing
-
-Quantization level is a first-class routing dimension. A 2-bit local model handles scaffolding; cloud handles cross-file reasoning.
-
-| Tier | Bits | Memory (7B) | Typical use |
-|---|---|---|---|
-| Q2 | 2 | ~2 GB | Scaffolding, formatting, docstrings |
-| Q4 | 4 | ~4.5 GB | General coding, test generation (default local) |
-| Q8 | 8 | ~8 GB | Complex reasoning, security review |
-| FP16 | 16 | ~14 GB | Cross-file planning, novel architecture |
-| Cloud | — | — | Frontier tasks (Anthropic / OpenAI) |
-
-Agent YAMLs declare quantization policy:
-```yaml
-inference:
-  quantization:
-    default: q4
-    minimum: q2
-    on_complexity_high: q8
-    on_failure: cloud
-```
-
-**Neural Lab calibration** runs benchmark suites through Q2→Cloud using `validation-judge` as oracle, then writes measured `quality_score` back to each provider record. Routing uses real scores, not tier assumptions.
-
 ### Encrypted Secrets Vault
 
 Secrets are encrypted at rest (AES-256-GCM), zeroed from heap on drop (`ZeroizeOnDrop`), and never stored as raw values in SpacetimeDB.
@@ -507,101 +497,20 @@ SQLite stores:       AES-256-GCM ciphertext    ← key from ~/.hex/vault.key (mo
 In-process:          Zeroizing<String>         ← zeroed after use
 ```
 
-Every agent access is scoped, time-limited, and single-use. Grant claims appear in real-time on every connected dashboard client via SpacetimeDB WebSocket:
+Every agent access is scoped, time-limited, and single-use. Grant claims appear in real-time on every connected dashboard client:
 
 ```bash
 hex secrets grant <agent-id> ANTHROPIC_API_KEY   # creates TTL-scoped grant
-# agent claims once via authenticated channel → grant marked claimed instantly across all clients
 hex secrets revoke <grant-id>                    # invalidates immediately
-```
 
-Frontier providers registered with key references, never raw values:
-```bash
+# Register frontier providers with key references, never raw values
 hex inference add anthropic --model claude-sonnet-4-6 --key-ref ANTHROPIC_API_KEY
 hex inference add openai    --model gpt-4o           --key-ref OPENAI_API_KEY --fallback anthropic
 ```
 
-### Goal-Driven Supervisor Loop
-
-The supervisor defines **objectives** and loops until all are met, re-evaluating everything after every agent action — because fixing a compile error can introduce a boundary violation, and fixing a violation can break tests.
-
-```
-Objectives: CodeGenerated · CodeCompiles · TestsPass · ReviewPasses · ArchitectureGradeA · UxReviewPasses · DocsGenerated
-
-Iteration 1: CodeCompiles ✗ (3 errors)   → hex-fixer
-Iteration 2: TestsPass ✗ (no tests)      → hex-tester
-Iteration 3: TestsPass ✗ (2 fail)        → hex-fixer
-Iteration 4: CodeCompiles ✗ (fix broke import) → hex-fixer
-Iteration 5: All ✓ → advance to next tier
-```
-
-Independent objectives (ReviewPasses + UxReviewPasses) run in parallel. Specialized agents per objective: `hex-coder`, `hex-reviewer`, `hex-tester`, `hex-documenter`, `hex-ux`, `hex-analyzer`, `hex-fixer` — each with role-specific context and model selection.
-
-### Neural Lab: Autonomous Architecture Research
-
-Neural Lab encodes neural network architecture as transactional SpacetimeDB state and runs an autonomous experiment loop via **scheduled WASM reducers** — no external orchestrator required.
-
-```
-NetworkConfig (architecture as state)
-    ↓ experiment_create
-Experiment (queued → training → evaluating → kept/discarded)
-    ↓ research_loop_tick() runs inside WASM every 30s
-ResearchFrontier (best known config per lineage, updated atomically)
-```
-
-The WASM module auto-generates mutation candidates (widen, deepen, attention, optimizer, activation) from the current frontier, dispatches training to GPU fleet nodes via hex-nexus subscription, and updates the frontier when results arrive. Multi-agent research swarms run N mutations in parallel — linear speedup over serial experiment loops. RL-engine Q-values drive mutation strategy selection.
-
-```bash
-hex neural-lab experiment create --hypothesis "increase n_embd 512→768"
-hex neural-lab frontier          # best config + experiment history
-```
-
-### Haiku Preflight & Automatic Context Compaction
-
-hex implements two multi-model orchestration patterns within a single conversation turn — a cheap Haiku classifier gates whether the expensive reasoning model runs and with what context.
-
-**Startup quota check** — before building any context window, hex fires a ~50-token Haiku request to verify API connectivity and quota. Fail-fast in <500ms instead of after a 15k-token context build that then hits a 429.
-
-**Topic change detection** — on every user input, a Haiku classification call determines whether this is a continuation or a new topic. New topic → automatic context compaction (conversation summarized, history cleared, summary injected as system context) before the reasoning model sees the input. Prevents unrelated prior conversation from polluting the context budget.
-
-**Automatic compaction** — when context utilization exceeds 85%, the conversation loop compacts without user intervention. No manual `/compact` needed.
-
-```
-~200 tokens to Haiku per turn (<0.1% of total cost)
-vs. savings from avoiding bloated context on all subsequent turns
-```
-
-### OpenRouter: 300+ Models via One API Key
-
-OpenRouter is a provider-of-providers: one API key, one billing dashboard, automatic upstream failover across Together AI, Lambda, Fireworks, and others. hex treats it as a first-class inference provider with its own `ProviderKind`.
-
-```bash
-hex inference discover --provider openrouter   # sync 300+ available models into SpacetimeDB
-hex secrets set OPENROUTER_API_KEY sk-or-...   # single key for all models
-```
-
-**Recommended models for the RL selection pool:**
-
-| Model | Context | $/M in | Best for |
-|---|---|---|---|
-| `meta-llama/llama-4-maverick` | 1M | $0.25 | General coding, large context |
-| `meta-llama/llama-4-scout` | 512K | $0.15 | Summarization, batch analysis |
-| `deepseek/deepseek-r1` | 128K | $0.55 | Complex reasoning, math, security review |
-| `qwen/qwen3-235b` | 128K | $0.20 | Multilingual, structured output |
-| `google/gemini-2.5-pro` | 1M | $1.25 | Long-context analysis |
-
-OpenRouter reports actual cost per request — the inference-gateway WASM module uses this directly for budget tracking instead of estimating from token counts. The RL engine uses real cost to learn which models are worth their price per task type.
-
-**Extended fallback chain with OpenRouter:**
-```
-Complex reasoning:   Opus → OpenRouter(deepseek-r1) → Sonnet
-Code generation:     Sonnet → OpenRouter(llama-4-maverick) → MiniMax
-Budget-constrained:  OpenRouter(llama-4-scout) → Local → Haiku
-```
-
 ### Grade A Quality Loop
 
-`hex dev` doesn't stop at generating code — it iterates through a quality gate until the output is provably correct.
+`hex dev` iterates through a quality gate until output is provably correct — it does not stop at generated code.
 
 ```
 Code generated
@@ -618,7 +527,7 @@ Code generated
   └── Grade A (≥90/100, zero violations) → advance to commit
 ```
 
-Each gate retries up to 3 times with specialized fix prompts (compile errors, test failures, boundary violations) and the actual error output as context — the agent sees exactly what went wrong. The loop reports cost per iteration:
+Each gate retries up to 3 times with the actual error output as context. The loop reports cost per iteration:
 
 ```
 Phase 5: Quality Gate — 3 iterations, $0.003 fix cost
@@ -627,39 +536,128 @@ Phase 5: Quality Gate — 3 iterations, $0.003 fix cost
   Analyze:    94/100 Grade A  (2 violations fixed automatically)
 ```
 
-Grade B (80+) is accepted in `--auto` mode with a warning. Only interactive mode blocks on Grade A. The quality loop is currently embedded in `validate_phase.rs`; the roadmap migrates it to swarm-controlled orchestration where each fix attempt is a tracked HexFlo task.
+### Haiku Preflight & Automatic Context Compaction
+
+hex implements multi-model orchestration within a single conversation turn — a cheap Haiku classifier gates whether the expensive reasoning model runs and with what context.
+
+- **Startup quota check** — ~50-token Haiku request verifies API connectivity before building any context. Fail-fast in <500ms instead of after a 15k-token context build that then hits a 429.
+- **Topic change detection** — Haiku classifies each user input as continuation or new topic. New topic → automatic compaction before the reasoning model sees the input.
+- **Automatic compaction at 85%** — no manual `/compact` required.
+
+### OpenRouter: 300+ Models via One API Key
+
+OpenRouter is a provider-of-providers: one API key, one billing dashboard, automatic upstream failover. hex treats it as a first-class inference provider.
+
+```bash
+hex inference discover --provider openrouter   # sync available models into SpacetimeDB
+hex secrets set OPENROUTER_API_KEY sk-or-...
+```
+
+| Model | Context | $/M input | Best for |
+|---|---|---|---|
+| `meta-llama/llama-4-maverick` | 1M | $0.25 | General coding, large context |
+| `meta-llama/llama-4-scout` | 512K | $0.15 | Summarization, batch analysis |
+| `deepseek/deepseek-r1` | 128K | $0.55 | Complex reasoning, security review |
+| `qwen/qwen3-235b` | 128K | $0.20 | Multilingual, structured output |
+| `google/gemini-2.5-pro` | 1M | $1.25 | Long-context analysis |
+
+OpenRouter reports actual cost per request — used directly for budget tracking instead of estimating from token counts. Extended fallback chains:
+
+```
+Complex reasoning:   Opus → OpenRouter(deepseek-r1) → Sonnet
+Code generation:     Sonnet → OpenRouter(llama-4-maverick) → MiniMax
+Budget-constrained:  OpenRouter(llama-4-scout) → Local → Haiku
+```
+
+---
+
+### Experimental Capabilities
+
+The following capabilities are accepted in design (ADRs written) but not yet fully implemented. They represent the active development roadmap.
+
+#### RL-Driven Model Selection
+
+hex-nexus runs a Q-learning engine that learns optimal model and context strategy per task type across sessions — no manual tuning.
+
+```
+State:  task_type + codebase_size + agent_count + token_usage + rate_limited
+Action: model (Haiku / Sonnet / MiniMax / Opus / Local) + context strategy
+Reward: success(+1.0) + fast_bonus − rate_limit_penalty − token_cost
+```
+
+Fallback chain (triggered on 429, with RL penalty applied):
+```
+Opus → Sonnet → MiniMax → MiniMaxFast → Haiku → Local → error
+```
+
+#### Quantization-Aware Inference Routing
+
+Routes each request to the cheapest local model that meets the quality floor for that task's complexity. A 2-bit local model handles scaffolding; cloud handles cross-file reasoning.
+
+| Tier | Bits | Memory (7B) | Typical use |
+|---|---|---|---|
+| Q2 | 2 | ~2 GB | Scaffolding, formatting, docstrings |
+| Q4 | 4 | ~4.5 GB | General coding, test generation |
+| Q8 | 8 | ~8 GB | Complex reasoning, security review |
+| FP16 | 16 | ~14 GB | Cross-file planning, novel architecture |
+| Cloud | — | — | Frontier tasks (Anthropic / OpenAI) |
+
+#### Goal-Driven Supervisor Loop
+
+The supervisor defines objectives and loops until all are met, re-evaluating everything after every agent action.
+
+```
+Objectives: CodeGenerated · CodeCompiles · TestsPass · ReviewPasses · ArchitectureGradeA · UxReviewPasses · DocsGenerated
+
+Iteration 1: CodeCompiles ✗ (3 errors)        → hex-fixer
+Iteration 2: TestsPass ✗ (no tests)           → hex-tester
+Iteration 3: TestsPass ✗ (2 fail)             → hex-fixer
+Iteration 4: CodeCompiles ✗ (fix broke import) → hex-fixer
+Iteration 5: All ✓ → advance to next tier
+```
+
+#### Neural Lab: Autonomous Architecture Research
+
+Neural network architecture encoded as transactional SpacetimeDB state. Autonomous experiment loop runs via scheduled WASM reducers — no external orchestrator required.
+
+```bash
+hex neural-lab experiment create --hypothesis "increase n_embd 512→768"
+hex neural-lab frontier          # best config + experiment history
+```
+
+Multi-agent research swarms run N mutations in parallel. RL-engine Q-values drive mutation strategy selection. Experiment results update the frontier atomically via SpacetimeDB reducers.
 
 ---
 
 ## Competitive Positioning
 
-SPECkit and BAML address real sub-problems in AI-assisted development. hex either incorporates those sub-problems or assumes them solved, and addresses the layer above.
+SPECkit and BAML address real sub-problems in AI-assisted development. hex incorporates those sub-problems and adds the enforcement and coordination layer that neither provides.
 
 | Capability | hex | SPECkit | BAML |
 |---|:---:|:---:|:---:|
-| Specs-first workflow | ✅ JSON behavioral specs | ✅ Markdown templates | ❌ |
-| Typed structured LLM output | ✅ via port interfaces | ❌ | ✅ core product |
-| Multi-provider LLM routing + fallback | ✅ | agent-dependent | ✅ |
-| Static architecture boundary enforcement | ✅ tree-sitter, hard fail | ❌ | ❌ |
-| Hexagonal layer isolation at import level | ✅ every commit | ❌ | ❌ |
-| Multi-agent swarm coordination | ✅ HexFlo + SpacetimeDB | ❌ | ❌ |
-| Git worktree isolation per agent | ✅ ADR-004 | ❌ | ❌ |
-| Dead-agent task reclamation | ✅ 45s stale / 120s dead | ❌ | ❌ |
-| Semantic validation gate before merge | ✅ validation-judge blocking | ❌ | ❌ |
-| Token-efficient AST summaries | ✅ tree-sitter L0–L3 | ❌ | ❌ |
-| Fleet management dashboard | ✅ real-time, multi-project | ❌ | ❌ |
-| Persistent session memory | ✅ SpacetimeDB / SQLite | ❌ | ❌ |
-| MCP server integration | ✅ | ✅ AGENTS.md | ✅ ActionRunner |
-| YAML-declarative agent behavior | ✅ 14 agents, 7 swarms | partial | ❌ |
-| Open source | ✅ | ✅ MIT | ✅ Apache 2.0 |
+| Specs-first workflow | ✅ | ✅ | ❌ |
+| Typed structured LLM output | ✅ | ❌ | ✅ |
+| Multi-provider LLM routing + fallback | ✅ | ❌ | ✅ |
+| Static architecture boundary enforcement | ✅ | ❌ | ❌ |
+| Hexagonal layer isolation at import level | ✅ | ❌ | ❌ |
+| Multi-agent swarm coordination | ✅ | ❌ | ❌ |
+| Git worktree isolation per agent | ✅ | ❌ | ❌ |
+| Dead-agent task reclamation | ✅ | ❌ | ❌ |
+| Semantic validation gate before merge | ✅ | ❌ | ❌ |
+| Token-efficient AST summaries | ✅ | ❌ | ❌ |
+| Fleet management dashboard | ✅ | ❌ | ❌ |
+| Persistent session memory | ✅ | ❌ | ❌ |
+| MCP server integration | ✅ | ✅ | ✅ |
+| YAML-declarative agent behavior | ✅ | ❌ | ❌ |
+| Open source | ✅ | ✅ | ✅ |
 
 **The honest summary:**
 
-- **SPECkit** covers Phase 1 of the hex pipeline — specs and planning — with minimal friction. hex's `behavioral-spec-writer` agent produces the same artifacts. SPECkit stops at the spec; hex treats the spec as the beginning.
+- **SPECkit** covers Phase 1 of the hex pipeline — specs and planning — with minimal friction and no infrastructure. hex's `behavioral-spec-writer` produces the same artifacts. SPECkit stops at the spec; hex treats the spec as the beginning.
 - **BAML** solves the function-level reliability problem for LLM calls extremely well. hex's typed inference port and adapter cover the same ground. BAML has no concept of project architecture, agent coordination, or the development lifecycle.
 - **hex's unique territory** — static boundary enforcement, worktree-per-agent isolation, dead-agent task reclamation, and the blocking semantic validation gate — is not addressed by either.
 
-The trade-off is real: hex requires more infrastructure (SpacetimeDB running, hex-nexus daemon) than either competitor. The payoff is the only guarantee in this comparison that architectural compliance is verified at the point of merge.
+hex requires more infrastructure than either competitor. That infrastructure is the source of its guarantees.
 
 ---
 
@@ -692,7 +690,7 @@ hex analyze .
 
 **Reference:**
 - [`CLAUDE.md`](CLAUDE.md) — authoritative system design and behavioral rules
-- [`docs/adrs/`](docs/adrs/) — all Architecture Decision Records
+- [`docs/adrs/`](docs/adrs/) — Architecture Decision Records (80+ and growing)
 - [`docs/specs/`](docs/specs/) — behavioral specifications
 - [`docs/workplans/`](docs/workplans/) — active feature workplans
 
@@ -700,6 +698,6 @@ hex analyze .
 
 <div align="center">
 
-Built on [Alistair Cockburn's Ports & Adapters pattern](https://alistair.cockburn.us/hexagonal-architecture/) · Coordination lineage from [ruflo](https://github.com/ruvnet/claude-flow) → HexFlo
+Built on [Alistair Cockburn's Ports & Adapters pattern](https://alistair.cockburn.us/hexagonal-architecture/) (2005) · Coordination lineage: [ruflo](https://github.com/ruvnet/claude-flow) → HexFlo
 
 </div>
