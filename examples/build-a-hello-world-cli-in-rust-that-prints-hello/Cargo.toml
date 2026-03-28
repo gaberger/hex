@@ -1,5 +1,5 @@
 [package]
-name = "hello-world-cli-implementation"
+name = "plan-build-a-hello-world-cli-in-rust-tha"
 version = "0.1.0"
 edition = "2021"
 

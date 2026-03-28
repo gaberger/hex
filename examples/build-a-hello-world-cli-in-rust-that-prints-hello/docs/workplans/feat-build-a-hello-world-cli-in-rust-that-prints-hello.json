@@ -1,13 +1,13 @@
 {
-  "id": "wp-230720T1430",
-  "title": "Hello World CLI Implementation",
-  "specs": "specs/hello-cli.md",
-  "adr": "ADR-230720T1430",
-  "created": "2023-07-20",
+  "id": "wp-build-a-hello-world-cli-in",
+  "title": "Plan: build a hello world CLI in rust that prints hello",
+  "specs": null,
+  "adr": null,
+  "created": null,
   "status": "planned",
-  "status_note": "Initial planning",
-  "topology": "mixed",
-  "budget": "100 tokens",
+  "status_note": "auto-generated fallback — LLM JSON extraction failed",
+  "topology": "pipeline",
+  "budget": null,
   "steps": [
     {
       "id": "P0.1",
@@ -17,24 +17,13 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": [
-        "S01"
-      ],
+      "specs": null,
       "worktree_branch": null,
       "done_condition": "src/main.rs compiles and implements the feature; Cargo.toml has correct dependencies"
     }
   ],
-  "mergeOrder": [
-    "P0.1",
-    "P0.2"
-  ],
-  "riskRegister": [],
-  "successCriteria": [
-    "CLI prints \"hello\"",
-    "No runtime errors"
-  ],
-  "dependencies": {
-    "cargo": [],
-    "npm": []
-  }
+  "mergeOrder": null,
+  "riskRegister": null,
+  "successCriteria": null,
+  "dependencies": null
 }
