@@ -407,8 +407,9 @@ hex memory search "auth"
 |---|---|
 | `hex spec write` | Start behavioral spec writer |
 | `hex plan list` | List workplans |
-| `hex plan execute <file>` | Run workplan end-to-end |
 | `hex plan status <file>` | Show workplan detail |
+| `hex plan reconcile <file>` | Check which steps are already implemented |
+| `hex plan report <file>` | Aggregate execution report |
 | `hex dev` | Interactive TUI development pipeline |
 
 </details>
@@ -571,12 +572,7 @@ Budget-constrained:  OpenRouter(llama-4-scout) → Local → Haiku
 
 ---
 
-### Experimental Capabilities
-
-> [!NOTE]
-> The capabilities in this section are **design-complete** (ADRs accepted, specs written, workplans created) but **not yet implemented**. They represent the active development roadmap — do not design production systems around them until their workplan status shows complete.
-
-#### RL-Driven Model Selection
+### RL-Driven Model Selection
 
 hex-nexus runs a Q-learning engine that learns optimal model and context strategy per task type across sessions — no manual tuning.
 
@@ -591,19 +587,9 @@ Fallback chain (triggered on 429, with RL penalty applied):
 Opus → Sonnet → MiniMax → MiniMaxFast → Haiku → Local → error
 ```
 
-#### Quantization-Aware Inference Routing
+Model selection source is visible in `hex dev` logs as `source=rl-engine` when the Q-table is queried, or `source=yaml-definition` when the agent YAML preferred model is used directly.
 
-Routes each request to the cheapest local model that meets the quality floor for that task's complexity. A 2-bit local model handles scaffolding; cloud handles cross-file reasoning.
-
-| Tier | Bits | Memory (7B) | Typical use |
-|---|---|---|---|
-| Q2 | 2 | ~2 GB | Scaffolding, formatting, docstrings |
-| Q4 | 4 | ~4.5 GB | General coding, test generation |
-| Q8 | 8 | ~8 GB | Complex reasoning, security review |
-| FP16 | 16 | ~14 GB | Cross-file planning, novel architecture |
-| Cloud | — | — | Frontier tasks (Anthropic / OpenAI) |
-
-#### Goal-Driven Supervisor Loop
+### Goal-Driven Supervisor Loop
 
 The supervisor defines objectives and loops until all are met, re-evaluating everything after every agent action.
 
@@ -616,6 +602,25 @@ Iteration 3: TestsPass ✗ (2 fail)             → hex-fixer
 Iteration 4: CodeCompiles ✗ (fix broke import) → hex-fixer
 Iteration 5: All ✓ → advance to next tier
 ```
+
+---
+
+### Experimental Capabilities
+
+> [!NOTE]
+> The capabilities in this section are **design-complete** (ADRs accepted, specs written, workplans created) but **not yet fully implemented**. They represent the active development roadmap — do not design production systems around them until their workplan status shows complete.
+
+#### Quantization-Aware Inference Routing
+
+Routes each request to the cheapest local model that meets the quality floor for that task's complexity. A 2-bit local model handles scaffolding; cloud handles cross-file reasoning.
+
+| Tier | Bits | Memory (7B) | Typical use |
+|---|---|---|---|
+| Q2 | 2 | ~2 GB | Scaffolding, formatting, docstrings |
+| Q4 | 4 | ~4.5 GB | General coding, test generation |
+| Q8 | 8 | ~8 GB | Complex reasoning, security review |
+| FP16 | 16 | ~14 GB | Cross-file planning, novel architecture |
+| Cloud | — | — | Frontier tasks (Anthropic / OpenAI) |
 
 #### Neural Lab: Autonomous Architecture Research
 
