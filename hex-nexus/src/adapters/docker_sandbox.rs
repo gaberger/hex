@@ -1,20 +1,27 @@
 //! DockerSandboxAdapter — ISandboxPort implementation via `docker sandbox` CLI.
 //!
-//! Uses Docker AI Sandbox microVMs for agent isolation. Each spawned sandbox
-//! gets a bind-mount of the worktree at the same host path (Docker AI Sandbox
-//! preserves the absolute path inside the VM), network policy enforced by the
-//! sandbox runtime, and env vars injected via CLI args to hex-agent daemon.
+//! Uses Docker AI Sandbox microVMs for agent isolation. Two-step spawn flow:
+//!
+//! 1. `docker sandbox create shell <worktree> --name hex-agent-<id>`
+//!    Creates the microVM and mounts the worktree at the same host path.
+//!
+//! 2. `docker sandbox exec -d hex-agent-<id> <agent_binary> daemon --agent-id <id>`
+//!    Runs hex-agent daemon inside the running microVM in detached mode.
+//!
+//! The hex-agent Linux binary is extracted from the `hex-agent:latest` Docker image
+//! on first use and cached at `~/.hex/bin/hex-agent`.
 
 use async_trait::async_trait;
 use hex_core::domain::sandbox::{SandboxConfig, SandboxError, SpawnResult};
 use hex_core::ports::sandbox::ISandboxPort;
+use std::path::PathBuf;
 use std::process::Command;
 use uuid::Uuid;
 
 /// Secondary adapter: manages Docker AI Sandbox microVMs as hex agent sandboxes.
 pub struct DockerSandboxAdapter {
-    /// Docker image used for all spawned sandboxes. Defaults to `hex-agent:latest`.
-    image: String,
+    /// Path to the Linux hex-agent binary to exec inside the sandbox.
+    agent_binary_path: PathBuf,
 }
 
 impl DockerSandboxAdapter {
@@ -29,14 +36,88 @@ impl DockerSandboxAdapter {
                 "docker sandbox CLI not available".into(),
             ));
         }
+        // Use a placeholder; actual path is resolved per-spawn relative to worktree
         Ok(Self {
-            image: "hex-agent:latest".to_string(),
+            agent_binary_path: PathBuf::from(".hex/bin/hex-agent"),
         })
     }
 
-    pub fn with_image(mut self, image: impl Into<String>) -> Self {
-        self.image = image.into();
+    pub fn with_agent_binary(mut self, path: impl Into<PathBuf>) -> Self {
+        self.agent_binary_path = path.into();
         self
+    }
+
+    /// Ensure the Linux hex-agent binary is extracted from `hex-agent:latest` into
+    /// `<worktree>/.hex/bin/hex-agent`. This path is accessible inside the sandbox
+    /// because the worktree is bind-mounted at the same absolute path.
+    fn ensure_agent_binary_in_worktree(worktree: &str) -> Result<PathBuf, SandboxError> {
+        let binary_dir = PathBuf::from(worktree).join(".hex").join("bin");
+        std::fs::create_dir_all(&binary_dir)
+            .map_err(|e| SandboxError::Runtime(format!("could not create .hex/bin: {e}")))?;
+
+        let binary_path = binary_dir.join("hex-agent");
+
+        if !binary_path.exists() {
+            Self::extract_binary_from_image(&binary_path)?;
+        }
+
+        Ok(binary_path)
+    }
+
+    /// `docker create hex-agent:latest` + `docker cp` to extract Linux binary.
+    fn extract_binary_from_image(dest: &PathBuf) -> Result<(), SandboxError> {
+        // Create a temporary container (do not start it)
+        let create_out = Command::new("docker")
+            .args(["create", "hex-agent:latest"])
+            .output()
+            .map_err(|e| SandboxError::Runtime(format!("docker create failed: {e}")))?;
+
+        if !create_out.status.success() {
+            let stderr = String::from_utf8_lossy(&create_out.stderr);
+            return Err(SandboxError::Runtime(format!(
+                "docker create hex-agent:latest failed: {}",
+                stderr.trim()
+            )));
+        }
+
+        let container_id = String::from_utf8_lossy(&create_out.stdout)
+            .trim()
+            .to_string();
+
+        // Copy the binary out
+        let dest_str = dest.to_string_lossy().to_string();
+        let cp_result = Command::new("docker")
+            .args([
+                "cp",
+                &format!("{container_id}:/usr/local/bin/hex-agent"),
+                &dest_str,
+            ])
+            .output();
+
+        // Always remove the temp container
+        let _ = Command::new("docker")
+            .args(["rm", &container_id])
+            .output();
+
+        let cp_out = cp_result
+            .map_err(|e| SandboxError::Runtime(format!("docker cp failed: {e}")))?;
+        if !cp_out.status.success() {
+            let stderr = String::from_utf8_lossy(&cp_out.stderr);
+            return Err(SandboxError::Runtime(format!(
+                "docker cp hex-agent binary failed: {}",
+                stderr.trim()
+            )));
+        }
+
+        // Make executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| SandboxError::Runtime(format!("chmod failed: {e}")))?;
+        }
+
+        Ok(())
     }
 
     fn sandbox_name(agent_id: &str) -> String {
@@ -47,7 +128,7 @@ impl DockerSandboxAdapter {
 impl Default for DockerSandboxAdapter {
     fn default() -> Self {
         Self {
-            image: "hex-agent:latest".to_string(),
+            agent_binary_path: PathBuf::from(".hex/bin/hex-agent"),
         }
     }
 }
@@ -66,40 +147,75 @@ impl ISandboxPort for DockerSandboxAdapter {
             })?
             .to_string();
 
-        // docker sandbox run \
-        //   --template hex-agent:latest \
-        //   --name hex-agent-<id> \
-        //   shell <worktree> \
-        //   -- daemon --agent-id <id> --task-id <task_id>
-        let mut cmd = Command::new("docker");
-        cmd.args([
-            "sandbox",
-            "run",
-            "--template",
-            &self.image,
-            "--name",
-            &sandbox_name,
-            "shell",
-            &worktree_str,
-            "--",
-            "daemon",
-            "--agent-id",
-            &agent_id,
-            "--task-id",
-            &config.task_id,
-        ]);
+        // Resolve binary path: if relative, extract into worktree so it's accessible
+        // inside the sandbox at the same absolute path.
+        let binary_path = if self.agent_binary_path.is_absolute() {
+            self.agent_binary_path.clone()
+        } else {
+            Self::ensure_agent_binary_in_worktree(&worktree_str)?
+        };
+        let binary_str = binary_path.to_string_lossy().to_string();
 
-        // Inject additional env vars as --env KEY=VAL pairs (if supported by future versions)
-        // For now, use NEXUS_HOST / NEXUS_PORT defaults (host.docker.internal:5555)
-
-        let output = cmd
+        // Step 1: create the shell sandbox (mounts worktree, starts microVM)
+        // docker sandbox create shell <worktree> --name hex-agent-<id>
+        let create_out = Command::new("docker")
+            .args([
+                "sandbox",
+                "create",
+                "--name",
+                &sandbox_name,
+                "shell",
+                &worktree_str,
+            ])
             .output()
-            .map_err(|e| SandboxError::SpawnFailed(format!("docker sandbox run: {e}")))?;
+            .map_err(|e| SandboxError::SpawnFailed(format!("docker sandbox create: {e}")))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        if !create_out.status.success() {
+            let stderr = String::from_utf8_lossy(&create_out.stderr);
             return Err(SandboxError::SpawnFailed(format!(
-                "docker sandbox run failed: {}",
+                "docker sandbox create failed: {}",
+                stderr.trim()
+            )));
+        }
+
+        // Step 2: exec hex-agent daemon in detached mode inside the running sandbox
+        // docker sandbox exec -d hex-agent-<id> <binary> daemon --agent-id <id> --task-id <task_id>
+        let exec_out = Command::new("docker")
+            .args([
+                "sandbox",
+                "exec",
+                "-d",
+                "-e",
+                "NEXUS_HOST=host.docker.internal",
+                "-e",
+                "NEXUS_PORT=5555",
+                "-e",
+                "RUST_LOG=info",
+                &sandbox_name,
+                &binary_str,
+                "--project-dir",
+                &worktree_str,
+                "daemon",
+                "--agent-id",
+                &agent_id,
+                "--task-id",
+                &config.task_id,
+                "--nexus-host",
+                "host.docker.internal",
+                "--nexus-port",
+                "5555",
+            ])
+            .output()
+            .map_err(|e| SandboxError::SpawnFailed(format!("docker sandbox exec: {e}")))?;
+
+        if !exec_out.status.success() {
+            // Clean up the sandbox on exec failure
+            let _ = Command::new("docker")
+                .args(["sandbox", "rm", &sandbox_name])
+                .output();
+            let stderr = String::from_utf8_lossy(&exec_out.stderr);
+            return Err(SandboxError::SpawnFailed(format!(
+                "docker sandbox exec hex-agent failed: {}",
                 stderr.trim()
             )));
         }
@@ -112,7 +228,7 @@ impl ISandboxPort for DockerSandboxAdapter {
 
     async fn stop(&self, container_id: &str) -> Result<(), SandboxError> {
         let output = Command::new("docker")
-            .args(["sandbox", "stop", container_id])
+            .args(["sandbox", "rm", container_id])
             .output()
             .map_err(|e| SandboxError::StopFailed {
                 container_id: container_id.to_string(),
@@ -156,7 +272,7 @@ impl ISandboxPort for DockerSandboxAdapter {
             .filter(|line| line.contains("hex-agent-"))
             .filter_map(|line| {
                 let name = line.split_whitespace().next()?;
-                // Extract agent_id from sandbox name: hex-agent-<first8>
+                // Extract agent_id prefix from sandbox name: hex-agent-<first8>
                 let agent_id = name.strip_prefix("hex-agent-")?.to_string();
                 Some(SpawnResult {
                     container_id: name.to_string(),

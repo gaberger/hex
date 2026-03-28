@@ -17,7 +17,7 @@ pub struct TaskExecutor {
 }
 
 #[derive(Debug, Deserialize)]
-struct HexFloTask {
+pub(crate) struct HexFloTask {
     id: String,
     title: String,
 }
@@ -61,6 +61,44 @@ impl TaskExecutor {
         resp.json::<HexFloTask>().await.ok()
     }
 
+    /// Register the project at `project_path` with the nexus and initialize hex templates.
+    ///
+    /// Called once at daemon startup so the nexus tracks the sandboxed project and
+    /// hex templates (CLAUDE.md, agents, skills, hooks) are in place.
+    pub async fn init_project(&self, project_path: &str) {
+        // 1. Register project
+        let register_url = format!("{}/api/projects/register", self.nexus_url);
+        match self.client
+            .post(&register_url)
+            .json(&serde_json::json!({ "path": project_path }))
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() =>
+                eprintln!("[hex-agent] project registered: {project_path}"),
+            Ok(r) =>
+                eprintln!("[hex-agent] project register returned {}: {project_path}", r.status()),
+            Err(e) =>
+                eprintln!("[hex-agent] project register unreachable (nexus down?): {e}"),
+        }
+
+        // 2. Initialize hex templates (CLAUDE.md, agents, skills, hooks) in the worktree
+        let init_url = format!("{}/api/projects/init", self.nexus_url);
+        match self.client
+            .post(&init_url)
+            .json(&serde_json::json!({ "path": project_path, "agent_id": self.agent_id }))
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() =>
+                eprintln!("[hex-agent] project initialized: {project_path}"),
+            Ok(r) =>
+                eprintln!("[hex-agent] project init returned {}: {project_path}", r.status()),
+            Err(e) =>
+                eprintln!("[hex-agent] project init unreachable (nexus down?): {e}"),
+        }
+    }
+
     /// Report task completion to nexus.
     pub async fn report_done(&self, task_id: &str, result: &str) -> Result<(), String> {
         let url = format!("{}/api/hexflo/tasks/{}", self.nexus_url, task_id);
@@ -79,8 +117,10 @@ impl TaskExecutor {
     }
 
     /// Run the daemon poll loop until `shutdown` is set.
-    pub async fn run_loop(&self, shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>) {
-        eprintln!("[hex-agent] daemon started — agent_id={}", self.agent_id);
+    /// `project_path` is the worktree to initialize via nexus before polling begins.
+    pub async fn run_loop(&self, project_path: &str, shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        eprintln!("[hex-agent] daemon started — agent_id={} project={}", self.agent_id, project_path);
+        self.init_project(project_path).await;
         loop {
             if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
                 eprintln!("[hex-agent] shutdown signal received, exiting");

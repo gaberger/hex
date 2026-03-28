@@ -214,7 +214,8 @@ async fn main() -> anyhow::Result<()> {
             tokio::signal::ctrl_c().await.ok();
             shutdown_clone.store(true, Ordering::SeqCst);
         });
-        executor.run_loop(shutdown).await;
+        let project_path = args.project_dir.clone();
+        executor.run_loop(&project_path, shutdown).await;
         return Ok(());
     }
 
