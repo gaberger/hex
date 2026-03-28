@@ -1,117 +1,82 @@
 {
-  "id": "wp-hello-world-rust-cli",
+  "id": "wp-230720T1430",
   "title": "Rust CLI Hello World Implementation",
-  "specs": null,
-  "adr": "ADR-2405241200",
-  "created": "2024-05-24",
+  "specs": "specs/cli-hello.md",
+  "adr": "ADR-230720T1430",
+  "created": "2023-07-20",
   "status": "planned",
-  "status_note": null,
-  "topology": "pipeline",
-  "budget": "2500",
+  "status_note": "ADR approved for implementation",
+  "topology": "mixed",
+  "budget": "1 token",
   "steps": [
     {
       "id": "P0.1",
-      "description": "Create domain layer Greeting entity with value type constraints",
+      "description": "Implement domain use case for hello",
       "layer": "domain",
       "adapter": null,
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": [],
-      "worktree_branch": "feat/hello-world-rust/domain",
-      "done_condition": "Greeting struct defined in domain/entities.rs with no external dependencies"
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/cli-hello/domain",
+      "done_condition": "Domain use case passes unit tests"
     },
     {
       "id": "P0.2",
-      "description": "Create ports layer OutputPort trait for text output abstraction",
+      "description": "Implement port interface for hello use case",
       "layer": "ports",
       "adapter": null,
-      "port": "OutputPort",
-      "dependencies": [],
-      "tier": 0,
-      "specs": [],
-      "worktree_branch": "feat/hello-world-rust/ports",
-      "done_condition": "OutputPort trait defined in ports/mod.rs accepting Greeting parameter"
-    },
-    {
-      "id": "P1.1",
-      "description": "Implement StdoutPrinter adapter for console output",
-      "layer": "primary",
-      "adapter": "StdoutPrinter",
-      "port": "OutputPort",
+      "port": "HelloUseCase",
       "dependencies": [
         "P0.1"
       ],
+      "tier": 0,
+      "specs": [
+        "S02"
+      ],
+      "worktree_branch": "feat/cli-hello/ports",
+      "done_condition": "Port interface compiles and passes lint checks"
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement primary CLI adapter for hello",
+      "layer": "primary",
+      "adapter": "cli",
+      "port": "HelloUseCase",
+      "dependencies": [
+        "P0.1",
+        "P0.2"
+      ],
       "tier": 2,
-      "specs": [],
-      "worktree_branch": "feat/hello-world-rust/adapters-primary",
-      "done_condition": "StdoutPrinter struct implements OutputPort trait without external adapter imports"
-    },
-    {
-      "id": "P2.1",
-      "description": "Wire usecase logic to compose port and adapter",
-      "layer": "usecases",
-      "adapter": null,
-      "port": "OutputPort",
-      "dependencies": [
-        "P0.1",
-        "P0.2",
-        "P1.1"
+      "specs": [
+        "S03",
+        "S04"
       ],
-      "tier": 3,
-      "specs": [],
-      "worktree_branch": "feat/hello-world-rust/usecases",
-      "done_condition": "usecases/mod.rs successfully composes Greeting with OutputPort interface"
-    },
-    {
-      "id": "P3.1",
-      "description": "Create composition root wiring configuration",
-      "layer": "integration",
-      "adapter": null,
-      "port": "OutputPort",
-      "dependencies": [
-        "P0.1",
-        "P0.2",
-        "P1.1",
-        "P2.1"
-      ],
-      "tier": 4,
-      "specs": [],
-      "worktree_branch": "feat/hello-world-rust/composition-root",
-      "done_condition": "Main application entry point registers adapters to ports"
+      "worktree_branch": "feat/cli-hello/cli",
+      "done_condition": "CLI adapter outputs 'hello' and passes integration test"
     }
   ],
   "mergeOrder": [
-    "domain layer merge first, then ports, then primary adapters, then usecases, finally composition root"
+    "P0.1",
+    "P0.2",
+    "P1.1"
   ],
   "riskRegister": [
     {
-      "impact": "low",
-      "mitigation": "Accept larger binary size as documentation benefit",
-      "risk": "Rust compilation overhead for simple output"
-    },
-    {
       "impact": "medium",
-      "mitigation": "Validate hex framework cross-language support via ADR-018",
-      "risk": "TypeScript/Go build integration friction"
-    },
-    {
-      "impact": "medium",
-      "mitigation": "Use scaffolding as documented baseline for future Rust modules",
-      "risk": "Over-engineering for one-line output"
+      "mitigation": "Implement integration test before merging",
+      "risk": "CLI adapter may not integrate correctly with domain layer"
     }
   ],
   "successCriteria": [
-    "Hello message prints to console via StdoutPrinter adapter",
-    "Domain Greeting entity remains isolated from output implementation",
-    "OutputPort trait enables swapping adapters without changing usecase",
-    "All layers compile without cross-layer imports violating hex boundaries"
+    "CLI outputs 'hello'",
+    "Domain layer remains pure",
+    "No cross-adapter dependencies"
   ],
   "dependencies": {
-    "cargo": [
-      "hex",
-      "serde"
-    ],
+    "cargo": [],
     "npm": []
   }
 }
