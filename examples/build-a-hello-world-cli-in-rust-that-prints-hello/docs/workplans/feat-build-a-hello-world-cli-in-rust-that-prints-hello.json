@@ -1,18 +1,18 @@
 {
-  "id": "wp-230315",
-  "title": "ADR-230315: Rust CLI Hello World Implementation",
-  "specs": "specs/230315.md",
+  "id": "wp-hello-world-cli",
+  "title": "Hello World CLI Implementation",
+  "specs": "specs/hello-world-cli.md",
   "adr": "ADR-230315",
   "created": "2023-03-15",
   "status": "planned",
-  "status_note": "Initial planning",
+  "status_note": "awaiting team assignment",
   "topology": "pipeline",
-  "budget": "2 days",
+  "budget": "1.5 days",
   "steps": [
     {
       "id": "P0.1",
-      "description": "Implement domain entity in src/domain/lib.rs",
-      "layer": "domain",
+      "description": "Implement the full feature in src/main.rs — single-binary rust project",
+      "layer": "primary",
       "adapter": null,
       "port": null,
       "dependencies": [],
@@ -20,95 +20,27 @@
       "specs": [
         "S01"
       ],
-      "worktree_branch": "feat/230315/domain",
-      "done_condition": "cargo build --release"
-    },
-    {
-      "id": "P0.2",
-      "description": "Implement PrinterPort interface in src/ports/lib.rs",
-      "layer": "ports",
-      "adapter": null,
-      "port": null,
-      "dependencies": [
-        "P0.1"
-      ],
-      "tier": 0,
-      "specs": [
-        "S02"
-      ],
-      "worktree_branch": "feat/230315/ports",
-      "done_condition": "cargo build --release"
-    },
-    {
-      "id": "P1.1",
-      "description": "Implement ConsolePrinterAdapter in src/adapters/primary/lib.rs",
-      "layer": "primary",
-      "adapter": "ConsolePrinterAdapter",
-      "port": "PrinterPort",
-      "dependencies": [
-        "P0.2"
-      ],
-      "tier": 2,
-      "specs": [
-        "S03"
-      ],
-      "worktree_branch": "feat/230315/adapters/primary",
-      "done_condition": "cargo test --release"
-    },
-    {
-      "id": "P1.2",
-      "description": "Implement HelloUseCase in src/usecases/lib.rs",
-      "layer": "usecases",
-      "adapter": null,
-      "port": null,
-      "dependencies": [
-        "P0.2",
-        "P1.1"
-      ],
-      "tier": 3,
-      "specs": [
-        "S04"
-      ],
-      "worktree_branch": "feat/230315/usecases",
-      "done_condition": "cargo test --release"
-    },
-    {
-      "id": "P2.1",
-      "description": "Implement composition root in src/composition-root/lib.rs",
-      "layer": "primary",
-      "adapter": "ConsolePrinterAdapter",
-      "port": "PrinterPort",
-      "dependencies": [
-        "P0.2",
-        "P1.1",
-        "P1.2"
-      ],
-      "tier": 4,
-      "specs": [
-        "S05"
-      ],
-      "worktree_branch": "feat/230315/composition-root",
-      "done_condition": "cargo test --release"
+      "worktree_branch": null,
+      "done_condition": "src/main.rs compiles and implements the feature; Cargo.toml has correct dependencies"
     }
   ],
   "mergeOrder": [
     "P0.1",
     "P0.2",
     "P1.1",
-    "P1.2",
     "P2.1"
   ],
   "riskRegister": [
     {
       "impact": "medium",
-      "mitigation": "Use cargo update before each phase",
-      "risk": "Rust dependency conflicts"
+      "mitigation": "Use module-level visibility instead of separate directories",
+      "risk": "Rust's single-file constraint may limit architecture separation"
     }
   ],
   "successCriteria": [
-    "Hello prints 'hello world'",
-    "All tests pass",
-    "No lints"
+    "cargo build succeeds",
+    "cargo test passes",
+    "CLI prints 'hello world' to stdout"
   ],
   "dependencies": {
     "cargo": [],

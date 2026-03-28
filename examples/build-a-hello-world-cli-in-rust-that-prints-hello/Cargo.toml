@@ -1,5 +1,5 @@
 [package]
-name = "adr-230315-rust-cli-hello-world-implemen"
+name = "hello-world-cli-implementation"
 version = "0.1.0"
 edition = "2021"
 
