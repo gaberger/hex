@@ -351,6 +351,19 @@ pub async fn register_session_agent(project_dir: &PathBuf, project_name: &str) -
 async fn subagent_start() -> Result<()> {
     let stdin = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
 
+    // Spec S08: block non-worktree execution when HEXFLO_TASK is present in the prompt
+    if stdin.contains("HEXFLO_TASK:") {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        // Git worktrees have a .git FILE (not directory); the project root has a .git DIR
+        let in_worktree = cwd.join(".git").is_file();
+        if !in_worktree {
+            eprintln!("worktree_required: swarm agents must run in an isolated worktree, not the project root");
+            eprintln!("  cwd: {}", cwd.to_string_lossy());
+            eprintln!("  hint: use 'hex swarm' to spawn agents in isolated worktrees");
+            std::process::exit(1);
+        }
+    }
+
     // P2.3: Send heartbeat so parent agent doesn't go stale during subagent work
     let _ = send_heartbeat().await;
 
