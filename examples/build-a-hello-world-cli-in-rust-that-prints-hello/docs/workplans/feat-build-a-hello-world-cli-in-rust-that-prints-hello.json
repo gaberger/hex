@@ -1,17 +1,17 @@
 {
-  "id": "wp-230720T1430",
+  "id": "wp-cli-hello-world",
   "title": "Rust CLI Hello World Implementation",
-  "specs": "specs/cli-hello.md",
-  "adr": "ADR-230720T1430",
+  "specs": "specs/cli-hello-world.md",
+  "adr": "ADR-230720001000",
   "created": "2023-07-20",
   "status": "planned",
-  "status_note": "ADR approved for implementation",
-  "topology": "mixed",
-  "budget": "1 token",
+  "status_note": "Initial planning",
+  "topology": "pipeline",
+  "budget": "2 tokens",
   "steps": [
     {
       "id": "P0.1",
-      "description": "Implement domain use case for hello",
+      "description": "Implement HelloService domain layer with trait and implementation",
       "layer": "domain",
       "adapter": null,
       "port": null,
@@ -20,15 +20,15 @@
       "specs": [
         "S01"
       ],
-      "worktree_branch": "feat/cli-hello/domain",
-      "done_condition": "Domain use case passes unit tests"
+      "worktree_branch": "feat/cli/hello-world/domain",
+      "done_condition": "HelloService trait implemented with 'hello' method returning 'hello'"
     },
     {
       "id": "P0.2",
-      "description": "Implement port interface for hello use case",
+      "description": "Create CLI port interface in ports/cli.rs",
       "layer": "ports",
       "adapter": null,
-      "port": "HelloUseCase",
+      "port": "CLI",
       "dependencies": [
         "P0.1"
       ],
@@ -36,44 +36,52 @@
       "specs": [
         "S02"
       ],
-      "worktree_branch": "feat/cli-hello/ports",
-      "done_condition": "Port interface compiles and passes lint checks"
+      "worktree_branch": "feat/cli/hello-world/ports",
+      "done_condition": "ports/cli.rs contains CLI trait with execute method signature"
     },
     {
       "id": "P1.1",
-      "description": "Implement primary CLI adapter for hello",
+      "description": "Develop CLI adapter in adapters/primary/cli/cli.rs",
       "layer": "primary",
-      "adapter": "cli",
-      "port": "HelloUseCase",
+      "adapter": "CLI",
+      "port": "HelloServicePort",
       "dependencies": [
-        "P0.1",
         "P0.2"
       ],
       "tier": 2,
       "specs": [
-        "S03",
+        "S03"
+      ],
+      "worktree_branch": "feat/cli/hello-world/primary",
+      "done_condition": "CLI adapter implements HelloServicePort and prints 'hello' to stdout"
+    },
+    {
+      "id": "P2.1",
+      "description": "Update composition root to wire CLI adapter",
+      "layer": "composition-root",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P1.1"
+      ],
+      "tier": 4,
+      "specs": [
         "S04"
       ],
-      "worktree_branch": "feat/cli-hello/cli",
-      "done_condition": "CLI adapter outputs 'hello' and passes integration test"
+      "worktree_branch": "feat/cli/hello-world/composition-root",
+      "done_condition": "composition_root.rs includes CLI adapter in composition"
     }
   ],
   "mergeOrder": [
     "P0.1",
     "P0.2",
-    "P1.1"
+    "P1.1",
+    "P2.1"
   ],
-  "riskRegister": [
-    {
-      "impact": "medium",
-      "mitigation": "Implement integration test before merging",
-      "risk": "CLI adapter may not integrate correctly with domain layer"
-    }
-  ],
+  "riskRegister": [],
   "successCriteria": [
-    "CLI outputs 'hello'",
-    "Domain layer remains pure",
-    "No cross-adapter dependencies"
+    "CLI prints 'hello' when executed",
+    "No layer violations detected"
   ],
   "dependencies": {
     "cargo": [],
