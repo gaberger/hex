@@ -573,7 +573,8 @@ Budget-constrained:  OpenRouter(llama-4-scout) → Local → Haiku
 
 ### Experimental Capabilities
 
-The following capabilities are accepted in design (ADRs written) but not yet fully implemented. They represent the active development roadmap.
+> [!NOTE]
+> The capabilities in this section are **design-complete** (ADRs accepted, specs written, workplans created) but **not yet implemented**. They represent the active development roadmap — do not design production systems around them until their workplan status shows complete.
 
 #### RL-Driven Model Selection
 
