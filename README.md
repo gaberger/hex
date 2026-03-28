@@ -1,10 +1,8 @@
 <div align="center">
 
-<img src="assets/hex-icon.png" alt="hex" width="96" />
+<img src=".github/assets/banner.svg" alt="hex — Hexagonal Architecture Harness for AI-Driven Development" width="900"/>
 
-# hex
-
-### AI-Assisted Integrated Development Environment
+<br/>
 
 **Hexagonal architecture enforcement · Native swarm coordination · Specs-first pipeline**
 
