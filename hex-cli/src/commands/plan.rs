@@ -51,6 +51,14 @@ pub enum PlanAction {
         /// Workplan execution ID
         id: String,
     },
+    /// Reconcile workplan step statuses against actual code (check done conditions)
+    Reconcile {
+        /// Workplan filename (e.g. feat-fix-dev-pipeline.json)
+        file: String,
+        /// Write confirmed-done statuses back to the workplan JSON
+        #[arg(long, default_value_t = false)]
+        update: bool,
+    },
     /// Output the canonical workplan JSON schema
     Schema,
 }
@@ -86,6 +94,10 @@ struct Step {
     dependencies: Vec<String>,
     #[serde(default)]
     status: String,
+    #[serde(default)]
+    done_condition: String,
+    #[serde(default)]
+    verify: String,
 }
 
 /// A workplan document — supports both legacy (steps) and current (phases/tasks) formats.
@@ -242,6 +254,7 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::History => show_execution_history().await,
         PlanAction::Report { id } => show_execution_report(&id).await,
         PlanAction::Schema => show_schema().await,
+        PlanAction::Reconcile { file, update } => reconcile_plan(&file, update).await,
     }
 }
 
@@ -320,6 +333,8 @@ async fn create_plan(requirements: &[String], lang: &str, adr: Option<&str>, no_
             tier,
             dependencies: deps,
             status: "pending".to_string(),
+            done_condition: String::new(),
+            verify: String::new(),
         });
     }
 
@@ -867,6 +882,230 @@ fn infer_adapter(req: &str) -> String {
     } else {
         "core/domain".to_string()
     }
+}
+
+// ── Reconcile ─────────────────────────────────────────────────────────
+
+#[derive(Tabled)]
+struct ReconcileRow {
+    #[tabled(rename = "Step")]
+    id: String,
+    #[tabled(rename = "")]
+    icon: String,
+    #[tabled(rename = "Result")]
+    result: String,
+    #[tabled(rename = "Done condition (excerpt)")]
+    condition: String,
+}
+
+/// Check each workplan step's done_condition against the actual codebase.
+/// Extracts identifiers from done_condition text, greps for them, and reports ✅/❌.
+async fn reconcile_plan(file: &str, update: bool) -> anyhow::Result<()> {
+    let path = if file.contains('/') {
+        std::path::PathBuf::from(file)
+    } else {
+        std::path::PathBuf::from("docs/workplans").join(file)
+    };
+
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| anyhow::anyhow!("Cannot read {}: {}", path.display(), e))?;
+
+    // Parse as generic JSON to preserve all fields for optional write-back
+    let mut raw: serde_json::Value = serde_json::from_str(&content)?;
+    let workplan: Workplan = serde_json::from_str(&content)?;
+
+    println!("{} Reconciling: {}", "\u{2b21}".cyan(), workplan.display_title());
+    println!();
+
+    let mut rows: Vec<ReconcileRow> = Vec::new();
+    let mut all_done = true;
+    let mut step_results: Vec<(String, bool)> = Vec::new(); // (step_id, is_done)
+
+    // Collect all steps (both formats)
+    let steps_to_check: Vec<(String, String)> = if !workplan.steps.is_empty() {
+        workplan.steps.iter().map(|s| {
+            let condition = if !s.done_condition.is_empty() {
+                s.done_condition.clone()
+            } else {
+                s.verify.clone()
+            };
+            (s.id.clone(), condition)
+        }).collect()
+    } else {
+        workplan.phases.iter()
+            .flat_map(|p| p.tasks.iter().map(|t| (t.id.clone(), t.name.clone())))
+            .collect()
+    };
+
+    for (step_id, condition) in &steps_to_check {
+        if condition.is_empty() {
+            rows.push(ReconcileRow {
+                id: step_id.clone(),
+                icon: "⊘".dimmed().to_string(),
+                result: "no condition".dimmed().to_string(),
+                condition: "(no done_condition)".dimmed().to_string(),
+            });
+            step_results.push((step_id.clone(), false));
+            continue;
+        }
+
+        // Extract greppable identifiers: snake_case/camelCase words ≥5 chars, or quoted strings
+        let identifiers = extract_identifiers(condition);
+        let found = check_identifiers(&identifiers);
+
+        // Also check cargo commands if present
+        let cargo_ok = if condition.contains("cargo check") || condition.contains("cargo build") || condition.contains("cargo test") {
+            check_cargo(condition)
+        } else {
+            true // no cargo requirement in condition
+        };
+
+        let is_done = found && cargo_ok;
+        all_done = all_done && is_done;
+        step_results.push((step_id.clone(), is_done));
+
+        let (icon, result_text) = if is_done {
+            ("\u{2705}".to_string(), "done".green().to_string())
+        } else {
+            ("\u{274c}".to_string(), "needs work".yellow().to_string())
+        };
+
+        let excerpt = if condition.len() > 60 {
+            format!("{}…", &condition[..57])
+        } else {
+            condition.clone()
+        };
+
+        rows.push(ReconcileRow {
+            id: step_id.clone(),
+            icon,
+            result: result_text,
+            condition: excerpt,
+        });
+    }
+
+    println!("{}", HexTable::render(&rows));
+    println!();
+
+    let done_count = step_results.iter().filter(|(_, d)| *d).count();
+    println!("  {}/{} steps confirmed done", done_count, step_results.len());
+
+    if update && done_count > 0 {
+        // Write confirmed-done step statuses back to workplan JSON
+        let mut updated = false;
+        for (step_id, is_done) in &step_results {
+            if !is_done { continue; }
+            // Update in steps array
+            if let Some(steps) = raw.get_mut("steps").and_then(|v| v.as_array_mut()) {
+                for step in steps.iter_mut() {
+                    if step.get("id").and_then(|v| v.as_str()) == Some(step_id.as_str()) {
+                        step["status"] = serde_json::json!("done");
+                        updated = true;
+                    }
+                }
+            }
+        }
+        // Also update top-level status if all done
+        if all_done {
+            raw["status"] = serde_json::json!("done");
+            updated = true;
+        }
+        if updated {
+            std::fs::write(&path, serde_json::to_string_pretty(&raw)?)?;
+            println!("  {} Updated {}", "\u{2713}".green(), path.display());
+        }
+    } else if update {
+        println!("  {} No changes — no steps confirmed done", "\u{26a0}".yellow());
+    }
+
+    Ok(())
+}
+
+/// Extract identifiers worth grepping from a done_condition string.
+/// Takes snake_case/camelCase words ≥5 chars and single-quoted strings.
+fn extract_identifiers(condition: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+
+    // Single-quoted strings like 'sonnet', 'prior_errors'
+    let mut in_quote = false;
+    let mut current = String::new();
+    for ch in condition.chars() {
+        if ch == '\'' {
+            if in_quote && !current.is_empty() {
+                ids.push(current.clone());
+                current.clear();
+            }
+            in_quote = !in_quote;
+        } else if in_quote {
+            current.push(ch);
+        }
+    }
+    // Word tokens: snake_case or CamelCase, ≥5 chars, not common prose words
+    let skip = ["cargo", "check", "build", "passes", "returns", "reads", "files", "calls",
+                "found", "added", "output", "result", "using", "value", "field", "never",
+                "always", "every", "should", "where", "which", "other", "after", "first",
+                "then", "from", "with", "into", "that", "this", "have", "does", "when"];
+    for word in condition.split(|c: char| !c.is_alphanumeric() && c != '_') {
+        let w = word.trim();
+        if w.len() >= 5 && (w.contains('_') || w.chars().any(|c| c.is_uppercase())) {
+            if !skip.iter().any(|s| w.to_lowercase() == *s) {
+                ids.push(w.to_string());
+            }
+        }
+    }
+
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// Grep for each identifier in the project source. Returns true if ≥1 found.
+fn check_identifiers(identifiers: &[String]) -> bool {
+    if identifiers.is_empty() { return false; }
+    for id in identifiers {
+        let output = std::process::Command::new("grep")
+            .args(["-r", "--include=*.rs", "-l", id.as_str(), "hex-cli/src", "hex-nexus/src", "hex-core/src"])
+            .output();
+        if let Ok(out) = output {
+            if !out.stdout.is_empty() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Run cargo check/build to verify compilation. Returns true if passes.
+fn check_cargo(condition: &str) -> bool {
+    let (cmd, pkg) = if condition.contains("cargo test") {
+        ("test", extract_cargo_pkg(condition))
+    } else if condition.contains("cargo build") {
+        ("build", extract_cargo_pkg(condition))
+    } else {
+        ("check", extract_cargo_pkg(condition))
+    };
+
+    let mut args = vec![cmd];
+    if let Some(pkg) = pkg.as_deref() {
+        args.push("-p");
+        args.push(pkg);
+    }
+
+    std::process::Command::new("cargo")
+        .args(&args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn extract_cargo_pkg(condition: &str) -> Option<String> {
+    // Match "-p hex-cli" or "-p hex-nexus" patterns in condition text
+    if condition.contains("hex-cli") { return Some("hex-cli".to_string()); }
+    if condition.contains("hex-nexus") { return Some("hex-nexus".to_string()); }
+    if condition.contains("hex-core") { return Some("hex-core".to_string()); }
+    None
 }
 
 /// Map adapter path to dependency tier.
