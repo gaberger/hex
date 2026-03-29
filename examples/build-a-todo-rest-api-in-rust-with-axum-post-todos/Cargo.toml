@@ -1,5 +1,5 @@
 [package]
-name = "plan-build-a-todo-rest-api-in-rust-with"
+name = "in-memory-todo-api-with-hexagonal-archit"
 version = "0.1.0"
 edition = "2021"
 

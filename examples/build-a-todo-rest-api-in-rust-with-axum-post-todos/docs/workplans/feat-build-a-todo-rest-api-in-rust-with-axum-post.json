@@ -1,13 +1,13 @@
 {
-  "id": "wp-build-a-todo-rest-api-in",
-  "title": "Plan: build a todo REST API in Rust with axum: POST /todos to create, GET /todos to list, DELETE /todos/:id to remove. In-memory storage, JSON responses.",
-  "specs": null,
-  "adr": null,
-  "created": null,
+  "id": "wp-230315123456",
+  "title": "In-Memory Todo API with Hexagonal Architecture",
+  "specs": "specs/todo-api.md",
+  "adr": "ADR-230315123456",
+  "created": "2023-03-15",
   "status": "planned",
-  "status_note": "auto-generated fallback — LLM JSON extraction failed",
-  "topology": "pipeline",
-  "budget": null,
+  "status_note": "Awaiting team review",
+  "topology": "mixed",
+  "budget": "2 token",
   "steps": [
     {
       "id": "P0.1",
@@ -17,13 +17,40 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": null,
+      "specs": [
+        "S01"
+      ],
       "worktree_branch": null,
       "done_condition": "src/main.rs compiles and fully implements: build a todo REST API in Rust with axum: POST /todos to create, GET /todos to list, DELETE /todos/:id to remove. In-memory storage, JSON responses.; Cargo.toml has correct dependencies"
     }
   ],
-  "mergeOrder": null,
-  "riskRegister": null,
-  "successCriteria": null,
-  "dependencies": null
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P2.1",
+    "P3.1"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Document in README.md and add warning in API responses",
+      "risk": "Data loss on application restart"
+    },
+    {
+      "impact": "low",
+      "mitigation": "Regular Vec cleanup during DELETE operations",
+      "risk": "Memory leaks from Vec storage"
+    }
+  ],
+  "successCriteria": [
+    "POST /todos creates new todo with 201 Created response",
+    "GET /todos returns 200 OK with JSON array of todos",
+    "DELETE /todos/:id returns 204 No Content",
+    "Application compiles and starts successfully"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
 }
