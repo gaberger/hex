@@ -1,0 +1,171 @@
+{
+  "id": "wp-p4-1",
+  "title": "Implement composition root for React app (wiring adapters to ports)",
+  "specs": "ADR-240530A1",
+  "adr": "ADR-240530A1",
+  "created": "2024-05-30",
+  "status": "planned",
+  "status_note": "ADR-240530A1 approved for implementation",
+  "topology": "mixed",
+  "budget": "token budget TBD",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Implement composition root container and basic adapter registration",
+      "layer": "composition-root",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 4,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/p4-1/composition-root",
+      "done_condition": "Container class implemented with registerAdapter method"
+    },
+    {
+      "id": "P0.2",
+      "description": "Create primary adapter implementations and register in composition root",
+      "layer": "composition-root",
+      "adapter": "DatabaseAdapter",
+      "port": null,
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 4,
+      "specs": [
+        "S02"
+      ],
+      "worktree_branch": "feat/p4-1/composition-root",
+      "done_condition": "DatabaseAdapter registered in container"
+    },
+    {
+      "id": "P0.3",
+      "description": "Create secondary adapter implementations and register in composition root",
+      "layer": "composition-root",
+      "adapter": "NotificationAdapter",
+      "port": null,
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 4,
+      "specs": [
+        "S03"
+      ],
+      "worktree_branch": "feat/p4-1/composition-root",
+      "done_condition": "NotificationAdapter registered in container"
+    },
+    {
+      "id": "P0.4",
+      "description": "Create AuthAdapter implementation and register in composition root",
+      "layer": "composition-root",
+      "adapter": "AuthAdapter",
+      "port": null,
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 4,
+      "specs": [
+        "S04"
+      ],
+      "worktree_branch": "feat/p4-1/composition-root",
+      "done_condition": "AuthAdapter registered in container"
+    },
+    {
+      "id": "P1.1",
+      "description": "Refactor usecases to receive dependencies via composition root",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.4"
+      ],
+      "tier": 3,
+      "specs": [
+        "S05"
+      ],
+      "worktree_branch": "feat/p4-1/usecases",
+      "done_condition": "All usecases receive dependencies from composition root"
+    },
+    {
+      "id": "P1.2",
+      "description": "Refactor primary adapters to use composition root dependencies",
+      "layer": "primary",
+      "adapter": "DatabaseAdapter",
+      "port": null,
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 2,
+      "specs": [
+        "S06"
+      ],
+      "worktree_branch": "feat/p4-1/adapters/primary",
+      "done_condition": "DatabaseAdapter uses composition root dependencies"
+    },
+    {
+      "id": "P1.3",
+      "description": "Refactor secondary adapters to use composition root dependencies",
+      "layer": "secondary",
+      "adapter": "NotificationAdapter",
+      "port": null,
+      "dependencies": [
+        "P0.3"
+      ],
+      "tier": 1,
+      "specs": [
+        "S07"
+      ],
+      "worktree_branch": "feat/p4-1/adapters/secondary",
+      "done_condition": "NotificationAdapter uses composition root dependencies"
+    },
+    {
+      "id": "P1.4",
+      "description": "Refactor AuthAdapter to use composition root dependencies",
+      "layer": "primary",
+      "adapter": "AuthAdapter",
+      "port": null,
+      "dependencies": [
+        "P0.4"
+      ],
+      "tier": 2,
+      "specs": [
+        "S08"
+      ],
+      "worktree_branch": "feat/p4-1/adapters/primary",
+      "done_condition": "AuthAdapter uses composition root dependencies"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P0.3",
+    "P0.4",
+    "P1.1",
+    "P1.2",
+    "P1.3",
+    "P1.4"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Create detailed onboarding documentation",
+      "risk": "Setup complexity for new team members"
+    },
+    {
+      "impact": "low",
+      "mitigation": "Use tree-shaking and lazy loading",
+      "risk": "Bundle size increase"
+    }
+  ],
+  "successCriteria": [
+    "All adapters registered in composition root",
+    "All components receive dependencies via composition root",
+    "ADR-001 compliance verified",
+    "ADR-014 test isolation requirements met"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
