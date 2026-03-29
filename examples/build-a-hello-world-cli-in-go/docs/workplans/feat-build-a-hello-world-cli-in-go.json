@@ -1,0 +1,107 @@
+{
+  "id": "wp-cli-230720T1430",
+  "title": "Go CLI Implementation Workplan",
+  "specs": "specs/cli-specs.md",
+  "adr": "ADR-230720T1430",
+  "created": "2023-07-20",
+  "status": "planned",
+  "status_note": "Initial planning",
+  "topology": "pipeline",
+  "budget": "2 tokens",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Define CLI port interface in ports/cli.go",
+      "layer": "ports",
+      "adapter": null,
+      "port": "CLI",
+      "dependencies": [],
+      "tier": 1,
+      "specs": [
+        "S01",
+        "S02"
+      ],
+      "worktree_branch": "feat/cli/ports",
+      "done_condition": "Interface definition passes type checks"
+    },
+    {
+      "id": "P0.2",
+      "description": "Implement basic I/O operations in primary/cli/cli.go",
+      "layer": "primary",
+      "adapter": "CLI",
+      "port": null,
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 2,
+      "specs": [
+        "S03",
+        "S04"
+      ],
+      "worktree_branch": "feat/cli/primary",
+      "done_condition": "CLI implementation passes basic tests"
+    },
+    {
+      "id": "P1.1",
+      "description": "Create GreetUseCase in usecases/greet_usecase.go",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 3,
+      "specs": [
+        "S05",
+        "S06"
+      ],
+      "worktree_branch": "feat/cli/usecases",
+      "done_condition": "UseCase passes domain integration tests"
+    },
+    {
+      "id": "P1.2",
+      "description": "Wire CLI to GreetUseCase in composition-root/cli_composition.go",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2",
+        "P1.1"
+      ],
+      "tier": 4,
+      "specs": [
+        "S07",
+        "S08"
+      ],
+      "worktree_branch": "feat/cli/composition",
+      "done_condition": "Composition passes integration tests"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P1.2"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Start with minimal I/O operations",
+      "risk": "CLI implementation complexity"
+    },
+    {
+      "impact": "high",
+      "mitigation": "Strict layer enforcement during code review",
+      "risk": "Port-adapter boundary violations"
+    }
+  ],
+  "successCriteria": [
+    "CLI implementation passes all port-adapter tests",
+    "GreetUseCase integrates correctly with CLI",
+    "No domain layer imports in primary adapter"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
