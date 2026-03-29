@@ -1,4 +1,4 @@
-module gin-rest-api-with-hexagonal-crud-for-tod
+module plan-build-a-simple-go-rest-api-with-gin
 
 go 1.22
 
