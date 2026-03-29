@@ -1,31 +1,32 @@
 {
-  "id": "wp-f1-race-standings",
+  "id": "wp-f1-standings-web-app",
   "title": "F1 Race Standings Web App Implementation",
   "specs": "specs/f1-standings.md",
-  "adr": "ADR-230715",
-  "created": "2023-07-15",
+  "adr": "ADR-230315",
+  "created": "2023-03-15",
   "status": "planned",
-  "status_note": "Initial planning complete",
+  "status_note": "Initial planning phase",
   "topology": "mixed",
-  "budget": "2000 tokens",
+  "budget": "token: 500",
   "steps": [
     {
       "id": "P0.1",
-      "description": "Create domain models for Driver, Race, Season, Constructor with value objects Position, Points, LapTime",
+      "description": "Create domain layer value objects and entities",
       "layer": "domain",
       "adapter": null,
       "port": null,
       "dependencies": [],
       "tier": 0,
       "specs": [
-        "S01"
+        "S01",
+        "S02"
       ],
-      "worktree_branch": "feat/f1-domain",
-      "done_condition": "All domain models pass unit tests"
+      "worktree_branch": "feat/f1-standings/domain",
+      "done_condition": "All domain types pass type checks and unit tests"
     },
     {
       "id": "P0.2",
-      "description": "Implement ports layer with LiveStandingsProvider and RaceResultsProvider interfaces",
+      "description": "Implement ports layer with RaceResultsPort and DriverStatsPort interfaces",
       "layer": "ports",
       "adapter": null,
       "port": null,
@@ -34,90 +35,117 @@
       ],
       "tier": 0,
       "specs": [
-        "S02"
+        "S03"
       ],
-      "worktree_branch": "feat/f1-ports",
-      "done_condition": "Ports layer compiles with domain models"
+      "worktree_branch": "feat/f1-standings/ports",
+      "done_condition": "Ports interfaces compile and pass unit tests"
     },
     {
       "id": "P1.1",
-      "description": "Implement WebSocketLiveStandingsAdapter for real-time driver standings",
-      "layer": "primary",
-      "adapter": "WebSocketLiveStandingsAdapter",
-      "port": "LiveStandingsProvider",
+      "description": "Implement mock adapter for historical data access",
+      "layer": "secondary",
+      "adapter": "MockAdapter",
+      "port": null,
       "dependencies": [
         "P0.2"
       ],
-      "tier": 2,
-      "specs": [
-        "S03"
-      ],
-      "worktree_branch": "feat/f1-live-adapter",
-      "done_condition": "WebSocket adapter passes integration tests"
-    },
-    {
-      "id": "P1.2",
-      "description": "Implement RESTRaceResultsAdapter for round-by-round race results",
-      "layer": "primary",
-      "adapter": "RESTRaceResultsAdapter",
-      "port": "RaceResultsProvider",
-      "dependencies": [
-        "P0.2"
-      ],
-      "tier": 2,
+      "tier": 1,
       "specs": [
         "S04"
       ],
-      "worktree_branch": "feat/f1-rest-adapter",
-      "done_condition": "REST adapter passes integration tests"
+      "worktree_branch": "feat/f1-standings/adapters/secondary",
+      "done_condition": "MockAdapter passes integration tests with domain layer"
     },
     {
-      "id": "P2.1",
-      "description": "Implement GetLiveStandingsUseCase using WebSocketLiveStandingsAdapter",
-      "layer": "usecases",
-      "adapter": null,
+      "id": "P1.2",
+      "description": "Implement API adapter for live race data",
+      "layer": "secondary",
+      "adapter": "APIAdapter",
       "port": null,
       "dependencies": [
-        "P1.1"
+        "P0.2"
       ],
-      "tier": 3,
+      "tier": 1,
       "specs": [
         "S05"
       ],
-      "worktree_branch": "feat/f1-live-usecase",
-      "done_condition": "Live standings use case passes unit tests"
+      "worktree_branch": "feat/f1-standings/adapters/secondary",
+      "done_condition": "APIAdapter passes integration tests with domain layer"
     },
     {
-      "id": "P2.2",
-      "description": "Implement GetRaceResultsUseCase using RESTRaceResultsAdapter",
+      "id": "P2.1",
+      "description": "Implement primary adapter for React frontend integration",
+      "layer": "primary",
+      "adapter": "ReactAdapter",
+      "port": null,
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 2,
+      "specs": [
+        "S06"
+      ],
+      "worktree_branch": "feat/f1-standings/adapters/primary",
+      "done_condition": "ReactAdapter passes integration tests with domain layer"
+    },
+    {
+      "id": "P3.1",
+      "description": "Implement standings use case with race results aggregation",
       "layer": "usecases",
       "adapter": null,
       "port": null,
       "dependencies": [
+        "P0.2",
+        "P1.1",
         "P1.2"
       ],
       "tier": 3,
       "specs": [
-        "S06"
+        "S07",
+        "S08"
       ],
-      "worktree_branch": "feat/f1-race-usecase",
-      "done_condition": "Race results use case passes unit tests"
+      "worktree_branch": "feat/f1-standings/usecases",
+      "done_condition": "Standings use case passes unit tests with mock and API adapters"
     },
     {
-      "id": "P3.1",
-      "description": "Integrate React frontend with composition root for dependency injection",
+      "id": "P3.2",
+      "description": "Implement driver profiles use case with stat aggregation",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2",
+        "P1.1",
+        "P1.2"
+      ],
+      "tier": 3,
+      "specs": [
+        "S09",
+        "S10"
+      ],
+      "worktree_branch": "feat/f1-standings/usecases",
+      "done_condition": "Driver profiles use case passes unit tests with mock and API adapters"
+    },
+    {
+      "id": "P4.1",
+      "description": "Implement composition root with React integration",
       "layer": "integration",
       "adapter": null,
       "port": null,
       "dependencies": [
-        "P2.2"
+        "P0.2",
+        "P1.1",
+        "P1.2",
+        "P2.1",
+        "P3.1",
+        "P3.2"
       ],
-      "tier": 5,
+      "tier": 4,
       "specs": [
-        "S07"
+        "S11"
       ],
-      "worktree_branch": "feat/f1-composition-root",
-      "done_condition": "Composition root compiles with React/Vite"
+      "worktree_branch": "feat/f1-standings/composition-root",
+      "done_condition": "Composition root passes integration tests with all adapters"
     }
   ],
   "mergeOrder": [
@@ -126,27 +154,28 @@
     "P1.1",
     "P1.2",
     "P2.1",
-    "P2.2",
-    "P3.1"
+    "P3.1",
+    "P3.2",
+    "P4.1"
   ],
   "riskRegister": [
     {
       "impact": "medium",
-      "mitigation": "Implement with socket.io and mock adapter for testing",
-      "risk": "WebSocket adapter complexity for real-time updates"
+      "mitigation": "Implement caching layer in API adapter",
+      "risk": "API rate limiting affecting live data"
     },
     {
       "impact": "low",
-      "mitigation": "Implement pagination and caching strategies",
-      "risk": "REST adapter performance for large datasets"
+      "mitigation": "Use adapter pattern for data transformation",
+      "risk": "Historical data storage format changes"
     }
   ],
   "successCriteria": [
-    "All domain models pass unit tests",
-    "Ports layer compiles with domain models",
-    "Primary adapters pass integration tests",
-    "Use cases pass unit tests",
-    "Composition root integrates with React/Vite"
+    "All domain logic passes unit tests",
+    "All ports interfaces implemented",
+    "Mock and API adapters pass integration tests",
+    "Composition root integrates with React frontend",
+    "All feature requirements implemented"
   ],
   "dependencies": {
     "cargo": [],
