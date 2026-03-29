@@ -1,0 +1,232 @@
+{
+  "id": "wp-f1-standings-web-app",
+  "title": "F1 Race Standings Web Application",
+  "specs": "specs/f1-web-app.md",
+  "adr": "adr-0001-f1-web-app",
+  "created": "2023-10-05",
+  "status": "planned",
+  "status_note": "Initial planning phase",
+  "topology": "mixed",
+  "budget": "token-500",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Define domain entities and value objects for F1 data (Driver, Team, Race, Season, Championship)",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/f1-data-model",
+      "done_condition": "All entities and value objects defined with proper validation"
+    },
+    {
+      "id": "P0.2",
+      "description": "Define port interfaces for data access (DriverRepository, TeamRepository, RaceRepository)",
+      "layer": "ports",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 0,
+      "specs": [
+        "S02"
+      ],
+      "worktree_branch": "feat/f1-data-access",
+      "done_condition": "All port interfaces implemented with TypeScript interfaces"
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement secondary adapter for F1 API data fetching (HTTP client for F1 API)",
+      "layer": "secondary",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [
+        "S03"
+      ],
+      "worktree_branch": "feat/f1-api-adapter",
+      "done_condition": "API client successfully fetches and parses F1 data"
+    },
+    {
+      "id": "P2.1",
+      "description": "Implement primary adapter for React frontend (REST client for F1 data)",
+      "layer": "primary",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2",
+        "P1.1"
+      ],
+      "tier": 2,
+      "specs": [
+        "S04"
+      ],
+      "worktree_branch": "feat/f1-react-client",
+      "done_condition": "React client successfully consumes F1 data from ports"
+    },
+    {
+      "id": "P3.1",
+      "description": "Implement use case for fetching live driver standings",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2",
+        "P2.1"
+      ],
+      "tier": 3,
+      "specs": [
+        "S05"
+      ],
+      "worktree_branch": "feat/f1-live-standings",
+      "done_condition": "Use case successfully retrieves and formats live standings"
+    },
+    {
+      "id": "P3.2",
+      "description": "Implement use case for race results by round",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2",
+        "P2.1"
+      ],
+      "tier": 3,
+      "specs": [
+        "S06"
+      ],
+      "worktree_branch": "feat/f1-race-results",
+      "done_condition": "Use case successfully retrieves and formats race results"
+    },
+    {
+      "id": "P3.3",
+      "description": "Implement use case for constructor championship table",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2",
+        "P2.1"
+      ],
+      "tier": 3,
+      "specs": [
+        "S07"
+      ],
+      "worktree_branch": "feat/f1-constructor-table",
+      "done_condition": "Use case successfully retrieves and formats constructor data"
+    },
+    {
+      "id": "P3.4",
+      "description": "Implement use case for driver profiles with stats",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2",
+        "P2.1"
+      ],
+      "tier": 3,
+      "specs": [
+        "S08"
+      ],
+      "worktree_branch": "feat/f1-driver-profiles",
+      "done_condition": "Use case successfully retrieves and formats driver profiles"
+    },
+    {
+      "id": "P3.5",
+      "description": "Implement use case for historical season data",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2",
+        "P2.1"
+      ],
+      "tier": 3,
+      "specs": [
+        "S09"
+      ],
+      "worktree_branch": "feat/f1-historical-data",
+      "done_condition": "Use case successfully retrieves and formats historical data"
+    },
+    {
+      "id": "P4.1",
+      "description": "Implement composition root for React app (wiring adapters to ports)",
+      "layer": "composition-root",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2",
+        "P2.1",
+        "P3.1",
+        "P3.2",
+        "P3.3",
+        "P3.4",
+        "P3.5"
+      ],
+      "tier": 4,
+      "specs": [
+        "S10"
+      ],
+      "worktree_branch": "feat/f1-composition-root",
+      "done_condition": "Composition root successfully initializes all ports and adapters"
+    },
+    {
+      "id": "P5.1",
+      "description": "Implement integration tests for F1 data flow (end-to-end validation)",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2",
+        "P1.1",
+        "P2.1",
+        "P3.1",
+        "P3.2",
+        "P3.3",
+        "P3.4",
+        "P3.5",
+        "P4.1"
+      ],
+      "tier": 5,
+      "specs": [
+        "S11"
+      ],
+      "worktree_branch": "feat/f1-integration-tests",
+      "done_condition": "All integration tests pass with mock F1 API"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1 -> P0.2 -> P1.1 -> P2.1 -> P3.1 -> P3.2 -> P3.3 -> P3.4 -> P3.5 -> P4.1 -> P5.1"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Implement caching layer in secondary adapter",
+      "risk": "F1 API rate limiting"
+    },
+    {
+      "impact": "high",
+      "mitigation": "Use Redux Toolkit for global state",
+      "risk": "React state management complexity"
+    }
+  ],
+  "successCriteria": [
+    "All F1 data endpoints successfully integrated",
+    "React frontend renders all race standings components",
+    "Integration tests pass with 100% coverage",
+    "API rate limits handled gracefully"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
