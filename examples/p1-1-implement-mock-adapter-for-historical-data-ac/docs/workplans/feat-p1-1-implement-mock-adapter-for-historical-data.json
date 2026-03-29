@@ -1,0 +1,63 @@
+{
+  "id": "wp-P1.1",
+  "title": "Implement mock adapter for historical data access",
+  "specs": "specs/historical-data-adapter.md",
+  "adr": "adr-0001",
+  "created": "2023-10-05",
+  "status": "planned",
+  "status_note": "Initial planning",
+  "topology": "pipeline",
+  "budget": "1",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Define port interface for historical data access",
+      "layer": "ports",
+      "adapter": null,
+      "port": "HistoricalDataPort",
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/P1.1/ports",
+      "done_condition": "Port interface implemented and validated"
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement mock adapter for historical data access",
+      "layer": "secondary",
+      "adapter": "HistoricalMockAdapter",
+      "port": "HistoricalDataPort",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 1,
+      "specs": [
+        "S02"
+      ],
+      "worktree_branch": "feat/P1.1/secondary",
+      "done_condition": "Mock adapter passes integration tests"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P1.1"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Implement data pattern simulation based on historical statistics",
+      "risk": "Mock adapter may not simulate real data patterns"
+    }
+  ],
+  "successCriteria": [
+    "Mock adapter returns consistent historical data patterns",
+    "Mock adapter integrates with existing data models",
+    "Mock adapter passes unit tests"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
