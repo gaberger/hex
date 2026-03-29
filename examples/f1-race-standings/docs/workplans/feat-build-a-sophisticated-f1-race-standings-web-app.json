@@ -1,158 +1,29 @@
 {
-  "id": "wp-f1-standings-web-app",
-  "title": "F1 Race Standings Web App",
-  "specs": "specs/f1-standings.md",
-  "adr": "adr-001-f1-web-app",
-  "created": "2023-10-05",
+  "id": "wp-build-a-sophisticated-f1-race-standings",
+  "title": "Plan: build a sophisticated F1 race standings web app with live driver standings, race results by round, constructor championship table, driver profiles with stats, and historical season data — use TypeScript + React + Vite",
+  "specs": null,
+  "adr": null,
+  "created": null,
   "status": "planned",
-  "status_note": "Initial planning",
-  "topology": "mixed",
-  "budget": "5000",
+  "status_note": "auto-generated fallback — LLM JSON extraction failed",
+  "topology": "pipeline",
+  "budget": null,
   "steps": [
     {
-      "id": "P0.1",
-      "description": "Create domain value objects for F1 entities (Driver, Team, Race, Result)",
-      "layer": "domain",
-      "adapter": null,
+      "id": "step-1",
+      "description": "build a sophisticated F1 race standings web app with live driver standings, race results by round, constructor championship table, driver profiles with stats, and historical season data — use TypeScript + React + Vite",
+      "layer": "adapters/primary",
+      "adapter": "primary/cli",
       "port": null,
       "dependencies": [],
-      "tier": 0,
-      "specs": [
-        "S01"
-      ],
-      "worktree_branch": "feat/f1-standings/domain",
-      "done_condition": "All entities implement serializable interfaces and have unit tests"
-    },
-    {
-      "id": "P0.2",
-      "description": "Define port interfaces for data access (DriverRepository, RaceRepository)",
-      "layer": "ports",
-      "adapter": null,
-      "port": null,
-      "dependencies": [
-        "P0.1"
-      ],
-      "tier": 0,
-      "specs": [
-        "S02"
-      ],
-      "worktree_branch": "feat/f1-standings/ports",
-      "done_condition": "All ports have typed interfaces with no implementation"
-    },
-    {
-      "id": "P1.1",
-      "description": "Implement secondary adapter for F1 API (fetch driver standings, race results)",
-      "layer": "secondary",
-      "adapter": "api-client",
-      "port": null,
-      "dependencies": [
-        "P0.2"
-      ],
-      "tier": 1,
-      "specs": [
-        "S03"
-      ],
-      "worktree_branch": "feat/f1-standings/adapters/secondary",
-      "done_condition": "API client returns mock data matching port interface"
-    },
-    {
-      "id": "P2.1",
-      "description": "Implement primary adapter for driver standings component (React functional component)",
-      "layer": "primary",
-      "adapter": "driver-standings",
-      "port": "DriverRepository",
-      "dependencies": [
-        "P1.1",
-        "P0.2"
-      ],
       "tier": 2,
-      "specs": [
-        "S04"
-      ],
-      "worktree_branch": "feat/f1-standings/adapters/primary",
-      "done_condition": "Component renders mock data and handles loading states"
-    },
-    {
-      "id": "P3.1",
-      "description": "Create use case for fetching driver standings with pagination",
-      "layer": "usecases",
-      "adapter": null,
-      "port": null,
-      "dependencies": [
-        "P1.1",
-        "P0.2"
-      ],
-      "tier": 3,
-      "specs": [
-        "S05"
-      ],
-      "worktree_branch": "feat/f1-standings/usecases",
-      "done_condition": "Use case returns paginated driver data matching port interface"
-    },
-    {
-      "id": "P4.1",
-      "description": "Wire composition root to connect driver standings adapter to use case",
-      "layer": "composition-root",
-      "adapter": null,
-      "port": null,
-      "dependencies": [
-        "P2.1",
-        "P3.1"
-      ],
-      "tier": 4,
-      "specs": [
-        "S06"
-      ],
-      "worktree_branch": "feat/f1-standings/composition-root",
-      "done_condition": "Composition root successfully resolves dependencies"
-    },
-    {
-      "id": "P5.1",
-      "description": "Implement integration tests for driver standings flow (API + React)",
-      "layer": "integration",
-      "adapter": null,
-      "port": null,
-      "dependencies": [
-        "P4.1"
-      ],
-      "tier": 5,
-      "specs": [
-        "S07"
-      ],
-      "worktree_branch": "feat/f1-standings/integration",
-      "done_condition": "All integration tests pass with real API data"
+      "specs": null,
+      "worktree_branch": null,
+      "done_condition": null
     }
   ],
-  "mergeOrder": [
-    "P0.1",
-    "P0.2",
-    "P1.1",
-    "P2.1",
-    "P3.1",
-    "P4.1",
-    "P5.1"
-  ],
-  "riskRegister": [
-    {
-      "impact": "medium",
-      "mitigation": "Implement mock API server with same response structure",
-      "risk": "API rate limiting affecting test data"
-    },
-    {
-      "impact": "low",
-      "mitigation": "Break into smaller components during implementation",
-      "risk": "React component complexity in primary adapter"
-    }
-  ],
-  "successCriteria": [
-    "All F1 data models implemented correctly",
-    "API adapter returns valid JSON data",
-    "Driver standings component renders correctly",
-    "Integration tests pass with real API data",
-    "Composition root successfully wires all components"
-  ],
-  "dependencies": {
-    "cargo": [],
-    "npm": []
-  }
+  "mergeOrder": null,
+  "riskRegister": null,
+  "successCriteria": null,
+  "dependencies": null
 }
