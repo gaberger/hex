@@ -1,13 +1,13 @@
 {
-  "id": "wp-230615123456",
-  "title": "Implement Todo REST API with Hexagonal Layers",
-  "specs": "ADR-230615123456",
-  "adr": "ADR-230615123456",
-  "created": "2023-06-15",
+  "id": "wp-build-a-todo-rest-api-in",
+  "title": "Plan: build a todo REST API in Rust with axum: POST /todos to create, GET /todos to list, DELETE /todos/:id to remove. In-memory storage, JSON responses.",
+  "specs": null,
+  "adr": null,
+  "created": null,
   "status": "planned",
-  "status_note": "Initial workplan generation",
+  "status_note": "auto-generated fallback — LLM JSON extraction failed",
   "topology": "pipeline",
-  "budget": "medium",
+  "budget": null,
   "steps": [
     {
       "id": "P0.1",
@@ -17,40 +17,13 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": [
-        "S01"
-      ],
+      "specs": null,
       "worktree_branch": null,
       "done_condition": "src/main.rs compiles and fully implements: build a todo REST API in Rust with axum: POST /todos to create, GET /todos to list, DELETE /todos/:id to remove. In-memory storage, JSON responses.; Cargo.toml has correct dependencies"
     }
   ],
-  "mergeOrder": [
-    "P0.1",
-    "P0.2",
-    "P1.1",
-    "P2.1",
-    "P3.1"
-  ],
-  "riskRegister": [
-    {
-      "impact": "medium",
-      "mitigation": "Document data loss on restart in ADR-230615123456",
-      "risk": "In-memory storage limitation"
-    },
-    {
-      "impact": "low",
-      "mitigation": "Include onboarding documentation in PR comments",
-      "risk": "Initial setup complexity"
-    }
-  ],
-  "successCriteria": [
-    "API endpoints POST/GET/DELETE /todos return JSON responses",
-    "All layers compile without warnings",
-    "In-memory storage implementation passes unit tests",
-    "Composition root wires all components correctly"
-  ],
-  "dependencies": {
-    "cargo": [],
-    "npm": []
-  }
+  "mergeOrder": null,
+  "riskRegister": null,
+  "successCriteria": null,
+  "dependencies": null
 }
