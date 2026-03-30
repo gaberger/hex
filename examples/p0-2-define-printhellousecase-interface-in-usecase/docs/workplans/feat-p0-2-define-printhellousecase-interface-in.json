@@ -1,0 +1,38 @@
+{
+  "id": "wp-P0.2",
+  "title": "Define PrintHelloUseCase interface in usecases/ layer specifying signature",
+  "specs": null,
+  "adr": "P0.2",
+  "created": "2023-10-05",
+  "status": "planned",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": "1000",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Define PrintHelloUseCase interface in usecases/PrintHelloUseCase.ts specifying signature",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 3,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/P0.2/usecases",
+      "done_condition": "Test passes in usecases/PrintHelloUseCase.test.ts"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1"
+  ],
+  "riskRegister": [],
+  "successCriteria": [
+    "PrintHelloUseCase interface exists in usecases/"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
