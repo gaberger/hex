@@ -1,0 +1,59 @@
+{
+  "id": "wp-leaderboard-service",
+  "title": "Leaderboard Service with Go API & TypeScript CLI",
+  "specs": null,
+  "adr": "ADR-2404261455",
+  "created": "2024-04-27",
+  "status": "planned",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": "medium",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Implement the full feature in main.go — single-binary go project\n\nFeature requirements: build a Go REST API for a leaderboard service with a TypeScript CLI client that submits scores and displays rankings",
+      "layer": "primary",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": null,
+      "done_condition": "main.go compiles and fully implements: build a Go REST API for a leaderboard service with a TypeScript CLI client that submits scores and displays rankings; go.mod has correct dependencies"
+    }
+  ],
+  "mergeOrder": [
+    "Domain and ports",
+    "Secondary adapters",
+    "Primary adapters",
+    "Usecases",
+    "Composition root",
+    "Integration Tests"
+  ],
+  "riskRegister": [
+    {
+      "impact": "high",
+      "mitigation": "Implement connection pooling and retry mechanisms",
+      "risk": "Database connection issues"
+    },
+    {
+      "impact": "medium",
+      "mitigation": "Implement caching and optimize database queries",
+      "risk": "API performance bottlenecks"
+    },
+    {
+      "impact": "medium",
+      "mitigation": "Define clear data validation rules and error handling",
+      "risk": "Inconsistent data between API and CLI"
+    }
+  ],
+  "successCriteria": [
+    "Leaderboard service can store and retrieve scores",
+    "Leaderboard rankings are accurate and up-to-date",
+    "CLI client can submit scores and display rankings"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
