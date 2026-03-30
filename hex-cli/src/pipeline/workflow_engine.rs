@@ -94,28 +94,35 @@ impl WorkflowEngine {
         for phase in &workflow.phases {
             let start = Instant::now();
 
-            // Check if this phase has a blocking gate.
-            // Gate evaluation is deferred to the supervisor — we just record
-            // the gate metadata so the supervisor knows what to check.
-            let gate_failure = match &phase.gate {
-                Some(gate) if gate.blocking => {
+            // Run the gate (if any) and determine success/failure.
+            let (phase_success, gate_failure) = match &phase.gate {
+                Some(gate) => {
                     debug!(
                         phase = %phase.id,
                         gate = %gate.name,
                         blocking = gate.blocking,
-                        "phase has blocking gate"
+                        "running phase gate"
                     );
-                    Some(GateFailure {
-                        gate_name: gate.name.clone(),
-                        on_fail_instructions: gate.on_fail.clone().unwrap_or_default(),
-                        blocking: true,
-                    })
+                    let gate_result = self.run_phase_gate_pub(gate);
+                    if gate_result.success {
+                        info!(phase = %phase.id, gate = %gate.name, "phase gate passed");
+                        (true, None)
+                    } else {
+                        warn!(
+                            phase = %phase.id,
+                            gate = %gate.name,
+                            blocking = gate.blocking,
+                            "phase gate failed"
+                        );
+                        let failure = GateFailure {
+                            gate_name: gate.name.clone(),
+                            on_fail_instructions: gate.on_fail.clone().unwrap_or_default(),
+                            blocking: gate.blocking,
+                        };
+                        (!gate.blocking, Some(failure))
+                    }
                 }
-                Some(gate) => {
-                    debug!(phase = %phase.id, gate = %gate.name, "phase has non-blocking gate");
-                    None
-                }
-                None => None,
+                None => (true, None),
             };
 
             let duration_ms = start.elapsed().as_millis() as u64;
@@ -123,8 +130,8 @@ impl WorkflowEngine {
             results.push(PhaseResult {
                 phase_id: phase.id.clone(),
                 phase_name: phase.name.clone(),
-                success: true,
-                gate_failure,
+                success: phase_success,
+                gate_failure: gate_failure.clone(),
                 duration_ms,
             });
 
@@ -132,8 +139,17 @@ impl WorkflowEngine {
                 phase = %phase.id,
                 name = %phase.name,
                 steps = phase.steps.len(),
-                "phase recorded"
+                success = phase_success,
+                "phase complete"
             );
+
+            // Stop at first blocking gate failure.
+            if let Some(ref gf) = gate_failure {
+                if gf.blocking {
+                    warn!(phase = %phase.id, gate = %gf.gate_name, "blocking gate failed — halting phase execution");
+                    break;
+                }
+            }
         }
 
         results
@@ -166,11 +182,19 @@ impl WorkflowEngine {
         &self,
         feedback: &FeedbackLoopConfig,
     ) -> Vec<FeedbackGateResult> {
-        feedback
-            .gates
-            .iter()
-            .map(|gate| self.run_single_gate(gate))
-            .collect()
+        let mut results = Vec::new();
+        for gate in &feedback.gates {
+            let result = self.run_single_gate(gate);
+            let failed = !result.success;
+            results.push(result);
+            // Short-circuit: if compile fails, lint and test will also fail —
+            // skip them to save ~8s per iteration and surface the real error.
+            if failed && gate.name == "compile" {
+                info!("compile gate failed — skipping remaining gates this iteration");
+                break;
+            }
+        }
+        results
     }
 
     /// Run a PhaseGate (from a workflow phase) as an executable gate.
@@ -359,7 +383,7 @@ impl WorkflowEngine {
     ///
     /// Returns (gate_results_per_iteration, escalated, escalation_message).
     /// Each inner Vec is one iteration's worth of gate results.
-    pub fn run_feedback_loop(
+    pub async fn run_feedback_loop(
         &self,
         feedback: &FeedbackLoopConfig,
     ) -> (Vec<Vec<FeedbackGateResult>>, bool, Option<String>) {
@@ -377,6 +401,15 @@ impl WorkflowEngine {
             if all_passed {
                 info!(iteration, "all feedback gates passed — loop complete");
                 return (all_iterations, false, None);
+            }
+
+            // Exponential backoff between failed iterations: 2s, 4s, 8s, 16s (cap 30s).
+            // Avoids hammering rate-limited OpenRouter endpoints and gives the fixer
+            // time to flush before the next gate run.
+            if iteration < max {
+                let backoff_secs = std::cmp::min(2u64.pow(iteration as u32 - 1) * 2, 30);
+                info!(iteration, backoff_secs, "backing off before next iteration");
+                tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
             }
 
             if iteration == max {
@@ -456,6 +489,39 @@ impl WorkflowEngine {
                     );
                     return fallback;
                 }
+
+                // Rust-specific: if the command uses `-p <pkg>` and that package
+                // doesn't exist in the workspace (e.g. single-binary projects where
+                // adapter_name resolved to a layer like "primary"), drop the `-p` flag
+                // so `cargo clippy` scans the whole project instead of failing.
+                if self.language == "rust" && cmd.contains("-p ") {
+                    // Extract the package name after `-p `
+                    if let Some(pkg) = cmd.split("-p ").nth(1).and_then(|s| s.split_whitespace().next()) {
+                        // Check if it's a real workspace member by looking for its Cargo.toml
+                        let pkg_toml = work_path.join(pkg).join("Cargo.toml");
+                        let is_workspace_member = pkg_toml.exists()
+                            // Also accept if the project-level Cargo.toml names this package
+                            || {
+                                let root_toml = work_path.join("Cargo.toml");
+                                std::fs::read_to_string(&root_toml)
+                                    .map(|c| c.contains(&format!("name = \"{}\"", pkg)))
+                                    .unwrap_or(false)
+                            };
+                        if !is_workspace_member {
+                            // Remove `-p <pkg>` from the command
+                            let fallback = cmd
+                                .replace(&format!("-p {} ", pkg), "")
+                                .replace(&format!("-p {}", pkg), "");
+                            warn!(
+                                original = %cmd,
+                                fallback = %fallback,
+                                pkg,
+                                "rust lint gate: package not found in workspace — dropping -p flag"
+                            );
+                            return fallback;
+                        }
+                    }
+                }
             }
             "test" => {
                 // Pattern: `npx vitest run <file>` or `go test ... <file>`
@@ -476,6 +542,30 @@ impl WorkflowEngine {
                         "test gate path not found — falling back to tests/"
                     );
                     return fallback;
+                }
+
+                // Rust-specific: `cargo test --lib <adapter_name>` fails for binary
+                // crates that have no lib target. Drop `--lib <name>` so the whole
+                // binary is tested (inline #[cfg(test)] modules run fine).
+                if self.language == "rust" && cmd.contains("--lib ") {
+                    if let Some(lib_name) = cmd.split("--lib ").nth(1).and_then(|s| s.split_whitespace().next()) {
+                        let root_toml = work_path.join("Cargo.toml");
+                        let has_lib = std::fs::read_to_string(&root_toml)
+                            .map(|c| c.contains("[lib]") || c.contains("lib.rs"))
+                            .unwrap_or(false);
+                        if !has_lib {
+                            let fallback = cmd
+                                .replace(&format!("--lib {} ", lib_name), "")
+                                .replace(&format!("--lib {}", lib_name), "");
+                            warn!(
+                                original = %cmd,
+                                fallback = %fallback,
+                                lib_name,
+                                "rust test gate: no lib target — dropping --lib flag"
+                            );
+                            return fallback;
+                        }
+                    }
                 }
             }
             _ => {}

@@ -20,7 +20,7 @@ use crate::pipeline::agents::{DocumenterAgent, ReviewerAgent, TesterAgent, UxRev
 use crate::pipeline::cli_runner::CliRunner;
 use crate::pipeline::code_phase::CodePhase;
 use crate::pipeline::fix_agent::{FixAgent, FixTaskInput};
-use crate::pipeline::model_selection::{ModelSelector, SelectedModel, TaskType};
+use crate::pipeline::model_selection::{ModelSelector, SelectedModel, TaskType, is_compatible_with_provider};
 use crate::pipeline::workflow_engine::WorkflowEngine;
 use crate::pipeline::objectives::{
     agent_for_objective, evaluate_all, objectives_for_tier, Objective, ObjectiveState,
@@ -449,7 +449,7 @@ impl Supervisor {
             workplan_step: Some(step_desc.to_string()),
             upstream_output: None,
             metadata,
-            project_id: None,
+            project_id: self.project_id.clone(),
         }
     }
 
@@ -479,7 +479,7 @@ impl Supervisor {
             workplan_step: None,
             upstream_output: None,
             metadata,
-            project_id: None,
+            project_id: self.project_id.clone(),
         }
     }
 
@@ -504,7 +504,7 @@ impl Supervisor {
             workplan_step: None,
             upstream_output: None,
             metadata,
-            project_id: None,
+            project_id: self.project_id.clone(),
         }
     }
 
@@ -523,7 +523,7 @@ impl Supervisor {
             workplan_step: None,
             upstream_output: None,
             metadata,
-            project_id: None,
+            project_id: self.project_id.clone(),
         }
     }
 
@@ -542,7 +542,7 @@ impl Supervisor {
             workplan_step: None,
             upstream_output: None,
             metadata,
-            project_id: None,
+            project_id: self.project_id.clone(),
         }
     }
 
@@ -567,7 +567,7 @@ impl Supervisor {
             workplan_step: None,
             upstream_output: Some(issue_desc.to_string()),
             metadata,
-            project_id: None,
+            project_id: self.project_id.clone(),
         }
     }
 
@@ -681,7 +681,7 @@ impl Supervisor {
             workplan_step: Some(step_desc.to_string()),
             upstream_output: None,
             metadata,
-            project_id: None,
+            project_id: self.project_id.clone(),
         }
     }
 
@@ -1845,7 +1845,9 @@ impl Supervisor {
                     // Select model from YAML definition (ADR-2603240130)
                     let yaml_selected = self.select_model_for_role("hex-coder", 0);
                     let yaml_model_id = yaml_selected.model_id.clone();
-                    let effective_model: Option<&str> = model_override.or(Some(&yaml_model_id));
+                    let effective_model: Option<&str> = model_override
+                        .or_else(|| is_compatible_with_provider(&yaml_model_id, provider_pref)
+                            .then_some(yaml_model_id.as_str()));
                     info!(
                         model = %yaml_model_id,
                         source = %yaml_selected.source,
@@ -2050,7 +2052,7 @@ impl Supervisor {
                             "running feedback loop"
                         );
                         let (iterations, escalated, escalation_msg) =
-                            engine.run_feedback_loop(fl);
+                            engine.run_feedback_loop(fl).await;
                         let total_iterations = iterations.len();
                         let all_passed = iterations
                             .last()
@@ -2069,8 +2071,9 @@ impl Supervisor {
                             let escalated_selected =
                                 self.select_model_for_role("hex-coder", total_iterations as u32);
                             let escalated_model_id = escalated_selected.model_id.clone();
-                            let fix_model: Option<&str> =
-                                model_override.or(Some(&escalated_model_id));
+                            let fix_model: Option<&str> = model_override
+                                .or_else(|| is_compatible_with_provider(&escalated_model_id, provider_pref)
+                                    .then_some(escalated_model_id.as_str()));
                             if escalated_model_id != yaml_model_id {
                                 info!(
                                     original = %yaml_model_id,
@@ -2116,7 +2119,7 @@ impl Supervisor {
                                             "gate fixer complete — retrying gates"
                                         );
                                         // One retry pass after the fix
-                                        let (retry_iters, _, _) = engine.run_feedback_loop(fl);
+                                        let (retry_iters, _, _) = engine.run_feedback_loop(fl).await;
                                         let retry_passed = retry_iters
                                             .last()
                                             .map(|last| last.iter().all(|g| g.success))
@@ -2142,7 +2145,9 @@ impl Supervisor {
                     // Still use YAML model selection (ADR-2603240130)
                     let yaml_selected = self.select_model_for_role("hex-coder", 0);
                     let yaml_model_id = yaml_selected.model_id.clone();
-                    let effective_model: Option<&str> = model_override.or(Some(&yaml_model_id));
+                    let effective_model: Option<&str> = model_override
+                        .or_else(|| is_compatible_with_provider(&yaml_model_id, provider_pref)
+                            .then_some(yaml_model_id.as_str()));
                     info!(
                         model = %yaml_model_id,
                         source = %yaml_selected.source,
@@ -2545,7 +2550,9 @@ impl Supervisor {
                 let yaml_selected = self.select_model_for_role("hex-fixer", 0);
                 let yaml_model_id = yaml_selected.model_id.clone();
                 info!(model = %yaml_model_id, source = %yaml_selected.source, "selected model for fix");
-                let fixer_model: Option<&str> = model_override.or(Some(&yaml_model_id));
+                let fixer_model: Option<&str> = model_override
+                    .or_else(|| is_compatible_with_provider(&yaml_model_id, provider_pref)
+                        .then_some(yaml_model_id.as_str()));
                 let result = agent
                     .execute(input, fixer_model, provider_pref)
                     .await

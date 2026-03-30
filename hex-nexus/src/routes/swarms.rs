@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -86,7 +86,10 @@ pub async fn create_swarm(
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let port = state_port(&state)?;
     let id = uuid::Uuid::new_v4().to_string();
-    let topology = body.topology.as_deref().unwrap_or("hierarchical");
+    let raw_topology = body.topology.as_deref().unwrap_or("hierarchical");
+    // "hex-pipeline" is hex-nexus's internal name for the phased dev topology.
+    // SpacetimeDB only accepts the canonical set; map before forwarding.
+    let topology = if raw_topology == "hex-pipeline" { "pipeline" } else { raw_topology };
     let created_by = headers
         .get("x-hex-agent-id")
         .and_then(|v| v.to_str().ok())
@@ -222,12 +225,16 @@ pub async fn create_task(
         .await
         .map_err(state_err)?;
 
-    // Assign to agent immediately if provided
+    // Assign to agent immediately if provided (skip if agent_id is empty string)
     let assigned_agent = if let Some(ref aid) = body.agent_id {
-        port.swarm_task_assign(&id, aid, None)
-            .await
-            .map_err(state_err)?;
-        aid.clone()
+        if !aid.is_empty() {
+            port.swarm_task_assign(&id, aid, None)
+                .await
+                .map_err(state_err)?;
+            aid.clone()
+        } else {
+            String::new()
+        }
     } else {
         String::new()
     };
@@ -360,6 +367,50 @@ pub async fn get_task_by_id(
         "completedAt": task.completed_at,
         "swarmStatus": swarm_status,
     })))
+}
+
+/// GET /api/hexflo/tasks/claim — atomically claim a pending task for an agent.
+///
+/// Query params: `agent_id` (required), `swarm_id` (optional filter).
+/// Returns the claimed task JSON or 204 No Content if nothing is pending.
+#[derive(Deserialize)]
+pub struct ClaimQuery {
+    agent_id: String,
+    swarm_id: Option<String>,
+}
+
+pub async fn claim_task(
+    State(state): State<SharedState>,
+    Query(q): Query<ClaimQuery>,
+) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
+    use axum::response::IntoResponse;
+    let port = state_port(&state)?;
+
+    let tasks = port.swarm_task_list(q.swarm_id.as_deref()).await.map_err(state_err)?;
+    let pending = tasks.into_iter().find(|t| {
+        (t.status.is_empty() || t.status == "pending") && t.agent_id.is_empty()
+    });
+
+    let Some(task) = pending else {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    };
+
+    // Atomically assign the task. If another agent claimed it first, return 409.
+    port.swarm_task_assign(&task.id, &q.agent_id, None)
+        .await
+        .map_err(|e| {
+            if matches!(e, StateError::Conflict(_)) {
+                (StatusCode::CONFLICT, Json(json!({ "error": format!("{}", e) })))
+            } else {
+                state_err(e)
+            }
+        })?;
+
+    Ok(Json(json!({
+        "id": task.id,
+        "title": task.title,
+        "swarmId": task.swarm_id,
+    })).into_response())
 }
 
 /// GET /api/agents/:id/swarm — get the swarm owned by this agent (if any)

@@ -38,6 +38,9 @@ pub struct ExecutionState {
     pub phase_results: Vec<PhaseResult>,
     #[serde(default)]
     pub gate_results: Vec<GateResult>,
+    /// Task IDs that have already completed successfully (used to skip on resume).
+    #[serde(default)]
+    pub completed_task_ids: Vec<String>,
 }
 
 /// Result of a phase gate check (ADR-046).
@@ -88,6 +91,9 @@ pub struct PhaseResult {
     pub status: String,
     pub agent_ids: Vec<String>,
     pub errors: Vec<String>,
+    /// Task IDs that completed successfully in this phase.
+    #[serde(default)]
+    pub completed_task_ids: Vec<String>,
 }
 
 /// Parsed workplan JSON structure — matches workplan.schema.json exactly.
@@ -262,6 +268,7 @@ impl WorkplanExecutor {
             project_id: String::new(),
             phase_results: Vec::new(),
             gate_results: Vec::new(),
+            completed_task_ids: Vec::new(),
         };
 
         // Persist via state port
@@ -329,6 +336,7 @@ impl WorkplanExecutor {
                         exec.completed_phases += 1;
                         exec.completed_tasks += result.agent_ids.len();
                         exec.failed_tasks += result.errors.len();
+                        exec.completed_task_ids.extend(result.completed_task_ids.iter().cloned());
                         exec.phase_results.push(result.clone());
                         exec.updated_at = chrono::Utc::now().to_rfc3339();
                         Self::store_execution(state_port.as_ref(), &exec).await.ok();
@@ -432,6 +440,7 @@ impl WorkplanExecutor {
                 prompt: Some(prompt),
                 worktree_branch,
                 wait_for_completion: true,
+                daemon: false,
             };
 
             let task_id = if !task.id.is_empty() { task.id.clone() } else { task.name.clone() };
@@ -453,7 +462,7 @@ impl WorkplanExecutor {
                             agent_id: Some(agent.id.clone()),
                             result: None,
                         }).await;
-                        Ok(agent.id)
+                        Ok((task_id, agent.id))
                     }
                     Err(e) => {
                         let _ = sp.workplan_update_task(WorkplanTaskUpdate {
@@ -469,9 +478,13 @@ impl WorkplanExecutor {
         }
 
         // Wait for all spawned agents
+        let mut completed_task_ids = Vec::new();
         for handle in handles {
             match handle.await {
-                Ok(Ok(id)) => agent_ids.push(id),
+                Ok(Ok((task_id, agent_id))) => {
+                    agent_ids.push(agent_id);
+                    completed_task_ids.push(task_id);
+                }
                 Ok(Err(e)) => errors.push(e),
                 Err(e) => errors.push(format!("Join error: {}", e)),
             }
@@ -490,6 +503,7 @@ impl WorkplanExecutor {
             status: status.to_string(),
             agent_ids,
             errors,
+            completed_task_ids,
         })
     }
 
@@ -565,6 +579,10 @@ impl WorkplanExecutor {
         let execution_id = exec.id.clone();
         let current_phase = exec.current_phase.clone();
 
+        // Capture completed_task_ids from the paused execution state so we can
+        // skip already-finished tasks when we re-enter the current_phase.
+        let already_completed = exec.completed_task_ids.clone();
+
         tokio::spawn(async move {
             // Find the phase to resume from and continue
             let mut found = false;
@@ -584,12 +602,53 @@ impl WorkplanExecutor {
 
                 Self::update_phase(state_port.as_ref(), &execution_id, &phase.name).await.ok();
 
-                match Self::execute_phase(&state_port, &shared_state, &workplan, phase).await {
+                // For the phase we are resuming into, skip tasks that already
+                // completed before the pause to avoid duplicate agents/worktrees.
+                let effective_phase;
+                let phase_to_run = if phase.name == current_phase && !already_completed.is_empty() {
+                    let remaining: Vec<_> = phase.tasks.iter()
+                        .filter(|t| {
+                            let id = if !t.id.is_empty() { t.id.as_str() } else { t.name.as_str() };
+                            !already_completed.contains(&id.to_string())
+                        })
+                        .cloned()
+                        .collect();
+                    if remaining.is_empty() {
+                        // All tasks in this phase already completed — skip it entirely.
+                        tracing::info!(phase = %phase.name, "All tasks already completed, skipping phase on resume");
+                        continue;
+                    }
+                    tracing::info!(
+                        phase = %phase.name,
+                        skipped = phase.tasks.len() - remaining.len(),
+                        remaining = remaining.len(),
+                        "Resuming phase with incomplete tasks only"
+                    );
+                    effective_phase = WorkplanPhase {
+                        id: phase.id.clone(),
+                        name: phase.name.clone(),
+                        tier: phase.tier,
+                        tasks: remaining,
+                        gate: phase.gate.clone(),
+                    };
+                    &effective_phase
+                } else {
+                    phase
+                };
+
+                match Self::execute_phase(&state_port, &shared_state, &workplan, phase_to_run).await {
                     Ok(result) if result.status == "failed" => {
                         Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&result.errors)).await.ok();
                         return;
                     }
-                    Ok(_) => {}
+                    Ok(result) => {
+                        // Persist newly completed task IDs so a second resume is also safe.
+                        if let Ok(Some(mut exec)) = Self::load_execution(state_port.as_ref(), &execution_id).await {
+                            exec.completed_task_ids.extend(result.completed_task_ids.iter().cloned());
+                            exec.updated_at = chrono::Utc::now().to_rfc3339();
+                            Self::store_execution(state_port.as_ref(), &exec).await.ok();
+                        }
+                    }
                     Err(e) => {
                         tracing::error!(error = %e, "Phase failed on resume");
                         Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&[e])).await.ok();

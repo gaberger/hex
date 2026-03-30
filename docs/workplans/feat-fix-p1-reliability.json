@@ -1,0 +1,59 @@
+{
+  "id": "feat-fix-p1-reliability",
+  "title": "P1 Reliability Fixes",
+  "description": "Fix five P1 reliability issues identified by the research swarm: (R1) workplan resume re-executes completed tasks, (R2) Docker agents orphaned on shutdown, (R3) claim_task TOCTOU race, (T5) StdbConnection never resets on disconnect, (T3) CodePhaseWorker has no TDD retry loop.",
+  "status": "active",
+  "language": "rust",
+  "crates": ["hex-nexus", "hex-agent"],
+  "steps": [
+    {
+      "id": "P1.1",
+      "title": "R1: Workplan resume skips already-completed tasks",
+      "description": "In hex-nexus/src/orchestration/workplan_executor.rs lines 569-603, resume() re-executes the current phase in full, re-spawning agents for tasks that already completed before the pause. Fix: before spawning tasks in the resumed phase, filter out any task_ids whose status is already 'completed' in the state port's workplan_task table.",
+      "tier": 0,
+      "files": ["hex-nexus/src/orchestration/workplan_executor.rs"],
+      "acceptance": [
+        "Tasks with status 'completed' are not re-spawned on resume",
+        "cargo check -p hex-nexus passes"
+      ]
+    },
+    {
+      "id": "P1.2",
+      "title": "R2+R3: Docker orphan cleanup and claim_task CAS race",
+      "description": "Two fixes in hex-nexus: (R2) agent_manager.rs lines 294-302 — Docker path discards container ID after 'docker run -d', so stop_local_agents() never kills containers. Fix: parse the container ID from stdout, store it, and kill via 'docker stop' on shutdown. (R3) swarms.rs lines 382-406 — claim_task lists pending tasks and assigns the first one, but two concurrent agents both get 200 OK for the same task because the CAS version field exists but is unused. Fix: pass the task's version field to swarm_task_assign, propagate Conflict as HTTP 409.",
+      "tier": 0,
+      "files": [
+        "hex-nexus/src/orchestration/agent_manager.rs",
+        "hex-nexus/src/routes/swarms.rs"
+      ],
+      "acceptance": [
+        "Docker container IDs are stored and killed on nexus shutdown",
+        "claim_task returns HTTP 409 when CAS version conflicts",
+        "cargo check -p hex-nexus passes"
+      ]
+    },
+    {
+      "id": "P1.3",
+      "title": "T5+T3: StdbConnection reconnect flag and CodePhaseWorker retry loop",
+      "description": "Two fixes in hex-agent: (T5) stdb_connection.rs lines 117-126 — on_disconnect callback logs but never resets the 'subscribed' AtomicBool, so is_connected() returns true on a dead connection forever. Fix: reset subscribed to false in on_disconnect. (T3) code_phase_worker.rs lines 138-270 — single-shot executor with no retry. When compile_check() fails, it returns Ok with 'compile: failed' in the string instead of retrying with error context fed back to the LLM. Fix: add a retry loop (max 3 iterations) that feeds compile errors back to the inference call as a follow-up message.",
+      "tier": 0,
+      "files": [
+        "hex-agent/src/adapters/secondary/stdb_connection.rs",
+        "hex-agent/src/adapters/secondary/code_phase_worker.rs"
+      ],
+      "acceptance": [
+        "subscribed flag reset to false in on_disconnect",
+        "CodePhaseWorker retries up to 3 times with compile errors fed back to LLM",
+        "cargo check -p hex-agent passes"
+      ]
+    }
+  ],
+  "topology": "parallel",
+  "objectives": [
+    {
+      "id": "CompileClean",
+      "evaluate": "cargo check --workspace",
+      "required": true
+    }
+  ]
+}

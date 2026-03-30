@@ -26,8 +26,10 @@ use ratatui::widgets::{Block, Borders};
 use tracing::{error, info, warn};
 
 use crate::pipeline::adr_phase::{AdrPhase, AdrPhaseResult};
+use crate::pipeline::cli_runner::CliRunner;
 use crate::pipeline::budget::{BudgetStatus, BudgetTracker};
 use crate::pipeline::code_phase::{CodePhase, CodeStepResult};
+use crate::nexus_client::NexusClient;
 use crate::pipeline::supervisor::Supervisor;
 use crate::pipeline::swarm_phase::{SwarmPhase, SwarmPhaseResult};
 use crate::pipeline::validate_phase::{ValidatePhase, ValidateResult};
@@ -368,11 +370,7 @@ impl TuiApp {
                     } else {
                         Some(self.config.model.as_str())
                     };
-                    let provider_pref = if self.config.provider.is_empty()
-                        || self.config.provider == "openrouter"
-                    {
-                        // "openrouter" is the default platform — no provider filtering,
-                        // let RL engine select the best model for the task type.
+                    let provider_pref = if self.config.provider.is_empty() {
                         None
                     } else {
                         Some(self.config.provider.as_str())
@@ -509,19 +507,17 @@ impl TuiApp {
                     } else {
                         Some(self.config.model.as_str())
                     };
-                    let provider_pref = if self.config.provider.is_empty()
-                        || self.config.provider == "openrouter"
-                    {
-                        // "openrouter" is the default platform — no provider filtering,
-                        // let RL engine select the best model for the task type.
+                    let provider_pref = if self.config.provider.is_empty() {
                         None
                     } else {
                         Some(self.config.provider.as_str())
                     };
+                    let wp_language = infer_language_from_description(&self.session.feature_description);
 
                     let execute_fut = wp_phase.execute(
                         &adr_path,
                         &self.session.feature_description,
+                        wp_language,
                         model_override,
                         provider_pref,
                     );
@@ -551,6 +547,7 @@ impl TuiApp {
                                     let retry_fut = wp_phase.execute(
                                         &adr_path,
                                         &self.session.feature_description,
+                                        wp_language,
                                         Some(*fallback_model),
                                         provider_pref,
                                     );
@@ -576,6 +573,7 @@ impl TuiApp {
                                 let retry_fut = wp_phase.execute(
                                     &adr_path,
                                     &self.session.feature_description,
+                                    wp_language,
                                     model_override,
                                     provider_pref,
                                 );
@@ -665,6 +663,7 @@ impl TuiApp {
                         &self.session.feature_description,
                         &workplan_data,
                         self.session.agent_id.as_deref(),
+                        self.session.project_id.as_deref(),
                     );
 
                     let result = if let Ok(handle) = &rt {
@@ -997,13 +996,34 @@ impl TuiApp {
                     let shared_session = std::sync::Arc::new(std::sync::Mutex::new(
                         self.session.clone(),
                     ));
+
+                    // Generate + store architecture fingerprint (ADR-2603301200).
+                    // Best-effort: failure is logged but does not block the pipeline.
+                    let fingerprint_project_id = self.session.project_id.clone();
+                    if let Some(ref pid) = fingerprint_project_id {
+                        let nexus = NexusClient::from_env();
+                        let wp_path = self.session.workplan_path.clone().unwrap_or_default();
+                        let fp_body = serde_json::json!({
+                            "project_root": output_dir,
+                            "workplan_path": wp_path,
+                        });
+                        let fp_url = format!("/api/projects/{}/fingerprint", pid);
+                        if let Ok(handle) = &rt {
+                            let _ = tokio::task::block_in_place(|| {
+                                handle.block_on(nexus.post_long(&fp_url, &fp_body))
+                            });
+                        }
+                        println!("         fingerprint: generated for project {}", pid);
+                    }
+
                     let supervisor = Supervisor::new(&output_dir, language)
                         .with_tracking(
                             self.session.swarm_id.clone(),
                             self.session.agent_id.clone(),
                         )
                         .with_task_ids(self.task_id_map.clone())
-                        .with_session(shared_session.clone());
+                        .with_session(shared_session.clone())
+                        .with_project_id(fingerprint_project_id);
 
                     println!("         supervisor: {} tiers, {} steps",
                         workplan_data.steps.iter().map(|s| s.tier).max().unwrap_or(0) + 1,
@@ -1085,11 +1105,7 @@ impl TuiApp {
                     } else {
                         Some(self.config.model.as_str())
                     };
-                    let provider_pref = if self.config.provider.is_empty()
-                        || self.config.provider == "openrouter"
-                    {
-                        // "openrouter" is the default platform — no provider filtering,
-                        // let RL engine select the best model for the task type.
+                    let provider_pref = if self.config.provider.is_empty() {
                         None
                     } else {
                         Some(self.config.provider.as_str())
@@ -1180,14 +1196,24 @@ impl TuiApp {
 
                             let _ = self.session.add_cost(qlr.fix_cost_usd, qlr.fix_tokens);
 
-                            // In --auto mode: accept Grade B (80+) with warning, fail on D or F
+                            // In --auto mode: block commit if code does not compile.
+                            // Grade D/F with compile failure = abort; grade C = warn only.
+                            if self.config.mode == DevMode::Auto && !qlr.compile.pass {
+                                eprintln!(
+                                    "         ABORT: code does not compile after quality loop (grade {}). Skipping commit.",
+                                    qlr.grade,
+                                );
+                                self.session.status = SessionStatus::Failed;
+                                self.session.save()?;
+                                break;
+                            }
+
                             if self.config.mode == DevMode::Auto {
                                 if qlr.grade == 'D' || qlr.grade == 'F' {
                                     eprintln!(
                                         "         FAIL: Grade {} (score {}) is below auto-accept threshold (B/80+)",
                                         qlr.grade, qlr.score,
                                     );
-                                    // Still advance to commit phase (user can inspect)
                                 } else if qlr.grade == 'C' {
                                     eprintln!(
                                         "         WARNING: Grade {} (score {}) — consider manual review",
@@ -1282,6 +1308,16 @@ impl TuiApp {
                         }
                     }
                 }
+            }
+        }
+
+        // Close the HexFlo swarm so status transitions from active → completed.
+        if let Some(ref swarm_id) = self.session.swarm_id.clone() {
+            let runner = CliRunner::new();
+            if let Err(e) = runner.swarm_complete(swarm_id) {
+                warn!(swarm_id = %swarm_id, error = %e, "swarm_complete failed — swarm will remain active");
+            } else {
+                info!(swarm_id = %swarm_id, "swarm closed");
             }
         }
 
@@ -2286,10 +2322,12 @@ impl TuiApp {
             Some(self.config.provider.as_str())
         };
 
+        let wp_lang = infer_language_from_description(&self.session.feature_description);
         match phase
             .execute(
                 &adr_path,
                 &self.session.feature_description,
+                wp_lang,
                 model_override,
                 provider_pref,
             )
@@ -2505,7 +2543,7 @@ impl TuiApp {
 
         let phase = SwarmPhase::from_env();
         match phase
-            .execute(&self.session.feature_description, &workplan_data, self.session.agent_id.as_deref())
+            .execute(&self.session.feature_description, &workplan_data, self.session.agent_id.as_deref(), self.session.project_id.as_deref())
             .await
         {
             Ok(result) => {
@@ -3151,25 +3189,52 @@ impl TuiApp {
 
 // ── Helpers (module-level) ──────────────────────────────────────────────
 
+/// Infer programming language from a user-supplied feature description alone.
+/// Used before the workplan is generated so the prompt can include language context.
+fn infer_language_from_description(description: &str) -> &'static str {
+    let d = description.to_lowercase();
+    if d.contains("rust") || d.contains("cargo") || d.contains(".rs") {
+        return "rust";
+    }
+    if d.contains("python") || d.contains(".py") || d.contains("pip") {
+        return "python";
+    }
+    if d.contains("golang") || d.contains("go lang") || d.contains("go module") || d.contains(" go ") {
+        return "go";
+    }
+    if d.contains("typescript") || d.contains("javascript") || d.contains("node") || d.contains("bun") {
+        return "typescript";
+    }
+    "typescript"
+}
+
 /// Infer programming language from workplan title and step descriptions.
 /// Scans for language-specific keywords; defaults to "typescript".
 fn infer_language_from_workplan(workplan: &crate::pipeline::workplan_phase::WorkplanData, user_description: &str) -> &'static str {
-    // Check user-supplied description first — it's authoritative.
+    // When the description mentions multiple languages (e.g. "Go API with TypeScript client"),
+    // the primary language is whichever appears first. We find the earliest match for each
+    // language's keywords and pick the winner.
     let user_desc = user_description.to_lowercase();
-    if user_desc.contains("typescript") || user_desc.contains(" ts ") || user_desc.contains(".ts")
-        || user_desc.contains("javascript") || user_desc.contains(" js ") || user_desc.contains(".js")
-        || user_desc.contains("node") || user_desc.contains("bun") || user_desc.contains("deno")
-    {
-        return "typescript";
-    }
-    if user_desc.contains("rust") || user_desc.contains("cargo") || user_desc.contains(".rs") {
-        return "rust";
-    }
-    if user_desc.contains("python") || user_desc.contains(".py") || user_desc.contains("pip") {
-        return "python";
-    }
-    if user_desc.contains("golang") || user_desc.contains("go lang") || user_desc.contains("go module") {
-        return "go";
+
+    let first_match = |keywords: &[&str]| -> Option<usize> {
+        keywords.iter().filter_map(|kw| user_desc.find(kw)).min()
+    };
+
+    let ts_pos   = first_match(&["typescript", " ts ", ".ts", "javascript", " js ", ".js", "node", "bun", "deno"]);
+    let rust_pos = first_match(&["rust", "cargo", ".rs"]);
+    let python_pos = first_match(&["python", ".py", "pip"]);
+    let go_pos   = first_match(&["golang", "go lang", "go module", " go ", " go:", "in go",
+                                  "with go", "go rest", "go api", "go cli", "go.mod"]);
+
+    // Build (position, language) pairs for detected languages, then pick earliest.
+    let mut candidates: Vec<(usize, &'static str)> = Vec::new();
+    if let Some(p) = ts_pos     { candidates.push((p, "typescript")); }
+    if let Some(p) = rust_pos   { candidates.push((p, "rust")); }
+    if let Some(p) = python_pos { candidates.push((p, "python")); }
+    if let Some(p) = go_pos     { candidates.push((p, "go")); }
+
+    if let Some(&(_, lang)) = candidates.iter().min_by_key(|&&(pos, _)| pos) {
+        return lang;
     }
 
     // Fall back to scanning workplan title + step descriptions.

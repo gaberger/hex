@@ -84,6 +84,11 @@ pub struct SpawnConfig {
     /// Used by workplan execution. Ad-hoc spawns default to false (fire-and-forget).
     #[serde(default)]
     pub wait_for_completion: bool,
+    /// If true, spawn hex-agent in daemon mode (`hex-agent daemon`).
+    /// The agent polls /api/hexflo/tasks/claim and spawns HexFlo swarms for each task.
+    /// HEX_AGENT_ID and HEX_NEXUS_URL are injected automatically.
+    #[serde(default)]
+    pub daemon: bool,
 }
 
 // ── Conversion helpers ─────────────────────────────────
@@ -153,6 +158,9 @@ pub struct AgentManager {
     /// Child process handles for locally-spawned agents (ADR-037).
     /// These are killed on nexus shutdown via `stop_local_agents()`.
     local_children: Mutex<Vec<LocalAgent>>,
+    /// Docker container IDs for agents spawned via `docker run -d`.
+    /// Stopped on nexus shutdown via `stop_local_agents()`.
+    docker_containers: Mutex<HashMap<String, String>>,
     /// Resolves secret keys to values for injection into agent child processes (ADR-026).
     /// Injected by the composition root — keeps orchestration free of std::env access.
     secret_resolver: SecretResolver,
@@ -173,6 +181,7 @@ impl AgentManager {
             state_port,
             pid_map: Mutex::new(HashMap::new()),
             local_children: Mutex::new(Vec::new()),
+            docker_containers: Mutex::new(HashMap::new()),
             secret_resolver,
         }
     }
@@ -224,17 +233,129 @@ impl AgentManager {
             }
         }
 
+        // Docker-first spawn: if Docker daemon is running and hex-agent:latest image exists,
+        // prefer microVM isolation (ADR-2603282000 P7). Only when a worktree is set.
+        if config.worktree_branch.is_some()
+            && is_docker_available()
+            && docker_image_exists("hex-agent:latest")
+        {
+            tracing::info!(agent_id = %id, "docker_available: spawning via docker run");
+
+            let nexus_url = config
+                .hub_url
+                .as_deref()
+                .unwrap_or("http://host.docker.internal:5555")
+                .to_string();
+
+            let mut docker_cmd = std::process::Command::new("docker");
+            docker_cmd.args([
+                "run", "--rm", "-d",
+                "-e", "WORKSPACE=/workspace",
+                "-e", &format!("HEX_NEXUS_URL={nexus_url}"),
+                "-e", &format!("HEX_AGENT_ID={id}"),
+            ]);
+
+            // Inject secrets (including HEXFLO_TASK, SPACETIMEDB_TOKEN if granted)
+            for key in &config.secret_keys {
+                if let Some(value) = (self.secret_resolver)(key) {
+                    docker_cmd.arg("-e");
+                    docker_cmd.arg(format!("{key}={value}"));
+                }
+            }
+
+            // Bind-mount worktree path to /workspace
+            docker_cmd.args([
+                "--mount",
+                &format!("type=bind,src={},dst=/workspace", config.project_dir),
+                "hex-agent:latest",
+            ]);
+
+            let output = docker_cmd
+                .output()
+                .map_err(|e| format!("docker run failed to exec: {e}"))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("docker run failed: {stderr}"));
+            }
+
+            let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+            let instance = AgentInstance {
+                id: id.clone(),
+                // Containers don't have a host PID; use 0 as sentinel
+                process_id: 0,
+                agent_name: agent_name.clone(),
+                project_dir: config.project_dir.clone(),
+                model: model.clone(),
+                status: AgentStatus::Running,
+                started_at: now.clone(),
+                ended_at: None,
+                metrics: None,
+            };
+
+            let info = instance_to_agent_info(&instance);
+            self.state_port.agent_register(info).await.map_err(|e| e.to_string())?;
+            self.pid_map.lock().await.insert(id.clone(), 0);
+            self.docker_containers.lock().await.insert(id.clone(), container_id.clone());
+
+            tracing::info!(
+                agent_id = %id,
+                container = %container_id,
+                "Spawned hex-agent via docker run"
+            );
+            return Ok(instance);
+        } else if config.worktree_branch.is_some() {
+            // Docker is required for worktree-based builds (ADR-2603282000).
+            // Log clearly so the operator knows isolation is degraded.
+            if !is_docker_available() {
+                tracing::warn!(
+                    "docker_unavailable: spawning agent as host process — \
+                     run `hex sandbox status` to diagnose. \
+                     Builds without Docker have no filesystem isolation."
+                );
+            } else {
+                // Docker available but image missing — prompt to build it.
+                tracing::warn!(
+                    "hex-agent:latest image not found — spawning agent as host process. \
+                     Run `hex sandbox build` to build the image and enable microVM isolation."
+                );
+            }
+        }
+
         // Build command arguments for hex-agent binary
         let mut cmd = tokio::process::Command::new("hex-agent");
-        cmd.arg("--project-dir").arg(&config.project_dir);
-        cmd.arg("--model").arg(&model);
-        cmd.arg("--agent").arg(&agent_name);
 
-        if let Some(ref hub_url) = config.hub_url {
-            cmd.arg("--hub-url").arg(hub_url);
+        if config.daemon {
+            // Daemon mode: hex-agent polls HexFlo for tasks and spawns swarms.
+            // The subcommand comes before global flags in clap.
+            cmd.arg("daemon");
+            cmd.arg("--nexus-host").arg(
+                config.hub_url.as_deref()
+                    .and_then(|u| u.strip_prefix("http://"))
+                    .and_then(|h| h.split(':').next())
+                    .unwrap_or("localhost")
+            );
+            // Inject agent identity and nexus URL so TaskExecutor::from_env() resolves them.
+            cmd.env("HEX_AGENT_ID", &id);
+            let nexus_url = config.hub_url.as_deref()
+                .unwrap_or("http://localhost:5555")
+                .to_string();
+            cmd.env("HEX_NEXUS_URL", &nexus_url);
+            cmd.env("HEX_PROJECT_DIR", &config.project_dir);
+        } else {
+            cmd.arg("--project-dir").arg(&config.project_dir);
+            cmd.arg("--model").arg(&model);
+            cmd.arg("--agent").arg(&agent_name);
         }
-        if let Some(ref hub_token) = config.hub_token {
-            cmd.arg("--hub-token").arg(hub_token);
+
+        if !config.daemon {
+            if let Some(ref hub_url) = config.hub_url {
+                cmd.arg("--hub-url").arg(hub_url);
+            }
+            if let Some(ref hub_token) = config.hub_token {
+                cmd.arg("--hub-token").arg(hub_token);
+            }
         }
 
         // ADR-026: Inject granted secrets as env vars into child process.
@@ -467,7 +588,44 @@ impl AgentManager {
     /// Stop all locally-spawned child agents (called on nexus shutdown).
     ///
     /// Sends SIGTERM first, then SIGKILL after a brief wait if the process is still alive.
+    /// Also stops any Docker containers spawned via `docker run -d`.
     pub async fn stop_local_agents(&self) {
+        // Stop Docker containers first (non-blocking — docker stop handles timeouts internally).
+        let mut containers = self.docker_containers.lock().await;
+        for (agent_id, container_id) in containers.iter() {
+            tracing::info!(
+                agent_id = %agent_id,
+                container = %container_id,
+                "Stopping Docker container for agent"
+            );
+            let status = std::process::Command::new("docker")
+                .args(["stop", container_id])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            match status {
+                Ok(s) if s.success() => {
+                    tracing::info!(container = %container_id, "Docker container stopped");
+                }
+                Ok(s) => {
+                    tracing::warn!(container = %container_id, exit = %s, "docker stop returned non-zero");
+                }
+                Err(e) => {
+                    tracing::warn!(container = %container_id, err = %e, "docker stop failed to exec");
+                }
+            }
+            let _ = self
+                .state_port
+                .agent_update_status(agent_id, PortAgentStatus::Completed, None)
+                .await;
+        }
+        let docker_count = containers.len();
+        containers.clear();
+        if docker_count > 0 {
+            tracing::info!("Stopped {} Docker container agent(s)", docker_count);
+        }
+
+        // Stop host child processes.
         let mut children = self.local_children.lock().await;
         for agent in children.iter_mut() {
             tracing::info!(
@@ -583,6 +741,25 @@ mod tests {
         assert!(config.prompt.is_none());
     }
 
+    /// When docker is not available, is_docker_available returns false without panicking.
+    /// This verifies the docker-unavailable fallback path (ADR-2603282000 P7).
+    #[test]
+    fn docker_unavailable_does_not_panic() {
+        // is_docker_available calls `docker info`; on CI or machines without docker this
+        // must return false gracefully (not panic or propagate an error).
+        let result = is_docker_available();
+        // We don't assert a specific value — docker may or may not be present in the
+        // test environment. We just verify it returns without panicking.
+        let _ = result;
+    }
+
+    /// docker_image_exists returns false for a non-existent image without panicking.
+    #[test]
+    fn docker_image_exists_missing_returns_false() {
+        // This image should never exist in any test environment.
+        assert!(!docker_image_exists("hex-agent-nonexistent-image-xyz:latest"));
+    }
+
     /// worktreeBranch round-trips as Some when provided.
     #[test]
     fn spawn_config_worktree_branch_round_trips() {
@@ -598,6 +775,28 @@ mod tests {
         let config: SpawnConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.worktree_branch.as_deref(), Some("feat/my-feature/p1.1"));
     }
+}
+
+/// Check if the Docker daemon is available (returns false if docker is not in PATH or daemon is down).
+fn is_docker_available() -> bool {
+    std::process::Command::new("docker")
+        .args(["info", "--format", "json"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Check if a Docker image exists locally.
+fn docker_image_exists(image: &str) -> bool {
+    std::process::Command::new("docker")
+        .args(["image", "inspect", image])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// Check if a process is alive by sending signal 0.

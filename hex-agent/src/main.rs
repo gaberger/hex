@@ -169,6 +169,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize tracing
     let filter = if args.verbose { "debug" } else { "info" };
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(filter)
         .init();
 
@@ -200,22 +201,70 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if let Some(Command::Daemon { agent_id, task_id, nexus_host, nexus_port }) = &args.command {
-        use adapters::secondary::task_executor::TaskExecutor;
+        use adapters::secondary::stdb_task_poller::{StdbTaskPoller, TaskPayload};
+        use adapters::secondary::code_phase_worker::CodePhaseWorker;
         use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-        // CLI args override env vars — set them so TaskExecutor::from_env() picks them up
-        if let Some(id) = agent_id { std::env::set_var("HEX_AGENT_ID", id); }
-        if let Some(id) = task_id  { std::env::set_var("HEX_SWARM_ID", id); }
+        // CLI args override env vars
+        if let Some(id) = agent_id  { std::env::set_var("HEX_AGENT_ID", id); }
+        if let Some(id) = task_id   { std::env::set_var("HEX_SWARM_ID", id); }
         if let Some(h)  = nexus_host { std::env::set_var("NEXUS_HOST", h); }
         if let Some(p)  = nexus_port { std::env::set_var("NEXUS_PORT", p); }
-        let executor = TaskExecutor::from_env();
+        std::env::set_var("HEX_PROJECT_DIR", &args.project_dir);
+
+        // P1: StdbTaskPoller — push-based task claiming (falls back to REST if StDB unavailable)
+        let poller = StdbTaskPoller::from_env();
+        poller.initialize().await;
+        poller.init_project(&args.project_dir).await;
+
+        // P3: CodePhaseWorker — direct code phase, no inner pipeline
+        let worker = CodePhaseWorker::from_env().await;
+
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = shutdown.clone();
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.ok();
             shutdown_clone.store(true, Ordering::SeqCst);
         });
-        let project_path = args.project_dir.clone();
-        executor.run_loop(&project_path, shutdown).await;
+
+        while !shutdown.load(Ordering::SeqCst) {
+            match poller.poll_next().await {
+                Some(claimed) => {
+                    // Decode TaskPayload (P4: supervisor encodes WorkplanStep JSON here)
+                    let payload = serde_json::from_str::<TaskPayload>(&claimed.description)
+                        .unwrap_or_else(|_| TaskPayload {
+                            step_id: claimed.task_id.clone(),
+                            description: claimed.description.clone(),
+                            model_hint: None,
+                            output_dir: None,
+                            role: None,
+                        });
+
+                    eprintln!(
+                        "[hex-agent] executing task {}: {}",
+                        claimed.task_id, payload.description
+                    );
+
+                    let result = match worker.execute(&payload).await {
+                        Ok(output) => output,
+                        Err(e) => {
+                            eprintln!("[hex-agent] task {} failed: {e}", claimed.task_id);
+                            format!("error: {e}")
+                        }
+                    };
+
+                    if let Err(e) = poller.report_done(&claimed, &result).await {
+                        eprintln!(
+                            "[hex-agent] report_done failed for {}: {e}",
+                            claimed.task_id
+                        );
+                    }
+                }
+                None => {
+                    // No tasks available — short sleep to avoid busy-loop on REST fallback
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
         return Ok(());
     }
 

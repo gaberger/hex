@@ -61,6 +61,7 @@ impl SwarmPhase {
         feature_description: &str,
         workplan: &WorkplanData,
         agent_id: Option<&str>,
+        project_id: Option<&str>,
     ) -> Result<SwarmPhaseResult> {
         info!("Swarm phase: creating swarm and tasks from workplan");
         let start = Instant::now();
@@ -74,7 +75,7 @@ impl SwarmPhase {
         // Ignore cleanup errors (nexus may have no stale swarms to clean).
         let _ = self.runner.swarm_cleanup();
 
-        let swarm_resp = match self.runner.swarm_init(&swarm_name, topology) {
+        let swarm_resp = match self.runner.swarm_init(&swarm_name, topology, project_id) {
             Ok(resp) => resp,
             Err(ref e) if e.to_string().contains("already owns an active swarm") => {
                 // The agent already owns a swarm — complete it, then retry.
@@ -96,7 +97,7 @@ impl SwarmPhase {
                     warn!("swarm_list failed — cannot determine prior swarm IDs");
                 }
                 self.runner
-                    .swarm_init(&swarm_name, topology)
+                    .swarm_init(&swarm_name, topology, project_id)
                     .context("hex swarm init failed after completing prior swarm")?
             }
             Err(e) => return Err(e).context("hex swarm init failed — is hex-nexus running?"),
@@ -113,13 +114,18 @@ impl SwarmPhase {
         let mut task_ids: Vec<(String, String)> = Vec::with_capacity(workplan.steps.len());
 
         for step in &workplan.steps {
-            let title = format!("{}: {}", step.id, step.description);
-            // Truncate title to 200 chars for readability
-            let title = if title.len() > 200 {
-                format!("{}...", &title[..197])
+            // Encode as JSON so the role guard in `hex agent worker` can match "hex-coder".
+            // Must be consistent with `create_tracking_task` in supervisor.rs.
+            let desc = if step.description.len() > 180 {
+                format!("{}...", &step.description[..177])
             } else {
-                title
+                step.description.clone()
             };
+            let title = serde_json::json!({
+                "role": "hex-coder",
+                "step_id": step.id,
+                "description": desc,
+            }).to_string();
 
             match self.runner.task_create(&swarm_id, &title, agent_id) {
                 Ok(task_resp) => {
