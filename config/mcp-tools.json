@@ -885,6 +885,52 @@
         },
         "required": []
       }
+    },
+    {
+      "name": "hex_batch_execute",
+      "category": "batch",
+      "description": "Execute a batch of shell commands in a working directory and index their output for fast search. Returns a session_id for use with hex_batch_search.",
+      "route": { "method": "POST", "path": "/api/command-sessions" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "commands": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Shell commands to run"
+          },
+          "working_dir": {
+            "type": "string",
+            "description": "Absolute path to working directory"
+          }
+        },
+        "required": ["commands", "working_dir"]
+      }
+    },
+    {
+      "name": "hex_batch_search",
+      "category": "batch",
+      "description": "Search indexed output from a prior hex_batch_execute session. Returns matching lines with command context and relevance score.",
+      "route": { "method": "GET", "path": "/api/command-sessions/{session_id}/search" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "Session ID returned by hex_batch_execute"
+          },
+          "queries": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Search terms to match against indexed output"
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Maximum results to return (default 50)"
+          }
+        },
+        "required": ["session_id", "queries"]
+      }
     }
   ]
 }

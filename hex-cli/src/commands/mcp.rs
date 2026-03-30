@@ -148,6 +148,8 @@ const READ_ONLY_TOOLS: &[&str] = &[
     // Neural Lab (read-only queries)
     "hex_neural_lab_config_list", "hex_neural_lab_experiment_list",
     "hex_neural_lab_frontier", "hex_neural_lab_strategies",
+    // Batch execution + search (search is read-only; execute is a thin proxy with no local side-effects)
+    "hex_batch_execute", "hex_batch_search",
 ];
 
 /// Build enforcement context from tool name and args.
@@ -201,6 +203,23 @@ fn get_enforcement_mode() -> EnforcementMode {
         }
     }
     EnforcementMode::Mandatory
+}
+
+// ─── Helpers ─────────────────────────────────────────────
+
+/// Percent-encode a query string value using only the characters that must be
+/// escaped in a URL query parameter.  We avoid pulling in an extra crate by
+/// encoding only the small set that would break URL parsing.
+fn urlencoding_simple(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
+            | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
 }
 
 // ─── Tool Dispatch ───────────────────────────────────────
@@ -954,6 +973,35 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 "lineage": lineage,
                 "status": "stopped",
             })).await.map_err(|e| e.to_string())
+        }
+
+        // ── Batch command execution + indexed search ──
+        "hex_batch_execute" => {
+            let commands = args.get("commands").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let working_dir = args.get("working_dir").and_then(|v| v.as_str()).unwrap_or(".");
+            let body = serde_json::json!({
+                "commands": commands,
+                "working_dir": working_dir,
+            });
+            nexus.post("/api/command-sessions", &body).await
+                .map_err(|_| r#"{"error": "hex-nexus not running"}"#.to_string())
+        }
+
+        "hex_batch_search" => {
+            let session_id = args.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+            let queries = args.get("queries").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let max_results = args.get("max_results").and_then(|v| v.as_u64()).unwrap_or(50);
+            let queries_param: Vec<String> = queries.iter()
+                .filter_map(|q| q.as_str().map(|s| urlencoding_simple(s)))
+                .collect();
+            let path = format!(
+                "/api/command-sessions/{}/search?queries={}&max_results={}",
+                session_id,
+                queries_param.join(","),
+                max_results,
+            );
+            nexus.get(&path).await
+                .map_err(|_| r#"{"error": "hex-nexus not running"}"#.to_string())
         }
 
         _ => Err(format!("Unknown tool: {}", name)),

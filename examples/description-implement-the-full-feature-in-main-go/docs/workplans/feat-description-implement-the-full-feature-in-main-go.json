@@ -1,137 +1,85 @@
 {
-  "id": "wp-url-shortener-rest-api",
-  "title": "Implement URL Shortener REST API in Go with In-Memory Storage",
+  "id": "wp-url-shortener-api",
+  "title": "Implement URL Shortener REST API in Go",
   "specs": null,
-  "adr": "ADR-2309281000",
-  "created": "2023-09-28",
+  "adr": "ADR-2310201020",
+  "created": "2023-10-23",
   "status": "planned",
   "status_note": null,
   "topology": "pipeline",
-  "budget": "none",
+  "budget": "2 tokens",
   "steps": [
     {
       "id": "P0.1",
-      "description": "Define domain entities for URL and short link mapping.",
+      "description": "Build the domain model and basic URL shortening logic, including unit tests.",
       "layer": "domain",
       "adapter": null,
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": [],
+      "specs": [
+        "S01"
+      ],
       "worktree_branch": "feat/url-shortener/domain",
-      "done_condition": "Domain entities file created with tests."
+      "done_condition": "Domain model code is implemented with passing unit tests."
     },
     {
       "id": "P0.2",
-      "description": "Create port interfaces for URL shortening and retrieval.",
+      "description": "Define the ports for URL shortening and retrieval functionalities.",
       "layer": "ports",
       "adapter": null,
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": [],
+      "specs": [
+        "S01"
+      ],
       "worktree_branch": "feat/url-shortener/ports",
-      "done_condition": "Port interfaces file created with tests."
+      "done_condition": "Port interfaces are defined and documented."
     },
     {
       "id": "P1.1",
-      "description": "Implement in-memory storage logic for URLs.",
+      "description": "Implement in-memory storage for URL shortening operations.",
       "layer": "adapters/secondary",
       "adapter": "in-memory",
-      "port": null,
+      "port": "URLStorage",
       "dependencies": [
         "P0.1",
         "P0.2"
       ],
       "tier": 1,
-      "specs": [],
-      "worktree_branch": "feat/url-shortener/adapters-secondary",
-      "done_condition": "In-memory storage implemented and tested."
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/url-shortener/adapters/secondary",
+      "done_condition": "In-memory storage adapter is implemented and integrated with domain logic."
     },
     {
       "id": "P1.2",
-      "description": "Build REST API endpoints for URL shortening and retrieval.",
+      "description": "Develop the REST API interface for URL shortening and retrieval.",
       "layer": "adapters/primary",
-      "adapter": "http",
-      "port": null,
+      "adapter": "rest",
+      "port": "URLShortenerAPI",
       "dependencies": [
+        "P0.2",
         "P1.1"
       ],
       "tier": 2,
-      "specs": [],
-      "worktree_branch": "feat/url-shortener/adapters-primary",
-      "done_condition": "REST API endpoints created and tested."
-    },
-    {
-      "id": "P2.1",
-      "description": "Implement use cases for URL shortening and retrieval.",
-      "layer": "usecases",
-      "adapter": null,
-      "port": null,
-      "dependencies": [
-        "P0.1",
-        "P0.2",
-        "P1.1",
-        "P1.2"
+      "specs": [
+        "S01"
       ],
-      "tier": 3,
-      "specs": [],
-      "worktree_branch": "feat/url-shortener/usecases",
-      "done_condition": "Use cases implemented and tested."
-    },
-    {
-      "id": "P3.1",
-      "description": "Setup the composition root to wire up the layers.",
-      "layer": "composition-root",
-      "adapter": null,
-      "port": null,
-      "dependencies": [
-        "P1.2",
-        "P2.1"
-      ],
-      "tier": 4,
-      "specs": [],
-      "worktree_branch": "feat/url-shortener/composition-root",
-      "done_condition": "Composition root setup and verified."
-    },
-    {
-      "id": "P4.1",
-      "description": "Develop integration tests for the full URL shortener API.",
-      "layer": "integration",
-      "adapter": null,
-      "port": null,
-      "dependencies": [
-        "P3.1"
-      ],
-      "tier": 5,
-      "specs": [],
-      "worktree_branch": "feat/url-shortener/integration",
-      "done_condition": "Integration tests passing."
+      "worktree_branch": "feat/url-shortener/adapters/primary",
+      "done_condition": "REST API is developed and connected to the in-memory storage."
     }
   ],
   "mergeOrder": [
-    "Merge domain and ports first.",
-    "Merge adapters/secondary next.",
-    "Merge adapters/primary after that.",
-    "Merge usecases thereafter.",
-    "Finally, merge composition root and run integration tests."
+    "Merge domain and ports first, then secondary adapters, followed by primary adapters."
   ],
-  "riskRegister": [
-    {
-      "impact": "high",
-      "mitigation": "Plan for future persistence storage implementation.",
-      "risk": "Data will be lost on application restarts due to in-memory storage."
-    },
-    {
-      "impact": "medium",
-      "mitigation": "Consider architectural refactoring in the future.",
-      "risk": "Scalability limitations due to single-binary constraints."
-    }
-  ],
+  "riskRegister": [],
   "successCriteria": [
-    "URL shortening and retrieval functionalities work as intended.",
-    "All tests pass for domain, ports, adapters, use cases, and integration.",
-    "API documentation is created and accessible."
+    "URL shortener functionality is fully implemented.",
+    "All unit tests for domain logic pass.",
+    "API endpoints are functional and tested."
   ],
   "dependencies": {
     "cargo": [],

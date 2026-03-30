@@ -25,6 +25,7 @@ pub mod swarms;
 pub mod neural_lab;
 pub mod test_sessions;
 pub mod openapi;
+pub mod command_sessions;
 pub mod sandbox;
 pub mod ws;
 
@@ -704,7 +705,11 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         .route("/api/test-sessions/trends", get(test_sessions::trends))
         .route("/api/test-sessions/flaky", get(test_sessions::flaky))
-        .route("/api/test-sessions/{id}", get(test_sessions::get_session));
+        .route("/api/test-sessions/{id}", get(test_sessions::get_session))
+        // Command session proxy (step-4 stub — wired to hex-agent in step-5)
+        .route("/api/command-sessions", post(command_sessions::create_session)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        .route("/api/command-sessions/{session_id}/search", get(command_sessions::search_session));
 
     // Session persistence (ADR-036 / ADR-042 P2.5) — SpacetimeDB primary, SQLite fallback
     let router = router
