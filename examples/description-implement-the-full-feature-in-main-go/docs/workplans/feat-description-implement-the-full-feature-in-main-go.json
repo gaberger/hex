@@ -1,91 +1,108 @@
 {
-  "id": "wp-build-url-shortener-rest-api-in-go",
-  "title": "Implement URL Shortener REST API in main.go",
-  "specs": "/Volumes/ExtendedStorage/PARA/01-Projects/hex-intf/examples/build-a-url-shortener-rest-api-in-go-with-in-memor",
-  "adr": "ADR-230315123456",
-  "created": "2023-03-15",
+  "id": "wp-build-a-url-shortener-rest-api-in-go",
+  "title": "URL Shortener REST API Implementation",
+  "specs": "/Volumes/ExtendedStorage/PARA/01-Projects/hex-intf/examples/build-a-url-shortener-rest-api-in-go-with-in-memor/spec.md",
+  "adr": "adr-0001",
+  "created": "2023-10-05",
   "status": "planned",
-  "status_note": "Initial workplan creation",
+  "status_note": "Initial planning",
   "topology": "pipeline",
-  "budget": "500 tokens",
+  "budget": "500",
   "steps": [
     {
       "id": "P0.1",
-      "description": "Implement URLShortener domain entity and port interface",
+      "description": "Define URLShortener entity and ValueObject",
       "layer": "domain",
       "adapter": null,
       "port": null,
       "dependencies": [],
       "tier": 0,
       "specs": [
-        "domain/URLShortener.go"
+        "S01"
       ],
-      "worktree_branch": "feat/build-url-shortener-rest-api-in-go/domain",
-      "done_condition": "Domain entity and port interface implemented with unit tests passing"
+      "worktree_branch": "feat/build-a-url-shortener-rest-api-in-go/domain",
+      "done_condition": "Entity and ValueObject defined with proper validation"
     },
     {
       "id": "P0.2",
-      "description": "Implement in-memory storage adapter for URLShortener port",
-      "layer": "primary",
-      "adapter": "InMemoryStorageAdapter",
-      "port": "URLShortener",
+      "description": "Define URLShortenerPort interface with createShorten and getShorten methods",
+      "layer": "ports",
+      "adapter": null,
+      "port": "URLShortenerPort",
       "dependencies": [
         "P0.1"
       ],
-      "tier": 2,
+      "tier": 0,
       "specs": [
-        "adapters/primary/InMemoryStorageAdapter.go"
+        "S02"
       ],
-      "worktree_branch": "feat/build-url-shortener-rest-api-in-go/primary",
-      "done_condition": "Adapter implements URLShortener interface with unit tests passing"
+      "worktree_branch": "feat/build-a-url-shortener-rest-api-in-go/ports",
+      "done_condition": "Port interface implemented with correct method signatures"
     },
     {
       "id": "P1.1",
-      "description": "Implement composition root to wire adapters and ports",
-      "layer": "integration",
-      "adapter": null,
-      "port": null,
+      "description": "Implement in-memory storage adapter for URLShortenerPort",
+      "layer": "primary",
+      "adapter": "InMemoryStorageAdapter",
+      "port": "URLShortenerPort",
       "dependencies": [
         "P0.2"
       ],
-      "tier": 4,
+      "tier": 2,
       "specs": [
-        "composition-root/main.go"
+        "S03"
       ],
-      "worktree_branch": "feat/build-url-shortener-rest-api-in-go/integration",
-      "done_condition": "Composition root successfully initializes application with all dependencies wired"
+      "worktree_branch": "feat/build-a-url-shortener-rest-api-in-go/primary",
+      "done_condition": "Storage adapter implements all port methods with in-memory persistence"
     },
     {
       "id": "P2.1",
-      "description": "Implement HTTP handlers for URLShortener use cases",
+      "description": "Implement REST handler for URL shortening endpoint",
       "layer": "primary",
-      "adapter": "HTTPHandler",
-      "port": "URLShortener",
+      "adapter": "RESTHandler",
+      "port": "URLShortenerPort",
       "dependencies": [
         "P1.1"
       ],
       "tier": 2,
       "specs": [
-        "adapters/primary/URLShortenerHandler.go"
+        "S04"
       ],
-      "worktree_branch": "feat/build-url-shortener-rest-api-in-go/primary",
-      "done_condition": "HTTP handlers implement all required REST endpoints with unit tests passing"
+      "worktree_branch": "feat/build-a-url-shortener-rest-api-in-go/primary",
+      "done_condition": "REST handler successfully routes POST /shorten and GET /{id} requests"
     },
     {
       "id": "P3.1",
-      "description": "Implement integration tests for full URL shortener flow",
+      "description": "Implement usecase for URL shortening logic",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P1.1",
+        "P2.1"
+      ],
+      "tier": 3,
+      "specs": [
+        "S05"
+      ],
+      "worktree_branch": "feat/build-a-url-shortener-rest-api-in-go/usecases",
+      "done_condition": "Usecase successfully generates and retrieves short URLs using storage adapter"
+    },
+    {
+      "id": "P5.1",
+      "description": "Implement integration tests for full URL shortening flow",
       "layer": "integration",
       "adapter": null,
       "port": null,
       "dependencies": [
-        "P2.1"
+        "P3.1"
       ],
       "tier": 5,
       "specs": [
-        "integration-tests/URLShortenerIntegrationTest.go"
+        "S06"
       ],
-      "worktree_branch": "feat/build-url-shortener-rest-api-in-go/integration",
-      "done_condition": "All integration tests pass with successful short URL creation and redirection"
+      "worktree_branch": "feat/build-a-url-shortener-rest-api-in-go/integration",
+      "done_condition": "Integration tests pass with 100% coverage for all endpoints"
     }
   ],
   "mergeOrder": [
@@ -93,25 +110,20 @@
     "P0.2",
     "P1.1",
     "P2.1",
-    "P3.1"
+    "P3.1",
+    "P5.1"
   ],
   "riskRegister": [
     {
       "impact": "medium",
-      "mitigation": "Document state limitations and consider future persistence extension",
+      "mitigation": "Plan for database migration in future phase",
       "risk": "In-memory storage limitations"
-    },
-    {
-      "impact": "low",
-      "mitigation": "Use hex framework's built-in router and dependency injection",
-      "risk": "Hex framework integration complexity"
     }
   ],
   "successCriteria": [
-    "Single binary executable runs with URL shortener API",
-    "All REST endpoints implement required functionality",
-    "In-memory storage handles all test cases successfully",
-    "Integration tests pass with 100% coverage"
+    "API endpoints return expected HTTP status codes",
+    "Storage persists data between restarts",
+    "All tests pass with 100% coverage"
   ],
   "dependencies": {
     "cargo": [],
