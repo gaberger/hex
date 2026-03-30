@@ -1,0 +1,79 @@
+{
+  "id": "wp-implement-fizzbuzz-cli-adapter",
+  "title": "Implement FizzBuzz CLI Adapter in Go",
+  "specs": "specs/fizzbuzz-cli.md",
+  "adr": "ADR-230615123456",
+  "created": "2023-06-15",
+  "status": "planned",
+  "status_note": "ADR-230615123456 approved for implementation",
+  "topology": "mixed",
+  "budget": "2 token",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Create FizzBuzz CLI adapter implementation file",
+      "layer": "primary",
+      "adapter": "cli",
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 2,
+      "specs": [
+        "S01",
+        "S02"
+      ],
+      "worktree_branch": "feat/fizzbuzz/cli",
+      "done_condition": "CLI adapter implements FizzBuzzPort interface and passes unit tests"
+    },
+    {
+      "id": "P0.2",
+      "description": "Implement CLI argument parsing for number range",
+      "layer": "primary",
+      "adapter": "cli",
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 2,
+      "specs": [
+        "S03",
+        "S04"
+      ],
+      "worktree_branch": "feat/fizzbuzz/cli",
+      "done_condition": "CLI accepts --start and --end flags and validates input ranges"
+    },
+    {
+      "id": "P0.3",
+      "description": "Integrate CLI adapter with composition root",
+      "layer": "primary",
+      "adapter": "cli",
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 4,
+      "specs": [
+        "S05",
+        "S06"
+      ],
+      "worktree_branch": "feat/fizzbuzz/composition-root",
+      "done_condition": "CLI adapter registered in composition root and handles command-line arguments"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P0.3"
+  ],
+  "riskRegister": [],
+  "successCriteria": [
+    "CLI adapter passes all unit tests",
+    "Composition root successfully wires CLI adapter",
+    "No cross-adapter dependencies introduced"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
