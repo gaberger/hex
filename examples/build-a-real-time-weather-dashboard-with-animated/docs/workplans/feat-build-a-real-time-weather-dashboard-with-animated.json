@@ -1,0 +1,180 @@
+{
+  "id": "wp-real-time-weather-dashboard",
+  "title": "Build Real-Time Weather Dashboard",
+  "specs": null,
+  "adr": "ADR-2310281230",
+  "created": "2023-10-28",
+  "status": "planned",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": "N/A",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Define domain models for weather data and geolocation.",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/weather/domain",
+      "done_condition": "Domain models for weather data and geolocation are defined and validated."
+    },
+    {
+      "id": "P0.2",
+      "description": "Create port interfaces for fetching weather data and geolocation.",
+      "layer": "ports",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/weather/ports",
+      "done_condition": "Port interfaces for weather data and geolocation are documented and ready for implementation."
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement secondary adapter for fetching weather data from an external API.",
+      "layer": "adapters/secondary",
+      "adapter": "weatherApi",
+      "port": "WeatherDataPort",
+      "dependencies": [
+        "P0.1",
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [],
+      "worktree_branch": "feat/weather/adapters/secondary",
+      "done_condition": "Secondary adapter for weather data fetching is implemented and tested."
+    },
+    {
+      "id": "P1.2",
+      "description": "Implement secondary adapter for retrieving user's geolocation data.",
+      "layer": "adapters/secondary",
+      "adapter": "geolocationApi",
+      "port": "GeolocationPort",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [],
+      "worktree_branch": "feat/geolocation/adapters/secondary",
+      "done_condition": "Secondary adapter for geolocation data retrieval is implemented and tested."
+    },
+    {
+      "id": "P2.1",
+      "description": "Implement primary adapter to render user interface with animated SVG icons.",
+      "layer": "adapters/primary",
+      "adapter": "weatherUI",
+      "port": null,
+      "dependencies": [
+        "P1.1",
+        "P1.2"
+      ],
+      "tier": 2,
+      "specs": [],
+      "worktree_branch": "feat/weather/adapters/primary",
+      "done_condition": "User interface is rendered with animated SVG icons and data from secondary adapters."
+    },
+    {
+      "id": "P2.2",
+      "description": "Implement primary adapter for managing user interactions on the dashboard.",
+      "layer": "adapters/primary",
+      "adapter": "interactionManager",
+      "port": null,
+      "dependencies": [
+        "P1.1",
+        "P1.2"
+      ],
+      "tier": 2,
+      "specs": [],
+      "worktree_branch": "feat/weather/adapters/primary",
+      "done_condition": "User interactions are managed effectively and stored as intended."
+    },
+    {
+      "id": "P3.1",
+      "description": "Develop use case for fetching and presenting weather data based on geolocation.",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1",
+        "P0.2",
+        "P1.1",
+        "P1.2",
+        "P2.1"
+      ],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/weather/usecases",
+      "done_condition": "Use case for fetching and presenting weather data through defined ports is implemented and tested."
+    },
+    {
+      "id": "P3.2",
+      "description": "Develop use case for handling user interactions and updates.",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P2.2"
+      ],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/weather/usecases",
+      "done_condition": "Use case for managing user interactions is implemented and tested."
+    },
+    {
+      "id": "P4.1",
+      "description": "Wiring all components in the composition root.",
+      "layer": "composition-root",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1",
+        "P0.2",
+        "P1.1",
+        "P1.2",
+        "P2.1",
+        "P3.1",
+        "P3.2"
+      ],
+      "tier": 4,
+      "specs": [],
+      "worktree_branch": "feat/weather/composition-root",
+      "done_condition": "All adapters and use cases are effectively wired together in the composition root."
+    },
+    {
+      "id": "P5.1",
+      "description": "Implement integration tests for the weather dashboard functionality.",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P4.1"
+      ],
+      "tier": 5,
+      "specs": [],
+      "worktree_branch": "feat/weather/integration-tests",
+      "done_condition": "Integration tests cover end-to-end functionality of the weather dashboard."
+    }
+  ],
+  "mergeOrder": [
+    "P0",
+    "P1",
+    "P2",
+    "P3",
+    "P4",
+    "P5"
+  ],
+  "riskRegister": [],
+  "successCriteria": [
+    "Weather data is accurately fetched and displayed.",
+    "User geolocation is correctly utilized for displaying relevant weather information.",
+    "User interface is responsive and engaging with animated SVG icons."
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
