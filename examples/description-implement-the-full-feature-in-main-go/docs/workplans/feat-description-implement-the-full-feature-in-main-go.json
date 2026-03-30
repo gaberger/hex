@@ -1,0 +1,171 @@
+{
+  "id": "wp-url-shortener-single-binary",
+  "title": "URL Shortener REST API with In-Memory Storage",
+  "specs": null,
+  "adr": "ADR-2412172334",
+  "created": "2024-12-17",
+  "status": "planned",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": "8k tokens",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Define URL domain entities and value objects with shortening business rules",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/url-shortener/domain",
+      "done_condition": "URL and ShortCode entities implemented with validation logic"
+    },
+    {
+      "id": "P0.2",
+      "description": "Define port interfaces for URL repository and ID generation",
+      "layer": "ports",
+      "adapter": null,
+      "port": "URLRepository",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/url-shortener/ports",
+      "done_condition": "URLRepository and IDGenerator port interfaces defined"
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement in-memory URL repository with thread-safe operations",
+      "layer": "adapters/secondary",
+      "adapter": "InMemoryURLRepository",
+      "port": "URLRepository",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [],
+      "worktree_branch": "feat/url-shortener/secondary",
+      "done_condition": "In-memory repository with mutex protection for concurrent access"
+    },
+    {
+      "id": "P1.2",
+      "description": "Implement short code generator adapter",
+      "layer": "adapters/secondary",
+      "adapter": "RandomIDGenerator",
+      "port": "IDGenerator",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [],
+      "worktree_branch": "feat/url-shortener/secondary",
+      "done_condition": "Random short code generator producing URL-safe codes"
+    },
+    {
+      "id": "P2.1",
+      "description": "Implement REST handler for POST /shorten endpoint",
+      "layer": "adapters/primary",
+      "adapter": "HTTPHandler",
+      "port": "URLShortener",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 2,
+      "specs": [],
+      "worktree_branch": "feat/url-shortener/primary",
+      "done_condition": "HTTP handler accepting URL and returning short code"
+    },
+    {
+      "id": "P2.2",
+      "description": "Implement REST handler for GET /{short-code} endpoint",
+      "layer": "adapters/primary",
+      "adapter": "HTTPHandler",
+      "port": "URLRetriever",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 2,
+      "specs": [],
+      "worktree_branch": "feat/url-shortener/primary",
+      "done_condition": "HTTP handler redirecting short codes to original URLs"
+    },
+    {
+      "id": "P3.1",
+      "description": "Implement URL shortening use case",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P1.1",
+        "P1.2"
+      ],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/url-shortener/usecases",
+      "done_condition": "Use case orchestrating URL validation, short code generation, and storage"
+    },
+    {
+      "id": "P3.2",
+      "description": "Implement URL retrieval use case",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P1.1"
+      ],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/url-shortener/usecases",
+      "done_condition": "Use case handling short code lookup and URL retrieval"
+    },
+    {
+      "id": "P4.1",
+      "description": "Wire all dependencies and configure HTTP server in main.go",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P2.1",
+        "P2.2",
+        "P3.1",
+        "P3.2"
+      ],
+      "tier": 4,
+      "specs": [],
+      "worktree_branch": "feat/url-shortener/integration",
+      "done_condition": "Single binary with all components wired and HTTP server running"
+    }
+  ],
+  "mergeOrder": [
+    "Domain and ports first (P0.1, P0.2)",
+    "Secondary adapters (P1.1, P1.2)",
+    "Primary adapters (P2.1, P2.2)",
+    "Use cases (P3.1, P3.2)",
+    "Integration and main.go (P4.1)"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Use mutex protection for all map operations",
+      "risk": "Thread safety issues with in-memory storage"
+    },
+    {
+      "impact": "low",
+      "mitigation": "Document memory growth characteristics for production consideration",
+      "risk": "Memory leaks from unbounded URL storage"
+    }
+  ],
+  "successCriteria": [
+    "Single Go binary compiles and runs",
+    "POST /shorten accepts URLs and returns short codes",
+    "GET /{short-code} redirects to original URLs",
+    "Concurrent requests handled safely",
+    "All hex layers properly separated"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
