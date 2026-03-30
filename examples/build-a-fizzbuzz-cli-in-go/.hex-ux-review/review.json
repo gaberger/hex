@@ -1,0 +1,16 @@
+{
+  "cost_usd": 0.0,
+  "duration_ms": 35720,
+  "issues": [
+    {
+      "description": "UX review output could not be parsed as structured JSON",
+      "recommendation": "(empty)",
+      "severity": "minor",
+      "user_impact": "Review must be read manually"
+    }
+  ],
+  "model_used": "arcee-ai/trinity-mini-20251201:free",
+  "tokens": 5179,
+  "ux_target": "",
+  "verdict": "NEEDS_FIXES"
+}
