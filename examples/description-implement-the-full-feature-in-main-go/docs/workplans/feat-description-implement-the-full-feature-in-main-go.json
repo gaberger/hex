@@ -1,17 +1,17 @@
 {
-  "id": "wp-url-shortener-rest-api",
+  "id": "wp-url-shortener",
   "title": "Implement URL Shortener REST API in Go",
   "specs": null,
-  "adr": "ADR-2303191200",
-  "created": "2023-03-19",
+  "adr": "ADR-2310161015",
+  "created": "2023-10-16",
   "status": "planned",
   "status_note": null,
   "topology": "pipeline",
-  "budget": "N/A",
+  "budget": "medium",
   "steps": [
     {
       "id": "P0.1",
-      "description": "Define domain entities and value objects for URL shortening logic.",
+      "description": "Create domain model for URLs, including properties for original URL and shortened URL, along with the logic for shortening and retrieving URLs.",
       "layer": "domain",
       "adapter": null,
       "port": null,
@@ -19,96 +19,77 @@
       "tier": 0,
       "specs": [],
       "worktree_branch": "feat/url-shortener/domain",
-      "done_condition": "Domain entities are defined and validated through tests."
+      "done_condition": "Domain model and logic are implemented and unit tested."
     },
     {
       "id": "P0.2",
-      "description": "Define ports for the URL shortener service.",
+      "description": "Define port interfaces for URL shortening and retrieval operations to interact with the domain logic.",
       "layer": "ports",
       "adapter": null,
       "port": null,
-      "dependencies": [],
+      "dependencies": [
+        "P0.1"
+      ],
       "tier": 0,
       "specs": [],
       "worktree_branch": "feat/url-shortener/ports",
-      "done_condition": "Ports for URL shortening are defined."
+      "done_condition": "Port interfaces are defined and documented."
     },
     {
       "id": "P1.1",
-      "description": "Implement the HTTP server interface for short URL creation and retrieval.",
+      "description": "Implement REST API endpoints for shortening URLs and retrieving shortened URLs using the defined port interfaces.",
       "layer": "adapters/primary",
-      "adapter": "http",
-      "port": null,
+      "adapter": "rest",
+      "port": "URLShortener",
       "dependencies": [
-        "P0.1",
         "P0.2"
       ],
       "tier": 2,
       "specs": [],
-      "worktree_branch": "feat/url-shortener/adapters-primary",
-      "done_condition": "HTTP server is up and running, handling basic requests."
+      "worktree_branch": "feat/url-shortener/primary",
+      "done_condition": "REST API for URL shortening is implemented and functional."
     },
     {
       "id": "P1.2",
-      "description": "Set up in-memory storage for URL management.",
+      "description": "Set up in-memory storage solution for URLs, implementing persistence within the application lifecycle.",
       "layer": "adapters/secondary",
-      "adapter": "in-memory",
-      "port": null,
+      "adapter": "memory",
+      "port": "URLShortener",
       "dependencies": [
-        "P0.1",
         "P0.2"
       ],
       "tier": 1,
       "specs": [],
-      "worktree_branch": "feat/url-shortener/adapters-secondary",
-      "done_condition": "In-memory storage is integrated and operational."
+      "worktree_branch": "feat/url-shortener/secondary",
+      "done_condition": "In-memory storage is set up and integrated with the domain logic."
     },
     {
       "id": "P2.1",
-      "description": "Implement use cases for creating and retrieving shortened URLs.",
-      "layer": "usecases",
-      "adapter": null,
-      "port": null,
-      "dependencies": [
-        "P0.1",
-        "P0.2",
-        "P1.1",
-        "P1.2"
-      ],
-      "tier": 3,
-      "specs": [],
-      "worktree_branch": "feat/url-shortener/usecases",
-      "done_condition": "Use cases are implemented and passing tests."
-    },
-    {
-      "id": "P3.1",
-      "description": "Set up integration tests to validate the complete URL shortener functionality.",
+      "description": "Test the full integration of the URL shortener API, including unit and integration tests for the implemented features.",
       "layer": "integration",
       "adapter": null,
       "port": null,
       "dependencies": [
-        "P0.1",
-        "P0.2",
         "P1.1",
-        "P1.2",
-        "P2.1"
+        "P1.2"
       ],
       "tier": 5,
       "specs": [],
       "worktree_branch": "feat/url-shortener/integration",
-      "done_condition": "All integration tests are passing."
+      "done_condition": "All integration tests pass successfully for the URL shortener API."
     }
   ],
   "mergeOrder": [
-    "Merge domain and ports first",
-    "Merge adapters next",
-    "Finally merge use cases and integration tests"
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P1.2",
+    "P2.1"
   ],
   "riskRegister": [],
   "successCriteria": [
-    "API can create shortened URLs",
-    "API can retrieve original URLs by shortened version",
-    "All features are tested and validated"
+    "Working URL shortener API with endpoints for shortening and retrieving URLs.",
+    "All features meet acceptance criteria and pass tests."
   ],
   "dependencies": {
     "cargo": [],
