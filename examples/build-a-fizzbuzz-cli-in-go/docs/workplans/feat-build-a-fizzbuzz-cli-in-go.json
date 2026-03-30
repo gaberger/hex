@@ -1,29 +1,82 @@
 {
-  "id": "wp-build-a-fizzbuzz-cli-in-go",
-  "title": "Plan: build a fizzbuzz CLI in Go",
+  "id": "wp-build-fizzbuzz-cli",
+  "title": "FizzBuzz CLI Implementation",
   "specs": null,
-  "adr": null,
-  "created": null,
+  "adr": "adr-0001",
+  "created": "2023-10-05",
   "status": "planned",
-  "status_note": "auto-generated fallback — LLM JSON extraction failed",
+  "status_note": null,
   "topology": "pipeline",
-  "budget": null,
+  "budget": "1.5 tokens",
   "steps": [
     {
-      "id": "step-1",
-      "description": "build a fizzbuzz CLI in Go",
-      "layer": "adapters/primary",
-      "adapter": "primary/cli",
+      "id": "P0.1",
+      "description": "Implement FizzBuzz domain logic in Go",
+      "layer": "domain",
+      "adapter": null,
       "port": null,
       "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/fizzbuzz/domain",
+      "done_condition": "Domain tests pass with 100% coverage"
+    },
+    {
+      "id": "P0.2",
+      "description": "Define FizzBuzz port interface in Go",
+      "layer": "ports",
+      "adapter": null,
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/fizzbuzz/ports",
+      "done_condition": "Port interface implemented and documented"
+    },
+    {
+      "id": "P2.1",
+      "description": "Implement CLI primary adapter in Go",
+      "layer": "primary",
+      "adapter": "CLIAdapter",
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.2"
+      ],
       "tier": 2,
-      "specs": null,
-      "worktree_branch": null,
-      "done_condition": null
+      "specs": [],
+      "worktree_branch": "feat/fizzbuzz/primary",
+      "done_condition": "CLI accepts input and outputs FizzBuzz sequence"
+    },
+    {
+      "id": "P5.1",
+      "description": "Create integration tests for CLI end-to-end",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P2.1"
+      ],
+      "tier": 5,
+      "specs": [],
+      "worktree_branch": "feat/fizzbuzz/integration",
+      "done_condition": "All integration tests pass with expected outputs"
     }
   ],
-  "mergeOrder": null,
-  "riskRegister": null,
-  "successCriteria": null,
-  "dependencies": null
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P2.1",
+    "P5.1"
+  ],
+  "riskRegister": [],
+  "successCriteria": [
+    "CLI generates correct FizzBuzz sequence",
+    "Integration tests validate CLI behavior"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
 }

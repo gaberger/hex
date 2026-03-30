@@ -1,9 +1,0 @@
-{
-  "verdict": "PASS",
-  "issues": [],
-  "model_used": "arcee-ai/trinity-mini-20251201:free",
-  "tokens": 11775,
-  "cost_usd": 0.0,
-  "duration_ms": 40459,
-  "reviewer_skipped": false
-}
