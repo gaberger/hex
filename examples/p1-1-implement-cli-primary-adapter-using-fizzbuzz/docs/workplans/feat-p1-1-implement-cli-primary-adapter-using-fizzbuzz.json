@@ -1,0 +1,40 @@
+{
+  "id": "wp-P1.1",
+  "title": "Implement CLI Primary Adapter with FizzBuzz Port",
+  "specs": "specs/cli-adapter-specs.md",
+  "adr": "ADR-2405301200",
+  "created": "2024-05-30",
+  "status": "planned",
+  "status_note": "Pending initial review",
+  "topology": "parallel",
+  "budget": "2h",
+  "steps": [
+    {
+      "id": "P1.1.1",
+      "description": "Create CLI adapter implementation of FizzBuzzPort in adapters/primary/cli/",
+      "layer": "primary",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P1.1.0"
+      ],
+      "tier": 2,
+      "specs": [
+        "S01",
+        "S02"
+      ],
+      "worktree_branch": "feat/cli-adapter/fizzbuzz",
+      "done_condition": "CLI adapter passes FizzBuzzPort interface tests"
+    }
+  ],
+  "mergeOrder": [],
+  "riskRegister": [],
+  "successCriteria": [
+    "CLI adapter implements FizzBuzzPort interface",
+    "CLI adapter handles user input/output for FizzBuzz operations"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
