@@ -1,0 +1,110 @@
+{
+  "id": "wp-cli-adapter",
+  "title": "Implement CLI Secondary Adapter",
+  "specs": "specs/cli-adapter.md",
+  "adr": "ADR-240630A1",
+  "created": "2024-06-30",
+  "status": "planned",
+  "status_note": "ADR-240630A1 approved for implementation",
+  "topology": "pipeline",
+  "budget": "2 tokens",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Create CLI adapter directory structure and basic input/output handling",
+      "layer": "secondary",
+      "adapter": "cli",
+      "port": null,
+      "dependencies": [
+        "P0.1.1"
+      ],
+      "tier": 1,
+      "specs": [
+        "S01",
+        "S02"
+      ],
+      "worktree_branch": "feat/cli/secondary",
+      "done_condition": "CLI adapter initialized with basic input/output handling"
+    },
+    {
+      "id": "P0.1.1",
+      "description": "Implement CLI adapter input port for command parsing",
+      "layer": "secondary",
+      "adapter": "cli",
+      "port": null,
+      "dependencies": [],
+      "tier": 1,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/cli/secondary",
+      "done_condition": "Input port implemented with command parsing logic"
+    },
+    {
+      "id": "P0.2",
+      "description": "Implement CLI adapter output port for agent response formatting",
+      "layer": "secondary",
+      "adapter": "cli",
+      "port": null,
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 1,
+      "specs": [
+        "S02"
+      ],
+      "worktree_branch": "feat/cli/secondary",
+      "done_condition": "Output port implemented with response formatting"
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement command routing and agent interaction logic",
+      "layer": "secondary",
+      "adapter": "cli",
+      "port": null,
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [
+        "S03",
+        "S04"
+      ],
+      "worktree_branch": "feat/cli/secondary",
+      "done_condition": "Command routing implemented with agent interaction"
+    },
+    {
+      "id": "P1.2",
+      "description": "Integrate CLI adapter with composition-root initialization",
+      "layer": "composition-root",
+      "adapter": "cli",
+      "port": null,
+      "dependencies": [
+        "P1.1"
+      ],
+      "tier": 4,
+      "specs": [
+        "S05"
+      ],
+      "worktree_branch": "feat/cli/secondary",
+      "done_condition": "CLI adapter integrated into composition-root"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.1.1",
+    "P0.2",
+    "P1.1",
+    "P1.2"
+  ],
+  "riskRegister": [],
+  "successCriteria": [
+    "CLI adapter implemented",
+    "MCP parity maintained",
+    "Testing workflows enabled"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
