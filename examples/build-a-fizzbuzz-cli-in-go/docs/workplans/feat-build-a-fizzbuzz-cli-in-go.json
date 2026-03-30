@@ -1,0 +1,29 @@
+{
+  "id": "wp-build-a-fizzbuzz-cli-in-go",
+  "title": "Plan: build a fizzbuzz CLI in Go",
+  "specs": null,
+  "adr": null,
+  "created": null,
+  "status": "planned",
+  "status_note": "auto-generated fallback — LLM JSON extraction failed",
+  "topology": "pipeline",
+  "budget": null,
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "build a fizzbuzz CLI in Go",
+      "layer": "adapters/primary",
+      "adapter": "primary/cli",
+      "port": null,
+      "dependencies": [],
+      "tier": 2,
+      "specs": null,
+      "worktree_branch": null,
+      "done_condition": null
+    }
+  ],
+  "mergeOrder": null,
+  "riskRegister": null,
+  "successCriteria": null,
+  "dependencies": null
+}
