@@ -83,6 +83,8 @@ pub struct AgentContext {
     pub upstream_output: Option<String>,
     /// Task-specific metadata.
     pub metadata: HashMap<String, String>,
+    /// hex project ID for architecture fingerprint injection (ADR-2603301200).
+    pub project_id: Option<String>,
 }
 
 // ── Supervisor ───────────────────────────────────────────────────────────
@@ -117,6 +119,8 @@ pub struct Supervisor {
     /// Last code step selection + duration, stored so `run_tier` can call `report_outcome`
     /// once `CodeCompiles` state is known (after `evaluate_all`).
     last_code_selection: Mutex<Option<(SelectedModel, u64)>>,
+    /// hex project ID for architecture fingerprint injection (ADR-2603301200).
+    pub project_id: Option<String>,
 }
 
 impl Supervisor {
@@ -155,6 +159,7 @@ impl Supervisor {
             task_id_map: HashMap::new(),
             selector,
             last_code_selection: Mutex::new(None),
+            project_id: None,
         }
     }
 
@@ -193,6 +198,15 @@ impl Supervisor {
         self
     }
 
+    /// Set the hex project ID for architecture fingerprint injection (ADR-2603301200).
+    ///
+    /// When set, all agent contexts will include this ID so agents can fetch and
+    /// inject the architecture fingerprint into their inference system prompts.
+    pub fn with_project_id(mut self, project_id: impl Into<Option<String>>) -> Self {
+        self.project_id = project_id.into();
+        self
+    }
+
     /// Nexus base URL (for callers that need to make REST calls).
     pub fn nexus_url(&self) -> &str {
         &self.nexus_url
@@ -221,10 +235,11 @@ impl Supervisor {
         let base = PathBuf::from(&self.output_dir).join("src");
         let lang = self.language.as_str();
 
-        // For Rust/Go single-binary projects, files live under src/ root
-        // not in the hexagonal sub-directories.  Fall through to scan all of src/.
+        // For Rust/Go single-binary projects, files live under src/ root (Rust)
+        // or the project root directly (Go: main.go, *_test.go).
         let dirs: Vec<PathBuf> = match lang {
-            "rust" | "go" => vec![base.clone()],
+            "rust" => vec![base.clone()],
+            "go" => vec![PathBuf::from(&self.output_dir)],
             _ => match tier {
                 0 => vec![
                     base.join("core").join("domain"),
@@ -247,6 +262,11 @@ impl Supervisor {
     /// Strip the output_dir prefix from a coder-returned file path if the model
     /// accidentally included it (e.g. `examples/proj/src/foo.ts` → `src/foo.ts`).
     /// This prevents doubled paths when the supervisor joins output_dir + rel_path.
+    ///
+    /// When `output_dir` is absolute (anchored to git root), LLMs typically
+    /// return repo-relative paths like `"examples/proj/src/foo.ts"` rather than
+    /// the full absolute path.  In that case we also try stripping any trailing
+    /// suffix of `output_dir` that matches the start of `path` (longest first).
     fn strip_output_dir_prefix<'a>(&self, path: &'a str) -> &'a str {
         let prefix_slash = format!("{}/", self.output_dir);
         if let Some(stripped) = path.strip_prefix(&prefix_slash) {
@@ -254,6 +274,26 @@ impl Supervisor {
         }
         if path == self.output_dir {
             return "";
+        }
+        // When output_dir is absolute, also try repo-relative sub-paths.
+        // E.g. for output_dir="/repo/examples/proj", try stripping:
+        //   "repo/examples/proj/", "examples/proj/", "proj/" (longest first).
+        let out_path = std::path::Path::new(&self.output_dir);
+        if out_path.is_absolute() {
+            let components: Vec<_> = out_path
+                .components()
+                .filter(|c| !matches!(
+                    c,
+                    std::path::Component::RootDir | std::path::Component::Prefix(_)
+                ))
+                .collect();
+            for start in 0..components.len() {
+                let candidate: std::path::PathBuf = components[start..].iter().collect();
+                let cand_str = format!("{}/", candidate.display());
+                if let Some(stripped) = path.strip_prefix(&cand_str) {
+                    return stripped;
+                }
+            }
         }
         path
     }
@@ -409,6 +449,7 @@ impl Supervisor {
             workplan_step: Some(step_desc.to_string()),
             upstream_output: None,
             metadata,
+            project_id: None,
         }
     }
 
@@ -438,6 +479,7 @@ impl Supervisor {
             workplan_step: None,
             upstream_output: None,
             metadata,
+            project_id: None,
         }
     }
 
@@ -462,6 +504,7 @@ impl Supervisor {
             workplan_step: None,
             upstream_output: None,
             metadata,
+            project_id: None,
         }
     }
 
@@ -480,6 +523,7 @@ impl Supervisor {
             workplan_step: None,
             upstream_output: None,
             metadata,
+            project_id: None,
         }
     }
 
@@ -498,6 +542,7 @@ impl Supervisor {
             workplan_step: None,
             upstream_output: None,
             metadata,
+            project_id: None,
         }
     }
 
@@ -522,6 +567,7 @@ impl Supervisor {
             workplan_step: None,
             upstream_output: Some(issue_desc.to_string()),
             metadata,
+            project_id: None,
         }
     }
 
@@ -635,6 +681,7 @@ impl Supervisor {
             workplan_step: Some(step_desc.to_string()),
             upstream_output: None,
             metadata,
+            project_id: None,
         }
     }
 
@@ -784,45 +831,155 @@ impl Supervisor {
     fn spawn_workers(&self, roles: &[String]) -> Result<()> {
         let hex_bin = std::env::current_exe()
             .unwrap_or_else(|_| std::path::PathBuf::from("hex"));
+        let use_sandbox = Self::sandbox_available();
 
         let mut workers = self.workers.lock().unwrap();
         for role in roles {
             let swarm_arg = self.swarm_id.as_deref().unwrap_or("");
-            let mut cmd = std::process::Command::new(&hex_bin);
-            cmd.args(["agent", "worker", "--role", role]);
-            if !swarm_arg.is_empty() {
-                cmd.args(["--swarm-id", swarm_arg]);
-            }
-            // Pass the supervisor's agent ID so the worker polls for tasks
-            // assigned to this agent identity (supervisor assigns to itself).
-            if let Some(ref aid) = self.agent_id {
-                cmd.args(["--agent-id", aid]);
-            }
+
             // Pipe worker stdout+stderr to a log file for diagnostics
             let log_path = format!("/tmp/hex-worker-{}.log", role);
             let log_file = std::fs::File::create(&log_path)
                 .unwrap_or_else(|_| std::fs::File::open("/dev/null").unwrap());
             let log_file2 = log_file.try_clone()
                 .unwrap_or_else(|_| std::fs::File::open("/dev/null").unwrap());
-            cmd.stdout(log_file)
-                .stderr(log_file2);
 
-            let child = cmd.spawn().with_context(|| {
-                format!("Failed to spawn worker for role {}", role)
-            })?;
+            let abs_output = std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join(&self.output_dir);
+            let abs_output_str = abs_output.to_string_lossy().to_string();
 
-            println!("  Spawned {} worker (PID {})", role, child.id());
+            let child = if use_sandbox {
+                // Spawn hex-agent daemon inside an isolated Docker container (ADR-2603282000).
+                //
+                // Uses plain `docker run` — Docker AI Sandbox (docker sandbox) is designed for
+                // interactive agents (Claude, Copilot); hex-agent is a background daemon that
+                // needs to stay running while polling, which conflicts with sandbox init hooks.
+                //
+                // `docker run --rm` spins up the container, runs the daemon, and cleans up on exit.
+                // child.try_wait() monitors liveness via the docker process.
+
+                // Rewrite localhost/127.0.0.1 → host.docker.internal so hex-agent daemon
+                // inside the container can reach the nexus daemon on the host.
+                let nexus_host = self.nexus_url
+                    .trim_start_matches("http://")
+                    .trim_start_matches("https://")
+                    .split(':')
+                    .next()
+                    .unwrap_or("localhost")
+                    .replace("localhost", "host.docker.internal")
+                    .replace("127.0.0.1", "host.docker.internal");
+                let nexus_port = self.nexus_url
+                    .split(':')
+                    .last()
+                    .unwrap_or("5555")
+                    .trim_end_matches('/')
+                    .to_string();
+
+                // Deterministic container name per role (removed in kill_workers).
+                let sandbox_name = format!("hex-sandbox-{}", role);
+
+                // Remove any pre-existing container with this name (best-effort).
+                let _ = std::process::Command::new("docker")
+                    .args(["rm", "-f", &sandbox_name])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .output();
+
+                // docker run --rm: mount output dir, inject env, run hex-agent daemon.
+                let mut cmd = std::process::Command::new("docker");
+                cmd.args([
+                    "run", "--rm",
+                    "--name", &sandbox_name,
+                    "-v", &format!("{}:{}", abs_output_str, abs_output_str),
+                    "--add-host", "host.docker.internal:host-gateway",
+                    "-e", &format!("NEXUS_HOST={nexus_host}"),
+                    "-e", &format!("NEXUS_PORT={nexus_port}"),
+                    "-e", &format!("HEX_NEXUS_URL=http://{}:{}", nexus_host, nexus_port),
+                    "-e", "RUST_LOG=info",
+                    "-e", &format!("HEX_OUTPUT_DIR={abs_output_str}"),
+                ]);
+                // Docker workers use the pull model: they register fresh UUIDs and
+                // self-claim tasks by role via /claim. Do NOT pass --agent-id so each
+                // container gets its own unique identity for step 2 task execution.
+                // Run `hex agent worker --role <role>` — same command as the non-docker path.
+                // Override ENTRYPOINT so we invoke the `hex` CLI binary, not hex-agent.
+                cmd.args(["--entrypoint", "hex", "hex-agent:latest",
+                    "agent", "worker", "--role", role]);
+                if !swarm_arg.is_empty() {
+                    cmd.args(["--swarm-id", swarm_arg]);
+                }
+                cmd.stdout(log_file).stderr(log_file2);
+
+                let child = cmd.spawn().with_context(|| {
+                    format!("docker run failed for role {}", role)
+                })?;
+                println!("  Spawned {} daemon in Docker container '{}' (PID {})", role, sandbox_name, child.id());
+                child
+            } else {
+                let mut cmd = std::process::Command::new(&hex_bin);
+                cmd.args(["agent", "worker", "--role", role]);
+                if !swarm_arg.is_empty() {
+                    cmd.args(["--swarm-id", swarm_arg]);
+                }
+                // Pass the supervisor's agent ID so the worker polls for tasks
+                // assigned to this agent identity (supervisor assigns to itself).
+                if let Some(ref aid) = self.agent_id {
+                    cmd.args(["--agent-id", aid]);
+                }
+                // Scope the worker to the example project directory so it reads/writes
+                // the right source files rather than the entire hex-intf workspace.
+                cmd.env("HEX_OUTPUT_DIR", &abs_output_str);
+                cmd.current_dir(&abs_output_str);
+                cmd.stdout(log_file).stderr(log_file2);
+
+                let child = cmd.spawn().with_context(|| {
+                    format!("Failed to spawn worker for role {}", role)
+                })?;
+                println!("  Spawned {} worker (PID {})", role, child.id());
+                child
+            };
+
             workers.push((role.clone(), child));
         }
         Ok(())
     }
 
+    /// Returns true when Docker is available for isolated worker containers.
+    /// ADR-2603282000: workers run inside plain `docker run` containers.
+    fn sandbox_available() -> bool {
+        // HEX_NO_SANDBOX=1 forces local worker mode (no Docker isolation).
+        // Useful when the project lives on a volume Docker can't bind-mount
+        // (e.g. /Volumes/... on macOS external drives) or for faster iteration.
+        if std::env::var("HEX_NO_SANDBOX").is_ok() {
+            return false;
+        }
+        std::process::Command::new("docker")
+            .args(["info", "--format", "{{.ServerVersion}}"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
     /// Kill all spawned worker processes and wait for them to exit.
+    /// For Docker workers, also force-removes the container.
     fn kill_workers(&self) {
+        let use_sandbox = Self::sandbox_available();
         let mut workers = self.workers.lock().unwrap();
         for (role, child) in workers.iter_mut() {
             let _ = child.kill();
             let _ = child.wait();
+            if use_sandbox {
+                let container_name = format!("hex-sandbox-{}", role);
+                let _ = std::process::Command::new("docker")
+                    .args(["rm", "-f", &container_name])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .output();
+                debug!(role = role.as_str(), container = %container_name, "removed docker container");
+            }
             debug!(role = role.as_str(), "killed worker");
         }
         workers.clear();
@@ -1012,7 +1169,7 @@ impl Supervisor {
         adr_content: &str,
         workplan_summary: &str,
     ) -> Result<TierResult> {
-        const MAX_ITERATIONS: u32 = 5;
+        let max_iterations = crate::pipeline::SwarmConfig::load_default().max_iterations_per_tier();
 
         let objectives = objectives_for_tier(tier, has_ui_adapters, is_final_tier);
 
@@ -1021,7 +1178,7 @@ impl Supervisor {
         // Accumulate error outputs per objective across fix iterations (last 2 kept).
         let mut prior_errors_map: HashMap<Objective, Vec<String>> = HashMap::new();
 
-        for iteration in 1..=MAX_ITERATIONS {
+        for iteration in 1..=max_iterations {
             // Evaluate ALL objectives from scratch each iteration
             let states = evaluate_all(
                 &objectives,
@@ -1176,9 +1333,9 @@ impl Supervisor {
 
         println!(
             "  [tier {}] max iterations ({}) reached",
-            tier, MAX_ITERATIONS
+            tier, max_iterations
         );
-        print_iteration_progress(tier, MAX_ITERATIONS, &final_states);
+        print_iteration_progress(tier, max_iterations, &final_states);
 
         // Identify the first unmet objective for the notification message.
         let first_unmet = final_states
@@ -1188,7 +1345,7 @@ impl Supervisor {
             .unwrap_or_else(|| "unknown objective".to_string());
         let reason = format!(
             "Pipeline stalled: tier {} exhausted {} iterations on {}",
-            tier, MAX_ITERATIONS, first_unmet
+            tier, max_iterations, first_unmet
         );
         let last_error = final_states
             .iter()
@@ -1233,24 +1390,40 @@ impl Supervisor {
         objective: &Objective,
         iteration: u32,
         step_id: Option<&str>,
+        step: Option<&WorkplanStep>,
     ) -> Option<String> {
-        // Check if SwarmPhase already created a task for this step.
-        if let Some(sid) = step_id {
-            if let Some(existing_id) = self.task_id_map.get(sid) {
-                debug!(task_id = %existing_id, step_id = %sid, role, "reusing SwarmPhase HexFlo task");
-                // Mark in_progress via the assign endpoint (best-effort).
-                if let Some(ref agent_id) = self.agent_id {
-                    let runner = CliRunner::new();
-                    let _ = runner.run_raw(&["task", "assign", existing_id, agent_id]);
+        // Reuse a SwarmPhase-created task only for the coder role on iteration 1.
+        // Other roles (reviewer, tester, fixer) always create a fresh task so
+        // they don't collide with completed coder tasks sharing the same step_id.
+        if iteration == 1 && role == "hex-coder" {
+            if let Some(sid) = step_id {
+                if let Some(existing_id) = self.task_id_map.get(sid) {
+                    debug!(task_id = %existing_id, step_id = %sid, role, "reusing SwarmPhase HexFlo task (iteration 1)");
+                    return Some(existing_id.clone());
                 }
-                return Some(existing_id.clone());
             }
         }
 
         let swarm_id = self.swarm_id.as_ref()?;
         let runner = CliRunner::new();
-        let title = format!("{}: {} [iteration {}]", role, objective, iteration);
-        match runner.task_create(swarm_id, &title, self.agent_id.as_deref()) {
+
+        // Encode the WorkplanStep as TaskPayload JSON so the worker can deserialize
+        // `step_id`, `description`, `model_hint`, and `output_dir` without needing
+        // a separate hexflo memory lookup (ADR-2603300100 P4.1).
+        let title = if let Some(s) = step {
+            serde_json::json!({
+                "role": role,
+                "step_id": s.id,
+                "description": s.description,
+                "output_dir": self.output_dir,
+            })
+            .to_string()
+        } else {
+            format!("{}: {} [iteration {}]", role, objective, iteration)
+        };
+
+        // Create unassigned (None agent_id) so docker workers can self-claim via /claim.
+        match runner.task_create(swarm_id, &title, None) {
             Ok(resp) => {
                 let task_id = resp["id"].as_str().map(|s| s.to_string());
                 if let Some(ref tid) = task_id {
@@ -1265,6 +1438,35 @@ impl Supervisor {
         }
     }
 
+    /// Store WorkplanStep metadata + output_dir in hexflo memory so Docker
+    /// workers can retrieve full execution context when picking up a task.
+    ///
+    /// Key: `{task_id}:step_metadata`
+    /// Value: JSON `{ steps: [...], output_dir: "..." }`
+    async fn store_step_metadata(&self, task_id: &str, steps: &[&WorkplanStep]) {
+        let nexus = crate::nexus_client::NexusClient::new(self.nexus_url.clone());
+        let steps_json: Vec<serde_json::Value> = steps
+            .iter()
+            .filter_map(|s| serde_json::to_value(s).ok())
+            .collect();
+        let metadata = serde_json::json!({
+            "steps": steps_json,
+            "output_dir": self.output_dir,
+        });
+        let key = format!("{}:step_metadata", task_id);
+        let scope = self.swarm_id.clone().unwrap_or_default();
+        let body = serde_json::json!({
+            "key": key,
+            "value": metadata.to_string(),
+            "scope": scope,
+        });
+        if let Err(e) = nexus.post("/api/hexflo/memory", &body).await {
+            debug!(error = %e, task_id, "failed to store step metadata (non-blocking)");
+        } else {
+            debug!(task_id, "stored step metadata for worker");
+        }
+    }
+
     /// Mark a HexFlo task as completed with a result summary (best-effort).
     async fn complete_tracking_task(&self, task_id: &str, result_summary: &str) {
         let runner = CliRunner::new();
@@ -1272,6 +1474,18 @@ impl Supervisor {
         if let Err(e) = runner.task_complete(task_id, Some(truncated)) {
             debug!(error = %e, task_id, "failed to complete HexFlo tracking task (non-blocking)");
         }
+    }
+
+    /// Read structured result stored by a Docker worker under `{task_id}:result` in hexflo memory.
+    async fn read_worker_result(&self, task_id: &str) -> Option<WorkerResult> {
+        let key = format!("{}:result", task_id);
+        let nexus = crate::nexus_client::NexusClient::new(self.nexus_url.clone());
+        let resp = nexus
+            .get(&format!("/api/hexflo/memory/{}", key))
+            .await
+            .ok()?;
+        let value_str = resp["value"].as_str()?;
+        serde_json::from_str::<WorkerResult>(value_str).ok()
     }
 
     /// Log a per-role ToolCall to the attached dev session (best-effort).
@@ -1328,10 +1542,17 @@ impl Supervisor {
         // Create (or reuse) HexFlo tracking task (best-effort).
         // Use the first workplan step's ID as the map key so SwarmPhase tasks
         // are reused instead of creating duplicate shadow tasks.
-        let step_id = workplan_steps.first().map(|s| s.id.as_str());
+        let first_step = workplan_steps.first().copied();
+        let step_id = first_step.map(|s| s.id.as_str());
         let tracking_task_id = self
-            .create_tracking_task(role, &state.objective, iteration, step_id)
+            .create_tracking_task(role, &state.objective, iteration, step_id, first_step)
             .await;
+
+        // Store step metadata in hexflo memory so Docker workers can read the
+        // full WorkplanStep context + output_dir when they pick up the task.
+        if let Some(ref tid) = tracking_task_id {
+            self.store_step_metadata(tid, workplan_steps).await;
+        }
 
         // Read cardinality for this role from the swarm YAML (ADR-2603240130 S06).
         let cardinality = crate::pipeline::SwarmConfig::load_default().cardinality_for_role(role);
@@ -1340,28 +1561,24 @@ impl Supervisor {
         let start = Instant::now();
 
         // Decide: delegate to worker process or execute inline.
-        // Worker delegation is currently disabled — task_assign/task_status
-        // plumbing is not fully wired end-to-end, so we always execute inline.
-        #[allow(clippy::overly_complex_bool_expr)]
-        let agent_result = if false && self.has_worker_for_role(role) {
+        // Delegates to a Docker worker when one is registered for this role,
+        // falls back to inline execution when Docker is unavailable.
+        let agent_result = if self.has_worker_for_role(role) {
             // ── Worker delegation path ──────────────────────────────────
-            // Assign the task to the worker via nexus (worker picks it up
-            // because it matches its agent_id + "in_progress" status).
+            // Tasks are left in "pending" state so workers self-claim via
+            // the role-guarded /claim endpoint (pull model, ADR-2603282000).
+            // Do NOT call `task assign` here — that would set the task
+            // in_progress with the supervisor's agent_id, which workers
+            // never match when polling for their own tasks.
             if let Some(ref tid) = tracking_task_id {
-                let runner = CliRunner::new();
-                // Mark task as assigned so the worker picks it up
-                // (use run_raw — task assign has no --json output)
-                let aid = self.agent_id.clone().unwrap_or_default();
-                let _ = runner.run_raw(&["task", "assign", tid, &aid]);
-
-                // Poll until the worker completes the task (max 120s)
+                // Poll until the worker completes the task (max 300s — Docker workers need ~5min)
                 let poll_start = Instant::now();
-                let timeout = std::time::Duration::from_secs(120);
+                let timeout = std::time::Duration::from_secs(300);
                 let mut retries = 0u32;
                 let poll_result: Result<()> = loop {
                     if poll_start.elapsed() > timeout {
                         break Err(anyhow::anyhow!(
-                            "Task {} timed out after 120s waiting for worker {}",
+                            "Task {} timed out after 300s waiting for worker {}",
                             tid,
                             role
                         ));
@@ -1392,8 +1609,12 @@ impl Supervisor {
                             // Respawn
                             self.spawn_workers(&[role.to_string()])?;
 
-                            // Reclaim the task back to assigned so new worker picks it up
-                            let _ = runner.run_raw(&["task", "assign", tid, &aid]);
+                            // Reset task to pending so the new worker can self-claim it.
+                            let nexus_reset = crate::nexus_client::NexusClient::new(self.nexus_url.clone());
+                            let _ = nexus_reset.patch(
+                                &format!("/api/hexflo/tasks/{}", tid),
+                                &serde_json::json!({"status": "pending", "agentId": ""}),
+                            ).await;
 
                             retries += 1;
                             if retries > 3 {
@@ -1405,12 +1626,16 @@ impl Supervisor {
                             }
 
                             // Wait for new worker to register
-                            std::thread::sleep(std::time::Duration::from_secs(3));
+                            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                             continue;
                         }
                     }
 
-                    if let Ok(status) = runner.run(&["task", "status", tid]) {
+                    // Poll task status directly via HTTP (no CLI subprocess needed).
+                    // `hex task status` does not exist as a subcommand; use the
+                    // /api/hexflo/tasks/:id endpoint instead.
+                    let nexus_http = crate::nexus_client::NexusClient::new(self.nexus_url.clone());
+                    if let Ok(status) = nexus_http.get(&format!("/api/hexflo/tasks/{}", tid)).await {
                         let task_status = status["status"].as_str().unwrap_or("pending");
                         match task_status {
                             "completed" => break Ok(()),
@@ -1428,8 +1653,44 @@ impl Supervisor {
                         }
                     }
 
-                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    // Filesystem fallback: if the worker has generated source files
+                    // but the task-completion signal isn't arriving (e.g. SpacetimeDB
+                    // latency), proceed rather than timing out.
+                    if poll_start.elapsed().as_secs() > 30 {
+                        let src_dir = std::path::PathBuf::from(&self.output_dir).join("src");
+                        let has_files = src_dir.exists()
+                            && std::fs::read_dir(&src_dir)
+                                .ok()
+                                .and_then(|mut d| d.next())
+                                .is_some();
+                        if has_files {
+                            debug!(role, "filesystem fallback: src/ has files — treating as complete");
+                            break Ok(());
+                        }
+                    }
+
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 };
+                // P2.1: After worker completes, read result from hexflo memory for observability.
+                // The actual ObjectiveState update happens on the next iteration via evaluate_all().
+                if poll_result.is_ok() {
+                    if let Some(worker_result) = self.read_worker_result(tid).await {
+                        info!(
+                            task_id = %tid,
+                            file_path = %worker_result.file_path,
+                            compile_pass = worker_result.compile_pass,
+                            tests_pass = worker_result.tests_pass,
+                            "worker result retrieved from hexflo memory"
+                        );
+                        println!(
+                            "  [worker] {} — compile:{} tests:{} file:{}",
+                            role,
+                            if worker_result.compile_pass { "✓" } else { "✗" },
+                            if worker_result.tests_pass { "✓" } else { "✗" },
+                            worker_result.file_path,
+                        );
+                    }
+                }
                 poll_result
             } else {
                 // No tracking task ID — cannot delegate without a task, fall back to inline
@@ -1680,9 +1941,15 @@ impl Supervisor {
                                 fs::create_dir_all(parent)
                                     .with_context(|| format!("creating directory for {}", rel_path))?;
                             }
-                            fs::write(&full_path, &result.content)
+                            let clean_content = strip_chat_tokens(&result.content);
+                            let clean_content = if self.language == "go" {
+                                sanitize_go_source(&clean_content)
+                            } else {
+                                clean_content
+                            };
+                            fs::write(&full_path, &clean_content)
                                 .with_context(|| format!("writing generated code to {}", rel_path))?;
-                            info!(path = %rel_path, bytes = result.content.len(), "wrote generated code to disk");
+                            info!(path = %rel_path, bytes = clean_content.len(), "wrote generated code to disk");
                         }
 
                         // Evaluate quality thresholds from hex-coder YAML (ADR-2603240130 S06)
@@ -1753,6 +2020,7 @@ impl Supervisor {
                                     language: self.language.clone(),
                                     output_dir: self.output_dir.clone(),
                                     prior_errors: prior_errors.to_vec(),
+                                    project_id: self.project_id.clone(),
                                 };
                                 let fix_agent = FixAgent::from_env();
                                 match fix_agent.execute(fix_input, effective_model, provider_pref).await {
@@ -1794,7 +2062,24 @@ impl Supervisor {
                             "feedback loop complete"
                         );
                         if !all_passed {
-                            // Gates failed — invoke FixAgent on gate errors, then retry once
+                            // Gates failed — invoke FixAgent on gate errors, then retry once.
+                            // Re-select model with actual iteration count so the upgrade
+                            // threshold (default: 3) fires when the feedback loop exhausted
+                            // its iterations — escalating to sonnet/opus automatically.
+                            let escalated_selected =
+                                self.select_model_for_role("hex-coder", total_iterations as u32);
+                            let escalated_model_id = escalated_selected.model_id.clone();
+                            let fix_model: Option<&str> =
+                                model_override.or(Some(&escalated_model_id));
+                            if escalated_model_id != yaml_model_id {
+                                info!(
+                                    original = %yaml_model_id,
+                                    escalated = %escalated_model_id,
+                                    iterations = total_iterations,
+                                    "model escalated for fix agent — iteration threshold reached"
+                                );
+                            }
+
                             let gate_errors: Vec<String> = iterations
                                 .last()
                                 .map(|last| {
@@ -1820,9 +2105,10 @@ impl Supervisor {
                                     language: self.language.clone(),
                                     output_dir: self.output_dir.clone(),
                                     prior_errors: prior_errors.to_vec(),
+                                    project_id: self.project_id.clone(),
                                 };
                                 let fix_agent = FixAgent::from_env();
-                                match fix_agent.execute(fix_input, effective_model, provider_pref).await {
+                                match fix_agent.execute(fix_input, fix_model, provider_pref).await {
                                     Ok(fix_result) => {
                                         info!(
                                             status = %fix_result.status,
@@ -1913,9 +2199,15 @@ impl Supervisor {
                                 fs::create_dir_all(parent)
                                     .with_context(|| format!("creating directory for {}", rel_path))?;
                             }
-                            fs::write(&full_path, &result.content)
+                            let clean_content = strip_chat_tokens(&result.content);
+                            let clean_content = if self.language == "go" {
+                                sanitize_go_source(&clean_content)
+                            } else {
+                                clean_content
+                            };
+                            fs::write(&full_path, &clean_content)
                                 .with_context(|| format!("writing generated code to {}", rel_path))?;
-                            info!(path = %rel_path, bytes = result.content.len(), "wrote generated code to disk");
+                            info!(path = %rel_path, bytes = clean_content.len(), "wrote generated code to disk");
                         }
 
                         // Evaluate quality thresholds from hex-coder YAML (ADR-2603240130 S06)
@@ -1984,6 +2276,7 @@ impl Supervisor {
                                     language: self.language.clone(),
                                     output_dir: self.output_dir.clone(),
                                     prior_errors: prior_errors.to_vec(),
+                                    project_id: self.project_id.clone(),
                                 };
                                 let fix_agent = FixAgent::from_env();
                                 match fix_agent.execute(fix_input, effective_model, provider_pref).await {
@@ -2247,9 +2540,14 @@ impl Supervisor {
                     language: self.language.clone(),
                     output_dir: self.output_dir.clone(),
                     prior_errors: prior_errors.to_vec(),
+                    project_id: self.project_id.clone(),
                 };
+                let yaml_selected = self.select_model_for_role("hex-fixer", 0);
+                let yaml_model_id = yaml_selected.model_id.clone();
+                info!(model = %yaml_model_id, source = %yaml_selected.source, "selected model for fix");
+                let fixer_model: Option<&str> = model_override.or(Some(&yaml_model_id));
                 let result = agent
-                    .execute(input, model_override, provider_pref)
+                    .execute(input, fixer_model, provider_pref)
                     .await
                     .context("fix agent failed")?;
                 // Log per-role performance with actual metrics (FixTaskOutput has no duration_ms)
@@ -2278,17 +2576,18 @@ impl Supervisor {
     /// Find the first source file path for a given tier (for reviewer/tester targeting).
     fn first_source_file_for_tier(&self, tier: u32) -> String {
         let files = self.files_for_tier(tier);
-        files
-            .first()
-            .map(|(path, _)| path.clone())
-            .unwrap_or_else(|| {
-                let ext = match self.language.as_str() {
-                    "rust" => "rs",
-                    "go" => "go",
-                    _ => "ts",
-                };
-                format!("src/unknown-tier{}.{}", tier, ext)
-            })
+        if let Some((path, _)) = files.first() {
+            return path.clone();
+        }
+        // For Go single-binary projects, main.go is always the target
+        if self.language == "go" {
+            return "main.go".to_string();
+        }
+        let ext = match self.language.as_str() {
+            "rust" => "rs",
+            _ => "ts",
+        };
+        format!("src/unknown-tier{}.{}", tier, ext)
     }
 
     /// Infer fix target files and fix_type from the objective and blocking issues.
@@ -2311,6 +2610,33 @@ impl Supervisor {
         let mut target_files: Vec<String> = Vec::new();
 
         let resolve_candidate = |candidate: &str| -> Option<String> {
+            // Skip cargo progress lines like "Checking crate v0.1.0 (/path)" —
+            // they match the dot+slash heuristic but are not file paths.
+            if candidate.contains(' ') {
+                return None;
+            }
+            // Strip TypeScript (line,col) suffix: "src/foo.ts(1,21)" → "src/foo.ts"
+            let candidate = if let Some(paren_pos) = candidate.rfind('(') {
+                let suffix = &candidate[paren_pos..];
+                // Only strip if it looks like (digits,digits)
+                let inner = suffix.trim_start_matches('(').trim_end_matches(')');
+                if inner.chars().all(|c| c.is_ascii_digit() || c == ',') {
+                    &candidate[..paren_pos]
+                } else {
+                    candidate
+                }
+            } else {
+                candidate
+            };
+            // Also accept bare filenames like "main.go" or "main.rs" with no path separator
+            let is_bare_source_file = candidate.contains('.')
+                && !candidate.contains('/')
+                && !candidate.contains('\\')
+                && (candidate.ends_with(".go") || candidate.ends_with(".rs") || candidate.ends_with(".ts"));
+            if is_bare_source_file {
+                // Return the bare filename — the caller prepends output_dir
+                return Some(candidate.to_string());
+            }
             if candidate.contains('.') && (candidate.contains('/') || candidate.contains('\\')) {
                 // Normalize to a path relative to output_dir so that
                 // PathBuf::join never silently discards the base (which happens
@@ -2399,13 +2725,17 @@ impl Supervisor {
     fn auto_patch_cargo_toml(&self, blocking_issues: &[String]) {
         // Known crates and their Cargo.toml entries
         let known_crates: &[(&str, &str)] = &[
+            ("axum", r#"axum = "0.8""#),
+            ("tokio", r#"tokio = { version = "1", features = ["full"] }"#),
             ("clap", r#"clap = { version = "4", features = ["derive"] }"#),
             ("serde", r#"serde = { version = "1", features = ["derive"] }"#),
             ("serde_json", r#"serde_json = "1""#),
             ("anyhow", r#"anyhow = "1""#),
-            ("tokio", r#"tokio = { version = "1", features = ["full"] }"#),
             ("thiserror", r#"thiserror = "1""#),
             ("tracing", r#"tracing = "0.1""#),
+            ("tracing_subscriber", r#"tracing-subscriber = "0.3""#),
+            ("reqwest", r#"reqwest = { version = "0.12", features = ["json"] }"#),
+            ("tower", r#"tower = "0.5""#),
             ("regex", r#"regex = "1""#),
             ("chrono", r#"chrono = "0.4""#),
             ("uuid", r#"uuid = { version = "1", features = ["v4"] }"#),
@@ -2427,9 +2757,18 @@ impl Supervisor {
         for (crate_name, dep_line) in known_crates {
             // Check if the error mentions this crate and it's not yet in Cargo.toml
             let mentioned = combined_errors.contains(&format!("crate or module `{}`", crate_name))
+                || combined_errors.contains(&format!("unlinked crate `{}`", crate_name))
                 || combined_errors.contains(&format!("use of undeclared crate `{}`", crate_name))
+                || combined_errors.contains(&format!("unresolved import `{}`", crate_name))
                 || combined_errors.contains(&format!("`{}` is not", crate_name));
-            if mentioned && !cargo_content.contains(crate_name) {
+            // Check if it's already a dependency (not just part of package name or path).
+            // A dep line starts at the beginning of a line: `crate_name =` or `crate_name.`
+            let already_dep = cargo_content.lines().any(|l| {
+                let t = l.trim_start();
+                t.starts_with(&format!("{} =", crate_name))
+                    || t.starts_with(&format!("{}.workspace", crate_name))
+            });
+            if mentioned && !already_dep {
                 additions.push(dep_line);
             }
         }
@@ -2615,6 +2954,16 @@ impl Drop for Supervisor {
 
 // ── Result types ────────────────────────────────────────────────────────
 
+/// Structured result stored by a Docker worker in hexflo memory under `{task_id}:result`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct WorkerResult {
+    pub file_path: String,
+    pub content_len: usize,
+    pub compile_pass: bool,
+    pub tests_pass: bool,
+    pub test_output: String,
+}
+
 /// Outcome of running a single tier's objective loop.
 #[derive(Debug, Clone)]
 pub enum TierResult {
@@ -2692,17 +3041,22 @@ impl SupervisorResult {
         let compile_pass = compile_state.map(|s| s.met).unwrap_or(false);
         let test_pass = test_state.map(|s| s.met).unwrap_or(false);
 
-        // Parse test counts from detail string (e.g. "3/5 tests passing")
+        // Parse test counts from detail string.
+        // Formats: "3/5 tests passed" (failed run), "3 tests passed" (all pass), "1 tests passed"
         let (tests_passed, tests_failed) = test_state
             .and_then(|s| {
-                let parts: Vec<&str> = s.detail.split('/').collect();
-                if parts.len() >= 2 {
-                    let passed = parts[0].trim().parse::<u32>().ok()?;
-                    let total_str = parts[1].split_whitespace().next()?;
+                let detail = &s.detail;
+                if let Some(slash) = detail.find('/') {
+                    // "N/total tests ..." — extract passed and total
+                    let passed = detail[..slash].trim().parse::<u32>().ok()?;
+                    let total_str = detail[slash + 1..].split_whitespace().next()?;
                     let total = total_str.parse::<u32>().ok()?;
                     Some((passed, total.saturating_sub(passed)))
                 } else {
-                    None
+                    // "N tests passed" — all tests passed, failed = 0
+                    let first = detail.split_whitespace().next()?;
+                    let passed = first.parse::<u32>().ok()?;
+                    Some((passed, 0))
                 }
             })
             .unwrap_or((0, 0));
@@ -2821,6 +3175,33 @@ fn print_iteration_progress(tier: u32, iteration: u32, states: &[ObjectiveState]
         })
         .collect();
     println!("  [tier {}] iteration {}: {}", tier, iteration, parts.join(", "));
+}
+
+/// Strip qwen/llama chat special tokens from LLM output before writing to disk.
+/// Models like qwen3.5 sometimes emit `<|endoftext|>`, `<|im_start|>`, etc.
+/// after their answer. Truncate at the first such marker.
+fn strip_chat_tokens(s: &str) -> String {
+    if let Some(pos) = s.find("<|") {
+        s[..pos].trim_end().to_string()
+    } else {
+        s.trim_end().to_string()
+    }
+}
+
+/// Fix common LLM Go formatting bugs.
+///
+/// LLMs sometimes output `package mainimport (` when they mean:
+/// ```text
+/// package main
+///
+/// import (
+/// ```
+fn sanitize_go_source(s: &str) -> String {
+    // Fix "package mainimport" → "package main\n\nimport"
+    let s = s.replace("package mainimport (", "package main\n\nimport (");
+    let s = s.replace("package mainimport(", "package main\n\nimport(");
+    // Fix "package main\nimport" → "package main\n\nimport" (missing blank line — valid but noisy)
+    s
 }
 
 #[cfg(test)]

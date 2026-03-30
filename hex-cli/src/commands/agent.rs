@@ -10,6 +10,7 @@ use tracing::debug;
 
 use crate::fmt::{HexTable, status_badge, truncate};
 use crate::nexus_client::NexusClient;
+use crate::pipeline::workplan_phase::{WorkplanData, WorkplanStep};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -823,6 +824,24 @@ async fn disconnect(agent_id: &str) -> anyhow::Result<()> {
     println!("{} Agent disconnected", "\u{2b21}".green());
     println!("  Agent ID: {}", agent_id);
 
+    // Clean up any swarms owned by this agent where all tasks are done
+    if let Ok(resp) = nexus.get("/api/swarms/active").await {
+        if let Some(swarms) = resp.as_array() {
+            let owned: Vec<_> = swarms
+                .iter()
+                .filter(|s| {
+                    s["ownerAgentId"].as_str() == Some(agent_id)
+                        || s["createdBy"].as_str() == Some(agent_id)
+                })
+                .cloned()
+                .collect();
+            let cleaned = crate::commands::swarm::auto_complete_done_swarms(&nexus, &owned).await;
+            if cleaned > 0 {
+                println!("  Swarms cleaned up: {}", cleaned);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -833,6 +852,17 @@ async fn evict() -> anyhow::Result<()> {
     let result = nexus.post("/api/hex-agents/evict", &body).await?;
     let evicted = result.get("evicted").and_then(|v| v.as_u64()).unwrap_or(0);
     println!("{} Evicted {} dead agent(s)", "\u{2b21}".green(), evicted);
+
+    // Clean up swarms where all tasks are done
+    if let Ok(resp) = nexus.get("/api/swarms/active").await {
+        if let Some(swarms) = resp.as_array() {
+            let cleaned = crate::commands::swarm::auto_complete_done_swarms(&nexus, swarms).await;
+            if cleaned > 0 {
+                println!("{} Cleaned up {} completed swarm(s)", "\u{2b21}".green(), cleaned);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1025,6 +1055,11 @@ async fn worker(
     // our own identity for heartbeats.
     let agent_id = override_agent_id.unwrap_or(registered_id);
 
+    // Rebuild nexus client with the resolved agent_id so all subsequent calls
+    // (including PATCH task completion) include the x-hex-agent-id header.
+    // This is critical in Docker where no session file exists on the container fs.
+    let nexus = nexus.with_agent_id(agent_id.clone());
+
     let short_id = &agent_id[..8.min(agent_id.len())];
     println!(
         "{} Worker started: {} (agent: {})",
@@ -1062,9 +1097,10 @@ async fn worker(
         if let Ok(resp) = nexus.get("/api/work-items/incomplete").await {
             if let Some(all_incomplete) = resp.as_array() {
                 for candidate in all_incomplete {
-                    // Filter: only pending tasks, and only from our swarm if specified
+                    // Filter: only pending tasks (status="" or "pending"), and only from our swarm if specified.
+                    // Tasks are created with status="" (empty), not "pending", so we must accept both.
                     let status = candidate["status"].as_str().unwrap_or("");
-                    if status != "pending" {
+                    if !matches!(status, "pending" | "") {
                         continue;
                     }
                     if let Some(ref sid) = swarm_id {
@@ -1077,25 +1113,44 @@ async fn worker(
                         }
                     }
                     let task_id = candidate["id"].as_str().unwrap_or("");
-                    let version = candidate["version"].as_u64().unwrap_or(0);
                     if task_id.is_empty() {
                         continue;
                     }
-                    // CAS assign — if another worker beats us we get 409 and try next
+                    // Skip already-assigned tasks (agentId non-null/non-empty).
+                    // /api/work-items/incomplete serializes SwarmTaskInfo with camelCase,
+                    // so the field is "agentId" — check both for defensive compatibility.
+                    let existing_agent = candidate["agentId"]
+                        .as_str()
+                        .or_else(|| candidate["agent_id"].as_str())
+                        .unwrap_or("");
+                    if !existing_agent.is_empty() && existing_agent != "null" {
+                        continue;
+                    }
+                    // Role guard: only claim tasks intended for this worker's role.
+                    let c_title = candidate["title"].as_str().unwrap_or("");
+                    let c_role: Option<String> = serde_json::from_str::<serde_json::Value>(c_title)
+                        .ok()
+                        .and_then(|v| v["role"].as_str().map(|s| s.to_string()));
+                    let role_ok = match &c_role {
+                        Some(r) => r == role,
+                        None => c_title.starts_with(&format!("{}: ", role)) || !c_title.contains(": "),
+                    };
+                    if !role_ok {
+                        continue;
+                    }
+                    // Assign via PATCH /api/hexflo/tasks/{id} — convenience route (no swarm ID needed).
+                    // SwarmTask has no version field, so we skip CAS version check.
                     let assign_result = nexus
                         .patch(
-                            &format!("/api/swarms/tasks/{}", task_id),
-                            &json!({
-                                "agent_id": agent_id,
-                                "version": version,
-                            }),
+                            &format!("/api/hexflo/tasks/{}", task_id),
+                            &json!({ "agentId": agent_id }),
                         )
                         .await;
                     if assign_result.is_ok() {
-                        debug!(task_id, "claimed pending task");
+                        debug!(task_id, "claimed pending task via /api/swarms/tasks");
                         break;
                     }
-                    // 409 = race lost, try next candidate
+                    // Non-200 = race lost or error, try next candidate
                 }
             }
         }
@@ -1139,12 +1194,32 @@ async fn worker(
                             continue;
                         }
 
+                        // Role guard: skip tasks intended for a different worker role.
+                        // Tasks embed the target role either as JSON {"role":"hex-tester",...}
+                        // or as a title prefix "hex-tester: ... [iteration N]".
+                        let task_role: Option<String> = serde_json::from_str::<serde_json::Value>(title)
+                            .ok()
+                            .and_then(|v| v["role"].as_str().map(|s| s.to_string()));
+                        let role_match = match &task_role {
+                            Some(r) => r == role,
+                            // Fallback: title prefix "hex-fixer: ..." or no role marker (accept)
+                            None => title.starts_with(&format!("{}: ", role)) || !title.contains(": "),
+                        };
+                        if !role_match {
+                            debug!(task_id, worker_role = role, task_role = ?task_role, "skipping task — role mismatch");
+                            continue;
+                        }
+
                         let tid_short = &task_id[..8.min(task_id.len())];
+                        let display_title = serde_json::from_str::<serde_json::Value>(title)
+                            .ok()
+                            .and_then(|v| v["description"].as_str().map(|s| s.to_string()))
+                            .unwrap_or_else(|| title.to_string());
                         println!(
                             "  {} Executing task: {} — {}",
                             "\u{2192}".cyan(),
                             tid_short,
-                            title
+                            display_title
                         );
 
                         // Execute based on role
@@ -1156,7 +1231,7 @@ async fn worker(
                             Ok(summary) => {
                                 let _ = nexus
                                     .patch(
-                                        &format!("/api/swarms/tasks/{}", task_id),
+                                        &format!("/api/hexflo/tasks/{}", task_id),
                                         &json!({
                                             "status": "completed",
                                             "result": summary,
@@ -1172,7 +1247,7 @@ async fn worker(
                             Err(e) => {
                                 let _ = nexus
                                     .patch(
-                                        &format!("/api/swarms/tasks/{}", task_id),
+                                        &format!("/api/hexflo/tasks/{}", task_id),
                                         &json!({
                                             "status": "failed",
                                             "result": format!("Error: {}", e),
@@ -1260,59 +1335,128 @@ async fn execute_worker_task(
             workplan_step: Some(task_title.to_string()),
             upstream_output: None,
             metadata: HashMap::new(),
+            project_id: None,
         }
     };
 
     let result = match role {
         "hex-coder" => {
-            // Build context and invoke CodePhase for real inference
-            let context = build_context("agent-coder", Vec::new(), title);
-            let _phase = crate::pipeline::code_phase::CodePhase::from_env();
+            // P1.1: Real hex-coder worker — fetch step metadata from hexflo memory
+            // (stored by supervisor P0.1), run inference via CodePhase, write the
+            // generated file to the Docker-mounted output dir, compile+test, and
+            // store a structured result so the supervisor can update ObjectiveState.
 
-            // For now, return a basic result — full workplan step parsing comes later
-            let result = format!("hex-coder: executed task '{}'", title);
+            let output_dir = std::env::var("HEX_OUTPUT_DIR")
+                .unwrap_or_else(|_| _project_dir.to_string());
 
-            // Write generated files to memory so tester/reviewer can find them
-            let memory_key = format!("{}:generated_files", task_id);
+            // 1. Fetch WorkplanStep from hexflo memory (best-effort — fall back to title-stub)
+            let metadata_key = format!("{}:step_metadata", task_id);
+            let (workplan_step, workplan_data) = match nexus
+                .get(&format!("/api/hexflo/memory/{}", metadata_key))
+                .await
+            {
+                Ok(resp) => worker_parse_step_metadata(&resp, task_id, title),
+                Err(_)   => worker_stub_step(task_id, title),
+            };
+
+            // 2. Run code generation
+            let phase = crate::pipeline::code_phase::CodePhase::from_env();
+            let step_result = phase
+                .execute_step(&workplan_step, &workplan_data, None, None)
+                .await?;
+
+            // 3. Write generated file to output_dir
+            let raw_path = step_result.file_path.as_deref().unwrap_or("main.go");
+            let rel_path = worker_strip_prefix(raw_path, &output_dir);
+            let full_path = PathBuf::from(&output_dir).join(rel_path);
+            if let Some(parent) = full_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&full_path, &step_result.content)?;
+
+            // 4. Compile + test checks
+            let language = worker_detect_language(&output_dir);
+            let compile_pass = worker_compile_check(&output_dir, &language);
+            let (tests_pass, test_output) = worker_test_check(&output_dir, &language);
+
+            // 5. Store structured result so supervisor can update ObjectiveState (P2.1)
+            let result_key = format!("{}:result", task_id);
+            let result_val = json!({
+                "file_path": rel_path,
+                "content_len": step_result.content.len(),
+                "compile_pass": compile_pass,
+                "tests_pass": tests_pass,
+                "test_output": &test_output[..test_output.len().min(500)],
+                "model": step_result.model_used,
+                "cost_usd": step_result.cost_usd,
+                "tokens": step_result.tokens,
+            });
             let _ = nexus
                 .post(
                     "/api/hexflo/memory",
                     &json!({
-                        "key": memory_key,
+                        "key": result_key,
+                        "value": result_val.to_string(),
+                        "scope": swarm_id,
+                    }),
+                )
+                .await;
+
+            // 6. Also store generated_files entry for downstream reviewer/tester
+            let files_key = format!("{}:generated_files", task_id);
+            let _ = nexus
+                .post(
+                    "/api/hexflo/memory",
+                    &json!({
+                        "key": files_key,
                         "value": json!({
-                            "files": [],
+                            "files": [rel_path],
                             "task": title,
-                            "prompt_template": context.prompt_template,
                         }).to_string(),
                         "scope": swarm_id,
                     }),
                 )
                 .await;
 
-            result
+            format!(
+                "hex-coder: generated {} (compile={}, tests={})",
+                rel_path, compile_pass, tests_pass
+            )
         }
         "hex-reviewer" => {
             use crate::pipeline::agents::ReviewerAgent;
             let agent = ReviewerAgent::from_env();
 
-            // Gather source files from upstream dependencies
-            let deps = task["depends_on"].as_str().unwrap_or("");
-            let source_files = gather_dep_files(deps).await;
+            let output_dir = std::env::var("HEX_OUTPUT_DIR")
+                .unwrap_or_else(|_| _project_dir.to_string());
 
-            let context = build_context("agent-reviewer", source_files, title);
+            // Prefer dep files; fall back to reading from output_dir directly.
+            let deps = task["depends_on"].as_str().unwrap_or("");
+            let dep_files = gather_dep_files(deps).await;
+            let source_files = if dep_files.is_empty() {
+                worker_read_source_files(&output_dir)
+            } else {
+                dep_files
+            };
+
+            let language = worker_detect_language(&output_dir);
+            let mut context = build_context("agent-reviewer", source_files, title);
+            context.metadata.insert("language".to_string(), language);
+            context.metadata.insert("review_target".to_string(), title.to_string());
+            context.metadata.insert("project_type".to_string(), "standalone".to_string());
 
             match agent.execute(&context, None, None).await {
                 Ok(review) => {
-                    let pass = review.verdict == "PASS";
-                    let summary = format!(
-                        "hex-reviewer: {} ({} issues, model={}, cost=${:.4})",
-                        review.verdict,
-                        review.issues.len(),
-                        review.model_used,
-                        review.cost_usd,
-                    );
+                    let pass = review.verdict == "PASS" || review.reviewer_skipped;
 
-                    // Write review results to memory
+                    // Write .hex-review/review-latest.json so supervisor evaluate_review_passes() picks it up.
+                    let review_dir = std::path::PathBuf::from(&output_dir).join(".hex-review");
+                    let _ = std::fs::create_dir_all(&review_dir);
+                    if let Ok(json_str) = serde_json::to_string_pretty(&review) {
+                        let _ = std::fs::write(review_dir.join("review-latest.json"), &json_str);
+                    }
+
+                    // Store structured result in hexflo memory.
                     let memory_key = format!("{}:review_results", task_id);
                     let _ = nexus
                         .post(
@@ -1332,7 +1476,13 @@ async fn execute_worker_task(
                         )
                         .await;
 
-                    summary
+                    format!(
+                        "hex-reviewer: {} ({} issues, model={}, cost=${:.4})",
+                        review.verdict,
+                        review.issues.len(),
+                        review.model_used,
+                        review.cost_usd,
+                    )
                 }
                 Err(e) => format!("hex-reviewer error: {}", e),
             }
@@ -1499,4 +1649,211 @@ async fn execute_worker_task(
     };
 
     Ok(result)
+}
+
+// ── Worker helper functions (P1.1) ──────────────────────────────────────────
+
+/// Parse WorkplanStep + WorkplanData from a hexflo memory response.
+/// Falls back to a minimal stub if the value is missing or malformed.
+fn worker_parse_step_metadata(
+    resp: &serde_json::Value,
+    task_id: &str,
+    title: &str,
+) -> (WorkplanStep, WorkplanData) {
+    if let Some(val_str) = resp["value"].as_str() {
+        if let Ok(meta) = serde_json::from_str::<serde_json::Value>(val_str) {
+            let steps: Vec<WorkplanStep> = meta["steps"]
+                .as_array()
+                .and_then(|arr| {
+                    serde_json::from_value(serde_json::Value::Array(arr.clone())).ok()
+                })
+                .unwrap_or_default();
+            if let Some(step) = steps.into_iter().next() {
+                let wd = WorkplanData {
+                    id: task_id.to_string(),
+                    title: title.to_string(),
+                    steps: vec![step.clone()],
+                    specs: None,
+                    adr: None,
+                    created: None,
+                    status: None,
+                    status_note: None,
+                    topology: None,
+                    budget: None,
+                    merge_order: None,
+                    risk_register: None,
+                    success_criteria: None,
+                    dependencies: None,
+                };
+                return (step, wd);
+            }
+        }
+    }
+    worker_stub_step(task_id, title)
+}
+
+/// Create a minimal WorkplanStep + WorkplanData from just a title (fallback).
+fn worker_stub_step(task_id: &str, title: &str) -> (WorkplanStep, WorkplanData) {
+    let step = WorkplanStep {
+        id: task_id.to_string(),
+        description: title.to_string(),
+        layer: None,
+        adapter: None,
+        port: None,
+        dependencies: vec![],
+        tier: 0,
+        specs: None,
+        worktree_branch: None,
+        done_condition: None,
+    };
+    let wd = WorkplanData {
+        id: task_id.to_string(),
+        title: title.to_string(),
+        steps: vec![step.clone()],
+        specs: None,
+        adr: None,
+        created: None,
+        status: None,
+        status_note: None,
+        topology: None,
+        budget: None,
+        merge_order: None,
+        risk_register: None,
+        success_criteria: None,
+        dependencies: None,
+    };
+    (step, wd)
+}
+
+/// Strip the output_dir prefix from a coder-returned file path so we get a
+/// path relative to the project root (mirrors supervisor's strip logic).
+fn worker_strip_prefix<'a>(path: &'a str, output_dir: &str) -> &'a str {
+    let prefix = format!("{}/", output_dir);
+    if let Some(stripped) = path.strip_prefix(&prefix) {
+        return stripped;
+    }
+    // Also try basename-relative prefixes (e.g. "workspace/main.go" → "main.go")
+    let out = std::path::Path::new(output_dir);
+    let components: Vec<_> = out
+        .components()
+        .filter(|c| !matches!(
+            c,
+            std::path::Component::RootDir | std::path::Component::Prefix(_)
+        ))
+        .collect();
+    for start in 0..components.len() {
+        let candidate: std::path::PathBuf = components[start..].iter().collect();
+        let cand_str = format!("{}/", candidate.display());
+        if let Some(stripped) = path.strip_prefix(&cand_str) {
+            return stripped;
+        }
+    }
+    path
+}
+
+/// Detect project language from files present in output_dir.
+/// Read all source files from `output_dir` into `(relative_path, content)` pairs.
+/// Skips binaries, `.git/`, `target/`, `node_modules/`, and files > 64 KiB.
+fn worker_read_source_files(output_dir: &str) -> Vec<(String, String)> {
+    const MAX_FILE_BYTES: u64 = 64 * 1024;
+    const SOURCE_EXTS: &[&str] = &[
+        "rs", "go", "ts", "tsx", "js", "jsx", "py", "java", "kt", "swift",
+        "c", "cpp", "h", "hpp", "toml", "yaml", "yml", "json", "md",
+    ];
+    const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", ".hex-review"];
+
+    let base = std::path::Path::new(output_dir);
+    let mut files = Vec::new();
+
+    fn walk(
+        dir: &std::path::Path,
+        base: &std::path::Path,
+        skip_dirs: &[&str],
+        source_exts: &[&str],
+        max_bytes: u64,
+        out: &mut Vec<(String, String)>,
+    ) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if path.is_dir() {
+                if !skip_dirs.contains(&name) {
+                    walk(&path, base, skip_dirs, source_exts, max_bytes, out);
+                }
+                continue;
+            }
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if !source_exts.contains(&ext) {
+                continue;
+            }
+            if path.metadata().map(|m| m.len()).unwrap_or(0) > max_bytes {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let rel = path.strip_prefix(base).unwrap_or(&path);
+                out.push((rel.to_string_lossy().to_string(), content));
+            }
+        }
+    }
+
+    walk(base, base, SKIP_DIRS, SOURCE_EXTS, MAX_FILE_BYTES, &mut files);
+    files
+}
+
+fn worker_detect_language(output_dir: &str) -> String {
+    let base = std::path::Path::new(output_dir);
+    if base.join("go.mod").exists() {
+        return "go".into();
+    }
+    if base.join("Cargo.toml").exists() {
+        return "rust".into();
+    }
+    if base.join("package.json").exists() {
+        return "typescript".into();
+    }
+    "unknown".into()
+}
+
+/// Run a compile check appropriate for the language. Returns true on success.
+fn worker_compile_check(output_dir: &str, language: &str) -> bool {
+    let (cmd, args): (&str, &[&str]) = match language {
+        "go"   => ("go", &["build", "./..."]),
+        "rust" => ("cargo", &["check", "--manifest-path", "Cargo.toml"]),
+        _      => ("tsc", &["--noEmit"]),
+    };
+    std::process::Command::new(cmd)
+        .args(args)
+        .current_dir(output_dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Run tests appropriate for the language. Returns (pass, output_snippet).
+fn worker_test_check(output_dir: &str, language: &str) -> (bool, String) {
+    let (cmd, args): (&str, &[&str]) = match language {
+        "go"   => ("go", &["test", "./..."]),
+        "rust" => ("cargo", &["test"]),
+        _      => ("bun", &["test"]),
+    };
+    match std::process::Command::new(cmd)
+        .args(args)
+        .current_dir(output_dir)
+        .output()
+    {
+        Ok(out) => {
+            let pass = out.status.success();
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            let combined = format!("{}{}", stdout, stderr);
+            (pass, combined)
+        }
+        Err(e) => (false, e.to_string()),
+    }
 }
