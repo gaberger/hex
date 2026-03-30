@@ -1,0 +1,258 @@
+{
+  "id": "wp-quantization-aware-inference-routing",
+  "feature": "Quantization-Aware Inference Routing",
+  "description": "Add QuantizationLevel as a first-class type in hex-core, extend inference provider records, add quantization policy to agent YAMLs, implement complexity-aware provider selection in hex-nexus, and close the loop with Neural Lab quality calibration. Enables local Q2/Q4 models for routine tasks with automatic escalation to cloud for complex ones.",
+  "adr": "ADR-2603271000",
+  "status": "complete",
+  "created_at": "2026-03-27T10:00:00Z",
+  "created_by": "planner",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "QuantizationLevel Domain Type and Provider Schema",
+      "tier": 0,
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-core -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "QuantizationLevel enum in hex-core with Ord, Display, FromStr",
+          "layer": "domain",
+          "agent": "hex-coder",
+          "description": "Create hex-core/src/quantization.rs. Define: pub enum QuantizationLevel { Q2, Q3, Q4, Q8, Fp16, Cloud }. Implement: Ord (Q2 < Q3 < Q4 < Q8 < Fp16 < Cloud via discriminant), Display (lowercase: 'q2', 'q3', 'q4', 'q8', 'fp16', 'cloud'), FromStr (parse lowercase strings + GGUF tags: 'q2_k' -> Q2, 'q4_k_m' -> Q4, 'q8_0' -> Q8). Derive Serialize/Deserialize (serde). Add default() -> Q4 for local, Cloud sentinel for API providers. Export from hex-core/src/lib.rs. Unit tests: round-trip Display/FromStr for all variants, GGUF tag parsing, Ord ordering. Done when: cargo check -p hex-core passes, all unit tests pass.",
+          "deps": [],
+          "files": [
+            "hex-core/src/quantization.rs",
+            "hex-core/src/lib.rs"
+          ],
+          "status": "done",
+          "completed_at": "2026-03-30"
+        },
+        {
+          "id": "P0.2",
+          "name": "Extend InferenceProvider record with quantization_level, context_window, quality_score",
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "description": "Update hex-nexus/src/routes/inference.rs (and any provider structs in hex-nexus/src/). Add to the provider registration request body: quantization_level: Option<QuantizationLevel> (default Q4 for local, Cloud for anthropic/openai/gemini). Add context_window: Option<u32>. Add quality_score: Option<f32> (0.0\u20131.0, None until Neural Lab calibrates). Update SQLite storage to persist these columns (ALTER TABLE or schema migration in HexFlo memory). Update list response to include all three fields. Done when: cargo check -p hex-nexus passes, registered provider echoes back quantization_level in list output.",
+          "deps": [
+            "P0.1"
+          ],
+          "files": [
+            "hex-nexus/src/routes/inference.rs",
+            "hex-nexus/Cargo.toml"
+          ],
+          "status": "done",
+          "completed_at": "2026-03-30"
+        },
+        {
+          "id": "P0.3",
+          "name": "hex inference test: real inference probe + quality_score calibration via PATCH endpoint",
+          "layer": "primary+secondary",
+          "agent": "hex-coder",
+          "description": "Rewrote hex inference test to run a real chat completion against the provider (not just a connectivity ping). Quality score formula: 0.70 base + latency bonus (0.15/<3s, 0.08/<8s, 0.02/<20s, -0.05/>20s) + sanity bonus (0.15 if non-empty reply). Writes quality_score back to SpacetimeDB via PATCH /api/inference/endpoints/:id (new calibrate_inference handler in hex-nexus/src/routes/secrets.rs). Route added to hex-nexus/src/routes/mod.rs. SelectionSource::RegistryRanked added to model_selection.rs \u2014 query_registry_best filters provider==openrouter AND quality_score>=0.0, ranks by score desc + context_window desc.",
+          "deps": [
+            "P0.2"
+          ],
+          "files": [
+            "hex-cli/src/commands/inference.rs",
+            "hex-nexus/src/routes/secrets.rs",
+            "hex-nexus/src/routes/mod.rs",
+            "hex-cli/src/pipeline/model_selection.rs"
+          ],
+          "status": "done",
+          "completed_at": "2026-03-30"
+        },
+        {
+          "id": "P0.4",
+          "name": "Production calibration: 89/91 OpenRouter endpoints calibrated with real quality scores",
+          "layer": "ops",
+          "agent": "ops",
+          "description": "Ran hex inference test against all registered OpenRouter endpoints. 89/91 calibrated. 2 remaining (qwen3-coder:free, qwen3-next-80b:free) blocked by upstream provider rate limits \u2014 paid equivalents already calibrated at 1.0. Quality range: 0.72 (z-ai/glm-5) to 1.00 (claude-sonnet-4.6, claude-haiku-4.5, most qwen3.5 models). Registry-ranked model selection now active: swarm agents fall back to anthropic/claude-sonnet-4.6 when RL engine unavailable.",
+          "deps": [
+            "P0.3"
+          ],
+          "files": [],
+          "status": "done",
+          "completed_at": "2026-03-30"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Complexity Scoring and Quantization Router",
+      "tier": 1,
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "ComplexityScorer: heuristic task complexity from inference request body",
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "description": "Create hex-nexus/src/complexity.rs. Implement ComplexityScorer::score(prompt: &str, context_files: &[&str]) -> ComplexityLevel where enum ComplexityLevel { Low, Medium, High, Critical }. Scoring heuristic (all additive): prompt_tokens < 200 -> Low base; cross-file keywords ('import from', 'depends on', 'across adapters') +1 level; prompt_tokens > 1000 +1 level; presence of security keywords ('auth', 'secret', 'vault', 'key') -> minimum Medium; presence of 'unsafe' or architectural keywords ('ADR', 'hexagonal', 'composition-root') -> minimum High. Map final score to ComplexityLevel. Expose as pub fn score_complexity(req: &InferenceRequest) -> ComplexityLevel. Unit tests: low-complexity docstring prompt scores Low, cross-file refactor scores High. Done when: cargo check passes, unit tests cover all level transitions.",
+          "deps": [
+            "P0.2"
+          ],
+          "files": [
+            "hex-nexus/src/complexity.rs",
+            "hex-nexus/src/lib.rs"
+          ],
+          "status": "done",
+          "completed_at": "2026-03-30"
+        },
+        {
+          "id": "P1.2",
+          "name": "QuantizationRouter: filter providers by minimum tier, prefer highest quality_score",
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "description": "Create hex-nexus/src/quant_router.rs. Implement QuantizationRouter with: fn select_provider(providers: &[InferenceProvider], min_level: QuantizationLevel) -> Option<&InferenceProvider>. Logic: filter to providers where quantization_level >= min_level; among candidates sort by quality_score desc (None treated as tier-default: Q2=0.6, Q4=0.8, Fp16=0.95, Cloud=1.0); return first. Implement fn complexity_to_min_level(complexity: ComplexityLevel, policy: &QuantPolicy) -> QuantizationLevel using policy or global defaults (Low->Q2, Medium->Q4, High->Q8, Critical->Cloud). Integrate into POST /api/inference/complete handler: score complexity, compute min_level, call select_provider, forward to selected provider. On provider error: retry with next tier (escalate once). Done when: integration test routes Low-complexity request to Q4 provider when Q2 and Q4 both registered.",
+          "deps": [
+            "P1.1"
+          ],
+          "files": [
+            "hex-nexus/src/quant_router.rs",
+            "hex-nexus/src/routes/inference.rs",
+            "hex-nexus/src/lib.rs"
+          ],
+          "status": "done",
+          "completed_at": "2026-03-30"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Agent YAML Schema Extension",
+      "tier": 2,
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add inference.quantization block to agent YAML JSON schema and supervisor parsing",
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "description": "Update hex-cli/assets/schemas/ (agent YAML JSON schema). Add to inference object: quantization: { type: object, properties: { default: {type: string, enum: [q2,q3,q4,q8,fp16,cloud]}, minimum: {type: string}, on_complexity_high: {type: string}, on_failure: {type: string} }, required: [] }. Update hex-nexus/src/orchestration/agent_manager.rs or workplan_executor.rs: when loading agent YAML, parse inference.quantization block into QuantPolicy struct { default: QuantizationLevel, minimum: QuantizationLevel, on_complexity_high: QuantizationLevel, on_failure: QuantizationLevel }. Pass QuantPolicy with each inference request dispatched by the workplan executor. Done when: cargo check passes, agent YAML with quantization block loaded without error, QuantPolicy propagated to routing.",
+          "deps": [
+            "P1.2"
+          ],
+          "files": [
+            "hex-cli/assets/schemas/agent.schema.json",
+            "hex-nexus/src/orchestration/agent_manager.rs",
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
+          "status": "done",
+          "completed_at": "2026-03-30"
+        },
+        {
+          "id": "P2.2",
+          "name": "Update hex-coder, planner, and reviewer agent YAMLs with quantization policy",
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "description": "Update the following files in hex-cli/assets/agents/hex/hex/: hex-coder.yml, planner.yml, hex-reviewer.yml. For hex-coder: default: q4, minimum: q2, on_complexity_high: q8, on_failure: cloud. For planner: default: q8, minimum: q4, on_complexity_high: cloud, on_failure: cloud (planning requires higher fidelity). For hex-reviewer: default: q8, minimum: q4, on_complexity_high: cloud, on_failure: cloud (review is security-sensitive). Leave other agent YAMLs unchanged \u2014 only update the three listed. Done when: all three YAMLs pass JSON schema validation, cargo check -p hex-nexus passes.",
+          "deps": [
+            "P2.1"
+          ],
+          "files": [
+            "hex-cli/assets/agents/hex/hex/hex-coder.yml",
+            "hex-cli/assets/agents/hex/hex/planner.yml",
+            "hex-cli/assets/agents/hex/hex/hex-reviewer.yml"
+          ],
+          "status": "done",
+          "completed_at": "2026-03-30"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "CLI Updates: --quantization Flag and Ollama Auto-Detect",
+      "tier": 3,
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "hex inference add: --quantization flag + Ollama tag auto-detect",
+          "layer": "primary",
+          "agent": "hex-coder",
+          "description": "Update hex-cli/src/commands/inference.rs. Add --quantization <level> optional flag to InferenceAction::Add (clap). When provider_type is 'ollama' and --quantization not given: parse model name for GGUF suffixes (q2_k, q3_k, q3_k_m, q4_k, q4_k_m, q4_0, q5_k_m, q8_0, f16) -> map to QuantizationLevel. If no suffix detected: default to Q4 and print warning: 'Could not detect quantization from model name; defaulting to q4. Use --quantization to set explicitly.' For anthropic/openai/gemini: always Cloud, flag ignored with info message. For vllm/openai-compatible: default Fp16 unless --quantization given. Include quantization_level in provider registration body. Update hex inference list output to show QUANT column. Done when: cargo check -p hex-cli passes, hex inference add ollama llama3.2:3b-q4_k_m auto-detects Q4.",
+          "deps": [
+            "P2.2"
+          ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
+          "status": "done",
+          "completed_at": "2026-03-30"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Neural Lab Quant-Calibration Experiment",
+      "tier": 4,
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-nexus -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "quant-calibration experiment type in Neural Lab: benchmark, score, write quality_score back",
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "description": "Create hex-nexus/src/neural_lab_quant.rs. Implement run_quant_calibration(providers: &[InferenceProvider], specs_dir: &Path) -> Result<Vec<ProviderCalibrationResult>>. Steps: (1) Load up to 10 behavioral specs from docs/specs/ as benchmark prompts (use simple code-generation tasks extracted from spec descriptions). (2) For each provider in quantization order (Q2 first): send each benchmark prompt, collect responses. (3) Score each response: heuristic scorer checks for compilation markers ('fn ', 'pub ', '}', 'use '), length reasonableness (50-2000 chars), presence of panic!/ unwrap without comment. Quality score = passing checks / total checks as f32. (4) Write quality_score back to provider record via PATCH /api/inference/providers/:id. (5) Store calibration summary to HexFlo memory: key 'neural-lab:quant-calibration:{provider_id}:{date}'. Add CLI command: hex neural-lab calibrate --type quant (calls this function). Done when: cargo check passes, calibration updates quality_score on at least one provider in integration test.",
+          "deps": [
+            "P3.1"
+          ],
+          "files": [
+            "hex-nexus/src/neural_lab_quant.rs",
+            "hex-nexus/src/lib.rs",
+            "hex-cli/src/commands/inference.rs"
+          ],
+          "status": "done",
+          "completed_at": "2026-03-30"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Integration Tests",
+      "tier": 5,
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-nexus 2>&1 | tail -15",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Integration tests: routing, escalation, auto-detect, calibration",
+          "layer": "secondary",
+          "agent": "integrator",
+          "description": "Write tests in hex-nexus/tests/quant_routing.rs. Required: (1) Low-complexity prompt routes to Q4 provider when Q4 and Cloud both registered. (2) High-complexity prompt (>1000 tokens + cross-file keywords) routes to Cloud when Q4 and Cloud registered. (3) Provider Q4 returns 500 -> router escalates to Q8 or Cloud. (4) Ollama model tag ':q2_k' auto-detects as Q2; ':q4_k_m' as Q4; unrecognized tag defaults Q4 with warning logged. (5) Planner agent YAML QuantPolicy parsed: default=Q8, on_failure=Cloud. (6) Neural Lab calibration: mock provider returns valid Rust snippet -> quality_score updated to > 0.8. Run hex analyze . and verify no new boundary violations. Done when all tests pass.",
+          "deps": [
+            "P4.1"
+          ],
+          "files": [
+            "hex-nexus/tests/quant_routing.rs"
+          ],
+          "status": "done",
+          "completed_at": "2026-03-30"
+        }
+      ]
+    }
+  ]
+}

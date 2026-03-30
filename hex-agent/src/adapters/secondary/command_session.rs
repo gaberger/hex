@@ -89,20 +89,30 @@ impl IBatchExecutionPort for CommandSessionAdapter {
     async fn batch_execute(
         &self,
         commands: Vec<String>,
+        working_dir: &Path,
     ) -> Result<BatchSession, CommandSessionError> {
+        if !working_dir.exists() {
+            return Err(CommandSessionError::WorkingDirNotFound {
+                path: working_dir.display().to_string(),
+            });
+        }
+
+        let commands_run = commands.len();
         let mut all_lines: Vec<IndexedLine> = Vec::new();
         let mut exit_codes: Vec<i32> = Vec::new();
         let mut total_bytes: usize = 0;
+        let limit_mb = self.max_bytes / 1024 / 1024;
 
         for cmd in &commands {
             // Capacity check before running each command.
             if total_bytes >= self.max_bytes {
-                return Err(CommandSessionError::CapacityExceeded(self.max_bytes));
+                return Err(CommandSessionError::CapacityExceeded { limit_mb });
             }
 
             let child_result = Command::new("sh")
                 .arg("-c")
                 .arg(cmd)
+                .current_dir(working_dir)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn();
@@ -110,7 +120,7 @@ impl IBatchExecutionPort for CommandSessionAdapter {
             let mut child = match child_result {
                 Ok(c) => c,
                 Err(e) => {
-                    return Err(CommandSessionError::SpawnError(e.to_string()));
+                    return Err(CommandSessionError::ExecutionFailed(e.to_string()));
                 }
             };
 
@@ -131,7 +141,9 @@ impl IBatchExecutionPort for CommandSessionAdapter {
                         match reader.read_line(&mut line).await {
                             Ok(0) => break,
                             Ok(_) => collected.push(line.trim_end_matches('\n').to_string()),
-                            Err(e) => return Err(CommandSessionError::Io(e.to_string())),
+                            Err(e) => {
+                                return Err(CommandSessionError::ExecutionFailed(e.to_string()));
+                            }
                         }
                     }
                 }
@@ -143,7 +155,9 @@ impl IBatchExecutionPort for CommandSessionAdapter {
                         match reader.read_line(&mut line).await {
                             Ok(0) => break,
                             Ok(_) => collected.push(line.trim_end_matches('\n').to_string()),
-                            Err(e) => return Err(CommandSessionError::Io(e.to_string())),
+                            Err(e) => {
+                                return Err(CommandSessionError::ExecutionFailed(e.to_string()));
+                            }
                         }
                     }
                 }
@@ -174,7 +188,7 @@ impl IBatchExecutionPort for CommandSessionAdapter {
             for (idx, text) in lines.into_iter().enumerate() {
                 total_bytes += text.len() + 1; // +1 for newline
                 if total_bytes > self.max_bytes {
-                    return Err(CommandSessionError::CapacityExceeded(self.max_bytes));
+                    return Err(CommandSessionError::CapacityExceeded { limit_mb });
                 }
                 all_lines.push(IndexedLine {
                     command: cmd_clone.clone(),
@@ -201,6 +215,7 @@ impl IBatchExecutionPort for CommandSessionAdapter {
 
         Ok(BatchSession {
             session_id,
+            commands_run,
             total_lines,
             exit_codes,
         })
@@ -215,28 +230,26 @@ impl IBatchExecutionPort for CommandSessionAdapter {
         let map = self.sessions.read().await;
         let session = map
             .get(session_id)
-            .ok_or_else(|| CommandSessionError::SessionExpired(session_id.to_string()))?;
+            .ok_or_else(|| CommandSessionError::SessionExpired {
+                session_id: session_id.to_string(),
+            })?;
 
         // key = (command, line_number) → highest score seen
         let mut best: HashMap<(String, usize), (f32, String)> = HashMap::new();
 
-        for line in &session.lines {
+        for indexed in &session.lines {
             let mut top_score: f32 = 0.0;
 
             for query in &queries {
-                let score = if line.text.contains(query.as_str()) {
+                let score = if indexed.text.contains(query.as_str()) {
                     1.0
-                } else if line
-                    .text
-                    .to_lowercase()
-                    .contains(&query.to_lowercase())
-                {
+                } else if indexed.text.to_lowercase().contains(&query.to_lowercase()) {
                     0.9
                 } else {
                     // Token match: any query token appears in the line
                     let hits = query
                         .split_whitespace()
-                        .any(|token| line.text.to_lowercase().contains(&token.to_lowercase()));
+                        .any(|token| indexed.text.to_lowercase().contains(&token.to_lowercase()));
                     if hits { 0.5 } else { 0.0 }
                 };
 
@@ -246,10 +259,10 @@ impl IBatchExecutionPort for CommandSessionAdapter {
             }
 
             if top_score > 0.0 {
-                let key = (line.command.clone(), line.line_number);
-                let entry = best.entry(key).or_insert((0.0, line.text.clone()));
+                let key = (indexed.command.clone(), indexed.line_number);
+                let entry = best.entry(key).or_insert((0.0, indexed.text.clone()));
                 if top_score > entry.0 {
-                    *entry = (top_score, line.text.clone());
+                    *entry = (top_score, indexed.text.clone());
                 }
             }
         }
@@ -257,10 +270,10 @@ impl IBatchExecutionPort for CommandSessionAdapter {
         // Convert to SearchResult, sort by score descending, truncate.
         let mut results: Vec<SearchResult> = best
             .into_iter()
-            .map(|((command, line_number), (score, text))| SearchResult {
+            .map(|((command, line_number), (score, line))| SearchResult {
                 command,
                 line_number,
-                text,
+                line,
                 score,
             })
             .collect();
@@ -271,11 +284,9 @@ impl IBatchExecutionPort for CommandSessionAdapter {
         Ok(results)
     }
 
-    async fn drop_session(&self, session_id: &str) -> Result<(), CommandSessionError> {
+    async fn drop_session(&self, session_id: &str) {
         let mut map = self.sessions.write().await;
-        map.remove(session_id)
-            .ok_or_else(|| CommandSessionError::SessionExpired(session_id.to_string()))?;
-        Ok(())
+        map.remove(session_id);
     }
 }
 
@@ -298,16 +309,21 @@ mod tests {
     #[tokio::test]
     async fn test_batch_execute_returns_session_with_lines_and_exit_codes() {
         let adapter = make_adapter();
+        let dir = std::path::Path::new("/tmp");
         let session = adapter
-            .batch_execute(vec![
-                "echo hello".to_string(),
-                "echo world && exit 2".to_string(),
-            ])
+            .batch_execute(
+                vec![
+                    "echo hello".to_string(),
+                    "echo world && exit 2".to_string(),
+                ],
+                dir,
+            )
             .await
             .expect("batch_execute should succeed");
 
         assert!(!session.session_id.is_empty(), "session_id must be non-empty");
         assert!(session.total_lines > 0, "should have captured some lines");
+        assert_eq!(session.commands_run, 2);
         assert_eq!(session.exit_codes.len(), 2);
         assert_eq!(session.exit_codes[0], 0);
         assert_eq!(session.exit_codes[1], 2);
@@ -316,8 +332,9 @@ mod tests {
     #[tokio::test]
     async fn test_search_finds_exact_match_with_score_1() {
         let adapter = make_adapter();
+        let dir = std::path::Path::new("/tmp");
         let session = adapter
-            .batch_execute(vec!["printf 'alpha\\nbeta\\ngamma\\n'".to_string()])
+            .batch_execute(vec!["printf 'alpha\\nbeta\\ngamma\\n'".to_string()], dir)
             .await
             .expect("batch_execute should succeed");
 
@@ -329,17 +346,16 @@ mod tests {
         assert!(!results.is_empty(), "should find at least one result");
         let top = &results[0];
         assert_eq!(top.score, 1.0, "exact substring match must score 1.0");
-        assert!(top.text.contains("beta"));
+        assert!(top.line.contains("beta"));
     }
 
     #[tokio::test]
     async fn test_search_on_expired_session_returns_session_expired() {
-        // Build an adapter with extremely short TTL sweep — we manually drop the session
-        // from the map to simulate expiry rather than sleeping.
         let adapter = make_adapter();
+        let dir = std::path::Path::new("/tmp");
 
         let session = adapter
-            .batch_execute(vec!["echo test".to_string()])
+            .batch_execute(vec!["echo test".to_string()], dir)
             .await
             .expect("batch_execute should succeed");
 
@@ -355,7 +371,7 @@ mod tests {
             .expect_err("should return error for expired session");
 
         assert!(
-            matches!(err, CommandSessionError::SessionExpired(_)),
+            matches!(err, CommandSessionError::SessionExpired { .. }),
             "expected SessionExpired, got: {:?}",
             err
         );
@@ -364,21 +380,19 @@ mod tests {
     #[tokio::test]
     async fn test_drop_session_removes_it() {
         let adapter = make_adapter();
+        let dir = std::path::Path::new("/tmp");
         let session = adapter
-            .batch_execute(vec!["echo drop_me".to_string()])
+            .batch_execute(vec!["echo drop_me".to_string()], dir)
             .await
             .expect("batch_execute should succeed");
 
-        adapter
-            .drop_session(&session.session_id)
-            .await
-            .expect("drop_session should succeed");
+        adapter.drop_session(&session.session_id).await;
 
         let err = adapter
             .search(&session.session_id, vec!["drop_me".to_string()], 10)
             .await
             .expect_err("session should be gone after drop");
 
-        assert!(matches!(err, CommandSessionError::SessionExpired(_)));
+        assert!(matches!(err, CommandSessionError::SessionExpired { .. }));
     }
 }

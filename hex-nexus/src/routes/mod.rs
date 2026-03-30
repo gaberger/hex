@@ -505,6 +505,8 @@ pub fn build_router(state: SharedState) -> Router {
             .post(neural_lab::create_config)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/neural-lab/configs/{id}", get(neural_lab::get_config))
+        .route("/api/neural-lab/experiments/quant-calibration",
+            post(crate::neural_lab_quant::run_quant_calibration_handler))
         .route("/api/neural-lab/experiments", get(neural_lab::list_experiments)
             .post(neural_lab::create_experiment)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
