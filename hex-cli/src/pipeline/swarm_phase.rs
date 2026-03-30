@@ -85,11 +85,25 @@ impl SwarmPhase {
                         for swarm in arr {
                             let status = swarm["status"].as_str().unwrap_or("");
                             let id = swarm["id"].as_str().unwrap_or("");
-                            if status == "active" && !id.is_empty() {
-                                debug!(swarm_id = %id, "completing prior swarm");
-                                if let Err(e) = self.runner.swarm_complete(id) {
-                                    warn!(swarm_id = %id, error = %e, "swarm_complete failed — may be owned by a different agent");
-                                }
+                            if status != "active" || id.is_empty() {
+                                continue;
+                            }
+                            // Only complete swarms owned by this agent to avoid
+                            // corrupting other agents' sessions in multi-agent envs.
+                            let owner = swarm["owner_agent_id"]
+                                .as_str()
+                                .or_else(|| swarm["created_by"].as_str())
+                                .unwrap_or("");
+                            let owned_by_us = agent_id
+                                .map(|aid| aid == owner)
+                                .unwrap_or(owner.is_empty());
+                            if !owned_by_us {
+                                debug!(swarm_id = %id, owner = %owner, "skipping swarm owned by another agent");
+                                continue;
+                            }
+                            debug!(swarm_id = %id, "completing prior swarm");
+                            if let Err(e) = self.runner.swarm_complete(id) {
+                                warn!(swarm_id = %id, error = %e, "swarm_complete failed");
                             }
                         }
                     }

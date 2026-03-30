@@ -74,6 +74,7 @@ pub enum AgentStatus {
     Running,
     Completed,
     Failed,
+    Terminated,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -606,6 +607,10 @@ pub trait IStatePort: Send + Sync {
     async fn swarm_complete(&self, id: &str) -> Result<(), StateError>;
     async fn swarm_fail(&self, id: &str, reason: &str) -> Result<(), StateError>;
     async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError>;
+    /// Returns all swarms for a project (all statuses — active, completed, failed).
+    async fn swarm_list_by_project(&self, project_id: &str) -> Result<Vec<SwarmInfo>, StateError>;
+    /// Returns a single swarm by ID regardless of status.
+    async fn swarm_get(&self, id: &str) -> Result<Option<SwarmInfo>, StateError>;
     /// Returns the swarm owned by `agent_id` (status=active), if any.
     async fn swarm_owned_by_agent(&self, agent_id: &str) -> Result<Option<SwarmInfo>, StateError>;
     /// Transfer swarm ownership from current owner to `new_owner_agent_id`.

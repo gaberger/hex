@@ -47,8 +47,10 @@ pub struct AppState {
     // Session persistence (ADR-036 / ADR-042 P2.5) — chat conversation history
     // SpacetimeDB primary, SQLite fallback
     pub session_port: Option<Arc<dyn ISessionPort>>,
-    // Context window pressure tracker (ADR-2603281000 P1)
-    pub context_pressure: Arc<Mutex<ContextPressureTracker>>,
+    // Context window pressure tracker (ADR-2603281000 P1) — keyed by session_id/agent_id
+    pub context_pressure: Arc<Mutex<HashMap<String, ContextPressureTracker>>>,
+    // Architecture fingerprints (ADR-2603301200) — in-memory, regenerated per hex dev run
+    pub fingerprints: RwLock<HashMap<String, crate::analysis::fingerprint_extractor::ArchitectureFingerprint>>,
 }
 
 impl AppState {
@@ -76,7 +78,8 @@ impl AppState {
             inference_stdb: None,
             chat_stdb: None,
             session_port: None,
-            context_pressure: Arc::new(Mutex::new(ContextPressureTracker::new())),
+            context_pressure: Arc::new(Mutex::new(HashMap::new())),
+            fingerprints: RwLock::new(HashMap::new()),
         }
     }
 

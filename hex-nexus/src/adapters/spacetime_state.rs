@@ -475,6 +475,7 @@ mod real {
                 AgentStatus::Running => "running",
                 AgentStatus::Completed => "completed",
                 AgentStatus::Failed => "failed",
+                AgentStatus::Terminated => "terminated",
             };
             let metrics_json = metrics
                 .map(|m| serde_json::to_string(&m).unwrap_or_else(|_| "{}".into()))
@@ -502,6 +503,7 @@ mod real {
                         "running" => AgentStatus::Running,
                         "completed" => AgentStatus::Completed,
                         "failed" => AgentStatus::Failed,
+                        "terminated" => AgentStatus::Terminated,
                         _ => AgentStatus::Running,
                     },
                     started_at: row.get("started_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -525,6 +527,7 @@ mod real {
                         "running" => AgentStatus::Running,
                         "completed" => AgentStatus::Completed,
                         "failed" => AgentStatus::Failed,
+                        "terminated" => AgentStatus::Terminated,
                         _ => AgentStatus::Running,
                     },
                     started_at: row.get("started_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -797,6 +800,42 @@ mod real {
                     updated_at: r.get("updated_at")?.as_str()?.to_string(),
                 })
             }).collect())
+        }
+
+        async fn swarm_list_by_project(&self, project_id: &str) -> Result<Vec<SwarmInfo>, StateError> {
+            let sql = format!("SELECT * FROM swarm WHERE project_id = '{}'", project_id);
+            let rows = self.query_table(&sql).await?;
+            Ok(rows.into_iter().filter_map(|r| {
+                Some(SwarmInfo {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    project_id: r.get("project_id")?.as_str()?.to_string(),
+                    name: r.get("name")?.as_str()?.to_string(),
+                    topology: r.get("topology")?.as_str()?.to_string(),
+                    status: r.get("status")?.as_str()?.to_string(),
+                    owner_agent_id: r.get("owner_agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_by: r.get("created_by").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    updated_at: r.get("updated_at")?.as_str()?.to_string(),
+                })
+            }).collect())
+        }
+
+        async fn swarm_get(&self, id: &str) -> Result<Option<SwarmInfo>, StateError> {
+            let sql = format!("SELECT * FROM swarm WHERE id = '{}'", id);
+            let rows = self.query_table(&sql).await?;
+            Ok(rows.into_iter().find_map(|r| {
+                Some(SwarmInfo {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    project_id: r.get("project_id")?.as_str()?.to_string(),
+                    name: r.get("name")?.as_str()?.to_string(),
+                    topology: r.get("topology")?.as_str()?.to_string(),
+                    status: r.get("status")?.as_str()?.to_string(),
+                    owner_agent_id: r.get("owner_agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_by: r.get("created_by").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    updated_at: r.get("updated_at")?.as_str()?.to_string(),
+                })
+            }))
         }
 
         async fn swarm_owned_by_agent(&self, agent_id: &str) -> Result<Option<SwarmInfo>, StateError> {
@@ -1486,6 +1525,8 @@ mod stub {
         async fn swarm_complete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError> { Err(Self::err()) }
+        async fn swarm_list_by_project(&self, _: &str) -> Result<Vec<SwarmInfo>, StateError> { Err(Self::err()) }
+        async fn swarm_get(&self, _: &str) -> Result<Option<SwarmInfo>, StateError> { Err(Self::err()) }
         async fn swarm_owned_by_agent(&self, _: &str) -> Result<Option<SwarmInfo>, StateError> { Err(Self::err()) }
         async fn swarm_transfer(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_task_create(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }

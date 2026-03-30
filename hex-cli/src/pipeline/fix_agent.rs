@@ -10,7 +10,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde_json::json;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::nexus_client::NexusClient;
 use crate::pipeline::model_selection::{ModelSelector, TaskType};
@@ -34,6 +34,8 @@ pub struct FixTaskInput {
     /// Error outputs from previous failed fix attempts (up to 2, oldest first).
     /// Empty on the first attempt.
     pub prior_errors: Vec<String>,
+    /// hex project ID for architecture fingerprint injection (ADR-2603301200).
+    pub project_id: Option<String>,
 }
 
 /// Result of a fix attempt.
@@ -137,7 +139,7 @@ impl FixAgent {
                 context.insert("test_file".to_string(), String::new());
                 // Read all source files from output_dir/src/ so the fixer can see
                 // what the code actually does (not just the test file path).
-                let source_files = read_source_files(&input.output_dir);
+                let source_files = read_source_files_for_language(&input.output_dir, &input.language);
                 context.insert("source_file".to_string(), source_files);
             }
             "violation" => {
@@ -160,12 +162,25 @@ impl FixAgent {
         // ── Render prompt ────────────────────────────────────────────────
         let template = PromptTemplate::load(template_name)
             .with_context(|| format!("loading {} prompt template", template_name))?;
-        let system_prompt = template.render(&context);
+        let raw_system = template.render(&context);
+        // Inject architecture fingerprint (ADR-2603301200)
+        let system_prompt = if let Some(pid) = &input.project_id {
+            match self.client.fetch_fingerprint_text(pid).await {
+                Some(fp) => { debug!(project_id = %pid, "injecting architecture fingerprint into fixer"); format!("{}\n\n{}", fp, raw_system) }
+                None => raw_system,
+            }
+        } else {
+            raw_system
+        };
 
         // ── Select model ─────────────────────────────────────────────────
+        // Use CodeGeneration (not CodeEdit) so the RL engine selects the same
+        // capable model used for initial code generation (e.g. claude-sonnet-4-6).
+        // Compile fixers need to rewrite entire files — CodeEdit mini-models are
+        // too weak for axum/tokio Rust errors.
         let selected = self
             .selector
-            .select_model(TaskType::CodeEdit, model_override, provider_pref)
+            .select_model(TaskType::CodeGeneration, model_override, provider_pref)
             .await
             .context("model selection failed for fix")?;
 
@@ -223,6 +238,14 @@ impl FixAgent {
 
         // ── Strip markdown code fences ───────────────────────────────────
         let clean_content = strip_code_fences(&fixed_content);
+        // ── Go-specific sanitization ──────────────────────────────────────
+        let clean_content = if input.language == "go" {
+            clean_content
+                .replace("package mainimport (", "package main\n\nimport (")
+                .replace("package mainimport(", "package main\n\nimport(")
+        } else {
+            clean_content
+        };
 
         // ── Check if content actually changed ────────────────────────────
         if clean_content.trim() == file_content.trim() {
@@ -264,19 +287,41 @@ impl FixAgent {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-/// Read all `.rs` source files from `{output_dir}/src/`, truncated to 4096 bytes each.
-/// Returns a single string with each file prefixed by its relative path.
-fn read_source_files(output_dir: &str) -> String {
+/// Read source files filtered by language.
+///
+/// - `"rust"` → `.rs`
+/// - `"typescript"` / `"javascript"` → `.ts`, `.tsx`, `.js`, `.jsx`
+/// - `"go"` → `.go`
+/// - anything else (including empty) → all of the above
+fn read_source_files_for_language(output_dir: &str, language: &str) -> String {
     let src_dir = Path::new(output_dir).join("src");
-    if !src_dir.exists() {
+    // For Go projects the conventional layout has no `src/` subdirectory —
+    // fall back to the output_dir root so .go files are still found.
+    let search_dir = if src_dir.exists() {
+        src_dir
+    } else {
+        Path::new(output_dir).to_path_buf()
+    };
+    if !search_dir.exists() {
         return String::new();
     }
+    let extensions: Vec<&str> = match language.to_lowercase().as_str() {
+        "rust" => vec!["rs"],
+        "typescript" | "javascript" => vec!["ts", "tsx", "js", "jsx"],
+        "go" => vec!["go"],
+        _ => vec!["rs", "ts", "tsx", "js", "jsx", "go"],
+    };
     let mut parts: Vec<String> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&src_dir) {
+    if let Ok(entries) = std::fs::read_dir(&search_dir) {
         let mut paths: Vec<std::path::PathBuf> = entries
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("rs"))
+            .filter(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|ext| extensions.contains(&ext))
+                    .unwrap_or(false)
+            })
             .collect();
         paths.sort();
         for path in paths {
@@ -296,8 +341,10 @@ fn read_source_files(output_dir: &str) -> String {
     parts.join("\n\n")
 }
 
-/// Strip markdown code fences from inference output.
+/// Strip markdown code fences and LLM chat special tokens from inference output.
 fn strip_code_fences(s: &str) -> String {
+    // Truncate at the first chat special token (qwen3.5 / llama-style).
+    let s = if let Some(pos) = s.find("<|") { &s[..pos] } else { s };
     let trimmed = s.trim();
     if let Some(rest) = trimmed.strip_prefix("```") {
         let body = if let Some(newline_pos) = rest.find('\n') {
@@ -308,7 +355,7 @@ fn strip_code_fences(s: &str) -> String {
         if let Some(stripped) = body.trim_end().strip_suffix("```") {
             return stripped.trim_end().to_string();
         }
-        return body.to_string();
+        return body.trim_end().to_string();
     }
     trimmed.to_string()
 }

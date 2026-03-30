@@ -219,11 +219,45 @@ fn tool_bash(params: &Value, workspace: &str) -> Value {
     }
 }
 
+/// Patterns whose filenames must never be staged automatically.
+///
+/// Applied only when no explicit `files` list is provided. Checked against
+/// the basename of each file reported by `git status --short`.
+const SECRET_DENY_PATTERNS: &[&str] = &[
+    ".env",
+    ".env.",
+    "credentials",
+    "secrets",
+    ".key",
+    ".pem",
+    ".p12",
+    ".pfx",
+    "id_rsa",
+    "id_ed25519",
+    "service-account",
+    "token",
+    "api-key",
+];
+
+fn looks_like_secret(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    let basename = lower.split('/').last().unwrap_or(&lower);
+    SECRET_DENY_PATTERNS
+        .iter()
+        .any(|pat| basename.contains(pat))
+}
+
 fn tool_git_commit(params: &Value, workspace: &str) -> Value {
     let message = match params.get("message").and_then(Value::as_str) {
         Some(m) => m,
         None => return json!({"error": "missing param: message"}),
     };
+
+    // Optional explicit file list. When absent, stage all non-secret files.
+    let explicit_files: Option<Vec<&str>> = params
+        .get("files")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(Value::as_str).collect());
 
     // Enforce conventional commit format: type(scope): description
     let valid_prefix = ["feat", "fix", "refactor", "chore", "docs", "test", "ci", "perf", "style"]
@@ -251,9 +285,58 @@ fn tool_git_commit(params: &Value, workspace: &str) -> Value {
         }
     }
 
-    // Stage all changes and commit
+    // Stage files: use explicit list when provided; otherwise stage only
+    // non-secret files from the working tree (never `git add -A`).
+    let files_to_stage: Vec<String> = if let Some(files) = explicit_files {
+        // Caller-specified files — validate each against the secret deny-list.
+        let blocked: Vec<&str> = files.iter().copied().filter(|f| looks_like_secret(f)).collect();
+        if !blocked.is_empty() {
+            return json!({"error": format!("secret_file_rejected: refusing to stage {:?}", blocked)});
+        }
+        files.iter().map(|s| s.to_string()).collect()
+    } else {
+        // Auto-detect changed files, excluding secret patterns.
+        let status_out = Command::new("git")
+            .args(["status", "--short", "--porcelain"])
+            .current_dir(workspace)
+            .output();
+
+        match status_out {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let mut safe_files: Vec<String> = Vec::new();
+                let mut skipped: Vec<String> = Vec::new();
+                for line in stdout.lines() {
+                    // porcelain format: "XY path" or "XY old -> new"
+                    let path = line.get(3..).unwrap_or("").trim().to_string();
+                    if path.is_empty() {
+                        continue;
+                    }
+                    if looks_like_secret(&path) {
+                        skipped.push(path);
+                    } else {
+                        safe_files.push(path);
+                    }
+                }
+                if !skipped.is_empty() {
+                    tracing::warn!(skipped = ?skipped, "git_commit: secret files excluded from staging");
+                }
+                safe_files
+            }
+            Err(e) => return json!({"error": format!("git_status_error: {e}")}),
+        }
+    };
+
+    if files_to_stage.is_empty() {
+        return json!({"error": "nothing_to_stage: no safe files to commit"});
+    }
+
+    let mut add_args = vec!["add", "--"];
+    let stage_refs: Vec<&str> = files_to_stage.iter().map(String::as_str).collect();
+    add_args.extend_from_slice(&stage_refs);
+
     let add = Command::new("git")
-        .args(["add", "-A"])
+        .args(&add_args)
         .current_dir(workspace)
         .output();
 
@@ -471,8 +554,9 @@ mod tests {
     fn safe_path_accepts_workspace_file() {
         let dir = tmp_workspace();
         let ws = dir.path().to_str().unwrap();
+        // Create the parent dir so canonicalize(parent) succeeds for a not-yet-existing file
+        std::fs::create_dir_all(format!("{ws}/src")).unwrap();
         let path = format!("{ws}/src/main.rs");
-        // Parent (ws) exists; file need not exist yet
         let result = safe_path(&path, ws);
         assert!(result.is_ok(), "should accept path inside workspace");
     }

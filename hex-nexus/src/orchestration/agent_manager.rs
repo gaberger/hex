@@ -32,6 +32,7 @@ pub enum AgentStatus {
     Running,
     Completed,
     Failed,
+    Terminated,
 }
 
 impl AgentStatus {
@@ -41,6 +42,7 @@ impl AgentStatus {
             AgentStatus::Running => "running",
             AgentStatus::Completed => "completed",
             AgentStatus::Failed => "failed",
+            AgentStatus::Terminated => "terminated",
         }
     }
 
@@ -50,6 +52,7 @@ impl AgentStatus {
             "running" => AgentStatus::Running,
             "completed" => AgentStatus::Completed,
             "failed" => AgentStatus::Failed,
+            "terminated" => AgentStatus::Terminated,
             _ => AgentStatus::Failed,
         }
     }
@@ -99,6 +102,7 @@ fn local_status_to_port(s: &AgentStatus) -> PortAgentStatus {
         AgentStatus::Running => PortAgentStatus::Running,
         AgentStatus::Completed => PortAgentStatus::Completed,
         AgentStatus::Failed => PortAgentStatus::Failed,
+        AgentStatus::Terminated => PortAgentStatus::Terminated,
     }
 }
 
@@ -108,6 +112,7 @@ fn port_status_to_local(s: &PortAgentStatus) -> AgentStatus {
         PortAgentStatus::Running => AgentStatus::Running,
         PortAgentStatus::Completed => AgentStatus::Completed,
         PortAgentStatus::Failed => AgentStatus::Failed,
+        PortAgentStatus::Terminated => AgentStatus::Terminated,
     }
 }
 
@@ -515,7 +520,7 @@ impl AgentManager {
 
         // Update status via state port
         self.state_port
-            .agent_update_status(id, PortAgentStatus::Completed, None)
+            .agent_update_status(id, PortAgentStatus::Terminated, None)
             .await
             .map_err(|e| e.to_string())?;
 

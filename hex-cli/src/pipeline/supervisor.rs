@@ -1889,11 +1889,12 @@ impl Supervisor {
                             dependencies: None,
                         };
 
-                        // Gate behind HEX_PHASE_MODE env var (default = "single" to avoid 3x cost)
+                        // Default mode is "tdd" (5-phase YAML workflow). Set HEX_PHASE_MODE=single
+                        // to opt out of TDD overhead (e.g. for quick one-shot generation).
                         let phase_mode = std::env::var("HEX_PHASE_MODE")
-                            .unwrap_or_else(|_| "single".to_string());
+                            .unwrap_or_else(|_| "tdd".to_string());
 
-                        let result = if phase_mode == "tdd" {
+                        let result = if phase_mode != "single" {
                             // Run red → green → refactor in sequence, passing accumulated output forward
                             let mut accumulated: Option<String> = None;
                             let mut last_result: Option<crate::pipeline::code_phase::CodeStepResult> = None;

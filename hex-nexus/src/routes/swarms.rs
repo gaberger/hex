@@ -154,9 +154,8 @@ pub async fn get_swarm(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let port = state_port(&state)?;
 
-    // Find the swarm among active swarms
-    let swarms = port.swarm_list_active().await.map_err(state_err)?;
-    let swarm = swarms.into_iter().find(|s| s.id == id).ok_or_else(|| {
+    // Use swarm_get so completed/failed swarms are found too (not just active ones)
+    let swarm = port.swarm_get(&id).await.map_err(state_err)?.ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "Swarm not found" })),

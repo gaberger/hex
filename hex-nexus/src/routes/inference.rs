@@ -58,6 +58,7 @@ pub struct InferenceCompleteResponse {
 /// Local providers (Ollama, vLLM) may need 5-10 minutes to load a model on first request.
 pub async fn inference_complete(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<InferenceCompleteRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let work = async move {
@@ -75,12 +76,41 @@ pub async fn inference_complete(
         "quantization routing: complexity scored, minimum tier selected"
     );
 
-    // Build messages list, optionally prepending system prompt
-    let mut messages = body.messages;
-    if let Some(ref system) = body.system {
-        if !system.is_empty() {
-            messages.insert(0, json!({ "role": "system", "content": system }));
+    // Resolve architecture fingerprint for ACI injection (ADR-2603301200).
+    // Read project_id from x-hex-project-id header; look up in state.fingerprints.
+    // If found, prepend the fingerprint block to the system prompt.
+    let aci_block: Option<String> = {
+        let project_id = headers
+            .get("x-hex-project-id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if !project_id.is_empty() {
+            let fp_map = state.fingerprints.read().await;
+            fp_map.get(project_id).map(|fp| fp.to_injection_block())
+        } else {
+            // No project header — try to use any fingerprint that is registered
+            let fp_map = state.fingerprints.read().await;
+            if fp_map.len() == 1 {
+                fp_map.values().next().map(|fp| fp.to_injection_block())
+            } else {
+                None
+            }
         }
+    };
+
+    // Build messages list, optionally prepending system prompt (with ACI block).
+    let effective_system: Option<String> = match (aci_block, body.system.as_deref()) {
+        (Some(aci), Some(sys)) if !sys.is_empty() => {
+            Some(format!("{}\n\n---\n\n{}", aci, sys))
+        }
+        (Some(aci), _) => Some(aci),
+        (None, Some(sys)) if !sys.is_empty() => Some(sys.to_string()),
+        _ => None,
+    };
+
+    let mut messages = body.messages;
+    if let Some(ref system) = effective_system {
+        messages.insert(0, json!({ "role": "system", "content": system }));
     }
 
     // Try registered inference endpoints first (SpacetimeDB providers)
@@ -114,32 +144,47 @@ pub async fn inference_complete(
                         // No model requested — use quantization router to pick best provider
                         select_provider(&providers, min_quant)
                     };
-                    // Fall back to first provider if no model match
-                    let p = matched.unwrap_or(&providers[0]);
-                    let first_model = p
-                        .models_json
-                        .trim_start_matches('[')
-                        .trim_end_matches(']')
-                        .split(',')
-                        .next()
-                        .unwrap_or(&p.models_json)
-                        .trim()
-                        .trim_matches('"')
-                        .to_string();
-                    Some(crate::routes::secrets::InferenceEndpointEntry {
-                        id: p.provider_id.clone(),
-                        url: p.base_url.clone(),
-                        provider: p.provider_type.clone(),
-                        model: first_model,
-                        status: if p.healthy == 1 {
-                            "healthy".into()
-                        } else {
-                            "unknown".into()
-                        },
-                        requires_auth: !p.api_key_ref.is_empty(),
-                        secret_key: p.api_key_ref.clone(),
-                        health_checked_at: p.last_health_check.clone(),
-                    })
+                    // Use matched provider if found.
+                    // If no model was requested, fall back to the first provider.
+                    // If a specific model was requested but NOT matched by any registered
+                    // provider, yield None so endpoint = None and the key-based OpenRouter
+                    // path (below) handles it — routing to an unrelated provider (e.g. an
+                    // offline Ollama) would waste time and eventually time out.
+                    let resolved = matched
+                        .or_else(|| if body.model.is_none() { Some(&providers[0]) } else { None });
+
+                    if let Some(p) = resolved {
+                        let first_model = p
+                            .models_json
+                            .trim_start_matches('[')
+                            .trim_end_matches(']')
+                            .split(',')
+                            .next()
+                            .unwrap_or(&p.models_json)
+                            .trim()
+                            .trim_matches('"')
+                            .to_string();
+                        Some(crate::routes::secrets::InferenceEndpointEntry {
+                            id: p.provider_id.clone(),
+                            url: p.base_url.clone(),
+                            provider: p.provider_type.clone(),
+                            model: first_model,
+                            status: if p.healthy == 1 {
+                                "healthy".into()
+                            } else {
+                                "unknown".into()
+                            },
+                            requires_auth: !p.api_key_ref.is_empty(),
+                            secret_key: p.api_key_ref.clone(),
+                            health_checked_at: p.last_health_check.clone(),
+                        })
+                    } else {
+                        tracing::debug!(
+                            model = ?body.model,
+                            "no registered provider serves this model — falling through to key-based path"
+                        );
+                        None
+                    }
                 }
                 _ => None,
             }
@@ -260,7 +305,7 @@ pub async fn inference_complete(
                 || e.contains("rate limited") || e.contains("429")
                 || e.contains("parse:") || e.contains("500") || e.contains("503")
                 || e.contains("404") || e.contains("No endpoints") || e.contains("data policy")
-                || e.contains("connection:") => {
+                || e.contains("connection:") || e.contains("null content") => {
                 // OpenRouter transient failure (credits, rate limit, parse/server error),
                 // or permanent failure (404 model-not-found / data policy).
                 //
@@ -402,13 +447,16 @@ pub async fn inference_complete(
                 // If no registered :free provider worked, try a chain of free models with the OR key.
                 if fallback_result.is_err() {
                     if let Some(ref or_key) = openrouter_key {
-                        // Models confirmed to support this account's privacy settings.
+                        // Ordered by capability (best first) — most capable free
+                        // models are tried before weaker ones so code generation gets
+                        // the strongest available model, not just the first that responds.
                         let free_candidates = [
                             "openai/gpt-4o-mini",
-                            "arcee-ai/trinity-mini:free",
-                            "mistralai/mistral-small-3.1-24b-instruct:free",
                             "meta-llama/llama-3.3-70b-instruct:free",
+                            "mistralai/mistral-small-3.1-24b-instruct:free",
+                            "deepseek/deepseek-r1:free",
                             "meta-llama/llama-3.2-3b-instruct:free",
+                            "arcee-ai/trinity-mini:free",
                         ];
                         for free_model in free_candidates {
                             // Minimum inter-candidate delay — same rationale as registered :free loop.

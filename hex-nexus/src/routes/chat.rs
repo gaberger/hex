@@ -382,6 +382,7 @@ async fn handle_chat_ws(
                         prompt: None,
                         worktree_branch: None,
                         wait_for_completion: false,
+                        daemon: false,
                     };
                     let spawn_result = if let Some(ref mgr) = state2.agent_manager {
                         mgr.spawn_agent(config).await
@@ -599,10 +600,12 @@ async fn llm_bridge(
         }),
     });
 
-    // Update context pressure tracker
+    // Update context pressure tracker (scoped per session_id — R5 fix)
     {
-        let mut tracker = state.context_pressure.lock().await;
-        tracker.record(input_tokens);
+        let mut map = state.context_pressure.lock().await;
+        map.entry(session_id.clone())
+            .or_insert_with(crate::orchestration::context_pressure::ContextPressureTracker::new)
+            .record(input_tokens);
     }
 
     // Persist to SpacetimeDB (fire-and-forget — never block chat)
@@ -819,8 +822,20 @@ pub(crate) async fn call_inference_endpoint(
             Ok((content, model_used, prompt_tokens, eval_tokens, String::new()))
         }
         _ if is_openrouter => {
-            let content = data["choices"][0]["message"]["content"]
-                .as_str().unwrap_or("(empty)").to_string();
+            // DeepSeek R1 and other reasoning models may return content=null with the
+            // actual answer in the reasoning field when chain-of-thought is enabled.
+            let content_val = data["choices"][0]["message"]["content"].as_str();
+            let reasoning_val = data["choices"][0]["message"]["reasoning"].as_str();
+            if content_val.is_none() && reasoning_val.is_none() {
+                tracing::warn!(
+                    response = %data.to_string(),
+                    "OpenRouter returned null content and null reasoning — full response logged"
+                );
+                return Err(format!("null content: model '{}' returned null/empty response — triggering fallback", model));
+            }
+            let content = content_val
+                .or(reasoning_val)
+                .unwrap_or("(empty)").to_string();
             let model_used = data["model"].as_str().unwrap_or(&model).to_string();
             let input_tokens = data["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
             let output_tokens = data["usage"]["completion_tokens"].as_u64().unwrap_or(0);
@@ -902,18 +917,39 @@ pub(crate) async fn call_anthropic(
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
-    let cached_messages = inject_cache_controls(messages);
+    // Extract any role:system messages from the array — Anthropic requires them
+    // at the top level `system` parameter, not as messages (HTTP 400 otherwise).
+    let is_system = |m: &&serde_json::Value| {
+        m.get("role").and_then(|r| r.as_str()) == Some("system")
+    };
+    let system_text: String = messages.iter()
+        .filter(is_system)
+        .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let system_text = if system_text.is_empty() {
+        "You are a helpful AI assistant integrated into the hex architecture dashboard. Be concise and helpful.".to_string()
+    } else {
+        system_text
+    };
+
+    let non_system: Vec<serde_json::Value> = messages.iter()
+        .filter(|m| !is_system(m))
+        .cloned()
+        .collect();
+    let cached_messages = inject_cache_controls(&non_system);
 
     // System prompt uses the array format so Anthropic can cache the static prefix.
     let system_block = json!([{
         "type": "text",
-        "text": "You are a helpful AI assistant integrated into the hex architecture dashboard. Be concise and helpful.",
+        "text": system_text,
         "cache_control": { "type": "ephemeral" }
     }]);
 
     let body = json!({
         "model": "claude-sonnet-4-20250514",
-        "max_tokens": 4096,
+        "max_tokens": 8192,
         "system": system_block,
         "messages": cached_messages,
     });

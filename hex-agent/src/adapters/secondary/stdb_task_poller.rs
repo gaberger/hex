@@ -110,39 +110,45 @@ impl StdbTaskPoller {
 
     async fn poll_via_stdb(&self) -> Option<ClaimedTask> {
         let tasks = self.stdb.pending_tasks();
-        let task = tasks.into_iter().next()?;
 
-        // Claim it via reducer
-        match self.stdb.assign_task(&task.task_id).await {
-            Ok(()) => {
-                self.stdb.evict(&task.task_id);
+        // Iterate through all cached pending tasks so a failed claim on one
+        // task (race with another agent) does not stall the loop — we try the
+        // next cached task immediately rather than returning None and sleeping.
+        for task in tasks {
+            match self.stdb.assign_task(&task.task_id).await {
+                Ok(()) => {
+                    self.stdb.evict(&task.task_id);
 
-                // Decode the request_json payload, fall back to raw description field
-                let description = serde_json::from_str::<TaskPayload>(&task.request_json)
-                    .map(|p| p.description)
-                    .unwrap_or_else(|_| task.request_json.clone());
+                    // Decode the request_json payload, fall back to raw description field
+                    let description = serde_json::from_str::<TaskPayload>(&task.request_json)
+                        .map(|p| p.description)
+                        .unwrap_or_else(|_| task.request_json.clone());
 
-                tracing::info!(
-                    task_id = %task.task_id,
-                    "StdbTaskPoller: claimed task via SpacetimeDB"
-                );
-                Some(ClaimedTask {
-                    task_id: task.task_id,
-                    description,
-                    via_stdb: true,
-                })
-            }
-            Err(e) => {
-                // Another agent may have claimed it first — remove from cache
-                self.stdb.evict(&task.task_id);
-                tracing::warn!(
-                    task_id = %task.task_id,
-                    error = %e,
-                    "StdbTaskPoller: assign_task failed (race?), skipping"
-                );
-                None
+                    tracing::info!(
+                        task_id = %task.task_id,
+                        "StdbTaskPoller: claimed task via SpacetimeDB"
+                    );
+                    return Some(ClaimedTask {
+                        task_id: task.task_id,
+                        description,
+                        via_stdb: true,
+                    });
+                }
+                Err(e) => {
+                    // Another agent claimed it first — evict from local cache
+                    // and try the next task in this same poll cycle.
+                    self.stdb.evict(&task.task_id);
+                    tracing::warn!(
+                        task_id = %task.task_id,
+                        error = %e,
+                        "StdbTaskPoller: assign_task failed (race?), trying next cached task"
+                    );
+                }
             }
         }
+
+        // All cached tasks were already claimed; caller will re-fetch from server.
+        None
     }
 
     async fn poll_via_rest(&self) -> Option<ClaimedTask> {
