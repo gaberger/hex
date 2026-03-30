@@ -1,4 +1,4 @@
-module plan-build-a-fizzbuzz-cli-in-go
+module build-fizzbuzz-cli-in-go
 
 go 1.22
 

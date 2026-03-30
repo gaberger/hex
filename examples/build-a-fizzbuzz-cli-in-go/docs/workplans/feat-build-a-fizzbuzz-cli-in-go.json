@@ -1,29 +1,79 @@
 {
-  "id": "wp-build-a-fizzbuzz-cli-in-go",
-  "title": "Plan: build a fizzbuzz CLI in Go",
+  "id": "wp-fizzbuzz-cli",
+  "title": "Build FizzBuzz CLI in Go",
   "specs": null,
-  "adr": null,
-  "created": null,
+  "adr": "ADR-2310061200",
+  "created": "2023-10-06",
   "status": "planned",
-  "status_note": "auto-generated fallback — LLM JSON extraction failed",
+  "status_note": null,
   "topology": "pipeline",
-  "budget": null,
+  "budget": "token budget estimate",
   "steps": [
     {
-      "id": "step-1",
-      "description": "build a fizzbuzz CLI in Go",
-      "layer": "adapters/primary",
-      "adapter": "primary/cli",
+      "id": "P0.1",
+      "description": "Implement the core FizzBuzz logic encapsulated in the domain layer.",
+      "layer": "domain",
+      "adapter": null,
       "port": null,
       "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/fizzbuzz/domain",
+      "done_condition": "Domain functions return expected values for FizzBuzz logic."
+    },
+    {
+      "id": "P0.2",
+      "description": "Define the port interface for the FizzBuzz application.",
+      "layer": "ports",
+      "adapter": null,
+      "port": "FizzBuzzPort",
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/fizzbuzz/ports",
+      "done_condition": "Port interface is defined and ready for use cases."
+    },
+    {
+      "id": "P1.1",
+      "description": "Develop use cases for coordinating FizzBuzz application logic and handling user input.",
+      "layer": "usecases",
+      "adapter": null,
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.1",
+        "P0.2"
+      ],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/fizzbuzz/usecases",
+      "done_condition": "Use case functions execute without errors and interact with the domain model."
+    },
+    {
+      "id": "P1.2",
+      "description": "Create the primary adapter for CLI interaction to get user input and display output.",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.1",
+        "P0.2"
+      ],
       "tier": 2,
-      "specs": null,
-      "worktree_branch": null,
-      "done_condition": null
+      "specs": [],
+      "worktree_branch": "feat/fizzbuzz/adapters/primary",
+      "done_condition": "CLI successfully interacts with use cases and produces the correct output."
     }
   ],
-  "mergeOrder": null,
-  "riskRegister": null,
-  "successCriteria": null,
-  "dependencies": null
+  "mergeOrder": [
+    "Merge domain and ports first, then use cases, followed by the primary adapter."
+  ],
+  "riskRegister": [],
+  "successCriteria": [
+    "FizzBuzz CLI runs successfully printing the correct FizzBuzz output.",
+    "Code adheres to hexagonal architecture principles."
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
 }
