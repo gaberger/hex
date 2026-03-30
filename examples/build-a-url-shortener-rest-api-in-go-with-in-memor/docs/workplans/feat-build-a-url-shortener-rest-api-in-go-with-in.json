@@ -1,16 +1,16 @@
 {
   "id": "wp-url-shortener",
-  "title": "Build a URL Shortener REST API in Go with In-Memory Storage",
+  "title": "Build URL Shortener REST API in Go with In-Memory Storage",
   "specs": null,
-  "adr": "ADR-2311081530",
-  "created": "2023-11-08",
+  "adr": "ADR-2311131230",
+  "created": "2023-11-13",
   "status": "planned",
   "status_note": null,
   "topology": "pipeline",
-  "budget": "N/A",
+  "budget": "5 tokens",
   "steps": [
     {
-      "id": "P0",
+      "id": "P0.1",
       "description": "Implement the full feature in main.go — single-binary go project\n\nFeature requirements: build a URL shortener REST API in Go with in-memory storage",
       "layer": "primary",
       "adapter": null,
@@ -23,18 +23,15 @@
     }
   ],
   "mergeOrder": [
-    "Merge domain changes first",
-    "Merge ports changes next",
-    "Merge primary adapters",
-    "Merge use cases",
-    "Merge composition root",
-    "Merge integration tests last"
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P1.2"
   ],
   "riskRegister": [],
   "successCriteria": [
-    "API responds correctly to URL shortening requests",
-    "URLs are stored and retrievable in memory",
-    "All tests pass"
+    "The API is able to create, retrieve, and delete shortened URLs.",
+    "All components are thoroughly tested and adhere to the hexagonal architecture principles."
   ],
   "dependencies": {
     "cargo": [],

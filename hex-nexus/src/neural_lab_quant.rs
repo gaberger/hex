@@ -80,8 +80,8 @@ pub async fn run_quant_calibration_handler(
         la.cmp(&lb)
     });
 
-    let nexus_url = std::env::var("HEX_NEXUS_URL")
-        .unwrap_or_else(|_| "http://localhost:5555".to_string());
+    // Use loopback — this handler runs inside hex-nexus, so self-calls always hit localhost.
+    let nexus_url = "http://localhost:5555";
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -117,11 +117,11 @@ pub async fn run_quant_calibration_handler(
             continue;
         }
 
-        // Resolve API key: stored key_ref first, then env var.
+        // Resolve API key: stored key_ref first, then injected state config.
         let api_key = if !provider.api_key_ref.is_empty() {
             provider.api_key_ref.clone()
         } else {
-            std::env::var("OPENROUTER_API_KEY").unwrap_or_default()
+            state.openrouter_api_key.clone().unwrap_or_default()
         };
 
         if api_key.is_empty() {

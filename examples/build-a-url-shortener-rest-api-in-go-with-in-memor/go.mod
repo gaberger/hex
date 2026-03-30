@@ -1,4 +1,4 @@
-module build-a-url-shortener-rest-api-in-go-wit
+module build-url-shortener-rest-api-in-go-with
 
 go 1.22
 
