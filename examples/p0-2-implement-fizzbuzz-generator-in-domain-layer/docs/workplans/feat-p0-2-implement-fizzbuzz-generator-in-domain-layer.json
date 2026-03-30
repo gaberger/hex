@@ -1,0 +1,39 @@
+{
+  "id": "wp-fizzbuzz-domain",
+  "title": "Implement FizzBuzz Generator in Domain Layer",
+  "specs": "specs/fizzbuzz-domain.md",
+  "adr": "ADR-2303151420",
+  "created": "2023-03-15",
+  "status": "planned",
+  "status_note": "Pending initial task decomposition",
+  "topology": "pipeline",
+  "budget": "1 token",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Implement FizzBuzz use case in domain layer",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01",
+        "S02"
+      ],
+      "worktree_branch": "feat/fizzbuzz/domain",
+      "done_condition": "Implementation passes domain layer tests"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1"
+  ],
+  "riskRegister": [],
+  "successCriteria": [
+    "Domain layer FizzBuzz implementation exists"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
