@@ -1,29 +1,138 @@
 {
-  "id": "wp-build-a-fizzbuzz-cli-in-go",
-  "title": "Plan: build a fizzbuzz CLI in Go",
-  "specs": null,
-  "adr": null,
-  "created": null,
+  "id": "wp-fizzbuzz-cli-go",
+  "title": "FizzBuzz CLI Implementation",
+  "specs": "specs/fizzbuzz-cli.md",
+  "adr": "ADR-2303151200",
+  "created": "2023-03-15",
   "status": "planned",
-  "status_note": "auto-generated fallback — LLM JSON extraction failed",
-  "topology": "pipeline",
-  "budget": null,
+  "status_note": "Initial planning complete",
+  "topology": "mixed",
+  "budget": "1000",
   "steps": [
     {
-      "id": "step-1",
-      "description": "build a fizzbuzz CLI in Go",
-      "layer": "adapters/primary",
-      "adapter": "primary/cli",
+      "id": "P0.1",
+      "description": "Implement FizzBuzz business logic in domain layer",
+      "layer": "domain",
+      "adapter": null,
       "port": null,
       "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01",
+        "S02"
+      ],
+      "worktree_branch": "feat/fizzbuzz/domain",
+      "done_condition": "All FizzBuzzRule tests pass"
+    },
+    {
+      "id": "P0.2",
+      "description": "Implement FizzBuzz generator in domain layer",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 0,
+      "specs": [
+        "S03",
+        "S04"
+      ],
+      "worktree_branch": "feat/fizzbuzz/domain",
+      "done_condition": "Generator produces correct sequences"
+    },
+    {
+      "id": "P1.1",
+      "description": "Define CLI input port interface",
+      "layer": "ports",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 0,
+      "specs": [
+        "S05"
+      ],
+      "worktree_branch": "feat/fizzbuzz/ports",
+      "done_condition": "Interface defined with required methods"
+    },
+    {
+      "id": "P1.2",
+      "description": "Define CLI output port interface",
+      "layer": "ports",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P1.1"
+      ],
+      "tier": 0,
+      "specs": [
+        "S06"
+      ],
+      "worktree_branch": "feat/fizzbuzz/ports",
+      "done_condition": "Output interface implemented"
+    },
+    {
+      "id": "P2.1",
+      "description": "Implement CLI adapter using primary adapter pattern",
+      "layer": "primary",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P1.1",
+        "P1.2"
+      ],
       "tier": 2,
-      "specs": null,
-      "worktree_branch": null,
-      "done_condition": null
+      "specs": [
+        "S07",
+        "S08"
+      ],
+      "worktree_branch": "feat/fizzbuzz/cli",
+      "done_condition": "CLI adapter produces correct output"
+    },
+    {
+      "id": "P3.1",
+      "description": "Implement composition root to wire components",
+      "layer": "composition-root",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1",
+        "P1.1",
+        "P1.2",
+        "P2.1"
+      ],
+      "tier": 4,
+      "specs": [
+        "S09"
+      ],
+      "worktree_branch": "feat/fizzbuzz/composition",
+      "done_condition": "Composition root successfully runs CLI"
     }
   ],
-  "mergeOrder": null,
-  "riskRegister": null,
-  "successCriteria": null,
-  "dependencies": null
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P1.2",
+    "P2.1",
+    "P3.1"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Use interfaces for ports and adapters",
+      "risk": "Go's static typing may require more upfront design"
+    }
+  ],
+  "successCriteria": [
+    "CLI produces correct FizzBuzz output",
+    "Domain layer remains pure with no CLI dependencies",
+    "All tests pass in CI pipeline"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
 }
