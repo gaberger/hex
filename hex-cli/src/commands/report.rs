@@ -87,11 +87,10 @@ async fn list_sessions() -> Result<()> {
 async fn show_latest(json: bool) -> Result<()> {
     let mut sessions = DevSession::list_all()?;
     // Sort by updated_at descending, prefer sessions with actual work (cost > 0)
-    sessions.sort_by(|a, b| b.total_cost_usd.partial_cmp(&a.total_cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+    sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     let latest = sessions
         .iter()
-        .find(|s| matches!(s.status, SessionStatus::Completed) && s.total_cost_usd > 0.0)
-        .or_else(|| sessions.iter().find(|s| matches!(s.status, SessionStatus::Completed)));
+        .find(|s| matches!(s.status, SessionStatus::Completed));
     match latest {
         Some(s) => show_report(&s.id, json).await,
         None => {
@@ -267,14 +266,27 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
     // ── Phase 4: Code Generation ────────────────────────────
     println!();
     println!("{}", "── Phase 4: Code Generation ──────────────────────────────────".dimmed());
-    if session.completed_steps.is_empty() {
-        println!("  {}", "No code generated (skipped or failed)".dimmed());
-    } else {
+    if !session.completed_steps.is_empty() {
+        // Interactive gate path — steps tracked individually
         println!("  Steps completed: {}", session.completed_steps.len());
         println!(
             "  Steps:  {}",
             session.completed_steps.join(", ")
         );
+    } else if session.quality_result.as_ref().map(|q| q.compile_pass).unwrap_or(false) {
+        // Supervisor auto path — steps not tracked individually but code compiled
+        let lang = session.quality_result.as_ref()
+            .map(|q| q.compile_language.as_str())
+            .unwrap_or("unknown");
+        let iters = session.quality_result.as_ref()
+            .map(|q| q.iterations)
+            .unwrap_or(0);
+        println!("  Mode:       supervisor (auto)");
+        println!("  Language:   {}", lang);
+        println!("  Iterations: {}", iters);
+        println!("  Compile:    {}", "PASS".green());
+    } else {
+        println!("  {}", "No code generated (skipped or failed)".dimmed());
     }
 
     // ── Phase 5: Quality Gate ────────────────────────────────
@@ -387,6 +399,12 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
             agent: String,
             #[tabled(rename = "Status")]
             status: String,
+            #[tabled(rename = "Model")]
+            model: String,
+            #[tabled(rename = "Tokens")]
+            tokens: String,
+            #[tabled(rename = "Context")]
+            context: String,
             #[tabled(rename = "Time")]
             time: String,
             #[tabled(rename = "Cost")]
@@ -397,12 +415,17 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
 
         let agent_rows: Vec<AgentRow> = agent_calls.iter().map(|call| {
             let role = call.phase.strip_prefix("agent-").unwrap_or(&call.phase);
+            let model = call.model.as_deref().unwrap_or("—");
+            let model_short = if model.len() > 18 { &model[model.len()-18..] } else { model };
             AgentRow {
                 agent: role.to_string(),
                 status: status_badge(&call.status),
+                model: model_short.to_string(),
+                tokens: call.tokens.map(|t| format_tokens(t)).unwrap_or_else(|| "—".into()),
+                context: call.input_tokens.map(|t| format_tokens(t)).unwrap_or_else(|| "—".into()),
                 time: format!("{:.1}s", call.duration_ms as f64 / 1000.0),
                 cost: call.cost_usd.map(|c| format!("${:.4}", c)).unwrap_or_else(|| "—".into()),
-                objective: truncate(call.detail.as_deref().unwrap_or("—"), 40),
+                objective: truncate(call.detail.as_deref().unwrap_or("—"), 35),
             }
         }).collect();
 
@@ -464,6 +487,8 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
             model: String,
             #[tabled(rename = "Tokens")]
             tokens: String,
+            #[tabled(rename = "Context")]
+            context: String,
             #[tabled(rename = "Cost")]
             cost: String,
             #[tabled(rename = "Duration")]
@@ -483,9 +508,10 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
             ToolCallRow {
                 timestamp: ts,
                 phase: call.phase.clone(),
-                tool: truncate(&call.tool, 35),
+                tool: truncate(&call.tool, 30),
                 model: model_short.to_string(),
-                tokens: call.tokens.map(|t| format!("{}", t)).unwrap_or_else(|| "—".into()),
+                tokens: call.tokens.map(|t| format_tokens(t)).unwrap_or_else(|| "—".into()),
+                context: call.input_tokens.map(|t| format_tokens(t)).unwrap_or_else(|| "—".into()),
                 cost: call.cost_usd.map(|c| format!("${:.4}", c)).unwrap_or_else(|| "—".into()),
                 duration: format!("{:.1}s", call.duration_ms as f64 / 1000.0),
                 status: status_badge(&call.status),
@@ -501,6 +527,47 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
             "  Total: {} calls ({} ok, {} errors, {} retries)",
             session.tool_calls.len(), ok_count, err_count, retry_count
         );
+    }
+
+    // ── Models Used ──────────────────────────────────────────
+    {
+        use std::collections::HashMap;
+        let mut model_stats: HashMap<String, (u64, u64, f64)> = HashMap::new(); // model → (tokens, ctx, cost)
+        for call in &session.tool_calls {
+            if let Some(ref m) = call.model {
+                let entry = model_stats.entry(m.clone()).or_insert((0, 0, 0.0));
+                entry.0 += call.tokens.unwrap_or(0);
+                entry.1 += call.input_tokens.unwrap_or(0);
+                entry.2 += call.cost_usd.unwrap_or(0.0);
+            }
+        }
+        if !model_stats.is_empty() {
+            println!();
+            println!("{}", "── Models Used ───────────────────────────────────────────────".dimmed());
+
+            #[derive(Tabled)]
+            struct ModelRow {
+                #[tabled(rename = "Model")]
+                model: String,
+                #[tabled(rename = "Tokens")]
+                tokens: String,
+                #[tabled(rename = "Context")]
+                context: String,
+                #[tabled(rename = "Cost")]
+                cost: String,
+            }
+
+            let mut model_rows: Vec<ModelRow> = model_stats.iter().map(|(model, (tokens, ctx, cost))| {
+                ModelRow {
+                    model: model.clone(),
+                    tokens: format_tokens(*tokens),
+                    context: format_tokens(*ctx),
+                    cost: format!("${:.4}", cost),
+                }
+            }).collect();
+            model_rows.sort_by(|a, b| b.tokens.cmp(&a.tokens));
+            println!("{}", HexTable::render(&model_rows));
+        }
     }
 
     // ── Summary ─────────────────────────────────────────────
@@ -528,11 +595,23 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
     if !models.is_empty() {
         println!("  Models:     {}", models.join(", "));
     }
-    println!(
-        "  Inference:  {} tokens, ${:.4}",
-        format_tokens(session.total_tokens),
-        session.total_cost_usd
-    );
+    let total_ctx: u64 = session.tool_calls.iter().filter_map(|c| c.input_tokens).sum();
+    let total_out: u64 = session.tool_calls.iter().filter_map(|c| c.output_tokens).sum();
+    if total_ctx > 0 || total_out > 0 {
+        println!(
+            "  Inference:  {} tokens (ctx: {}, out: {}), ${:.4}",
+            format_tokens(session.total_tokens),
+            format_tokens(total_ctx),
+            format_tokens(total_out),
+            session.total_cost_usd
+        );
+    } else {
+        println!(
+            "  Inference:  {} tokens, ${:.4}",
+            format_tokens(session.total_tokens),
+            session.total_cost_usd
+        );
+    }
     if let Some(ref si) = swarm_info {
         println!(
             "  Swarm:      {} tasks ({} completed, {} pending)",
@@ -676,34 +755,81 @@ struct SwarmInfo {
 async fn gather_swarm_info(session: &DevSession, client: &NexusClient) -> Option<SwarmInfo> {
     let swarm_id = session.swarm_id.as_ref()?;
 
-    // Try fetching from nexus
-    let swarms_data = client.get("/api/swarms/active").await.ok()?;
-    let swarms = swarms_data.as_array()?;
+    // Try active swarms first, then fall back to all swarms (completed swarms
+    // are no longer in the active list by the time the report is shown).
+    let swarm = {
+        let try_find = |data: &serde_json::Value| -> Option<serde_json::Value> {
+            data.as_array()?
+                .iter()
+                .find(|s| s["id"].as_str().unwrap_or("") == swarm_id)
+                .cloned()
+        };
+        // Try direct lookup by ID first (works for active and completed swarms)
+        let direct = client.get(&format!("/api/swarms/{}", swarm_id)).await.ok();
+        let found = direct.as_ref().and_then(|d| {
+            // GET /api/swarms/{id} returns { "swarm": {...}, "tasks": [...] }
+            // unwrap to the swarm object if nested
+            if d.get("swarm").is_some() {
+                d["swarm"].as_object().map(|_| d["swarm"].clone())
+            } else {
+                Some(d.clone())
+            }
+        });
+        if found.is_some() {
+            found
+        } else {
+            // Fallback: search active swarms list
+            let active = client.get("/api/swarms/active").await.ok();
+            active.as_ref().and_then(try_find)
+        }
+    }?;
 
-    let swarm = swarms.iter().find(|s| {
-        s["id"].as_str().unwrap_or("") == swarm_id
-    })?;
+    // Also fetch the full response again to extract tasks — the direct lookup
+    // returns { "swarm": {...}, "tasks": [...] } so tasks are NOT inside swarm.
+    let tasks_from_direct = client.get(&format!("/api/swarms/{}", swarm_id)).await.ok();
+    let tasks_top_level = tasks_from_direct.as_ref()
+        .and_then(|d| d["tasks"].as_array())
+        .cloned();
 
     let name = swarm["name"].as_str().unwrap_or("").to_string();
     let topology = swarm["topology"].as_str().unwrap_or("").to_string();
     let status = swarm["status"].as_str().unwrap_or("").to_string();
 
-    let tasks_arr = swarm["tasks"].as_array();
     let mut tasks = Vec::new();
     let mut completed = 0;
 
-    if let Some(arr) = tasks_arr {
-        for t in arr {
-            let task_status = t["status"].as_str().unwrap_or("pending").to_string();
-            if task_status == "completed" {
-                completed += 1;
-            }
+    // Tasks live at the top-level "tasks" key of GET /api/swarms/{id},
+    // not inside the "swarm" sub-object. Fall back to swarm["tasks"] for
+    // older server versions that embed them directly.
+    let task_iter: Box<dyn Iterator<Item = &serde_json::Value>> =
+        if let Some(ref top) = tasks_top_level {
+            Box::new(top.iter())
+        } else if let Some(embedded) = swarm["tasks"].as_array() {
+            Box::new(embedded.iter())
+        } else {
+            Box::new(std::iter::empty())
+        };
+
+    for t in task_iter {
+        let task_status = t["status"].as_str().unwrap_or("pending").to_string();
+        if task_status == "completed" {
+            completed += 1;
+        }
+        let raw_title = t["title"].as_str().unwrap_or("").to_string();
+            // Task titles may be stored as JSON objects like {"description":"..."}
+            let title = if raw_title.starts_with('{') {
+                serde_json::from_str::<serde_json::Value>(&raw_title)
+                    .ok()
+                    .and_then(|v| v["description"].as_str().map(|s| s.to_string()))
+                    .unwrap_or(raw_title)
+            } else {
+                raw_title
+            };
             tasks.push(SwarmTask {
                 id: t["id"].as_str().unwrap_or("").to_string(),
-                title: t["title"].as_str().unwrap_or("").to_string(),
+                title,
                 status: task_status,
             });
-        }
     }
 
     Some(SwarmInfo {

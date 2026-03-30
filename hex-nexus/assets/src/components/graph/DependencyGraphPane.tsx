@@ -33,12 +33,14 @@ interface GraphEdge {
 // ---------------------------------------------------------------------------
 
 const LAYER_COLORS: Record<string, string> = {
-  domain: '#58a6ff',
-  ports: '#bc8cff',
-  usecases: '#3fb950',
-  'use-cases': '#3fb950',
-  primary: '#f0883e',
-  secondary: '#d29922',
+  domain: '#22c55e',       // green
+  ports: '#bc8cff',        // purple
+  usecases: '#eab308',     // yellow
+  'use-cases': '#eab308',  // yellow (alias)
+  'adapters/primary': '#f97316',   // orange
+  'adapters/secondary': '#3b82f6', // blue
+  primary: '#f97316',      // orange
+  secondary: '#3b82f6',    // blue
   external: '#8b949e',
   infrastructure: '#6e7a88',
 };

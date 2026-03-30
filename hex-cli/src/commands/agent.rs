@@ -56,6 +56,8 @@ pub enum AgentAction {
     Fleet,
     /// Audit recent commits against HexFlo task tracking (ADR-2603221939)
     Audit,
+    /// Show active git worktrees with assigned agent, task, and age (ADR-2603231700)
+    WorktreeAudit,
     /// Evict dead/stale agents from the registry
     Evict,
     /// Run as a persistent agent worker for a specific role
@@ -135,6 +137,7 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
         AgentAction::Fleet => fleet().await,
         AgentAction::Evict => evict().await,
         AgentAction::Audit => audit().await,
+        AgentAction::WorktreeAudit => super::agent_audit::run().await,
         AgentAction::Worker {
             role,
             swarm_id,
@@ -1456,7 +1459,9 @@ async fn execute_worker_task(
                         let _ = std::fs::write(review_dir.join("review-latest.json"), &json_str);
                     }
 
-                    // Store structured result in hexflo memory.
+                    // Store structured result in hexflo memory (two keys):
+                    // 1. review_results — verdict/issues for downstream agents
+                    // 2. result — audit metrics for supervisor read_worker_result()
                     let memory_key = format!("{}:review_results", task_id);
                     let _ = nexus
                         .post(
@@ -1469,6 +1474,28 @@ async fn execute_worker_task(
                                     "issues": review.issues.len(),
                                     "model": review.model_used,
                                     "tokens": review.tokens,
+                                    "cost_usd": review.cost_usd,
+                                }).to_string(),
+                                "scope": swarm_id,
+                            }),
+                        )
+                        .await;
+                    // Also write to :result so supervisor can read audit metrics.
+                    let result_key = format!("{}:result", task_id);
+                    let _ = nexus
+                        .post(
+                            "/api/hexflo/memory",
+                            &json!({
+                                "key": result_key,
+                                "value": json!({
+                                    "file_path": "",
+                                    "compile_pass": pass,
+                                    "tests_pass": pass,
+                                    "test_output": "",
+                                    "model": review.model_used,
+                                    "tokens": review.tokens,
+                                    "input_tokens": review.input_tokens,
+                                    "output_tokens": review.output_tokens,
                                     "cost_usd": review.cost_usd,
                                 }).to_string(),
                                 "scope": swarm_id,
@@ -1507,7 +1534,9 @@ async fn execute_worker_task(
                         test_result.cost_usd,
                     );
 
-                    // Write test results to memory
+                    // Write test results to memory (two keys):
+                    // 1. test_results — for downstream agents
+                    // 2. result — audit metrics for supervisor read_worker_result()
                     let memory_key = format!("{}:test_results", task_id);
                     let _ = nexus
                         .post(
@@ -1519,6 +1548,27 @@ async fn execute_worker_task(
                                     "suggested_path": test_result.suggested_path,
                                     "model": test_result.model_used,
                                     "tokens": test_result.tokens,
+                                    "cost_usd": test_result.cost_usd,
+                                }).to_string(),
+                                "scope": swarm_id,
+                            }),
+                        )
+                        .await;
+                    let result_key = format!("{}:result", task_id);
+                    let _ = nexus
+                        .post(
+                            "/api/hexflo/memory",
+                            &json!({
+                                "key": result_key,
+                                "value": json!({
+                                    "file_path": test_result.suggested_path,
+                                    "compile_pass": has_content,
+                                    "tests_pass": has_content,
+                                    "test_output": "",
+                                    "model": test_result.model_used,
+                                    "tokens": test_result.tokens,
+                                    "input_tokens": test_result.input_tokens,
+                                    "output_tokens": test_result.output_tokens,
                                     "cost_usd": test_result.cost_usd,
                                 }).to_string(),
                                 "scope": swarm_id,

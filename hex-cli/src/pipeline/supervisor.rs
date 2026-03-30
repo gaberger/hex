@@ -64,6 +64,19 @@ Tier 4+ (Composition Root / Integration):
 2. All relative imports MUST use .js extensions (NodeNext module resolution)
 3. Domain, ports, usecases, and adapters rules still apply within their directories";
 
+// ── AgentMetrics ─────────────────────────────────────────────────────────
+
+/// Performance metrics captured by `dispatch_agent` for a single agent invocation.
+/// Written by `dispatch_agent`, consumed once by `execute_agent_tracked` for session logging.
+#[derive(Debug, Clone, Default)]
+pub struct AgentMetrics {
+    pub model: Option<String>,
+    pub tokens: Option<u64>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cost_usd: Option<f64>,
+}
+
 // ── AgentContext ─────────────────────────────────────────────────────────
 
 /// Everything an agent needs to perform its task — assembled by [`Supervisor`].
@@ -119,6 +132,9 @@ pub struct Supervisor {
     /// Last code step selection + duration, stored so `run_tier` can call `report_outcome`
     /// once `CodeCompiles` state is known (after `evaluate_all`).
     last_code_selection: Mutex<Option<(SelectedModel, u64)>>,
+    /// Metrics from the most recent `dispatch_agent` call.
+    /// Written by `dispatch_agent`, consumed once by `execute_agent_tracked`.
+    last_dispatch_metrics: Mutex<Option<AgentMetrics>>,
     /// hex project ID for architecture fingerprint injection (ADR-2603301200).
     pub project_id: Option<String>,
 }
@@ -159,6 +175,7 @@ impl Supervisor {
             task_id_map: HashMap::new(),
             selector,
             last_code_selection: Mutex::new(None),
+            last_dispatch_metrics: Mutex::new(None),
             project_id: None,
         }
     }
@@ -1495,6 +1512,8 @@ impl Supervisor {
         role: &str,
         model: Option<&str>,
         tokens: Option<u64>,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
         cost_usd: Option<f64>,
         duration_ms: u64,
         success: bool,
@@ -1508,6 +1527,8 @@ impl Supervisor {
                     tool: "POST /api/inference/complete".to_string(),
                     model: model.map(|s| s.to_string()),
                     tokens,
+                    input_tokens,
+                    output_tokens,
                     cost_usd,
                     duration_ms,
                     status: if success { "ok" } else { "error" }.to_string(),
@@ -1517,6 +1538,13 @@ impl Supervisor {
                     debug!(error = %e, role, "failed to log agent performance (non-blocking)");
                 }
             }
+        }
+    }
+
+    /// Store agent metrics from `dispatch_agent` for consumption by `execute_agent_tracked`.
+    fn store_dispatch_metrics(&self, metrics: AgentMetrics) {
+        if let Ok(mut guard) = self.last_dispatch_metrics.lock() {
+            *guard = Some(metrics);
         }
     }
 
@@ -1689,6 +1717,16 @@ impl Supervisor {
                             if worker_result.tests_pass { "✓" } else { "✗" },
                             worker_result.file_path,
                         );
+                        // Store audit metrics so execute_agent_tracked logs them once.
+                        if worker_result.model.is_some() || worker_result.tokens.is_some() {
+                            self.store_dispatch_metrics(AgentMetrics {
+                                model: worker_result.model.clone(),
+                                tokens: worker_result.tokens,
+                                input_tokens: worker_result.input_tokens,
+                                output_tokens: worker_result.output_tokens,
+                                cost_usd: worker_result.cost_usd,
+                            });
+                        }
                     }
                 }
                 poll_result
@@ -1711,17 +1749,20 @@ impl Supervisor {
         let duration_ms = start.elapsed().as_millis() as u64;
         let success = agent_result.is_ok();
 
-        // Extract performance metrics from agent results and log them.
-        // Each agent type returns model_used/tokens/cost_usd — we capture
-        // what we can from the dispatch. For roles that don't surface metrics
-        // directly (hex-coder delegates to CodePhase), we log with None.
-        //
-        // The per-role ToolCall is logged regardless of success/failure.
+        // Read metrics stored by dispatch_agent (or worker path) and log once.
+        // dispatch_agent writes to last_dispatch_metrics before returning; we
+        // consume it here so there is exactly one ToolCall entry per agent run.
+        let metrics = self.last_dispatch_metrics.lock()
+            .ok()
+            .and_then(|mut g| g.take())
+            .unwrap_or_default();
         self.log_agent_performance(
             role,
-            None, // model extracted below per-role where available
-            None,
-            None,
+            metrics.model.as_deref(),
+            metrics.tokens,
+            metrics.input_tokens,
+            metrics.output_tokens,
+            metrics.cost_usd,
             duration_ms,
             success,
             &state.objective,
@@ -2348,16 +2389,14 @@ impl Supervisor {
                     )
                     .await
                     .context("reviewer agent failed")?;
-                // Log per-role performance with actual metrics
-                self.log_agent_performance(
-                    "hex-reviewer",
-                    Some(&result.model_used),
-                    Some(result.tokens),
-                    Some(result.cost_usd),
-                    result.duration_ms,
-                    true,
-                    &state.objective,
-                );
+                // Store metrics for execute_agent_tracked to log once
+                self.store_dispatch_metrics(AgentMetrics {
+                    model: Some(result.model_used.clone()),
+                    tokens: Some(result.tokens),
+                    input_tokens: Some(result.input_tokens),
+                    output_tokens: Some(result.output_tokens),
+                    cost_usd: Some(result.cost_usd),
+                });
                 if result.reviewer_skipped {
                     warn!(
                         tier,
@@ -2429,16 +2468,13 @@ impl Supervisor {
                     .execute(&context, tester_model, provider_pref)
                     .await
                     .context("tester agent failed")?;
-                // Log per-role performance with actual metrics
-                self.log_agent_performance(
-                    "hex-tester",
-                    Some(&result.model_used),
-                    Some(result.tokens),
-                    Some(result.cost_usd),
-                    result.duration_ms,
-                    true,
-                    &state.objective,
-                );
+                self.store_dispatch_metrics(AgentMetrics {
+                    model: Some(result.model_used.clone()),
+                    tokens: Some(result.tokens),
+                    input_tokens: Some(result.input_tokens),
+                    output_tokens: Some(result.output_tokens),
+                    cost_usd: Some(result.cost_usd),
+                });
                 // Write test file to the suggested path
                 let test_path = PathBuf::from(&self.output_dir).join(&result.suggested_path);
                 if let Some(parent) = test_path.parent() {
@@ -2455,16 +2491,13 @@ impl Supervisor {
                     .execute(&context, &self.output_dir, model_override, provider_pref)
                     .await
                     .context("documenter agent failed")?;
-                // Log per-role performance with actual metrics
-                self.log_agent_performance(
-                    "hex-documenter",
-                    Some(&result.model_used),
-                    Some(result.tokens),
-                    Some(result.cost_usd),
-                    result.duration_ms,
-                    true,
-                    &state.objective,
-                );
+                self.store_dispatch_metrics(AgentMetrics {
+                    model: Some(result.model_used.clone()),
+                    tokens: Some(result.tokens),
+                    input_tokens: None,
+                    output_tokens: None,
+                    cost_usd: Some(result.cost_usd),
+                });
                 info!("documentation generated");
             }
             "hex-ux" => {
@@ -2475,16 +2508,13 @@ impl Supervisor {
                     .execute(&context, &self.output_dir, model_override, provider_pref)
                     .await
                     .context("ux reviewer agent failed")?;
-                // Log per-role performance with actual metrics
-                self.log_agent_performance(
-                    "hex-ux",
-                    Some(&result.model_used),
-                    Some(result.tokens),
-                    Some(result.cost_usd),
-                    result.duration_ms,
-                    true,
-                    &state.objective,
-                );
+                self.store_dispatch_metrics(AgentMetrics {
+                    model: Some(result.model_used.clone()),
+                    tokens: Some(result.tokens),
+                    input_tokens: None,
+                    output_tokens: None,
+                    cost_usd: Some(result.cost_usd),
+                });
                 // Write UX review output
                 let ux_dir = PathBuf::from(&self.output_dir).join(".hex-ux-review");
                 let _ = fs::create_dir_all(&ux_dir);
@@ -2558,16 +2588,13 @@ impl Supervisor {
                     .execute(input, fixer_model, provider_pref)
                     .await
                     .context("fix agent failed")?;
-                // Log per-role performance with actual metrics (FixTaskOutput has no duration_ms)
-                self.log_agent_performance(
-                    "hex-fixer",
-                    Some(&result.model_used),
-                    Some(result.tokens),
-                    Some(result.cost_usd),
-                    0, // duration tracked by outer wrapper
-                    result.status == "fixed",
-                    &state.objective,
-                );
+                self.store_dispatch_metrics(AgentMetrics {
+                    model: Some(result.model_used.clone()),
+                    tokens: Some(result.tokens),
+                    input_tokens: Some(result.input_tokens),
+                    output_tokens: Some(result.output_tokens),
+                    cost_usd: Some(result.cost_usd),
+                });
                 info!(
                     status = %result.status,
                     file = %result.file_path,
@@ -2966,10 +2993,29 @@ impl Drop for Supervisor {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct WorkerResult {
     pub file_path: String,
+    #[serde(default)]
     pub content_len: usize,
+    #[serde(default)]
     pub compile_pass: bool,
+    #[serde(default)]
     pub tests_pass: bool,
+    #[serde(default)]
     pub test_output: String,
+    /// Inference model used (populated by reviewer/tester workers).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Total tokens (input + output).
+    #[serde(default)]
+    pub tokens: Option<u64>,
+    /// Prompt tokens (context window usage).
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    /// Completion tokens.
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+    /// Cost in USD.
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
 }
 
 /// Outcome of running a single tier's objective loop.

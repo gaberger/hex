@@ -65,6 +65,10 @@ pub async fn get_token_file(
     match sp.project_get(&project_id).await {
         Ok(Some(entry)) => {
             let decoded = urlencoding::decode(&file).unwrap_or_default().into_owned();
+            // Reject path traversal attempts, absolute paths, and null bytes
+            if decoded.contains("..") || decoded.starts_with('/') || decoded.contains('\0') {
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": "Invalid file path" })));
+            }
             match entry.token_files.get(&decoded) {
                 Some(data) => (StatusCode::OK, Json(data.clone())),
                 None => (StatusCode::NOT_FOUND, Json(json!({ "error": "File not found" }))),

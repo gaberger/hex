@@ -13,7 +13,8 @@ use serde_json::json;
 use tracing::{debug, info, warn};
 
 use crate::nexus_client::NexusClient;
-use crate::pipeline::model_selection::{ModelSelector, SelectedModel, TaskType};
+use crate::pipeline::agent_def::AgentDefinition;
+use crate::pipeline::model_selection::{ModelSelector, SelectedModel, TaskType, is_compatible_with_provider};
 use crate::prompts::PromptTemplate;
 
 // ── Result type ──────────────────────────────────────────────────────────
@@ -33,6 +34,10 @@ pub struct WorkplanPhaseResult {
     pub cost_usd: f64,
     /// Total tokens (input + output).
     pub tokens: u64,
+    /// Prompt tokens (context window usage).
+    pub input_tokens: u64,
+    /// Completion tokens.
+    pub output_tokens: u64,
     /// Wall-clock duration of the inference call in milliseconds.
     pub duration_ms: u64,
     /// The RL selection metadata (for reward reporting).
@@ -129,6 +134,7 @@ impl WorkplanPhase {
         &self,
         adr_path: &str,
         feature_description: &str,
+        language: &str,
         model_override: Option<&str>,
         provider_pref: Option<&str>,
     ) -> Result<WorkplanPhaseResult> {
@@ -139,12 +145,14 @@ impl WorkplanPhase {
         let workplan_schema = self.get_workplan_schema();
         let architecture_rules = self.get_architecture_rules();
         let tier_definitions = self.get_tier_definitions();
+        let language_guidance = Self::build_language_guidance(language);
 
         let mut context = HashMap::new();
         context.insert("adr_content".to_string(), adr_content);
         context.insert("workplan_schema".to_string(), workplan_schema);
         context.insert("architecture_rules".to_string(), architecture_rules);
         context.insert("tier_definitions".to_string(), tier_definitions);
+        context.insert("language_guidance".to_string(), language_guidance);
 
         // ── 2. Load and render prompt template ───────────────────────────
         let template = PromptTemplate::load("workplan-generate")
@@ -156,10 +164,16 @@ impl WorkplanPhase {
             "rendered workplan prompt"
         );
 
-        // ── 3. Select model via RL ───────────────────────────────────────
+        // ── 3. Select model — YAML definition wins over RL engine ───────
+        let yaml_model = AgentDefinition::load("planner")
+            .map(|d| d.model.preferred_model_id().to_string())
+            .filter(|m| is_compatible_with_provider(m, provider_pref));
+        let effective_override = model_override
+            .map(str::to_string)
+            .or(yaml_model);
         let selected = self
             .selector
-            .select_model(TaskType::StructuredOutput, model_override, provider_pref)
+            .select_model(TaskType::StructuredOutput, effective_override.as_deref(), provider_pref)
             .await
             .context("model selection failed")?;
         info!(model = %selected.model_id, source = %selected.source, "selected model for workplan generation");
@@ -241,6 +255,11 @@ impl WorkplanPhase {
             }
         };
 
+        // ── 6b. Sanitize workplan for language ───────────────────────────
+        // If the LLM generated TypeScript hex layer paths for a Rust/Go project,
+        // collapse to a single src/main.rs step — the LLM often ignores language guidance.
+        let parsed = Self::sanitize_workplan_for_language(parsed, language, feature_description);
+
         // ── 7. Generate filename ─────────────────────────────────────────
         let file_path = generate_workplan_filename(feature_description);
 
@@ -265,9 +284,122 @@ impl WorkplanPhase {
             model_used,
             cost_usd,
             tokens,
+            input_tokens,
+            output_tokens,
             duration_ms,
             selected_model: selected,
         })
+    }
+
+    // ── Workplan sanitizer ───────────────────────────────────────────────
+
+    /// For Rust/Go projects: if the workplan contains TypeScript hex layer paths
+    /// (domain/, ports/, adapters/, .ts files), collapse all steps into a single
+    /// Tier-0 step targeting src/main.rs.  This corrects LLMs that ignore the
+    /// language guidance in the prompt and default to TypeScript hex structure.
+    pub(crate) fn sanitize_workplan_for_language(mut workplan: WorkplanData, language: &str, feature_description: &str) -> WorkplanData {
+        if !matches!(language, "rust" | "go") {
+            return workplan;
+        }
+        let main_file = if language == "go" { "main.go" } else { "src/main.rs" };
+        let dep_file = if language == "go" { "go.mod" } else { "Cargo.toml" };
+
+        // For Rust/Go, ANY hex-layered workplan structure is wrong — these are
+        // single-binary projects with no hex layer split. Collapse if:
+        //   • any step has tier > 0 (multi-tier = hex layer decomposition)
+        //   • any step has a layer set (e.g. "adapters/primary", "domain", "ports")
+        //   • any step references hex-specific fields (adapter, port)
+        //   • any step description contains TypeScript hex keywords
+        let needs_sanitize = workplan.steps.iter().any(|s| {
+            s.tier > 0
+                || s.layer.is_some()
+                || s.adapter.is_some()
+                || s.port.is_some()
+                || {
+                    let d = s.description.to_lowercase();
+                    d.contains("domain") || d.contains("port") || d.contains("adapter")
+                        || d.contains(".ts") || d.contains("typescript")
+                        || d.contains("usecase") || d.contains("composition-root")
+                }
+        });
+
+        if needs_sanitize {
+            info!(
+                language,
+                original_steps = workplan.steps.len(),
+                "sanitizing workplan: collapsing TS hex layer steps to single {main_file} step"
+            );
+            let original_id = workplan.steps.first().map(|s| s.id.as_str()).unwrap_or("P0.1");
+            let step_id = if original_id.starts_with("P0") { original_id.to_string() } else { "P0.1".to_string() };
+
+            let desc = if feature_description.is_empty() {
+                format!("Implement the full feature in {main_file} — single-binary {} project", language)
+            } else {
+                format!(
+                    "Implement the full feature in {main_file} — single-binary {} project\n\nFeature requirements: {}",
+                    language, feature_description
+                )
+            };
+            let done_cond = if feature_description.is_empty() {
+                format!("{main_file} compiles and implements the feature; {dep_file} has correct dependencies")
+            } else {
+                format!(
+                    "{main_file} compiles and fully implements: {}; {dep_file} has correct dependencies",
+                    feature_description
+                )
+            };
+            workplan.steps = vec![WorkplanStep {
+                id: step_id,
+                description: desc,
+                layer: Some("primary".to_string()),
+                adapter: None,
+                port: None,
+                dependencies: vec![],
+                tier: 0,
+                specs: workplan.steps.first().and_then(|s| s.specs.clone()),
+                worktree_branch: None,
+                done_condition: Some(done_cond),
+            }];
+        }
+        workplan
+    }
+
+    // ── Language guidance ────────────────────────────────────────────────
+
+    fn build_language_guidance(language: &str) -> String {
+        match language {
+            "rust" => concat!(
+                "**Target language: Rust** — This is a single-binary Rust project.\n",
+                "CRITICAL RULES for Rust projects:\n",
+                "- ALL implementation goes in `src/main.rs` (one file)\n",
+                "- Dependencies go in `Cargo.toml`\n",
+                "- Do NOT generate TypeScript paths (domain/, ports/, adapters/, .ts files)\n",
+                "- Do NOT use hex layer structure — this is a standalone Rust binary\n",
+                "- Generate EXACTLY ONE Tier-0 step with `\"files\": [\"src/main.rs\", \"Cargo.toml\"]`\n",
+                "- The step description must say: implement the full feature in src/main.rs\n",
+                "- agent: hex-coder, layer: primary (single-binary has no hex layer split)",
+            ).to_string(),
+            "python" => concat!(
+                "**Target language: Python** — This is a Python project.\n",
+                "CRITICAL RULES for Python projects:\n",
+                "- Main implementation file is `main.py` or `src/main.py`\n",
+                "- Dependencies go in `pyproject.toml` or `requirements.txt`\n",
+                "- Do NOT use TypeScript hex layer paths\n",
+                "- Generate steps targeting Python source files (.py)",
+            ).to_string(),
+            "go" => concat!(
+                "**Target language: Go** — This is a Go module project.\n",
+                "CRITICAL RULES for Go projects:\n",
+                "- Main implementation file is `main.go`\n",
+                "- Module config is `go.mod`\n",
+                "- Do NOT use TypeScript hex layer paths\n",
+                "- Generate steps targeting Go source files (.go)",
+            ).to_string(),
+            _ => concat!(
+                "**Target language: TypeScript** — This is a TypeScript project using hex hexagonal architecture.\n",
+                "Use the standard hex layer structure: domain/, ports/, adapters/primary/, adapters/secondary/, usecases/.",
+            ).to_string(),
+        }
     }
 
     // ── Context builders (best-effort, never fail the phase) ─────────────
@@ -879,5 +1011,100 @@ mod tests {
         assert!(summary.contains("3 steps"));
         assert!(summary.contains("T0: 1"));
         assert!(summary.contains("T1: 2"));
+    }
+
+    // ── Sanitizer tests ──────────────────────────────────────────────────
+
+    fn make_workplan_step(id: &str, description: &str, layer: Option<&str>, tier: u8) -> WorkplanStep {
+        WorkplanStep {
+            id: id.into(),
+            description: description.into(),
+            layer: layer.map(Into::into),
+            adapter: None,
+            port: None,
+            dependencies: vec![],
+            tier,
+            specs: None,
+            worktree_branch: None,
+            done_condition: None,
+        }
+    }
+
+    #[test]
+    fn sanitize_collapses_adapters_primary_tier2_for_rust() {
+        // Regression: workplan with layer="adapters/primary" and tier=2 was not
+        // collapsed because the old check only matched "domain" | "ports" in the layer.
+        let wp = WorkplanData {
+            id: "wp-test".into(),
+            title: "build a todo list REST API in rust with axum".into(),
+            specs: None, adr: None, created: None, status: None, status_note: None,
+            topology: None, budget: None, merge_order: None, risk_register: None,
+            success_criteria: None, dependencies: None,
+            steps: vec![make_workplan_step(
+                "step-1",
+                "build a todo list REST API in rust with axum",
+                Some("adapters/primary"),
+                2,
+            )],
+        };
+        let sanitized = WorkplanPhase::sanitize_workplan_for_language(wp, "rust", "");
+        assert_eq!(sanitized.steps.len(), 1);
+        assert_eq!(sanitized.steps[0].tier, 0, "tier must be collapsed to 0");
+        assert!(sanitized.steps[0].description.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn sanitize_collapses_multi_tier_rust_workplan() {
+        let wp = WorkplanData {
+            id: "wp-test".into(),
+            title: "Feature".into(),
+            specs: None, adr: None, created: None, status: None, status_note: None,
+            topology: None, budget: None, merge_order: None, risk_register: None,
+            success_criteria: None, dependencies: None,
+            steps: vec![
+                make_workplan_step("P0.1", "Domain model", Some("domain"), 0),
+                make_workplan_step("P1.1", "Secondary adapter", Some("adapters/secondary"), 1),
+                make_workplan_step("P2.1", "Primary adapter", Some("adapters/primary"), 2),
+            ],
+        };
+        let sanitized = WorkplanPhase::sanitize_workplan_for_language(wp, "rust", "");
+        assert_eq!(sanitized.steps.len(), 1);
+        assert_eq!(sanitized.steps[0].id, "P0.1", "should preserve first step id");
+        assert_eq!(sanitized.steps[0].tier, 0);
+    }
+
+    #[test]
+    fn sanitize_does_not_touch_typescript_workplan() {
+        let wp = WorkplanData {
+            id: "wp-test".into(),
+            title: "Feature".into(),
+            specs: None, adr: None, created: None, status: None, status_note: None,
+            topology: None, budget: None, merge_order: None, risk_register: None,
+            success_criteria: None, dependencies: None,
+            steps: vec![
+                make_workplan_step("P0.1", "Domain model", Some("domain"), 0),
+                make_workplan_step("P1.1", "Adapter", Some("adapters/secondary"), 1),
+            ],
+        };
+        let sanitized = WorkplanPhase::sanitize_workplan_for_language(wp, "typescript", "");
+        // TypeScript projects keep their hex layer structure
+        assert_eq!(sanitized.steps.len(), 2);
+    }
+
+    #[test]
+    fn sanitize_does_not_collapse_clean_rust_step() {
+        // A Rust workplan with no layer, no tier > 0, no hex keywords — leave it alone.
+        let wp = WorkplanData {
+            id: "wp-test".into(),
+            title: "Build thing".into(),
+            specs: None, adr: None, created: None, status: None, status_note: None,
+            topology: None, budget: None, merge_order: None, risk_register: None,
+            success_criteria: None, dependencies: None,
+            steps: vec![make_workplan_step("P0.1", "Implement full feature in src/main.rs", None, 0)],
+        };
+        let sanitized = WorkplanPhase::sanitize_workplan_for_language(wp, "rust", "");
+        // Already clean — no collapse needed, description preserved
+        assert_eq!(sanitized.steps.len(), 1);
+        assert_eq!(sanitized.steps[0].description, "Implement full feature in src/main.rs");
     }
 }

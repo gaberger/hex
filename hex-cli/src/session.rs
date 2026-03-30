@@ -95,12 +95,14 @@ pub struct ToolCall {
     pub timestamp: String,
     pub phase: String,
     pub tool: String,           // e.g. "POST /api/inference/complete", "GET /api/adrs"
-    pub model: Option<String>,  // inference model used (if applicable)
-    pub tokens: Option<u64>,    // tokens consumed (if inference)
-    pub cost_usd: Option<f64>,  // cost in USD (if inference)
-    pub duration_ms: u64,       // wall clock time
-    pub status: String,         // "ok", "error", "retry"
-    pub detail: Option<String>, // step ID, error message, or other context
+    pub model: Option<String>,         // inference model used (if applicable)
+    pub tokens: Option<u64>,           // total tokens (input + output)
+    pub input_tokens: Option<u64>,     // prompt tokens (context window usage)
+    pub output_tokens: Option<u64>,    // completion tokens
+    pub cost_usd: Option<f64>,         // cost in USD (if inference)
+    pub duration_ms: u64,              // wall clock time
+    pub status: String,                // "ok", "error", "retry"
+    pub detail: Option<String>,        // step ID, error message, or other context
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

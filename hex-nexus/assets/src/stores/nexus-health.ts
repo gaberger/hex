@@ -36,7 +36,14 @@ let _pollTimer: ReturnType<typeof setInterval> | null = null;
 
 async function pollNexus() {
   try {
-    const data = await restClient.get<any>("/api/version");
+    // /api/health is the authoritative source for spacetimedb connectivity.
+    // Fall back to /api/version for version/uptime metadata.
+    const [health, version] = await Promise.all([
+      restClient.get<any>("/api/health").catch(() => null),
+      restClient.get<any>("/api/version").catch(() => null),
+    ]);
+    const data = version ?? {};
+    const spacetimedb = health?.spacetimedb ?? data.spacetimedb ?? data.stdb_connected ?? false;
     setNexusStatus({
       online: true,
       version: data.version ?? data.hex_version ?? "—",
@@ -45,7 +52,7 @@ async function pollNexus() {
       port: data.port ?? 5555,
       agents: data.agents ?? data.agent_count ?? 0,
       swarms: data.swarms ?? data.swarm_count ?? 0,
-      spacetimedb: data.spacetimedb ?? data.stdb_connected ?? false,
+      spacetimedb,
     });
   } catch {
     setNexusStatus({ ...DEFAULT, online: false });
@@ -56,7 +63,7 @@ async function pollNexus() {
 export function startNexusHealthPoll() {
   if (_pollTimer) return;
   pollNexus(); // immediate first poll
-  _pollTimer = setInterval(pollNexus, 10_000);
+  _pollTimer = setInterval(pollNexus, 15_000);
 }
 
 /** Stop polling (cleanup). */

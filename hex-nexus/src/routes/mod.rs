@@ -26,6 +26,7 @@ pub mod neural_lab;
 pub mod test_sessions;
 pub mod openapi;
 pub mod command_sessions;
+pub mod inbox;
 pub mod sandbox;
 pub mod ws;
 
@@ -562,7 +563,7 @@ pub fn build_router(state: SharedState) -> Router {
         // Docker sandbox agent lifecycle (ADR-docker-sandbox)
         .route("/api/agents/sandbox/spawn", post(sandbox::spawn_agent)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
-        .route("/api/agents/sandbox/:agent_id", delete(sandbox::stop_agent))
+        .route("/api/agents/sandbox/{agent_id}", delete(sandbox::stop_agent))
         // Agent orchestration
         .route("/api/agents/spawn", post(orchestration::spawn_agent)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
@@ -688,6 +689,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/hexflo/inbox/expire", post(hexflo::inbox_expire))
         .route("/api/hexflo/inbox/{agent_id}", get(hexflo::inbox_query))
         .route("/api/hexflo/inbox/{id}/ack", patch(hexflo::inbox_acknowledge)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
+        // Dashboard inbox — project-scoped view + ack (step-5)
+        .route("/api/inbox", get(inbox::list_inbox))
+        .route("/api/inbox/{id}/ack", post(inbox::ack_notification)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
 
         // Unified Agent Registry (ADR-058) — hex_agent table

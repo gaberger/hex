@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use serde_json::json;
 use tracing::{debug, info};
 
@@ -18,7 +19,7 @@ use crate::prompts::PromptTemplate;
 // ── Result type ──────────────────────────────────────────────────────────
 
 /// Output of a successful test generation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TestAgentResult {
     /// The generated test file content.
     pub test_content: String,
@@ -28,6 +29,10 @@ pub struct TestAgentResult {
     pub model_used: String,
     /// Total tokens (input + output).
     pub tokens: u64,
+    /// Prompt tokens (context window usage).
+    pub input_tokens: u64,
+    /// Completion tokens.
+    pub output_tokens: u64,
     /// Cost in USD.
     pub cost_usd: f64,
     /// Wall-clock duration in milliseconds.
@@ -92,8 +97,18 @@ impl TesterAgent {
 
         let template = PromptTemplate::load("agent-tester")
             .context("loading agent-tester prompt template")?;
-        let system_prompt = template.render(&tpl_context);
+        let raw_system = template.render(&tpl_context);
         debug!(template = "agent-tester", placeholders = ?template.placeholders(), "rendered tester prompt");
+
+        // Inject architecture fingerprint (ADR-2603301200) — prepend to system prompt.
+        let system_prompt = if let Some(pid) = &context.project_id {
+            match self.client.fetch_fingerprint_text(pid).await {
+                Some(fp) => { debug!(project_id = %pid, "injecting architecture fingerprint into tester"); format!("{}\n\n{}", fp, raw_system) }
+                None => raw_system,
+            }
+        } else {
+            raw_system
+        };
 
         let selected = self.selector
             .select_model(TaskType::CodeGeneration, model_override, provider_pref)
@@ -163,7 +178,7 @@ impl TesterAgent {
 
         info!(test_target = %test_target, suggested_path = %suggested_path, model = %model_used, tokens, cost_usd, duration_ms, "tester agent complete");
 
-        Ok(TestAgentResult { test_content, suggested_path, model_used, tokens, cost_usd, duration_ms })
+        Ok(TestAgentResult { test_content, suggested_path, model_used, tokens, input_tokens, output_tokens, cost_usd, duration_ms })
     }
 }
 
@@ -202,6 +217,14 @@ fn compute_ts_import_path(test_path: &str, source_path: &str) -> String {
 }
 
 fn strip_code_fences(s: &str) -> String {
+    // Strip qwen/llama chat special tokens before anything else.
+    // Models like qwen3.5 sometimes emit <|endoftext|>, <|im_start|>, etc.
+    // Truncate at the first such marker so they don't end up in source files.
+    let s = if let Some(pos) = s.find("<|") {
+        &s[..pos]
+    } else {
+        s
+    };
     let trimmed = s.trim();
     if trimmed.starts_with("```") {
         if let Some(first_newline) = trimmed.find('\n') {
@@ -211,7 +234,7 @@ fn strip_code_fences(s: &str) -> String {
             }
         }
     }
-    s.to_string()
+    trimmed.to_string()
 }
 
 fn derive_test_path(source_path: &str, language: &str) -> String {

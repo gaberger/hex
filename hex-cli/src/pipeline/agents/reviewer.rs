@@ -36,7 +36,7 @@ pub struct ReviewIssue {
 }
 
 /// Output of a successful review.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ReviewResult {
     /// `"PASS"` or `"NEEDS_FIXES"`.
     pub verdict: String,
@@ -46,6 +46,10 @@ pub struct ReviewResult {
     pub model_used: String,
     /// Total tokens (input + output).
     pub tokens: u64,
+    /// Prompt tokens (context window usage).
+    pub input_tokens: u64,
+    /// Completion tokens.
+    pub output_tokens: u64,
     /// Cost in USD.
     pub cost_usd: f64,
     /// Wall-clock duration in milliseconds.
@@ -152,8 +156,18 @@ impl ReviewerAgent {
 
         let template = PromptTemplate::load("agent-reviewer")
             .context("loading agent-reviewer prompt template")?;
-        let system_prompt = template.render(&tpl_context);
+        let raw_system = template.render(&tpl_context);
         debug!(template = "agent-reviewer", placeholders = ?template.placeholders(), "rendered reviewer prompt");
+
+        // Inject architecture fingerprint (ADR-2603301200) — prepend to system prompt.
+        let system_prompt = if let Some(pid) = &context.project_id {
+            match self.client.fetch_fingerprint_text(pid).await {
+                Some(fp) => { debug!(project_id = %pid, "injecting architecture fingerprint into reviewer"); format!("{}\n\n{}", fp, raw_system) }
+                None => raw_system,
+            }
+        } else {
+            raw_system
+        };
 
         // Model selection: hard CLI override wins; otherwise let RL+selector decide
         // using the YAML preference as the effective default.  This ensures the
@@ -212,6 +226,8 @@ impl ReviewerAgent {
         let start = Instant::now();
         let mut last_model_used = selected.model_id.clone();
         let mut total_tokens: u64 = 0;
+        let mut total_input_tokens: u64 = 0;
+        let mut total_output_tokens: u64 = 0;
         let mut total_cost: f64 = 0.0;
 
         for attempt in 0u8..3 {
@@ -252,6 +268,8 @@ impl ReviewerAgent {
             let input_tokens = resp["input_tokens"].as_u64().unwrap_or(0);
             let output_tokens = resp["output_tokens"].as_u64().unwrap_or(0);
             total_tokens += input_tokens + output_tokens;
+            total_input_tokens += input_tokens;
+            total_output_tokens += output_tokens;
             total_cost += resp["openrouter_cost_usd"].as_str()
                 .and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
 
@@ -297,6 +315,8 @@ impl ReviewerAgent {
                 issues,
                 model_used: last_model_used,
                 tokens: total_tokens,
+                input_tokens,
+                output_tokens,
                 cost_usd: total_cost,
                 duration_ms,
                 reviewer_skipped: false,
@@ -323,6 +343,8 @@ impl ReviewerAgent {
             issues: vec![],
             model_used: last_model_used,
             tokens: total_tokens,
+            input_tokens: total_input_tokens,
+            output_tokens: total_output_tokens,
             cost_usd: total_cost,
             duration_ms,
             reviewer_skipped: true,

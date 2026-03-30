@@ -43,11 +43,14 @@ const HealthBadge: Component = () => {
         </span>
       </Show>
       <Show when={!healthLoading() && healthData()}>
-        <span
-          class={`ml-auto rounded px-1.5 py-0.5 text-[10px] font-mono font-bold ${scoreBg(healthData()!.health_score)} ${scoreColor(healthData()!.health_score)}`}
-        >
-          {healthData()!.health_score}/100
-        </span>
+        {(() => {
+          const d = healthData()!;
+          const raw = d as any;
+          const isStub = raw.ast_is_stub || raw.astIsStub || (d.health_score === 100 && (raw.file_count ?? 0) === 0);
+          return isStub
+            ? <span class="ml-auto rounded px-1.5 py-0.5 text-[10px] font-mono font-bold bg-gray-800 text-gray-500" title="Run `hex analyze .` to get real scores">--/100</span>
+            : <span class={`ml-auto rounded px-1.5 py-0.5 text-[10px] font-mono font-bold ${scoreBg(d.health_score)} ${scoreColor(d.health_score)}`}>{d.health_score}/100</span>;
+        })()}
       </Show>
       <Show when={!healthLoading() && !healthData()}>
         <span class="ml-auto text-[10px] text-gray-600">click to scan</span>

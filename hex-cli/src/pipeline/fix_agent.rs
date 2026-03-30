@@ -47,6 +47,10 @@ pub struct FixTaskOutput {
     pub model_used: String,
     /// Total tokens consumed (input + output).
     pub tokens: u64,
+    /// Prompt tokens (context window usage).
+    pub input_tokens: u64,
+    /// Completion tokens.
+    pub output_tokens: u64,
     /// Cost in USD.
     pub cost_usd: f64,
     /// Path where the fixed file was written.
@@ -231,6 +235,8 @@ impl FixAgent {
                 status: "failed".to_string(),
                 model_used,
                 tokens,
+                input_tokens,
+                output_tokens,
                 cost_usd,
                 file_path: input.target_file,
             });
@@ -254,6 +260,8 @@ impl FixAgent {
                 status: "unchanged".to_string(),
                 model_used,
                 tokens,
+                input_tokens,
+                output_tokens,
                 cost_usd,
                 file_path: input.target_file,
             });
@@ -279,6 +287,8 @@ impl FixAgent {
             status: "fixed".to_string(),
             model_used,
             tokens,
+            input_tokens,
+            output_tokens,
             cost_usd,
             file_path: input.target_file,
         })

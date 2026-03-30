@@ -52,6 +52,10 @@ struct SessionState {
     /// Resolved worktree branch name from workplan step
     #[serde(default)]
     worktree_branch: Option<String>,
+    /// RFC-3339 timestamp of last architecture fingerprint generation (ADR-2603301200).
+    /// Used to detect staleness when key project files change.
+    #[serde(default)]
+    fingerprint_generated_at: Option<String>,
 }
 
 impl SessionState {
@@ -81,6 +85,32 @@ impl SessionState {
         }
         std::fs::write(&path, serde_json::to_string_pretty(self)?)?;
         Ok(())
+    }
+
+    fn set_worktree(&mut self, path: &str) {
+        self.worktree_path = Some(path.to_string());
+    }
+
+    fn add_allowed_path(&mut self, path: &str) {
+        if !self.allowed_paths.contains(&path.to_string()) {
+            self.allowed_paths.push(path.to_string());
+        }
+    }
+
+    /// Returns true if the given path is permitted for this session.
+    ///
+    /// Fail-open: when `allowed_paths` is empty all paths are allowed.
+    /// Cross-cutting directories (`docs/`, `tests/`, `config/`, `.hex/`) are
+    /// always allowed regardless of the allow-list.
+    fn is_path_allowed(&self, path: &str) -> bool {
+        const ALWAYS_ALLOWED: &[&str] = &["docs/", "tests/", "config/", ".hex/"];
+        if self.allowed_paths.is_empty() {
+            return true;
+        }
+        if ALWAYS_ALLOWED.iter().any(|prefix| path.contains(prefix)) {
+            return true;
+        }
+        self.allowed_paths.iter().any(|allowed| path.starts_with(allowed.as_str()))
     }
 }
 
@@ -214,6 +244,14 @@ async fn session_start(project_dir: &Path) -> Result<()> {
 
             // ADR-050: Load active workplan from HexFlo memory
             let _ = load_workplan_context(id).await;
+
+            // ADR-2603301200: Inject architecture fingerprint into Claude Code context.
+            // The fingerprint text is printed to stdout so Claude Code picks it up
+            // as session context, preventing architectural drift in interactive sessions.
+            let client = crate::nexus_client::NexusClient::from_env();
+            if let Some(fp_text) = client.fetch_fingerprint_text(id).await {
+                println!("\n{}", fp_text);
+            }
         }
         Err(_) => {
             println!("  Nexus:   {} (run `hex nexus start`)", "offline".yellow());
@@ -337,6 +375,7 @@ pub async fn register_session_agent(project_dir: &Path, project_name: &str) -> R
             worktree_path: None,
             allowed_paths: Vec::new(),
             worktree_branch: None,
+            fingerprint_generated_at: None,
         };
         state.save()?;
 
@@ -413,11 +452,383 @@ async fn subagent_start() -> Result<()> {
         state.workplan_id = Some(wp_id);
     }
 
+    // Extract swarm_id for tier gate enforcement
+    let swarm_id = extract_prefixed_value(&stdin, "HEXFLO_SWARM:");
+
+    // Resolve worktree branch from workplan step matching task title
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+    if let Some((branch, step_id)) = resolve_worktree_from_workplan(&client, &task_id, &project_dir).await {
+        state.set_worktree(&branch);
+        state.worktree_branch = Some(branch.clone());
+
+        // Step 5: tier gate — block if lower-tier tasks are still pending
+        if let Some(ref sid) = swarm_id {
+            if !step_id.is_empty() {
+                let tier_mode = std::env::var("HEX_TIER_ENFORCEMENT").unwrap_or_default();
+                match check_tier_gate(&client, sid, &step_id).await {
+                    Ok(()) => {}
+                    Err(msg) => {
+                        if tier_mode == "mandatory" {
+                            eprintln!("{msg}");
+                            std::process::exit(1);
+                        } else {
+                            eprintln!("WARNING: {msg}");
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step 3: auto-create the worktree and populate allowed_paths
+        ensure_worktree_exists(&branch, &project_dir, &mut state);
+    }
+
     // Track the mapping so SubagentStop can complete it
     state.current_task_id = Some(task_id);
     state.save()?;
 
     Ok(())
+}
+
+/// Step 3: create a git worktree for `branch` (if it doesn't already exist) and
+/// populate `state.allowed_paths` from the branch name's embedded layer segment.
+/// Fail-open — logs warnings but never panics or exits non-zero.
+fn ensure_worktree_exists(branch: &str, project_dir: &Path, state: &mut SessionState) {
+    // 1. Determine repo root
+    let repo_root = match std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(project_dir)
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        }
+        _ => {
+            eprintln!("[hex hook] step3: could not determine repo root, skipping worktree creation");
+            // Still populate allowed_paths even without a worktree
+            for p in derive_allowed_paths(branch) {
+                state.add_allowed_path(&p);
+            }
+            return;
+        }
+    };
+
+    // 2. Check concurrent worktree cap (max 8; `git worktree list` always includes
+    //    the main worktree so threshold is 9 lines)
+    let worktree_count = std::process::Command::new("git")
+        .args(["worktree", "list"])
+        .current_dir(&repo_root)
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).lines().count())
+        .unwrap_or(0);
+    if worktree_count >= 9 {
+        eprintln!(
+            "[hex hook] step3: max concurrent worktrees reached ({}/8), skipping creation for branch '{}'",
+            worktree_count - 1,
+            branch
+        );
+        for p in derive_allowed_paths(branch) {
+            state.add_allowed_path(&p);
+        }
+        return;
+    }
+
+    // 3. Check if the worktree already exists (porcelain output contains "branch refs/heads/<branch>")
+    let porcelain_out = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&repo_root)
+        .output();
+    let already_exists = if let Ok(out) = porcelain_out {
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        text.lines().any(|line| line == format!("branch refs/heads/{}", branch))
+    } else {
+        false
+    };
+
+    if !already_exists {
+        // 4. Create the worktree: `git worktree add hex-worktrees-{branch} -b {branch}`
+        let worktree_dir = format!("hex-worktrees-{}", branch);
+        let add_out = std::process::Command::new("git")
+            .args(["worktree", "add", &worktree_dir, "-b", branch])
+            .current_dir(&repo_root)
+            .output();
+        match add_out {
+            Ok(out) if out.status.success() => {
+                eprintln!("[hex hook] step3: created worktree '{}' for branch '{}'", worktree_dir, branch);
+                // Update worktree_path to the absolute path
+                let abs_path = std::path::Path::new(&repo_root).join(&worktree_dir);
+                state.worktree_path = Some(abs_path.to_string_lossy().to_string());
+            }
+            Ok(out) => {
+                eprintln!(
+                    "[hex hook] step3: git worktree add failed: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                );
+            }
+            Err(e) => {
+                eprintln!("[hex hook] step3: could not run git worktree add: {}", e);
+            }
+        }
+    } else {
+        eprintln!("[hex hook] step3: worktree for branch '{}' already exists, skipping", branch);
+        // Still update worktree_path
+        let worktree_dir = format!("hex-worktrees-{}", branch);
+        let abs_path = std::path::Path::new(&repo_root).join(&worktree_dir);
+        state.worktree_path = Some(abs_path.to_string_lossy().to_string());
+    }
+
+    // 5. Populate allowed_paths from layer derived from branch name
+    for p in derive_allowed_paths(branch) {
+        state.add_allowed_path(&p);
+    }
+}
+
+/// Derive the set of allowed file paths for a worktree branch based on the
+/// layer/adapter encoded in the branch name.
+///
+/// Branch naming conventions:
+///   `feat-<feature>-domain`                  → domain layer
+///   `feat-<feature>-ports`                   → ports layer
+///   `feat-<feature>-secondary-<name>`        → secondary adapter
+///   `feat-<feature>-primary-<name>`          → primary adapter
+///   `feat-<feature>-usecases`                → usecases layer
+///   anything else                            → no layer-specific paths (only universal)
+///
+/// Universal paths (always appended): `docs/`, `tests/`, `config/`, `.hex/`
+fn derive_allowed_paths(branch: &str) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+
+    // Normalise: lower-case, replace underscores with hyphens
+    let b = branch.to_lowercase().replace('_', "-");
+
+    if b.ends_with("-domain") || b.contains("-domain-") {
+        paths.push("src/core/domain/".to_string());
+    } else if b.ends_with("-ports") || b.contains("-ports-") {
+        paths.push("src/core/ports/".to_string());
+    } else if b.ends_with("-usecases") || b.contains("-usecases-") {
+        paths.push("src/usecases/".to_string());
+    } else if let Some(idx) = b.find("-secondary-") {
+        let adapter_name = &b[idx + "-secondary-".len()..];
+        // Strip any trailing segments after the adapter name (e.g. worktree suffix)
+        let name = adapter_name.split('-').next().unwrap_or(adapter_name);
+        paths.push(format!("src/adapters/secondary/{}/", name));
+        // Secondary adapters may also touch Rust crates
+        paths.push("hex-nexus/src/".to_string());
+        paths.push("hex-agent/src/".to_string());
+        paths.push("hex-cli/src/".to_string());
+    } else if let Some(idx) = b.find("-primary-") {
+        let adapter_name = &b[idx + "-primary-".len()..];
+        let name = adapter_name.split('-').next().unwrap_or(adapter_name);
+        paths.push(format!("src/adapters/primary/{}/", name));
+    }
+
+    // Universal cross-cutting paths
+    for p in &["docs/", "tests/", "config/", ".hex/"] {
+        paths.push(p.to_string());
+    }
+
+    paths
+}
+
+/// Returns Err with a message if tier gate is violated (blocking deps not done).
+/// Returns Ok(()) on pass or if enforcement is disabled/unavailable. Fail-open.
+async fn check_tier_gate(
+    client: &reqwest::Client,
+    swarm_id: &str,
+    current_step_id: &str,
+) -> Result<(), String> {
+    // Parse tier from "P{N}.{M}" format
+    let current_tier: u8 = current_step_id
+        .strip_prefix('P')
+        .and_then(|s| s.split('.').next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+
+    if current_tier == 0 {
+        return Ok(()); // Tier 0 has no dependencies
+    }
+
+    // Fetch all tasks for the swarm
+    let url = nexus_url(&format!("/api/swarms/{}/tasks", swarm_id));
+    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Ok(()); // Fail-open on API errors
+    }
+    let tasks: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let arr = match tasks.as_array() {
+        Some(a) => a.clone(),
+        None => return Ok(()),
+    };
+
+    // Find incomplete tasks in a lower tier
+    let mut blocking: Vec<String> = Vec::new();
+    for task in &arr {
+        let title = task["title"].as_str().unwrap_or("");
+        // Parse step_id from JSON field or title pattern like "P0.1"
+        let step_id = if let Some(sid) = task["step_id"].as_str() {
+            sid.to_string()
+        } else {
+            // Try to extract from JSON-encoded title like {"step_id":"P0.1",...}
+            serde_json::from_str::<serde_json::Value>(title)
+                .ok()
+                .and_then(|v| v["step_id"].as_str().map(|s| s.to_string()))
+                .unwrap_or_default()
+        };
+        if step_id.is_empty() {
+            continue;
+        }
+        let tier: u8 = step_id
+            .strip_prefix('P')
+            .and_then(|s| s.split('.').next())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(current_tier);
+        if tier >= current_tier {
+            continue;
+        }
+        let status = task["status"].as_str().unwrap_or("pending");
+        if status == "pending" || status == "in_progress" {
+            blocking.push(format!(
+                "{}({})",
+                step_id,
+                task["id"].as_str().unwrap_or("?")
+            ));
+        }
+    }
+
+    if blocking.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "TIER GATE: step {} (tier {}) cannot start — tier {} tasks still pending: {}",
+            current_step_id,
+            current_tier,
+            current_tier - 1,
+            blocking.join(", ")
+        ))
+    }
+}
+
+/// Fetch the HexFlo task title, find the matching workplan step, and return its
+/// `worktree_branch`. Fail-open: returns `None` on any error.
+async fn resolve_worktree_from_workplan(
+    client: &reqwest::Client,
+    task_id: &str,
+    project_dir: &Path,
+) -> Option<(String, String)> {
+    // 1. Fetch task metadata from nexus to get the title/description
+    let task_url = nexus_url(&format!("/api/hexflo/tasks/{}", task_id));
+    let task_resp = client.get(&task_url).send().await.ok()?;
+    let task_json: serde_json::Value = task_resp.json().await.ok()?;
+    let task_title = task_json
+        .get("title")
+        .or_else(|| task_json.get("description"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if task_title.is_empty() {
+        eprintln!(
+            "[hex hook] subagent-start: task {} has no title, skipping workplan resolution",
+            task_id
+        );
+        return None;
+    }
+
+    // 2. Find active workplan files in docs/workplans/ (newest first)
+    let workplans_dir = project_dir.join("docs/workplans");
+    if !workplans_dir.exists() {
+        return None;
+    }
+
+    let entries = std::fs::read_dir(&workplans_dir).ok()?;
+    let mut candidates: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        .filter_map(|e| {
+            let path = e.path();
+            let mtime = e.metadata().ok()?.modified().ok()?;
+            let raw = std::fs::read_to_string(&path).ok()?;
+            if raw.contains("\"active\"") || raw.contains("\"in_progress\"") {
+                Some((mtime, path))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+
+    for (_, path) in &candidates {
+        let raw = match std::fs::read_to_string(path) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let wp: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(branch) = find_branch_in_workplan(&wp, &task_title) {
+            return Some(branch);
+        }
+    }
+
+    eprintln!(
+        "[hex hook] subagent-start: no workplan step matched task '{}'",
+        task_title
+    );
+    None
+}
+
+/// Walk a workplan JSON for a step whose description contains `task_title`
+/// (case-insensitive substring). Returns the `worktree_branch` field if found.
+fn find_branch_in_workplan(wp: &serde_json::Value, task_title: &str) -> Option<(String, String)> {
+    let check_step = |step: &serde_json::Value| -> Option<(String, String)> {
+        let desc = step
+            .get("description")
+            .or_else(|| step.get("title"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if !desc.is_empty() && (desc.contains(task_title) || task_title.contains(desc.as_str())) {
+            let branch = step.get("worktree_branch")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let step_id = step.get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if branch.is_empty() { None } else { Some((branch, step_id)) }
+        } else {
+            None
+        }
+    };
+
+    // Flat steps array
+    if let Some(steps) = wp.get("steps").and_then(|v| v.as_array()) {
+        for step in steps {
+            if let Some(b) = check_step(step) {
+                return Some(b);
+            }
+        }
+    }
+
+    // Phases with nested steps
+    if let Some(phases) = wp.get("phases").and_then(|v| v.as_array()) {
+        for phase in phases {
+            if let Some(steps) = phase.get("steps").and_then(|v| v.as_array()) {
+                for step in steps {
+                    if let Some(b) = check_step(step) {
+                        return Some(b);
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Extract a value after a PREFIX: marker (e.g. HEXFLO_WORKPLAN:wp-foo → "wp-foo").
@@ -467,6 +878,121 @@ async fn subagent_stop() -> Result<()> {
     // Clear the current task from session state
     let mut state = state;
     state.current_task_id = None;
+
+    // Auto-merge and cleanup worktree if one was set for this task (ADR-2603231700)
+    if let Some(ref branch) = state.worktree_branch.clone() {
+        let branch = branch.clone();
+
+        // Check if subagent result indicates failure — skip merge if so
+        let looks_like_failure = result.to_lowercase().contains("error")
+            || result.to_lowercase().contains("failed");
+
+        // Find repo root (fail-open)
+        let repo_root_opt = std::process::Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .ok()
+            .and_then(|o| if o.status.success() {
+                String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+            } else {
+                None
+            });
+
+        if let Some(repo_root) = repo_root_opt {
+            // Check the branch exists
+            let branch_exists = std::process::Command::new("git")
+                .args(["branch", "--list", &branch])
+                .current_dir(&repo_root)
+                .output()
+                .ok()
+                .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+                .unwrap_or(false);
+
+            let mut merge_ok = false;
+
+            if !branch_exists {
+                eprintln!("[hex hook] subagent_stop: branch '{}' not found, skipping merge", branch);
+            } else if looks_like_failure {
+                eprintln!("[hex hook] subagent_stop: result looks like failure, skipping merge of '{}'", branch);
+            } else {
+                // Merge the worktree branch into current branch
+                let merge_msg = format!("feat(worktree): merge {}", branch);
+                let merge_out = std::process::Command::new("git")
+                    .args(["merge", "--no-ff", &branch, "-m", &merge_msg])
+                    .current_dir(&repo_root)
+                    .output();
+
+                match merge_out {
+                    Ok(o) if o.status.success() => {
+                        eprintln!("[hex hook] subagent_stop: merged branch '{}'", branch);
+                        merge_ok = true;
+                    }
+                    Ok(o) => {
+                        eprintln!(
+                            "[hex hook] subagent_stop: merge of '{}' failed: {}",
+                            branch,
+                            String::from_utf8_lossy(&o.stderr).trim()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("[hex hook] subagent_stop: merge command error for '{}': {}", branch, e);
+                    }
+                }
+            }
+
+            // Remove worktree (regardless of merge outcome)
+            let worktree_dir = format!("hex-worktrees-{}", branch);
+            let rm_out = std::process::Command::new("git")
+                .args(["worktree", "remove", "--force", &worktree_dir])
+                .current_dir(&repo_root)
+                .output();
+
+            match rm_out {
+                Ok(o) if o.status.success() => {
+                    eprintln!("[hex hook] subagent_stop: removed worktree '{}'", worktree_dir);
+                }
+                Ok(o) => {
+                    eprintln!(
+                        "[hex hook] subagent_stop: worktree remove failed: {}",
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    );
+                }
+                Err(e) => {
+                    eprintln!("[hex hook] subagent_stop: worktree remove error: {}", e);
+                }
+            }
+
+            // Delete the branch (safe delete — only if merged)
+            if merge_ok {
+                let del_out = std::process::Command::new("git")
+                    .args(["branch", "-d", &branch])
+                    .current_dir(&repo_root)
+                    .output();
+
+                match del_out {
+                    Ok(o) if o.status.success() => {
+                        eprintln!("[hex hook] subagent_stop: deleted branch '{}'", branch);
+                    }
+                    Ok(o) => {
+                        eprintln!(
+                            "[hex hook] subagent_stop: branch delete failed: {}",
+                            String::from_utf8_lossy(&o.stderr).trim()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("[hex hook] subagent_stop: branch delete error: {}", e);
+                    }
+                }
+            }
+        } else {
+            eprintln!("[hex hook] subagent_stop: could not determine repo root, skipping worktree cleanup");
+        }
+
+        // Clear worktree state
+        state.worktree_branch = None;
+        state.worktree_path = None;
+    }
+
     state.save()?;
 
     Ok(())
@@ -617,6 +1143,24 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
                 // ADR-050: Validate file falls within workplan adapter boundary
                 if let Some(ref workplan_id) = state.workplan_id {
                     validate_workplan_boundary(project_dir, file_path, workplan_id)?;
+                }
+
+                // ADR-2603231700: Enforce adapter boundary via allowed_paths.
+                // Only active when allowed_paths is non-empty (set by step-2 worktree setup).
+                // Mode: HEX_BOUNDARY_MODE=mandatory|advisory (default: advisory for safe rollout).
+                if !state.allowed_paths.is_empty() && !state.is_path_allowed(file_path) {
+                    let boundary_mode = std::env::var("HEX_BOUNDARY_MODE")
+                        .unwrap_or_else(|_| "advisory".to_string());
+                    let msg = format!(
+                        "BOUNDARY VIOLATION: {} is outside allowed adapter boundary. Allowed: {:?}",
+                        file_path, state.allowed_paths
+                    );
+                    if boundary_mode == "mandatory" {
+                        println!("{}", msg);
+                        std::process::exit(2);
+                    } else {
+                        println!("WARNING: {}", msg);
+                    }
                 }
             }
         }
@@ -832,6 +1376,103 @@ async fn pre_bash() -> Result<()> {
     Ok(())
 }
 
+/// ADR-2603301200: Refresh the architecture fingerprint when key project files have changed.
+///
+/// Key files: docs/adrs/*.md, docs/workplans/*.json, go.mod, Cargo.toml, package.json.
+/// The last generation timestamp is cached in session state — avoiding a nexus round-trip
+/// on every prompt. When stale, regenerates silently (best-effort) and prints the updated
+/// fingerprint block to stdout so Claude Code picks it up as fresh context.
+async fn refresh_fingerprint_if_stale(project_dir: &Path) -> Result<()> {
+    // Only run when nexus is available and project is registered
+    let project_json = project_dir.join(".hex/project.json");
+    if !project_json.exists() {
+        return Ok(());
+    }
+    let content = std::fs::read_to_string(&project_json)?;
+    let project: serde_json::Value = serde_json::from_str(&content)?;
+    let project_id = match project["id"].as_str() {
+        Some(id) if !id.is_empty() => id.to_string(),
+        _ => return Ok(()),
+    };
+
+    // Load the last known fingerprint generation time from session state
+    let last_generated: Option<std::time::SystemTime> = SessionState::load()
+        .and_then(|s| s.fingerprint_generated_at)
+        .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts).ok())
+        .map(|dt| std::time::UNIX_EPOCH + std::time::Duration::from_secs(dt.timestamp() as u64));
+
+    // Check modification times of key project files
+    let key_globs: &[&str] = &["docs/adrs", "docs/workplans", "go.mod", "Cargo.toml", "package.json"];
+    let mut latest_mtime: Option<std::time::SystemTime> = None;
+
+    for rel in key_globs {
+        let full = project_dir.join(rel);
+        if full.is_file() {
+            if let Ok(meta) = std::fs::metadata(&full) {
+                if let Ok(mtime) = meta.modified() {
+                    if latest_mtime.map_or(true, |prev| mtime > prev) {
+                        latest_mtime = Some(mtime);
+                    }
+                }
+            }
+        } else if full.is_dir() {
+            // Check all files one level deep in the directory
+            if let Ok(entries) = std::fs::read_dir(&full) {
+                for entry in entries.flatten() {
+                    if let Ok(meta) = entry.metadata() {
+                        if let Ok(mtime) = meta.modified() {
+                            if latest_mtime.map_or(true, |prev| mtime > prev) {
+                                latest_mtime = Some(mtime);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Determine if regeneration is needed:
+    // - No fingerprint generated yet in this session, OR
+    // - A key file is newer than the last generation
+    let needs_refresh = match (last_generated, latest_mtime) {
+        (None, _) => true,
+        (Some(gen), Some(mtime)) => mtime > gen,
+        (Some(_), None) => false,
+    };
+
+    if !needs_refresh {
+        return Ok(());
+    }
+
+    // Best-effort regeneration — don't block or fail the hook on errors
+    let nexus = crate::nexus_client::NexusClient::from_env();
+
+    // Find active workplan path from session state
+    let workplan_path = SessionState::load()
+        .and_then(|s| s.workplan_id)
+        .map(|id| format!("docs/workplans/{}.json", id))
+        .unwrap_or_default();
+
+    let fp_body = serde_json::json!({
+        "project_root": project_dir.display().to_string(),
+        "workplan_path": workplan_path,
+    });
+
+    if let Ok(_) = nexus.post_long(&format!("/api/projects/{}/fingerprint", project_id), &fp_body).await {
+        // Update session state timestamp
+        if let Some(mut state) = SessionState::load() {
+            state.fingerprint_generated_at = Some(chrono::Utc::now().to_rfc3339());
+            let _ = state.save();
+        }
+        // Print updated fingerprint as context for Claude Code
+        if let Some(fp_text) = nexus.fetch_fingerprint_text(&project_id).await {
+            println!("\n{}", fp_text);
+        }
+    }
+
+    Ok(())
+}
+
 async fn route(project_dir: &Path) -> Result<()> {
     let tool_input = std::env::var("TOOL_INPUT").unwrap_or_default();
 
@@ -840,6 +1481,9 @@ async fn route(project_dir: &Path) -> Result<()> {
 
     // ADR-060: Check agent inbox for critical notifications
     let _ = check_inbox().await;
+
+    // ADR-2603301200: Refresh architecture fingerprint if key project files have changed
+    let _ = refresh_fingerprint_if_stale(project_dir).await;
 
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
         if let Some(content) = input["content"].as_str() {

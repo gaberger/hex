@@ -10,6 +10,7 @@ import ToastContainer from '../components/layout/ToastContainer';
 import ShortcutsOverlay from '../components/layout/ShortcutsOverlay';
 import { spawnDialogOpen, setSpawnDialogOpen, commandPaletteOpen, setCommandPaletteOpen, swarmInitDialogOpen, setSwarmInitDialogOpen, shortcutsOpen, setShortcutsOpen } from '../stores/ui';
 import { startNexusHealthPoll, stopNexusHealthPoll } from '../stores/nexus-health';
+import ConnectionStatusBanner from '../components/layout/ConnectionStatusBanner';
 import { mode, toggleMode } from '../stores/mode';
 import { initChatConnection, disconnectChat } from '../stores/chat';
 import { startHexFloMonitor } from '../stores/hexflo-monitor';
@@ -217,6 +218,8 @@ const App: Component = () => {
 
   return (
     <div class="flex h-screen flex-col bg-gray-950 text-gray-100">
+      {/* Connection status banner — shown when nexus or SpacetimeDB is unavailable */}
+      <ConnectionStatusBanner />
       {/* TopBar */}
       <header class="flex h-12 shrink-0 items-center justify-between border-b border-gray-800 bg-gray-900 px-4">
         <div class="flex items-center gap-3">

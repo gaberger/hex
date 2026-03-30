@@ -52,19 +52,32 @@ function formatUptime(startedAt: string | undefined): string {
 // ---------------------------------------------------------------------------
 
 const AgentFleet: Component = () => {
+  // When a project is selected, scope to that project's agents only.
+  const projectId = createMemo(() => activeProjectId());
+
+  const filteredAgents = createMemo(() => {
+    const pid = projectId();
+    if (!pid) return registryAgents();
+    return registryAgents().filter((a: any) =>
+      matchesProject(pid, getEntityProjectRef(a)) ||
+      matchesProject(pid, getAgentProjectDir(a)) ||
+      matchesProject(pid, a.project_id ?? a.projectId ?? a.project ?? "")
+    );
+  });
+
   const localAgents = createMemo(() => {
-    return registryAgents().filter(
+    return filteredAgents().filter(
       (a: any) => !a.host && !a.remote && !a.transport
     );
   });
 
   const remoteAgents = createMemo(() => {
-    return registryAgents().filter(
+    return filteredAgents().filter(
       (a: any) => a.host || a.remote || a.transport
     );
   });
 
-  const totalCount = createMemo(() => registryAgents().length);
+  const totalCount = createMemo(() => filteredAgents().length);
 
   /** Group local agents by project. Returns null when grouping adds no value. */
   const agentsByProject = createMemo(() => {
@@ -123,6 +136,7 @@ const AgentFleet: Component = () => {
           <h2 class="text-[22px] font-bold text-gray-100">Agent Fleet</h2>
           <p class="mt-0.5 text-xs text-gray-400">
             {totalCount()} agent{totalCount() !== 1 ? "s" : ""} registered
+            {projectId() ? " in this project" : " across all projects"}
           </p>
         </div>
 
@@ -222,7 +236,7 @@ const AgentFleet: Component = () => {
                 };
 
                 return (
-                  <div class="flex flex-col gap-2.5 rounded-xl border border-gray-800 bg-gray-900 p-4">
+                  <div class="flex flex-col gap-2.5 rounded-xl border border-indigo-900/40 bg-gray-900 p-4 ring-1 ring-inset ring-indigo-900/20">
                     {/* Top row */}
                     <div class="flex items-center justify-between">
                       <div class="flex items-center gap-2">
@@ -231,11 +245,16 @@ const AgentFleet: Component = () => {
                           {name()}
                         </span>
                       </div>
-                      <span
-                        class={`rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadgeBg(status())}`}
-                      >
-                        {status()}
-                      </span>
+                      <div class="flex items-center gap-1.5">
+                        <span class="rounded-full bg-indigo-900/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-300">
+                          remote
+                        </span>
+                        <span
+                          class={`rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadgeBg(status())}`}
+                        >
+                          {status()}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Connection details */}

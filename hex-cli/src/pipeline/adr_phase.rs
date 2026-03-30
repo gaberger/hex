@@ -12,7 +12,8 @@ use serde_json::json;
 use tracing::{debug, info, warn};
 
 use crate::nexus_client::NexusClient;
-use crate::pipeline::model_selection::{ModelSelector, SelectedModel, TaskType};
+use crate::pipeline::agent_def::AgentDefinition;
+use crate::pipeline::model_selection::{ModelSelector, SelectedModel, TaskType, is_compatible_with_provider};
 use crate::prompts::PromptTemplate;
 
 // ── Result type ──────────────────────────────────────────────────────────
@@ -30,6 +31,10 @@ pub struct AdrPhaseResult {
     pub cost_usd: f64,
     /// Total tokens (input + output).
     pub tokens: u64,
+    /// Prompt tokens (context window usage).
+    pub input_tokens: u64,
+    /// Completion tokens.
+    pub output_tokens: u64,
     /// Wall-clock duration of the inference call in milliseconds.
     pub duration_ms: u64,
     /// The RL selection metadata (for reward reporting).
@@ -96,10 +101,16 @@ impl AdrPhase {
             "rendered ADR prompt"
         );
 
-        // ── 3. Select model via RL ───────────────────────────────────────
+        // ── 3. Select model — YAML definition wins over RL engine ───────
+        let yaml_model = AgentDefinition::load("adr-reviewer")
+            .map(|d| d.model.preferred_model_id().to_string())
+            .filter(|m| is_compatible_with_provider(m, provider_pref));
+        let effective_override = model_override
+            .map(str::to_string)
+            .or(yaml_model);
         let selected = self
             .selector
-            .select_model(TaskType::Reasoning, model_override, provider_pref)
+            .select_model(TaskType::Reasoning, effective_override.as_deref(), provider_pref)
             .await
             .context("model selection failed")?;
         info!(model = %selected.model_id, source = %selected.source, "selected model for ADR generation");
@@ -162,6 +173,8 @@ impl AdrPhase {
             model_used,
             cost_usd,
             tokens,
+            input_tokens,
+            output_tokens,
             duration_ms,
             selected_model: selected,
         })
