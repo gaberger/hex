@@ -1,0 +1,385 @@
+# dev-tracker — Persistent development process tracker (HexFlo-backed)
+#
+# HexFlo does the heavy lifting:
+#   - Task state: mcp__hex__hex_hexflo_task_create/list/complete/status
+#   - Session memory: mcp__hex__hex_hexflo_memory_store/retrieve/search
+#   - Agent tracking: # removed: agent_spawn (use hex-hub)/list/status
+#   - Swarm topology: mcp__hex__hex_hexflo_swarm_init/status
+#
+# The dev-tracker is a COORDINATOR, not a database. It reads from HexFlo
+# and git, reconciles the two, and decides what to do next. All state
+# lives in HexFlo — nothing in local JSON files.
+
+name: dev-tracker
+type: coordinator
+version: "2.0.0"
+description: >
+  Session-persistent development tracker backed by HexFlo. On every session
+  start, reconciles HexFlo task state against git history. Identifies completed,
+  in-progress, blocked, and next tasks. Spawns agents for the next work items.
+  Converts validation findings into HexFlo tasks automatically.
+
+model:
+  tier: 3
+  preferred: opus
+  fallback: sonnet
+
+# ── HexFlo Memory Keys ────────────────────────────────────
+#
+# All persistent state lives in HexFlo memory. These are the canonical keys.
+# No local JSON files — HexFlo IS the database.
+
+memory_schema:
+  keys:
+    "devtracker/active-feature":
+      type: string
+      description: Name of the feature currently being developed
+    "devtracker/session-count":
+      type: number
+      description: How many sessions have worked on this feature
+    "devtracker/last-session-summary":
+      type: string
+      description: What happened last session (tasks done, decisions made)
+    "devtracker/blocked-tasks":
+      type: json
+      description: "Array of {taskId, reason, unblockCondition}"
+    "devtracker/completed-commits":
+      type: json
+      description: "Map of taskId → commitHash for reconciliation"
+    "devtracker/validation-actions":
+      type: json
+      description: Action items from last hex analyze / validation run
+
+# ── Context ──────────────────────────────────────────────
+
+context:
+  load_on_start:
+    - path: src/core/ports/index.ts
+      level: L1
+      purpose: Port interfaces for task classification
+    - path: src/adapters/
+      level: L0
+      purpose: Adapter inventory for task assignment
+  token_budget:
+    max: 40000
+    reserved_response: 10000
+
+# ── Constraints ──────────────────────────────────────────
+
+constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_analyze, mcp__hex__hex_hexflo_task_list, mcp__hex__hex_status instead of Bash."
+  - Never write application code directly (delegate to hex-coder agents)
+  - All task state lives in HexFlo — never create local tracking JSON files
+  - Always reconcile HexFlo tasks against git log before creating new tasks
+  - Always store session summary in HexFlo memory before ending
+  - When validation finds bugs, create HexFlo tasks immediately
+
+# ── Tools ────────────────────────────────────────────────
+
+tools:
+  required:
+    - Read
+    - Glob
+    - Grep
+    - Bash          # git log, git diff, git branch, git worktree list
+  hexflo_tasks:
+    - mcp__hex__hex_hexflo_task_create
+    - mcp__hex__hex_hexflo_task_list
+    - mcp__hex__hex_hexflo_task_complete
+    - mcp__hex__hex_hexflo_swarm_status
+  hexflo_memory:
+    - mcp__hex__hex_hexflo_memory_store
+    - mcp__hex__hex_hexflo_memory_retrieve
+    - mcp__hex__hex_hexflo_memory_search
+  hexflo_swarm:
+    - mcp__hex__hex_hexflo_swarm_init
+    - mcp__hex__hex_hexflo_swarm_status
+    - # removed: agent_spawn (use hex-hub)
+    - # removed: agent_list (use hex-hub)
+  hex_analysis:
+    - mcp__hex__hex_analyze
+    - mcp__hex__hex_validate_boundaries
+    - mcp__hex__hex_status
+
+# ── Inputs ───────────────────────────────────────────────
+
+inputs:
+  action:
+    type: string
+    enum: [start, resume, status, plan, validate, close]
+    required: true
+    description: >
+      start:     Reconcile state, show progress, recommend next steps
+      resume:    Pick up the next unfinished task and spawn agents
+      status:    Show progress report (read-only)
+      plan:      Create HexFlo tasks for new requirements
+      validate:  Run hex analyze, convert findings to HexFlo tasks
+      close:     Write session summary to HexFlo memory
+  requirements:
+    type: string[]
+    required: false
+    description: New requirements (only with action=plan)
+  feature_name:
+    type: string
+    required: false
+
+# ── Outputs ──────────────────────────────────────────────
+
+outputs:
+  session_report:
+    type: object
+    schema:
+      active_feature: string | null
+      session_number: number
+      progress:
+        total: number
+        completed: number
+        in_progress: number
+        blocked: number
+        not_started: number
+        percent: number
+      recent_completions: string[]
+      next_tasks: string[]
+      blocked_items: string[]
+      health_score: number
+      recommendation: string
+
+# ── Workflow ─────────────────────────────────────────────
+
+workflow:
+  phases:
+
+    # ═══════════════════════════════════════════════════════
+    # START SESSION — "Where are we?"
+    # ═══════════════════════════════════════════════════════
+    - id: start
+      name: "Session Start — Reconcile & Report"
+      steps:
+        - id: load-hexflo-state
+          action: |
+            mcp__hex__hex_hexflo_task_list()           → get all registered tasks
+            mcp__hex__hex_hexflo_memory_retrieve("devtracker/active-feature")
+            mcp__hex__hex_hexflo_memory_retrieve("devtracker/last-session-summary")
+            mcp__hex__hex_hexflo_memory_retrieve("devtracker/blocked-tasks")
+            mcp__hex__hex_hexflo_memory_retrieve("devtracker/completed-commits")
+            mcp__hex__hex_hexflo_swarm_status()        → get agent state
+
+        - id: reconcile-with-git
+          action: |
+            Run: git log --oneline -20
+            Run: git branch --list 'feat/*'
+            Run: git worktree list
+
+            For each HexFlo task that is NOT completed:
+              1. Search git log for commits mentioning the task ID or adapter name
+              2. If commit found → mcp__hex__hex_hexflo_task_complete(taskId, commitHash)
+              3. If feat/ branch exists → task is in-progress
+              4. If feat/ branch was deleted → check if merged
+
+            For each completed HexFlo task:
+              1. Verify commit hash still exists (not rebased away)
+
+            Update mcp__hex__hex_hexflo_memory_store("devtracker/completed-commits", ...)
+
+        - id: run-health-check
+          action: |
+            mcp__hex__hex_analyze(".")        → get health score + violations
+            If new violations found since last session:
+              Convert to HexFlo tasks via action-items extractor
+              mcp__hex__hex_hexflo_task_create for each critical/high item
+
+        - id: present-status
+          action: |
+            Format and display to user:
+
+            ┌─────────────────────────────────────────────┐
+            │  DEV TRACKER — Session #N                   │
+            ├─────────────────────────────────────────────┤
+            │  Feature:  <name>                           │
+            │  Progress: ██████░░░░ 60% (6/10)           │
+            │  Health:   85/100 (B)                       │
+            │  Last:     <summary of last session>        │
+            ├─────────────────────────────────────────────┤
+            │  ✓ Completed: domain entities, port ifaces  │
+            │  → Active:   secondary/db-adapter           │
+            │  ○ Next:     primary/http-adapter            │
+            │  ✗ Blocked:  integration tests (needs db)   │
+            ├─────────────────────────────────────────────┤
+            │  Recommendation: Resume db-adapter work     │
+            └─────────────────────────────────────────────┘
+
+    # ═══════════════════════════════════════════════════════
+    # PLAN — "What needs doing?"
+    # ═══════════════════════════════════════════════════════
+    - id: plan
+      name: "Plan — Decompose into HexFlo Tasks"
+      steps:
+        - id: decompose
+          action: |
+            Spawn planner agent to decompose requirements
+            Planner outputs a workplan with adapter-bounded tasks
+
+        - id: register-in-hexflo
+          action: |
+            For each task in the workplan:
+              mcp__hex__hex_hexflo_task_create({
+                title: task.description,
+                metadata: {
+                  adapter: task.adapter,
+                  port: task.port,
+                  tier: task.dependencyTier,
+                  feature: feature_name
+                }
+              })
+
+            mcp__hex__hex_hexflo_memory_store("devtracker/active-feature", feature_name)
+
+    # ═══════════════════════════════════════════════════════
+    # RESUME — "Do the next thing"
+    # ═══════════════════════════════════════════════════════
+    - id: resume
+      name: "Resume — Spawn Agents for Next Tasks"
+      steps:
+        - id: pick-next-tasks
+          action: |
+            mcp__hex__hex_hexflo_task_list()
+            Filter to: status != completed, all dependencies met
+            Sort by: dependency tier (lowest first), then priority
+
+            Select up to maxAgents tasks from the lowest available tier
+
+        - id: spawn-agents
+          action: |
+            For each selected task:
+              1. Check if git worktree exists for this adapter
+              2. If not: git worktree add ../hex-<adapter> feat/<adapter>
+              3. Spawn hex-coder agent:
+                   Agent tool: {
+                     subagent_type: "general-purpose",
+                     mode: "bypassPermissions",
+                     run_in_background: true,
+                     prompt: <task context including port interface, related completions>
+                   }
+              4. # removed: agent_spawn (use hex-hub)(agentId, taskId)
+
+        - id: update-state
+          action: |
+            mcp__hex__hex_hexflo_memory_store("devtracker/session-count", N+1)
+
+    # ═══════════════════════════════════════════════════════
+    # VALIDATE — "Check quality, create fix tasks"
+    # ═══════════════════════════════════════════════════════
+    - id: validate
+      name: "Validate — Run Analysis, Create Fix Tasks"
+      steps:
+        - id: run-analysis
+          action: |
+            mcp__hex__hex_analyze(".")
+            Parse ArchAnalysisResult through extractArchActions()
+
+        - id: create-fix-tasks
+          action: |
+            For each action item with priority critical or high:
+              mcp__hex__hex_hexflo_task_create({
+                title: item.title,
+                metadata: {
+                  category: item.category,
+                  priority: item.priority,
+                  file: item.file,
+                  suggestedFix: item.suggestedFix,
+                  source: "validation",
+                  autoFixable: item.autoFixable
+                }
+              })
+
+            Store full action item report:
+              mcp__hex__hex_hexflo_memory_store("devtracker/validation-actions", report)
+
+        - id: report-results
+          action: |
+            Display formatted ACTION ITEMS report to user
+            Show which items were auto-created as HexFlo tasks
+
+    # ═══════════════════════════════════════════════════════
+    # STATUS — "Progress report (read-only)"
+    # ═══════════════════════════════════════════════════════
+    - id: status
+      name: "Status — Progress Report"
+      steps:
+        - id: gather
+          action: |
+            mcp__hex__hex_hexflo_task_list()
+            mcp__hex__hex_hexflo_memory_retrieve("devtracker/active-feature")
+            mcp__hex__hex_analyze(".")
+
+        - id: format
+          action: |
+            DEVELOPMENT PROGRESS REPORT
+            ═══════════════════════════
+
+            Feature: <name>
+            Health:  <score>/100 (<grade>)
+
+            ┌────────────────────────┬──────────┬─────────┬────────┐
+            │ Task                   │ Layer    │ Status  │ Commit │
+            ├────────────────────────┼──────────┼─────────┼────────┤
+            │ Define entities        │ domain   │ ✓ Done  │ abc123 │
+            │ Port interfaces        │ ports    │ ✓ Done  │ def456 │
+            │ DB adapter             │ sec.     │ → WIP   │        │
+            │ HTTP handler           │ pri.     │ ○ Next  │        │
+            │ Fix: hardcoded year    │ sec.     │ ! Bug   │        │
+            │ Integration tests      │ tests    │ ✗ Block │        │
+            └────────────────────────┴──────────┴─────────┴────────┘
+
+            Tier Progress:
+              T0 domain+ports:    ██████████ 100%
+              T1 sec. adapters:   █████░░░░░  50%
+              T2 pri. adapters:   ░░░░░░░░░░   0%
+              T3 usecases+comp:   ░░░░░░░░░░   0%
+              T4 integration:     ░░░░░░░░░░   0%
+
+    # ═══════════════════════════════════════════════════════
+    # CLOSE — "Save state for next session"
+    # ═══════════════════════════════════════════════════════
+    - id: close
+      name: "Close Session — Persist to HexFlo"
+      steps:
+        - id: summarize
+          action: |
+            Review what happened:
+              - Tasks completed this session (from HexFlo task transitions)
+              - Tasks started but not finished
+              - Decisions made
+              - Validation results
+
+        - id: persist
+          action: |
+            mcp__hex__hex_hexflo_memory_store("devtracker/last-session-summary",
+              "Session #N: Completed [tasks]. Started [tasks]. Health: X/100.")
+            mcp__hex__hex_hexflo_memory_store("devtracker/session-count", N)
+            mcp__hex__hex_hexflo_memory_store("devtracker/blocked-tasks", [...])
+
+        - id: recommend
+          action: |
+            Tell the user:
+              - What's ready for next session
+              - Any blockers needing external resolution
+              - "Run 'dev-tracker start' next session to pick up here"
+
+# ── Agent Assignment Rules ───────────────────────────────
+
+agent_routing:
+  description: >
+    The dev-tracker decides which agent type to spawn based on
+    the task's layer and category. All spawns go through HexFlo
+    for tracking.
+  rules:
+    domain:           { agent: hex-coder, mode: bypassPermissions }
+    ports:            { agent: hex-coder, mode: bypassPermissions }
+    secondary-adapter: { agent: hex-coder, mode: bypassPermissions }
+    primary-adapter:  { agent: hex-coder, mode: bypassPermissions }
+    usecase:          { agent: hex-coder, mode: bypassPermissions }
+    integration-test: { agent: integrator, mode: bypassPermissions }
+    validation:       { agent: validation-judge, mode: bypassPermissions }
+    bug-fix:          { agent: hex-coder, mode: bypassPermissions }
+    spec-writing:     { agent: behavioral-spec-writer, mode: bypassPermissions }

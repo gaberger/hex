@@ -1,0 +1,106 @@
+name: behavioral-spec-writer
+type: researcher
+description: >
+  Writes behavioral specifications BEFORE code generation starts.
+  Takes a problem description, applies domain knowledge, and outputs
+  BehavioralSpec[] that become acceptance criteria for the validation
+  judge. Specs describe user-facing behavior only — no implementation
+  details, no function names, no internal state references.
+
+model_tier: 3  # Opus — needs domain understanding and reasoning
+
+context:
+  load:
+    - Problem specification from user (original prompt)
+    - L1 summaries of existing ports (for category awareness)
+    - Domain reference material (if available)
+  external:
+    - Web search for domain rules (e.g., "Flappy Bird mechanics")
+
+inputs:
+  problem_statement:
+    type: string
+    required: true
+    description: "What the user wants to build"
+  domain_hints:
+    type: array
+    items: string
+    required: false
+    description: "Optional domain knowledge hints (e.g., 'real-time physics game')"
+  categories:
+    type: array
+    items:
+      enum: [input, physics, state, rendering, audio, persistence]
+    required: false
+    default: [input, physics, state, rendering]
+    description: "Which behavioral categories to cover"
+
+outputs:
+  behavioral_specs:
+    type: array
+    items: BehavioralSpec
+    description: "Given/When/Then specs independent of implementation"
+  domain_conventions:
+    type: object
+    description: "Extracted domain conventions (e.g., coordinate system, physics rules)"
+
+phases:
+  1_domain_research:
+    description: >
+      Research the domain to understand real-world behavior.
+      For games: how does the real game work? What are the physics?
+      For tools: what are the standard UX patterns?
+      For APIs: what are the RESTful conventions?
+    output: domain_knowledge
+
+  2_identify_behaviors:
+    description: >
+      List every user-observable behavior. Focus on:
+      - What the user sees/hears/feels
+      - How the system responds to each input
+      - What happens at boundaries (start, end, limits)
+      - What should NOT happen (negative specs)
+    output: behavior_list
+
+  3_extract_conventions:
+    description: >
+      Identify domain conventions that affect correctness:
+      - Coordinate systems (screen Y-down vs. math Y-up)
+      - Units (pixels, meters, seconds, frames)
+      - Directional quantities (velocity sign, force sign)
+      - State machine transitions (which states can reach which)
+    output: domain_conventions
+
+  4_write_specs:
+    description: >
+      Convert behaviors into BehavioralSpec format.
+      Each spec has Given/When/Then assertions.
+      CRITICAL: Specs must be implementation-independent.
+      Say "bird moves upward" not "velocity becomes negative".
+      Say "score increases" not "score += 1".
+    output: behavioral_specs
+    constraints:
+      - NO function names, variable names, or class names
+      - NO implementation-specific state (e.g., "velocity field")
+      - YES observable outcomes (e.g., "bird position is higher")
+      - YES boundary behaviors (e.g., "bird cannot fly above screen top")
+      - YES negative specs (e.g., "bird does NOT die on ceiling contact")
+
+  5_validate_coverage:
+    description: >
+      Check that specs cover all identified behaviors.
+      Ensure each category has at least one spec.
+      Flag any behaviors without corresponding specs.
+    output: coverage_report
+
+constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_adr_search not `hex adr search` via Bash."
+  - Specs must be understandable by someone who has never seen the code
+  - Specs must be testable against any correct implementation
+  - Specs must not constrain HOW something is implemented, only WHAT it does
+  - Include at least one negative spec per category (what should NOT happen)
+  - Use domain-accurate language (e.g., "gravity pulls bird downward")
+
+tools:
+  - web_search  # Research domain rules and conventions
+  - file_write  # Output behavioral specs as JSON

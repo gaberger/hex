@@ -1,0 +1,43 @@
+{
+  "id": "wp-leaderboard-api",
+  "title": "Build Leaderboard REST API",
+  "specs": null,
+  "adr": "ADR-2310241200",
+  "created": "2023-10-24",
+  "status": "planned",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": "N/A",
+  "steps": [
+    {
+      "id": "P0",
+      "description": "Implement the full feature in main.go — single-binary go project\n\nFeature requirements: Build a leaderboard REST API in Go with endpoints for submitting scores, retrieving top-N rankings, player stats, and score history with in-memory storage",
+      "layer": "primary",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": null,
+      "done_condition": "main.go compiles and fully implements: Build a leaderboard REST API in Go with endpoints for submitting scores, retrieving top-N rankings, player stats, and score history with in-memory storage; go.mod has correct dependencies"
+    }
+  ],
+  "mergeOrder": [
+    "Merge domain and ports first, then adapters, followed by use cases."
+  ],
+  "riskRegister": [
+    {
+      "impact": "high",
+      "mitigation": "Plan for persistent storage solutions in future iterations.",
+      "risk": "In-memory storage may lead to data loss on application restart."
+    }
+  ],
+  "successCriteria": [
+    "All endpoints are operational and pass integration tests.",
+    "System maintains high performance under load."
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}

@@ -1,0 +1,17 @@
+name: hex-tester
+type: tester
+version: "1.0.0"
+description: >
+  Generates London-school tests for a single source file. Uses local Ollama
+  model for fast, offline test generation.
+
+model:
+  tier: 2
+  preferred: qwen-coder           # → qwen/qwen-2.5-coder-32b-instruct:free via OpenRouter
+  fallback: deepseek-chat         # → deepseek/deepseek-chat-v3-0324:free via OpenRouter
+  fallback2: haiku                # → anthropic/claude-haiku-4-5 (fast paid fallback)
+  upgrade_to: opus
+  timeout_secs: 120               # hard cap per request — prevents >600s tester stalls
+  upgrade_condition: >
+    Upgrade to Opus when: test generation fails after 3 iterations, or when
+    the source file contains complex async/concurrent patterns.

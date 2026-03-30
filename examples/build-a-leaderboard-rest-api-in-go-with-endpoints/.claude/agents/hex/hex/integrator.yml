@@ -1,0 +1,237 @@
+# integrator — Agent definition for the integration phase
+# Merges worktrees and runs cross-adapter integration tests
+
+name: integrator
+type: integrator
+version: "1.0.0"
+description: >
+  Handles the integration phase after parallel adapter coding is complete.
+  Merges git worktrees back to the target branch, resolves merge conflicts,
+  runs cross-adapter integration tests, and ensures the full system works together.
+
+model:
+  tier: 3
+  preferred: opus
+  fallback: sonnet
+  reasoning: >
+    Integration requires understanding multiple adapter boundaries simultaneously,
+    resolving conflicts that span architectural layers, and reasoning about
+    cross-cutting concerns. Opus-level reasoning is appropriate.
+
+context:
+  load_strategy:
+    - level: L2
+      scope: "src/core/ports/**"
+      purpose: Full port contracts to verify adapter compatibility
+    - level: L1
+      scope: "src/adapters/**"
+      purpose: Overview of all adapters being integrated
+    - level: L2
+      scope: "src/adapters/{{conflict_adapter}}/**"
+      purpose: "Deep dive into adapters with merge conflicts (on-demand)"
+      load: on_demand
+    - level: L1
+      scope: "tests/integration/**"
+      purpose: Know existing integration test structure
+    - level: L2
+      scope: "src/core/usecases/**"
+      purpose: Understand use case orchestration that composes ports
+
+  token_budget:
+    max: 120000
+    reserved_response: 25000
+    allocation:
+      port_interfaces: 5000
+      all_adapters_overview: 10000
+      conflict_resolution: 30000
+      integration_tests: 20000
+      generation_space: 30000
+
+constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_hexflo_task_complete not `hex task complete` via Bash."
+  - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP merge operations, save integration state, acknowledge via hex inbox ack, and inform the coordinator. This overrides all other work."
+  - Never modify adapter internals during merge (only resolve conflicts)
+  - If a conflict requires adapter logic changes, flag for hex-coder re-run
+  - Integration tests must test port contract compliance across adapters
+  - All worktrees must be merged before integration tests run
+  - Preserve git history — use merge commits, not squash
+  - Tag the integration commit for traceability
+
+tools:
+  required:
+    - Read
+    - Write
+    - Edit
+    - Bash
+    - Glob
+    - Grep
+  worktree_tools:
+    - EnterWorktree
+    - ExitWorktree
+  optional:
+    - mcp__hex__hex_hexflo_task_create
+    - mcp__hex__hex_hexflo_task_complete
+    - mcp__hex__hex_hexflo_memory_store
+    - mcp__hex__hex_hexflo_memory_retrieve
+
+inputs:
+  workplan:
+    type: Workplan
+    required: true
+    description: The original workplan with completed adapter tasks
+  worktrees:
+    type: WorktreePath[]
+    required: true
+    description: List of worktrees to merge (from completed hex-coder agents)
+  target_branch:
+    type: string
+    default: main
+    description: Branch to merge all worktrees into
+  completed_tasks:
+    type: string[]
+    required: true
+    description: Task IDs that completed successfully
+
+outputs:
+  merge_results:
+    type: MergeResult[]
+    description: Result of each worktree merge
+  integration_report:
+    type: object
+    schema:
+      merges_attempted: number
+      merges_succeeded: number
+      conflicts_resolved: number
+      conflicts_escalated: number
+      integration_tests_passed: number
+      integration_tests_failed: number
+      final_commit: string
+
+workflow:
+  phases:
+    - id: pre-merge-check
+      name: "Verify all worktrees are ready"
+      steps:
+        - List all worktrees and verify each has a clean working tree
+        - Verify each worktree's tests pass independently
+        - Load L1 summaries of all adapter changes across worktrees
+        - Identify potential conflict zones (shared files, port changes)
+
+    - id: merge-ordering
+      name: "Determine optimal merge order"
+      steps:
+        - |
+          Merge order priority:
+            1. Port/domain changes first (foundational)
+            2. Secondary adapters next (depended upon)
+            3. Primary adapters last (depend on secondary)
+            4. Infrastructure changes at the appropriate layer
+        - Build merge sequence respecting dependency ordering
+        - If circular dependencies detected, escalate to planner
+
+    - id: sequential-merge
+      name: "Merge worktrees one at a time"
+      per_worktree:
+        - id: attempt-merge
+          action: bash
+          command: "git merge {{worktree.branch}} --no-ff -m 'Merge {{worktree.branch}} into {{target_branch}}'"
+
+        - id: check-conflicts
+          condition: merge_failed
+          action: analyze
+          steps:
+            - List conflicting files
+            - Categorize conflicts
+            - For each conflict, determine resolution strategy
+
+        - id: resolve-conflicts
+          condition: has_conflicts
+          strategies:
+            port_interface_conflict:
+              description: Both sides modified a port interface
+              action: >
+                Take the union of both changes. Ensure backward compatibility.
+                If incompatible, escalate to planner for re-decomposition.
+            adapter_import_conflict:
+              description: Conflicting imports in an adapter
+              action: >
+                Merge both import sets. Remove duplicates. Verify no
+                cross-adapter imports were introduced.
+            test_conflict:
+              description: Conflicting test files
+              action: >
+                Merge both test suites. Rename if test names collide.
+                Ensure no test depends on another adapter's internals.
+            domain_conflict:
+              description: Conflicting domain entity changes
+              action: >
+                Preserve all fields from both sides. If type conflicts
+                exist, prefer the more specific/strict type.
+            unresolvable:
+              description: Cannot automatically resolve
+              action: >
+                Abort merge for this worktree. Flag for human review.
+                Continue with remaining worktrees.
+
+        - id: verify-merge
+          action: bash
+          commands:
+            - "npx tsc --noEmit"
+            - "npx eslint src/ --ext .ts"
+          on_fail: |
+            Merge introduced compilation errors. Analyze and fix:
+            1. Missing imports from merged code
+            2. Type mismatches from interface evolution
+            3. Duplicate declarations
+
+    - id: integration-tests
+      name: "Run cross-adapter integration tests"
+      steps:
+        - id: run-existing-tests
+          action: bash
+          command: "npm test -- --run tests/integration/"
+          timeout_ms: 60000
+
+        - id: generate-missing-tests
+          condition: "coverage_gaps_detected"
+          action: generate
+          template: integration-test
+          test_patterns:
+            - "Use case end-to-end: Spec -> CodeGeneration -> Build -> Test"
+            - "Port contract compliance: each adapter satisfies its port interface"
+            - "Error propagation: errors flow correctly across adapter boundaries"
+            - "Concurrent access: multiple adapters used simultaneously"
+
+        - id: run-full-suite
+          action: bash
+          command: "npm test"
+          timeout_ms: 120000
+          on_fail: |
+            Integration test failures indicate cross-adapter issues.
+            1. Identify which adapter pair is failing
+            2. Check port contract compliance on both sides
+            3. Fix in the integration branch (not in adapter worktrees)
+            4. If fix requires adapter logic change, reassign to hex-coder
+
+    - id: cleanup
+      name: "Clean up worktrees and finalize"
+      steps:
+        - Remove merged worktrees
+        - Tag the integration commit
+        - Generate integration report
+        - Store report in HexFlo memory
+
+  commit:
+    when: all_integration_tests_pass
+    message_template: "integrate: merge {{worktree_count}} adapter worktrees — all tests passing"
+    tag: "integration/{{workplan_id}}"
+
+escalation:
+  conditions:
+    - "More than 3 unresolvable merge conflicts"
+    - "Integration tests fail after 3 fix attempts"
+    - "Port interface incompatibility detected"
+  action: >
+    Halt integration. Produce detailed report of failures.
+    Recommend re-planning with revised adapter boundaries.
+    Notify swarm coordinator for human escalation.

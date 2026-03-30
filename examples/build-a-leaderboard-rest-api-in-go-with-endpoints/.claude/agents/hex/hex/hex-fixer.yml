@@ -1,0 +1,17 @@
+name: hex-fixer
+type: fixer
+version: "1.0.0"
+description: >
+  Fixes specific compile, lint, and test errors in generated code. Uses fast
+  OpenRouter models for iterative fixes with Sonnet escalation for hard cases.
+
+model:
+  tier: 2
+  preferred: deepseek-chat      # → deepseek/deepseek-chat-v3-0324:free  (fast, free)
+  fallback: qwen-coder          # → qwen/qwen-2.5-coder-32b-instruct:free (code-specialized)
+  fallback2: haiku              # → anthropic/claude-haiku-4-5 (fast paid fallback)
+  upgrade_to: sonnet            # → anthropic/claude-sonnet-4-6 (after 3 failed fix iterations)
+  upgrade_condition: >
+    Upgrade to Sonnet when: fix loop exceeds 3 iterations without progress, or
+    when errors indicate architectural redesign is needed.
+  timeout_secs: 120

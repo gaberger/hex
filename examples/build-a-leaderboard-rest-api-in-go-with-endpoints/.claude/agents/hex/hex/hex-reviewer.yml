@@ -1,0 +1,15 @@
+name: hex-reviewer
+type: reviewer
+version: "1.0.0"
+description: >
+  Reviews code for quality, hex boundary compliance, and patterns. Uses local
+  Ollama model for fast offline review.
+
+model:
+  tier: 2
+  preferred: qwen3.5:9b
+  fallback: qwen3.5:3b
+  upgrade_to: opus
+  upgrade_condition: >
+    Upgrade to Opus when: review requires deep architectural analysis or
+    cross-adapter boundary reasoning.
