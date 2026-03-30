@@ -1,0 +1,97 @@
+{
+  "id": "wp-p2-1",
+  "title": "Implement primary adapter for FizzBuzz CLI",
+  "specs": "specs/cli-adapter.md",
+  "adr": "ADR-230720T1430",
+  "created": "2023-07-20",
+  "status": "planned",
+  "status_note": "ADR-230720T1430 approved",
+  "topology": "parallel",
+  "budget": "2h",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Create FizzBuzzPort interface in ports layer",
+      "layer": "ports",
+      "adapter": null,
+      "port": "FizzBuzzPort",
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/cli-adapter/ports",
+      "done_condition": "Ports layer passes lint and type checks"
+    },
+    {
+      "id": "P0.2",
+      "description": "Implement CLI adapter structure in primary layer",
+      "layer": "primary",
+      "adapter": "cliAdapter",
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 1,
+      "specs": [
+        "S02"
+      ],
+      "worktree_branch": "feat/cli-adapter/primary",
+      "done_condition": "CLI adapter passes unit tests"
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement FizzBuzz use case in usecases layer",
+      "layer": "usecases",
+      "adapter": null,
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 2,
+      "specs": [
+        "S03"
+      ],
+      "worktree_branch": "feat/cli-adapter/usecases",
+      "done_condition": "Use case passes integration tests"
+    },
+    {
+      "id": "P1.2",
+      "description": "Wire CLI adapter to composition root",
+      "layer": "composition-root",
+      "adapter": "cliAdapter",
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.2",
+        "P1.1"
+      ],
+      "tier": 3,
+      "specs": [
+        "S04"
+      ],
+      "worktree_branch": "feat/cli-adapter/composition-root",
+      "done_condition": "Composition root passes end-to-end tests"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P1.2"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Use ADR-019 parity requirements to define distinct boundaries",
+      "risk": "CLI adapter may duplicate MCP implementation"
+    }
+  ],
+  "successCriteria": [
+    "CLI adapter passes all unit tests",
+    "Composition root handles CLI input/output correctly"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
