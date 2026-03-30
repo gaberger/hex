@@ -33,6 +33,8 @@ pub use rate_limiter::RateLimiterPort;
 pub use batch::BatchPort;
 pub use token_metrics::TokenMetricsPort;
 pub use preflight::PreflightPort;
+pub mod command_session;
+pub use command_session::IBatchExecutionPort;
 
 // Re-export domain types that adapters need (so adapters import from ports, not domain)
 #[allow(unused_imports)]
