@@ -1,0 +1,41 @@
+{
+  "id": "wp-fizzbuzz-domain",
+  "title": "Implement core FizzBuzz logic in domain layer",
+  "specs": "specs/fizzbuzz.md",
+  "adr": "adr-001",
+  "created": "2023-10-05",
+  "status": "planned",
+  "status_note": "",
+  "topology": "pipeline",
+  "budget": "100",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Implement FizzBuzz logic in domain layer with value objects and pure functions",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01",
+        "S02"
+      ],
+      "worktree_branch": "feat/fizzbuzz/domain",
+      "done_condition": "All FizzBuzz tests pass and domain layer is pure"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1"
+  ],
+  "riskRegister": [],
+  "successCriteria": [
+    "FizzBuzz logic implemented correctly",
+    "Domain layer is pure",
+    "All tests pass"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
