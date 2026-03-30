@@ -1,17 +1,17 @@
 {
-  "id": "wp-url-shortener-rest-api",
-  "title": "Implement URL Shortener REST API in Go",
+  "id": "wp-url-shortener",
+  "title": "Implement URL Shortener REST API in Go with In-Memory Storage",
   "specs": null,
-  "adr": "ADR-2310311230",
-  "created": "2023-10-31",
+  "adr": "ADR-2309251030",
+  "created": "2023-09-25",
   "status": "planned",
   "status_note": null,
-  "topology": "mixed",
+  "topology": "pipeline",
   "budget": "token budget estimate",
   "steps": [
     {
       "id": "P0.1",
-      "description": "Implement core logic for URL shortening and retrieval, including value objects and entities for the domain layer.",
+      "description": "Define URL structure and core business logic for URL shortening and retrieval.",
       "layer": "domain",
       "adapter": null,
       "port": null,
@@ -19,11 +19,11 @@
       "tier": 0,
       "specs": [],
       "worktree_branch": "feat/url-shortener/domain",
-      "done_condition": "Core domain logic implemented and unit tested."
+      "done_condition": "Domain logic successfully encapsulated in defined value objects and entities."
     },
     {
       "id": "P0.2",
-      "description": "Define ports for URL shortener operations (e.g., create and retrieve URL), establishing interfaces for interaction with domain logic.",
+      "description": "Create interfaces for URL management to be exposed by the API.",
       "layer": "ports",
       "adapter": null,
       "port": null,
@@ -31,45 +31,50 @@
       "tier": 0,
       "specs": [],
       "worktree_branch": "feat/url-shortener/ports",
-      "done_condition": "Ports implemented and ready for use."
+      "done_condition": "Ports for URL management are defined and ready for integration."
     },
     {
       "id": "P1.1",
-      "description": "Implement in-memory storage solution for managing shortened URLs in the secondary adapter.",
-      "layer": "adapters/secondary",
-      "adapter": "in-memory",
+      "description": "Implement HTTP adapters to handle incoming REST requests and map them to domain functionality.",
+      "layer": "adapters/primary",
+      "adapter": "http",
       "port": null,
       "dependencies": [
         "P0.1",
         "P0.2"
       ],
-      "tier": 1,
+      "tier": 2,
       "specs": [],
-      "worktree_branch": "feat/url-shortener/adapters/secondary",
-      "done_condition": "In-memory storage implemented and integration tested."
+      "worktree_branch": "feat/url-shortener/adapters",
+      "done_condition": "HTTP adapters are successfully processing requests and interfacing with the domain logic."
     },
     {
       "id": "P1.2",
-      "description": "Create REST API endpoints in the primary adapter for handling requests related to URL shortening.",
+      "description": "Run tests to verify that adapters are correctly interacting with the domain and ports.",
       "layer": "adapters/primary",
-      "adapter": "rest",
-      "port": "URLShortener",
+      "adapter": "http",
+      "port": null,
       "dependencies": [
-        "P0.2"
+        "P1.1"
       ],
       "tier": 2,
       "specs": [],
-      "worktree_branch": "feat/url-shortener/adapters/primary",
-      "done_condition": "REST API endpoints created and passing integration tests."
+      "worktree_branch": "feat/url-shortener/adapters",
+      "done_condition": "All adapter tests pass successfully."
     }
   ],
   "mergeOrder": [
-    "Merge domain and ports before secondary and primary adapters"
+    "Merge domain and ports first, then integrate primary adapters."
   ],
-  "riskRegister": [],
+  "riskRegister": [
+    {
+      "impact": "high",
+      "mitigation": "Consider implementing persistent storage in future iterations.",
+      "risk": "Data loss due to in-memory storage."
+    }
+  ],
   "successCriteria": [
-    "API for URL shortening works as intended with in-memory storage.",
-    "All components are tested and validated against requirements."
+    "The URL shortener API is fully functional with in-memory storage and responsive to user requests."
   ],
   "dependencies": {
     "cargo": [],
