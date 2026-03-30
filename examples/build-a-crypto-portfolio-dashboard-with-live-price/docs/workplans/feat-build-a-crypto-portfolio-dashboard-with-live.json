@@ -1,0 +1,122 @@
+{
+  "id": "wp-crypto-portfolio-dashboard",
+  "title": "Build Crypto Portfolio Dashboard with Live Charts",
+  "specs": null,
+  "adr": "ADR-2310231200",
+  "created": "2023-10-23",
+  "status": "planned",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": "token budget estimate",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Define domain models for tracking crypto assets, including value objects and entities.",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/crypto-portfolio/domain",
+      "done_condition": "Domain models are defined and reviewed."
+    },
+    {
+      "id": "P0.2",
+      "description": "Define ports/interfaces for the application to communicate with external services.",
+      "layer": "ports",
+      "adapter": null,
+      "port": "PortfolioServicePort",
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/crypto-portfolio/ports",
+      "done_condition": "Ports/interfaces are defined and reviewed."
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement use cases for retrieving and managing crypto portfolio assets and values.",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1",
+        "P0.2"
+      ],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/crypto-portfolio/usecases",
+      "done_condition": "Use cases are implemented and unit tested."
+    },
+    {
+      "id": "P1.2",
+      "description": "Develop primary adapters using Vite for the user interface components that visualize live data.",
+      "layer": "adapters/primary",
+      "adapter": "Vite",
+      "port": null,
+      "dependencies": [
+        "P0.1",
+        "P0.2"
+      ],
+      "tier": 2,
+      "specs": [],
+      "worktree_branch": "feat/crypto-portfolio/adapters-primary",
+      "done_condition": "Primary UI components are developed and functional."
+    },
+    {
+      "id": "P2.1",
+      "description": "Integrate live data sources for real-time price updates in the dashboard.",
+      "layer": "adapters/secondary",
+      "adapter": "API",
+      "port": "PortfolioServicePort",
+      "dependencies": [
+        "P1.1",
+        "P1.2"
+      ],
+      "tier": 1,
+      "specs": [],
+      "worktree_branch": "feat/crypto-portfolio/adapters-secondary",
+      "done_condition": "Live data integration is tested and operational."
+    },
+    {
+      "id": "P2.2",
+      "description": "Setup composition root to wire up all components and services together.",
+      "layer": "composition-root",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P1.1",
+        "P1.2",
+        "P2.1"
+      ],
+      "tier": 4,
+      "specs": [],
+      "worktree_branch": "feat/crypto-portfolio/composition-root",
+      "done_condition": "Composition root is implemented and all components are integrated."
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P1.2",
+    "P2.1",
+    "P2.2"
+  ],
+  "riskRegister": [
+    {
+      "impact": "high",
+      "mitigation": "Implement caching strategies and handle errors gracefully.",
+      "risk": "Dependency on external real-time data sources may affect performance."
+    }
+  ],
+  "successCriteria": [
+    "Dashboard displays real-time asset prices and visualizations properly.",
+    "Users can track portfolio performance and see profit/loss metrics.",
+    "All components are modular and maintainable."
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
