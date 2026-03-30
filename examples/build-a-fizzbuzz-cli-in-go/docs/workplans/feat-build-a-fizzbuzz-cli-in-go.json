@@ -1,0 +1,131 @@
+{
+  "id": "wp-fizzbuzz-cli-go",
+  "title": "FizzBuzz CLI Implementation",
+  "specs": "specs/fizzbuzz-cli.md",
+  "adr": "adr-0001",
+  "created": "2023-10-05",
+  "status": "planned",
+  "status_note": "Initial planning",
+  "topology": "mixed",
+  "budget": "2 tokens",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Implement core FizzBuzz logic in domain layer",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/fizzbuzz/domain",
+      "done_condition": "FizzBuzz function passes unit tests"
+    },
+    {
+      "id": "P0.2",
+      "description": "Define FizzBuzz port interface in ports layer",
+      "layer": "ports",
+      "adapter": null,
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 0,
+      "specs": [
+        "S02"
+      ],
+      "worktree_branch": "feat/fizzbuzz/ports",
+      "done_condition": "Port interface implemented and documented"
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement CLI primary adapter using FizzBuzz port",
+      "layer": "primary",
+      "adapter": "cli",
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 2,
+      "specs": [
+        "S03"
+      ],
+      "worktree_branch": "feat/fizzbuzz/primary",
+      "done_condition": "CLI binary compiles and runs"
+    },
+    {
+      "id": "P2.1",
+      "description": "Add logging secondary adapter",
+      "layer": "secondary",
+      "adapter": "logger",
+      "port": "FizzBuzzPort",
+      "dependencies": [
+        "P0.2"
+      ],
+      "tier": 1,
+      "specs": [
+        "S04"
+      ],
+      "worktree_branch": "feat/fizzbuzz/secondary",
+      "done_condition": "Logging adapter integrates with FizzBuzz"
+    },
+    {
+      "id": "P3.1",
+      "description": "Compose CLI with FizzBuzz port in composition root",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P1.1"
+      ],
+      "tier": 3,
+      "specs": [
+        "S05"
+      ],
+      "worktree_branch": "feat/fizzbuzz/usecases",
+      "done_condition": "Composition root compiles and initializes CLI"
+    },
+    {
+      "id": "P4.1",
+      "description": "Implement integration tests for CLI-FizzBuzz flow",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P3.1"
+      ],
+      "tier": 5,
+      "specs": [
+        "S06"
+      ],
+      "worktree_branch": "feat/fizzbuzz/integration",
+      "done_condition": "End-to-end tests pass"
+    }
+  ],
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P2.1",
+    "P3.1",
+    "P4.1"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Use port mocking in integration tests",
+      "risk": "CLI adapter not testable in isolation"
+    }
+  ],
+  "successCriteria": [
+    "CLI binary produces correct FizzBuzz output",
+    "Logging adapter captures all CLI operations",
+    "Integration tests validate full CLI flow"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
