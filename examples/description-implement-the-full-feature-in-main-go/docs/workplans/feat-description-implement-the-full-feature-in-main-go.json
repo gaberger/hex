@@ -2,16 +2,16 @@
   "id": "wp-url-shortener-api",
   "title": "Implement URL Shortener REST API in Go",
   "specs": null,
-  "adr": "ADR-2310231200",
-  "created": "2023-10-23",
+  "adr": "ADR-2409231230",
+  "created": "2023-09-24",
   "status": "planned",
   "status_note": null,
   "topology": "pipeline",
-  "budget": "unknown",
+  "budget": "5 tokens",
   "steps": [
     {
       "id": "P0.1",
-      "description": "Develop domain models for URLs including short and long forms.",
+      "description": "Define the core domain logic for URL shortening including value objects and entities.",
       "layer": "domain",
       "adapter": null,
       "port": null,
@@ -19,11 +19,11 @@
       "tier": 0,
       "specs": [],
       "worktree_branch": "feat/url-shortener/domain",
-      "done_condition": "Domain models for URLs are implemented and unit tested"
+      "done_condition": "Core domain logic implemented and tested."
     },
     {
       "id": "P0.2",
-      "description": "Define ports for URL shortening and retrieval functionality.",
+      "description": "Define port interfaces for URL management including creating, retrieving, and managing URLs.",
       "layer": "ports",
       "adapter": null,
       "port": null,
@@ -31,93 +31,103 @@
       "tier": 0,
       "specs": [],
       "worktree_branch": "feat/url-shortener/ports",
-      "done_condition": "Ports for URL operations are defined and documented"
+      "done_condition": "Port interfaces implemented and tested."
     },
     {
       "id": "P1.1",
-      "description": "Implement use case for shortening URLs.",
-      "layer": "usecases",
-      "adapter": null,
-      "port": "URLShortener",
+      "description": "Implement in-memory storage adapter for URLs ensuring it conforms to the domain models.",
+      "layer": "adapters/secondary",
+      "adapter": "in-memory",
+      "port": null,
       "dependencies": [
         "P0.1",
         "P0.2"
       ],
-      "tier": 3,
+      "tier": 1,
       "specs": [],
-      "worktree_branch": "feat/url-shortener/usecases",
-      "done_condition": "Use case for shortening URLs is implemented and tested"
+      "worktree_branch": "feat/url-shortener/adapters/secondary",
+      "done_condition": "In-memory storage adapter implemented and tested."
     },
     {
       "id": "P1.2",
-      "description": "Implement use case for retrieving original URLs from short links.",
-      "layer": "usecases",
-      "adapter": null,
-      "port": "URLRetriever",
-      "dependencies": [
-        "P0.1",
-        "P0.2"
-      ],
-      "tier": 3,
-      "specs": [],
-      "worktree_branch": "feat/url-shortener/usecases",
-      "done_condition": "Use case for retrieving URLs is implemented and tested"
-    },
-    {
-      "id": "P2.1",
-      "description": "Develop the primary adapter for handling HTTP requests for the API.",
-      "layer": "adapters/primary",
-      "adapter": "http",
-      "port": "URLShortener",
-      "dependencies": [
-        "P1.1",
-        "P1.2"
-      ],
-      "tier": 2,
-      "specs": [],
-      "worktree_branch": "feat/url-shortener/adapters_primary",
-      "done_condition": "HTTP adapter for the URL shortener is implemented and can handle requests"
-    },
-    {
-      "id": "P2.2",
-      "description": "Implement API endpoints for shortening and retrieval of URLs.",
+      "description": "Implement HTTP handlers for the REST API to translate requests to internal API calls.",
       "layer": "adapters/primary",
       "adapter": "http",
       "port": null,
       "dependencies": [
-        "P2.1"
+        "P0.2"
       ],
       "tier": 2,
       "specs": [],
-      "worktree_branch": "feat/url-shortener/adapters_primary",
-      "done_condition": "API endpoints for URL shortening and retrieval are up and running with basic tests"
+      "worktree_branch": "feat/url-shortener/adapters/primary",
+      "done_condition": "HTTP handlers implemented and tested."
+    },
+    {
+      "id": "P2.1",
+      "description": "Integrate the use cases logic to handle application-specific requirements for URL shortening.",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1",
+        "P1.1",
+        "P1.2"
+      ],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/url-shortener/usecases",
+      "done_condition": "Use case logic implemented and tested."
     },
     {
       "id": "P3.1",
-      "description": "Create integration tests for the URL shortener API.",
+      "description": "Wiring adapters to ports in the composition root to facilitate integration.",
+      "layer": "composition-root",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1",
+        "P0.2",
+        "P1.1",
+        "P1.2",
+        "P2.1"
+      ],
+      "tier": 4,
+      "specs": [],
+      "worktree_branch": "feat/url-shortener/composition-root",
+      "done_condition": "Composition root wired correctly with no issues."
+    },
+    {
+      "id": "P5.1",
+      "description": "Conduct end-to-end tests to validate the functionality of the URL shortener REST API.",
       "layer": "integration",
       "adapter": null,
       "port": null,
       "dependencies": [
-        "P2.2"
+        "P0.1",
+        "P1.1",
+        "P1.2",
+        "P2.1",
+        "P3.1"
       ],
       "tier": 5,
       "specs": [],
       "worktree_branch": "feat/url-shortener/integration",
-      "done_condition": "Integration tests validate the complete API functionality"
+      "done_condition": "Integration tests pass successfully with correct API responses."
     }
   ],
   "mergeOrder": [
-    "P0",
-    "P1",
-    "P2",
-    "P3"
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P1.2",
+    "P2.1",
+    "P3.1",
+    "P5.1"
   ],
   "riskRegister": [],
   "successCriteria": [
-    "API responds correctly to HTTP requests for shortening and retrieving URLs",
-    "All unit tests for domain, ports, and use cases pass",
-    "Integration tests validate end-to-end functionality"
+    "Successful implementation of URL shortener API with in-memory storage.",
+    "All tests pass and the application meets the specified requirements."
   ],
   "dependencies": {
     "cargo": [],
