@@ -1638,3 +1638,146 @@ pub fn enforcement_rule_delete(
     ctx.db.enforcement_rule().id().delete(&id);
     Ok(())
 }
+
+/// Combined cleanup reducer called by hex-nexus periodically (ADR-042).
+///
+/// `cutoff` is an RFC3339 timestamp — agents and notifications older than
+/// this value are marked stale/dead/expired. Inlines agent_mark_stale,
+/// agent_mark_dead, and expire_stale_notifications in a single transaction.
+#[reducer]
+pub fn coordination_cleanup(
+    ctx: &ReducerContext,
+    cutoff: String,
+) -> Result<(), String> {
+    // 1. Mark active agents as stale if their heartbeat is before the cutoff.
+    let stale: Vec<SwarmAgent> = ctx.db.swarm_agent().iter()
+        .filter(|a| a.status == "active" && a.last_heartbeat < cutoff)
+        .collect();
+    for agent in stale {
+        ctx.db.swarm_agent().id().update(SwarmAgent {
+            status: "stale".to_string(),
+            ..agent
+        });
+    }
+
+    // 2. Mark stale agents as dead and reclaim their in-progress tasks.
+    let dead: Vec<SwarmAgent> = ctx.db.swarm_agent().iter()
+        .filter(|a| a.status == "stale" && a.last_heartbeat < cutoff)
+        .collect();
+    for agent in dead {
+        let orphaned: Vec<SwarmTask> = ctx.db.swarm_task().iter()
+            .filter(|t| t.agent_id == agent.id && t.status == "in_progress")
+            .collect();
+        for task in orphaned {
+            ctx.db.swarm_task().id().update(SwarmTask {
+                status: "pending".to_string(),
+                agent_id: String::new(),
+                ..task
+            });
+        }
+        ctx.db.swarm_agent().id().update(SwarmAgent {
+            status: "dead".to_string(),
+            ..agent
+        });
+    }
+
+    // 3. Expire unacknowledged inbox notifications older than the cutoff.
+    let expired: Vec<AgentInbox> = ctx.db.agent_inbox().iter()
+        .filter(|n| {
+            n.acknowledged_at.is_empty()
+                && n.expired_at.is_empty()
+                && n.created_at < cutoff
+        })
+        .collect();
+    for notif in expired {
+        ctx.db.agent_inbox().id().update(AgentInbox {
+            expired_at: cutoff.clone(),
+            ..notif
+        });
+    }
+
+    Ok(())
+}
+
+// ─── Architecture Fingerprint ──────────────────────────────────────────────
+//
+// ADR-2603301200: Token-efficient architecture context injected into every
+// LLM inference system prompt. Generated from go.mod/package.json/Cargo.toml,
+// workplan, and active ADRs. Prevents models from hallucinating wrong stacks.
+
+#[table(name = architecture_fingerprint, public)]
+#[derive(Clone, Debug)]
+pub struct ArchitectureFingerprint {
+    #[primary_key]
+    pub project_id: String,
+    /// Primary language: "go", "typescript", "rust"
+    pub language: String,
+    /// Framework: "stdlib", "gin", "express", "axum", etc. or "none"
+    pub framework: String,
+    /// Output type: "cli", "web-api", "library", "standalone"
+    pub output_type: String,
+    /// Architecture style: "hexagonal", "standalone", "layered"
+    pub architecture_style: String,
+    /// JSON array of constraint strings (max 5)
+    pub constraints: String,
+    /// JSON array of {id, summary} objects (max 3 active ADRs)
+    pub active_adrs: String,
+    /// One-sentence description of what the project builds
+    pub workplan_objective: String,
+    /// Estimated token count of the formatted injection block
+    pub fingerprint_tokens: u32,
+    /// ISO 8601 timestamp of last generation
+    pub generated_at: String,
+}
+
+/// Upsert an architecture fingerprint for a project.
+#[reducer]
+pub fn upsert_fingerprint(
+    ctx: &ReducerContext,
+    project_id: String,
+    language: String,
+    framework: String,
+    output_type: String,
+    architecture_style: String,
+    constraints: String,
+    active_adrs: String,
+    workplan_objective: String,
+    fingerprint_tokens: u32,
+    generated_at: String,
+) -> Result<(), String> {
+    if project_id.is_empty() {
+        return Err("project_id is required".to_string());
+    }
+    let fp = ArchitectureFingerprint {
+        project_id: project_id.clone(),
+        language,
+        framework,
+        output_type,
+        architecture_style,
+        constraints,
+        active_adrs,
+        workplan_objective,
+        fingerprint_tokens,
+        generated_at,
+    };
+    if ctx.db.architecture_fingerprint().project_id().find(&project_id).is_some() {
+        ctx.db.architecture_fingerprint().project_id().update(fp);
+    } else {
+        ctx.db.architecture_fingerprint().insert(fp);
+    }
+    Ok(())
+}
+
+/// Remove a fingerprint when a project is deleted or reset.
+#[reducer]
+pub fn delete_fingerprint(
+    ctx: &ReducerContext,
+    project_id: String,
+) -> Result<(), String> {
+    if ctx.db.architecture_fingerprint().project_id().find(&project_id).is_some() {
+        ctx.db.architecture_fingerprint().project_id().delete(&project_id);
+        Ok(())
+    } else {
+        Err(format!("No fingerprint found for project '{}'", project_id))
+    }
+}

@@ -1,0 +1,94 @@
+{
+  "id": "wp-agent-oneshot-execution",
+  "feature": "hex-agent One-Shot Execution Mode for Workplan Tasks",
+  "description": "Three bugs prevent workplan tasks from doing real work: (1) spawn_agent passes --agent-name but hex-agent CLI uses --agent — clap rejects the flag and exits immediately; (2) CliAdapter reads stdin line-by-line so multi-line prompts become many separate messages; (3) spawn_agent never awaits the child process so tasks 'complete' before any work is done. This workplan fixes all three and adds wait_for_completion semantics to SpawnConfig.",
+  "adr": "ADR-2603261000",
+  "status": "completed",
+  "created_at": "2026-03-26T18:00:00Z",
+  "created_by": "planner",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Fix --agent-name flag mismatch",
+      "tier": 0,
+      "gate": { "type": "build", "command": "cargo check -p hex-nexus", "blocking": true },
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Fix spawn_agent to pass --agent matching hex-agent CLI flag",
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "description": "In hex-nexus/src/orchestration/agent_manager.rs, the spawn_agent function builds the hex-agent command with `cmd.arg(\"--agent-name\").arg(&agent_name)`. But hex-agent/src/main.rs defines the flag as `#[arg(long)] agent: Option<String>` which clap maps to `--agent`, not `--agent-name`. Clap rejects unknown flags and exits immediately, so no work is ever done. Fix: change `cmd.arg(\"--agent-name\")` to `cmd.arg(\"--agent\")` in hex-nexus/src/orchestration/agent_manager.rs. Also check all other flags passed: --project-dir, --model, --hub-url, --hub-token all appear correct. Done when: cargo check -p hex-nexus passes.",
+          "deps": [],
+          "files": [
+            "hex-nexus/src/orchestration/agent_manager.rs"
+          ],
+          "status": "done"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Add --prompt flag and one-shot mode to hex-agent",
+      "tier": 1,
+      "gate": { "type": "build", "command": "cargo check -p hex-agent", "blocking": true },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add --prompt flag to hex-agent Args and one-shot execution path in CliAdapter",
+          "layer": "primary",
+          "agent": "hex-coder",
+          "description": "Two changes in hex-agent:\n\n1. In hex-agent/src/main.rs, add to the Args struct: `#[arg(long)] prompt: Option<String>` — a task prompt for non-interactive one-shot execution. When --prompt is provided, pass it through to CliAdapter.\n\n2. In hex-agent/src/adapters/primary/cli.rs, update CliAdapter::run() to accept an optional prompt parameter: `pub async fn run(&self, prompt: Option<String>) -> anyhow::Result<()>`. If prompt is Some: skip the REPL loop entirely — send the full prompt as a single message via self.conversation.send_message(), print the response to stdout, then return Ok(()). If prompt is None AND stdin is not a TTY (use `atty::is(atty::Stream::Stdin)` — add atty crate to hex-agent/Cargo.toml): read ALL of stdin with `io::read_to_string(stdin)` as a single string, send as one message, return. If prompt is None AND stdin IS a TTY: run the existing interactive REPL loop unchanged.\n\nThis ensures: workplan executor writes multi-line prompt to stdin, closes pipe (EOF), agent reads it all as one message, processes it, exits cleanly. Done when: cargo check -p hex-agent passes; `echo 'say hello' | hex-agent --no-preflight` sends a single message and exits.",
+          "deps": ["P0.1"],
+          "files": [
+            "hex-agent/src/main.rs",
+            "hex-agent/src/adapters/primary/cli.rs",
+            "hex-agent/Cargo.toml"
+          ],
+          "status": "done"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Make spawn_agent await child completion",
+      "tier": 2,
+      "gate": { "type": "build", "command": "cargo check -p hex-nexus", "blocking": true },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add wait_for_completion to SpawnConfig; spawn_agent awaits child exit when set",
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "description": "In hex-nexus/src/orchestration/agent_manager.rs:\n\n1. SpawnConfig already has `prompt` and `worktree_branch` fields (added in previous work). Add `wait_for_completion: bool` with serde default false.\n\n2. In spawn_agent(), after writing the prompt to stdin, if config.wait_for_completion is true: call `let exit_status = child.wait().await.map_err(|e| format!(\"Agent wait failed: {}\", e))?;`. If exit_status.success(), return Ok(instance). If not, update agent status to Failed via state port and return Err(format!(\"hex-agent exited with {}\", exit_status)).\n\n3. In workplan_executor.rs execute_phase(), set `wait_for_completion: true` in the SpawnConfig built for workplan tasks.\n\n4. The two ad-hoc SpawnConfig sites in chat.rs and orchestration.rs already have `wait_for_completion` absent — add `wait_for_completion: false` to both (fire-and-forget daemon mode unchanged).\n\nDone when: cargo check -p hex-nexus passes; workplan execution blocks per task until agent exits.",
+          "deps": ["P1.1"],
+          "files": [
+            "hex-nexus/src/orchestration/agent_manager.rs",
+            "hex-nexus/src/orchestration/workplan_executor.rs",
+            "hex-nexus/src/routes/chat.rs",
+            "hex-nexus/src/routes/orchestration.rs"
+          ],
+          "status": "done"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Integration test and rebuild",
+      "tier": 3,
+      "gate": { "type": "build", "command": "cargo build -p hex-agent -p hex-nexus 2>&1 | grep -E '(Compiling|Finished|error)'", "blocking": true },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Build both crates, smoke-test one-shot mode end-to-end",
+          "layer": "secondary",
+          "agent": "integrator",
+          "description": "Build and verify the full chain:\n\n1. Run: cargo build -p hex-agent -p hex-nexus — both must compile.\n\n2. Smoke test one-shot mode: `echo 'Print the number 42 and nothing else' | ./target/debug/hex-agent --no-preflight 2>/dev/null` — verify it prints 42 and exits (exit code 0). If ANTHROPIC_API_KEY is not set, skip this step and note it.\n\n3. Verify --agent flag works: `./target/debug/hex-agent --agent hex-coder --help` — must not show 'unrecognized argument' error.\n\n4. Check that all compilation warnings are reasonable (no new errors introduced).\n\nDone when: both crates build, --agent flag accepted, one-shot stdin mode exits cleanly.",
+          "deps": ["P2.1"],
+          "files": [],
+          "status": "done"
+        }
+      ]
+    }
+  ]
+}

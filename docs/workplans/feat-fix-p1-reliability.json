@@ -2,7 +2,7 @@
   "id": "feat-fix-p1-reliability",
   "title": "P1 Reliability Fixes",
   "description": "Fix five P1 reliability issues identified by the research swarm: (R1) workplan resume re-executes completed tasks, (R2) Docker agents orphaned on shutdown, (R3) claim_task TOCTOU race, (T5) StdbConnection never resets on disconnect, (T3) CodePhaseWorker has no TDD retry loop.",
-  "status": "active",
+  "status": "done",
   "language": "rust",
   "crates": ["hex-nexus", "hex-agent"],
   "steps": [

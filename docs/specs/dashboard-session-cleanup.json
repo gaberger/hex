@@ -1,0 +1,120 @@
+{
+  "feature": "dashboard-session-cleanup",
+  "description": "Fix stale coordination session cleanup in hex-hub dashboard",
+  "specs": [
+    {
+      "id": "spec-1",
+      "category": "heartbeat",
+      "description": "Sessions with no heartbeat for 60s are marked stale",
+      "given": "A coordination session has last_heartbeat timestamp",
+      "when": "Current time - last_heartbeat > 60 seconds",
+      "then": "Session status is marked as 'stale' in hub state",
+      "negative_spec": false,
+      "domain_conventions": {
+        "heartbeat_timeout": "60 seconds",
+        "timestamp_field": "last_heartbeat (Unix timestamp)"
+      }
+    },
+    {
+      "id": "spec-2",
+      "category": "cleanup",
+      "description": "Stale sessions older than cleanup threshold are removed",
+      "given": "A session has been marked stale for more than 5 minutes",
+      "when": "Cleanup cron runs (every 60 seconds)",
+      "then": "Session is removed from SQLite and no longer appears in dashboard",
+      "negative_spec": false,
+      "domain_conventions": {
+        "cleanup_threshold": "5 minutes after becoming stale",
+        "cron_interval": "60 seconds"
+      }
+    },
+    {
+      "id": "spec-3",
+      "category": "pid-validation",
+      "description": "Dead PIDs are marked stale immediately",
+      "given": "A session has a PID that no longer exists",
+      "when": "Hub validates PID using process existence check",
+      "then": "Session is marked stale regardless of last_heartbeat timestamp",
+      "negative_spec": false,
+      "domain_conventions": {
+        "pid_check": "Use process.kill(pid, 0) or equivalent",
+        "dead_pid_handling": "Immediate stale marking, no grace period"
+      }
+    },
+    {
+      "id": "spec-4",
+      "category": "state-sync",
+      "description": "Dashboard shows actual agent/task counts from ICoordinationPort",
+      "given": "Hub has coordination sessions registered",
+      "when": "Dashboard queries instance status",
+      "then": "Agent and task counts reflect actual running processes, not stale SQLite cache",
+      "negative_spec": false,
+      "domain_conventions": {
+        "state_source": "ICoordinationPort.getInstanceStatus()",
+        "refresh_rate": "Real-time query, not cached"
+      }
+    },
+    {
+      "id": "spec-5",
+      "category": "manual-cleanup",
+      "description": "Manual cleanup button removes all stale sessions immediately",
+      "given": "Dashboard UI has a cleanup button",
+      "when": "User clicks the cleanup button",
+      "then": "All stale sessions are removed and count is displayed (e.g., 'Removed 16 stale sessions')",
+      "negative_spec": false,
+      "domain_conventions": {
+        "ui_location": "Instance Status section",
+        "feedback": "Show count of removed sessions"
+      }
+    },
+    {
+      "id": "spec-6",
+      "category": "heartbeat",
+      "description": "Active sessions continue to receive heartbeats",
+      "given": "A CoordinationAdapter is running",
+      "when": "15 seconds elapse (heartbeat interval)",
+      "then": "Hub receives heartbeat and updates last_heartbeat timestamp",
+      "negative_spec": false,
+      "domain_conventions": {
+        "heartbeat_interval": "15 seconds (already implemented)",
+        "update_field": "last_heartbeat in SQLite"
+      }
+    },
+    {
+      "id": "spec-7-negative",
+      "category": "cleanup",
+      "description": "Active sessions are NOT cleaned up even if older than 5 minutes",
+      "given": "A session has been running for 10 minutes with regular heartbeats",
+      "when": "Cleanup cron runs",
+      "then": "Session is NOT removed because last_heartbeat is recent",
+      "negative_spec": true,
+      "domain_conventions": {
+        "protection": "Only stale sessions (60s+ since last heartbeat) are candidates for cleanup"
+      }
+    },
+    {
+      "id": "spec-8",
+      "category": "lifecycle-events",
+      "description": "Session lifecycle events are logged to hub",
+      "given": "Hub manages session state",
+      "when": "Session is registered, heartbeat received, marked stale, or cleaned up",
+      "then": "Event is logged with type (instance_registered, instance_alive, instance_stale, instance_removed) and timestamp",
+      "negative_spec": false,
+      "domain_conventions": {
+        "event_types": ["instance_registered", "instance_alive", "instance_stale", "instance_removed"],
+        "log_destination": "Hub event log (existing logging system)"
+      }
+    }
+  ],
+  "implementation_notes": {
+    "cross_language": "TypeScript (coordination-adapter, dashboard-adapter) + Rust (hex-hub)",
+    "affected_files": [
+      "hex-hub/src/routes/coordination.rs",
+      "hex-hub/src/persistence.rs",
+      "hex-hub/src/cleanup.rs (new)",
+      "hex-hub/assets/index.html",
+      "src/adapters/secondary/coordination-adapter.ts (verify heartbeat works)",
+      "src/adapters/primary/dashboard-adapter.ts (sync real-time state)"
+    ]
+  }
+}

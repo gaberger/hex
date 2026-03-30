@@ -67,6 +67,7 @@ context:
 # ── Constraints ──────────────────────────────────────────
 
 constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_analyze, mcp__hex__hex_hexflo_task_list, mcp__hex__hex_status instead of Bash."
   - Never write application code directly (delegate to hex-coder agents)
   - All task state lives in HexFlo — never create local tracking JSON files
   - Always reconcile HexFlo tasks against git log before creating new tasks

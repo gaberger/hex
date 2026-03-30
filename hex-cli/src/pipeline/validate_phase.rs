@@ -327,6 +327,7 @@ impl ValidatePhase {
         let (cmd_name, args, config_file): (&str, Vec<&str>, &str) = match language {
             "typescript" => ("npx", vec!["tsc", "--noEmit"], "tsconfig.json"),
             "rust" => ("cargo", vec!["check"], "Cargo.toml"),
+            "go" => ("go", vec!["build", "./..."], "go.mod"),
             other => {
                 return Ok(CompileResult {
                     pass: true,
@@ -395,6 +396,7 @@ impl ValidatePhase {
                 ("npx", vec!["vitest", "run"], "package.json"),
             ],
             "rust" => vec![("cargo", vec!["test"], "Cargo.toml")],
+            "go" => vec![("go", vec!["test", "-v", "./..."], "go.mod")],
             other => {
                 return Ok(TestResult {
                     pass: true,
@@ -1344,6 +1346,33 @@ fn parse_compile_errors(output: &str, language: &str) -> Vec<CompileError> {
         return errors;
     }
 
+    // Go: errors are `./file.go:line:col: message` — no "error" keyword.
+    if language == "go" {
+        for line in output.lines() {
+            // Match lines like `./main.go:4:2: "fmt" imported and not used`
+            let line = line.trim_start_matches('#').trim(); // strip package header
+            if line.is_empty() || line.starts_with("FAIL") || line.starts_with("ok") {
+                continue;
+            }
+            // Parse file:line:col: message
+            let parts: Vec<&str> = line.splitn(4, ':').collect();
+            if parts.len() >= 3 {
+                let file = parts[0].trim_start_matches("./").to_string();
+                let line_num = parts[1].parse::<u32>().ok();
+                let message = if parts.len() == 4 {
+                    format!("{}", parts[3].trim())
+                } else {
+                    line.to_string()
+                };
+                // Only include if it looks like a file path (contains .go)
+                if file.ends_with(".go") {
+                    errors.push(CompileError { file, line: line_num, message });
+                }
+            }
+        }
+        return errors;
+    }
+
     for line in output.lines() {
         let is_error = match language {
             "typescript" => {
@@ -1407,6 +1436,7 @@ fn parse_test_counts(output: &str, language: &str) -> (u32, u32) {
     match language {
         "typescript" => parse_ts_test_counts(output),
         "rust" => parse_rust_test_counts(output),
+        "go" => parse_go_test_counts(output),
         _ => (0, 0),
     }
 }
@@ -1480,6 +1510,23 @@ fn parse_rust_test_counts(output: &str) -> (u32, u32) {
         }
     }
 
+    (passed, failed)
+}
+
+/// Go test output format (with -v):
+///   --- PASS: TestFoo (0.00s)
+///   --- FAIL: TestBar (0.01s)
+fn parse_go_test_counts(output: &str) -> (u32, u32) {
+    let mut passed = 0u32;
+    let mut failed = 0u32;
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("--- PASS:") {
+            passed += 1;
+        } else if trimmed.starts_with("--- FAIL:") {
+            failed += 1;
+        }
+    }
     (passed, failed)
 }
 

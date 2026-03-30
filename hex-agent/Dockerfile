@@ -75,6 +75,7 @@ ENV NEXUS_PORT=5555
 ENV HEX_MCP_SERVER=0
 ENV RUST_LOG=info
 
-# Default: daemon mode (polls HexFlo tasks)
+# Entrypoint is hex-agent — used via `docker sandbox exec <name> hex-agent daemon [args]`
+# after creating the sandbox with `docker sandbox create shell <workspace> --template hex-agent:latest`
 ENTRYPOINT ["hex-agent"]
 CMD ["daemon"]

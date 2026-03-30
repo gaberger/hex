@@ -2,7 +2,7 @@
   "id": "feat-tui-async-channels",
   "title": "TUI Async Channel Architecture",
   "adr": "ADR-2603241500",
-  "status": "pending",
+  "status": "done",
   "description": "Refactor hex dev TUI from blocking tick() to async channel pattern. Phases run on tokio tasks, communicate with UI via mpsc. Render loop never blocks.",
   "steps": [
     {

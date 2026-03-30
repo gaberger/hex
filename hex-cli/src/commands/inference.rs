@@ -295,12 +295,59 @@ async fn list_providers() -> anyhow::Result<()> {
 async fn test_provider(target: &str) -> anyhow::Result<()> {
     println!("{} Testing {}...", "→".cyan(), target);
 
-    let url = if target.starts_with("http") {
-        target.to_string()
+    // Look up full provider record when given an ID (not a raw URL).
+    struct ProviderRecord {
+        url: String,
+        provider_type: String,
+        model: String,
+        api_key_ref: String,
+    }
+
+    let nexus = crate::nexus_client::NexusClient::from_env();
+    let record = if target.starts_with("http") {
+        ProviderRecord {
+            url: target.to_string(),
+            provider_type: String::new(),
+            model: String::new(),
+            api_key_ref: String::new(),
+        }
+    } else if nexus.ensure_running().await.is_ok() {
+        nexus.get("/api/inference/endpoints").await
+            .ok()
+            .and_then(|v| {
+                v.get("endpoints")?.as_array()?
+                    .iter()
+                    .find(|p| p.get("id").and_then(|id| id.as_str()) == Some(target))
+                    .map(|p| ProviderRecord {
+                        url: p.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
+                        provider_type: p.get("provider").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        model: {
+                            // models_json is a JSON-encoded array: parse first element
+                            let raw = p.get("model").and_then(|v| v.as_str()).unwrap_or("[]");
+                            serde_json::from_str::<Vec<String>>(raw)
+                                .ok()
+                                .and_then(|v| v.into_iter().next())
+                                .unwrap_or_default()
+                        },
+                        api_key_ref: String::new(), // resolved from env below
+                    })
+            })
+            .unwrap_or_else(|| ProviderRecord {
+                url: format!("http://{}:11434", target),
+                provider_type: String::new(),
+                model: String::new(),
+                api_key_ref: String::new(),
+            })
     } else {
-        // Assume it's an Ollama host shorthand
-        format!("http://{}:11434", target)
+        ProviderRecord {
+            url: format!("http://{}:11434", target),
+            provider_type: String::new(),
+            model: String::new(),
+            api_key_ref: String::new(),
+        }
     };
+
+    let url = record.url.clone();
 
     // Tags probe uses a short timeout; inference probe uses a longer one
     // since large models (27B+) may need time to load from disk on first call.
@@ -308,8 +355,98 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
     let http_infer = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(60))
         .build()?;
+
+    // ── OpenRouter / OpenAI-compatible calibration ────────────────────────
+    if record.provider_type == "openrouter" || url.contains("openrouter.ai") {
+        let api_key = std::env::var("OPENROUTER_API_KEY").ok()
+            .filter(|k| !k.is_empty())
+            .or_else(|| {
+                // Try vault via nexus (best-effort)
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        nexus.get("/api/secrets/vault/OPENROUTER_API_KEY").await.ok()
+                            .and_then(|v| v.get("value").and_then(|s| s.as_str()).map(|s| s.to_string()))
+                            .filter(|s| !s.is_empty())
+                    })
+                })
+            });
+
+        let Some(api_key) = api_key else {
+            println!("  {} OPENROUTER_API_KEY not set — cannot calibrate", "✗".red());
+            println!("  Set it: hex secrets set OPENROUTER_API_KEY sk-or-...");
+            return Ok(());
+        };
+
+        let model = if record.model.is_empty() { "openai/gpt-4o-mini".to_string() } else { record.model.clone() };
+        println!("  {} Sending test inference to {} via {}...", "→".cyan(), model, url);
+
+        let chat_url = format!("{}/chat/completions", url.trim_end_matches('/'));
+        let test_body = serde_json::json!({
+            "model": model,
+            "messages": [{"role": "user", "content": "Reply with only the word 'ok'."}],
+            "max_tokens": 16,
+        });
+
+        let start = std::time::Instant::now();
+        let result = http_infer
+            .post(&chat_url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&test_body)
+            .send()
+            .await;
+
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        match result {
+            Ok(resp) if resp.status().is_success() => {
+                let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                let reply = body
+                    .get("choices").and_then(|c| c.get(0))
+                    .and_then(|c| c.get("message")).and_then(|m| m.get("content"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_lowercase();
+                let reply_ok = !reply.is_empty();
+
+                // Quality score: 0.7 baseline + latency bonus + response sanity bonus
+                let latency_bonus: f32 = if latency_ms < 3_000 { 0.15 }
+                    else if latency_ms < 8_000 { 0.08 }
+                    else if latency_ms < 20_000 { 0.02 }
+                    else { -0.05 };
+                let sanity_bonus: f32 = if reply_ok { 0.15 } else { 0.0 };
+                let quality_score = (0.70_f32 + latency_bonus + sanity_bonus).clamp(0.0, 1.0);
+
+                println!("  {} {} responded in {}ms — reply: {:?}", "✓".green(), model, latency_ms, reply);
+                println!("  {} quality_score = {:.2}  (latency bonus: {:+.2}, sanity: {:+.2})",
+                    "ℹ".cyan(), quality_score, latency_bonus, sanity_bonus);
+
+                // Write quality_score back to SpacetimeDB via nexus PATCH
+                if nexus.ensure_running().await.is_ok() {
+                    let patch_body = serde_json::json!({ "quality_score": quality_score });
+                    match nexus.patch(&format!("/api/inference/endpoints/{}", target), &patch_body).await {
+                        Ok(_) => println!("  {} Calibration saved — provider is now active in model router", "✓".green()),
+                        Err(e) => println!("  {} Could not save calibration: {}", "!".yellow(), e),
+                    }
+                } else {
+                    println!("  {} Nexus not running — calibration not saved", "!".yellow());
+                }
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                println!("  {} {} returned HTTP {} — {}", "!".yellow(), model, status,
+                    body.chars().take(200).collect::<String>());
+            }
+            Err(e) => {
+                println!("  {} Inference failed: {}", "✗".red(), e);
+            }
+        }
+        return Ok(());
+    }
 
     // Test Ollama /api/tags
     let ollama_url = format!("{}/api/tags", url.trim_end_matches('/'));
@@ -640,6 +777,7 @@ async fn discover_openrouter(filter: Option<&str>, min_context: Option<u64>) -> 
                 "models_json": serde_json::to_string(&vec![id]).unwrap_or_default(),
                 "requires_auth": true,
                 "secret_key": "OPENROUTER_API_KEY",
+                "context_window": context_length as u32,
             });
 
             if client.post("/api/inference/register", &reg_body).await.is_ok() {

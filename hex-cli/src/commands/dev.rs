@@ -211,6 +211,33 @@ async fn start_session(
         dir
     };
 
+    // ── Anchor output_dir to git repository root ─────────────────────
+    // When `hex dev start` is invoked from a subdirectory (e.g. from inside
+    // a previously-generated example), all relative paths resolve against
+    // that subdirectory — causing the new project to be created nested
+    // inside the old one.  Always resolve to an absolute path based on the
+    // git root so the generated project always lands at the correct location
+    // regardless of the caller's working directory.
+    let output_dir = if std::path::Path::new(&output_dir).is_absolute() {
+        output_dir
+    } else {
+        let git_root = std::process::Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                } else {
+                    None
+                }
+            });
+        match git_root {
+            Some(root) => format!("{}/{}", root, output_dir),
+            None => output_dir,
+        }
+    };
+
     // ── Clean up stale runs before creating the output directory ─────
     // If the target directory (or sibling directories with the same slug prefix)
     // exists, has no passing binary, and is older than 5 minutes, remove it.

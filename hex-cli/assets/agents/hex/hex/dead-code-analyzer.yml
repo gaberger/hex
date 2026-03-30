@@ -70,6 +70,7 @@ analysis_phases:
     description: "Verify every port interface has at least one adapter and one use case consumer"
 
 constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_analyze not `hex analyze` via Bash."
   - Only analyze project source files (exclude node_modules, dist, tests)
   - Tests may import from anywhere (no hex validation on test files)
   - Entry points (index.ts, cli.ts) are allowed to wire adapters to ports

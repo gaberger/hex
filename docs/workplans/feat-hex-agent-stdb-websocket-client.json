@@ -1,0 +1,100 @@
+{
+  "id": "feat-hex-agent-stdb-websocket-client",
+  "status": "done",
+  "title": "hex-agent SpacetimeDB WebSocket Client",
+  "adr": "ADR-2603300100",
+  "spec": "docs/specs/hex-agent-stdb-websocket-client.json",
+  "description": "Replace hex-agent REST polling with direct SpacetimeDB WebSocket subscriptions for task coordination and inference. Eliminate the nested inner pipeline in Docker workers.",
+  "steps": [
+    {
+      "id": "P0.1",
+      "tier": 0,
+      "title": "Fix SpacetimeDB module deployment — resolve coordination_cleanup 404",
+      "description": "The hexflo-coordination WASM module deployed in SpacetimeDB is missing the coordination_cleanup reducer that hex-nexus calls. Identify which module version is deployed vs. what hex-nexus expects, then redeploy the correct module. This unblocks all subsequent phases.",
+      "files": ["spacetime-modules/hexflo-coordination/src/lib.rs", "hex-nexus/src/cleanup.rs"],
+      "acceptance": "hex nexus start shows no 'Reducer coordination_cleanup failed (404)' in logs"
+    },
+    {
+      "id": "P1.1",
+      "tier": 1,
+      "title": "Add spacetimedb-client-sdk to hex-agent — StdbConnection type",
+      "description": "Add the SpacetimeDB Rust client SDK crate to hex-agent/Cargo.toml. Create StdbConnection in hex-agent/src/adapters/secondary/stdb_connection.rs that wraps the WebSocket client, handles auth (SPACETIMEDB_TOKEN from env), and exposes a connect() async method. Includes graceful error on connection failure.",
+      "files": ["hex-agent/Cargo.toml", "hex-agent/src/adapters/secondary/stdb_connection.rs"],
+      "acceptance": "hex-agent compiles with spacetimedb-client-sdk; StdbConnection::connect() returns Ok on live StDB"
+    },
+    {
+      "id": "P1.2",
+      "tier": 1,
+      "title": "StdbTaskPoller — subscribe to swarm_task table instead of REST polling",
+      "description": "Create StdbTaskPoller in hex-agent/src/adapters/secondary/stdb_task_poller.rs that subscribes to 'SELECT * FROM swarm_task WHERE agent_id = ? AND status = pending'. On row insert/update push, deserializes TaskPayload JSON from task.description, calls task_assign reducer, returns the task to the caller. Implement REST fallback path (wraps existing TaskExecutor::poll_task) when StDB is unavailable.",
+      "files": ["hex-agent/src/adapters/secondary/stdb_task_poller.rs", "hex-agent/src/adapters/secondary/task_executor.rs"],
+      "acceptance": "SC-001, SC-002, SC-003 pass; task assigned within 100ms of creation on live StDB"
+    },
+    {
+      "id": "P2.1",
+      "tier": 2,
+      "title": "StdbInferenceClient — inference via inference_request_create reducer",
+      "description": "Create StdbInferenceClient in hex-agent/src/adapters/secondary/stdb_inference.rs. On inference request: call inference_request_create reducer with agent_id, model, messages. Subscribe to inference_response WHERE request_id = ?. Wait for push (with 600s timeout). Return content and model_used. Fallback: if StDB unavailable, call POST /api/inference/complete (existing path).",
+      "files": ["hex-agent/src/adapters/secondary/stdb_inference.rs"],
+      "acceptance": "SC-004 passes; inference request delivered to hex-nexus via StDB subscription; response returned to agent"
+    },
+    {
+      "id": "P2.2",
+      "tier": 2,
+      "title": "hex-nexus: process inference_request table — call inference_response_complete reducer",
+      "description": "Add InferenceRequestProcessor in hex-nexus/src/orchestration/inference_processor.rs. On startup, subscribes to inference_request table (status='pending'). For each pending request: resolves model, calls existing inference route logic, then calls inference_response_complete(request_id, content, model, tokens) reducer. This is hex-nexus fulfilling its correct role: network bridge for WASM that cannot make HTTP calls.",
+      "files": ["hex-nexus/src/orchestration/inference_processor.rs", "hex-nexus/src/main.rs"],
+      "acceptance": "SC-004 passes end-to-end; hex-nexus log shows 'inference_response_complete called for request {id}'"
+    },
+    {
+      "id": "P3.1",
+      "tier": 3,
+      "title": "CodePhaseWorker — replace inner pipeline with direct code phase execution",
+      "description": "Create CodePhaseWorker in hex-agent/src/adapters/secondary/code_phase_worker.rs. Given a TaskPayload: (1) constructs a WorkplanStep from payload fields, (2) calls StdbInferenceClient to generate code, (3) calls POST /api/files/write to write to output_dir, (4) calls POST /api/compile-check, (5) calls task_complete(task_id, TaskResult JSON) reducer. Replaces execute_task in task_executor.rs which called 'hex dev start --auto'. No inner ADR/workplan/swarm phases.",
+      "files": [
+        "hex-agent/src/adapters/secondary/code_phase_worker.rs",
+        "hex-agent/src/adapters/secondary/task_executor.rs",
+        "hex-agent/src/main.rs"
+      ],
+      "acceptance": "SC-005, SC-006, SC-007 pass; no 'hex dev start --auto' subprocess spawned; code written to output_dir"
+    },
+    {
+      "id": "P4.1",
+      "tier": 4,
+      "title": "Supervisor: encode WorkplanStep JSON in task payload",
+      "description": "Update supervisor.rs create_tracking_task() to serialize WorkplanStep + output_dir + model_hint into the task description field as JSON (TaskPayload schema). Also update the supervisor's wait loop to subscribe to swarm_task via hex-nexus SSE or WebSocket instead of polling GET /api/hexflo/tasks/{id} every 2s.",
+      "files": ["hex-cli/src/pipeline/supervisor.rs"],
+      "acceptance": "SC-002, SC-008 pass; supervisor receives task completion notification within 100ms; no 120s polling timeout"
+    },
+    {
+      "id": "P5.1",
+      "tier": 5,
+      "title": "Integration test: full task lifecycle via SpacetimeDB",
+      "description": "Write hex-agent/tests/stdb_task_lifecycle.rs: (1) connect to StDB, (2) create swarm + task via reducers, (3) start hex-agent daemon, (4) verify task assigned within 100ms, (5) verify code file written to temp output_dir, (6) verify task status = completed in StDB within 5s. Uses real SpacetimeDB (not mocks). Requires SPACETIMEDB_URL + SPACETIMEDB_TOKEN in test env.",
+      "files": ["hex-agent/tests/stdb_task_lifecycle.rs"],
+      "acceptance": "AC-001 through AC-010 all pass; test passes in CI with real SpacetimeDB"
+    }
+  ],
+  "tier_summary": {
+    "0": "SpacetimeDB module fix (unblocks everything)",
+    "1": "StDB client + task subscription (replaces REST polling)",
+    "2": "Inference via StDB + hex-nexus processor (replaces inference fallback chain)",
+    "3": "CodePhaseWorker (replaces nested inner pipeline)",
+    "4": "Supervisor task payload + completion subscription",
+    "5": "Integration test"
+  },
+  "risk_register": [
+    {
+      "risk": "spacetimedb-client-sdk Rust crate API may differ from expected",
+      "mitigation": "Check hexflo-coordination module for existing Rust client usage patterns; the spacetime-modules use spacetimedb-sdk internally"
+    },
+    {
+      "risk": "inference_request / inference_response tables may not exist in deployed modules",
+      "mitigation": "P0.1 audit of deployed modules will reveal; add tables to inference-gateway module if missing"
+    },
+    {
+      "risk": "Docker containers may not have network access to SpacetimeDB",
+      "mitigation": "Pass SPACETIMEDB_URL=ws://host.docker.internal:3033 in docker run command (same pattern as HEX_NEXUS_URL)"
+    }
+  ]
+}

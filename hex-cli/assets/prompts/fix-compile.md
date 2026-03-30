@@ -35,6 +35,44 @@ Your fix must not violate any of these rules:
 6. **Adapters must NEVER import other adapters**
 7. **composition-root** is the ONLY file that imports from adapters
 
+## Rust Library API Reference (axum 0.8 / tokio 1.x)
+
+If fixing a Rust web server, use ONLY modern axum 0.8 APIs — the old APIs are REMOVED:
+
+```rust
+// ✅ Correct axum 0.8
+use axum::{Router, routing::{get, post, put, delete}, extract::{State, Path, Json}, http::StatusCode};
+use tokio::net::TcpListener;
+
+// Complete correct axum 0.8 pattern with shared mutable state:
+use tokio::sync::Mutex;  // ← ALWAYS tokio::sync::Mutex, never std::sync::Mutex (can't .await)
+use std::sync::Arc;
+
+type SharedState = Arc<Mutex<Vec<Item>>>;  // use same type everywhere
+
+// Handler — State<T> type must exactly match what .with_state() receives
+async fn list_items(State(state): State<SharedState>) -> Json<Vec<Item>> {
+    Json(state.lock().await.clone())
+}
+
+// Startup — .with_state(state) REQUIRED to convert Router<S> → Router<()>
+#[tokio::main]
+async fn main() {
+    let state: SharedState = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .route("/items", get(list_items))
+        .with_state(state);  // ← without this: "Router<S>: Service<IncomingStream>" error
+    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+
+// ❌ REMOVED — do not use:
+// use axum::prelude::*          → remove, import items directly
+// axum::routing::route(...)     → use .route("/path", get(handler)) on Router
+// Server::bind(...).serve(...)  → use axum::serve(listener, app)
+// app.bind(...)                 → use TcpListener::bind + axum::serve
+```
+
 ## Common Compilation Error Patterns and Fixes
 
 | Error Pattern | Fix |
@@ -46,6 +84,10 @@ Your fix must not violate any of these rules:
 | Lifetime / borrow error (Rust) | Fix ownership without introducing `unsafe` blocks or unnecessary clones |
 | Missing `.js` extension (TypeScript) | Add `.js` to the relative import path (NodeNext module resolution) |
 | Unused import warning treated as error | Remove the unused import rather than suppressing the warning |
+| `Router<S>: Service<IncomingStream>` not satisfied (Rust/axum) | Add `.with_state(state)` before `axum::serve()` to convert `Router<S>` → `Router<()>` |
+| `Result<MutexGuard<...>> is not a future` (Rust) | Using `std::sync::Mutex` with `.await` — replace with `tokio::sync::Mutex` |
+| mismatched types on `State<T>` extractor (Rust/axum) | State type in handler `State<T>` must exactly match the type passed to `.with_state(t)` |
+| use of moved value after `HashMap::insert` / `Vec::push` (Rust) | Clone the value before inserting: `items.push(item.clone()); return item;` |
 | Trait not implemented (Rust) | Implement the required trait methods matching the port definition |
 | Interface not satisfied (TypeScript) | Implement all required properties/methods from the port interface |
 

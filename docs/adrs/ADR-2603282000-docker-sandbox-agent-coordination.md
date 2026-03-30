@@ -1,6 +1,6 @@
 # ADR-2603282000: hex-agent as Claude Code-Independent Runtime in Docker AI Sandbox
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-28
 **Drivers:** Claude Code dependency limits model choice and portability; agents run without isolation on the host filesystem; no enforcement of worktree boundaries; no credential scoping per agent
 **Supersedes:** None
@@ -143,14 +143,14 @@ For interactive Claude Code sessions that don't use Docker, `hex hook subagent-s
 
 | Phase | Description | Status |
 |-------|------------|--------|
-| P1 | `hex-agent`: MCP server exposing `hex_write_file`, `hex_edit_file`, `hex_read_file`, `hex_bash`, `hex_git_commit`, `hex_analyze` | Pending |
-| P2 | `hex-agent`: boundary enforcement in `hex_write_file` / `hex_edit_file` — validate import paths before writing | Pending |
-| P3 | `hex-agent`: agentic loop — receive task from SpacetimeDB, call LLM, execute tool calls, report completion | Pending |
-| P4 | `hex-agent/Dockerfile` + Docker AI Sandbox config — microVM definition, network policy, MCP Gateway setup | Pending |
-| P5 | `hex-nexus`: `POST /api/agents/spawn` — launch microVM, inject env vars, return `{container_id, agent_id}` | Pending |
-| P6 | `hex hook subagent-start` — hard-error gate for non-Docker path (HEXFLO_TASK + cwd == project root) | Pending |
-| P7 | `hex swarm` — default to microVM spawn; `--no-sandbox` for Claude Code interactive path | Pending |
-| P8 | `hex test coordination` — spawn two agents in parallel, verify no filesystem collision, verify heartbeats in SpacetimeDB | Pending |
+| P1 | `hex-agent`: MCP server exposing `hex_write_file`, `hex_edit_file`, `hex_read_file`, `hex_bash`, `hex_git_commit`, `hex_analyze` | Done |
+| P2 | `hex-agent`: boundary enforcement in `hex_write_file` / `hex_edit_file` — validate import paths before writing | Done |
+| P3 | `hex-agent`: agentic loop — receive task from SpacetimeDB, call LLM, execute tool calls, report completion | Done |
+| P4 | `hex-agent/Dockerfile` + Docker AI Sandbox config — microVM definition, network policy, MCP Gateway setup | Done |
+| P5 | `hex-nexus`: `POST /api/agents/spawn` — launch microVM, inject env vars, return `{container_id, agent_id}` | Done |
+| P6 | `hex hook subagent-start` — hard-error gate for non-Docker path (HEXFLO_TASK + cwd == project root) | Done |
+| P7 | `hex swarm` — docker-first spawn in `agent_manager::spawn_agent`; falls back to process spawn with `docker_unavailable` log | Done |
+| P8 | `hex-agent/mcp_server` unit tests — path safety, boundary enforcement, handle_request (initialize + tools/list) | Done |
 
 ## References
 

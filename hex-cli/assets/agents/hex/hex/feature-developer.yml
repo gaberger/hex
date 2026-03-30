@@ -56,6 +56,7 @@ context:
     reserved_response: 20000
 
 constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_analyze not `hex analyze` via Bash, mcp__hex__hex_hexflo_swarm_init not `hex swarm init`."
   - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP all work, save feature state to HexFlo memory, acknowledge via hex inbox ack, and inform the user. This overrides all other work."
   - Never write application code directly (delegate to hex-coder agents)
   - Never skip the behavioral specs phase (it is MANDATORY)

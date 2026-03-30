@@ -16,3 +16,4 @@ pub mod dead_export_finder;
 pub mod analyzer;
 pub mod frontend_checker;
 pub mod adr_compliance;
+pub mod fingerprint_extractor;

@@ -11,17 +11,14 @@ description: >
 
 model:
   tier: 2
-  preferred: sonnet
-  fallback: haiku
-  upgrade_to: opus
+  preferred: gpt-4o-mini        # → openai/gpt-4o-mini (capable, reliable, not :free)
+  fallback: haiku               # → anthropic/claude-haiku-4-5 (fast paid fallback)
+  upgrade_to: sonnet            # → anthropic/claude-sonnet-4-6 (after 3 failed iterations)
   upgrade_condition: >
-    Upgrade to Opus when: feedback loop exceeds 3 iterations without resolution,
-    or when the adapter requires complex algorithmic logic.
-  quantization:
-    default: q4          # Q4 local model for routine code generation
-    minimum: q2          # Never go below Q2 — too low for code tasks
-    on_complexity_high: q8   # Escalate to Q8 for cross-file / architectural work
-    on_failure: cloud    # Fall back to cloud after repeated provider failures
+    Upgrade to Sonnet when: feedback loop exceeds 3 iterations without resolution,
+    or when the adapter requires complex algorithmic logic. Upgrade to Opus when
+    the task involves cross-cutting architecture changes or security-sensitive code.
+  timeout_secs: 180             # hard cap per inference request
 
 context:
   load_strategy:
@@ -58,6 +55,7 @@ context:
       relief: summarize_history
 
 constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_analyze not `hex analyze` via Bash, mcp__hex__hex_adr_search not `hex adr search`."
   - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP coding, commit any in-progress work, acknowledge via hex inbox ack, and inform the coordinator. This overrides all other work."
   - Never import from other adapters (only from core/ports and core/domain)
   - Always implement the full port interface (no partial implementations)
@@ -69,6 +67,9 @@ constraints:
   - Follow existing project naming conventions
 
 tools:
+  preference: >
+    ALWAYS prefer mcp__hex__* tools over Bash equivalents when a hex MCP tool
+    covers the operation. Use Bash only for operations with no mcp__hex__ equivalent.
   required:
     - Read
     - Write
@@ -76,12 +77,11 @@ tools:
     - Bash
     - Glob
     - Grep
-    - hex_analyze
-    - hex_summarize
+    - mcp__hex__hex_analyze
+    - mcp__hex__hex_status
   optional:
-    - hex_plan
-    - hex_adr_list
-    - hex_adr_search
+    - mcp__hex__hex_adr_list
+    - mcp__hex__hex_adr_search
     - mcp__hex__hex_hexflo_task_create
     - mcp__hex__hex_hexflo_task_complete
     - mcp__hex__hex_hexflo_memory_store
@@ -224,7 +224,7 @@ workflow:
       - name: lint
         command:
           typescript: "npx eslint src/adapters/{{adapter}}/ --ext .ts --format json"
-          go: "golangci-lint run --out-format json ./src/adapters/{{adapter}}/..."
+          go: "go vet ./..."
           rust: "cargo clippy -p {{adapter_name}} --message-format json -- -D warnings"
         timeout_ms: 10000
         on_fail: |
@@ -234,7 +234,7 @@ workflow:
       - name: test
         command:
           typescript: "npx vitest run tests/unit/{{adapter_name}}.test.ts --reporter json"
-          go: "go test -json ./tests/unit/{{adapter_name}}_test.go"
+          go: "go test -json ./..."
           rust: "cargo test --lib {{adapter_name}} -- --format json"
         timeout_ms: 30000
         on_fail: |

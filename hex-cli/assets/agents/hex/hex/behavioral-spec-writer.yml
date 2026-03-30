@@ -94,6 +94,7 @@ phases:
     output: coverage_report
 
 constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_adr_search not `hex adr search` via Bash."
   - Specs must be understandable by someone who has never seen the code
   - Specs must be testable against any correct implementation
   - Specs must not constrain HOW something is implemented, only WHAT it does

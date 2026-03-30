@@ -175,7 +175,21 @@ impl ModelConfig {
             // OpenAI pass-through
             "gpt-4o" => "openai/gpt-4o",
             "gpt-4o-mini" => "openai/gpt-4o-mini",
-            // Unknown → sonnet as sensible default (NOT gpt-4o-mini)
+            // Local Ollama models — pass through as-is so the inference route
+            // matches them to the registered Ollama provider.
+            "qwen3.5:27b" => "qwen3.5:27b",
+            "qwen3.5:9b" => "qwen3.5:9b",
+            "qwen3.5:3b" => "qwen3.5:3b",
+            // Free OpenRouter models — capable enough for code/reasoning tasks.
+            "deepseek-r1" | "deepseek-r1-free" => "deepseek/deepseek-r1:free",
+            "deepseek-chat" | "deepseek-v3" => "deepseek/deepseek-chat-v3-0324:free",
+            "gemini-flash" | "gemini-flash-free" => "google/gemini-2.0-flash-exp:free",
+            // Qwen on OpenRouter (cloud) — distinct from local Ollama qwen aliases above.
+            // OpenRouter normalises responses to OpenAI format so no chat-token leakage.
+            "qwen-72b" | "qwen2.5-72b" => "qwen/qwen-2.5-72b-instruct:free",
+            "qwen-coder" | "qwen2.5-coder" => "qwen/qwen-2.5-coder-32b-instruct:free",
+            "qwen-7b" | "qwen2.5-7b" => "qwen/qwen-2.5-7b-instruct:free",
+            // Unknown → openrouter/free so the inference layer picks the best available
             _ => "openrouter/free",
         }
     }
@@ -796,14 +810,14 @@ mod tests {
         assert_eq!(def.name, "hex-coder");
         assert_eq!(def.agent_type, "coder");
         assert_eq!(def.model.tier, 2);
-        assert_eq!(def.model.preferred.as_deref(), Some("sonnet"));
+        assert_eq!(def.model.preferred.as_deref(), Some("gpt-4o-mini"));
         assert_eq!(def.model.fallback.as_deref(), Some("haiku"));
-        assert_eq!(def.model.upgrade_to.as_deref(), Some("opus"));
+        assert_eq!(def.model.upgrade_to.as_deref(), Some("sonnet"));
 
         // Model ID resolution
-        assert_eq!(def.model.preferred_model_id(), "claude-sonnet-4-6");
+        assert_eq!(def.model.preferred_model_id(), "openai/gpt-4o-mini");
         assert_eq!(def.model.fallback_model_id(), "claude-haiku-4-5-20251001");
-        assert_eq!(def.model.upgrade_model_id(), Some("claude-opus-4-6"));
+        assert_eq!(def.model.upgrade_model_id(), Some("claude-sonnet-4-6"));
 
         // Context load_strategy
         let ctx = def.context.expect("hex-coder should have context");
@@ -923,8 +937,8 @@ mod tests {
 
         // Iteration
         let iter = comp.iteration.expect("should have iteration config");
-        assert_eq!(iter.max_per_tier, 5);
-        assert_eq!(iter.max_total, 25);
+        assert_eq!(iter.max_per_tier, 8);
+        assert_eq!(iter.max_total, 40);
 
         // Grade thresholds
         let grades = comp.grade_thresholds.expect("should have grade thresholds");

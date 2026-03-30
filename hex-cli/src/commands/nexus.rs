@@ -235,6 +235,16 @@ fn try_start_spacetimedb(bin: &str, args: &[&str], stdout: &std::fs::File, stder
 /// Ensure hex-nexus is running (with an agent). If not running, auto-start it
 /// on the default port. Used by `hex dev` to guarantee nexus is available.
 pub async fn ensure_nexus_running() -> anyhow::Result<()> {
+    // HEX_NEXUS_URL allows agents in sandboxes (Docker AI Sandbox microVMs) to point
+    // to a remote nexus instead of starting one locally. When set, we just verify
+    // reachability — never attempt to spawn a local daemon.
+    if let Ok(remote_url) = std::env::var("HEX_NEXUS_URL") {
+        let nexus = crate::nexus_client::NexusClient::new(remote_url.clone());
+        nexus.ensure_running().await.map_err(|e| {
+            anyhow::anyhow!("HEX_NEXUS_URL={remote_url} is set but nexus unreachable: {e}")
+        })?;
+        return Ok(());
+    }
     let port = read_port();
     let nexus = crate::nexus_client::NexusClient::new(format!("http://127.0.0.1:{}", port));
     if nexus.ensure_running().await.is_ok() {
@@ -476,8 +486,10 @@ async fn start(port: u16, bind: &str, token: Option<&str>, _no_agent: bool) -> a
         // auto_register_project has its own 2s wait + retry logic.
         auto_register_project(&nexus, &project_dir).await;
 
-        // Auto-start default hex-agent (ADR-037) — always starts
-        if let Some(agent_bin) = find_agent_binary() {
+        // Auto-start default hex-agent (ADR-037) — skipped when HEX_NO_AUTO_AGENT=1
+        // (used for e2e tests where sandbox agents should be the sole task claimants).
+        let skip_auto_agent = std::env::var("HEX_NO_AUTO_AGENT").as_deref() == Ok("1");
+        if !skip_auto_agent { if let Some(agent_bin) = find_agent_binary() {
             // Query nexus for registered inference endpoints to pass to agent
             let mut cmd = std::process::Command::new(&agent_bin);
             cmd.args(["--hub-url", &nexus_url, "--project-dir", &project_dir]);
@@ -547,7 +559,7 @@ async fn start(port: u16, bind: &str, token: Option<&str>, _no_agent: bool) -> a
                     tracing::debug!("hex-agent failed to start: {e}");
                 }
             }
-        }
+        } } // if let Some(agent_bin) / if !skip_auto_agent
     } else {
         println!(
             "{} hex-nexus spawned (PID {}) — not yet responsive",

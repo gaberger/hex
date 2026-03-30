@@ -421,6 +421,7 @@ name = "inference-gateway"
 version = "0.1.0"
 dependencies = [
  "log",
+ "serde_json",
  "spacetimedb",
 ]
 
@@ -851,9 +852,6 @@ dependencies = [
 [[package]]
 name = "test-results"
 version = "0.1.0"
-dependencies = [
- "spacetimedb",
-]
 
 [[package]]
 name = "thiserror"

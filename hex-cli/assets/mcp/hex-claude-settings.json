@@ -88,6 +88,6 @@
     ]
   },
   "companyAnnouncements": [
-    "hex — Hexagonal Architecture Framework\nRun `hex analyze .` for architecture health | `hex status` for overview | `hex swarm status` for active swarms"
+    "hex — Hexagonal Architecture Framework\nRun `hex analyze .` for architecture health | `hex status` for overview | `hex swarm status` for active swarms\n\nTOOL PREFERENCE: Always prefer mcp__hex__* tools over Bash/generic equivalents. Use mcp__hex__hex_analyze instead of `hex analyze` via Bash. Use mcp__hex__hex_hexflo_* for swarm/task ops. Use mcp__hex__hex_adr_* for ADR queries. Use mcp__hex__hex_inference_* for model ops. Fall back to Bash only when no mcp__hex__ tool covers the operation."
   ]
 }

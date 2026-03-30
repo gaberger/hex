@@ -1,0 +1,79 @@
+{
+  "feature": "swarm-gate-pre-agent-enforcement",
+  "description": "Enforce active HexFlo swarm existence before agent spawn in both Rust hooks and hook-handler.cjs",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "Background agent with valid swarm, workplan, and task is allowed to spawn",
+      "given": "SessionState has workplan_id and swarm_id set, HEXFLO_TASK:{uuid} references a task in an active swarm",
+      "when": "pre_agent() hook fires for a background agent",
+      "then": "Hook exits 0, agent spawns normally",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "ErrorHandling",
+      "description": "Background agent without active swarm is blocked at spawn time",
+      "given": "SessionState has workplan_id but swarm_id is None, enforcement mode is mandatory",
+      "when": "pre_agent() hook fires for a background agent",
+      "then": "Hook prints 'Background agent blocked — no active HexFlo swarm' and exits 2",
+      "negative_spec": true
+    },
+    {
+      "id": "S03",
+      "category": "ErrorHandling",
+      "description": "Background agent with task belonging to non-active swarm is blocked",
+      "given": "HEXFLO_TASK:{uuid} references a task whose parent swarm has status 'completed'",
+      "when": "pre_agent() hook fires and validates the task via nexus REST",
+      "then": "Hook prints 'HEXFLO_TASK belongs to completed swarm' and exits 2",
+      "negative_spec": true
+    },
+    {
+      "id": "S04",
+      "category": "EdgeCase",
+      "description": "Advisory mode warns but does not block agent without swarm",
+      "given": "SessionState has no swarm_id, enforcement mode is advisory",
+      "when": "pre_agent() hook fires for a background agent",
+      "then": "Hook prints warning 'Agent spawned without active swarm' but exits 0",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "EdgeCase",
+      "description": "Nexus unreachable degrades swarm validation to advisory",
+      "given": "HEXFLO_TASK:{uuid} is present but nexus is not running",
+      "when": "pre_agent() hook attempts GET /api/hexflo/tasks/{task_id}",
+      "then": "Hook logs warning about unreachable nexus and exits 0 (fail-open)",
+      "negative_spec": false,
+      "domain_conventions": { "timeout": "2 seconds, matching nexus_client(2) pattern" }
+    },
+    {
+      "id": "S06",
+      "category": "HappyPath",
+      "description": "GET /api/hexflo/tasks/:id returns task with swarm_status field",
+      "given": "A task exists with id 'abc-123' belonging to swarm 'swarm-1' which has status 'active'",
+      "when": "GET /api/hexflo/tasks/abc-123 is called",
+      "then": "Response is 200 with JSON body containing swarm_status: 'active'",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "Integration",
+      "description": "OpenCode hook-handler.cjs validates swarm via nexus REST call",
+      "given": "OpenCode pre-task handler detects HEXFLO_TASK:{uuid} in prompt",
+      "when": "hook-handler.cjs validates the task against nexus",
+      "then": "fetch() call to /api/hexflo/tasks/{id} returns swarm_status, agent is blocked if not 'active'",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "HappyPath",
+      "description": "Read-only agent types bypass all swarm checks",
+      "given": "subagent_type is 'Explore' (exempt type)",
+      "when": "pre_agent() hook fires",
+      "then": "Hook returns immediately without checking swarm or task",
+      "negative_spec": false
+    }
+  ]
+}

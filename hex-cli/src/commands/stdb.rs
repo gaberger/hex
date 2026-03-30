@@ -377,13 +377,18 @@ async fn publish(modules_dir: &str, host: &str, database: &str) -> anyhow::Resul
         let name = entry.file_name().to_string_lossy().to_string();
         print!("  {} {} ... ", "\u{25cb}".dimmed(), name);
 
+        // Each module is published to its own database (module name = database name).
+        // The `database` arg here is just the fallback/legacy alias; per-module names
+        // are canonical so `hex stdb generate` and SDK bindings resolve correctly.
+        let db_name = name.clone();
         let output = tokio::process::Command::new(&binary)
             .arg("publish")
             .arg("--server")
             .arg(host)
-            .arg(database)
-            .arg("--project-path")
+            .arg(&db_name)
+            .arg("--module-path")
             .arg(entry.path())
+            .arg("--delete-data=on-conflict")
             .arg("--yes")
             .output()
             .await;
@@ -610,9 +615,10 @@ async fn hydrate(host: &str, database: &str, force: bool, dry_run: bool) -> anyh
                 .arg("publish")
                 .arg("--server")
                 .arg(host)
-                .arg(database)
-                .arg("--project-path")
+                .arg(*module_name)
+                .arg("--module-path")
                 .arg(&module_path)
+                .arg("--delete-data=on-conflict")
                 .arg("--yes")
                 .output()
                 .await;
@@ -704,10 +710,9 @@ async fn generate(out_dir: &str, host: &str, database: &str) -> anyhow::Result<(
         .arg("rust")
         .arg("--out-dir")
         .arg(out_dir)
-        .arg("--project-path")
-        .arg(database)
         .arg("--server")
         .arg(host)
+        .arg(database)
         .output()
         .await?;
 

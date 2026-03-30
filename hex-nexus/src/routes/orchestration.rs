@@ -45,6 +45,8 @@ pub struct SpawnRequest {
     pub prompt: Option<String>,
     /// Git branch for worktree isolation (ADR-004). Created if absent.
     pub worktree_branch: Option<String>,
+    /// If true, spawn hex-agent in daemon mode (polls HexFlo and spawns swarms).
+    pub daemon: Option<bool>,
 }
 
 /// POST /api/agents/spawn — spawn a new hex-agent process
@@ -78,6 +80,7 @@ pub async fn spawn_agent(
         prompt: body.prompt,
         worktree_branch: body.worktree_branch,
         wait_for_completion: false,
+        daemon: body.daemon.unwrap_or(false),
     };
 
     match mgr.spawn_agent(config).await {

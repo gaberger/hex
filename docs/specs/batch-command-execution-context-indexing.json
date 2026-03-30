@@ -1,0 +1,118 @@
+{
+  "feature": "batch-command-execution-context-indexing",
+  "description": "Run shell commands in a sandboxed session, index their output, and return only query-matched excerpts — keeping raw output out of agent context windows",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "batch_execute runs all commands and returns a session handle with summary stats",
+      "given": "A list of valid shell commands and a working directory path",
+      "when": "batch_execute(commands, working_dir) is called",
+      "then": "Returns a BatchSession { session_id: <uuid>, commands_run: N, total_lines: M, exit_codes: [...] } without emitting raw output to the caller",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "search returns lines matching the query from a valid session",
+      "given": "A BatchSession whose indexed output contains lines matching 'error[E'",
+      "when": "search(session_id, ['error[E']) is called",
+      "then": "Returns Vec<SearchResult> with line, line_number, command, and score >= 0.9 for exact matches",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "ErrorHandling",
+      "description": "Commands with non-zero exit codes still have their output indexed",
+      "given": "A command that exits with code 1 and emits stderr output",
+      "when": "batch_execute([failing_command], working_dir) is called",
+      "then": "Session is created, exit_codes contains [1], stderr output is indexed and searchable",
+      "negative_spec": false,
+      "domain_conventions": {
+        "stderr_handling": "stderr and stdout are both captured and indexed; they are merged per line in emission order"
+      }
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "search with no matches returns an empty result set, not an error",
+      "given": "A valid session whose output does not contain the string 'xyzzy_notfound'",
+      "when": "search(session_id, ['xyzzy_notfound']) is called",
+      "then": "Returns Ok(vec![]) — empty Vec, no error",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "EdgeCase",
+      "description": "Sessions are evicted from memory after their TTL expires",
+      "given": "A session created more than 10 minutes ago with no subsequent search calls",
+      "when": "search(session_id, queries) is called",
+      "then": "Returns Err(CommandSessionError::SessionExpired { session_id })",
+      "negative_spec": true,
+      "domain_conventions": {
+        "ttl_minutes": 10,
+        "eviction": "background task sweeps expired sessions every 60 seconds"
+      }
+    },
+    {
+      "id": "S06",
+      "category": "Security",
+      "description": "Raw command output does NOT appear in the return value of batch_execute",
+      "given": "A command that produces 500 lines of output",
+      "when": "batch_execute([command], working_dir) is called",
+      "then": "The returned BatchSession contains only metadata (counts, exit codes) — no raw lines",
+      "negative_spec": true,
+      "domain_conventions": {
+        "context_protection": "This is the core invariant: output is indexed server-side, never returned wholesale to callers"
+      }
+    },
+    {
+      "id": "S07",
+      "category": "Integration",
+      "description": "hex_batch_execute MCP tool returns a session summary suitable for agent use",
+      "given": "An MCP client calls hex_batch_execute with commands=['cargo check'] and working_dir='/project'",
+      "when": "The MCP server processes the tool call",
+      "then": "Returns JSON { session_id, commands_run, total_lines, exit_codes } — not the raw cargo output",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "Integration",
+      "description": "hex_batch_search MCP tool returns matched excerpts with surrounding context lines",
+      "given": "A valid session_id and queries=['error[E0308']",
+      "when": "hex_batch_search MCP tool is called",
+      "then": "Returns JSON array of { command, line_number, line, score } sorted by score descending, max 50 results",
+      "negative_spec": false,
+      "domain_conventions": {
+        "max_results": 50,
+        "context_lines": "0 by default; callers may request ±N context lines via context_lines param"
+      }
+    },
+    {
+      "id": "S09",
+      "category": "EdgeCase",
+      "description": "Memory cap is enforced — sessions beyond HEX_CMD_SESSION_MAX_MB are rejected",
+      "given": "The adapter is at its configured memory limit (default 500MB of indexed output)",
+      "when": "batch_execute is called for a new session",
+      "then": "Returns Err(CommandSessionError::CapacityExceeded) and does not execute commands",
+      "negative_spec": true,
+      "domain_conventions": {
+        "default_cap_mb": 500,
+        "env_override": "HEX_CMD_SESSION_MAX_MB"
+      }
+    },
+    {
+      "id": "S10",
+      "category": "ErrorHandling",
+      "description": "Commands exceeding the execution timeout are terminated and flagged",
+      "given": "A command that does not exit within 60 seconds",
+      "when": "batch_execute([long_running_command], working_dir) is called",
+      "then": "The command is killed, exit_code is -1, and the session contains output captured up to the timeout point",
+      "negative_spec": false,
+      "domain_conventions": {
+        "default_timeout_seconds": 60,
+        "env_override": "HEX_CMD_TIMEOUT_SECONDS"
+      }
+    }
+  ]
+}

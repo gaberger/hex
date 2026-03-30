@@ -1,0 +1,92 @@
+{
+  "id": "openrouter-inference-integration",
+  "title": "OpenRouter Inference Integration — Behavioral Specs",
+  "adr": "ADR-2603231600",
+  "created": "2026-03-23",
+  "specs": [
+    {
+      "id": "S01",
+      "description": "OpenRouter registered as provider in inference-gateway WASM module",
+      "given": "An inference_provider row with provider_id='openrouter' exists",
+      "when": "request_inference is called with provider='openrouter' and model='meta-llama/llama-4-maverick'",
+      "then": "Request is queued with status='queued'; budget validated; rate limit checked against openrouter provider row"
+    },
+    {
+      "id": "S02",
+      "description": "OpenRouter-specific headers included in outbound requests",
+      "given": "hex-nexus picks up a queued inference_request for provider='openrouter'",
+      "when": "The HTTP request is constructed",
+      "then": "Request includes headers: Authorization (Bearer key), HTTP-Referer (project URL), X-Title ('hex-agent')"
+    },
+    {
+      "id": "S03",
+      "description": "OpenRouter actual cost extracted from response",
+      "given": "OpenRouter returns a chat completion response with usage.cost field",
+      "when": "complete_inference reducer is called",
+      "then": "The cost_usd field uses the OpenRouter-reported cost, not a token×rate calculation"
+    },
+    {
+      "id": "S04",
+      "description": "Model discovery populates provider table",
+      "given": "OPENROUTER_API_KEY is set in secrets vault",
+      "when": "hex inference discover --provider openrouter is executed",
+      "then": "inference_provider table is populated with models from OpenRouter /api/v1/models endpoint; each row has model_id, context_window, pricing, and capabilities"
+    },
+    {
+      "id": "S05",
+      "description": "Fallback routing for batch workloads",
+      "given": "A batch-classified inference request with model='auto'",
+      "when": "OpenRouter provider is healthy and budget allows",
+      "then": "Request routes to OpenRouter with route='fallback' body extension; falls back to MiniMax if OpenRouter unavailable"
+    },
+    {
+      "id": "S06",
+      "description": "RL model selection includes OpenRouter models",
+      "given": "RL engine receives a reward signal for a completed task",
+      "when": "ModelSelection::OpenRouter('meta-llama/llama-4-maverick') was used",
+      "then": "Reward updates the Q-value for that model; actual cost from OpenRouter response is used in cost-efficiency component"
+    },
+    {
+      "id": "S07",
+      "description": "Secret management via hex secrets vault",
+      "given": "User runs hex secrets set OPENROUTER_API_KEY sk-or-...",
+      "when": "An OpenRouter inference request is processed",
+      "then": "hex-nexus retrieves the key from secrets vault; key is never logged or included in SpacetimeDB tables"
+    },
+    {
+      "id": "S08",
+      "description": "OpenRouter provider preferences passed in request body",
+      "given": "An OpenRouter inference request",
+      "when": "Provider preferences are configured (order, allow, deny lists)",
+      "then": "Request body includes provider.order/allow/deny fields; transforms=['middle-out'] for context >100K tokens"
+    },
+    {
+      "id": "S09",
+      "description": "Dashboard shows OpenRouter models and per-request cost",
+      "given": "Inference panel is rendering completed requests",
+      "when": "Provider is 'openrouter'",
+      "then": "Model column shows full model ID (e.g. meta-llama/llama-4-maverick); cost column shows actual cost from OpenRouter; provider column shows 'OpenRouter' badge"
+    },
+    {
+      "id": "S10",
+      "description": "Budget enforcement uses OpenRouter actual cost",
+      "given": "An agent has budget_usd=1.00 and has used $0.95",
+      "when": "An OpenRouter request returns with usage.cost=$0.10",
+      "then": "Budget is updated to $1.05 used; next request is rejected with 'budget_exceeded'"
+    },
+    {
+      "id": "S11",
+      "description": "Rate limit tracking per OpenRouter model",
+      "given": "OpenRouter provider has rpm_limit=60",
+      "when": "61st request in a minute is submitted",
+      "then": "Request is rejected with 'rate_limit_exceeded'; current_rpm counter accurate"
+    },
+    {
+      "id": "S12",
+      "description": "TypeScript inference-discovery port includes OpenRouter",
+      "given": "InferenceDiscoveryPort.listEndpoints() is called",
+      "when": "An OpenRouter endpoint is registered",
+      "then": "Endpoint appears with provider='openrouter'; healthCheck validates connectivity to openrouter.ai/api/v1/models"
+    }
+  ]
+}

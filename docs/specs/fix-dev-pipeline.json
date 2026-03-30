@@ -1,0 +1,115 @@
+{
+  "feature": "fix-dev-pipeline",
+  "description": "Fix four compounding bugs in the hex dev pipeline that prevent any generated project from compiling",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "resolve_model_id maps YAML tier names to correct Anthropic model IDs",
+      "given": "An agent YAML declares model tier 'sonnet', 'haiku', or 'opus'",
+      "when": "resolve_model_id() is called with that tier name",
+      "then": "Returns 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001', or 'claude-opus-4-6' respectively",
+      "negative_spec": false,
+      "domain_conventions": { "note": "OpenRouter-compatible IDs needed for inference gateway" }
+    },
+    {
+      "id": "S02",
+      "category": "ErrorHandling",
+      "description": "Unknown model tier name falls back to a sensible default, not gpt-4o-mini",
+      "given": "An agent YAML declares an unrecognized model tier name",
+      "when": "resolve_model_id() is called",
+      "then": "Returns 'claude-sonnet-4-6' as the default (not 'openai/gpt-4o-mini')",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "RL Q-learning receives training signal from code generation outcomes",
+      "given": "A code generation run completes (success or failure)",
+      "when": "The CodePhase records its outcome",
+      "then": "report_outcome() is called on ModelSelector with the result, updating the Q-table",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "Structured workplan tasks (P0.1-P4.1) execute in order during pipeline",
+      "given": "A swarm has been initialized with structured P* tasks in HexFlo",
+      "when": "The Supervisor runs the pipeline",
+      "then": "Supervisor uses the existing P* task IDs from task_id_map — no new shadow tasks are created",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "ErrorHandling",
+      "description": "Pipeline does not create duplicate shadow tasks alongside existing P* tasks",
+      "given": "SwarmPhase has created P0.1-P4.1 HexFlo tasks and returned task_id_map",
+      "when": "Supervisor::with_tracking() is constructed",
+      "then": "task_id_map is available to Supervisor so execute_agent_tracked() reuses existing task IDs",
+      "negative_spec": true
+    },
+    {
+      "id": "S06",
+      "category": "HappyPath",
+      "description": "Fix agent receives all relevant source files as context, not just the test file path",
+      "given": "A compile error spans main.rs and lib.rs in an output project",
+      "when": "FixAgent::execute() is called for a fix iteration",
+      "then": "The inference prompt includes the content of src/main.rs and the error context together",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "HappyPath",
+      "description": "Fix iterations carry accumulated error context from previous attempts",
+      "given": "Fix iteration 1 fails to resolve a compile error",
+      "when": "Fix iteration 2 is dispatched for the same objective",
+      "then": "The prompt includes the error output from iteration 1 so the model can reason about what didn't work",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "ErrorHandling",
+      "description": "Fix agent targets all files with errors, not just the first",
+      "given": "A cargo build error mentions 3 files with errors",
+      "when": "infer_fix_target() runs",
+      "then": "All 3 files are identified as fix targets for the current iteration",
+      "negative_spec": false
+    },
+    {
+      "id": "S09",
+      "category": "HappyPath",
+      "description": "Generated Rust test binary name matches the crate name from Cargo.toml",
+      "given": "A Cargo.toml with name = 'rust-cli-temperature-converter'",
+      "when": "The tester agent generates integration tests",
+      "then": "Tests reference CARGO_BIN_EXE_rust-cli-temperature-converter (exact match to Cargo.toml name)",
+      "negative_spec": false
+    },
+    {
+      "id": "S10",
+      "category": "ErrorHandling",
+      "description": "No contradiction between test-generate.md and agent-tester.md on CARGO_BIN_EXE_ usage",
+      "given": "A tester agent reads both prompt files for guidance",
+      "when": "The agent decides how to reference the binary in integration tests",
+      "then": "Both files give consistent guidance (one authoritative rule about binary name injection)",
+      "negative_spec": true
+    },
+    {
+      "id": "S11",
+      "category": "HappyPath",
+      "description": "Max iterations triggers escalation rather than silent continuation",
+      "given": "A pipeline tier has exhausted all fix iterations without passing CodeCompiles",
+      "when": "run_tier() detects MaxIterations",
+      "then": "An inbox notification is sent (priority 2) and the pipeline halts with a clear error — it does not silently continue to the next tier",
+      "negative_spec": false
+    },
+    {
+      "id": "S12",
+      "category": "HappyPath",
+      "description": "Pipeline start cleans up stale failed-run example directories",
+      "given": "Previous failed runs have left N partial example directories",
+      "when": "A new hex dev run begins for the same objective",
+      "then": "The previous partial directory is removed before code generation starts",
+      "negative_spec": false
+    }
+  ]
+}

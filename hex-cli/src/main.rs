@@ -30,7 +30,9 @@ use commands::{
     memory::MemoryAction,
     neural_lab::NeuralLabAction,
     nexus::NexusAction,
+    sandbox::SandboxAction,
     plan::PlanAction,
+    fingerprint::FingerprintAction,
     project::ProjectAction,
     readme::ReadmeAction,
     secrets::SecretsAction,
@@ -198,6 +200,16 @@ enum Commands {
         #[command(subcommand)]
         action: commands::report::ReportAction,
     },
+    /// Docker AI Sandbox management — build image, check readiness (ADR-2603282000)
+    Sandbox {
+        #[command(subcommand)]
+        action: SandboxAction,
+    },
+    /// Architecture fingerprint management (ADR-2603301200)
+    Fingerprint {
+        #[command(subcommand)]
+        action: FingerprintAction,
+    },
 }
 
 #[tokio::main]
@@ -246,5 +258,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Opencode { action } => commands::opencode::run(action),
         Commands::Dev { action } => commands::dev::run(action).await,
         Commands::Report { action } => commands::report::run(action).await,
+        Commands::Sandbox { action } => commands::sandbox::run(action).await,
+        Commands::Fingerprint { action } => commands::fingerprint::run(action).await,
     }
 }

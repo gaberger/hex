@@ -1,3 +1,0 @@
-export interfaceCliPort {
-  run(): void;
-}

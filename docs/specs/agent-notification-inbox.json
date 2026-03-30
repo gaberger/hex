@@ -1,0 +1,126 @@
+{
+  "feature": "agent-notification-inbox",
+  "description": "Durable SpacetimeDB-backed message queue for notifying running agents of critical system events",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "A notification sent to an agent appears in their inbox",
+      "given": "A registered agent with id 'agent-abc' in project 'hex-intf-1xq8wun'",
+      "when": "notify_agent('agent-abc', 2, 'restart', '{\"reason\":\"hex-nexus update\",\"version\":\"2.3.0\"}') is called",
+      "then": "An agent_inbox row is created with agent_id='agent-abc', priority=2, kind='restart', payload containing version, created_at set, acknowledged_at=None",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "Broadcast notification reaches all agents in a project",
+      "given": "Three registered agents in project 'hex-intf-1xq8wun'",
+      "when": "notify_all_agents('hex-intf-1xq8wun', 1, 'config_change', '{\"keys\":[\"inference.model\"]}') is called",
+      "then": "Three agent_inbox rows are created, one per agent, each with the same kind/payload but distinct agent_id",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "Agent acknowledges a notification and it no longer appears in unacked queries",
+      "given": "An unacknowledged notification with id=42 for agent 'agent-abc'",
+      "when": "acknowledge_notification(42, 'agent-abc') is called",
+      "then": "The notification's acknowledged_at is set to current timestamp; querying unacked inbox for 'agent-abc' does not include id=42",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "PreToolUse hook injects critical notification into Claude context",
+      "given": "An unacknowledged priority-2 notification exists for the current agent",
+      "when": "The PreToolUse hook fires (any tool call)",
+      "then": "Hook stdout contains the notification kind and payload, which appears as context in Claude's next action",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "Agent preserves state before acknowledging a restart notification",
+      "given": "Agent receives a priority-2 'restart' notification while working on swarm task 'task-xyz'",
+      "when": "The agent processes the restart notification",
+      "then": "Session file (~/.hex/sessions/agent-{id}.json) is updated with current_task_id, phase, and swarm_id; memory is stored via hex memory store; notification is acknowledged only after state is saved",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "Security",
+      "description": "Only the target agent can acknowledge its own notifications",
+      "given": "A notification with id=42 addressed to agent 'agent-abc'",
+      "when": "acknowledge_notification(42, 'agent-xyz') is called by a different agent",
+      "then": "The reducer rejects the acknowledgment; acknowledged_at remains None",
+      "negative_spec": true
+    },
+    {
+      "id": "S07",
+      "category": "ErrorHandling",
+      "description": "Notification to a non-existent agent is rejected",
+      "given": "No agent registered with id 'agent-nonexistent'",
+      "when": "notify_agent('agent-nonexistent', 2, 'restart', '{}') is called",
+      "then": "The reducer returns an error; no agent_inbox row is created",
+      "negative_spec": true
+    },
+    {
+      "id": "S08",
+      "category": "EdgeCase",
+      "description": "Critical notifications repeat on every tool call until acknowledged",
+      "given": "An unacknowledged priority-2 notification for the current agent",
+      "when": "The PreToolUse hook fires 3 consecutive times without acknowledgment",
+      "then": "All 3 hook invocations include the notification in stdout; it is not suppressed or deduplicated",
+      "negative_spec": false
+    },
+    {
+      "id": "S09",
+      "category": "EdgeCase",
+      "description": "Info and warning notifications are delivered once, not repeated",
+      "given": "An unacknowledged priority-0 notification for the current agent that was already delivered once",
+      "when": "The PreToolUse hook fires again",
+      "then": "The priority-0 notification is not included in hook stdout (only priority-2 repeats)",
+      "negative_spec": false,
+      "domain_conventions": {
+        "delivery": "Priority 0-1 delivered on first hook fire after creation; priority 2 repeats until acked"
+      }
+    },
+    {
+      "id": "S10",
+      "category": "EdgeCase",
+      "description": "Stale notifications are expired by cleanup",
+      "given": "A notification created 48 hours ago that was never acknowledged",
+      "when": "expire_stale_notifications(86400) is called with max_age=24h",
+      "then": "The notification's expired_at is set; it no longer appears in inbox queries",
+      "negative_spec": false
+    },
+    {
+      "id": "S11",
+      "category": "Integration",
+      "description": "hex-nexus produces restart notification on binary update detection",
+      "given": "hex-nexus detects its own binary has changed on disk (mtime or hash differs)",
+      "when": "The update detection check runs",
+      "then": "notify_all_agents is called with priority=2, kind='restart', payload containing new binary hash and reason",
+      "negative_spec": false
+    },
+    {
+      "id": "S12",
+      "category": "Integration",
+      "description": "Resumed session restores context from restart notification",
+      "given": "An agent was restarted due to a 'restart' notification; session file has saved state",
+      "when": "hex hook session-start runs on the new session",
+      "then": "The hook injects recovery context: restart reason (from inbox history) and previous state (from session file)",
+      "negative_spec": false
+    },
+    {
+      "id": "S13",
+      "category": "Integration",
+      "description": "Idle agent receives critical notification via external resume",
+      "given": "An idle agent (no tool calls for >60s) with an unacknowledged priority-2 notification",
+      "when": "hex-nexus escalation detects the unacked critical after 60s",
+      "then": "hex-nexus invokes 'claude --resume <session-id> -p \"Check your hex inbox\"' to wake the agent",
+      "negative_spec": false
+    }
+  ]
+}

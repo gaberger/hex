@@ -45,3 +45,65 @@ impl ContextPressureTracker {
         self.pressure() >= 0.95
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_starts_at_zero() {
+        let t = ContextPressureTracker::new();
+        assert_eq!(t.tokens_used, 0);
+        assert_eq!(t.pressure(), 0.0);
+    }
+
+    #[test]
+    fn record_accumulates_tokens() {
+        let mut t = ContextPressureTracker::new();
+        t.record(50_000);
+        t.record(50_000);
+        assert_eq!(t.tokens_used, 100_000);
+    }
+
+    #[test]
+    fn pressure_fraction_correct() {
+        let mut t = ContextPressureTracker::new();
+        t.record(100_000); // 50% of 200k
+        assert!((t.pressure() - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn is_high_triggers_at_80_pct() {
+        let mut t = ContextPressureTracker::new();
+        t.record(159_999); // just under 80%
+        assert!(!t.is_high());
+        t.record(1); // 160_000 / 200_000 = 80%
+        assert!(t.is_high());
+    }
+
+    #[test]
+    fn is_critical_triggers_at_95_pct() {
+        let mut t = ContextPressureTracker::new();
+        t.record(189_999); // just under 95%
+        assert!(!t.is_critical());
+        t.record(1); // 190_000 / 200_000 = 95%
+        assert!(t.is_critical());
+    }
+
+    #[test]
+    fn record_saturates_at_u64_max() {
+        let mut t = ContextPressureTracker::new();
+        t.record(u64::MAX);
+        t.record(1); // should not overflow
+        assert_eq!(t.tokens_used, u64::MAX);
+    }
+
+    #[test]
+    fn zero_limit_returns_zero_pressure() {
+        let t = ContextPressureTracker {
+            tokens_used: 1000,
+            tokens_limit: 0,
+        };
+        assert_eq!(t.pressure(), 0.0);
+    }
+}

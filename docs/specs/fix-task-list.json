@@ -1,0 +1,60 @@
+{
+  "feature": "fix-task-list",
+  "description": "Fix hex task list: agent column always empty and tasks not grouped by swarm",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "task list shows agent ID when a task is assigned",
+      "given": "A swarm task with agent_id 'claude-abc123' assigned via PATCH /api/hexflo/tasks/{id}",
+      "when": "hex task list is run",
+      "then": "The Agent column shows 'claude-abc12' (truncated to 14 chars)",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "task list groups tasks under their swarm name",
+      "given": "Two swarms each with multiple tasks",
+      "when": "hex task list is run",
+      "then": "Tasks from each swarm are contiguous rows — swarm A tasks appear together, then swarm B tasks",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "task list fetches from /api/hexflo/tasks flat endpoint",
+      "given": "hex-nexus is running with tasks registered via HexFlo",
+      "when": "hex task list is run",
+      "then": "The CLI calls GET /api/hexflo/tasks (not /api/swarms/active) and all tasks are returned with full fields including agent_id",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "EdgeCase",
+      "description": "task list handles tasks with no agent assigned",
+      "given": "A task in pending status with no agent_id",
+      "when": "hex task list is run",
+      "then": "The Agent column shows empty string (not '-' or 'null')",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "ErrorHandling",
+      "description": "task list shows helpful message when no tasks exist",
+      "given": "No active swarms or tasks in hex-nexus",
+      "when": "hex task list is run",
+      "then": "Output is '⬡ No tasks found' and exit code is 0",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "EdgeCase",
+      "description": "task list does NOT show swarm_id column — swarm name is sufficient",
+      "given": "Active tasks across multiple swarms",
+      "when": "hex task list is run",
+      "then": "The Swarm column shows the human-readable swarm name, not the UUID swarm_id",
+      "negative_spec": true
+    }
+  ]
+}

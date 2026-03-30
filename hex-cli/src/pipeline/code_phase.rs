@@ -293,6 +293,109 @@ tokio = {{ version = "1", features = ["full"] }}
             info!(files = ?files, "Rust scaffold generated");
             Ok(files)
         }
+        "go" => {
+            let gomod_path = dir.join("go.mod");
+            let main_path = dir.join("main.go");
+            if gomod_path.exists() && main_path.exists() {
+                debug!(path = %gomod_path.display(), "go.mod + main.go already exist — skipping scaffold");
+                return Ok(vec![]);
+            }
+
+            std::fs::create_dir_all(dir).context("creating scaffold directory")?;
+
+            let go_mod = format!(
+                r#"module {}
+
+go 1.22
+
+require (
+	github.com/gin-gonic/gin v1.10.0
+)
+"#,
+                slug
+            );
+
+            let main_go = format!(
+                r#"package main
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+func main() {{
+	r := gin.Default()
+
+	r.GET("/health", func(c *gin.Context) {{
+		c.JSON(http.StatusOK, gin.H{{"status": "ok", "service": "{}"}})
+	}})
+
+	r.Run(":8080")
+}}
+"#,
+                feature_name
+            );
+
+            let main_test_go = r#"package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+)
+
+func setupRouter() *gin.Engine {
+	r := gin.Default()
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	return r
+}
+
+func TestHealthEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := setupRouter()
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/health", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+}
+"#;
+
+            std::fs::write(&gomod_path, go_mod).context("writing go.mod")?;
+            std::fs::write(&main_path, main_go).context("writing main.go")?;
+            let test_path = dir.join("main_test.go");
+            std::fs::write(&test_path, main_test_go).context("writing main_test.go")?;
+
+            // Run go mod tidy to fetch dependencies
+            info!(dir = %dir.display(), "running go mod tidy for Go project");
+            let tidy_ok = std::process::Command::new("go")
+                .args(["mod", "tidy"])
+                .current_dir(dir)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if !tidy_ok {
+                warn!(dir = %dir.display(), "go mod tidy failed — compile checks may not work");
+            }
+
+            let mut files = vec![
+                gomod_path.to_string_lossy().to_string(),
+                main_path.to_string_lossy().to_string(),
+                test_path.to_string_lossy().to_string(),
+            ];
+            generate_readme(dir, feature_name, language, &mut files)?;
+            generate_start_script(dir, feature_name, language, &mut files)?;
+            info!(files = ?files, "Go scaffold generated");
+            Ok(files)
+        }
         other => {
             debug!(language = %other, "no scaffold template for language — skipping");
             // Still generate README + start script for unknown languages
@@ -319,18 +422,21 @@ fn generate_readme(
     let lang_display = match language {
         "typescript" | "ts" => "TypeScript",
         "rust" | "rs" => "Rust",
+        "go" => "Go",
         other => other,
     };
 
     let start_cmd = match language {
         "typescript" | "ts" => "node dist/main.js",
         "rust" | "rs" => "cargo run",
+        "go" => "go run .",
         _ => "./start.sh",
     };
 
     let test_cmd = match language {
         "typescript" | "ts" => "npx vitest run",
         "rust" | "rs" => "cargo test",
+        "go" => "go test ./...",
         _ => "echo 'no tests configured'",
     };
 
@@ -394,6 +500,7 @@ This project follows hexagonal architecture rules:
         install_cmd = match language {
             "typescript" | "ts" => "bun install",
             "rust" | "rs" => "# no install step needed",
+            "go" => "go mod tidy",
             _ => "# see start.sh",
         },
     );
@@ -441,6 +548,11 @@ cargo build --release
 
 echo "Starting application..."
 ./target/release/$(basename $(pwd))"#,
+            "go" => r#"echo "Fetching dependencies..."
+go mod tidy
+
+echo "Starting application..."
+go run ."#,
             _ => r#"echo "No start configuration — edit this script for your setup""#,
         },
     );
@@ -509,11 +621,25 @@ impl CodePhase {
         let target_file_content = self.read_target_file(&target_file).await;
         let ast_summary = self.fetch_ast_summary(&target_file).await;
         let port_interfaces = self.fetch_port_interfaces(step).await;
-        let boundary_rules = Self::get_boundary_rules();
         let language = self.infer_language(step, workplan);
+        let boundary_rules = Self::get_boundary_rules(&language);
 
         let mut context = HashMap::new();
-        context.insert("step_description".to_string(), step.description.clone());
+        // Enrich step description with done_condition and workplan success criteria
+        // so the model knows exactly what to implement, not just the generic step title.
+        let mut step_desc = step.description.clone();
+        if let Some(ref cond) = step.done_condition {
+            step_desc.push_str(&format!("\n\nAcceptance criteria: {}", cond));
+        }
+        if let Some(ref criteria) = workplan.success_criteria {
+            if !criteria.is_empty() {
+                step_desc.push_str("\n\nSuccess criteria:\n");
+                for c in criteria {
+                    step_desc.push_str(&format!("- {}\n", c));
+                }
+            }
+        }
+        context.insert("step_description".to_string(), step_desc.clone());
         context.insert("target_file".to_string(), target_file_content);
         context.insert("ast_summary".to_string(), ast_summary);
         context.insert("port_interfaces".to_string(), port_interfaces);
@@ -543,7 +669,7 @@ impl CodePhase {
         let user_message = format!(
             "Generate the complete source file for step '{}': {}\n\nTarget file: {}\nLanguage: {}",
             step.id,
-            step.description,
+            step_desc,
             target_file.as_deref().unwrap_or("(not specified)"),
             language,
         );
@@ -583,9 +709,9 @@ impl CodePhase {
             .and_then(|s| s.parse::<f64>().ok())
             .unwrap_or(0.0);
 
-        if raw_content.is_empty() {
+        if raw_content.is_empty() || raw_content.trim() == "(empty)" {
             anyhow::bail!(
-                "inference returned empty content for step '{}' — check hex-nexus logs",
+                "inference returned empty content for step '{}' — model returned null/empty. Check hex-nexus logs for the raw API response.",
                 step.id
             );
         }
@@ -656,11 +782,25 @@ impl CodePhase {
         let target_file_content = self.read_target_file(&target_file).await;
         let ast_summary = self.fetch_ast_summary(&target_file).await;
         let port_interfaces = self.fetch_port_interfaces(step).await;
-        let boundary_rules = Self::get_boundary_rules();
         let language = self.infer_language(step, workplan);
+        let boundary_rules = Self::get_boundary_rules(&language);
 
         let mut context = HashMap::new();
-        context.insert("step_description".to_string(), step.description.clone());
+        // Enrich step description with done_condition and workplan success criteria
+        // so the model knows exactly what to implement, not just the generic step title.
+        let mut step_desc = step.description.clone();
+        if let Some(ref cond) = step.done_condition {
+            step_desc.push_str(&format!("\n\nAcceptance criteria: {}", cond));
+        }
+        if let Some(ref criteria) = workplan.success_criteria {
+            if !criteria.is_empty() {
+                step_desc.push_str("\n\nSuccess criteria:\n");
+                for c in criteria {
+                    step_desc.push_str(&format!("- {}\n", c));
+                }
+            }
+        }
+        context.insert("step_description".to_string(), step_desc.clone());
         context.insert("target_file".to_string(), target_file_content);
         context.insert("ast_summary".to_string(), ast_summary);
         context.insert("port_interfaces".to_string(), port_interfaces);
@@ -694,7 +834,7 @@ impl CodePhase {
         let mut user_message = format!(
             "Generate the complete source file for step '{}': {}\n\nTarget file: {}\nLanguage: {}",
             step.id,
-            step.description,
+            step_desc,
             target_file.as_deref().unwrap_or("(not specified)"),
             language,
         );
@@ -740,9 +880,9 @@ impl CodePhase {
             .and_then(|s| s.parse::<f64>().ok())
             .unwrap_or(0.0);
 
-        if raw_content.is_empty() {
+        if raw_content.is_empty() || raw_content.trim() == "(empty)" {
             anyhow::bail!(
-                "inference returned empty content for step '{}' phase '{}' — check hex-nexus logs",
+                "inference returned empty content for step '{}' phase '{}' — model returned null/empty. Check hex-nexus logs.",
                 step.id,
                 phase.id
             );
@@ -979,6 +1119,7 @@ impl CodePhase {
     fn infer_workplan_language(&self, workplan: &WorkplanData) -> String {
         let mut rust_signals = 0u32;
         let mut ts_signals = 0u32;
+        let mut go_signals = 0u32;
 
         let title_lower = workplan.title.to_lowercase();
         if title_lower.contains("rust") || title_lower.contains("cargo") {
@@ -986,6 +1127,13 @@ impl CodePhase {
         }
         if title_lower.contains("typescript") || title_lower.contains("bun") {
             ts_signals += 2;
+        }
+        if title_lower.contains("golang") || title_lower.contains("go lang")
+            || title_lower.contains(" go ") || title_lower.contains("go.mod")
+            || title_lower.contains("go rest") || title_lower.contains("go api")
+            || title_lower.contains("go cli") || title_lower.ends_with(" go")
+        {
+            go_signals += 2;
         }
 
         for step in &workplan.steps {
@@ -996,9 +1144,16 @@ impl CodePhase {
             if desc.contains("typescript") || desc.contains(".ts") || desc.contains("bun") {
                 ts_signals += 1;
             }
+            if desc.contains("golang") || desc.contains(".go") || desc.contains("go.mod")
+                || desc.contains("gin") || desc.contains("go test") || desc.contains("go build")
+            {
+                go_signals += 1;
+            }
         }
 
-        if rust_signals > ts_signals {
+        if go_signals > rust_signals && go_signals > ts_signals {
+            "go".to_string()
+        } else if rust_signals > ts_signals {
             "rust".to_string()
         } else {
             "typescript".to_string()
@@ -1174,8 +1329,21 @@ impl CodePhase {
     }
 
     /// Get hex architecture boundary rules (inline constant).
-    fn get_boundary_rules() -> String {
-        r#"1. domain/ must only import from domain/ (value-objects, entities)
+    fn get_boundary_rules(language: &str) -> String {
+        match language {
+            "go" => "This is a single-binary Go project — ALL code goes in main.go.\n\
+                 DO NOT create subdirectories for adapters, ports, or domain layers.\n\
+                 Write self-contained code in one flat package. Use gin for HTTP routing.\n\
+                 All imports must use the module path from go.mod."
+                .to_string(),
+            "rust" => format!(
+                "This is a single-binary {} project — ALL code goes in src/main.rs.\n\
+                 DO NOT add `use crate::adapters`, `use crate::ports`, `use crate::domain`, \
+                 or any multi-module hex layer structure.\n\
+                 Write self-contained code in one flat file. No module declarations for hex layers.",
+                language
+            ),
+            _ => r#"1. domain/ must only import from domain/ (value-objects, entities)
 2. ports/ may import from domain/ (for value types) but nothing else
 3. usecases/ may import from domain/ and ports/ only
 4. adapters/primary/ may import from ports/ only
@@ -1183,7 +1351,8 @@ impl CodePhase {
 6. adapters must NEVER import other adapters (cross-adapter coupling)
 7. composition-root is the ONLY file that imports from adapters
 8. All relative imports MUST use .js extensions (NodeNext module resolution)"#
-            .to_string()
+                .to_string(),
+        }
     }
 
     /// Infer the programming language from the step and workplan.
@@ -1196,11 +1365,23 @@ impl CodePhase {
         if desc.contains("typescript") || desc.contains(".ts") || desc.contains("bun") {
             return "typescript".to_string();
         }
+        if desc.contains("golang") || desc.contains(".go") || desc.contains("go.mod")
+            || desc.contains("gin") || desc.contains("go test") || desc.contains("go build")
+        {
+            return "go".to_string();
+        }
 
         // Check workplan title
         let title = workplan.title.to_lowercase();
-        if title.contains("rust") {
+        if title.contains("rust") || title.contains("cargo") {
             return "rust".to_string();
+        }
+        if title.contains("golang") || title.contains("go lang")
+            || title.contains(" go ") || title.contains("go.mod")
+            || title.contains("go rest") || title.contains("go api")
+            || title.contains("go cli") || title.ends_with(" go")
+        {
+            return "go".to_string();
         }
 
         // Check if target file path hints at language
@@ -1210,6 +1391,9 @@ impl CodePhase {
             }
             if path.ends_with(".ts") || path.ends_with(".tsx") {
                 return "typescript".to_string();
+            }
+            if path.ends_with(".go") {
+                return "go".to_string();
             }
         }
 
@@ -1339,16 +1523,24 @@ fn slug_from_description(description: &str) -> String {
 /// Looks for patterns like `src/adapters/secondary/foo.ts` or
 /// `hex-cli/src/pipeline/bar.rs` in the description text.
 fn extract_file_path_from_description(description: &str) -> Option<String> {
-    // Look for tokens that look like file paths
+    // Look for tokens that look like file paths (with or without path separators)
     for word in description.split_whitespace() {
         let clean = word.trim_matches(|c: char| c == '`' || c == '\'' || c == '"' || c == ',');
-        if (clean.contains('/') || clean.contains('\\'))
-            && (clean.ends_with(".rs")
-                || clean.ends_with(".ts")
-                || clean.ends_with(".tsx")
-                || clean.ends_with(".js")
-                || clean.ends_with(".jsx"))
-        {
+        let known_ext = clean.ends_with(".rs")
+            || clean.ends_with(".ts")
+            || clean.ends_with(".tsx")
+            || clean.ends_with(".js")
+            || clean.ends_with(".jsx")
+            || clean.ends_with(".go");
+        if !known_ext {
+            continue;
+        }
+        // Paths with separators are always valid
+        if clean.contains('/') || clean.contains('\\') {
+            return Some(clean.to_string());
+        }
+        // Bare filenames (e.g. "main.go", "main.rs") are also valid
+        if !clean.contains(|c: char| c.is_whitespace()) && clean.len() < 64 {
             return Some(clean.to_string());
         }
     }

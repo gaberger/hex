@@ -1,0 +1,114 @@
+[
+  {
+    "category": "version-parsing",
+    "description": "Version value object parses YY.M format correctly",
+    "given": "A version string '26.3'",
+    "when": "Version.parse('26.3') is called",
+    "then": "Returns a Version with year=26, month=3, patch=0",
+    "negative_spec": false
+  },
+  {
+    "category": "version-parsing",
+    "description": "Version value object parses YY.M.patch format",
+    "given": "A version string '26.3.1'",
+    "when": "Version.parse('26.3.1') is called",
+    "then": "Returns a Version with year=26, month=3, patch=1",
+    "negative_spec": false
+  },
+  {
+    "category": "version-parsing",
+    "description": "Version rejects invalid formats",
+    "given": "An invalid version string 'abc' or '1.13' (month > 12)",
+    "when": "Version.parse() is called",
+    "then": "Returns null (does not throw)",
+    "negative_spec": true
+  },
+  {
+    "category": "version-comparison",
+    "description": "Version comparison orders by year then month then patch",
+    "given": "Versions 26.3.0 and 26.2.1",
+    "when": "v1.isNewerThan(v2) is called",
+    "then": "Returns true (26.3 > 26.2 regardless of patch)",
+    "negative_spec": false
+  },
+  {
+    "category": "version-comparison",
+    "description": "Same versions are equal",
+    "given": "Two Version objects both representing 26.3.0",
+    "when": "v1.equals(v2) is called",
+    "then": "Returns true",
+    "negative_spec": false
+  },
+  {
+    "category": "cli-version",
+    "description": "hex --version prints the current CLI version",
+    "given": "hex CLI is installed with package.json version '26.3'",
+    "when": "User runs 'hex --version' or 'hex version'",
+    "then": "Prints 'hex 26.3' to stdout and exits with code 0",
+    "negative_spec": false
+  },
+  {
+    "category": "hub-version-detect",
+    "description": "Version adapter reads hex-hub binary version",
+    "given": "hex-hub Rust binary exists at ~/.hex/bin/hex-hub",
+    "when": "VersionAdapter.getHubVersion() is called",
+    "then": "Returns the version from the binary (via --version flag or Cargo.toml)",
+    "negative_spec": false
+  },
+  {
+    "category": "hub-version-detect",
+    "description": "Version adapter returns null when no hex-hub binary found",
+    "given": "No hex-hub binary on any search path",
+    "when": "VersionAdapter.getHubVersion() is called",
+    "then": "Returns null (not an error)",
+    "negative_spec": false
+  },
+  {
+    "category": "upgrade-check",
+    "description": "CLI warns when hex-hub binary is older than CLI",
+    "given": "CLI version is 26.3 and hex-hub binary is 26.2",
+    "when": "User runs 'hex hub status' or 'hex status'",
+    "then": "Output includes a warning: 'hex-hub 26.2 is outdated (CLI is 26.3). Run hex setup to rebuild.'",
+    "negative_spec": false
+  },
+  {
+    "category": "upgrade-check",
+    "description": "No warning when versions match",
+    "given": "CLI version 26.3 and hex-hub binary version 26.3",
+    "when": "User runs 'hex hub status'",
+    "then": "No upgrade warning is shown",
+    "negative_spec": true
+  },
+  {
+    "category": "daemon-routing",
+    "description": "hex dashboard prefers Rust binary over Node fallback",
+    "given": "Rust hex-hub binary exists at target/release/hex-hub",
+    "when": "User runs 'hex dashboard'",
+    "then": "Launches the Rust binary via HubLauncher, NOT the Node DashboardHub",
+    "negative_spec": false
+  },
+  {
+    "category": "daemon-routing",
+    "description": "hex dashboard falls back to Node when no Rust binary",
+    "given": "No Rust hex-hub binary found on any path",
+    "when": "User runs 'hex dashboard'",
+    "then": "Falls back to the Node.js DashboardHub with a warning message",
+    "negative_spec": false
+  },
+  {
+    "category": "daemon-routing",
+    "description": "Running Node daemon is replaced by Rust binary on restart",
+    "given": "A Node.js dashboard daemon is running AND a Rust binary is available",
+    "when": "User runs 'hex hub start'",
+    "then": "Stops the Node daemon and starts the Rust binary",
+    "negative_spec": false
+  },
+  {
+    "category": "version-display",
+    "description": "hex status shows both CLI and hub versions",
+    "given": "CLI version 26.3, hex-hub running version 26.3",
+    "when": "User runs 'hex status'",
+    "then": "Output includes 'CLI: 26.3' and 'Hub: 26.3'",
+    "negative_spec": false
+  }
+]

@@ -305,6 +305,48 @@ pub async fn evaluate_all(
 // ── Individual evaluators ────────────────────────────────────────────
 
 fn evaluate_code_generated(tier: u32, output_dir: &str, language: &str) -> ObjectiveState {
+    // Override: if .go files exist in the project root, treat this as a Go project
+    // regardless of the language parameter (handles mixed Go+TypeScript projects where
+    // infer_language_from_workplan may pick the wrong primary language).
+    let has_root_go_files = fs::read_dir(output_dir)
+        .ok()
+        .map(|entries| entries.flatten().any(|e| {
+            e.path().extension().and_then(|x| x.to_str()) == Some("go")
+        }))
+        .unwrap_or(false);
+    let effective_language = if has_root_go_files { "go" } else { language };
+
+    // Go single-binary projects: code lives in the project root (main.go), not src/
+    if effective_language == "go" {
+        let main_go = Path::new(output_dir).join("main.go");
+        let has_go_files = main_go.exists() || {
+            // Also accept any .go file in the root
+            fs::read_dir(output_dir)
+                .ok()
+                .map(|entries| entries.flatten().any(|e| {
+                    e.path().extension().and_then(|x| x.to_str()) == Some("go")
+                }))
+                .unwrap_or(false)
+        };
+        if !has_go_files {
+            return ObjectiveState::unmet(
+                Objective::CodeGenerated,
+                "no .go files in project root",
+                vec!["main.go does not exist".into()],
+            );
+        }
+        let go_file_count = fs::read_dir(output_dir)
+            .ok()
+            .map(|entries| entries.flatten().filter(|e| {
+                e.path().extension().and_then(|x| x.to_str()) == Some("go")
+            }).count())
+            .unwrap_or(0);
+        return ObjectiveState::met(
+            Objective::CodeGenerated,
+            &format!("{} Go source files found", go_file_count),
+        );
+    }
+
     let src_dir = Path::new(output_dir).join("src");
     if !src_dir.is_dir() {
         return ObjectiveState::unmet(
@@ -314,7 +356,7 @@ fn evaluate_code_generated(tier: u32, output_dir: &str, language: &str) -> Objec
         );
     }
 
-    let extensions: &[&str] = match language {
+    let extensions: &[&str] = match effective_language {
         "rust" => &["rs"],
         "typescript" | "ts" => &["ts", "tsx"],
         "javascript" | "js" => &["js", "jsx"],
@@ -341,7 +383,7 @@ fn evaluate_code_generated(tier: u32, output_dir: &str, language: &str) -> Objec
     // For Rust/Go, files live directly under src/ — check globally.
     // For other languages, check the tier-specific directories so that
     // CodeGenerated can only pass once the coder has written files for THAT tier.
-    let dirs_to_check: Vec<std::path::PathBuf> = match language {
+    let dirs_to_check: Vec<std::path::PathBuf> = match effective_language {
         "rust" | "go" => vec![src_dir.clone()],
         _ => match tier {
             0 => vec![
@@ -357,21 +399,36 @@ fn evaluate_code_generated(tier: u32, output_dir: &str, language: &str) -> Objec
 
     let count: usize = dirs_to_check.iter().map(|d| count_files_recursive(d, extensions)).sum();
 
-    if count > 0 {
-        ObjectiveState::met(
-            Objective::CodeGenerated,
-            format!("{} source file(s) found for tier {}", count, tier),
-        )
-    } else {
+    if count == 0 {
         let dir_names: Vec<String> = dirs_to_check.iter()
             .map(|d| d.strip_prefix(output_dir).unwrap_or(d).display().to_string())
             .collect();
-        ObjectiveState::unmet(
+        return ObjectiveState::unmet(
             Objective::CodeGenerated,
             format!("no source files for tier {} in {}", tier, dir_names.join(", ")),
             vec![format!("generate code for tier {} (expected in: {})", tier, dir_names.join(", "))],
-        )
+        );
     }
+
+    // For Rust/Go single-file projects, check that src/main.rs is not just the
+    // scaffold stub ("Hello from <feature>").  If it is, hex-coder hasn't run yet.
+    if matches!(language, "rust" | "go") {
+        let main_path = src_dir.join("main.rs");
+        if let Ok(content) = fs::read_to_string(&main_path) {
+            if content.contains("println!(\"Hello from") && content.lines().count() < 5 {
+                return ObjectiveState::unmet(
+                    Objective::CodeGenerated,
+                    "src/main.rs is scaffold stub — hex-coder has not implemented the feature yet",
+                    vec!["implement the requested feature in src/main.rs (replace scaffold stub)".into()],
+                );
+            }
+        }
+    }
+
+    ObjectiveState::met(
+        Objective::CodeGenerated,
+        format!("{} source file(s) found for tier {}", count, tier),
+    )
 }
 
 fn evaluate_code_compiles(output_dir: &str, language: &str, nexus_url: &str) -> ObjectiveState {
@@ -407,6 +464,28 @@ fn evaluate_code_compiles(output_dir: &str, language: &str, nexus_url: &str) -> 
 }
 
 fn evaluate_tests_exist(output_dir: &str, language: &str) -> ObjectiveState {
+    // Go: tests live alongside source as *_test.go in the project root
+    if language == "go" {
+        let test_count = fs::read_dir(output_dir)
+            .ok()
+            .map(|entries| entries.flatten().filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                name.ends_with("_test.go")
+            }).count())
+            .unwrap_or(0);
+        if test_count > 0 {
+            return ObjectiveState::met(
+                Objective::TestsExist,
+                &format!("{} Go test files found", test_count),
+            );
+        }
+        return ObjectiveState::unmet(
+            Objective::TestsExist,
+            "no *_test.go files found",
+            vec!["no Go test files in project root".into()],
+        );
+    }
+
     let tests_dir = Path::new(output_dir).join("tests");
     let src_dir = Path::new(output_dir).join("src");
 
@@ -544,9 +623,11 @@ fn evaluate_review_passes(output_dir: &str) -> ObjectiveState {
                                         .unwrap_or("unknown")
                                         .to_lowercase();
                                     if severity == "critical" || severity == "high" {
-                                        if let Some(msg) = issue["message"].as_str() {
-                                            critical_issues.push(msg.to_string());
-                                        }
+                                        let msg = issue["description"]
+                                            .as_str()
+                                            .or_else(|| issue["message"].as_str())
+                                            .unwrap_or("critical issue");
+                                        critical_issues.push(msg.to_string());
                                     }
                                 }
                             }

@@ -2,7 +2,7 @@
   "id": "feat-fix-p0-pipeline-correctness",
   "title": "P0 Pipeline Correctness Fixes",
   "description": "Fix the four P0 issues identified by the research swarm that collectively prevent the nominal code-generation path from executing end-to-end: (T2) CodePhaseWorker disconnected from task dispatch, (D1) workflow gates never enforced, (D3) project_id never propagated to AgentContext, (D5) blocking thread::sleep in async executor.",
-  "status": "active",
+  "status": "done",
   "language": "rust",
   "crates": ["hex-agent", "hex-cli"],
   "steps": [

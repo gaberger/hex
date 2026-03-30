@@ -171,7 +171,20 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     // ADR-065 P4: show project registration status
     match &register_result {
-        Ok(pid) => println!("  {} SpacetimeDB project registered ({})", "\u{2713}".green(), &pid[..8.min(pid.len())]),
+        Ok(pid) => {
+            println!("  {} SpacetimeDB project registered ({})", "\u{2713}".green(), &pid[..8.min(pid.len())]);
+            // ADR-2603301200: Generate architecture fingerprint on init so it's available
+            // immediately in Claude Code sessions and the first `hex dev` run.
+            let nexus = crate::nexus_client::NexusClient::from_env();
+            let fp_body = serde_json::json!({
+                "project_root": target.display().to_string(),
+                "workplan_path": "",
+            });
+            match nexus.post_long(&format!("/api/projects/{}/fingerprint", pid), &fp_body).await {
+                Ok(_) => println!("  {} Architecture fingerprint generated", "\u{2713}".green()),
+                Err(_) => println!("  {} Fingerprint: will generate on first `hex dev` run", "\u{2022}".dimmed()),
+            }
+        }
         Err(_) => println!("  {} SpacetimeDB: project will register on first agent connect", "\u{2022}".dimmed()),
     }
 
@@ -282,10 +295,16 @@ fn create_mcp_json(target: &Path) -> Result<()> {
         serde_json::json!({"mcpServers": {}})
     };
 
-    // Add hex server entry — delegates to the hex binary on PATH
+    // Add hex server entry — delegates to the hex binary on PATH.
+    // toolSearch enables BM25 on-demand tool discovery so only needed
+    // tool schemas enter context (not all 50+ hex tools upfront).
     mcp["mcpServers"]["hex"] = serde_json::json!({
         "command": "hex",
-        "args": ["mcp"]
+        "args": ["mcp"],
+        "toolSearch": {
+            "type": "tool_search_tool_bm25_20251119",
+            "enabled": true
+        }
     });
 
     fs::write(&mcp_path, serde_json::to_string_pretty(&mcp)?)
@@ -489,24 +508,28 @@ async fn register_project_in_nexus(target: &Path, name: &str) -> Result<String> 
     let nexus = crate::nexus_client::NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    // Read project ID from the .hex/project.json we just created
-    let project_json_path = target.join(".hex/project.json");
-    let project_id = if project_json_path.exists() {
-        let content = fs::read_to_string(&project_json_path)?;
-        let parsed: serde_json::Value = serde_json::from_str(&content)?;
-        parsed["id"].as_str().unwrap_or_default().to_string()
-    } else {
-        Uuid::new_v4().to_string()
-    };
-
     let body = serde_json::json!({
-        "id": project_id,
         "name": name,
-        "root_path": target.to_string_lossy(),
+        "rootPath": target.to_string_lossy(),
     });
 
-    nexus.post("/api/projects", &body).await?;
-    Ok(project_id)
+    let resp = nexus.post("/api/projects/register", &body).await?;
+
+    // Server assigns the canonical ID (slug-based). Update .hex/project.json
+    // so read_project_id_in() returns the nexus-registered ID, not the local UUID.
+    let server_id = resp["id"].as_str().unwrap_or_default().to_string();
+    if !server_id.is_empty() {
+        let project_json_path = target.join(".hex/project.json");
+        if project_json_path.exists() {
+            let content = fs::read_to_string(&project_json_path)?;
+            let mut parsed: serde_json::Value = serde_json::from_str(&content)?;
+            parsed["id"] = serde_json::Value::String(server_id.clone());
+            fs::write(&project_json_path, serde_json::to_string_pretty(&parsed)?)
+                .context("Failed to update .hex/project.json with server ID")?;
+        }
+    }
+
+    Ok(server_id)
 }
 
 /// Pull embedded skills, agents, and hooks from hex-nexus via its REST API.

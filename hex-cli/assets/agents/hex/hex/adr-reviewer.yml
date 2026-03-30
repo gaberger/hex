@@ -66,6 +66,7 @@ outputs:
       recommendations: string[]
 
 constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_adr_list, mcp__hex__hex_adr_search, mcp__hex__hex_adr_status instead of Bash."
   - Every ADR must have: Title, Status, Context, Decision, Consequences sections
   - Status must be one of: proposed, accepted, deprecated, superseded
   - Superseded ADRs must link to their replacement via "Superseded by ADR-XXX"

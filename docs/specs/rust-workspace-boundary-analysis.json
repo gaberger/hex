@@ -1,0 +1,103 @@
+{
+  "feature": "rust-workspace-boundary-analysis",
+  "description": "Extend hex analyze to detect and report Rust workspace layers and boundary violations. Currently hex analyze only reports TypeScript src/ layer counts; 299 Rust files (87% of the codebase) are invisible to the health score and boundary checker.",
+  "adr": "ADR-2603283000",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "hex analyze reports Rust workspace layer counts when Cargo.toml is present",
+      "given": "Running `hex analyze .` in the hex-intf root (has Cargo.toml workspace)",
+      "when": "The analyze command runs",
+      "then": "A 'Rust workspace layers' section appears showing Domain, Ports, Primary Adapters, Secondary Adapters, Use Cases with file counts sourced from Rust crate src/ directories",
+      "negative_spec": false,
+      "domain_conventions": {
+        "layer_mapping": "hex-core/src/domain → Domain, hex-core/src/ports → Ports, hex-nexus/src/adapters → Secondary Adapters, hex-nexus/src/orchestration → Use Cases, hex-nexus/src/routes + hex-cli/src/commands + hex-agent/src/adapters/primary → Primary Adapters"
+      }
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "Health score denominator includes all Rust source files",
+      "given": "The project has 452 source files (12 TS domain + 299 Rust + rest)",
+      "when": "The health score is computed",
+      "then": "The score denominator is the total file count including Rust files, not just TypeScript files",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "Rust boundary violation detected when secondary adapter imports another secondary adapter",
+      "given": "A Rust file in hex-nexus/src/adapters/ contains `use crate::adapters::other_adapter`",
+      "when": "hex analyze runs the offline boundary scan",
+      "then": "A boundary violation is reported: 'secondary adapter imports secondary adapter'",
+      "negative_spec": false,
+      "domain_conventions": {
+        "rule": "Secondary adapters must only import from hex-core ports/domain, never from sibling adapters"
+      }
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "Domain layer violation detected when domain file imports from adapters",
+      "given": "A Rust file in hex-core/src/domain/ contains `use hex_nexus::adapters`",
+      "when": "hex analyze runs the offline boundary scan",
+      "then": "A boundary violation is reported: 'domain imports from adapters layer'",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "JSON output includes rust_layers field",
+      "given": "Running `hex analyze . --json`",
+      "when": "The command completes",
+      "then": "The JSON output contains a `rust_layers` array with `{ layer, file_count }` entries, parallel to the existing `layers` field for TypeScript",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "HappyPath",
+      "description": "Crates without recognized layer directories are counted as infrastructure",
+      "given": "hex-parser/ has no domain/, ports/, adapters/ subdirectories under src/",
+      "when": "hex analyze scans the workspace",
+      "then": "hex-parser files are counted in total file count but reported as 'Infrastructure' — not penalized and not boundary-checked",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "EdgeCase",
+      "description": "TypeScript-only project shows no Rust section",
+      "given": "Running hex analyze on a project with no Cargo.toml",
+      "when": "The command runs",
+      "then": "No 'Rust workspace layers' section appears; output is identical to current behavior",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "EdgeCase",
+      "description": "Test-only use statements are excluded from boundary scan",
+      "given": "A Rust adapter file has `use other_adapter::Foo` inside `#[cfg(test)] mod tests { ... }`",
+      "when": "The offline boundary scan runs",
+      "then": "The use statement is not flagged as a violation — test code is excluded from boundary enforcement",
+      "negative_spec": false
+    },
+    {
+      "id": "S09",
+      "category": "NegativeSpec",
+      "description": "Clean hex-intf codebase produces zero Rust boundary violations",
+      "given": "The current hex-intf Rust codebase (which follows hex rules)",
+      "when": "hex analyze runs the Rust boundary scan",
+      "then": "Zero boundary violations are reported for the Rust workspace",
+      "negative_spec": true
+    },
+    {
+      "id": "S10",
+      "category": "HappyPath",
+      "description": "Rust layer display appears before the health score line",
+      "given": "Running `hex analyze .` with both TypeScript and Rust code present",
+      "when": "Output is rendered",
+      "then": "The display order is: Project structure → TypeScript hex layers (if src/ exists) → Rust workspace layers → boundary violations → health score",
+      "negative_spec": false
+    }
+  ]
+}

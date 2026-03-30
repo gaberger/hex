@@ -1,0 +1,274 @@
+{
+  "feature": "opencode-integration",
+  "title": "hex Context Injection into opencode",
+  "adr": "ADR-2603231800",
+  "description": "Enable opencode to leverage hex's complete ecosystem (MCP tools, agent definitions, skills, hooks, enforcement rules) via opencode.json configuration",
+  "spec_version": "2.0",
+  "behaviors": [
+    {
+      "id": "inject-all",
+      "description": "hex opencode inject injects all hex context into opencode.json",
+      "given": ["hex CLI is installed", "opencode.json may or may not exist at project root or ~/.config/opencode/opencode.json"],
+      "when": ["user runs hex opencode inject"],
+      "then": [
+        "$schema field is set to 'https://opencode.ai/config.json'",
+        "hex MCP server entry is added to mcp key with type: 'local', command: ['hex', 'mcp'], enabled: true",
+        "HEX_PROJECT_ROOT environment variable is set to '.' in MCP entry",
+        "hex agent definitions are added to hex.context.agents",
+        "hex skills are added to hex.context.skills",
+        "hex hooks are added to hex.context.hooks",
+        "hex enforcement rules are added to hex.context.enforcement",
+        "existing opencode.json config is preserved via non-destructive merge",
+        "original config is backed up before modification",
+        "success message is displayed with config file location"
+      ]
+    },
+    {
+      "id": "inject-mcp-only",
+      "description": "hex opencode inject --mcp injects only MCP server spec",
+      "given": ["hex CLI is installed"],
+      "when": ["user runs hex opencode inject --mcp"],
+      "then": [
+        "hex MCP entry is added to mcp key: type 'local', command ['hex', 'mcp'], enabled true",
+        "other hex context (agents, skills, hooks) is NOT modified",
+        "existing MCP server configurations are preserved"
+      ]
+    },
+    {
+      "id": "inject-agents-only",
+      "description": "hex opencode inject --agents injects only agent definitions",
+      "given": ["hex CLI is installed"],
+      "when": ["user runs hex opencode inject --agents"],
+      "then": [
+        "hex agent definitions (YAML) are read from embedded assets",
+        "agents are added to hex.context.agents in opencode.json",
+        "14+ agents (feature-developer, planner, hex-coder, integrator, etc.) become available"
+      ]
+    },
+    {
+      "id": "inject-skills-only",
+      "description": "hex opencode inject --skills injects only skills",
+      "given": ["hex CLI is installed"],
+      "when": ["user runs hex opencode inject --skills"],
+      "then": [
+        "hex skills are read from embedded assets",
+        "28+ skills are added to hex.context.skills in opencode.json"
+      ]
+    },
+    {
+      "id": "inject-hooks-only",
+      "description": "hex opencode inject --hooks injects only hooks",
+      "given": ["hex CLI is installed"],
+      "when": ["user runs hex opencode inject --hooks"],
+      "then": [
+        "hex hooks are read from embedded helpers/*.cjs assets",
+        "hooks are added to hex.context.hooks in opencode.json"
+      ]
+    },
+    {
+      "id": "inject-enforcement-only",
+      "description": "hex opencode inject --enforcement injects only enforcement rules",
+      "given": ["hex CLI is installed"],
+      "when": ["user runs hex opencode inject --enforcement"],
+      "then": [
+        "ADR compliance rules are read from .hex/adr-rules.toml",
+        "rules are added to hex.context.enforcement in opencode.json"
+      ]
+    },
+    {
+      "id": "inject-global",
+      "description": "hex opencode inject --global writes to global config",
+      "given": ["hex CLI is installed"],
+      "when": ["user runs hex opencode inject --global"],
+      "then": [
+        "config is written to ~/.config/opencode/opencode.json (not project-local)",
+        "HEX_PROJECT_ROOT is set to the absolute path of the current directory",
+        "parent directories are created if needed"
+      ]
+    },
+    {
+      "id": "config-detection",
+      "description": "hex opencode detects opencode.json config location",
+      "given": ["opencode may be installed"],
+      "when": ["user runs any hex opencode command"],
+      "then": [
+        "hex checks ./opencode.json first (project root, highest precedence)",
+        "if not found, checks ~/.config/opencode/opencode.json (global)",
+        "for inject without --global, defaults to creating ./opencode.json if not found"
+      ]
+    },
+    {
+      "id": "merge-strategy",
+      "description": "hex opencode uses non-destructive merge with serde flatten",
+      "given": ["opencode.json exists with existing configuration"],
+      "when": ["user runs hex opencode inject"],
+      "then": [
+        "existing $schema field is preserved",
+        "existing mcp entries (other than hex) are preserved",
+        "existing hex.context is updated, not replaced",
+        "unknown top-level keys are preserved via serde flatten",
+        "no user config is lost during round-trip"
+      ]
+    },
+    {
+      "id": "backup-before-modify",
+      "description": "hex opencode backs up config before modification",
+      "given": ["opencode.json exists"],
+      "when": ["user runs hex opencode inject or hex opencode remove"],
+      "then": [
+        "original config is copied to opencode.json.backup.<timestamp>",
+        "unix timestamp is used in backup filename"
+      ]
+    },
+    {
+      "id": "remove-all",
+      "description": "hex opencode remove removes all hex context from opencode.json",
+      "given": ["hex context was previously injected into opencode.json"],
+      "when": ["user runs hex opencode remove"],
+      "then": [
+        "hex entry is removed from mcp key",
+        "hex context block is removed",
+        "other opencode configuration (other mcp servers, unknown keys) is preserved",
+        "$schema field is preserved"
+      ]
+    },
+    {
+      "id": "disable",
+      "description": "hex opencode disable sets enabled: false on hex MCP server",
+      "given": ["hex MCP server is configured in opencode.json"],
+      "when": ["user runs hex opencode disable"],
+      "then": [
+        "mcp.hex.enabled is set to false",
+        "all other config (command, environment, hex context) is preserved",
+        "config is backed up before modification"
+      ]
+    },
+    {
+      "id": "enable",
+      "description": "hex opencode enable sets enabled: true on hex MCP server",
+      "given": ["hex MCP server is configured in opencode.json with enabled: false"],
+      "when": ["user runs hex opencode enable"],
+      "then": [
+        "mcp.hex.enabled is set to true",
+        "all other config is preserved"
+      ]
+    },
+    {
+      "id": "disable-not-configured",
+      "description": "hex opencode disable errors when hex MCP not configured",
+      "given": ["hex MCP server is NOT configured in opencode.json"],
+      "when": ["user runs hex opencode disable"],
+      "then": [
+        "error message indicates hex MCP server not configured",
+        "suggests running hex opencode inject --mcp first"
+      ]
+    },
+    {
+      "id": "status",
+      "description": "hex opencode status shows configured hex context",
+      "given": ["hex may or may not be configured in opencode"],
+      "when": ["user runs hex opencode status"],
+      "then": [
+        "displays config file location",
+        "displays whether hex MCP server is enabled or disabled",
+        "displays MCP command and environment variables",
+        "displays hex version from hex.version",
+        "displays agent, skill, hook counts from hex.context",
+        "displays whether enforcement is configured"
+      ]
+    },
+    {
+      "id": "status-no-config",
+      "description": "hex opencode status handles missing config",
+      "given": ["no opencode.json exists"],
+      "when": ["user runs hex opencode status"],
+      "then": [
+        "displays 'Config: not found'",
+        "suggests running hex opencode inject"
+      ]
+    },
+    {
+      "id": "invalid-config",
+      "description": "hex opencode handles corrupted config file",
+      "given": ["opencode.json exists but is invalid JSON"],
+      "when": ["user runs hex opencode inject"],
+      "then": [
+        "error message indicates config is corrupted",
+        "original file is not modified"
+      ]
+    },
+    {
+      "id": "mcp-spec-format",
+      "description": "hex MCP server is injected with correct opencode specification",
+      "given": ["hex opencode inject is run"],
+      "when": ["MCP server spec is being injected"],
+      "then": [
+        "type field is set to 'local'",
+        "command field is set to ['hex', 'mcp'] (array, not string)",
+        "enabled field is set to true",
+        "environment.HEX_PROJECT_ROOT is set to '.' (project-local) or absolute path (global)"
+      ]
+    },
+    {
+      "id": "agent-conversion",
+      "description": "hex agent definitions are correctly loaded from embedded assets",
+      "given": ["hex agent YAML definitions are embedded in hex-cli binary"],
+      "when": ["hex opencode inject --agents is run"],
+      "then": [
+        "agent definitions are read from embedded assets/agents/*.yaml",
+        "each agent's name and content are extracted",
+        "agents are stored in hex.context.agents array"
+      ]
+    }
+  ],
+  "non_behaviors": [
+    {
+      "id": "never-delete-existing",
+      "description": "hex opencode never deletes existing opencode configuration",
+      "given": ["opencode.json exists with user config"],
+      "when": ["hex opencode inject is run"],
+      "then": ["existing mcp entries, unknown keys, and $schema are preserved via serde flatten"]
+    },
+    {
+      "id": "never-modify-hex",
+      "description": "hex opencode never modifies hex's own configuration files",
+      "given": ["hex is installed"],
+      "when": ["hex opencode inject is run"],
+      "then": ["hex's agents/, skills/, helpers/, .hex/ directories are not modified"]
+    },
+    {
+      "id": "never-shell-interpret-command",
+      "description": "hex opencode never uses shell string for MCP command",
+      "given": ["hex MCP entry is being created"],
+      "when": ["command field is populated"],
+      "then": ["command is always an array ['hex', 'mcp'], never a shell string"]
+    }
+  ],
+  "properties": [
+    {
+      "id": "config-validity",
+      "property": "After hex opencode inject, opencode.json remains valid JSON with $schema",
+      "theorem": "serde_json::from_str::<Value>(&config) succeeds and config['$schema'] == 'https://opencode.ai/config.json'"
+    },
+    {
+      "id": "idempotent-mcp",
+      "property": "Running hex opencode inject twice does not duplicate MCP server",
+      "theorem": "config['mcp']['hex'] exists exactly once after two inject calls"
+    },
+    {
+      "id": "roundtrip",
+      "property": "hex opencode remove restores original config (minus hex entries)",
+      "theorem": "After inject → remove, all non-hex config keys equal original"
+    },
+    {
+      "id": "flatten-preservation",
+      "property": "Unknown opencode.json keys survive round-trip",
+      "theorem": "For any key K not in {$schema, mcp, hex}, config[K] is unchanged after inject"
+    },
+    {
+      "id": "toggle-idempotent",
+      "property": "enable/disable are idempotent",
+      "theorem": "Running disable twice yields same state as running it once"
+    }
+  ]
+}

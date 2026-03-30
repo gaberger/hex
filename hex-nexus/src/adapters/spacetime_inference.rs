@@ -116,6 +116,16 @@ impl SpacetimeInferenceClient {
         self.call_reducer("remove_provider", serde_json::json!([provider_id])).await
     }
 
+    /// Push a resolved API key into the private `inference_api_key` table.
+    ///
+    /// Called by hex-nexus at startup (and on demand) after resolving each
+    /// provider's `api_key_ref` from the OS environment or vault.  The
+    /// `inference_api_key` table is private — clients cannot subscribe to it.
+    pub async fn set_api_key(&self, provider_id: &str, api_key: &str) -> Result<(), String> {
+        self.call_reducer("set_api_key", serde_json::json!([provider_id, api_key]))
+            .await
+    }
+
     /// Submit an inference request to SpacetimeDB (status = "queued").
     ///
     /// Note: `request_id` is auto-incremented by SpacetimeDB. The caller

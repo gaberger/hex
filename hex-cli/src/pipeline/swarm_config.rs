@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn max_iterations_from_config() {
         let config = SwarmConfig::load_default();
-        assert_eq!(config.max_iterations_per_tier(), 5);
+        assert_eq!(config.max_iterations_per_tier(), 8);
     }
 
     #[test]

@@ -9,7 +9,7 @@
 //! Tests that require a live Docker daemon or SpacetimeDB are
 //! gated behind the `integration` feature / `#[ignore]` to keep CI fast.
 
-use hex_core::domain::sandbox::{AgentTask, SandboxConfig, SandboxError, SpawnResult, ToolResult};
+use hex_core::domain::sandbox::{AgentTask, SandboxConfig, SandboxError, ToolResult};
 use hex_core::ports::agent_runtime::IAgentRuntimePort;
 use hex_core::ports::sandbox::ISandboxPort;
 use std::collections::HashMap;

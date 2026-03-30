@@ -113,6 +113,7 @@ analysis_phases:
     description: "Flag dependency conflicts, license issues, ecosystem gaps"
 
 constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_analyze, mcp__hex__hex_adr_search instead of Bash."
   - Never recommend unmaintained libraries (no commit in 12+ months)
   - Prefer libraries with TypeScript types / Go interfaces / Rust traits
   - Weight LLM generation quality — if an LLM can't write good code for a library, skip it

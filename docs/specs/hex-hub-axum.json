@@ -1,0 +1,310 @@
+[
+  {
+    "id": "S01",
+    "category": "static-serving",
+    "description": "Hub serves embedded dashboard HTML at root path",
+    "given": "Hub is running on port 5555",
+    "when": "GET / is requested",
+    "then": "Returns 200 with Content-Type text/html containing the dashboard UI",
+    "negative_spec": false
+  },
+  {
+    "id": "S02",
+    "category": "registration",
+    "description": "Projects register with hub via POST",
+    "given": "Hub is running, no projects registered",
+    "when": "POST /api/projects/register with { rootPath: '/foo/bar', name: 'bar' }",
+    "then": "Returns 200 with { id, name, rootPath } where id is deterministic hash of rootPath",
+    "negative_spec": false
+  },
+  {
+    "id": "S03",
+    "category": "registration",
+    "description": "Re-registration updates metadata without duplicating",
+    "given": "Project 'bar' already registered",
+    "when": "POST /api/projects/register with same rootPath but different name",
+    "then": "Returns same id, updates name and project metadata, does not create duplicate entry",
+    "negative_spec": false
+  },
+  {
+    "id": "S04",
+    "category": "registration",
+    "description": "Registration requires rootPath",
+    "given": "Hub is running",
+    "when": "POST /api/projects/register with empty body or missing rootPath",
+    "then": "Returns 400 with { error: 'Missing rootPath' }",
+    "negative_spec": true
+  },
+  {
+    "id": "S05",
+    "category": "registration",
+    "description": "Unregister removes project and broadcasts event",
+    "given": "Project 'bar' is registered",
+    "when": "DELETE /api/projects/bar-id",
+    "then": "Returns 200 { ok: true }, project removed from list, SSE broadcasts project-unregistered",
+    "negative_spec": false
+  },
+  {
+    "id": "S06",
+    "category": "registration",
+    "description": "Unregister nonexistent project returns 404",
+    "given": "No project with id 'nonexistent'",
+    "when": "DELETE /api/projects/nonexistent",
+    "then": "Returns 404 { error: 'Not found' }",
+    "negative_spec": true
+  },
+  {
+    "id": "S07",
+    "category": "project-list",
+    "description": "List projects returns all registered projects",
+    "given": "Two projects registered: 'alpha' and 'beta'",
+    "when": "GET /api/projects",
+    "then": "Returns 200 { projects: [{ id, name, rootPath, registeredAt, lastPushAt, astIsStub }] } with 2 entries",
+    "negative_spec": false
+  },
+  {
+    "id": "S08",
+    "category": "push",
+    "description": "Push health state stores data and broadcasts SSE update",
+    "given": "Project 'bar' is registered, browser connected via SSE",
+    "when": "POST /api/push with { projectId: 'bar-id', type: 'health', data: { summary: {...} } }",
+    "then": "Returns 200 { ok: true }, state stored, SSE receives event: state-update with { projectId, type: 'health' }",
+    "negative_spec": false
+  },
+  {
+    "id": "S09",
+    "category": "push",
+    "description": "Push to unregistered project returns 404",
+    "given": "No project with id 'ghost'",
+    "when": "POST /api/push with { projectId: 'ghost', type: 'health', data: {} }",
+    "then": "Returns 404 { error: 'Project not registered' }",
+    "negative_spec": true
+  },
+  {
+    "id": "S10",
+    "category": "push",
+    "description": "Push unknown state type returns 400",
+    "given": "Project 'bar' is registered",
+    "when": "POST /api/push with { projectId: 'bar-id', type: 'invalid', data: {} }",
+    "then": "Returns 400 { error: 'Unknown state type: invalid' }",
+    "negative_spec": true
+  },
+  {
+    "id": "S11",
+    "category": "push",
+    "description": "Push supports all 6 state types",
+    "given": "Project 'bar' is registered",
+    "when": "POST /api/push with type = health | tokens | tokenFile | swarm | graph | project",
+    "then": "Each type stores data in the correct state field and returns 200",
+    "negative_spec": false,
+    "domain_conventions": {
+      "valid_types": ["health", "tokens", "tokenFile", "swarm", "graph", "project"],
+      "tokenFile_requires": "filePath field in body alongside data"
+    }
+  },
+  {
+    "id": "S12",
+    "category": "push",
+    "description": "Push body size limited to 256KB",
+    "given": "Project 'bar' is registered",
+    "when": "POST /api/push with body exceeding 256KB",
+    "then": "Connection terminated or 413 returned",
+    "negative_spec": true
+  },
+  {
+    "id": "S13",
+    "category": "event",
+    "description": "Push event broadcasts to SSE clients with project filter",
+    "given": "Project 'bar' registered, SSE client connected with ?project=bar-id",
+    "when": "POST /api/event with { projectId: 'bar-id', event: 'file-change', data: { path: 'src/foo.ts' } }",
+    "then": "SSE client receives event: file-change with data including project field",
+    "negative_spec": false
+  },
+  {
+    "id": "S14",
+    "category": "event",
+    "description": "Event body size limited to 16KB",
+    "given": "Project 'bar' is registered",
+    "when": "POST /api/event with body exceeding 16KB",
+    "then": "Connection terminated or 413 returned",
+    "negative_spec": true
+  },
+  {
+    "id": "S15",
+    "category": "query",
+    "description": "Query returns stored state with defaults for null fields",
+    "given": "Project 'bar' registered, no health data pushed yet",
+    "when": "GET /api/bar-id/health",
+    "then": "Returns 200 with default { summary: { healthScore: 0, totalFiles: 0, ... } }",
+    "negative_spec": false
+  },
+  {
+    "id": "S16",
+    "category": "query",
+    "description": "Query nonexistent project returns 404",
+    "given": "No project with id 'ghost'",
+    "when": "GET /api/ghost/health",
+    "then": "Returns 404 { error: 'Not found' }",
+    "negative_spec": true
+  },
+  {
+    "id": "S17",
+    "category": "query",
+    "description": "Token file query decodes URL-encoded paths",
+    "given": "Project has tokenFile stored for 'src/adapters/primary/cli.ts'",
+    "when": "GET /api/bar-id/tokens/src%2Fadapters%2Fprimary%2Fcli.ts",
+    "then": "Returns the stored token data for that file",
+    "negative_spec": false
+  },
+  {
+    "id": "S18",
+    "category": "sse",
+    "description": "SSE sends initial project list on connect",
+    "given": "Two projects registered",
+    "when": "GET /api/events (EventSource connects)",
+    "then": "First event is type 'connected' with data { projects: [...] }",
+    "negative_spec": false
+  },
+  {
+    "id": "S19",
+    "category": "sse",
+    "description": "SSE filters events by project when ?project= specified",
+    "given": "Projects 'alpha' and 'beta' registered, SSE client with ?project=alpha-id",
+    "when": "State pushed to both alpha and beta",
+    "then": "SSE client only receives events for alpha, not beta",
+    "negative_spec": false
+  },
+  {
+    "id": "S20",
+    "category": "sse",
+    "description": "SSE heartbeat prevents connection timeout",
+    "given": "SSE client connected",
+    "when": "15 seconds pass with no events",
+    "then": "Client receives :heartbeat comment line",
+    "negative_spec": false,
+    "domain_conventions": { "heartbeat_interval_seconds": 15 }
+  },
+  {
+    "id": "S21",
+    "category": "decision",
+    "description": "Decision response is forwarded via SSE",
+    "given": "Project 'bar' registered, SSE client connected",
+    "when": "POST /api/bar-id/decisions/dec-123 with { selectedOption: 'continue' }",
+    "then": "SSE broadcasts event: decision-response with { decisionId, selectedOption, respondedBy: 'human', timestamp }",
+    "negative_spec": false
+  },
+  {
+    "id": "S22",
+    "category": "ws",
+    "description": "WebSocket sends welcome message on connect",
+    "given": "Hub is running with WS enabled",
+    "when": "Client connects to ws://localhost:5555/ws",
+    "then": "Receives { topic: 'hub:health', event: 'connected', data: { clientId, authenticated } }",
+    "negative_spec": false
+  },
+  {
+    "id": "S23",
+    "category": "ws",
+    "description": "WebSocket subscribe and receive topic messages",
+    "given": "WS client connected",
+    "when": "Client sends { type: 'subscribe', topic: 'project:abc:*' } then a message is published to project:abc:file-change",
+    "then": "Client receives { topic: 'project:abc:file-change', event: '...', data: {...} }",
+    "negative_spec": false
+  },
+  {
+    "id": "S24",
+    "category": "ws",
+    "description": "WebSocket wildcard matching uses trailing :* only",
+    "given": "WS client subscribed to 'project:abc:*'",
+    "when": "Messages published to project:abc:file-change and project:def:file-change",
+    "then": "Client receives project:abc:file-change but NOT project:def:file-change",
+    "negative_spec": false,
+    "domain_conventions": { "wildcard_rule": "trailing :* only — prefix match up to and including the colon before *" }
+  },
+  {
+    "id": "S25",
+    "category": "ws",
+    "description": "Unauthenticated WS clients cannot publish",
+    "given": "Hub has authToken configured, WS client connected without token",
+    "when": "Client sends { type: 'publish', topic: '...', event: '...', data: {} }",
+    "then": "Receives error { message: 'Authentication required to publish' }",
+    "negative_spec": true
+  },
+  {
+    "id": "S26",
+    "category": "ws",
+    "description": "WebSocket heartbeat terminates unresponsive clients",
+    "given": "WS client connected",
+    "when": "30s heartbeat interval passes and client does not respond to ping",
+    "then": "Client connection is terminated",
+    "negative_spec": false,
+    "domain_conventions": { "heartbeat_interval_seconds": 30 }
+  },
+  {
+    "id": "S27",
+    "category": "auth",
+    "description": "POST/DELETE require bearer token when HEX_DASHBOARD_TOKEN is set",
+    "given": "Hub started with auth token 'secret123'",
+    "when": "POST /api/push without Authorization header",
+    "then": "Returns 401 { error: 'Unauthorized' }",
+    "negative_spec": true
+  },
+  {
+    "id": "S28",
+    "category": "auth",
+    "description": "GET requests bypass auth",
+    "given": "Hub started with auth token 'secret123'",
+    "when": "GET /api/projects without Authorization header",
+    "then": "Returns 200 with project list (auth not checked for GET)",
+    "negative_spec": false
+  },
+  {
+    "id": "S29",
+    "category": "cors",
+    "description": "CORS allows localhost origins only",
+    "given": "Hub is running",
+    "when": "Request with Origin: http://localhost:3000",
+    "then": "Response includes Access-Control-Allow-Origin: http://localhost:3000",
+    "negative_spec": false
+  },
+  {
+    "id": "S30",
+    "category": "cors",
+    "description": "OPTIONS preflight returns 204 with CORS headers",
+    "given": "Hub is running",
+    "when": "OPTIONS /api/push with Origin: http://localhost:3000",
+    "then": "Returns 204 with Allow-Methods and Allow-Headers",
+    "negative_spec": false
+  },
+  {
+    "id": "S31",
+    "category": "daemon",
+    "description": "Daemon writes lock file on start",
+    "given": "No lock file at ~/.hex/daemon/hub.lock",
+    "when": "hex-hub --daemon starts",
+    "then": "Lock file created with { pid, port, token, startedAt, version }",
+    "negative_spec": false
+  },
+  {
+    "id": "S32",
+    "category": "daemon",
+    "description": "Daemon cleans up lock file on graceful shutdown",
+    "given": "Daemon is running with lock file",
+    "when": "Daemon receives SIGTERM",
+    "then": "Lock file is removed, SSE clients disconnected, server closes",
+    "negative_spec": false
+  },
+  {
+    "id": "S33",
+    "category": "project-id",
+    "description": "Project ID is deterministic from rootPath",
+    "given": "rootPath = '/Users/gary/projects/my-app'",
+    "when": "makeProjectId is called twice with same path",
+    "then": "Returns identical id both times (basename + hash of full path)",
+    "negative_spec": false,
+    "domain_conventions": {
+      "algorithm": "basename-djb2hash_base36",
+      "note": "Must match TypeScript implementation exactly for cross-language compatibility"
+    }
+  }
+]

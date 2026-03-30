@@ -73,6 +73,7 @@ pub struct InferenceRegisterRequest {
     /// Auto-detected from Ollama model name if omitted. Defaults to "cloud" for API providers.
     pub quantization: Option<String>,
     /// Context window size in tokens.
+    #[serde(alias = "context_window")]
     pub context_window: Option<u32>,
 }
 
@@ -319,16 +320,41 @@ pub async fn register_inference(
             _ => "q4".to_string(),
         });
 
+    let api_key_ref = body.secret_key.clone().unwrap_or_default();
+
+    // Auto-fetch context window from OpenRouter model metadata if not provided.
+    let context_window: u64 = if body.provider == "openrouter" && body.context_window.is_none() {
+        let first_model: Option<String> = serde_json::from_str::<Vec<String>>(&models_json)
+            .ok()
+            .and_then(|v| v.into_iter().next());
+        if let Some(ref mid) = first_model {
+            fetch_openrouter_context_window(mid).await.unwrap_or(0) as u64
+        } else {
+            0
+        }
+    } else {
+        body.context_window.unwrap_or(0) as u64
+    };
+
     match stdb_client.register_provider(
         &body.id, provider_type, &body.url,
-        &body.secret_key.unwrap_or_default(),
-        &models_json, 60, 100_000,
+        &api_key_ref,
+        &models_json, 60, context_window,
         &quantization_level, 0, -1.0,
     ).await {
-        Ok(()) => (StatusCode::CREATED, Json(json!({
-            "id": body.id,
-            "quantization_level": quantization_level,
-        }))),
+        Ok(()) => {
+            // Push the actual resolved key to the private inference_api_key table
+            // so the execute_inference procedure can use it directly.
+            if !api_key_ref.is_empty() {
+                if let Err(e) = stdb_client.set_api_key(&body.id, &api_key_ref).await {
+                    tracing::warn!(provider = %body.id, error = %e, "set_api_key failed (non-fatal)");
+                }
+            }
+            (StatusCode::CREATED, Json(json!({
+                "id": body.id,
+                "quantization_level": quantization_level,
+            })))
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
     }
 }
@@ -379,6 +405,61 @@ pub async fn remove_inference(
     }
 }
 
+/// PATCH /api/inference/endpoints/:id — update quality_score for a calibrated provider.
+///
+/// Re-registers the provider via the SpacetimeDB upsert reducer, preserving all
+/// existing fields and writing the new quality_score. Called by `hex inference test`
+/// after a successful inference round-trip.
+#[derive(Debug, Deserialize)]
+pub struct CalibrateRequest {
+    pub quality_score: f32,
+    /// If provided, updates the stored context window for this endpoint.
+    pub context_window: Option<u32>,
+}
+
+pub async fn calibrate_inference(
+    State(state): State<SharedState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<CalibrateRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if !(0.0..=1.0).contains(&body.quality_score) {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "quality_score must be 0.0–1.0" })));
+    }
+    let Some(ref stdb_client) = state.inference_stdb else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "SpacetimeDB not connected" })));
+    };
+
+    let providers = match stdb_client.list_providers().await {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+    };
+
+    let Some(p) = providers.into_iter().find(|p| p.provider_id == id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": format!("provider '{}' not found", id) })));
+    };
+
+    let new_ctx = body.context_window.unwrap_or(p.context_window);
+    match stdb_client.register_provider(
+        &p.provider_id,
+        &p.provider_type,
+        &p.base_url,
+        &p.api_key_ref,
+        &p.models_json,
+        p.rate_limit_rpm,
+        p.rate_limit_tpm,
+        &p.quantization_level,
+        new_ctx,
+        body.quality_score,
+    ).await {
+        Ok(()) => (StatusCode::OK, Json(json!({
+            "id": id,
+            "quality_score": body.quality_score,
+            "context_window": new_ctx,
+        }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+    }
+}
+
 pub async fn check_inference_health(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
@@ -411,4 +492,28 @@ pub async fn check_inference_health(
         results.push(json!({ "id": id, "status": status, "latency_ms": latency_ms, "url": url }));
     }
     (StatusCode::OK, Json(json!({ "results": results })))
+}
+
+// ── Helpers ───────────────────────────────────────────────
+
+/// Fetch the context window size for an OpenRouter model from the public model metadata API.
+///
+/// OpenRouter exposes `GET https://openrouter.ai/api/v1/models/{model_id}` — no auth required.
+/// Returns `None` on any network or parse error (caller falls back to 0).
+async fn fetch_openrouter_context_window(model_id: &str) -> Option<u32> {
+    let url = format!("https://openrouter.ai/api/v1/models/{}", model_id);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let resp: serde_json::Value = client
+        .get(&url)
+        .header("User-Agent", "hex-nexus/1.0")
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    resp["context_length"].as_u64().map(|n| n as u32)
 }

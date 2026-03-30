@@ -1,170 +1,94 @@
 {
-  "id": "feat-docker-sandbox-agent-coordination",
-  "title": "Feature: hex-agent as Claude Code-independent runtime in Docker AI Sandbox microVMs",
-  "specs": "docs/specs/docker-sandbox-agent-coordination.json",
+  "id": "wp-docker-sandbox-agent-coordination",
+  "feature": "Docker Sandbox Agent Coordination",
+  "description": "Complete ADR-2603282000. P1 (MCP server), P2 (boundary enforcement), P3 (agentic loop), P5 (spawn endpoint), and P8-partial (coordination tests) are already implemented. This workplan covers the remaining phases: P4 (Dockerfile + sandbox.yml), P6 (hook worktree gate), P7 (hex swarm microVM-first), and P8-completion (MCP server tests).",
   "adr": "ADR-2603282000",
-  "created": "2026-03-28",
-  "status": "planned",
-  "topology": "hierarchical",
-  "budget": "~85000 tokens",
-  "steps": [
+  "specs": "docs/specs/docker-sandbox-agent-coordination.json",
+  "status": "done",
+  "created_at": "2026-03-28T00:00:00Z",
+  "created_by": "planner",
+  "phases": [
     {
-      "id": "step-1",
-      "description": "Define port interfaces and domain types for sandbox lifecycle and agent runtime. Create ISandboxPort (spawn, stop, status, list), IAgentRuntimePort (execute_task, report_completion), and domain types: SandboxConfig { worktree_path, task_id, env_vars, network_allow }, AgentTask { task_id, description, model_hint }, ToolCall { name, args }, ToolResult { success, output, error }. Add to hex-core/src/ports/ and hex-core/src/domain/.",
-      "layer": "ports",
-      "adapter": "hex-core",
-      "port": "ISandboxPort, IAgentRuntimePort",
-      "dependencies": [],
+      "id": "P4",
+      "name": "Dockerfile + Docker AI Sandbox YAML",
       "tier": 0,
-      "specs": ["S05", "S06", "S07"],
-      "worktree_branch": "feat/docker-sandbox/ports",
-      "done_condition": "cargo check passes; ISandboxPort and IAgentRuntimePort compile with all methods defined"
+      "gate": { "type": "build", "command": "cargo build -p hex-agent", "blocking": true },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "hex-agent/Dockerfile — multi-stage build",
+          "layer": "infrastructure",
+          "agent": "hex-coder",
+          "description": "Create hex-agent/Dockerfile with two stages. Stage 1 (builder): FROM rust:1-slim, install build deps (pkg-config, libssl-dev), COPY workspace Cargo files + hex-agent + hex-core source, RUN cargo build --release -p hex-agent. Stage 2 (runtime): FROM debian:bookworm-slim, install ca-certificates + git, COPY --from=builder the hex-agent binary to /usr/local/bin/hex-agent, set ENV WORKSPACE=/workspace, WORKDIR /workspace, ENTRYPOINT [\"hex-agent\", \"daemon\"]. The 'daemon' subcommand should be the existing daemon mode (run_loop). Done when: docker build -t hex-agent:latest hex-agent/ succeeds (or cargo build -p hex-agent passes as build gate).",
+          "deps": [],
+          "files": ["hex-agent/Dockerfile"],
+          "status": "todo"
+        },
+        {
+          "id": "P4.2",
+          "name": "hex-agent/sandbox.yml — Docker AI Sandbox network policy",
+          "layer": "infrastructure",
+          "agent": "hex-coder",
+          "description": "Create hex-agent/sandbox.yml defining the Docker AI Sandbox microVM config. Fields: name: hex-agent-sandbox, image: hex-agent:latest, network.allow list: host.docker.internal:3033 (SpacetimeDB), host.docker.internal:5555 (hex-nexus REST), host.docker.internal:11434 (Ollama), openrouter.ai:443, crates.io:443, static.crates.io:443, npmjs.com:443. Add a comment explaining the Linux fallback (SPACETIMEDB_HOST injected by nexus for non-macOS). Done when: file is valid YAML and documents all required allow-list entries from the ADR.",
+          "deps": [],
+          "files": ["hex-agent/sandbox.yml"],
+          "status": "todo"
+        }
+      ]
     },
     {
-      "id": "step-2",
-      "description": "Implement hex-agent MCP server with hex-aware file and git tools. In hex-agent/src/adapters/primary/mcp_server.rs, implement an MCP server exposing: hex_read_file, hex_write_file (with safePath + boundary validation), hex_edit_file (same guards), hex_bash (command allowlist), hex_git_commit (runs cargo check / bun test before commit), hex_git_status, hex_analyze (calls hex analyze and returns JSON). Wire the MCP server as a primary adapter. Boundary validation in hex_write_file must parse import statements and reject cross-adapter imports (S02, S03).",
-      "layer": "adapters/primary",
-      "adapter": "mcp-server",
-      "port": "IAgentRuntimePort",
-      "dependencies": ["step-1"],
+      "id": "P6",
+      "name": "Hook Worktree Gate",
+      "tier": 1,
+      "gate": { "type": "test", "command": "cargo test -p hex-cli -- hook", "blocking": true },
+      "tasks": [
+        {
+          "id": "P6.1",
+          "name": "hex hook subagent-start — worktree enforcement gate",
+          "layer": "primary",
+          "agent": "hex-coder",
+          "description": "In hex-cli/src/commands/hook.rs (or wherever 'subagent-start' is handled), add the worktree gate: (1) Read HEXFLO_TASK env var — if not set, exit 0 immediately (interactive session, no gate). (2) If HEXFLO_TASK is set, detect if cwd is the project root by checking if cwd/Cargo.toml contains '[workspace]'. (3) Also check if cwd path contains 'hex-worktrees' or '/feat/' — if so, it's a worktree, exit 0. (4) If cwd is project root and HEXFLO_TASK is set: print to stderr 'worktree_required: HEXFLO_TASK is set but cwd is project root — swarm agents must run in a git worktree (ADR-004)' and exit with code 1. Unit tests: HEXFLO_TASK unset → exit 0; HEXFLO_TASK set + worktree cwd → exit 0; HEXFLO_TASK set + project root → exit 1 with worktree_required message. Done when: cargo test -p hex-cli passes for the new hook tests.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/hook.rs"],
+          "status": "todo"
+        }
+      ]
+    },
+    {
+      "id": "P7",
+      "name": "hex swarm microVM-first Default",
       "tier": 2,
-      "specs": ["S01", "S02", "S03"],
-      "worktree_branch": "feat/docker-sandbox/mcp-server",
-      "done_condition": "hex_write_file rejects paths outside /workspace; hex_write_file rejects cross-adapter imports; hex_git_commit runs cargo check before committing"
+      "gate": { "type": "build", "command": "cargo check -p hex-nexus", "blocking": true },
+      "tasks": [
+        {
+          "id": "P7.1",
+          "name": "Docker availability check + docker run spawn in agent_manager",
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "description": "In hex-nexus/src/orchestration/agent_manager.rs spawn_agent(), add Docker-first logic: (1) Check if docker is available: run 'docker info --format json' with timeout 2s. (2) If available AND worktree_branch is set AND hex-agent:latest image exists (docker image inspect hex-agent:latest): spawn via docker run --rm -d -e WORKSPACE=/workspace -e HEX_NEXUS_URL -e HEX_AGENT_ID -e HEXFLO_TASK -e SPACETIMEDB_TOKEN --mount type=bind,src=<worktree_path>,dst=/workspace hex-agent:latest. Return container_id as the agent handle. (3) If docker unavailable or image missing: log 'docker_unavailable: falling back to process spawn' and use the existing process spawn path unchanged. No new dependencies needed (std::process::Command for docker). Done when: cargo check -p hex-nexus passes; unit test verifies docker-unavailable path falls through to process spawn.",
+          "deps": [],
+          "files": ["hex-nexus/src/orchestration/agent_manager.rs"],
+          "status": "todo"
+        }
+      ]
     },
     {
-      "id": "step-3",
-      "description": "Implement agentic loop in hex-agent. In hex-agent/src/usecases/execute_task.rs, implement the loop: (1) receive task from HEXFLO_TASK env var, (2) score complexity via hex-nexus complexity module, (3) select model via inference gateway (POST /api/inference/complete), (4) send system prompt + task to LLM, (5) parse tool calls from LLM response, (6) dispatch to MCP server tools, (7) feed tool results back to LLM, (8) repeat until LLM signals done or max_iterations, (9) call POST /api/hexflo/tasks/{task_id} to mark complete. Escalation: after 3 failed test iterations, call escalate_tier and retry with next model tier (S09, S10).",
-      "layer": "usecases",
-      "adapter": "execute-task",
-      "port": "IAgentRuntimePort",
-      "dependencies": ["step-1", "step-2"],
+      "id": "P8",
+      "name": "MCP Server Tests",
       "tier": 3,
-      "specs": ["S07", "S09", "S10"],
-      "worktree_branch": "feat/docker-sandbox/agentic-loop",
-      "done_condition": "hex-agent binary can receive a simple task via HEXFLO_TASK, call a local Ollama model, execute hex_write_file, and mark the task complete in SpacetimeDB"
-    },
-    {
-      "id": "step-4",
-      "description": "Implement DockerSandboxAdapter in hex-nexus implementing ISandboxPort. In hex-nexus/src/adapters/secondary/docker_sandbox.rs, use the Docker Engine API (via bollard crate) to: spawn a microVM with the hex-agent:latest image, bind-mount the worktree to /workspace, inject env vars (SPACETIMEDB_HOST, SPACETIMEDB_TOKEN, HEX_AGENT_ID, HEXFLO_TASK, ANTHROPIC_API_KEY, OPENROUTER_API_KEY), apply network policy (allow list: SPACETIMEDB_HOST:3033, nexus:5555, inference endpoints). On macOS inject host.docker.internal; on Linux resolve host bridge IP. Return { container_id, agent_id }.",
-      "layer": "adapters/secondary",
-      "adapter": "docker-sandbox",
-      "port": "ISandboxPort",
-      "dependencies": ["step-1"],
-      "tier": 1,
-      "specs": ["S05", "S06", "S11"],
-      "worktree_branch": "feat/docker-sandbox/docker-adapter",
-      "done_condition": "DockerSandboxAdapter::spawn launches a container, injects env vars, and returns container_id; container cannot reach hosts outside the allow list"
-    },
-    {
-      "id": "step-5",
-      "description": "Add POST /api/agents/spawn route to hex-nexus. In hex-nexus/src/routes/agents.rs, implement the spawn endpoint: validate worktree path exists, resolve granted secrets from vault for the requesting session, generate a per-agent SpacetimeDB token (short-lived, scoped to agent identity), call DockerSandboxAdapter::spawn, register agent in SpacetimeDB agent-registry module, return { container_id, agent_id, status: 'starting' }. Add DELETE /api/agents/{agent_id} for teardown.",
-      "layer": "adapters/primary",
-      "adapter": "agents-route",
-      "port": "ISandboxPort",
-      "dependencies": ["step-1", "step-4"],
-      "tier": 2,
-      "specs": ["S05", "S11"],
-      "worktree_branch": "feat/docker-sandbox/spawn-route",
-      "done_condition": "POST /api/agents/spawn returns { container_id, agent_id }; agent appears in hex agent list within 10 seconds of spawn"
-    },
-    {
-      "id": "step-6",
-      "description": "Add SpacetimeDB WebSocket coordination to hex-agent startup. In hex-agent/src/adapters/secondary/spacetime_coordination.rs, on startup connect to SPACETIMEDB_HOST via WebSocket using SPACETIMEDB_TOKEN, call register_agent reducer, start heartbeat loop (every 30s), subscribe to swarm_task table filtered by HEX_AGENT_ID. On container exit (SIGTERM), call agent_disconnect reducer to cleanly de-register.",
-      "layer": "adapters/secondary",
-      "adapter": "spacetime-coordination",
-      "port": "IAgentRuntimePort",
-      "dependencies": ["step-1"],
-      "tier": 1,
-      "specs": ["S04", "S12"],
-      "worktree_branch": "feat/docker-sandbox/stdb-coordination",
-      "done_condition": "hex-agent running in a container appears as 'active' in hex agent list; after container exits, agent is marked stale within 45 seconds"
-    },
-    {
-      "id": "step-7",
-      "description": "Add hex-agent/Dockerfile and Docker AI Sandbox configuration. Dockerfile: FROM debian:bookworm-slim, copy hex-agent binary, install Claude Code CLI (npm install -g @anthropic-ai/claude-code), set WORKDIR /workspace. Docker AI Sandbox config (sandbox.yml): define network allow list, MCP Gateway integration, microVM resource limits (2 CPU, 4GB RAM). Add 'hex dev-rebuild' target that rebuilds the image after cargo build --release.",
-      "layer": "adapters/primary",
-      "adapter": "dockerfile",
-      "port": "ISandboxPort",
-      "dependencies": ["step-2", "step-3", "step-6"],
-      "tier": 4,
-      "specs": ["S04", "S06", "S11"],
-      "worktree_branch": "feat/docker-sandbox/dockerfile",
-      "done_condition": "docker build -t hex-agent:latest succeeds; container starts and hex-agent binary runs; network policy blocks access to hosts outside the allow list"
-    },
-    {
-      "id": "step-8",
-      "description": "Add worktree enforcement gate to hex hook subagent-start. In hex-agent/src/adapters/primary/cli.rs subagent-start handler: if HEXFLO_TASK is set in the input prompt AND cwd is the project root (not under hex-worktrees-*/), exit with error 'worktree_required'. Update hex swarm to default to Docker spawn path; add --no-sandbox flag to bypass for interactive Claude Code sessions.",
-      "layer": "adapters/primary",
-      "adapter": "hook-enforcement",
-      "port": "ISandboxPort",
-      "dependencies": ["step-1"],
-      "tier": 2,
-      "specs": ["S08"],
-      "worktree_branch": "feat/docker-sandbox/hook-enforcement",
-      "done_condition": "Attempting to run a swarm agent in the project root with HEXFLO_TASK set produces 'worktree_required' error and the agent does not proceed"
-    },
-    {
-      "id": "step-9",
-      "description": "Wire all components in hex-nexus composition root and write integration tests. Add DockerSandboxAdapter and spawn route to the hex-nexus router. Write hex-nexus/tests/agent_coordination.rs: (1) spawn two agents in parallel for different worktrees, (2) each agent writes a unique file to /workspace, (3) verify neither agent can read the other's file, (4) verify both agents appear in hex agent list with active heartbeats, (5) verify both tasks complete in SpacetimeDB. Also implement 'hex test coordination' in hex-cli/src/commands/test.rs.",
-      "layer": "integration",
-      "adapter": "composition-root",
-      "port": "ISandboxPort, IAgentRuntimePort",
-      "dependencies": ["step-2", "step-3", "step-4", "step-5", "step-6", "step-7", "step-8"],
-      "tier": 5,
-      "specs": ["S04", "S05", "S06", "S07", "S08", "S09", "S10", "S11", "S12"],
-      "worktree_branch": "feat/docker-sandbox/integration",
-      "done_condition": "hex test coordination passes: two parallel agents complete without filesystem collision; both appear in SpacetimeDB with heartbeats; hex test inference still passes 3/3"
+      "gate": { "type": "test", "command": "cargo test -p hex-agent -- mcp", "blocking": true },
+      "tasks": [
+        {
+          "id": "P8.1",
+          "name": "Unit tests for mcp_server.rs — path safety and boundary enforcement",
+          "layer": "primary",
+          "agent": "hex-coder",
+          "description": "In hex-agent/src/adapters/primary/mcp_server.rs, add #[cfg(test)] block with: (1) safe_path_blocks_traversal: call safe_path('../../etc/passwd', '/workspace') in a temp dir, assert Err containing 'path_traversal_rejected'. (2) safe_path_allows_valid: safe_path('src/lib.rs', workspace_root) returns Ok. (3) check_boundary_primary_importing_secondary: call check_boundary('src/adapters/primary/foo.rs', 'use crate::adapters::secondary::Bar;'), assert Some(msg) containing 'boundary_violation'. (4) check_boundary_clean_file: check_boundary on a domain file with no adapter imports returns None. (5) handle_request_initialize: call handle_request with initialize JSON, assert response contains 'serverInfo'. (6) handle_request_tools_list: call handle_request with tools/list, assert response contains 'hex_write_file'. Done when: cargo test -p hex-agent passes for these 6 tests.",
+          "deps": [],
+          "files": ["hex-agent/src/adapters/primary/mcp_server.rs"],
+          "status": "todo"
+        }
+      ]
     }
-  ],
-  "dependencies": {
-    "cargo": [
-      { "name": "bollard", "version": "0.17", "purpose": "Docker Engine API client for container lifecycle management" },
-      { "name": "spacetimedb-sdk", "version": "1.1", "purpose": "SpacetimeDB WebSocket client for hex-agent coordination (already used in hex-nexus)" }
-    ],
-    "npm": []
-  },
-  "mergeOrder": [
-    "step-1 first (ports — all others depend on it)",
-    "step-4, step-6 parallel (tier 1 secondary adapters — both depend only on step-1)",
-    "step-2, step-5, step-8 parallel (tier 2 primary adapters — depend on step-1 + step-4)",
-    "step-3 after step-1, step-2 (tier 3 use case — needs MCP tools ready)",
-    "step-7 after step-2, step-3, step-6 (tier 4 Dockerfile — needs complete binary)",
-    "step-9 last (tier 5 integration — needs everything)"
-  ],
-  "riskRegister": [
-    {
-      "risk": "Docker AI Sandboxes API changes — it is a new Docker feature and the API may not be stable",
-      "impact": "medium",
-      "mitigation": "Isolate Docker AI Sandbox specifics behind ISandboxPort; plain Docker containers can serve as fallback implementation"
-    },
-    {
-      "risk": "host.docker.internal not available on Linux",
-      "impact": "medium",
-      "mitigation": "Detect OS at spawn time; inject host bridge IP (172.17.0.1) or use --add-host on Linux; abstract behind SPACETIMEDB_HOST env var"
-    },
-    {
-      "risk": "SpacetimeDB SDK version mismatch between hex-nexus and hex-agent",
-      "impact": "high",
-      "mitigation": "Pin spacetimedb-sdk to same version in both Cargo.toml files; add version check to hex test coordination"
-    },
-    {
-      "risk": "LLM tool call parsing — different models format tool calls differently",
-      "impact": "medium",
-      "mitigation": "Use OpenAI-compatible tool call format (JSON function calls); hex-agent normalises model responses before dispatch"
-    },
-    {
-      "risk": "Agentic loop infinite retry — LLM produces consistently failing code",
-      "impact": "low",
-      "mitigation": "Hard cap of 10 iterations per task; escalation after 3 failures; task marked failed after cap with full trace in SpacetimeDB"
-    }
-  ],
-  "successCriteria": [
-    "hex test coordination passes: two parallel agents complete a coding task in isolated worktrees without any filesystem collision",
-    "hex agent list shows both agents as 'active' with heartbeats during execution",
-    "After containers exit, agents are marked stale in SpacetimeDB within 45 seconds",
-    "hex_write_file rejects paths outside /workspace and cross-adapter imports in all test cases",
-    "A simple coding task runs end-to-end through hex-agent using a local Ollama model — no Claude Code, no ANTHROPIC_API_KEY required",
-    "hex test inference still passes 3/3 (no regression)"
   ]
 }

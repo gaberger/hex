@@ -1018,8 +1018,15 @@ impl Supervisor {
     ) -> Result<SupervisorResult> {
         let workplan_summary = format!("{} — {}", workplan.id, workplan.title);
 
-        // Spawn worker processes for each role needed by the workplan
-        let roles = Self::roles_for_workplan(workplan);
+        // Spawn worker processes for each role needed by the workplan.
+        // hex-fixer is excluded: it runs inline inside dispatch_agent so it has
+        // direct access to the current error context and can complete synchronously
+        // before the next goal-loop iteration. A long-running worker process would
+        // receive a stub result (the worker handler in agent.rs does not call FixAgent).
+        let roles: Vec<String> = Self::roles_for_workplan(workplan)
+            .into_iter()
+            .filter(|r| r != "hex-fixer")
+            .collect();
         if let Err(e) = self.spawn_workers(&roles) {
             warn!(error = %e, "failed to spawn workers — falling back to inline execution");
         } else if !self.workers.lock().unwrap().is_empty() {
@@ -2067,8 +2074,21 @@ impl Supervisor {
                                     project_id: self.project_id.clone(),
                                 };
                                 let fix_agent = FixAgent::from_env();
+                                let fix_start = std::time::Instant::now();
                                 match fix_agent.execute(fix_input, effective_model, provider_pref).await {
                                     Ok(fix_result) => {
+                                        let fix_dur = fix_start.elapsed().as_millis() as u64;
+                                        self.log_agent_performance(
+                                            "hex-fixer",
+                                            Some(&fix_result.model_used),
+                                            Some(fix_result.tokens),
+                                            Some(fix_result.input_tokens),
+                                            Some(fix_result.output_tokens),
+                                            Some(fix_result.cost_usd),
+                                            fix_dur,
+                                            fix_result.status != "failed",
+                                            &Objective::CodeGenerated,
+                                        );
                                         info!(
                                             status = %fix_result.status,
                                             file = %fix_result.file_path,
@@ -2153,8 +2173,21 @@ impl Supervisor {
                                     project_id: self.project_id.clone(),
                                 };
                                 let fix_agent = FixAgent::from_env();
+                                let fix_start = std::time::Instant::now();
                                 match fix_agent.execute(fix_input, fix_model, provider_pref).await {
                                     Ok(fix_result) => {
+                                        let fix_dur = fix_start.elapsed().as_millis() as u64;
+                                        self.log_agent_performance(
+                                            "hex-fixer",
+                                            Some(&fix_result.model_used),
+                                            Some(fix_result.tokens),
+                                            Some(fix_result.input_tokens),
+                                            Some(fix_result.output_tokens),
+                                            Some(fix_result.cost_usd),
+                                            fix_dur,
+                                            fix_result.status != "failed",
+                                            &Objective::CodeCompiles,
+                                        );
                                         info!(
                                             status = %fix_result.status,
                                             file = %fix_result.file_path,
@@ -2326,8 +2359,21 @@ impl Supervisor {
                                     project_id: self.project_id.clone(),
                                 };
                                 let fix_agent = FixAgent::from_env();
+                                let fix_start = std::time::Instant::now();
                                 match fix_agent.execute(fix_input, effective_model, provider_pref).await {
                                     Ok(fix_result) => {
+                                        let fix_dur = fix_start.elapsed().as_millis() as u64;
+                                        self.log_agent_performance(
+                                            "hex-fixer",
+                                            Some(&fix_result.model_used),
+                                            Some(fix_result.tokens),
+                                            Some(fix_result.input_tokens),
+                                            Some(fix_result.output_tokens),
+                                            Some(fix_result.cost_usd),
+                                            fix_dur,
+                                            fix_result.status != "failed",
+                                            &Objective::CodeGenerated,
+                                        );
                                         info!(
                                             status = %fix_result.status,
                                             file = %fix_result.file_path,

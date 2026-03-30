@@ -1,0 +1,73 @@
+{
+  "feature": "fix-rl-model-routing",
+  "description": "Fix the RL engine model ID mangling so recommendations are actually routed — not silently discarded",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "extract_model_from_action returns the native provider/model format",
+      "given": "An RL action string containing 'model:openrouter:meta-llama/llama-4-maverick'",
+      "when": "extract_model_from_action is called",
+      "then": "Returns 'meta-llama/llama-4-maverick' (slash preserved, no openrouter- prefix mangling)",
+      "negative_spec": false,
+      "domain_conventions": {
+        "format": "OpenRouter model IDs use 'provider/model' format — the slash is meaningful and must be preserved",
+        "inference_rs": "inference.rs routing matches on p.models_json.contains(requested_model) which requires the exact ID"
+      }
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "RL-recommended model successfully routes through inference.rs to a registered provider",
+      "given": "RL engine returns action 'model:openrouter:meta-llama/llama-3.3-70b-instruct:free|context:balanced' and a matching openrouter provider is registered",
+      "when": "select_model() is called and the result is passed to call_inference_endpoint",
+      "then": "inference.rs matches the model to the registered provider and returns a successful response (source=rl-engine in logs)",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "Integration",
+      "description": "Coder agent reports RL outcome after each code generation phase",
+      "given": "A coder agent completes a code generation step (success or failure)",
+      "when": "The agent finishes inference",
+      "then": "report_outcome is called with the task type, success flag, cost_usd, and duration_ms so the Q-table is updated",
+      "negative_spec": false,
+      "domain_conventions": {
+        "note": "Currently select_from_yaml bypasses RL entirely — coder should still report outcomes even when using YAML-selected models to build a baseline dataset"
+      }
+    },
+    {
+      "id": "S04",
+      "category": "ErrorHandling",
+      "description": "Non-OpenRouter RL action variants (model:opus, model:haiku) still resolve correctly",
+      "given": "An RL action string containing 'model:opus|context:aggressive'",
+      "when": "extract_model_from_action is called",
+      "then": "Returns 'claude-opus-4-6' (existing anthropic model mapping is preserved)",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "ErrorHandling",
+      "description": "Unknown action falls back to the task-type default — never returns a mangled ID",
+      "given": "An RL action string with no model directive ('context:conservative')",
+      "when": "extract_model_from_action is called for TaskType::Reasoning",
+      "then": "Returns the current default for Reasoning ('meta-llama/llama-3.3-70b-instruct:free'), not a stale 'google/gemini-*' reference",
+      "negative_spec": false,
+      "domain_conventions": {
+        "stale_tests": "Two unit tests assert google/gemini-2.0-flash-001 which was the old default before the free-tier migration — these must be updated"
+      }
+    },
+    {
+      "id": "S06",
+      "category": "EdgeCase",
+      "description": "Mangled openrouter- IDs must NOT be passed to inference.rs",
+      "given": "The RL engine recommends any OpenRouter model",
+      "when": "The model ID flows from select_model() through the pipeline to inference routing",
+      "then": "At no point does a string matching /^openrouter-[a-z]/ appear in the model field sent to /api/inference/complete",
+      "negative_spec": true,
+      "domain_conventions": {
+        "prior_bug": "extract_model_from_action was converting 'meta-llama/llama-4-maverick' → 'openrouter-meta-llama-llama-4-maverick' via format!(\"openrouter-{}\", or_id.replace('/', \"-\"))"
+      }
+    }
+  ]
+}

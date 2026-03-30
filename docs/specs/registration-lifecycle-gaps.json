@@ -1,0 +1,78 @@
+{
+  "feature": "registration-lifecycle-gaps",
+  "description": "Fix project and agent registration fragmentation so remote agents get session files, projects auto-register, and inbox resolution works",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "hex agent connect writes a session file on the client host",
+      "given": "A remote host running hex agent connect http://nexus:5555",
+      "when": "The connect succeeds and returns an agent ID",
+      "then": "A session file is written to ~/.hex/sessions/agent-{session_id}.json containing agentId, name, project, registeredAt",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "hex agent connect sends project_dir and session_id to nexus",
+      "given": "A remote host with CWD /home/gary/projects/hex-monitor",
+      "when": "hex agent connect http://nexus:5555 is called",
+      "then": "The POST body includes project_dir (CWD) and a generated session_id; the server resolves and returns project_id",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "resolve_agent_id uses CLAUDE_SESSION_ID when available",
+      "given": "CLAUDE_SESSION_ID=abc123 is set and ~/.hex/sessions/agent-abc123.json exists",
+      "when": "resolve_agent_id() is called",
+      "then": "Returns the agentId from agent-abc123.json, ignoring newer session files",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "resolve_agent_id uses HEX_AGENT_ID when CLAUDE_SESSION_ID is absent",
+      "given": "HEX_AGENT_ID=9f94a059-... is set, no CLAUDE_SESSION_ID",
+      "when": "resolve_agent_id() is called",
+      "then": "Returns '9f94a059-...' directly without reading session files",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "resolve_agent_id skips nexus-agent session files",
+      "given": "Two session files: agent-nexus-123.json (newest, name='nexus-agent-*') and agent-456.json (older, name='claude-*')",
+      "when": "resolve_agent_id() falls back to newest-file scan",
+      "then": "Returns agentId from agent-456.json, skipping the nexus file",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "HappyPath",
+      "description": "hex inbox list works on remote host after hex agent connect",
+      "given": "Remote agent connected via hex agent connect, session file written",
+      "when": "hex inbox list is called on the remote host",
+      "then": "Resolves the correct agent ID and queries the inbox successfully",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "HappyPath",
+      "description": "Server returns project_id in connect response",
+      "given": "Agent connects with project_dir=/home/gary/projects/hex-monitor",
+      "when": "POST /api/hex-agents/connect is called",
+      "then": "Response includes projectId field (auto-registered if needed)",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "ErrorHandling",
+      "description": "resolve_agent_id returns clear error when no session exists",
+      "given": "No session files exist, no env vars set",
+      "when": "resolve_agent_id() is called",
+      "then": "Returns error 'Cannot resolve agent ID' with hint to run hex agent connect",
+      "negative_spec": true
+    }
+  ]
+}

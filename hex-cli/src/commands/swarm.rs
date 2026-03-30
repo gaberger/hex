@@ -18,6 +18,9 @@ pub enum SwarmAction {
         /// Topology type
         #[arg(short, long, default_value = "hierarchical")]
         topology: String,
+        /// Explicitly set the project ID (overrides CWD-based resolution)
+        #[arg(long)]
+        project_id: Option<String>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -63,9 +66,32 @@ pub enum SwarmAction {
     },
 }
 
+/// Auto-complete any active swarms where all tasks are done (public for use by agent commands).
+/// Returns the number of swarms transitioned.
+pub async fn auto_complete_done_swarms(nexus: &NexusClient, swarms: &[serde_json::Value]) -> u32 {
+    let mut count = 0u32;
+    for swarm in swarms {
+        let id = swarm["id"].as_str().unwrap_or("");
+        if id.is_empty() { continue; }
+        if swarm["status"].as_str() != Some("active") { continue; }
+        let tasks = swarm["tasks"].as_array();
+        let total = tasks.map(|t| t.len()).unwrap_or(0);
+        if total == 0 { continue; }
+        let completed = tasks
+            .map(|t| t.iter().filter(|tk| tk["status"].as_str() == Some("completed")).count())
+            .unwrap_or(0);
+        if completed == total {
+            if nexus.patch(&format!("/api/swarms/{}", id), &json!({})).await.is_ok() {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
     match action {
-        SwarmAction::Init { name, topology, json } => init(&name, &topology, json).await,
+        SwarmAction::Init { name, topology, project_id, json } => init(&name, &topology, project_id.as_deref(), json).await,
         SwarmAction::Status => status().await,
         SwarmAction::List { json } => list(json).await,
         SwarmAction::Complete { id, .. } => complete(&id).await,
@@ -74,12 +100,12 @@ pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
     }
 }
 
-async fn init(name: &str, topology: &str, json_output: bool) -> anyhow::Result<()> {
+async fn init(name: &str, topology: &str, explicit_project_id: Option<&str>, json_output: bool) -> anyhow::Result<()> {
     match topology {
-        "hierarchical" | "mesh" | "pipeline" | "mixed" => {}
+        "hierarchical" | "mesh" | "pipeline" | "mixed" | "hex-pipeline" => {}
         other => {
             anyhow::bail!(
-                "Unknown topology '{}'. Supported: hierarchical, mesh, pipeline, mixed",
+                "Unknown topology '{}'. Supported: hierarchical, mesh, pipeline, mixed, hex-pipeline",
                 other
             );
         }
@@ -88,30 +114,34 @@ async fn init(name: &str, topology: &str, json_output: bool) -> anyhow::Result<(
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    // Resolve project ID: look up registered project matching cwd, fall back to basename
-    let cwd = std::env::current_dir()?;
-    let cwd_str = cwd.to_string_lossy().to_string();
-    let project_id = if let Ok(projects_resp) = nexus.get("/api/projects").await {
-        projects_resp["projects"]
-            .as_array()
-            .and_then(|list| {
-                list.iter().find(|p| {
-                    p["rootPath"].as_str().map(|rp| rp == cwd_str).unwrap_or(false)
-                })
-            })
-            .and_then(|p| p["id"].as_str())
-            .map(String::from)
-            .unwrap_or_else(|| {
-                cwd.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
-            })
+    // Use explicit project_id if provided; otherwise resolve from CWD.
+    let project_id: String = if let Some(pid) = explicit_project_id {
+        pid.to_string()
     } else {
-        cwd.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string()
+        let cwd = std::env::current_dir()?;
+        let cwd_str = cwd.to_string_lossy().to_string();
+        if let Ok(projects_resp) = nexus.get("/api/projects").await {
+            projects_resp["projects"]
+                .as_array()
+                .and_then(|list| {
+                    list.iter().find(|p| {
+                        p["rootPath"].as_str().map(|rp| rp == cwd_str).unwrap_or(false)
+                    })
+                })
+                .and_then(|p| p["id"].as_str())
+                .map(String::from)
+                .unwrap_or_else(|| {
+                    cwd.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string()
+                })
+        } else {
+            cwd.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string()
+        }
     };
 
     let resp = nexus
@@ -143,8 +173,10 @@ async fn status() -> anyhow::Result<()> {
     nexus.ensure_running().await?;
 
     let resp = nexus.get("/api/swarms/active").await?;
-    // Response is a plain array of swarm objects
     let swarms = resp.as_array().cloned().unwrap_or_default();
+
+    // Auto-complete swarms where all tasks are done
+    auto_complete_done_swarms(&nexus, &swarms).await;
 
     if swarms.is_empty() {
         println!("{} No active swarms", "\u{2b21}".dimmed());
@@ -203,13 +235,15 @@ async fn list(json_output: bool) -> anyhow::Result<()> {
     nexus.ensure_running().await?;
 
     let resp = nexus.get("/api/swarms/active").await?;
+    let swarms = resp.as_array().cloned().unwrap_or_default();
+
+    // Auto-complete swarms where all tasks are done before rendering
+    auto_complete_done_swarms(&nexus, &swarms).await;
 
     if json_output {
         println!("{}", resp);
         return Ok(());
     }
-
-    let swarms = resp.as_array().cloned().unwrap_or_default();
 
     if swarms.is_empty() {
         println!("{} No registered swarms", "\u{2b21}".dimmed());
@@ -224,12 +258,17 @@ async fn list(json_output: bool) -> anyhow::Result<()> {
         let id = swarm["id"].as_str().unwrap_or("-");
         let name = swarm["name"].as_str().unwrap_or("-");
         let topology = swarm["topology"].as_str().unwrap_or("-");
-        let swarm_status = swarm["status"].as_str().unwrap_or("active");
         let tasks = swarm["tasks"].as_array();
         let total = tasks.map(|t| t.len()).unwrap_or(0);
         let completed = tasks
             .map(|t| t.iter().filter(|tk| tk["status"].as_str() == Some("completed")).count())
             .unwrap_or(0);
+        // Show as completed if all tasks done, regardless of server-side status lag
+        let swarm_status = if total > 0 && completed == total {
+            "completed"
+        } else {
+            swarm["status"].as_str().unwrap_or("active")
+        };
         let in_progress = tasks
             .map(|t| t.iter().filter(|tk| {
                 let s = tk["status"].as_str().unwrap_or("");

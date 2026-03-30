@@ -58,13 +58,29 @@ pub fn default_model_for_general() -> &'static str {
 
 fn default_model_for(task_type: TaskType) -> &'static str {
     match task_type {
-        // openai/gpt-4o-mini — reliable free model that supports OpenRouter privacy settings.
-        // Using a specific model ID is more reliable than "openrouter/free" dynamic routing.
-        TaskType::Reasoning => "openai/gpt-4o-mini",
-        TaskType::StructuredOutput => "openai/gpt-4o-mini",
+        // Code generation needs a capable model — free/mini models produce stubs that
+        // reference non-existent modules and can't recover even with 8 fix iterations.
+        // openai/gpt-4o-mini is used because it is reliably available on OpenRouter
+        // without requiring Anthropic credits, and produces significantly better code
+        // than the :free tier models (arcee-ai/trinity-mini, etc.).
         TaskType::CodeGeneration => "openai/gpt-4o-mini",
         TaskType::CodeEdit => "openai/gpt-4o-mini",
+        // openai/gpt-4o-mini — reliable free model for lighter tasks.
+        TaskType::Reasoning => "openai/gpt-4o-mini",
+        TaskType::StructuredOutput => "openai/gpt-4o-mini",
         TaskType::General => "openai/gpt-4o-mini",
+    }
+}
+
+/// Returns true if the model is acceptable for the given task type.
+///
+/// Free models (ending in `:free`) are not acceptable for code generation —
+/// they produce stubs that reference non-existent modules and cannot recover
+/// even with many fix iterations.
+fn is_adequate_for_task(model: &str, task_type: TaskType) -> bool {
+    match task_type {
+        TaskType::CodeGeneration | TaskType::CodeEdit => !model.ends_with(":free"),
+        _ => true,
     }
 }
 
@@ -84,10 +100,10 @@ fn provider_model_for(provider: &str, task_type: TaskType) -> Option<&'static st
             TaskType::General => "claude-haiku-4-5-20251001",
         }),
         "ollama" => Some(match task_type {
-            TaskType::Reasoning => "qwen3.5:9b",
+            TaskType::Reasoning => "qwen3.5:27b",
             TaskType::StructuredOutput => "qwen3.5:9b",
-            TaskType::CodeGeneration => "qwen3.5:9b",
-            TaskType::CodeEdit => "qwen3.5:9b",
+            TaskType::CodeGeneration => "qwen3.5:27b",
+            TaskType::CodeEdit => "qwen3.5:27b",
             TaskType::General => "qwen3.5:9b",
         }),
         _ => None,
@@ -100,6 +116,24 @@ pub fn free_fallback_for(_task_type: TaskType) -> &'static str {
     "openai/gpt-4o-mini"
 }
 
+/// Returns true if `model` can be used with `provider` without hitting a
+/// separate credit balance requirement.
+///
+/// Specifically: Anthropic models (`claude-*`) routed through OpenRouter require
+/// the user to hold a separate Anthropic balance on OpenRouter — distinct from
+/// their OpenRouter credits. Using them silently fails with HTTP 400 when that
+/// balance is zero. All other OpenRouter models bill against the OpenRouter balance.
+///
+/// Call this before using a YAML-sourced model as an effective override so that
+/// the pipeline falls back to an OpenRouter-native model automatically.
+/// Explicit user `--model` overrides bypass this check intentionally.
+pub fn is_compatible_with_provider(model: &str, provider: Option<&str>) -> bool {
+    match provider {
+        Some("openrouter") => !model.starts_with("claude-"),
+        _ => true,
+    }
+}
+
 /// Ordered fallback chain: primary → alternatives (all privacy-compatible free models).
 pub fn fallback_chain_for(task_type: TaskType) -> Vec<&'static str> {
     vec![
@@ -107,6 +141,32 @@ pub fn fallback_chain_for(task_type: TaskType) -> Vec<&'static str> {
         "google/gemma-2-9b-it:free",                    // Fallback 1: Gemma 2
         "qwen/qwen-2.5-7b-instruct:free",               // Fallback 2: Qwen 2.5
     ]
+}
+
+// ── Registry response types ───────────────────────────────────────────────
+
+/// A single endpoint entry from `GET /api/inference/endpoints`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegistryEndpoint {
+    provider: String,
+    /// JSON-encoded model array, e.g. `"[\"qwen/qwen3-coder-next\"]"`.
+    model: String,
+    quality_score: Option<f32>,
+    context_window: Option<u32>,
+}
+
+impl RegistryEndpoint {
+    /// Decode the first model ID from the JSON-encoded model string.
+    fn first_model_id(&self) -> Option<String> {
+        let arr: Vec<String> = serde_json::from_str(&self.model).ok()?;
+        arr.into_iter().next()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistryListResponse {
+    endpoints: Vec<RegistryEndpoint>,
 }
 
 // ── RL response types ────────────────────────────────────────────────────
@@ -151,6 +211,8 @@ pub enum SelectionSource {
     UserOverride,
     /// Filtered to a specific provider preference.
     ProviderFiltered,
+    /// Highest quality_score model from the live SpacetimeDB registry.
+    RegistryRanked,
     /// Selected from agent YAML definition (ADR-2603240130).
     YamlDefinition,
     /// Upgraded from YAML preferred to upgrade_to model after iteration threshold.
@@ -164,6 +226,7 @@ impl std::fmt::Display for SelectionSource {
             Self::Default => write!(f, "default"),
             Self::UserOverride => write!(f, "user-override"),
             Self::ProviderFiltered => write!(f, "provider-filtered"),
+            Self::RegistryRanked => write!(f, "registry-ranked"),
             Self::YamlDefinition => write!(f, "yaml-definition"),
             Self::YamlUpgrade => write!(f, "yaml-upgrade"),
         }
@@ -327,7 +390,15 @@ impl ModelSelector {
                 Ok(selected)
             }
             Err(e) => {
-                warn!(%task_type, error = %e, "RL engine unavailable — using default model");
+                warn!(%task_type, error = %e, "RL engine unavailable — querying registry");
+                if let Some(model_id) = self.query_registry_best(task_type).await {
+                    return Ok(SelectedModel {
+                        model_id,
+                        state_key: None,
+                        action: None,
+                        source: SelectionSource::RegistryRanked,
+                    });
+                }
                 Ok(SelectedModel {
                     model_id: default_model_for(task_type).to_string(),
                     state_key: None,
@@ -336,6 +407,47 @@ impl ModelSelector {
                 })
             }
         }
+    }
+
+    /// Query the live registry for the highest-quality calibrated model.
+    ///
+    /// Filters to OpenRouter providers with `quality_score >= 0.0` (calibrated via
+    /// `hex inference test`). Ranks by quality_score desc, context_window desc as
+    /// tiebreak. Returns `None` if no calibrated models are registered — caller falls
+    /// through to hardcoded defaults.
+    async fn query_registry_best(&self, task_type: TaskType) -> Option<String> {
+        let resp: serde_json::Value = self.client.get("/api/inference/endpoints").await.ok()?;
+        let list: RegistryListResponse = serde_json::from_value(resp).ok()?;
+
+        let mut candidates: Vec<(f32, u32, String)> = list
+            .endpoints
+            .into_iter()
+            .filter(|ep| ep.provider == "openrouter")
+            .filter_map(|ep| {
+                let score = ep.quality_score.filter(|&s| s >= 0.0)?;
+                let model_id = ep.first_model_id()?;
+                if !is_adequate_for_task(&model_id, task_type) {
+                    return None;
+                }
+                let ctx = ep.context_window.unwrap_or(0);
+                Some((score, ctx, model_id))
+            })
+            .collect();
+
+        // Sort: highest quality_score first; break ties by largest context window.
+        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(b.1.cmp(&a.1)));
+
+        let best = candidates.into_iter().next().map(|(score, ctx, model_id)| {
+            debug!(
+                model = %model_id,
+                quality_score = score,
+                context_window = ctx,
+                %task_type,
+                "registry-ranked model selected"
+            );
+            model_id
+        });
+        best
     }
 
     /// Query the RL engine via `POST /api/rl/action`.
@@ -359,7 +471,24 @@ impl ModelSelector {
             .context("unexpected shape from /api/rl/action")?;
 
         // Parse compound action string to extract the model directive.
-        let model_id = extract_model_from_action(&rl.action, task_type);
+        let rl_model_id = extract_model_from_action(&rl.action, task_type);
+
+        // Enforce minimum capability floor: if the RL selected a free/weak model
+        // for a task that requires a capable model (e.g. CodeGeneration), override
+        // with the default. Free models write stubs that cannot be fixed in any
+        // number of iterations.
+        let model_id = if is_adequate_for_task(&rl_model_id, task_type) {
+            rl_model_id
+        } else {
+            let floor = default_model_for(task_type).to_string();
+            warn!(
+                rl_model = %rl_model_id,
+                floor_model = %floor,
+                %task_type,
+                "RL selected inadequate model for task type — enforcing minimum floor"
+            );
+            floor
+        };
 
         Ok(SelectedModel {
             model_id,
@@ -514,6 +643,27 @@ mod tests {
     }
 
     #[test]
+    fn code_generation_defaults_to_capable_model() {
+        // Free/mini models write stubs that can't be fixed — ensure the default
+        // for code generation is a model that works on OpenRouter without credits issues.
+        let model = default_model_for(TaskType::CodeGeneration);
+        assert_eq!(model, "openai/gpt-4o-mini",
+            "CodeGeneration default must be openai/gpt-4o-mini (reliable, free, capable)");
+        let edit_model = default_model_for(TaskType::CodeEdit);
+        assert_eq!(edit_model, "openai/gpt-4o-mini",
+            "CodeEdit default must be openai/gpt-4o-mini");
+    }
+
+    #[test]
+    fn free_model_is_inadequate_for_code_generation() {
+        assert!(!is_adequate_for_task("arcee-ai/trinity-mini:free", TaskType::CodeGeneration));
+        assert!(!is_adequate_for_task("google/gemma-2-9b-it:free", TaskType::CodeEdit));
+        assert!(is_adequate_for_task("anthropic/claude-sonnet-4-6", TaskType::CodeGeneration));
+        assert!(is_adequate_for_task("openai/gpt-4o-mini", TaskType::Reasoning));
+        assert!(is_adequate_for_task("google/gemma-2-9b-it:free", TaskType::Reasoning));
+    }
+
+    #[test]
     fn extract_openrouter_model() {
         let action = "model:openrouter:meta-llama/llama-4-maverick|context:balanced";
         let model = extract_model_from_action(action, TaskType::CodeGeneration);
@@ -559,6 +709,7 @@ mod tests {
         assert_eq!(SelectionSource::ProviderFiltered.to_string(), "provider-filtered");
         assert_eq!(SelectionSource::YamlDefinition.to_string(), "yaml-definition");
         assert_eq!(SelectionSource::YamlUpgrade.to_string(), "yaml-upgrade");
+        assert_eq!(SelectionSource::RegistryRanked.to_string(), "registry-ranked");
     }
 
     #[test]

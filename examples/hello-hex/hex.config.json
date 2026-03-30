@@ -1,9 +1,0 @@
-{
-  "projectName": "hello-hex",
-  "language": "typescript",
-  "srcDir": "src",
-  "domainDir": "src/core/domain",
-  "portsDir": "src/core/ports",
-  "adaptersDir": "src/adapters",
-  "usecasesDir": "src/core/usecases"
-}

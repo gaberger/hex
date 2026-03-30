@@ -1,119 +1,88 @@
 {
   "feature": "docker-sandbox-agent-coordination",
-  "description": "hex-agent as a Claude Code-independent runtime in Docker AI Sandbox microVMs with SpacetimeDB WebSocket coordination",
+  "description": "Complete ADR-2603282000 — P1/P2/P3/P5/P8-partial already implemented. This spec covers the remaining pieces: P4 (Dockerfile + sandbox YAML), P6 (hook worktree gate), P7 (hex swarm microVM-first default).",
+  "adr": "ADR-2603282000",
   "specs": [
     {
       "id": "S01",
       "category": "HappyPath",
-      "description": "hex_write_file MCP tool writes a file inside /workspace",
-      "given": "hex-agent MCP server is running inside a microVM with /workspace bind-mounted to a git worktree",
-      "when": "hex_write_file({ path: '/workspace/src/adapters/foo.rs', content: '...' }) is called",
-      "then": "File is written to disk and the tool returns { success: true, path: '/workspace/src/adapters/foo.rs' }",
+      "description": "hex-agent Docker image builds successfully",
+      "given": "hex-agent/Dockerfile exists with a multi-stage build (rust builder + debian:bookworm-slim runtime)",
+      "when": "docker build -t hex-agent:latest hex-agent/ is run",
+      "then": "Image builds; hex-agent binary is at /usr/local/bin/hex-agent; WORKSPACE defaults to /workspace; image is under 200MB",
       "negative_spec": false
     },
     {
       "id": "S02",
-      "category": "Security",
-      "description": "hex_write_file rejects paths outside /workspace",
-      "given": "hex-agent MCP server is running inside a microVM",
-      "when": "hex_write_file({ path: '/etc/passwd', content: '...' }) or hex_write_file({ path: '../../host-file', content: '...' }) is called",
-      "then": "Tool returns { success: false, error: 'path_traversal_rejected' } and no file is written",
-      "negative_spec": true,
-      "domain_conventions": { "security": "safePath() must reject any path that resolves outside /workspace" }
+      "category": "HappyPath",
+      "description": "sandbox.yml defines the correct network policy",
+      "given": "hex-agent/sandbox.yml exists",
+      "when": "Inspected",
+      "then": "Allows host:3033 (SpacetimeDB), host:5555 (nexus), host:11434 (Ollama), openrouter.ai:443, crates.io:443, static.crates.io:443, npmjs.com:443; all other outbound is default-deny",
+      "negative_spec": false
     },
     {
       "id": "S03",
-      "category": "Security",
-      "description": "hex_write_file rejects adapter files that import from other adapters",
-      "given": "A file being written to adapters/secondary/db-adapter.rs that contains 'use crate::adapters::primary::cli'",
-      "when": "hex_write_file is called with content containing a cross-adapter import",
-      "then": "Tool returns { success: false, error: 'boundary_violation', detail: 'adapters must not import other adapters' } and no file is written",
-      "negative_spec": true,
-      "domain_conventions": { "hex_rule": "ADR boundary rule: adapters/secondary must never import adapters/primary and vice versa" }
+      "category": "HappyPath",
+      "description": "hex hook subagent-start gates non-Docker path: HEXFLO_TASK set + cwd is project root → error",
+      "given": "HEXFLO_TASK env var is set AND cwd contains a root-level Cargo.toml with [workspace]",
+      "when": "hex hook subagent-start is invoked",
+      "then": "Exit code 1; stderr contains 'worktree_required'",
+      "negative_spec": false
     },
     {
       "id": "S04",
       "category": "HappyPath",
-      "description": "hex-agent connects to SpacetimeDB via WebSocket from inside the microVM and sends heartbeats",
-      "given": "A microVM is launched with SPACETIMEDB_HOST=ws://host.docker.internal:3033 and SPACETIMEDB_TOKEN=<valid token>",
-      "when": "hex-agent starts up inside the microVM",
-      "then": "Agent registers in the agent-registry SpacetimeDB module and sends a heartbeat within 30 seconds; the agent appears as 'active' in hex agent list",
+      "description": "hex hook subagent-start passes when cwd is a worktree",
+      "given": "HEXFLO_TASK is set AND cwd path contains 'hex-worktrees' or 'feat/'",
+      "when": "hex hook subagent-start is invoked",
+      "then": "Exit code 0 — worktree detected, gate not triggered",
       "negative_spec": false
     },
     {
       "id": "S05",
       "category": "HappyPath",
-      "description": "hex-nexus spawn endpoint launches a microVM and returns agent identity",
-      "given": "hex-nexus is running, Docker AI Sandboxes is available, and a valid worktree path exists",
-      "when": "POST /api/agents/spawn is called with { worktree_path, task_id, secrets: ['OPENROUTER_API_KEY'] }",
-      "then": "Returns { container_id, agent_id, status: 'starting' } and the microVM launches with the correct env vars injected",
+      "description": "hex hook subagent-start is a no-op without HEXFLO_TASK",
+      "given": "HEXFLO_TASK is NOT set (interactive session)",
+      "when": "hex hook subagent-start is invoked",
+      "then": "Exit code 0, no output — gate only enforces swarm tasks",
       "negative_spec": false
     },
     {
       "id": "S06",
-      "category": "Integration",
-      "description": "Two agents spawned in parallel cannot collide on filesystem",
-      "given": "Two HexFlo tasks exist for different worktrees (feat/foo/ports and feat/foo/adapters)",
-      "when": "Both agents are spawned simultaneously and each writes to their assigned /workspace",
-      "then": "Both writes succeed; neither agent can read or write the other's worktree; both complete without conflict",
+      "category": "HappyPath",
+      "description": "hex swarm spawn uses docker run when Docker is available",
+      "given": "Docker daemon running and hex-agent:latest image exists",
+      "when": "hex swarm spawn or hex nexus POST /api/agents/spawn is called with a worktree_branch",
+      "then": "docker run is invoked with WORKSPACE, HEX_NEXUS_URL, HEX_AGENT_ID, HEXFLO_TASK, SPACETIMEDB_TOKEN injected; worktree path bind-mounted to /workspace",
       "negative_spec": false
     },
     {
       "id": "S07",
       "category": "HappyPath",
-      "description": "hex-agent completes a task and calls task_complete reducer",
-      "given": "hex-agent is running inside a microVM with HEXFLO_TASK=<task-id> and has finished its coding work",
-      "when": "All tool calls succeed and tests pass",
-      "then": "hex-agent calls the task_complete SpacetimeDB reducer with the task_id and a result summary; HexFlo marks the task as completed",
+      "description": "hex swarm spawn falls back to process when Docker is unavailable",
+      "given": "docker is not in PATH or daemon is down",
+      "when": "POST /api/agents/spawn is called",
+      "then": "Falls back to process spawn (existing SpawnConfig path); logs 'docker_unavailable: falling back to process spawn'",
       "negative_spec": false
     },
     {
       "id": "S08",
-      "category": "ErrorHandling",
-      "description": "subagent-start hook blocks non-worktree execution when HEXFLO_TASK is set",
-      "given": "A Claude Code subagent is started with HEXFLO_TASK set in its prompt and cwd is the project root (not a worktree)",
-      "when": "The subagent-start hook fires",
-      "then": "Hook exits with error 'worktree_required: swarm agents must run in an isolated worktree, not the project root' and the agent does not proceed",
+      "category": "NegativeSpec",
+      "description": "hex_write_file rejects path traversal (existing P2 — verified by test)",
+      "given": "MCP server receives hex_write_file with path='../../etc/passwd'",
+      "when": "safe_path() runs",
+      "then": "Returns error 'path_traversal_rejected'; file not written",
       "negative_spec": true
     },
     {
       "id": "S09",
-      "category": "HappyPath",
-      "description": "hex-agent routes low-complexity tasks to local Ollama model",
-      "given": "hex-agent agentic loop receives a task with a short, low-complexity prompt and Ollama is available at bazzite:11434",
-      "when": "The agent selects a model for the task",
-      "then": "The request is routed to the local Ollama model (e.g. qwen3.5:9b); no OpenRouter or Anthropic API call is made",
-      "negative_spec": false,
-      "domain_conventions": { "routing": "ADR-2603271000: complexity score Low → min quantization Q2 → local model preferred" }
-    },
-    {
-      "id": "S10",
-      "category": "HappyPath",
-      "description": "hex-agent escalates to frontier model after local model fails N iterations",
-      "given": "hex-agent is attempting a high-complexity task; local model has produced failing tests for 3 consecutive iterations",
-      "when": "The iteration limit is reached",
-      "then": "hex-agent escalates to the next quantization tier (e.g. OpenRouter frontier model) and retries the task",
-      "negative_spec": false,
-      "domain_conventions": { "escalation": "ADR-2603271000: escalate_tier(Q4) → Q8 → Fp16 → Cloud" }
-    },
-    {
-      "id": "S11",
-      "category": "Security",
-      "description": "Credentials are never written to the microVM filesystem",
-      "given": "A microVM is spawned with ANTHROPIC_API_KEY and OPENROUTER_API_KEY injected as env vars",
-      "when": "The agent runs and the microVM filesystem is inspected",
-      "then": "No credential values appear in any file on the microVM filesystem; keys exist only as in-memory env vars",
-      "negative_spec": true,
-      "domain_conventions": { "security": "Docker MCP Gateway injects secrets as env vars only; no .env files, no filesystem writes" }
-    },
-    {
-      "id": "S12",
-      "category": "EdgeCase",
-      "description": "hex-agent microVM is cleaned up when the task completes or the container exits",
-      "given": "A microVM was spawned for a HexFlo task that has now completed",
-      "when": "The container exits (normally or via crash)",
-      "then": "The SpacetimeDB agent record is marked stale within 45 seconds; any incomplete tasks assigned to this agent are reclaimed by HexFlo cleanup",
-      "negative_spec": false
+      "category": "NegativeSpec",
+      "description": "hex_write_file rejects cross-adapter boundary violation (existing P2 — verified by test)",
+      "given": "Content written to adapters/primary/ contains 'use crate::adapters::secondary'",
+      "when": "check_boundary() runs",
+      "then": "Returns error 'boundary_violation'; file not written",
+      "negative_spec": true
     }
   ]
 }

@@ -53,11 +53,17 @@ impl NexusClient {
             .build()
             .expect("failed to build HTTP client");
         let http_long = reqwest::Client::builder()
-            .timeout(Duration::from_secs(600))
+            .timeout(Duration::from_secs(900))
             .build()
             .expect("failed to build long-timeout HTTP client");
         let agent_id = read_session_agent_id();
         Self { base_url, http, http_long, auth_token, agent_id }
+    }
+
+    /// Set the agent ID on this client (used by Docker workers after registration).
+    pub fn with_agent_id(mut self, agent_id: String) -> Self {
+        self.agent_id = Some(agent_id);
+        self
     }
 
     /// Check if nexus is reachable. Returns Ok(()) or a user-friendly error.
@@ -196,6 +202,25 @@ impl NexusClient {
     /// Base URL for display purposes.
     pub fn url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Fetch the architecture fingerprint injection block for a project (ADR-2603301200).
+    ///
+    /// Returns the formatted text block ready to prepend to an inference system prompt,
+    /// or `None` if the fingerprint has not been generated or nexus is unavailable.
+    /// Never fails — absence of a fingerprint must not block inference.
+    pub async fn fetch_fingerprint_text(&self, project_id: &str) -> Option<String> {
+        let url = format!("{}/api/projects/{}/fingerprint/text", self.base_url, project_id);
+        let mut req = self.http.get(&url);
+        if let Some(token) = &self.auth_token {
+            req = req.bearer_auth(token);
+        }
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                resp.text().await.ok().filter(|s| !s.is_empty())
+            }
+            _ => None,
+        }
     }
 }
 

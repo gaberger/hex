@@ -61,8 +61,10 @@ async fn create(swarm_id: &str, title: &str, depends_on: &str, agent: Option<Str
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    // Auto-resolve agent_id from session state if not provided
-    let agent_id = agent.or_else(crate::nexus_client::read_session_agent_id);
+    // Only assign if --agent is explicitly provided. Auto-resolving from session
+    // state would pre-assign tasks to the supervisor, preventing Docker workers
+    // from self-claiming via the pull model (ADR-2603282000).
+    let agent_id = agent;
 
     // POST to /api/swarms/{swarm_id}/tasks
     let path = format!("/api/swarms/{}/tasks", swarm_id);

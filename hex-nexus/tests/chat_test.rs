@@ -206,19 +206,41 @@ async fn chat_ws_invalid_json_ignored() {
 
 #[tokio::test]
 async fn chat_ws_llm_bridge_disabled_without_api_key() {
-    // Temporarily clear API key so the LLM bridge reports disabled.
-    struct EnvGuard(Option<String>);
+    // Temporarily clear ALL inference API keys AND redirect SpacetimeDB vault to
+    // an unreachable address so vault_get() also returns None.
+    // Without all three, vault-stored keys would keep llmBridge true.
+    struct EnvGuard {
+        anthropic: Option<String>,
+        openrouter: Option<String>,
+        stdb_host: Option<String>,
+    }
     impl Drop for EnvGuard {
         fn drop(&mut self) {
-            match &self.0 {
+            match &self.anthropic {
                 Some(v) => unsafe { std::env::set_var("ANTHROPIC_API_KEY", v) },
                 None => unsafe { std::env::remove_var("ANTHROPIC_API_KEY") },
             }
+            match &self.openrouter {
+                Some(v) => unsafe { std::env::set_var("OPENROUTER_API_KEY", v) },
+                None => unsafe { std::env::remove_var("OPENROUTER_API_KEY") },
+            }
+            match &self.stdb_host {
+                Some(v) => unsafe { std::env::set_var("HEX_SPACETIMEDB_HOST", v) },
+                None => unsafe { std::env::remove_var("HEX_SPACETIMEDB_HOST") },
+            }
         }
     }
-    let old = std::env::var("ANTHROPIC_API_KEY").ok();
-    unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
-    let _guard = EnvGuard(old);
+    let _guard = EnvGuard {
+        anthropic: std::env::var("ANTHROPIC_API_KEY").ok(),
+        openrouter: std::env::var("OPENROUTER_API_KEY").ok(),
+        stdb_host: std::env::var("HEX_SPACETIMEDB_HOST").ok(),
+    };
+    unsafe {
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("OPENROUTER_API_KEY");
+        // Point vault at a non-listening port so connect() returns false quickly
+        std::env::set_var("HEX_SPACETIMEDB_HOST", "http://127.0.0.1:1");
+    }
 
     let addr = start_test_server_with_token(None).await;
 

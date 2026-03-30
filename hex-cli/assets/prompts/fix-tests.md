@@ -58,6 +58,9 @@ Follow this decision tree to determine what to fix:
 | `mock.module()` usage | Replace with dependency injection via the Deps pattern (ADR-014) |
 | Snapshot mismatch after intentional change | Update the snapshot if the change is intentional |
 | Off-by-one or boundary error | Fix the source logic — test boundary conditions are usually correct |
+| Go: `go test` reports 0 tests run | Function is not named `TestXxx(t *testing.T)` — rename it |
+| Go: `undefined: someFunc` in `_test.go` | Test is in wrong package or function is unexported — move to same package |
+| Go: `cannot use _ as type testing.T` | Parameter type must be `*testing.T` (pointer), not `testing.T` |
 
 ## Testing Rules (hex-specific)
 
@@ -72,6 +75,8 @@ Follow this decision tree to determine what to fix:
 Produce ONLY the corrected file content for the file at `{{file_path}}`. No markdown fences, no explanation, no diff — just the complete file that should replace the current content.
 
 ## Rules
+
+0a. **Go test naming**: If `go test` reports `[no test files]` or `testing: warning: no tests to run`, the test functions are not following Go conventions. Every test function MUST be named `TestXxx(t *testing.T)` where `Xxx` starts with an uppercase letter. A function named `testFoo`, `Test_foo`, or with signature `(t testing.T)` (missing `*`) will be silently skipped. Rename and fix the signature.
 
 0. **Rust binary name**: If fixing a Rust test that uses `env!("CARGO_BIN_EXE_<name>")`, the EXACT binary name is provided in the issue description as "The binary name from Cargo.toml is EXACTLY `<name>`". Use that name verbatim — never invent or guess it. A wrong name causes compile failure.
 

@@ -657,17 +657,27 @@ hex-chat/ui/
 
 ### 8. Hybrid LLM Bridge Architecture — Queue-Driven Inference
 
+> **Update (ADR-2603300100, Phase 2.2 — 2026-03-30):**
+> The `inference-gateway` WASM module now handles **agent inference** (code generation tasks)
+> fully inside SpacetimeDB via `#[spacetimedb::procedure]`. The `execute_inference` procedure
+> reads the request, calls the provider HTTP API via `ctx.http.send`, and writes the response
+> row — no hex-nexus bridge involved for this path. `InferenceRequestProcessor` has been
+> removed from hex-nexus.
+>
+> The analysis below about streaming and chat UX remains valid and applies only to the
+> **interactive chat path** (`/ws/chat`). Agent inference and chat are separate paths.
+
 The LLM bridge is the last piece of hex-nexus that resists migration to SpacetimeDB. Today, `/ws/chat` is a bidirectional WebSocket through hex-nexus that routes to inference providers and streams tokens back. This section describes how to make inference **SpacetimeDB-coordinated** while preserving token-by-token streaming UX.
 
-#### Why Not Fully Inside SpacetimeDB?
+#### Why Not Fully Inside SpacetimeDB? (chat streaming path only)
 
-SpacetimeDB 2.0 procedures support `ctx.http.fetch()` for outbound HTTP — so a procedure *could* call Ollama/OpenAI. But:
+SpacetimeDB 1.0 procedures support `ctx.http.send()` for outbound HTTP — so a procedure *can*
+call Ollama/OpenAI (and does, for agent inference). But for **chat streaming**:
 
 - **No streaming**: Procedures are synchronous. User sees nothing until the entire response completes (5-30s blank screen).
-- **30s per-request timeout**: Large local models (70B on Ollama) can exceed this.
-- **Procedures API is unstable**: May change in minor releases.
+- **Timeout risk**: Large local models (70B on Ollama) can take 30s+.
 
-Token-by-token streaming is non-negotiable for chat UX. So we use a **hybrid: SpacetimeDB coordinates, external workers stream.**
+Token-by-token streaming is non-negotiable for chat UX. So the chat path uses a **hybrid: SpacetimeDB coordinates, external workers stream.**
 
 #### Architecture: Queue Table + Bridge Workers
 

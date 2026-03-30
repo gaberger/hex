@@ -24,3 +24,5 @@ pub mod hook_registry;
 pub mod agent_definition_registry;
 #[cfg(feature = "spacetimedb")]
 pub mod remote_agent_registry;
+#[cfg(feature = "spacetimedb")]
+pub mod inference_gateway;

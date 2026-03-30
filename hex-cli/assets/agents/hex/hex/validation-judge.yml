@@ -116,6 +116,7 @@ phases:
     blocking: true
 
 constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_analyze not `hex analyze` via Bash."
   - Behavioral specs must be INDEPENDENT of implementation (no function names)
   - Property tests must use PRODUCTION config values, never test-only fixtures
   - Property tests must use fast-check (fc.assert/fc.property), not example-based assertions

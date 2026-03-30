@@ -297,18 +297,15 @@ pub async fn project_report(
         }
     };
 
-    // 2. Agents for this project
+    // 2. Live agents for this project
     let all_agents = sp.hex_agent_list().await.unwrap_or_default();
-    let agents: Vec<_> = all_agents.into_iter()
+    let live_agents: Vec<_> = all_agents.into_iter()
         .filter(|a| a.get("projectId").and_then(|v| v.as_str()).unwrap_or("") == project.id
                  || a.get("project_id").and_then(|v| v.as_str()).unwrap_or("") == project.id)
         .collect();
 
-    // 3. Swarms for this project (filter active + completed by project_id)
-    let all_swarms = sp.swarm_list_active().await.unwrap_or_default();
-    let project_swarms: Vec<_> = all_swarms.into_iter()
-        .filter(|s| s.project_id == project.id)
-        .collect();
+    // 3. Swarms for this project (all statuses — active, completed, failed)
+    let project_swarms = sp.swarm_list_by_project(&project.id).await.unwrap_or_default();
 
     // 4. Tasks per swarm + summary counts
     let mut swarm_reports = Vec::new();
@@ -316,6 +313,12 @@ pub async fn project_report(
     let mut completed_tasks = 0usize;
     let mut pending_tasks = 0usize;
     let mut failed_tasks = 0usize;
+    // Collect unique historical agent IDs from task assignment records
+    let mut seen_agent_ids: std::collections::HashSet<String> = live_agents
+        .iter()
+        .filter_map(|a| a.get("id").or_else(|| a.get("agentId")).and_then(|v| v.as_str()).map(str::to_string))
+        .collect();
+    let mut historical_agents: Vec<serde_json::Value> = live_agents.clone();
 
     for swarm in &project_swarms {
         let tasks = sp.swarm_task_list(Some(&swarm.id)).await.unwrap_or_default();
@@ -329,6 +332,20 @@ pub async fn project_report(
         completed_tasks += t_completed;
         failed_tasks += t_failed;
         pending_tasks += t_pending;
+
+        // Collect agent IDs from task records not already in live agent list
+        for task in &tasks {
+            if !task.agent_id.is_empty() && seen_agent_ids.insert(task.agent_id.clone()) {
+                historical_agents.push(json!({
+                    "id": task.agent_id,
+                    "agentId": task.agent_id,
+                    "name": format!("agent-{}", &task.agent_id[..task.agent_id.len().min(8)]),
+                    "status": "offline",
+                    "project_id": project.id,
+                    "historical": true,
+                }));
+            }
+        }
 
         swarm_reports.push(json!({
             "id": swarm.id,
@@ -346,7 +363,7 @@ pub async fn project_report(
             },
             "taskList": tasks.iter().map(|t| json!({
                 "id": t.id,
-                "title": t.title,
+                "title": normalize_task_title(&t.title),
                 "status": t.status,
                 "agentId": t.agent_id,
                 "result": t.result,
@@ -357,6 +374,7 @@ pub async fn project_report(
         }));
     }
 
+    let agent_count = historical_agents.len();
     let report = json!({
         "project": {
             "id": project.id,
@@ -364,10 +382,10 @@ pub async fn project_report(
             "rootPath": project.root_path,
             "registeredAt": project.registered_at,
         },
-        "agents": agents,
+        "agents": historical_agents,
         "swarms": swarm_reports,
         "summary": {
-            "agentCount": agents.len(),
+            "agentCount": agent_count,
             "swarmCount": project_swarms.len(),
             "tasksTotal": total_tasks,
             "tasksCompleted": completed_tasks,
@@ -377,6 +395,18 @@ pub async fn project_report(
     });
 
     (StatusCode::OK, Json(report))
+}
+
+fn normalize_task_title(title: &str) -> String {
+    let trimmed = title.trim();
+    if trimmed.starts_with('{') {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if let Some(s) = v.get("description").and_then(|d| d.as_str()) {
+                return s.to_string();
+            }
+        }
+    }
+    title.to_string()
 }
 
 pub async fn list_projects(

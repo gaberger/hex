@@ -1,0 +1,94 @@
+{
+  "feature": "fix-review-passes",
+  "description": "Wire hex-reviewer into the RL model selection loop, add JSON retry with model upgrade, and emit a fallback verdict so ReviewPasses is never permanently blocked by flaky free-model output",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "Reviewer RL model selection — RL engine is queried for hex-reviewer role",
+      "given": "The Q-table has prior history for task_type='structured_review'",
+      "when": "select_model_for_role('hex-reviewer', iteration) is called",
+      "then": "Returns a SelectedModel with source=RlEngine and the model ID preserved in native provider/model format",
+      "negative_spec": false,
+      "domain_conventions": {
+        "task_type": "structured_review",
+        "selection_priority": "RL first, YAML fallback when Q-table has no entry"
+      }
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "Valid JSON verdict reports positive reward to RL engine",
+      "given": "The reviewer agent returns a response containing valid JSON with verdict='PASSES' or 'NEEDS_FIXES'",
+      "when": "The reviewer invocation completes",
+      "then": "POST /api/rl/reward is called with reward >= 0.4 for the (state_key, action) pair used during selection",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "ErrorHandling",
+      "description": "Non-JSON response triggers retry with explicit JSON instruction",
+      "given": "The reviewer returns a response that cannot be parsed as JSON (prose, markdown, empty string)",
+      "when": "The reviewer invocation result is evaluated",
+      "then": "The prompt is retried with an appended JSON-enforcement instruction; the same model is used on retry 1",
+      "negative_spec": false,
+      "domain_conventions": {
+        "json_enforcement_suffix": "Respond ONLY with a JSON object matching {\"verdict\":\"PASSES\"|\"NEEDS_FIXES\",\"issues\":[...]}. No prose, no markdown."
+      }
+    },
+    {
+      "id": "S04",
+      "category": "ErrorHandling",
+      "description": "Second retry upgrades to a higher model tier",
+      "given": "Retry 1 (same model + JSON instruction) also fails to return valid JSON",
+      "when": "Retry 2 is attempted",
+      "then": "The model is upgraded to the next tier (preferred → upgrade_model from YAML), and the JSON-enforcement instruction is included",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "ErrorHandling",
+      "description": "Non-JSON response reports negative reward to RL engine",
+      "given": "The reviewer returns invalid JSON after all retries are exhausted",
+      "when": "Retries are exhausted",
+      "then": "POST /api/rl/reward is called with reward=-0.8 for the (state_key, action) pair; a warning is logged",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "EdgeCase",
+      "description": "Fallback auto-PASSES verdict when all retries fail — tier is not permanently blocked",
+      "given": "Reviewer invocation fails to produce valid JSON across all attempts (original + 2 retries)",
+      "when": "evaluate_review_passes is called for this tier",
+      "then": "A synthetic PASSES verdict is written to .hex-review/<tier>.json with issues=[] and a warning field 'reviewer_skipped: true'; ReviewPasses clears; a tracing warn is emitted",
+      "negative_spec": false,
+      "domain_conventions": {
+        "synthetic_verdict": "{\"verdict\":\"PASSES\",\"issues\":[],\"reviewer_skipped\":true,\"reason\":\"reviewer returned non-JSON after 3 attempts\"}"
+      }
+    },
+    {
+      "id": "S07",
+      "category": "Security",
+      "description": "RL model routing cannot select a model that produces NEEDS_FIXES indefinitely as 'good'",
+      "given": "A model consistently returns valid NEEDS_FIXES JSON (structured output success) but the coder never fixes the issues",
+      "when": "The pipeline loops",
+      "then": "The tier hits max_iterations and escalates; the reviewer's structured-output reward (+0.4) does not prevent escalation — it only tracks JSON reliability, not whether issues are resolved",
+      "negative_spec": true,
+      "domain_conventions": {
+        "note": "Reviewer reward tracks output FORMAT reliability, not verdict correctness. Fix-loop convergence is a separate gate."
+      }
+    },
+    {
+      "id": "S08",
+      "category": "Integration",
+      "description": "RL-selected reviewer model survives the extract_model_from_action fix",
+      "given": "The RL engine recommends 'anthropic/claude-sonnet-4-6' for the reviewer role",
+      "when": "extract_model_from_action converts the RL action to a model ID",
+      "then": "The resulting model ID is 'anthropic/claude-sonnet-4-6' (unchanged), not 'openrouter-anthropic-claude-sonnet-4-6'",
+      "negative_spec": false,
+      "domain_conventions": {
+        "dependency": "Requires feat-fix-rl-model-routing step-1 to be merged first"
+      }
+    }
+  ]
+}

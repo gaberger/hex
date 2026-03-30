@@ -31,6 +31,10 @@ Read the ADR and produce a valid JSON workplan that follows the schema exactly. 
 | 4 | composition-root | Wiring adapters to ports | Tiers 0-3 |
 | 5 | integration tests | End-to-end validation | Everything |
 
+## Language Context
+
+{{language_guidance}}
+
 ## Output Format
 
 Produce ONLY valid JSON matching the workplan schema. No markdown fences, no explanation — just the JSON object. The output must parse with `JSON.parse()` / `serde_json::from_str()`.

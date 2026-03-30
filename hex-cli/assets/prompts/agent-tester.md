@@ -30,6 +30,23 @@ Tests in hex follow the London school — mock collaborators at port boundaries:
 - **Use case tests**: Mock all port dependencies; verify orchestration logic
 - **Integration tests**: Wire real adapters; verify end-to-end through composition root
 
+## CRITICAL: TypeScript Import Rules (NodeNext module resolution)
+
+**All relative imports in TypeScript MUST end with `.js`** — even though the source files are `.ts`.
+This is required by NodeNext module resolution (`"moduleResolution": "NodeNext"` in tsconfig).
+
+```typescript
+// ✅ CORRECT
+import { TodoRepo } from '../../../src/adapters/secondary/todo-repo.js';
+import { ITodoPort } from '../../../src/core/ports/todo-port.js';
+
+// ❌ WRONG — will fail with TS2834 under NodeNext
+import { TodoRepo } from '../../../src/adapters/secondary/todo-repo';
+import { ITodoPort } from '../../../src/core/ports/todo-port';
+```
+
+**Every single relative import must have `.js` at the end. No exceptions.**
+
 ## Output Format
 
 Produce ONLY the complete test file content. No markdown fences, no explanation, no preamble — just the test code.
@@ -82,7 +99,19 @@ Each test file must include these categories:
 7. **No test interdependence**: Tests must not depend on execution order or shared mutable state.
 7a. **JavaScript number precision**: JavaScript `number` is a 64-bit float. Very large inputs do NOT produce `NaN` — they produce large floats or `Infinity`. Never `expect(result).toBeNaN()` for arithmetic operations on finite inputs. Use `expect(result).toBeFinite()` or check the actual computed value instead.
 8. **No real I/O**: Unit tests must not touch the filesystem, network, or database. Use injected test doubles.
-9. **TypeScript specifics**: Use `.js` extensions in relative imports. Use `describe`/`it` blocks. Use `vi.fn()` for mock functions.
+9. **Go specifics**: Test functions MUST be named `TestXxx(t *testing.T)` — `go test` silently ignores any function that does not match this signature. Write test files in the same package as the code under test (`package main` for a `main.go` binary). Use `net/http/httptest` to test HTTP handlers without starting a real server. For dependency injection, define a small interface in the test file and provide a struct implementation — no third-party mock libraries. Use `t.Run("description", func(t *testing.T) {...})` for subtests and table-driven tests. Use `t.Fatal` to stop on first failure; use `t.Error` to continue and collect all failures.
+
+   **Go mock interface example:**
+   ```go
+   type storeInterface interface {
+       FindAll() []Item
+       Insert(item Item) error
+   }
+   type mockStore struct{ items []Item }
+   func (m *mockStore) FindAll() []Item        { return m.items }
+   func (m *mockStore) Insert(i Item) error    { m.items = append(m.items, i); return nil }
+   ```
+10. **TypeScript specifics**: Use `.js` extensions in relative imports. Use `describe`/`it` blocks. Use `vi.fn()` for mock functions.
    - **CRITICAL import path rule**: The test file lives at `tests/unit/<layer>/<file>.test.ts`. The source lives at `src/...`. You MUST calculate the correct relative path from the test file to the source file. For example, if the source is `src/core/domain/foo.ts` and the test is at `tests/unit/domain/foo.test.ts`, the import is `../../../src/core/domain/foo.js` (three levels up). Count the directory levels carefully. NEVER use `./` to import from `src/` when the test is in `tests/`.
 10. **Rust integration test specifics**: The test file lives in `tests/` at the crate root — it is a **separate crate**. This means:
     - NEVER use `use super::*` — there is no `super` in integration tests
@@ -123,4 +152,4 @@ Each test file must include these categories:
         assert!(stdout.contains("212"));
     }
     ```
-11. **Cover the port contract completely**: Every method in the port interface must have at least one happy-path and one error-case test.
+12. **Cover the port contract completely**: Every method in the port interface must have at least one happy-path and one error-case test.

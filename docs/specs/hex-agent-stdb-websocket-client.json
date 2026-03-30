@@ -1,0 +1,224 @@
+{
+  "id": "hex-agent-stdb-websocket-client",
+  "title": "hex-agent as First-Class SpacetimeDB WebSocket Client",
+  "adr": "ADR-2603300100",
+  "version": "1.0.0",
+  "description": "Behavioral specification for replacing hex-agent's REST polling coordination with direct SpacetimeDB WebSocket subscriptions. Covers task assignment, code generation, inference routing, and task completion signal paths.",
+
+  "actors": {
+    "hex_agent": "Docker worker process running hex-agent binary",
+    "spacetimedb": "SpacetimeDB instance running hexflo-coordination and inference-gateway WASM modules",
+    "hex_nexus": "hex-nexus daemon — filesystem bridge only, not coordination hub",
+    "outer_supervisor": "hex dev pipeline supervisor on the host machine"
+  },
+
+  "scenarios": [
+    {
+      "id": "SC-001",
+      "title": "Agent connects to SpacetimeDB at startup",
+      "given": [
+        "SPACETIMEDB_URL is set (default: ws://localhost:3033)",
+        "SPACETIMEDB_TOKEN is set (resolved from vault by hex-nexus on agent registration)",
+        "HEX_AGENT_ID is set"
+      ],
+      "when": "hex-agent daemon starts",
+      "then": [
+        "Agent establishes WebSocket connection to SpacetimeDB",
+        "Agent subscribes to swarm_task table WHERE agent_id = {self} AND status = 'pending'",
+        "Agent subscribes to inference_response table WHERE agent_id = {self}",
+        "Agent calls agent_heartbeat reducer every 30 seconds",
+        "Agent logs: '[hex-agent] connected to SpacetimeDB at {url}'"
+      ],
+      "failure_modes": [
+        "SpacetimeDB unreachable: agent falls back to REST polling every 5s (existing behavior)",
+        "Token invalid: agent logs error and exits with code 1"
+      ]
+    },
+
+    {
+      "id": "SC-002",
+      "title": "Supervisor encodes WorkplanStep in task payload",
+      "given": [
+        "Supervisor has a WorkplanStep to execute",
+        "Supervisor has determined output_dir and model_hint for the step"
+      ],
+      "when": "Supervisor creates a HexFlo task for the step",
+      "then": [
+        "Task title = human-readable step summary (unchanged)",
+        "Task description = JSON-encoded TaskPayload: { step_id, description, tier, language, output_dir, model_hint, context: { workplan_summary, existing_file_paths } }",
+        "Task is created in SpacetimeDB via task_create reducer",
+        "Supervisor subscribes to swarm_task WHERE id = {task_id} to watch for status changes"
+      ]
+    },
+
+    {
+      "id": "SC-003",
+      "title": "Agent receives task assignment via push notification",
+      "given": [
+        "Agent is connected to SpacetimeDB",
+        "A task is created with agent_id matching this agent"
+      ],
+      "when": "SpacetimeDB pushes swarm_task row update to agent's subscription",
+      "then": [
+        "Agent deserializes TaskPayload from task.description",
+        "Agent calls task_assign(task_id, agent_id) reducer to set status = 'in_progress'",
+        "Agent begins code generation for the step",
+        "Latency from task creation to agent acknowledgement: < 100ms"
+      ]
+    },
+
+    {
+      "id": "SC-004",
+      "title": "Agent requests inference via SpacetimeDB reducer",
+      "given": [
+        "Agent has a WorkplanStep and needs to generate code",
+        "Agent has constructed the inference prompt"
+      ],
+      "when": "Agent calls inference_request_create(agent_id, model, messages) reducer",
+      "then": [
+        "SpacetimeDB stores inference_request row with status = 'pending'",
+        "hex-nexus (subscribed to inference_request table) receives push notification",
+        "hex-nexus makes HTTP call to appropriate provider (OpenRouter/Anthropic/Ollama)",
+        "hex-nexus calls inference_response_complete(request_id, content, model, tokens) reducer",
+        "Agent receives inference_response push via subscription",
+        "Agent proceeds with code generation using the response content"
+      ],
+      "failure_modes": [
+        "Inference times out (600s): SpacetimeDB marks request as 'failed', agent receives failure push",
+        "Model unavailable: hex-nexus tries fallback chain, updates response with actual model used"
+      ]
+    },
+
+    {
+      "id": "SC-005",
+      "title": "Agent writes generated code to output_dir via hex-nexus",
+      "given": [
+        "Agent has generated code content from inference response",
+        "output_dir is set in task payload"
+      ],
+      "when": "Agent writes files",
+      "then": [
+        "Agent calls POST /api/files/write with { path: output_dir/src/..., content: ... }",
+        "hex-nexus writes the file to the filesystem",
+        "Agent reads back the written path to confirm write succeeded",
+        "Agent records written_files: [list of paths] for inclusion in task result"
+      ]
+    },
+
+    {
+      "id": "SC-006",
+      "title": "Agent runs compile check and reports result",
+      "given": [
+        "Agent has written generated files to output_dir",
+        "Language is known from task payload"
+      ],
+      "when": "Agent runs compile check",
+      "then": [
+        "Agent calls POST /api/compile-check with { dir: output_dir, language }",
+        "hex-nexus runs tsc --noEmit / cargo check / go build in output_dir",
+        "Result: { success: bool, error_count: int, errors: [string] }",
+        "Agent includes compile result in task result JSON"
+      ]
+    },
+
+    {
+      "id": "SC-007",
+      "title": "Agent completes task via SpacetimeDB reducer",
+      "given": [
+        "Agent has written files and run compile check",
+        "Task is in status = 'in_progress'"
+      ],
+      "when": "Agent calls task_complete(task_id, result_json, now) reducer",
+      "then": [
+        "SpacetimeDB updates swarm_task row: status = 'completed', result = result_json",
+        "Outer supervisor receives push notification via subscription",
+        "Supervisor extracts compile_status, written_files from result_json",
+        "Supervisor updates ObjectiveState (CodeGenerated, CodeCompiles) without re-running checks",
+        "End-to-end latency from task_complete call to supervisor seeing 'completed': < 100ms"
+      ]
+    },
+
+    {
+      "id": "SC-008",
+      "title": "Supervisor reacts to task completion without polling",
+      "given": [
+        "Supervisor is subscribed to swarm_task WHERE id = {task_id}",
+        "Agent calls task_complete reducer"
+      ],
+      "when": "SpacetimeDB pushes task status update to supervisor subscription",
+      "then": [
+        "Supervisor immediately proceeds to objective evaluation",
+        "No 120s timeout occurs",
+        "No filesystem fallback needed",
+        "Supervisor logs: '[tier N] task {id} completed by {agent_id} in {duration_ms}ms'"
+      ]
+    },
+
+    {
+      "id": "SC-009",
+      "title": "Graceful fallback when SpacetimeDB is unavailable",
+      "given": [
+        "SPACETIMEDB_URL is set but SpacetimeDB is down",
+        "hex-nexus REST API is available"
+      ],
+      "when": "hex-agent starts",
+      "then": [
+        "Agent logs: '[hex-agent] SpacetimeDB unavailable — falling back to REST polling'",
+        "Agent uses existing REST polling path (GET /api/hexflo/tasks/claim every 5s)",
+        "Agent uses REST PATCH for task completion",
+        "Agent uses POST /api/inference/complete for inference",
+        "Behavior is degraded but functional (existing behavior preserved)"
+      ]
+    }
+  ],
+
+  "data_contracts": {
+    "TaskPayload": {
+      "step_id": "string — workplan step ID (e.g. 'P0.1')",
+      "description": "string — human-readable step description",
+      "tier": "integer — dependency tier (0 = domain, 1 = secondary adapter, etc.)",
+      "language": "string — 'typescript' | 'rust' | 'go'",
+      "output_dir": "string — absolute path to project directory",
+      "model_hint": "string — preferred model ID (e.g. 'openai/gpt-4o-mini')",
+      "context": {
+        "workplan_summary": "string — brief summary of the overall workplan",
+        "existing_file_paths": "string[] — list of already-written files for context"
+      }
+    },
+    "TaskResult": {
+      "step_id": "string",
+      "written_files": "string[] — paths of files written relative to output_dir",
+      "compile_status": "object — { success: bool, error_count: int, errors: string[] }",
+      "model_used": "string — actual model that produced the code",
+      "tokens": "integer",
+      "duration_ms": "integer"
+    }
+  },
+
+  "acceptance_criteria": [
+    "AC-001: Agent connects to SpacetimeDB within 2s of startup; logs connection confirmed",
+    "AC-002: Task assignment delivered to agent within 100ms of task_create reducer call",
+    "AC-003: No REST polling for task assignment when SpacetimeDB is available",
+    "AC-004: Inference request routes through inference-gateway reducer, not POST /api/inference/complete",
+    "AC-005: task_complete reducer call updates task status atomically; no 403 or 404",
+    "AC-006: Supervisor sees task status = 'completed' within 100ms of task_complete call",
+    "AC-007: No nested 'hex dev start --auto' inside Docker worker",
+    "AC-008: WorkplanStep context (language, tier, output_dir, model_hint) is available to worker",
+    "AC-009: Compile result is included in TaskResult and used by supervisor for objective evaluation",
+    "AC-010: Fallback to REST polling is transparent to the supervisor"
+  ],
+
+  "out_of_scope": [
+    "Rewriting the outer supervisor's TDD feedback loop (unchanged)",
+    "Changing the Docker container image build process (unchanged)",
+    "Replacing hex-nexus filesystem bridge role (unchanged)",
+    "Multi-file code generation in a single task (single file per step, as today)"
+  ],
+
+  "dependencies": [
+    "SpacetimeDB hexflo-coordination module deployed with task_assign, task_complete, agent_heartbeat reducers",
+    "SpacetimeDB inference-gateway module deployed with inference_request_create reducer",
+    "hex-nexus processes inference_request table and calls inference_response_complete reducer",
+    "coordination_cleanup 404 resolved (stale module version deployed)"
+  ]
+}

@@ -48,6 +48,7 @@ context:
       generation_space: 30000
 
 constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_hexflo_task_complete not `hex task complete` via Bash."
   - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP merge operations, save integration state, acknowledge via hex inbox ack, and inform the coordinator. This overrides all other work."
   - Never modify adapter internals during merge (only resolve conflicts)
   - If a conflict requires adapter logic changes, flag for hex-coder re-run

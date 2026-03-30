@@ -1,0 +1,109 @@
+{
+  "feature": "declarative-swarm-agents",
+  "description": "Complete ADR-2603240130 — all swarm agent behavior driven from YAML definitions, not hardcoded Rust",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "hex-coder runs pre_validate gate before any code generation",
+      "given": "A workplan step targeting a hex boundary with a YAML workflow containing a pre_validate phase",
+      "when": "dispatch_agent runs for 'hex-coder'",
+      "then": "The boundary_check gate runs first; if it fails, code generation is skipped and the error is surfaced",
+      "negative_spec": false,
+      "domain_conventions": {
+        "gate": "pre_validate phase has a blocking boundary_check gate in hex-coder.yml"
+      }
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "hex-coder runs separate inference calls for red, green, and refactor phases",
+      "given": "A workplan step with a phase-based workflow (red → green → refactor)",
+      "when": "dispatch_agent executes the hex-coder role",
+      "then": "Three distinct inference calls are made — red (write tests), green (make tests pass), refactor (clean up) — each with phase-specific system prompt context",
+      "negative_spec": false,
+      "domain_conventions": {
+        "phases": "red=write failing tests, green=minimal implementation, refactor=clean up",
+        "prompt_key": "phase steps from YAML are injected into the system prompt"
+      }
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "YAML load_strategy drives context assembly for hex-coder",
+      "given": "A hex-coder.yml with a context.load_strategy specifying L1/L2/L3 levels per scope",
+      "when": "Context is built for a hex-coder step",
+      "then": "build_context_from_yaml is used (not the hardcoded build_coder_context), loading files at the YAML-specified levels",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "Token budget from YAML caps context file loading",
+      "given": "Agent YAML specifies context.token_budget.max = 8000",
+      "when": "Context is assembled for a code generation step",
+      "then": "File content is truncated to respect the YAML budget, not the hardcoded MAX_FILE_BYTES constant",
+      "negative_spec": false,
+      "domain_conventions": {
+        "current_bug": "MAX_FILE_BYTES is hardcoded to 4096 in supervisor.rs; should read from agent YAML"
+      }
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "Quality thresholds from YAML are enforced after code generation",
+      "given": "Agent YAML specifies quality_thresholds (max_lint_warnings, max_file_lines, etc.)",
+      "when": "Code generation completes for a step",
+      "then": "evaluate_quality_thresholds is called and violations are logged/reported; blocking violations prevent step completion",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "HappyPath",
+      "description": "Agent cardinality from swarm YAML determines how many agents run per role",
+      "given": "dev-pipeline.yml defines hex-coder with cardinality: per_workplan_step",
+      "when": "A swarm runs for a workplan with 4 steps",
+      "then": "The supervisor instantiates one hex-coder pass per workplan step (respecting per_workplan_step cardinality)",
+      "negative_spec": false,
+      "domain_conventions": {
+        "cardinalities": "per_workplan_step, per_source_file, per_tier, per_swarm"
+      }
+    },
+    {
+      "id": "S07",
+      "category": "ErrorHandling",
+      "description": "pre_validate gate failure stops code generation and surfaces the error",
+      "given": "The boundary_check gate fails (code imports an adapter from another adapter)",
+      "when": "dispatch_agent runs pre_validate for a step",
+      "then": "Code generation is not called; the gate failure message is included in the step error; the step is marked failed",
+      "negative_spec": true
+    },
+    {
+      "id": "S08",
+      "category": "ErrorHandling",
+      "description": "Phase inference failure falls back gracefully without crashing the pipeline",
+      "given": "The red-phase inference call returns an error (network, model unavailable)",
+      "when": "Phase-driven dispatch executes the red phase",
+      "then": "The error is logged and the pipeline either retries via FixAgent or marks the step failed — it does not panic",
+      "negative_spec": true
+    },
+    {
+      "id": "S09",
+      "category": "EdgeCase",
+      "description": "Agent with no phase workflow still gets YAML model + context (no regression)",
+      "given": "A role (hex-reviewer, hex-tester) with a step-based workflow (not phase-based)",
+      "when": "dispatch_agent runs for that role",
+      "then": "YAML model selection is used and context is built correctly — existing behavior is not broken",
+      "negative_spec": false
+    },
+    {
+      "id": "S10",
+      "category": "Integration",
+      "description": "hex dev end-to-end runs a full YAML-driven pipeline without fallback to hardcoded behavior",
+      "given": "A workplan with 2+ steps, hex-nexus running, all agent YAMLs present",
+      "when": "hex dev <feature> is invoked",
+      "then": "All phases execute (pre_validate, red, green, refactor), feedback gates run, FixAgent is called on failures, and the model used matches the hex-coder.yml preferred model",
+      "negative_spec": false
+    }
+  ]
+}

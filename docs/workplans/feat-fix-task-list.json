@@ -3,7 +3,7 @@
   "feature": "fix-task-list",
   "title": "Fix: hex task list agent column and swarm grouping",
   "description": "Fix two bugs in hex task list: (1) tasks not grouped by swarm because _swarm_id is collected but unused in task.rs, (2) agentId not surfaced correctly from /api/swarms/active response",
-  "status": "planned",
+  "status": "done",
   "created": "2026-03-24",
   "specs": "docs/specs/fix-task-list.json",
   "phases": [

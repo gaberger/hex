@@ -112,9 +112,13 @@ impl CliRunner {
         self.run(&["analyze", path])
     }
 
-    /// `hex swarm init <name> --topology <topology> --json`
-    pub fn swarm_init(&self, name: &str, topology: &str) -> Result<Value> {
-        self.run(&["swarm", "init", name, "--topology", topology])
+    /// `hex swarm init <name> --topology <topology> [--project-id <id>] --json`
+    pub fn swarm_init(&self, name: &str, topology: &str, project_id: Option<&str>) -> Result<Value> {
+        if let Some(pid) = project_id {
+            self.run(&["swarm", "init", name, "--topology", topology, "--project-id", pid])
+        } else {
+            self.run(&["swarm", "init", name, "--topology", topology])
+        }
     }
 
     /// `hex swarm cleanup --apply --stale-hours 0` — close all active swarms before creating a new one.
@@ -124,8 +128,8 @@ impl CliRunner {
     }
 
     /// `hex swarm complete <id>` — mark a swarm as completed.
-    pub fn swarm_complete(&self, swarm_id: &str) -> Result<Value> {
-        self.run(&["swarm", "complete", swarm_id])
+    pub fn swarm_complete(&self, swarm_id: &str) -> Result<()> {
+        self.run_raw(&["swarm", "complete", swarm_id]).map(|_| ())
     }
 
     /// `hex swarm list` — return all swarms as JSON array.

@@ -1,9 +1,0 @@
-{
-  "verdict": "PASS",
-  "issues": [],
-  "model_used": "openai/gpt-4o-mini",
-  "tokens": 54749,
-  "cost_usd": 0.0082209,
-  "duration_ms": 4480,
-  "reviewer_skipped": false
-}

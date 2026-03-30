@@ -988,7 +988,7 @@ This gives agents **real-time streaming through SpacetimeDB subscriptions** — 
 |-------|------------|-----------------|------|
 | **0** | Extract `hex-core` with shared types + ports | New crate | Low — additive |
 | **1a** | SpacetimeDB modules: `file-lock-manager`, `architecture-enforcer`, `conflict-resolver` | spacetime-modules | Low — new modules |
-| **1b** | SpacetimeDB module: `inference-gateway` with procedures for HTTP calls | spacetime-modules | Medium — procedures are beta |
+| **1b** | SpacetimeDB module: `inference-gateway` with procedures for HTTP calls | spacetime-modules | ✅ Complete — `execute_inference` procedure + `InferenceApiKey` table; `spacetimedb = { features = ["unstable"] }` |
 | **2** | `hex-agent` depends on `hex-core`, pre-write validation in code_writer | hex-agent, hex-core | Medium — changes write path |
 | **3** | `hex-nexus` depends on `hex-core`, remove duplicate types | hex-nexus, hex-core | Medium — refactor |
 | **4** | `hex-chat` TUI binary with SpacetimeDB subscriptions | New crate | Low — additive |

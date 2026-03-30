@@ -46,6 +46,7 @@ context:
       monitoring_space: 5000
 
 constraints:
+  - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash. e.g. use mcp__hex__hex_hexflo_swarm_status, mcp__hex__hex_hexflo_memory_retrieve instead of Bash."
   - "ADR-060 PRIORITY: If a critical notification (priority 2) appears in hook output, STOP monitoring, acknowledge via hex inbox ack, and relay the notification to the user. This overrides all other work."
   - Never modify source code or tests (read-only access to codebase)
   - Never interfere with other agents' git worktrees
