@@ -1,0 +1,47 @@
+{
+  "id": "wp-hello-world-cli",
+  "title": "Implement Hello World CLI in Go",
+  "specs": null,
+  "adr": "ADR-2404271401",
+  "created": "2024-04-27",
+  "status": "planned",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": "small",
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Implement the full feature in main.go — single-binary go project\n\nFeature requirements: build a hello world CLI in Go that prints Hello, hex!",
+      "layer": "primary",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": null,
+      "done_condition": "main.go compiles and fully implements: build a hello world CLI in Go that prints Hello, hex!; go.mod has correct dependencies"
+    }
+  ],
+  "mergeOrder": [
+    "domain",
+    "ports",
+    "usecases",
+    "cli",
+    "composition-root"
+  ],
+  "riskRegister": [
+    {
+      "impact": "low",
+      "mitigation": "Consider refactoring as the application grows.",
+      "risk": "Boilerplate code introduction"
+    }
+  ],
+  "successCriteria": [
+    "A CLI command `hello` exists.",
+    "Running `hello` prints 'Hello, hex!' to standard output."
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
