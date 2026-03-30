@@ -1,0 +1,40 @@
+{
+  "id": "wp-P0.2",
+  "title": "Create CLI Port Interface in Ports Layer",
+  "specs": "specs/cli-port-interface.md",
+  "adr": "ADR-240712143000",
+  "created": "2024-07-12",
+  "status": "planned",
+  "status_note": "Pending approval",
+  "topology": "pipeline",
+  "budget": "1 story point",
+  "steps": [
+    {
+      "id": "P0.2.1",
+      "description": "Define CLI port interface in ports layer",
+      "layer": "ports",
+      "adapter": null,
+      "port": "cli",
+      "dependencies": [
+        "P0.2.1.1"
+      ],
+      "tier": 1,
+      "specs": [
+        "S01"
+      ],
+      "worktree_branch": "feat/cli-port-interface",
+      "done_condition": "CLI port interface created in ports/cli/cli.ts"
+    }
+  ],
+  "mergeOrder": [
+    "P0.2.1"
+  ],
+  "riskRegister": [],
+  "successCriteria": [
+    "CLI port interface exists in ports layer"
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
