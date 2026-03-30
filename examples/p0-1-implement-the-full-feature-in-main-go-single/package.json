@@ -1,5 +1,5 @@
 {
-  "name": "implement-url-shortener-rest-api-in-main",
+  "name": "refactor-main-go-into-hexagonal-layers",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
