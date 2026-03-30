@@ -1,0 +1,1 @@
+importuseCase from 'ports/usecases/useCase.js';
