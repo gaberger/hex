@@ -96,31 +96,35 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          merge-multiple: true
 
       - name: List artifacts
-        run: ls -la
+        run: find artifacts -type f
 
       - name: Prepare release files
         run: |
           mkdir -p release-files
-          # Only copy files that exist
-          for f in hex-x86_64-unknown-linux-gnu hex-aarch64-unknown-linux-gnu hex-x86_64-apple-darwin hex-aarch64-apple-darwin; do
-            if [ -f "$f" ]; then
-              cp "$f" "release-files/$f"
-              echo "  ✓ $f"
-            else
-              echo "  ✗ $f (skipped)"
+          # Map artifact directories to release files
+          for dir in artifacts/hex-*; do
+            if [ -d "$dir" ]; then
+              bin=$(basename "$dir")
+              src=$(find "$dir" -type f -maxdepth 1 | head -1)
+              if [ -n "$src" ]; then
+                # Extract platform from artifact name (e.g., hex-x86_64-unknown-linux-gnu -> hex-x86_64-unknown-linux-gnu)
+                name="$bin"
+                cp "$src" "release-files/$name"
+                echo "  ✓ $name"
+              fi
             fi
           done
           ls -la release-files/
+          echo "VERSION=${{ github.inputs.version }}" >> $GITHUB_ENV
 
       - name: Create Release
         if: env.GITHUB_TOKEN != ''
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.inputs.version }}
-          name: hex v${{ github.inputs.version }}
+          tag_name: v${{ env.VERSION }}
+          name: hex v${{ env.VERSION }}
           draft: false
           prerelease: ${{ github.inputs.prerelease }}
           generate_release_notes: true
@@ -132,25 +136,26 @@ jobs:
 
       - name: Print download commands
         run: |
+          VERSION="${{ env.VERSION }}"
           echo "## Download Commands" >> $GITHUB_STEP_SUMMARY
           echo "```bash" >> $GITHUB_STEP_SUMMARY
           echo "# Linux x86_64" >> $GITHUB_STEP_SUMMARY
-          echo "curl -LO https://github.com/anthropic-hex/hex/releases/download/v${{ github.inputs.version }}/hex-x86_64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
+          echo "curl -LO https://github.com/anthropic-hex/hex/releases/download/v${VERSION}/hex-x86_64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
           echo "chmod +x hex-x86_64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
           echo "sudo mv hex-x86_64-unknown-linux-gnu /usr/local/bin/hex" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# Linux ARM64" >> $GITHUB_STEP_SUMMARY
-          echo "curl -LO https://github.com/anthropic-hex/hex/releases/download/v${{ github.inputs.version }}/hex-aarch64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
+          echo "curl -LO https://github.com/anthropic-hex/hex/releases/download/v${VERSION}/hex-aarch64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
           echo "chmod +x hex-aarch64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
           echo "sudo mv hex-aarch64-unknown-linux-gnu /usr/local/bin/hex" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# macOS x86_64" >> $GITHUB_STEP_SUMMARY
-          echo "curl -LO https://github.com/anthropic-hex/hex/releases/download/v${{ github.inputs.version }}/hex-x86_64-apple-darwin" >> $GITHUB_STEP_SUMMARY
+          echo "curl -LO https://github.com/anthropic-hex/hex/releases/download/v${VERSION}/hex-x86_64-apple-darwin" >> $GITHUB_STEP_SUMMARY
           echo "chmod +x hex-x86_64-apple-darwin" >> $GITHUB_STEP_SUMMARY
           echo "sudo mv hex-x86_64-apple-darwin /usr/local/bin/hex" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# macOS ARM64 (Apple Silicon)" >> $GITHUB_STEP_SUMMARY
-          echo "curl -LO https://github.com/anthropic-hex/hex/releases/download/v${{ github.inputs.version }}/hex-aarch64-apple-darwin" >> $GITHUB_STEP_SUMMARY
+          echo "curl -LO https://github.com/anthropic-hex/hex/releases/download/v${VERSION}/hex-aarch64-apple-darwin" >> $GITHUB_STEP_SUMMARY
           echo "chmod +x hex-aarch64-apple-darwin" >> $GITHUB_STEP_SUMMARY
           echo "sudo mv hex-aarch64-apple-darwin /usr/local/bin/hex" >> $GITHUB_STEP_SUMMARY
           echo "```" >> $GITHUB_STEP_SUMMARY
