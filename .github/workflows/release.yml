@@ -120,6 +120,13 @@ jobs:
           done
           ls -la release-files/
 
+      - name: Debug - list files in release-files
+        run: |
+          ls -la release-files/
+          echo "---"
+          echo "RELEASE_VERSION=$RELEASE_VERSION"
+          echo "GITHUB_TOKEN set: ${{ env.GITHUB_TOKEN != '' }}"
+
       - name: Create Release
         if: env.GITHUB_TOKEN != ''
         uses: softprops/action-gh-release@v2
