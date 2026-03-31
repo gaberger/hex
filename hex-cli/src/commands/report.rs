@@ -118,11 +118,11 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
         }
     });
 
-    // Gather all data
-    let adr_info = gather_adr_info(&session);
-    let workplan_info = gather_workplan_info(&session);
-    let swarm_info = gather_swarm_info(&session, &client).await;
+    // Gather all data — git first so phase gatherers can use it as fallback
     let git_info = gather_git_info(&session);
+    let adr_info = gather_adr_info(&session, git_info.as_ref());
+    let workplan_info = gather_workplan_info(&session, git_info.as_ref());
+    let swarm_info = gather_swarm_info(&session, &client).await;
     let quality_gates = gather_quality_gates(&session, &client).await;
 
     if json_output {
@@ -136,6 +136,24 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
     println!("  {}", "hex dev — Audit Report".cyan().bold());
     println!("{}", "═".repeat(65).cyan());
     println!();
+
+    // ── Incomplete completion warning ────────────────────────
+    // Detect sessions that were marked complete without doing real work:
+    // swarm exists but 0 tasks completed, or completed_steps is empty with no quality result.
+    {
+        let swarm_incomplete = swarm_info.as_ref()
+            .map(|s| s.tasks_total > 0 && s.tasks_completed == 0)
+            .unwrap_or(false);
+        let no_code = session.completed_steps.is_empty()
+            && session.quality_result.is_none();
+        if matches!(session.status, SessionStatus::Completed) && (swarm_incomplete || no_code) {
+            println!("  {} Pipeline phases were skipped — no code was generated or tested.",
+                "⚠ Incomplete:".yellow().bold());
+            println!("  {} Use `hex dev start \"{}\"` to resume.",
+                "  Hint:".dimmed(), session.feature_description);
+            println!();
+        }
+    }
 
     // ── Ask ─────────────────────────────────────────────────
     println!(
@@ -329,14 +347,7 @@ async fn show_report(id: &str, json_output: bool) -> Result<()> {
             );
         }
     } else {
-        match session.current_phase {
-            crate::session::PipelinePhase::Validate | crate::session::PipelinePhase::Commit => {
-                println!("  Status: {}", "PASS".green());
-            }
-            _ => {
-                println!("  Status: {}", "Not reached".dimmed());
-            }
-        }
+        println!("  Status: {}", "Not run".dimmed());
     }
 
     // ── Quality Gates (SpacetimeDB) ──────────────────────────
@@ -656,12 +667,11 @@ struct AdrInfo {
     title: String,
 }
 
-fn gather_adr_info(session: &DevSession) -> Option<AdrInfo> {
-    let path = session.adr_path.as_ref()?;
+fn load_adr_info(path: &str) -> Option<AdrInfo> {
     let p = Path::new(path);
     if !p.exists() {
         return Some(AdrInfo {
-            path: path.clone(),
+            path: path.to_string(),
             lines: 0,
             size: 0,
             title: "(file not found)".into(),
@@ -676,12 +686,19 @@ fn gather_adr_info(session: &DevSession) -> Option<AdrInfo> {
         .unwrap_or("")
         .trim_start_matches("# ")
         .to_string();
-    Some(AdrInfo {
-        path: path.clone(),
-        lines,
-        size,
-        title,
-    })
+    Some(AdrInfo { path: path.to_string(), lines, size, title })
+}
+
+fn gather_adr_info(session: &DevSession, git_fallback: Option<&GitInfo>) -> Option<AdrInfo> {
+    // Session-recorded path takes priority
+    if let Some(path) = session.adr_path.as_ref() {
+        return load_adr_info(path);
+    }
+    // Fallback: find ADR created/modified in this session via git status
+    let git = git_fallback?;
+    let path = git.created.iter().chain(git.modified.iter())
+        .find(|f| f.starts_with("docs/adrs/") && f.ends_with(".md"))?;
+    load_adr_info(path)
 }
 
 struct WorkplanStep {
@@ -699,8 +716,7 @@ struct WorkplanInfo {
     steps: Vec<WorkplanStep>,
 }
 
-fn gather_workplan_info(session: &DevSession) -> Option<WorkplanInfo> {
-    let path = session.workplan_path.as_ref()?;
+fn load_workplan_info(path: &str) -> Option<WorkplanInfo> {
     let content = std::fs::read_to_string(path).ok()?;
     let data: Value = serde_json::from_str(&content).ok()?;
 
@@ -728,12 +744,24 @@ fn gather_workplan_info(session: &DevSession) -> Option<WorkplanInfo> {
         .join(", ");
 
     Some(WorkplanInfo {
-        path: path.clone(),
+        path: path.to_string(),
         title,
         total_steps: steps.len(),
         tier_summary,
         steps,
     })
+}
+
+fn gather_workplan_info(session: &DevSession, git_fallback: Option<&GitInfo>) -> Option<WorkplanInfo> {
+    // Session-recorded path takes priority
+    if let Some(path) = session.workplan_path.as_ref() {
+        return load_workplan_info(path);
+    }
+    // Fallback: find workplan created/modified in this session via git status
+    let git = git_fallback?;
+    let path = git.created.iter().chain(git.modified.iter())
+        .find(|f| f.starts_with("docs/workplans/") && f.ends_with(".json"))?;
+    load_workplan_info(path)
 }
 
 struct SwarmTask {
@@ -753,7 +781,26 @@ struct SwarmInfo {
 }
 
 async fn gather_swarm_info(session: &DevSession, client: &NexusClient) -> Option<SwarmInfo> {
-    let swarm_id = session.swarm_id.as_ref()?;
+    // Resolve swarm ID: session field first, then name-slug fallback for TUI sessions
+    let swarm_id: String = if let Some(id) = session.swarm_id.as_ref() {
+        id.clone()
+    } else {
+        // Derive slug from feature description (e.g. "hex docs static site generator" → "hex-docs-static-site-generator")
+        let slug = session.feature_description
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join("-");
+        let active = client.get("/api/swarms/active").await.ok()?;
+        active.as_array()?
+            .iter()
+            .find(|s| {
+                let name = s["name"].as_str().unwrap_or("");
+                name == slug || name.contains(&slug) || slug.contains(name)
+            })?["id"]
+            .as_str()?
+            .to_string()
+    };
 
     // Try active swarms first, then fall back to all swarms (completed swarms
     // are no longer in the active list by the time the report is shown).

@@ -1,6 +1,6 @@
 # ADR-2603311730: Integrate claude-code Capabilities into hex-agent
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-31
 **Drivers:** hex-agent lacks advanced tool permission management and cost tracking that claude-code has developed over years. These capabilities significantly improve agent usability and cost visibility.
 
@@ -92,12 +92,12 @@ Implementation in `hex-agent/src/adapters/secondary/token_metrics.rs` with new p
 
 | Phase | Description | Status |
 |-------|------------|--------|
-| P1 | Add PermissionPort to hex-agent/ports | Pending |
-| P2 | Implement hook-based permission system | Pending |
-| P3 | Add classifier auto-approval for safe patterns | Pending |
-| P4 | Add model pricing to TokenMetricsAdapter | Pending |
-| P5 | Add USD cost calculation and session aggregation | Pending |
-| P6 | Persist permissions and costs to SpacetimeDB | Pending |
+| P1 | Add PermissionPort to hex-agent/ports | **Done** |
+| P2 | Implement hook-based permission system | **Done** |
+| P3 | Add classifier auto-approval for safe patterns | **Done** |
+| P4 | Add model pricing to TokenMetricsAdapter | **Done** |
+| P5 | Add USD cost calculation and session aggregation | **Done** |
+| P6 | Wire permissions into ToolExecutorAdapter | **Done** |
 
 ## References
 

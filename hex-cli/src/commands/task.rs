@@ -6,7 +6,7 @@ use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
 
-use crate::fmt::{pretty_table, status_badge, truncate};
+use crate::fmt::{extract_task_title, pretty_table, status_badge, truncate};
 use crate::nexus_client::NexusClient;
 
 #[derive(Subcommand)]
@@ -164,7 +164,8 @@ async fn list() -> anyhow::Result<()> {
         .iter()
         .map(|(swarm_name, _swarm_id, task)| {
             let tid = task["id"].as_str().unwrap_or("-");
-            let title = task["title"].as_str().unwrap_or("-");
+            let raw_title = task["title"].as_str().unwrap_or("-");
+            let title = extract_task_title(raw_title);
             let status = task["status"].as_str().unwrap_or("pending");
             let agent_id = task["agentId"]
                 .as_str()
@@ -176,7 +177,7 @@ async fn list() -> anyhow::Result<()> {
                 status_badge(status),
                 truncate(agent_id, 14),
                 truncate(tid, 12),
-                truncate(title, 50),
+                truncate(&title, 50),
             ]
         })
         .collect();

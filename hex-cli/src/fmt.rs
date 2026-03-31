@@ -114,6 +114,22 @@ pub fn bool_badge(val: bool) -> String {
 
 // ── Text Helpers ────────────────────────────────────────────────────────
 
+/// Extract a human-readable title from a task title that may be raw JSON.
+/// `{"description":"Define domain models..."}` → `"Define domain models..."`
+pub fn extract_task_title(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.starts_with('{') {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            for key in &["description", "title", "name", "step"] {
+                if let Some(s) = v[key].as_str() {
+                    return s.to_string();
+                }
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
 /// Truncate a string to `max_len` characters, appending "…" if truncated.
 pub fn truncate(s: &str, max_len: usize) -> String {
     if s.chars().count() <= max_len {

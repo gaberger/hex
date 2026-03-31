@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod context_manager;
+pub mod prompt;
 pub mod tools;
 pub mod skill_loader;
 pub mod agent_loader;
@@ -27,6 +28,7 @@ pub mod stdb_inference;
 pub mod stdb_task_poller;
 pub mod swarm_spawner;
 pub mod code_phase_worker;
+pub mod controller_worker;
 pub mod task_executor;
 pub mod command_session;
 pub use command_session::CommandSessionAdapter;

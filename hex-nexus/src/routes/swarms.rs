@@ -170,6 +170,36 @@ pub async fn list_failed_swarms(
     Ok(Json(Value::Array(enriched)))
 }
 
+/// GET /api/swarms/all?limit=N — list all swarms (all statuses), most recent first
+pub async fn list_all_swarms(
+    State(state): State<SharedState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+    let limit = params.get("limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(50);
+
+    let swarms = port.swarm_list_all(limit).await.map_err(state_err)?;
+
+    let mut enriched = Vec::with_capacity(swarms.len());
+    for swarm in &swarms {
+        let tasks = port
+            .swarm_task_list(Some(&swarm.id))
+            .await
+            .unwrap_or_default();
+        let total     = tasks.len() as u64;
+        let completed = tasks.iter().filter(|t| t.status == "completed").count() as u64;
+        let failed    = tasks.iter().filter(|t| t.status == "failed").count() as u64;
+        let in_prog   = tasks.iter().filter(|t| t.status == "in_progress").count() as u64;
+        let mut val = serde_json::to_value(swarm).unwrap();
+        val["taskSummary"] = serde_json::json!({
+            "total": total, "completed": completed, "failed": failed, "inProgress": in_prog
+        });
+        enriched.push(val);
+    }
+
+    Ok(Json(Value::Array(enriched)))
+}
+
 // DEPRECATED(ADR-039): Browser will use SpacetimeDB direct subscription
 /// GET /api/swarms/:id — get swarm with tasks and agents
 pub async fn get_swarm(

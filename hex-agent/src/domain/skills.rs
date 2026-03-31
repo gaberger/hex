@@ -15,11 +15,9 @@ impl SkillManifestExt for SkillManifest {
             .filter(|skill| {
                 skill.triggers.iter().any(|trigger| match trigger {
                     SkillTrigger::SlashCommand(cmd) => input.starts_with(cmd.as_str()),
-                    SkillTrigger::Pattern(pattern) => {
-                        regex::Regex::new(pattern)
-                            .map(|re| re.is_match(input))
-                            .unwrap_or(false)
-                    }
+                    SkillTrigger::Pattern(pattern) => regex::Regex::new(pattern)
+                        .map(|re| re.is_match(input))
+                        .unwrap_or(false),
                     SkillTrigger::Keyword(kw) => input_lower.contains(&kw.to_lowercase()),
                 })
             })

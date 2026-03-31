@@ -40,6 +40,8 @@ pub fn render(frame: &mut Frame, area: Rect, at_gate: bool, paused: bool) {
             Span::raw("  "),
             key_span("m", "model"),
             Span::raw("  "),
+            key_span("s", "swarm"),
+            Span::raw("  "),
             key_span("d", "debug"),
             Span::raw("  "),
             key_span("l", "log"),

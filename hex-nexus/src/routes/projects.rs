@@ -585,6 +585,53 @@ async fn scan_project_artifacts(root_path: &str) -> serde_json::Value {
     })
 }
 
+/// GET /api/projects/:id/swarms — list all swarms for a project (all statuses), most recent first
+pub async fn project_swarms(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "State port not available" }))),
+    };
+
+    // Resolve project (same logic as project_report)
+    let project = {
+        let by_id = sp.project_get(&id).await.unwrap_or(None);
+        let by_find = if by_id.is_none() { sp.project_find(&id).await.unwrap_or(None) } else { None };
+        let by_prefix = if by_id.is_none() && by_find.is_none() {
+            let all = sp.project_list().await.unwrap_or_default();
+            let q = id.to_lowercase();
+            all.into_iter().find(|p| {
+                p.name.to_lowercase().starts_with(&q)
+                    || p.root_path.rsplit('/').next().unwrap_or("").to_lowercase().starts_with(&q)
+                    || p.id.starts_with(&q)
+            })
+        } else { None };
+        match by_id.or(by_find).or(by_prefix) {
+            Some(p) => p,
+            None => return (StatusCode::NOT_FOUND, Json(json!({ "error": format!("Project '{}' not found", id) }))),
+        }
+    };
+
+    let swarms = sp.swarm_list_by_project(&project.id).await.unwrap_or_default();
+    let mut enriched = Vec::with_capacity(swarms.len());
+    for swarm in &swarms {
+        let tasks = sp.swarm_task_list(Some(&swarm.id)).await.unwrap_or_default();
+        let total     = tasks.len() as u64;
+        let completed = tasks.iter().filter(|t| t.status == "completed").count() as u64;
+        let failed    = tasks.iter().filter(|t| t.status == "failed").count() as u64;
+        let in_prog   = tasks.iter().filter(|t| t.status == "in_progress").count() as u64;
+        let mut val = serde_json::to_value(swarm).unwrap();
+        val["taskSummary"] = json!({ "total": total, "completed": completed, "failed": failed, "inProgress": in_prog });
+        enriched.push(val);
+    }
+    // Most recent first
+    enriched.sort_by(|a, b| b["updated_at"].as_str().unwrap_or("").cmp(a["updated_at"].as_str().unwrap_or("")));
+
+    (StatusCode::OK, Json(json!(enriched)))
+}
+
 pub async fn list_projects(
     State(state): State<SharedState>,
 ) -> Json<serde_json::Value> {

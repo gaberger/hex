@@ -19,6 +19,8 @@ pub struct TaskExecutor {
     hex_binary: String,
     /// Project directory to operate in.
     project_path: String,
+    /// Agent role label reported to nexus (e.g. "controller", "hex-coder").
+    role: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +52,7 @@ impl TaskExecutor {
                 "hex".into() // fall back to PATH
             }
         });
+        let role = std::env::var("HEX_AGENT_ROLE").unwrap_or_else(|_| "hex-coder".into());
         Self {
             client: reqwest::Client::new(),
             nexus_url,
@@ -57,7 +60,37 @@ impl TaskExecutor {
             swarm_id,
             hex_binary,
             project_path,
+            role,
         }
+    }
+
+    /// Register this agent with nexus so it appears in `hex agent list`.
+    async fn register_with_nexus(&self) {
+        let hostname = std::env::var("HOSTNAME")
+            .unwrap_or_else(|_| "unknown-host".to_string());
+        let url = format!("{}/api/hex-agents/connect", self.nexus_url);
+        let body = serde_json::json!({
+            "agent_id": self.agent_id,
+            "name": format!("{}-{}", self.role, &hostname),
+            "host": hostname,
+            "project_dir": self.project_path,
+            "capabilities": [self.role],
+        });
+        match self.client.post(&url).json(&body).send().await {
+            Ok(r) if r.status().is_success() =>
+                eprintln!("[hex-agent] registered with nexus (role={})", self.role),
+            Ok(r) =>
+                eprintln!("[hex-agent] nexus register returned {}", r.status()),
+            Err(e) =>
+                eprintln!("[hex-agent] nexus register failed (nexus down?): {e}"),
+        }
+    }
+
+    /// Deregister this agent from nexus on clean shutdown.
+    async fn deregister_from_nexus(&self) {
+        let url = format!("{}/api/hex-agents/{}", self.nexus_url, self.agent_id);
+        let _ = self.client.delete(&url).send().await;
+        eprintln!("[hex-agent] deregistered from nexus");
     }
 
     /// Poll for a claimable task. Returns `None` if no task is available (204).
@@ -139,10 +172,34 @@ impl TaskExecutor {
 
     /// Run the daemon poll loop until `shutdown` is set.
     pub async fn run_loop(&self, shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>) {
-        eprintln!("[hex-agent] daemon started — agent_id={} project={} hex={}", self.agent_id, self.project_path, self.hex_binary);
+        eprintln!("[hex-agent] daemon started — agent_id={} role={} project={}", self.agent_id, self.role, self.project_path);
         // Expose nexus URL so `hex dev start --auto` inside the sandbox finds the remote nexus
         std::env::set_var("HEX_NEXUS_URL", &self.nexus_url);
+
+        // Register with nexus so this agent appears in `hex agent list`
+        self.register_with_nexus().await;
         self.init_project(&self.project_path.clone()).await;
+
+        // Heartbeat loop — keeps agent visible in `hex agent list` (45s stale threshold)
+        let hb_client = self.client.clone();
+        let hb_url = format!("{}/api/hex-agents/heartbeat", self.nexus_url);
+        let hb_id = self.agent_id.clone();
+        let hb_shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                if hb_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                let _ = hb_client
+                    .post(&hb_url)
+                    .json(&serde_json::json!({ "agent_id": hb_id }))
+                    .send()
+                    .await;
+            }
+        });
+
         loop {
             if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
                 eprintln!("[hex-agent] shutdown signal received, exiting");
@@ -184,6 +241,9 @@ impl TaskExecutor {
                 }
             }
         }
+
+        // Clean deregister on shutdown
+        self.deregister_from_nexus().await;
     }
 }
 
@@ -206,10 +266,36 @@ impl IAgentRuntimePort for TaskExecutor {
                 role: None,
             });
 
-        // Route: hex-coder role (or output_dir present) → CodePhaseWorker (direct LLM-to-file).
-        // All other roles → SwarmSpawner (full `hex dev start --auto` subprocess).
-        let is_code_phase = payload.role.as_deref() == Some("hex-coder")
-            || payload.output_dir.is_some();
+        // Route:
+        //   controller role → ControllerWorker (inference planning + sub-task delegation)
+        //   hex-coder role (or output_dir present) → CodePhaseWorker (direct LLM-to-file)
+        //   all other roles → SwarmSpawner (full `hex dev start --auto` subprocess)
+        let role = payload.role.as_deref().unwrap_or("");
+        if role == "controller" {
+            use super::controller_worker::ControllerWorker;
+            eprintln!("[hex-agent] execute_task: routing to ControllerWorker");
+            let worker = ControllerWorker::from_env();
+            return match worker.plan_and_delegate(&payload, &self.swarm_id).await {
+                Ok(summary) => {
+                    eprintln!("[hex-agent] execute_task ControllerWorker done: {summary}");
+                    Ok(ToolResult {
+                        success: true,
+                        output: Some(summary),
+                        error: None,
+                    })
+                }
+                Err(e) => {
+                    eprintln!("[hex-agent] execute_task ControllerWorker error: {e}");
+                    Ok(ToolResult {
+                        success: false,
+                        output: None,
+                        error: Some(e),
+                    })
+                }
+            };
+        }
+
+        let is_code_phase = role == "hex-coder" || payload.output_dir.is_some();
 
         if is_code_phase {
             use super::code_phase_worker::CodePhaseWorker;

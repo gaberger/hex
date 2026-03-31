@@ -6,7 +6,7 @@ use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
 
-use crate::fmt::{pretty_table, status_badge, truncate};
+use crate::fmt::{extract_task_title, pretty_table, status_badge, truncate};
 use crate::nexus_client::NexusClient;
 
 #[derive(Subcommand)]
@@ -29,6 +29,9 @@ pub enum SwarmAction {
     Status,
     /// List all swarms
     List {
+        /// Show all swarms including completed history (default: active + failed only)
+        #[arg(long)]
+        all: bool,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -93,7 +96,7 @@ pub async fn run(action: SwarmAction) -> anyhow::Result<()> {
     match action {
         SwarmAction::Init { name, topology, project_id, json } => init(&name, &topology, project_id.as_deref(), json).await,
         SwarmAction::Status => status().await,
-        SwarmAction::List { json } => list(json).await,
+        SwarmAction::List { json, all } => list(json, all).await,
         SwarmAction::Complete { id, .. } => complete(&id).await,
         SwarmAction::Fail { id, reason, .. } => fail(&id, &reason).await,
         SwarmAction::Cleanup { stale_hours, apply, .. } => cleanup(stale_hours, apply).await,
@@ -211,7 +214,8 @@ async fn status() -> anyhow::Result<()> {
             println!();
             let rows: Vec<Vec<String>> = tasks.iter().map(|task| {
                 let tid = task["id"].as_str().unwrap_or("-");
-                let title = task["title"].as_str().unwrap_or("-");
+                let raw_title = task["title"].as_str().unwrap_or("-");
+                let title = extract_task_title(raw_title);
                 let status = task["status"].as_str().unwrap_or("unknown");
                 let agent_id = task["agentId"].as_str()
                     .or_else(|| task["agent_id"].as_str())
@@ -220,7 +224,7 @@ async fn status() -> anyhow::Result<()> {
                     status_badge(status),
                     truncate(agent_id, 16),
                     truncate(tid, 36),
-                    truncate(title, 50),
+                    truncate(&title, 50),
                 ]
             }).collect();
             println!("{}", pretty_table(&["Status", "Agent", "Task ID", "Title"], &rows));
@@ -230,89 +234,115 @@ async fn status() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn list(json_output: bool) -> anyhow::Result<()> {
+async fn list(json_output: bool, show_all: bool) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    let resp = nexus.get("/api/swarms/active").await?;
-    let swarms = resp.as_array().cloned().unwrap_or_default();
+    // Auto-detect current project from cwd basename (same heuristic as `hex project report`)
+    let project_hint = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
 
-    // Auto-complete swarms where all tasks are done before rendering
-    auto_complete_done_swarms(&nexus, &swarms).await;
+    let (resp, project_scoped) = if let Some(ref hint) = project_hint {
+        match nexus.get(&format!("/api/projects/{}/swarms", hint)).await {
+            Ok(r) => (r, true),
+            Err(_) => (nexus.get("/api/swarms/all?limit=50").await?, false),
+        }
+    } else {
+        (nexus.get("/api/swarms/all?limit=50").await?, false)
+    };
+    let all_swarms = resp.as_array().cloned().unwrap_or_default();
 
     if json_output {
         println!("{}", resp);
         return Ok(());
     }
 
+    // Default: only active + failed (things needing attention). --all shows full history.
+    let swarms: Vec<_> = if show_all {
+        all_swarms.clone()
+    } else {
+        all_swarms.iter().filter(|s| matches!(s["status"].as_str(), Some("active") | Some("failed"))).cloned().collect()
+    };
+
+    let active_count = all_swarms.iter().filter(|s| s["status"].as_str() == Some("active")).count();
+    let completed_count = all_swarms.iter().filter(|s| s["status"].as_str() == Some("completed")).count();
+
     if swarms.is_empty() {
-        println!("{} No registered swarms", "\u{2b21}".dimmed());
+        let hint = if completed_count > 0 {
+            format!("  ({} completed — use --all to show)", completed_count)
+        } else {
+            String::new()
+        };
+        println!("{} No active or failed swarms{}", "\u{2b21}".dimmed(), hint.dimmed());
         return Ok(());
     }
 
-    println!("{} Swarms ({})", "\u{2b21}".cyan(), swarms.len());
+    let scope_label = if project_scoped {
+        format!(" · {}", project_hint.as_deref().unwrap_or("?").dimmed())
+    } else {
+        " · all projects".dimmed().to_string()
+    };
+    let header = if active_count > 0 {
+        format!("Swarms ({} active / {} total{})", active_count, all_swarms.len(), scope_label)
+    } else {
+        format!("Swarms ({} total, none active{})", all_swarms.len(), scope_label)
+    };
+    println!("{} {}", "\u{2b21}".cyan(), header);
     println!();
 
     let mut rows: Vec<Vec<String>> = Vec::new();
     for swarm in &swarms {
-        let id = swarm["id"].as_str().unwrap_or("-");
-        let name = swarm["name"].as_str().unwrap_or("-");
+        let id       = swarm["id"].as_str().unwrap_or("-");
+        let name     = swarm["name"].as_str().unwrap_or("-");
         let topology = swarm["topology"].as_str().unwrap_or("-");
-        let tasks = swarm["tasks"].as_array();
-        let total = tasks.map(|t| t.len()).unwrap_or(0);
-        let completed = tasks
-            .map(|t| t.iter().filter(|tk| tk["status"].as_str() == Some("completed")).count())
-            .unwrap_or(0);
-        // Show as completed if all tasks done, regardless of server-side status lag
-        let swarm_status = if total > 0 && completed == total {
-            "completed"
-        } else {
-            swarm["status"].as_str().unwrap_or("active")
-        };
-        let in_progress = tasks
-            .map(|t| t.iter().filter(|tk| {
-                let s = tk["status"].as_str().unwrap_or("");
-                s == "in_progress" || s == "running"
-            }).count())
-            .unwrap_or(0);
-        let pending = total - completed - in_progress;
+        let status   = swarm["status"].as_str().unwrap_or("?");
 
-        let status_colored = match swarm_status {
-            "active" => swarm_status.green().to_string(),
-            "completed" => swarm_status.dimmed().to_string(),
-            _ => swarm_status.to_string(),
-        };
-
-        // Format: "3/5 done (1 active)"
-        let task_summary = if total == 0 {
-            "0".dimmed().to_string()
-        } else if completed == total {
-            format!("{}", format!("{}/{} done", completed, total).green())
-        } else if in_progress > 0 {
-            format!(
-                "{}/{} done ({} active, {} pending)",
-                completed, total, in_progress, pending
+        // taskSummary is from /api/swarms/all; fall back to tasks array for other endpoints
+        let (total, completed, in_progress) = if let Some(ts) = swarm.get("taskSummary") {
+            (
+                ts["total"].as_u64().unwrap_or(0) as usize,
+                ts["completed"].as_u64().unwrap_or(0) as usize,
+                ts["inProgress"].as_u64().unwrap_or(0) as usize,
             )
         } else {
-            format!("{}/{} done ({} pending)", completed, total, pending)
+            let tasks = swarm["tasks"].as_array();
+            let t = tasks.map(|t| t.len()).unwrap_or(0);
+            let c = tasks.map(|t| t.iter().filter(|tk| tk["status"].as_str() == Some("completed")).count()).unwrap_or(0);
+            let p = tasks.map(|t| t.iter().filter(|tk| matches!(tk["status"].as_str(), Some("in_progress") | Some("running"))).count()).unwrap_or(0);
+            (t, c, p)
+        };
+        let pending = total.saturating_sub(completed).saturating_sub(in_progress);
+
+        let status_colored = match status {
+            "active"    => status.green().to_string(),
+            "completed" => status.dimmed().to_string(),
+            "failed"    => status.red().to_string(),
+            _           => status.yellow().to_string(),
         };
 
-        let agent = swarm["createdBy"]
-            .as_str()
-            .or_else(|| swarm["owner_agent_id"].as_str())
-            .unwrap_or("-");
+        // For completed/failed swarms don't show in_progress counts — tasks may be stuck
+        // in DB from purged zombie swarms (misleading noise).
+        let task_summary = if total == 0 {
+            "—".dimmed().to_string()
+        } else if status == "completed" {
+            format!("{}/{} done", completed, total).green().to_string()
+        } else if in_progress > 0 {
+            format!("{}/{} done  {} active  {} pending", completed, total, in_progress, pending)
+        } else {
+            format!("{}/{} done  {} pending", completed, total, pending)
+        };
 
         rows.push(vec![
             truncate(id, 36),
-            name.to_string(),
+            truncate(name, 36),
             topology.to_string(),
             status_colored,
-            truncate(agent, 20),
             task_summary,
         ]);
     }
 
-    println!("{}", pretty_table(&["ID", "Name", "Topology", "Status", "Agent", "Tasks"], &rows));
+    println!("{}", pretty_table(&["ID", "Name", "Topology", "Status", "Tasks"], &rows));
 
     Ok(())
 }

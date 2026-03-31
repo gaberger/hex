@@ -20,6 +20,7 @@ pub mod tui;
 use commands::{
     adr::AdrAction,
     agent::AgentAction,
+    context::ContextAction,
     spec::SpecAction,
     analyze,
     dev::DevAction,
@@ -220,6 +221,11 @@ enum Commands {
         #[arg(long, short)]
         fix: bool,
     },
+    /// Inspect and manage context engineering prompts
+    Context {
+        #[command(subcommand)]
+        action: ContextAction,
+    },
     /// Run full build pipeline (build → test → analyze → validate)
     Validate {
         /// Skip test phase
@@ -283,6 +289,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Sandbox { action } => commands::sandbox::run(action).await,
         Commands::Fingerprint { action } => commands::fingerprint::run(action).await,
         Commands::Doctor { verbose, fix } => doctor::run_doctor(verbose, fix).await,
+        Commands::Context { action } => commands::context::run(action).await,
         Commands::Validate { skip_test, strict, parallel } => {
             doctor::run_validate_pipeline(skip_test, strict, parallel).await
         }

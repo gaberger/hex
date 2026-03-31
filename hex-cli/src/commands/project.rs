@@ -342,15 +342,40 @@ fn status_badge(status: &str) -> String {
     }
 }
 
+/// Query SpacetimeDB (via nexus) for the project whose rootPath contains CWD.
+/// Returns the project ID if an unambiguous match is found.
+async fn resolve_project_id_from_cwd(client: &NexusClient) -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    let resp = client.get("/api/projects").await.ok()?;
+    let projects = resp["projects"].as_array()?;
+
+    // Prefer exact rootPath match, then prefix match (CWD is inside a registered project).
+    let mut best: Option<(usize, &str)> = None; // (path_len, id)
+    for p in projects {
+        let root = p["rootPath"].as_str()?;
+        let root_path = std::path::Path::new(root);
+        if cwd == root_path || cwd.starts_with(root_path) {
+            let len = root.len();
+            if best.map_or(true, |(prev_len, _)| len > prev_len) {
+                best = Some((len, p["id"].as_str()?));
+            }
+        }
+    }
+    best.map(|(_, id)| id.to_string())
+}
+
 async fn report(client: &NexusClient, id: &str, json_output: bool) -> anyhow::Result<()> {
-    // Default to current directory name if no ID given
-    let resolved_id = if id.is_empty() {
-        std::env::current_dir()
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-            .unwrap_or_default()
-    } else {
+    // Resolve project ID: explicit arg → rootPath match in SpacetimeDB → current dir name
+    let resolved_id = if !id.is_empty() {
         id.to_string()
+    } else {
+        resolve_project_id_from_cwd(client).await
+            .unwrap_or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                    .unwrap_or_default()
+            })
     };
 
     let resp = client
@@ -383,6 +408,51 @@ async fn report(client: &NexusClient, id: &str, json_output: bool) -> anyhow::Re
     println!("{}", top.cyan());
     println!("  {}  {}", "id  ".dimmed(), proj_id.dimmed());
     println!("  {}  {}", "path".dimmed(), root.dimmed());
+
+    // ── Architecture Health ──────────────────────────────
+    // Run `hex analyze <path> --json` in a subprocess so we reuse the full
+    // analysis logic without coupling the report to analyze internals.
+    let arch = run_analyze_json(root).await;
+    println!();
+    println!("{}", format!("── Architecture Health {}", "─".repeat(w.saturating_sub(23))).dimmed());
+    match &arch {
+        Some(a) => {
+            let score = a["score"].as_u64().unwrap_or(0);
+            let violations: Vec<_> = a["violations"].as_array()
+                .into_iter().flatten()
+                .chain(a["rust_violations"].as_array().into_iter().flatten())
+                .collect();
+            let grade = score_to_grade(score);
+            let grade_colored = match grade {
+                "A+" | "A" => grade.green().bold().to_string(),
+                "B"        => grade.yellow().bold().to_string(),
+                _          => grade.red().bold().to_string(),
+            };
+            println!("  {} Grade {}  score {}/100  {} violations",
+                "\u{2b21}".cyan(),
+                grade_colored,
+                score,
+                if violations.is_empty() {
+                    "0".green().to_string()
+                } else {
+                    violations.len().to_string().red().to_string()
+                }
+            );
+            // Show first 5 violations if any
+            for v in violations.iter().take(5) {
+                let msg = v["message"].as_str()
+                    .or_else(|| v.as_str())
+                    .unwrap_or("violation");
+                println!("    {} {}", "✗".red(), fmt_truncate(msg, 60));
+            }
+            if violations.len() > 5 {
+                println!("    {} … and {} more violations", "✗".red(), violations.len() - 5);
+            }
+        }
+        None => {
+            println!("  {}", "analyze unavailable (run `hex analyze .` manually)".dimmed());
+        }
+    }
 
     // ── Development Artifacts ────────────────────────────
     let adrs      = &arts["adrs"];
@@ -458,16 +528,11 @@ async fn report(client: &NexusClient, id: &str, json_output: bool) -> anyhow::Re
     // ── Swarms ───────────────────────────────────────────
     let swarms = resp["swarms"].as_array();
     if let Some(swarms) = swarms.filter(|s| !s.is_empty()) {
-        // Partition: active/failed shown in full; only last 5 completed shown; stale hidden
-        const MAX_COMPLETED: usize = 5;
-        let stale_count = swarms.iter().filter(|s| s["status"].as_str() == Some("stale")).count();
-        let active_swarms: Vec<_>    = swarms.iter().filter(|s| matches!(s["status"].as_str(), Some("active") | Some("failed"))).collect();
-        let completed_swarms: Vec<_> = swarms.iter().filter(|s| s["status"].as_str() == Some("completed")).collect();
-        let completed_hidden = completed_swarms.len().saturating_sub(MAX_COMPLETED);
-        let visible_completed = &completed_swarms[completed_swarms.len().saturating_sub(MAX_COMPLETED)..];
-
-        let mut show_swarms: Vec<_> = active_swarms.clone();
-        show_swarms.extend(visible_completed.iter().copied());
+        let stale_count     = swarms.iter().filter(|s| s["status"].as_str() == Some("stale")).count();
+        let completed_count = swarms.iter().filter(|s| s["status"].as_str() == Some("completed")).count();
+        let show_swarms: Vec<_> = swarms.iter()
+            .filter(|s| matches!(s["status"].as_str(), Some("active") | Some("failed")))
+            .collect();
 
         println!();
         println!("{}", format!("── Swarms {}", "─".repeat(w.saturating_sub(10))).dimmed());
@@ -534,8 +599,13 @@ async fn report(client: &NexusClient, id: &str, json_output: bool) -> anyhow::Re
                 }
             }
         }
-        if completed_hidden > 0 {
-            println!("  {} … and {} more completed", "○".dimmed(), completed_hidden.to_string().dimmed());
+        if show_swarms.is_empty() {
+            if completed_count > 0 {
+                println!("  {} {} completed — use `hex swarm list --all` to view",
+                    "○".dimmed(), completed_count.to_string().dimmed());
+            }
+        } else if completed_count > 0 {
+            println!("  {} {} more completed", "○".dimmed(), completed_count.to_string().dimmed());
         }
         if stale_count > 0 {
             println!("  {} {} zombie swarms hidden (agent died mid-run — run `hex swarm cleanup --apply` to remove)",
@@ -609,5 +679,27 @@ fn colorize_task_status(s: &str) -> String {
         "failed"      => s.red().to_string(),
         "in_progress" => s.yellow().to_string(),
         _             => s.dimmed().to_string(),
+    }
+}
+
+async fn run_analyze_json(path: &str) -> Option<serde_json::Value> {
+    let exe = std::env::current_exe().ok()?;
+    let out = tokio::process::Command::new(exe)
+        .args(["analyze", path, "--json"])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() { return None; }
+    serde_json::from_slice(&out.stdout).ok()
+}
+
+fn score_to_grade(score: u64) -> &'static str {
+    match score {
+        100       => "A+",
+        90..=99   => "A",
+        80..=89   => "B",
+        70..=79   => "C",
+        60..=69   => "D",
+        _         => "F",
     }
 }

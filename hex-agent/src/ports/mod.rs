@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod conversation;
 pub mod context;
+pub mod prompt;
 pub mod tools;
 pub mod skills;
 pub mod hooks;

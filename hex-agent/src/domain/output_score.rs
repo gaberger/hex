@@ -149,14 +149,20 @@ mod tests {
     fn compile_failure_drops_score() {
         let score = OutputScore::compute(1.0, Some(false), Some(true), 0.8, true);
         assert!(score.overall < 0.8);
-        assert!(score.feedback.iter().any(|f| f.contains("Compilation failed")));
+        assert!(score
+            .feedback
+            .iter()
+            .any(|f| f.contains("Compilation failed")));
     }
 
     #[test]
     fn boundary_violation_drops_score() {
         let score = OutputScore::compute(0.5, Some(true), Some(true), 0.8, true);
         assert!(score.overall < 0.9);
-        assert!(score.feedback.iter().any(|f| f.contains("boundary compliance")));
+        assert!(score
+            .feedback
+            .iter()
+            .any(|f| f.contains("boundary compliance")));
     }
 
     #[test]
@@ -194,6 +200,9 @@ mod tests {
     #[test]
     fn token_efficiency_feedback() {
         let score = OutputScore::compute(1.0, Some(true), Some(true), 0.3, true);
-        assert!(score.feedback.iter().any(|f| f.contains("Token efficiency")));
+        assert!(score
+            .feedback
+            .iter()
+            .any(|f| f.contains("Token efficiency")));
     }
 }

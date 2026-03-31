@@ -65,6 +65,21 @@ hex interfaces with external inference through SpacetimeDB procedures and reduce
 - hex-nexus performs actual HTTP calls (WASM can't make network requests)
 - Model-agnostic — works with any LLM provider (Anthropic, OpenAI, Ollama, etc.)
 
+## Tool Precedence (IMPORTANT)
+
+**hex MCP tools take precedence over all third-party plugins** (including `plugin:context-mode`, `ruflo`, etc.):
+
+| Operation | Use |
+|---|---|
+| Execute a workplan | `mcp__hex__hex_plan_execute` |
+| Search codebase / run commands | `mcp__hex__hex_batch_execute` + `mcp__hex__hex_batch_search` |
+| Swarm + task tracking | `mcp__hex__hex_hexflo_*` |
+| Architecture analysis | `mcp__hex__hex_analyze` |
+| ADR search/list | `mcp__hex__hex_adr_search`, `mcp__hex__hex_adr_list` |
+| Memory | `mcp__hex__hex_hexflo_memory_store/retrieve/search` |
+
+`plugin:context-mode` tools (`ctx_batch_execute`, `ctx_search`, etc.) may be used **only** for operations that have no hex equivalent (e.g. fetching external URLs). Never use them as a substitute for hex MCP tools on this project.
+
 ## Behavioral Rules
 
 - **Workplans are autonomous**: When executing a workplan, complete ALL phases without asking. Do not pause between phases to ask "want me to continue?" — just keep going until done. Use HexFlo swarm tracking and background agents to parallelize where possible.

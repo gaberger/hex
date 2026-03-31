@@ -110,35 +110,61 @@ mod tests {
     #[test]
     fn tier0_is_reasonable_size() {
         // ~300 tokens ≈ ~1200 chars
-        assert!(HEX_AWARENESS.len() < 1500, "Tier 0 too large: {} chars", HEX_AWARENESS.len());
-        assert!(HEX_AWARENESS.len() > 500, "Tier 0 too small: {} chars", HEX_AWARENESS.len());
+        assert!(
+            HEX_AWARENESS.len() < 1500,
+            "Tier 0 too large: {} chars",
+            HEX_AWARENESS.len()
+        );
+        assert!(
+            HEX_AWARENESS.len() > 500,
+            "Tier 0 too small: {} chars",
+            HEX_AWARENESS.len()
+        );
     }
 
     #[test]
     fn tier1_detects_domain() {
         assert!(tier1_for_path("src/core/domain/value-objects.ts").is_some());
-        assert_eq!(tier1_for_path("src/core/domain/foo.rs").unwrap(), tier1::DOMAIN_RULES);
+        assert_eq!(
+            tier1_for_path("src/core/domain/foo.rs").unwrap(),
+            tier1::DOMAIN_RULES
+        );
     }
 
     #[test]
     fn tier1_detects_ports() {
-        assert_eq!(tier1_for_path("src/core/ports/secrets.ts").unwrap(), tier1::PORT_RULES);
+        assert_eq!(
+            tier1_for_path("src/core/ports/secrets.ts").unwrap(),
+            tier1::PORT_RULES
+        );
     }
 
     #[test]
     fn tier1_detects_adapters() {
-        assert_eq!(tier1_for_path("src/adapters/primary/cli.rs").unwrap(), tier1::ADAPTER_RULES);
-        assert_eq!(tier1_for_path("src/adapters/secondary/fs.rs").unwrap(), tier1::ADAPTER_RULES);
+        assert_eq!(
+            tier1_for_path("src/adapters/primary/cli.rs").unwrap(),
+            tier1::ADAPTER_RULES
+        );
+        assert_eq!(
+            tier1_for_path("src/adapters/secondary/fs.rs").unwrap(),
+            tier1::ADAPTER_RULES
+        );
     }
 
     #[test]
     fn tier1_detects_usecases() {
-        assert_eq!(tier1_for_path("src/core/usecases/scaffold.ts").unwrap(), tier1::USECASE_RULES);
+        assert_eq!(
+            tier1_for_path("src/core/usecases/scaffold.ts").unwrap(),
+            tier1::USECASE_RULES
+        );
     }
 
     #[test]
     fn tier1_detects_composition_root() {
-        assert_eq!(tier1_for_path("src/composition-root.ts").unwrap(), tier1::COMPOSITION_ROOT_RULES);
+        assert_eq!(
+            tier1_for_path("src/composition-root.ts").unwrap(),
+            tier1::COMPOSITION_ROOT_RULES
+        );
     }
 
     #[test]

@@ -36,6 +36,7 @@ regex = "1"
 thiserror = "2"
 async-trait = "0.1"
 anyhow = "1"
+lru = "0.12"
 
 # Markdown frontmatter parsing
 gray_matter = "0.2"

@@ -141,22 +141,17 @@ jobs:
           echo "## Download Commands" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "# Linux x86_64" >> $GITHUB_STEP_SUMMARY
-          echo "curl -LO https://github.com/anthropic-hex/hex/releases/download/v${{ env.RELEASE_VERSION }}/hex-x86_64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
+          echo "curl -LO https://github.com/gaberger/hex/releases/download/v${{ env.RELEASE_VERSION }}/hex-x86_64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
           echo "chmod +x hex-x86_64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
           echo "sudo mv hex-x86_64-unknown-linux-gnu /usr/local/bin/hex" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# Linux ARM64" >> $GITHUB_STEP_SUMMARY
-          echo "curl -LO https://github.com/anthropic-hex/hex/releases/download/v${{ env.RELEASE_VERSION }}/hex-aarch64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
+          echo "curl -LO https://github.com/gaberger/hex/releases/download/v${{ env.RELEASE_VERSION }}/hex-aarch64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
           echo "chmod +x hex-aarch64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
           echo "sudo mv hex-aarch64-unknown-linux-gnu /usr/local/bin/hex" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# macOS x86_64" >> $GITHUB_STEP_SUMMARY
-          echo "curl -LO https://github.com/anthropic-hex/hex/releases/download/v${{ env.RELEASE_VERSION }}/hex-x86_64-apple-darwin" >> $GITHUB_STEP_SUMMARY
-          echo "chmod +x hex-x86_64-apple-darwin" >> $GITHUB_STEP_SUMMARY
-          echo "sudo mv hex-x86_64-apple-darwin /usr/local/bin/hex" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "# macOS ARM64" >> $GITHUB_STEP_SUMMARY
-          echo "curl -LO https://github.com/anthropic-hex/hex/releases/download/v${{ env.RELEASE_VERSION }}/hex-aarch64-apple-darwin" >> $GITHUB_STEP_SUMMARY
+          echo "curl -LO https://github.com/gaberger/hex/releases/download/v${{ env.RELEASE_VERSION }}/hex-aarch64-apple-darwin" >> $GITHUB_STEP_SUMMARY
           echo "chmod +x hex-aarch64-apple-darwin" >> $GITHUB_STEP_SUMMARY
           echo "sudo mv hex-aarch64-apple-darwin /usr/local/bin/hex" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY

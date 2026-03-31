@@ -21,7 +21,7 @@ use crossterm::terminal::{
 };
 use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders};
+use ratatui::widgets::{Block, Borders, Cell, Row, Table};
 
 use tracing::{error, info, warn};
 
@@ -36,6 +36,11 @@ use crate::pipeline::validate_phase::{ValidatePhase, ValidateResult};
 use crate::pipeline::workplan_phase::{WorkplanPhase, WorkplanPhaseResult, WorkplanData, workplan_summary};
 use crate::pipeline::{DevConfig, DevMode};
 use crate::session::{CompletionOutcome, DevSession, PipelinePhase, SessionStatus, ToolCall};
+
+/// Maximum time allowed for a single phase before it is cancelled with an error.
+/// Code phase gets 3x since it runs one step per workplan item.
+const PHASE_TIMEOUT_SECS: u64 = 600; // 10 minutes
+const CODE_PHASE_TIMEOUT_SECS: u64 = 1800; // 30 minutes
 use gate::{GateDialog, GateResult};
 
 // ---------------------------------------------------------------------------
@@ -62,6 +67,20 @@ pub enum TaskStatus {
 // Overlay mode for debug/log keyboard shortcuts
 // ---------------------------------------------------------------------------
 
+fn extract_task_title(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.starts_with('{') {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            for key in &["description", "title", "name", "step"] {
+                if let Some(s) = v[key].as_str() {
+                    return s.to_string();
+                }
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayMode {
     /// Normal view — task list or gate dialog.
@@ -70,6 +89,8 @@ pub enum OverlayMode {
     Log,
     /// Show debug info (session state, phase details).
     Debug,
+    /// Show swarm task table (step status, agent, task ID, title).
+    SwarmTasks,
 }
 
 // ---------------------------------------------------------------------------
@@ -1451,12 +1472,69 @@ impl TuiApp {
                 .style(Style::default().fg(Color::White))
                 .wrap(ratatui::widgets::Wrap { trim: false });
             frame.render_widget(paragraph, chunks[1]);
+        } else if self.overlay == OverlayMode::SwarmTasks {
+            let swarm_id = self.session.swarm_id.as_deref().unwrap_or("none");
+            let done_count = self.session.completed_steps.len();
+
+            let rows: Vec<Row> = if let Some(ref wp) = self.loaded_workplan {
+                wp.steps.iter().map(|step| {
+                    let task_id = self.task_id_map.get(&step.id)
+                        .map(|id| if id.len() > 8 { format!("{}…", &id[..8]) } else { id.clone() })
+                        .unwrap_or_else(|| "—".to_string());
+                    let is_done = self.session.completed_steps.contains(&step.id);
+                    let (status_str, status_style) = if is_done {
+                        ("\u{2713} done".to_string(), Style::default().fg(Color::Green))
+                    } else {
+                        ("\u{25cb} pending".to_string(), Style::default().fg(Color::DarkGray))
+                    };
+                    let title = {
+                        let full = extract_task_title(&step.description);
+                        if full.len() > 55 { format!("{}…", &full[..55]) } else { full }
+                    };
+                    Row::new(vec![
+                        Cell::from(status_str).style(status_style),
+                        Cell::from(task_id),
+                        Cell::from(title),
+                    ])
+                }).collect()
+            } else {
+                vec![Row::new(vec![Cell::from("No workplan loaded")])]
+            };
+
+            let total = self.loaded_workplan.as_ref().map(|w| w.steps.len()).unwrap_or(0);
+            let header = Row::new(vec!["Status", "Task ID", "Title"])
+                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+
+            let table = Table::new(rows, [
+                Constraint::Length(10),
+                Constraint::Length(10),
+                Constraint::Fill(1),
+            ])
+            .header(header)
+            .block(Block::default()
+                .title(format!(" Swarm Tasks — {}  {}/{} done  [s] dismiss ", swarm_id, done_count, total))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)));
+
+            frame.render_widget(table, chunks[1]);
         } else if let Some(phase) = self.running_phase {
             let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let spinner = spinner_frames[(self.phase_elapsed_ticker as usize) % spinner_frames.len()];
-            let elapsed = self.phase_started
+            let elapsed_secs = self.phase_started
                 .map(|s| s.elapsed().as_secs())
                 .unwrap_or(0);
+            let elapsed_str = if elapsed_secs >= 60 {
+                format!("{}m {}s", elapsed_secs / 60, elapsed_secs % 60)
+            } else {
+                format!("{}s", elapsed_secs)
+            };
+            let slow_warning = if elapsed_secs >= 600 {
+                "  ⚠ stuck? (>10m)"
+            } else if elapsed_secs >= 180 {
+                "  ⚠ slow (>3m)"
+            } else {
+                ""
+            };
 
             // Build progress detail from ui_state if available
             let progress_detail = self.ui_state.current_progress
@@ -1472,13 +1550,13 @@ impl TuiApp {
 
             let total_elapsed = self.ui_state.elapsed();
             let total_elapsed_str = if total_elapsed.as_secs() >= 60 {
-                format!("{}m{}s", total_elapsed.as_secs() / 60, total_elapsed.as_secs() % 60)
+                format!("{}m {}s", total_elapsed.as_secs() / 60, total_elapsed.as_secs() % 60)
             } else {
                 format!("{}s", total_elapsed.as_secs())
             };
 
             let msg = format!(
-                "{} Running {} phase ({}s)\n\
+                "{} Running {} phase ({}{})\n\
                  {}\n\n\
                  Session:  {}\n\
                  Total elapsed: {}\n\
@@ -1487,7 +1565,8 @@ impl TuiApp {
                  {}",
                 spinner,
                 phase,
-                elapsed,
+                elapsed_str,
+                slow_warning,
                 progress_detail,
                 &self.session.id[..8.min(self.session.id.len())],
                 total_elapsed_str,
@@ -1551,6 +1630,13 @@ impl TuiApp {
                 if self.gate.is_some() {
                     self.pending_gate_action = Some(GateResult::Skip);
                     self.gate = None;
+                } else {
+                    // Toggle swarm task table overlay
+                    if self.overlay == OverlayMode::SwarmTasks {
+                        self.overlay = OverlayMode::None;
+                    } else {
+                        self.overlay = OverlayMode::SwarmTasks;
+                    }
                 }
             }
             KeyCode::Char('e') => {
@@ -1681,8 +1767,12 @@ impl TuiApp {
 
             match phase {
                 PipelinePhase::Adr => {
-                    let result =
-                        tokio::task::block_in_place(|| handle.block_on(self.run_adr_phase()));
+                    let timeout = Duration::from_secs(PHASE_TIMEOUT_SECS);
+                    let result = tokio::task::block_in_place(|| handle.block_on(async {
+                        tokio::time::timeout(timeout, self.run_adr_phase())
+                            .await
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("ADR phase timed out after {}m", PHASE_TIMEOUT_SECS / 60)))
+                    }));
                     if let Err(ref e) = result {
                         error!(error = %e, "ADR phase error");
                         let _ = self.ui_tx.send(messages::UiMessage::PhaseError {
@@ -1699,8 +1789,12 @@ impl TuiApp {
                     }
                 }
                 PipelinePhase::Workplan => {
-                    let result =
-                        tokio::task::block_in_place(|| handle.block_on(self.run_workplan_phase()));
+                    let timeout = Duration::from_secs(PHASE_TIMEOUT_SECS);
+                    let result = tokio::task::block_in_place(|| handle.block_on(async {
+                        tokio::time::timeout(timeout, self.run_workplan_phase())
+                            .await
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("Workplan phase timed out after {}m", PHASE_TIMEOUT_SECS / 60)))
+                    }));
                     if let Err(ref e) = result {
                         error!(error = %e, "Workplan phase error");
                         let _ = self.ui_tx.send(messages::UiMessage::PhaseError {
@@ -1717,8 +1811,12 @@ impl TuiApp {
                     }
                 }
                 PipelinePhase::Swarm => {
-                    let result =
-                        tokio::task::block_in_place(|| handle.block_on(self.run_swarm_phase()));
+                    let timeout = Duration::from_secs(PHASE_TIMEOUT_SECS);
+                    let result = tokio::task::block_in_place(|| handle.block_on(async {
+                        tokio::time::timeout(timeout, self.run_swarm_phase())
+                            .await
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("Swarm phase timed out after {}m", PHASE_TIMEOUT_SECS / 60)))
+                    }));
                     if let Err(ref e) = result {
                         error!(error = %e, "Swarm phase error");
                         let _ = self.ui_tx.send(messages::UiMessage::PhaseError {
@@ -1739,8 +1837,12 @@ impl TuiApp {
                     }
                 }
                 PipelinePhase::Code => {
-                    let result =
-                        tokio::task::block_in_place(|| handle.block_on(self.run_code_phase()));
+                    let timeout = Duration::from_secs(CODE_PHASE_TIMEOUT_SECS);
+                    let result = tokio::task::block_in_place(|| handle.block_on(async {
+                        tokio::time::timeout(timeout, self.run_code_phase())
+                            .await
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("Code phase timed out after {}m", CODE_PHASE_TIMEOUT_SECS / 60)))
+                    }));
                     if let Err(ref e) = result {
                         error!(error = %e, "Code phase error");
                         let _ = self.ui_tx.send(messages::UiMessage::PhaseError {
@@ -1762,8 +1864,12 @@ impl TuiApp {
                     }
                 }
                 PipelinePhase::Validate => {
-                    let result =
-                        tokio::task::block_in_place(|| handle.block_on(self.run_validate_phase()));
+                    let timeout = Duration::from_secs(PHASE_TIMEOUT_SECS);
+                    let result = tokio::task::block_in_place(|| handle.block_on(async {
+                        tokio::time::timeout(timeout, self.run_validate_phase())
+                            .await
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("Validate phase timed out after {}m", PHASE_TIMEOUT_SECS / 60)))
+                    }));
                     if let Err(ref e) = result {
                         error!(error = %e, "Validate phase error");
                         let _ = self.ui_tx.send(messages::UiMessage::PhaseError {

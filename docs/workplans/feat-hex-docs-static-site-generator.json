@@ -1,124 +1,180 @@
 {
-  "id": "feat-hex-docs-static-site-generator",
-  "title": "hex docs — Static Site Generator",
-  "adr": "ADR-2603312000",
-  "spec": "hex-docs-static-site-generator",
-  "status": "proposed",
-  "created": "2026-03-31",
-  "phases": [
+  "id": "wp-hex-docs-static-site-generator",
+  "title": "Hex Documentation Static Site Generator",
+  "specs": null,
+  "adr": "ADR-2506101449",
+  "created": "2025-06-10",
+  "status": "planned",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": "1000",
+  "steps": [
     {
-      "id": "P0",
-      "title": "Scaffold hex docs command + output skeleton",
+      "id": "P0.1",
+      "description": "Define domain models for Document, SiteConfig, Section, and Navigation entities.",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
       "tier": 0,
-      "description": "Wire up the new hex docs subcommand in hex-cli, add pulldown-cmark and minijinja dependencies, create the output directory skeleton and base HTML template.",
-      "deliverables": [
-        "hex-cli/src/commands/docs.rs — DocsAction enum (Generate, Serve) with clap definitions",
-        "hex-cli/src/commands/mod.rs — register docs command",
-        "hex-cli/src/main.rs — route DocsCli to docs::run()",
-        "hex-cli/Cargo.toml — add pulldown-cmark, minijinja",
-        "hex-cli/assets/docs/ — base CSS (style.css) and search JS (search.js) as embedded assets",
-        "Generator skeleton: create output dir, copy static assets, write placeholder index.html"
-      ],
-      "acceptance": "hex docs generate produces hex-docs/ with index.html and static/ dir; hex docs --help shows Generate and Serve subcommands"
+      "specs": [],
+      "worktree_branch": "feat/hex-docs/domain",
+      "done_condition": "Domain models are defined and pass type checks."
     },
     {
-      "id": "P1",
-      "title": "Commands section — clap tree introspection",
+      "id": "P0.2",
+      "description": "Define ports for DocumentRenderer, SiteCompiler, and DocumentRepository interfaces.",
+      "layer": "ports",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/hex-docs/ports",
+      "done_condition": "Ports are defined and integrated with domain models."
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement secondary adapter for Markdown processing using a library like marked.",
+      "layer": "adapters/secondary",
+      "adapter": "MarkdownProcessor",
+      "port": "DocumentRenderer",
+      "dependencies": [
+        "P0.1",
+        "P0.2"
+      ],
       "tier": 1,
-      "depends_on": ["P0"],
-      "description": "Walk the live clap Command tree to generate commands/index.html and one page per top-level command. Each page lists subcommands, flags (short/long/type/default/required), and description.",
-      "deliverables": [
-        "hex-cli/src/docs/commands.rs — walk_commands() traverses clap::Command recursively",
-        "CommandDoc struct: name, about, subcommands, flags (name, short, long, help, required, default)",
-        "commands/index.html — table of all top-level commands",
-        "commands/<name>.html — per-command page with full flag reference",
-        "Navigation breadcrumbs: Home > Commands > <name>"
-      ],
-      "acceptance": "All 32 top-level commands appear in commands/index.html; hex dev page shows all subcommands (start, list, resume, load, clean) with their flags"
+      "specs": [],
+      "worktree_branch": "feat/hex-docs/adapters-secondary",
+      "done_condition": "Markdown processing adapter is implemented and unit tested."
     },
     {
-      "id": "P2",
-      "title": "Skills section — embedded frontmatter extraction",
+      "id": "P1.2",
+      "description": "Implement secondary adapter for HTML template rendering using a lightweight engine like handlebars.",
+      "layer": "adapters/secondary",
+      "adapter": "TemplateRenderer",
+      "port": "DocumentRenderer",
+      "dependencies": [
+        "P0.1",
+        "P0.2"
+      ],
       "tier": 1,
-      "depends_on": ["P0"],
-      "description": "Read skill definitions from the rust-embed bundle, parse frontmatter, render skills/index.html and per-skill pages.",
-      "deliverables": [
-        "hex-cli/src/docs/skills.rs — SkillDoc struct + extract_skills() from embedded assets",
-        "Reuse parse_skill_frontmatter() pattern from hex-nexus/src/routes/skills.rs",
-        "skills/index.html — sorted table: trigger | name | description",
-        "skills/<name>.html — full skill page: trigger as copyable code block, full markdown body rendered to HTML",
-        "Distinguish hex-native (from assets/skills/) vs .claude/skills/ if both present"
-      ],
-      "acceptance": "All 20 hex-native skills appear; /hex-scaffold trigger shows as a copyable block; skill body (prompt content) is rendered as HTML"
+      "specs": [],
+      "worktree_branch": "feat/hex-docs/adapters-secondary",
+      "done_condition": "HTML template rendering adapter is implemented and unit tested."
     },
     {
-      "id": "P3",
-      "title": "Agents and swarms sections",
+      "id": "P1.3",
+      "description": "Implement secondary adapter for static file generation.",
+      "layer": "adapters/secondary",
+      "adapter": "StaticFileGenerator",
+      "port": "SiteCompiler",
+      "dependencies": [
+        "P0.1",
+        "P0.2"
+      ],
       "tier": 1,
-      "depends_on": ["P0"],
-      "description": "Generate agents/ and swarms/ sections from embedded YAML definitions.",
-      "deliverables": [
-        "hex-cli/src/docs/agents.rs — AgentDoc struct + extract_agents() from assets/agents/",
-        "agents/index.html — table: role | model tier | description",
-        "agents/<name>.html — YAML source in syntax-highlighted code block, parsed fields displayed",
-        "swarms/index.html — table of swarm behavior YAMLs from assets/swarms/",
-        "Parsed fields highlighted: model.tier, workflow.phases, feedback_loop gates, quality thresholds"
-      ],
-      "acceptance": "All 14 agents appear; hex-coder.html shows YAML source and highlights model tier and workflow phases"
+      "specs": [],
+      "worktree_branch": "feat/hex-docs/adapters-secondary",
+      "done_condition": "Static file generation adapter is implemented and unit tested."
     },
     {
-      "id": "P4",
-      "title": "ADRs section — markdown rendering",
-      "tier": 1,
-      "depends_on": ["P0"],
-      "description": "Read docs/adrs/*.md, parse status from frontmatter or H2 content, render to HTML via pulldown-cmark, generate grouped index.",
-      "deliverables": [
-        "hex-cli/src/docs/adrs.rs — AdrDoc struct + extract_adrs(docs_path) from filesystem",
-        "adrs/index.html — three sections: Accepted | Proposed | Deprecated, each as a table",
-        "adrs/<id>.html — full ADR rendered to HTML; metadata block (Status, Date, Deciders) at top",
-        "ADR cross-references (e.g. ADR-2603221522) converted to hyperlinks within the site",
-        "Fallback: if docs/adrs/ not present, adrs/ section shows 'ADRs not available in this build'"
+      "id": "P2.1",
+      "description": "Build CLI adapter providing commands for init, build, and serve.",
+      "layer": "adapters/primary",
+      "adapter": "CLI",
+      "port": null,
+      "dependencies": [
+        "P1.1",
+        "P1.2",
+        "P1.3"
       ],
-      "acceptance": "ADR index shows correct status groupings for all 100+ ADRs; ADR-001 renders with metadata block; cross-reference links resolve correctly"
-    },
-    {
-      "id": "P5",
-      "title": "Search index + client-side search",
       "tier": 2,
-      "depends_on": ["P1", "P2", "P3", "P4"],
-      "description": "Build a JSON search index from all generated content, bundle it, and wire up search.js for client-side filtering across all sections.",
-      "deliverables": [
-        "static/search-index.json — generated at build time: array of {id, title, section, body, url}",
-        "static/search.js — vanilla JS: debounced input, filter against index, render results",
-        "Search box in navigation header on all pages",
-        "Results show section badge (command / skill / agent / adr) and snippet",
-        "No external JS dependencies"
-      ],
-      "acceptance": "Searching 'scaffold' returns the hex-scaffold skill and any commands mentioning scaffold; searching 'swarm' returns swarm command, swarm-coordinator agent, and swarm ADRs; works offline (file:// URL)"
+      "specs": [],
+      "worktree_branch": "feat/hex-docs/adapters-primary",
+      "done_condition": "CLI commands are implemented and tested."
     },
     {
-      "id": "P6",
-      "title": "hex docs serve + hex-nexus /docs route",
-      "tier": 2,
-      "depends_on": ["P0"],
-      "description": "Wire hex docs serve to auto-generate then serve via hex-nexus at /docs. Add /docs route to hex-nexus that serves files from the generated hex-docs/ directory.",
-      "deliverables": [
-        "hex-cli/src/commands/docs.rs — Serve variant: ensure hex-docs/ exists (auto-generate if not), call nexus /api/docs/serve or open browser",
-        "hex-nexus/src/routes/docs.rs — serve static files from HEX_DOCS_DIR env var or default hex-docs/ path",
-        "hex-nexus/src/routes/mod.rs — register /docs and /docs/* routes",
-        "Graceful fallback: if hex-docs/ not found, /docs returns redirect to hex docs generate instructions"
+      "id": "P2.2",
+      "description": "Create MCP server adapter to enable documentation preview from within IDEs.",
+      "layer": "adapters/primary",
+      "adapter": "MCPServer",
+      "port": null,
+      "dependencies": [
+        "P1.1",
+        "P1.2",
+        "P1.3"
       ],
-      "acceptance": "hex docs serve opens http://localhost:5555/docs in browser; all pages load correctly; hex docs generate followed by hex docs serve shows up-to-date content"
+      "tier": 2,
+      "specs": [],
+      "worktree_branch": "feat/hex-docs/adapters-primary",
+      "done_condition": "MCP server adapter is implemented and integrated with CLI."
+    },
+    {
+      "id": "P3.1",
+      "description": "Create use case to orchestrate the compilation pipeline (validate → render → assemble → output).",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1",
+        "P0.2",
+        "P1.1",
+        "P1.2",
+        "P1.3"
+      ],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/hex-docs/usecases",
+      "done_condition": "Compilation pipeline use case is implemented and tested."
+    },
+    {
+      "id": "P4.1",
+      "description": "Dogfood the generator to build hex's own documentation site, validating the architecture and user experience.",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P2.1",
+        "P2.2",
+        "P3.1"
+      ],
+      "tier": 5,
+      "specs": [],
+      "worktree_branch": "feat/hex-docs/integration",
+      "done_condition": "Hex documentation site is successfully built and feedback is gathered."
     }
   ],
-  "implementation_notes": [
-    "Use pulldown-cmark for markdown rendering — already used pattern in codebase, zero config needed",
-    "minijinja for HTML templates — lighter than Tera, no proc macros",
-    "Clap introspection: call build_cli() from hex-cli/src/main.rs and pass Command ref to docs generator",
-    "Embedded assets use existing HexAssets rust-embed struct — no new embed needed",
-    "Style: dark theme matching hex dashboard aesthetic (CSS vars from hex-nexus/assets/)",
-    "All HTML output must be escaped — use minijinja auto-escaping, never format! with user content"
+  "mergeOrder": [
+    "P0.1",
+    "P0.2",
+    "P1.1",
+    "P1.2",
+    "P1.3",
+    "P2.1",
+    "P2.2",
+    "P3.1",
+    "P4.1"
   ],
-  "estimated_phases": 6,
-  "parallel_phases": ["P1", "P2", "P3", "P4"]
+  "riskRegister": [
+    {
+      "impact": "high",
+      "mitigation": "Plan and scope features properly to avoid scope creep.",
+      "risk": "Initial overhead in building a fully-featured static site generator"
+    },
+    {
+      "impact": "medium",
+      "mitigation": "Establish clear ownership and update strategy for dependencies.",
+      "risk": "Maintenance burden for additional component"
+    }
+  ],
+  "successCriteria": [
+    "Documentation generator successfully compiles documentation site.",
+    "User experience is validated through dogfooding.",
+    "Documentation format is consistent across hex projects."
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
 }
