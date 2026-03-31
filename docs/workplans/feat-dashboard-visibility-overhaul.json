@@ -1,10 +1,10 @@
 {
   "id": "feat-dashboard-visibility-overhaul",
-  "title": "Feature: Dashboard visibility overhaul — fix broken views, project-centric nav, task drill-down, inbox panel",
+  "title": "Feature: Dashboard visibility overhaul \u2014 fix broken views, project-centric nav, task drill-down, inbox panel",
   "specs": "docs/specs/dashboard-visibility-overhaul.json",
   "adr": "ADR-066",
   "created": "2026-03-22",
-  "status": "planned",
+  "status": "done",
   "topology": "pipeline",
   "budget": "~80000 tokens",
   "steps": [
@@ -16,7 +16,9 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": ["S01"],
+      "specs": [
+        "S01"
+      ],
       "done_condition": "Health ring shows warning state when astIsStub=true; real scores render normally"
     },
     {
@@ -27,7 +29,9 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": ["S02"],
+      "specs": [
+        "S02"
+      ],
       "done_condition": "Graph nodes for adapters/primary/ and adapters/secondary/ render with distinct non-gray colors"
     },
     {
@@ -38,7 +42,9 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": ["S03"],
+      "specs": [
+        "S03"
+      ],
       "done_condition": "Agent Fleet shows only agents matching selected project; remote agents (different host) visually distinguished"
     },
     {
@@ -49,7 +55,9 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": ["S06"],
+      "specs": [
+        "S06"
+      ],
       "done_condition": "GET / serves SolidJS dashboard; GET /chat redirects to SPA; legacy index.html removed"
     },
     {
@@ -58,9 +66,13 @@
       "layer": "adapters/primary",
       "adapter": "dashboard",
       "port": null,
-      "dependencies": ["step-3"],
+      "dependencies": [
+        "step-3"
+      ],
       "tier": 1,
-      "specs": ["S05"],
+      "specs": [
+        "S05"
+      ],
       "done_condition": "Inbox panel shows notifications for project agents; priority 2 has red styling; ack button works"
     },
     {
@@ -69,9 +81,13 @@
       "layer": "adapters/primary",
       "adapter": "dashboard",
       "port": null,
-      "dependencies": ["step-3"],
+      "dependencies": [
+        "step-3"
+      ],
       "tier": 1,
-      "specs": ["S04"],
+      "specs": [
+        "S04"
+      ],
       "done_condition": "Clicking a swarm task shows agent details + worktree + commits in expanded row"
     },
     {
@@ -82,7 +98,9 @@
       "port": null,
       "dependencies": [],
       "tier": 1,
-      "specs": ["S07"],
+      "specs": [
+        "S07"
+      ],
       "done_condition": "Workplan view shows linked ADR badge; clicking navigates to ADR browser"
     },
     {
@@ -93,18 +111,22 @@
       "port": null,
       "dependencies": [],
       "tier": 1,
-      "specs": ["S08"],
+      "specs": [
+        "S08"
+      ],
       "done_condition": "Disconnecting SpacetimeDB shows banner; reconnecting clears it; views don't break"
     },
     {
       "id": "step-9",
-      "description": "Security: validate path in /api/{project}/tokens/{file} endpoint — reject paths containing '..' or absolute paths. Return 400.",
+      "description": "Security: validate path in /api/{project}/tokens/{file} endpoint \u2014 reject paths containing '..' or absolute paths. Return 400.",
       "layer": "adapters/primary",
       "adapter": "rest-api",
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": ["S09"],
+      "specs": [
+        "S09"
+      ],
       "done_condition": "GET /api/{project}/tokens/../../etc/passwd returns 400; normal paths still work"
     },
     {
@@ -113,9 +135,29 @@
       "layer": "integration",
       "adapter": null,
       "port": null,
-      "dependencies": ["step-1", "step-2", "step-3", "step-4", "step-5", "step-6", "step-7", "step-8", "step-9"],
+      "dependencies": [
+        "step-1",
+        "step-2",
+        "step-3",
+        "step-4",
+        "step-5",
+        "step-6",
+        "step-7",
+        "step-8",
+        "step-9"
+      ],
       "tier": 2,
-      "specs": ["S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09"],
+      "specs": [
+        "S01",
+        "S02",
+        "S03",
+        "S04",
+        "S05",
+        "S06",
+        "S07",
+        "S08",
+        "S09"
+      ],
       "done_condition": "All views render correctly; no console errors; inbox notifications visible; health ring accurate"
     }
   ],
@@ -124,15 +166,15 @@
     "npm": []
   },
   "mergeOrder": [
-    "step-1, step-2, step-3, step-4, step-9 parallel (tier 0 — independent fixes)",
-    "step-5, step-6, step-7, step-8 parallel (tier 1 — new components, depend on step-3 for project scoping)",
+    "step-1, step-2, step-3, step-4, step-9 parallel (tier 0 \u2014 independent fixes)",
+    "step-5, step-6, step-7, step-8 parallel (tier 1 \u2014 new components, depend on step-3 for project scoping)",
     "step-10 last (integration validation)"
   ],
   "riskRegister": [
     {
       "risk": "Removing index.html breaks bookmarks/scripts pointing to /",
       "impact": "medium",
-      "mitigation": "Serve SolidJS app at / — same URL, different content. No redirect needed."
+      "mitigation": "Serve SolidJS app at / \u2014 same URL, different content. No redirect needed."
     },
     {
       "risk": "agent_inbox table not in SpacetimeDB auto-generated client bindings",
@@ -150,6 +192,6 @@
     "Developer can click a failed swarm task and see the agent, worktree, and commits",
     "Inbox notifications from ADR-060 are visible in the dashboard without CLI",
     "Health ring shows accurate state (warning when stub, real score when analyzed)",
-    "No legacy HTML pages — single SolidJS SPA serves all routes"
+    "No legacy HTML pages \u2014 single SolidJS SPA serves all routes"
   ]
 }

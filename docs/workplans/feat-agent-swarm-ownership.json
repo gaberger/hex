@@ -2,7 +2,7 @@
   "id": "feat-agent-swarm-ownership",
   "title": "Agent-Swarm Ownership Hierarchy with Conflict Detection",
   "adr": "ADR-2603241900",
-  "status": "pending",
+  "status": "partial",
   "phases": [
     {
       "id": "T0",
@@ -42,7 +42,9 @@
       "id": "T2",
       "title": "SQLite fallback adapter: implement CAS + ownership",
       "tier": 1,
-      "depends_on": ["T1"],
+      "depends_on": [
+        "T1"
+      ],
       "files": [
         "hex-nexus/src/adapters/sqlite_state.rs"
       ],
@@ -60,7 +62,9 @@
       "id": "T3",
       "title": "SpacetimeDB state adapter: sync new fields",
       "tier": 1,
-      "depends_on": ["T1"],
+      "depends_on": [
+        "T1"
+      ],
       "files": [
         "hex-nexus/src/adapters/spacetimedb_state.rs"
       ],
@@ -77,7 +81,10 @@
       "id": "T4",
       "title": "REST routes: enforce ownership + return CAS conflict",
       "tier": 2,
-      "depends_on": ["T2", "T3"],
+      "depends_on": [
+        "T2",
+        "T3"
+      ],
       "files": [
         "hex-nexus/src/routes/swarms.rs"
       ],
@@ -92,7 +99,9 @@
       "id": "T5",
       "title": "MCP tool schema: expose version + conflict fields",
       "tier": 2,
-      "depends_on": ["T4"],
+      "depends_on": [
+        "T4"
+      ],
       "files": [
         "hex-cli/assets/schemas/mcp-tools.json",
         "hex-cli/src/commands/swarm.rs",
@@ -110,7 +119,10 @@
       "id": "T6",
       "title": "Validation: smoke test ownership + conflict scenarios",
       "tier": 3,
-      "depends_on": ["T4", "T5"],
+      "depends_on": [
+        "T4",
+        "T5"
+      ],
       "files": [],
       "tasks": [
         "Verify agent can't init second swarm while first is active (409 returned)",

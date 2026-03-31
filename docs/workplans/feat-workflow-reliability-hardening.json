@@ -27,7 +27,7 @@
     },
     {
       "id": "P2",
-      "title": "Agent session lifecycle — disconnect on session-end",
+      "title": "Agent session lifecycle \u2014 disconnect on session-end",
       "description": "Add POST /api/hex-agents/:id/disconnect route to hex-nexus that sets endedAt=now, status=completed. Wire into hook-handler for session-end event: call hex agent disconnect $CLAUDE_SESSION_ID. Add hex agent disconnect CLI command.",
       "files": [
         "hex-nexus/src/routes/orchestration.rs",
@@ -56,5 +56,6 @@
       ],
       "acceptance": "Placeholder model IDs (non-existent gpt-5.x, grok-4.x) are removed from provider list on startup"
     }
-  ]
+  ],
+  "status": "partial"
 }

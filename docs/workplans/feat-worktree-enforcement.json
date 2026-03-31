@@ -1,11 +1,11 @@
 {
   "id": "feat-worktree-enforcement",
-  "title": "Feature: Worktree Enforcement in Agent Hooks — close the gap between ADR-004 and actual agent behavior",
+  "title": "Feature: Worktree Enforcement in Agent Hooks \u2014 close the gap between ADR-004 and actual agent behavior",
   "specs": null,
   "adr": "ADR-2603231700",
   "created": "2026-03-23",
-  "status": "planned",
-  "status_note": "Critical — without this, all swarm features bypass worktree isolation",
+  "status": "done",
+  "status_note": "Critical \u2014 without this, all swarm features bypass worktree isolation",
   "topology": "pipeline",
   "budget": "~40000 tokens",
   "steps": [
@@ -27,7 +27,9 @@
       "layer": "usecases",
       "adapter": "hooks",
       "port": null,
-      "dependencies": ["step-1"],
+      "dependencies": [
+        "step-1"
+      ],
       "tier": 1,
       "specs": [],
       "worktree_branch": "feat/worktree-enforcement/workplan-resolution",
@@ -35,11 +37,13 @@
     },
     {
       "id": "step-3",
-      "description": "Add worktree auto-creation in pre-agent hook. After resolving worktree_branch: (1) run git worktree list to check if it exists, (2) if not, run git worktree add <path> -b <branch> from project root, (3) path format: ../{project}-worktrees/feat/{feature}/{adapter}, (4) validate branch name matches feat/*/* pattern, (5) store worktree_path in session state, (6) output HEXFLO_WORKTREE_PATH=<path> to stdout so the orchestrator can include it in the agent prompt. Respect MAX_WORKTREES=8 limit — block if at capacity.",
+      "description": "Add worktree auto-creation in pre-agent hook. After resolving worktree_branch: (1) run git worktree list to check if it exists, (2) if not, run git worktree add <path> -b <branch> from project root, (3) path format: ../{project}-worktrees/feat/{feature}/{adapter}, (4) validate branch name matches feat/*/* pattern, (5) store worktree_path in session state, (6) output HEXFLO_WORKTREE_PATH=<path> to stdout so the orchestrator can include it in the agent prompt. Respect MAX_WORKTREES=8 limit \u2014 block if at capacity.",
       "layer": "adapters/primary",
       "adapter": "hooks",
       "port": null,
-      "dependencies": ["step-2"],
+      "dependencies": [
+        "step-2"
+      ],
       "tier": 2,
       "specs": [],
       "worktree_branch": "feat/worktree-enforcement/auto-create",
@@ -47,11 +51,13 @@
     },
     {
       "id": "step-4",
-      "description": "Add adapter boundary enforcement to pre-edit hook. When session state has allowed_paths (derived from task's layer/adapter): (1) resolve the file path being edited from TOOL_INPUT, (2) check if it falls within the allowed boundary, (3) docs/, tests/, config/ always allowed (cross-cutting), (4) if outside boundary and mode is mandatory: block with exit 2 and message showing allowed paths, (5) if advisory: warn but allow. Boundary mapping: domain→domain/, ports→ports/, adapters/secondary/{name}→files matching adapter name, usecases→usecases/+composition-root, integration→tests/.",
+      "description": "Add adapter boundary enforcement to pre-edit hook. When session state has allowed_paths (derived from task's layer/adapter): (1) resolve the file path being edited from TOOL_INPUT, (2) check if it falls within the allowed boundary, (3) docs/, tests/, config/ always allowed (cross-cutting), (4) if outside boundary and mode is mandatory: block with exit 2 and message showing allowed paths, (5) if advisory: warn but allow. Boundary mapping: domain\u2192domain/, ports\u2192ports/, adapters/secondary/{name}\u2192files matching adapter name, usecases\u2192usecases/+composition-root, integration\u2192tests/.",
       "layer": "adapters/primary",
       "adapter": "hooks",
       "port": null,
-      "dependencies": ["step-1"],
+      "dependencies": [
+        "step-1"
+      ],
       "tier": 1,
       "specs": [],
       "worktree_branch": "feat/worktree-enforcement/boundary-check",
@@ -63,7 +69,9 @@
       "layer": "usecases",
       "adapter": "hooks",
       "port": null,
-      "dependencies": ["step-2"],
+      "dependencies": [
+        "step-2"
+      ],
       "tier": 2,
       "specs": [],
       "worktree_branch": "feat/worktree-enforcement/dependency-order",
@@ -75,7 +83,10 @@
       "layer": "adapters/primary",
       "adapter": "hooks",
       "port": null,
-      "dependencies": ["step-3", "step-5"],
+      "dependencies": [
+        "step-3",
+        "step-5"
+      ],
       "tier": 3,
       "specs": [],
       "worktree_branch": "feat/worktree-enforcement/auto-merge",
@@ -87,7 +98,10 @@
       "layer": "adapters/primary",
       "adapter": "cli",
       "port": null,
-      "dependencies": ["step-3", "step-4"],
+      "dependencies": [
+        "step-3",
+        "step-4"
+      ],
       "tier": 3,
       "specs": [],
       "worktree_branch": "feat/worktree-enforcement/audit",
@@ -95,11 +109,14 @@
     },
     {
       "id": "step-8",
-      "description": "Integration tests: (1) spawn mock background agent with HEXFLO_TASK — verify worktree auto-created, (2) attempt edit outside boundary — verify blocked in mandatory mode, (3) spawn task with incomplete dependency — verify blocked, (4) complete all tier tasks — verify auto-merge triggered, (5) hex agent audit on test commits — verify report flags violations. Run hex analyze to verify no boundary violations in the enforcement code itself.",
+      "description": "Integration tests: (1) spawn mock background agent with HEXFLO_TASK \u2014 verify worktree auto-created, (2) attempt edit outside boundary \u2014 verify blocked in mandatory mode, (3) spawn task with incomplete dependency \u2014 verify blocked, (4) complete all tier tasks \u2014 verify auto-merge triggered, (5) hex agent audit on test commits \u2014 verify report flags violations. Run hex analyze to verify no boundary violations in the enforcement code itself.",
       "layer": "integration",
       "adapter": null,
       "port": null,
-      "dependencies": ["step-6", "step-7"],
+      "dependencies": [
+        "step-6",
+        "step-7"
+      ],
       "tier": 4,
       "specs": [],
       "worktree_branch": "feat/worktree-enforcement/integration",
@@ -111,12 +128,12 @@
     "npm": []
   },
   "mergeOrder": [
-    "step-1 (session state — tier 0, all others depend on it)",
-    "step-1 → step-2, step-4 parallel (workplan resolution + boundary check — tier 1)",
-    "step-2 → step-3, step-5 parallel (auto-create + dependency order — tier 2)",
-    "step-3 + step-5 → step-6 (auto-merge — needs worktrees + dependency checking)",
-    "step-3 + step-4 → step-7 (audit — needs worktree tracking + boundary rules)",
-    "step-6 + step-7 → step-8 (integration tests — all features)"
+    "step-1 (session state \u2014 tier 0, all others depend on it)",
+    "step-1 \u2192 step-2, step-4 parallel (workplan resolution + boundary check \u2014 tier 1)",
+    "step-2 \u2192 step-3, step-5 parallel (auto-create + dependency order \u2014 tier 2)",
+    "step-3 + step-5 \u2192 step-6 (auto-merge \u2014 needs worktrees + dependency checking)",
+    "step-3 + step-4 \u2192 step-7 (audit \u2014 needs worktree tracking + boundary rules)",
+    "step-6 + step-7 \u2192 step-8 (integration tests \u2014 all features)"
   ],
   "riskRegister": [
     {
@@ -125,7 +142,7 @@
       "mitigation": "pre-agent checks git status before worktree add; stash uncommitted changes or block with message"
     },
     {
-      "risk": "Workplan JSON format inconsistency — step IDs don't match HexFlo task titles",
+      "risk": "Workplan JSON format inconsistency \u2014 step IDs don't match HexFlo task titles",
       "impact": "medium",
       "mitigation": "Fuzzy matching on step description; include step-N ID in HexFlo task title as convention"
     },
@@ -140,7 +157,7 @@
       "mitigation": "MAX_WORKTREES=8 enforced; stale detection flags worktrees >24h without commits"
     },
     {
-      "risk": "Hook latency — worktree resolution adds time to every agent spawn",
+      "risk": "Hook latency \u2014 worktree resolution adds time to every agent spawn",
       "impact": "low",
       "mitigation": "Cache workplan resolution in session state; git worktree list is fast (<50ms)"
     }

@@ -370,11 +370,25 @@ pub async fn project_report(
             })
         }).collect();
 
+        // A zombie swarm: all tasks stuck in_progress, none completed or failed.
+        // This happens when agents die mid-run. Mark it stale so the CLI skips it.
+        // Applies to both "active" and "failed" stored statuses.
+        let effective_status = if matches!(swarm.status.as_str(), "active" | "failed")
+            && t_total > 0
+            && t_in_progress == t_total
+            && t_completed == 0
+            && t_failed == 0
+        {
+            "stale"
+        } else {
+            swarm.status.as_str()
+        };
+
         swarm_reports.push(json!({
             "id": swarm.id,
             "name": swarm.name,
             "topology": swarm.topology,
-            "status": swarm.status,
+            "status": effective_status,
             "createdAt": swarm.created_at,
             "updatedAt": swarm.updated_at,
             "tasks": {
@@ -504,12 +518,22 @@ async fn scan_project_artifacts(root_path: &str) -> serde_json::Value {
             if let Ok(content) = tokio::fs::read_to_string(&path).await {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
                     let feature = v["feature"].as_str().unwrap_or(&fname).to_string();
+                    // Top-level "status": "done" or "completed" means the workplan is finished,
+                    // regardless of individual phase status fields (which may predate this field).
+                    let top_done = matches!(
+                        v["status"].as_str(),
+                        Some("done") | Some("completed") | Some("complete") | Some("superseded")
+                    );
                     let phases = v["phases"].as_array();
                     let total = phases.map(|p| p.len()).unwrap_or(0);
-                    let done = phases.map(|p| {
-                        p.iter().filter(|ph| ph["status"].as_str() == Some("done")).count()
-                    }).unwrap_or(0);
-                    let active = done < total;
+                    let done = if top_done {
+                        total // treat all phases as done
+                    } else {
+                        phases.map(|p| {
+                            p.iter().filter(|ph| ph["status"].as_str() == Some("done")).count()
+                        }).unwrap_or(0)
+                    };
+                    let active = !top_done && done < total;
                     workplan_list.push(json!({
                         "feature": feature,
                         "file": fname,
