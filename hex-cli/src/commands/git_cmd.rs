@@ -1,6 +1,7 @@
 //! Git integration commands.
 //!
-//! `hex git status|log|diff|branches` — delegates to hex-nexus git API.
+//! `hex git status|log|diff|branches|cleanup` — delegates to hex-nexus git API
+//! (except cleanup which runs git locally).
 
 use clap::Subcommand;
 use colored::Colorize;
@@ -21,6 +22,15 @@ pub enum GitAction {
     Diff,
     /// List branches
     Branches,
+    /// Delete merged and stale branches (dry-run by default)
+    Cleanup {
+        /// Actually delete branches (default is dry-run)
+        #[arg(long)]
+        force: bool,
+        /// Also delete unmerged stale branches matching known patterns (worktree-agent-*, hex-go/*, hex/uuid-*)
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 pub async fn run(action: GitAction) -> anyhow::Result<()> {
@@ -29,6 +39,7 @@ pub async fn run(action: GitAction) -> anyhow::Result<()> {
         GitAction::Log { limit } => log(limit).await,
         GitAction::Diff => diff().await,
         GitAction::Branches => branches().await,
+        GitAction::Cleanup { force, all } => cleanup(force, all).await,
     }
 }
 
@@ -237,6 +248,129 @@ async fn diff() -> anyhow::Result<()> {
         println!("  No unstaged changes.");
     }
 
+    Ok(())
+}
+
+async fn cleanup(force: bool, all: bool) -> anyhow::Result<()> {
+    // Collect merged branches (safe to delete with -d)
+    let merged_out = std::process::Command::new("git")
+        .args(["branch", "--merged", "main"])
+        .output()?;
+    let merged_raw = String::from_utf8_lossy(&merged_out.stdout);
+
+    // Each line may be prefixed with "* " (current), "+ " (worktree), or "  " (normal)
+    let merged: Vec<(String, bool)> = merged_raw
+        .lines()
+        .map(|l| {
+            let in_worktree = l.starts_with('+');
+            let name = l.trim_start_matches(['*', '+', ' ']).trim().to_string();
+            (name, in_worktree)
+        })
+        .filter(|(name, _)| !name.is_empty() && name != "main")
+        .collect();
+
+    // Collect stale pattern branches (may or may not be merged)
+    let all_out = std::process::Command::new("git")
+        .args(["branch", "--list"])
+        .output()?;
+    let all_raw = String::from_utf8_lossy(&all_out.stdout);
+
+    let stale_patterns: &[&str] = &[
+        "worktree-agent-",
+        "hex-go/",
+        "hex/",          // hex/uuid-* swarm branches
+    ];
+
+    let stale_unmerged: Vec<(String, bool)> = all_raw
+        .lines()
+        .map(|l| {
+            let in_worktree = l.starts_with('+');
+            let name = l.trim_start_matches(['*', '+', ' ']).trim().to_string();
+            (name, in_worktree)
+        })
+        .filter(|(name, _)| {
+            if name.is_empty() || name == "main" { return false; }
+            stale_patterns.iter().any(|p| name.starts_with(p))
+        })
+        // Exclude already in merged list
+        .filter(|(name, _)| !merged.iter().any(|(m, _)| m == name))
+        .collect();
+
+    println!("{}", "Git Branch Cleanup".bold());
+    println!("{}", "─".repeat(60));
+
+    if merged.is_empty() && (!all || stale_unmerged.is_empty()) {
+        println!("  {} Nothing to clean up.", "\u{2713}".green());
+        return Ok(());
+    }
+
+    // Show merged branches
+    if !merged.is_empty() {
+        println!("\n  {} Merged into main (safe to delete):", "\u{25cf}".green());
+        for (name, in_worktree) in &merged {
+            let wt_note = if *in_worktree { " (checked out in worktree — skipped)".dimmed().to_string() } else { String::new() };
+            println!("    {} {}{}", "-".green(), name, wt_note);
+        }
+    }
+
+    // Show stale unmerged branches
+    if all && !stale_unmerged.is_empty() {
+        println!("\n  {} Stale pattern branches (unmerged):", "\u{25cb}".yellow());
+        for (name, in_worktree) in &stale_unmerged {
+            let wt_note = if *in_worktree { " (checked out in worktree — skipped)".dimmed().to_string() } else { String::new() };
+            println!("    {} {}{}", "-".yellow(), name, wt_note);
+        }
+    }
+
+    if !force {
+        println!("\n  {} Dry run — pass {} to delete.", "\u{26a0}".yellow(), "--force".bold());
+        let deletable_merged = merged.iter().filter(|(_, wt)| !wt).count();
+        let deletable_stale = if all { stale_unmerged.iter().filter(|(_, wt)| !wt).count() } else { 0 };
+        println!("  Would delete {} merged + {} stale branches.", deletable_merged, deletable_stale);
+        return Ok(());
+    }
+
+    // Delete merged branches (skip worktree-checked-out ones)
+    let mut deleted = 0usize;
+    let mut skipped = 0usize;
+    for (name, in_worktree) in &merged {
+        if *in_worktree {
+            skipped += 1;
+            continue;
+        }
+        let result = std::process::Command::new("git")
+            .args(["branch", "-d", name])
+            .output()?;
+        if result.status.success() {
+            println!("  {} Deleted (merged): {}", "\u{2713}".green(), name);
+            deleted += 1;
+        } else {
+            let err = String::from_utf8_lossy(&result.stderr);
+            println!("  {} Failed to delete {}: {}", "\u{2717}".red(), name, err.trim());
+        }
+    }
+
+    // Delete stale unmerged branches with -D if --all specified
+    if all {
+        for (name, in_worktree) in &stale_unmerged {
+            if *in_worktree {
+                skipped += 1;
+                continue;
+            }
+            let result = std::process::Command::new("git")
+                .args(["branch", "-D", name])
+                .output()?;
+            if result.status.success() {
+                println!("  {} Deleted (stale): {}", "\u{2713}".yellow(), name);
+                deleted += 1;
+            } else {
+                let err = String::from_utf8_lossy(&result.stderr);
+                println!("  {} Failed to delete {}: {}", "\u{2717}".red(), name, err.trim());
+            }
+        }
+    }
+
+    println!("\n  Deleted {} branch(es), skipped {} (active worktrees).", deleted, skipped);
     Ok(())
 }
 

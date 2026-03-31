@@ -156,12 +156,48 @@ pub fn cleanup_stale_output_dir(output_dir: &str, feature_name: &str) {
 /// * `output_dir` — directory to scaffold into (created if it doesn't exist)
 /// * `language` — `"typescript"`, `"ts"`, `"rust"`, or `"rs"`
 /// * `feature_name` — human-readable feature name (slugified for package name)
+/// Ensure `dir` is an isolated git repository.
+/// Runs `git init` only if there is no `.git` directory already present.
+/// Errors are non-fatal — logged as warnings so a missing git binary
+/// never blocks code generation.
+fn ensure_git_isolated(dir: &std::path::Path) {
+    if dir.join(".git").exists() {
+        return;
+    }
+    match std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(dir)
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            info!(dir = %dir.display(), "initialised isolated git repo for example");
+        }
+        Ok(out) => {
+            warn!(
+                dir = %dir.display(),
+                stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                "git init failed (non-fatal)"
+            );
+        }
+        Err(e) => {
+            warn!(dir = %dir.display(), error = %e, "git not found — skipping git init (non-fatal)");
+        }
+    }
+}
+
 pub fn generate_scaffold(
     output_dir: &str,
     language: &str,
     feature_name: &str,
 ) -> Result<Vec<String>> {
     let dir = Path::new(output_dir);
+
+    // Create the root directory first so git init can run before language-specific
+    // subdirectories and files are written. Each example gets its own isolated repo
+    // so pipeline branches (fix agents, worktrees) never bleed into the parent repo.
+    std::fs::create_dir_all(dir).context("creating output directory")?;
+    ensure_git_isolated(dir);
+
     let slug = to_feature_slug(feature_name);
 
     match language {

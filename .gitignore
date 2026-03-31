@@ -48,10 +48,14 @@ Volumes/
 .hex/
 .superset/
 examples/hex-worktrees/
-examples/hex-worktrees/
 target/
 examples/rust-api/target/
 hex-hub/target/
+
+# Example projects are isolated git repos — ignore their build artifacts and git state
+examples/*/target/
+examples/*/.git/
+examples/sandbox-demo/target/
 
 # Built binaries (use target/ or ~/.hex/bin/ instead)
 bin/hex-agent
