@@ -130,15 +130,26 @@ fn list_sessions(show_all: bool) -> Result<()> {
     }
 
     let rows: Vec<Vec<String>> = sessions.iter().map(|s| {
+        // Truncate ISO timestamp to date+time (first 16 chars: "2026-03-31T14:05")
+        let created = s.created_at.get(..16).unwrap_or(&s.created_at).to_string();
+        let steps = if s.completed_steps_count > 0 {
+            format!("{} ✓", s.completed_steps_count)
+        } else {
+            "-".to_string()
+        };
+        let validated = if s.has_quality_result { "✓".to_string() } else { "-".to_string() };
         vec![
-            s.id.clone(),
+            truncate(&s.id, 8),
             status_badge(&s.status.to_string()),
             s.current_phase.to_string(),
             format!("${:.4}", s.total_cost_usd),
-            truncate(&s.feature_description, 50),
+            steps,
+            validated,
+            created,
+            truncate(&s.feature_description, 40),
         ]
     }).collect();
-    println!("{}", pretty_table(&["ID", "Status", "Phase", "Cost", "Feature"], &rows));
+    println!("{}", pretty_table(&["ID", "Status", "Phase", "Cost", "Steps", "QA", "Created", "Feature"], &rows));
     if !show_all {
         let completed = DevSession::list_all()?.iter()
             .filter(|s| matches!(s.status, SessionStatus::Completed))

@@ -162,6 +162,24 @@ function hubEvent(eventType, data) {
   });
 }
 
+function hubDelete(urlPath) {
+  const conn = getHubConnection();
+  if (!conn) return; // hub not running — skip silently
+  const req = http.request({
+    hostname: '127.0.0.1',
+    port: conn.port,
+    path: urlPath,
+    method: 'DELETE',
+    headers: {
+      ...(conn.token ? { 'Authorization': `Bearer ${conn.token}` } : {}),
+    },
+    timeout: 1500,
+  });
+  req.on('error', () => {}); // non-fatal
+  req.on('timeout', () => req.destroy());
+  req.end();
+}
+
 function hubEnsureRegistered() {
   // RegisterRequest uses rootPath to derive the project ID server-side
   hubPost('/api/projects/register', {
@@ -343,6 +361,18 @@ const handlers = {
         }
       } catch (e) { /* non-fatal */ }
     }
+    // Deregister this agent from nexus so it no longer appears in `hex agent list`
+    // Session file written by hex hook session-start: ~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json
+    try {
+      const sessionId = process.env.CLAUDE_SESSION_ID;
+      if (sessionId) {
+        const sessionFile = path.join(require('os').homedir(), '.hex', 'sessions', `agent-${sessionId}.json`);
+        const agentData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+        if (agentData && agentData.agent_id) {
+          hubDelete(`/api/hex-agents/${agentData.agent_id}`);
+        }
+      }
+    } catch (e) { /* non-fatal — agent may already be gone */ }
     hubEvent('session-end', { timestamp: Date.now() });
     // Clear .hex/status.json — session is over, swarm is no longer active
     writeHexStatus({ swarm: false, agentdb: false, activeAgents: 0, idleAgents: 0, tasks: 0, completedTasks: 0 });
