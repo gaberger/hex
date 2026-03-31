@@ -73,6 +73,23 @@ pub enum OverlayMode {
 }
 
 // ---------------------------------------------------------------------------
+// PreconditionError
+// ---------------------------------------------------------------------------
+
+/// Error returned when a pipeline phase is entered without its required upstream artifacts.
+#[derive(Debug)]
+pub struct PreconditionError {
+    pub message: String,
+    pub suggested_return_phase: PipelinePhase,
+}
+
+impl std::fmt::Display for PreconditionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "precondition failed: {}", self.message)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // TuiApp
 // ---------------------------------------------------------------------------
 
@@ -1824,6 +1841,55 @@ impl TuiApp {
         }
     }
 
+    /// Check that upstream artifacts exist before entering a phase.
+    /// Returns Err(PreconditionError) if a required field is missing.
+    fn check_phase_preconditions(&self, phase: PipelinePhase) -> Result<(), PreconditionError> {
+        match phase {
+            PipelinePhase::Workplan => {
+                if self.session.adr_path.is_none() {
+                    return Err(PreconditionError {
+                        message: "ADR must be created before workplan".to_string(),
+                        suggested_return_phase: PipelinePhase::Adr,
+                    });
+                }
+            }
+            PipelinePhase::Swarm => {
+                if self.session.workplan_path.is_none() {
+                    return Err(PreconditionError {
+                        message: "Workplan must exist before swarm".to_string(),
+                        suggested_return_phase: PipelinePhase::Workplan,
+                    });
+                }
+            }
+            PipelinePhase::Code => {
+                if self.session.workplan_path.is_none() {
+                    return Err(PreconditionError {
+                        message: "Workplan must exist before code generation".to_string(),
+                        suggested_return_phase: PipelinePhase::Workplan,
+                    });
+                }
+            }
+            PipelinePhase::Validate => {
+                if self.session.completed_steps.is_empty() {
+                    return Err(PreconditionError {
+                        message: "Code phase must complete at least one step before validate".to_string(),
+                        suggested_return_phase: PipelinePhase::Code,
+                    });
+                }
+            }
+            PipelinePhase::Commit => {
+                if self.session.quality_result.is_none() {
+                    return Err(PreconditionError {
+                        message: "Validate phase must produce a quality result before commit".to_string(),
+                        suggested_return_phase: PipelinePhase::Validate,
+                    });
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Advance to the next pipeline phase (used when skipping).
     fn advance_to_next_phase(&mut self) {
         let next = match self.session.current_phase {
@@ -2677,14 +2743,13 @@ impl TuiApp {
             return Ok(());
         }
 
-        let workplan_path = match &self.session.workplan_path {
-            Some(p) => p.clone(),
-            None => {
-                warn!("code phase called but no workplan path — skipping to Validate");
-                let _ = self.session.update_phase(PipelinePhase::Validate);
-                return Ok(());
-            }
-        };
+        if let Err(e) = self.check_phase_preconditions(PipelinePhase::Code) {
+            warn!(error = %e, return_to = %e.suggested_return_phase, "code phase precondition failed");
+            let _ = self.session.update_phase(e.suggested_return_phase);
+            return Ok(());
+        }
+
+        let workplan_path = self.session.workplan_path.clone().expect("precondition check guarantees workplan_path is Some");
 
         // Load workplan from disk
         let workplan_data = match std::fs::read_to_string(&workplan_path) {
