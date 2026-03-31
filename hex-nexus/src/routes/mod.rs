@@ -486,6 +486,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/swarms", post(swarms::create_swarm)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/swarms/active", get(swarms::list_active_swarms))
+        .route("/api/swarms/failed", get(swarms::list_failed_swarms))
         .route("/api/swarms/{id}", get(swarms::get_swarm)
             .patch(swarms::complete_swarm))
         .route("/api/swarms/{id}/fail", post(swarms::fail_swarm)

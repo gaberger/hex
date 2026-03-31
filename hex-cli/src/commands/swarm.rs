@@ -348,11 +348,30 @@ async fn cleanup(stale_hours: u64, apply: bool) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    let resp = nexus.get("/api/swarms/active").await?;
-    let swarms = resp.as_array().cloned().unwrap_or_default();
+    // Fetch active swarms + failed swarms (zombies: agent-death with all tasks in_progress)
+    let active_resp = nexus.get("/api/swarms/active").await?;
+    let mut swarms = active_resp.as_array().cloned().unwrap_or_default();
+
+    // Also load failed swarms to catch zombies (agent-death: all tasks stuck in_progress)
+    if let Ok(failed_resp) = nexus.get("/api/swarms/failed").await {
+        for s in failed_resp.as_array().cloned().unwrap_or_default() {
+            let tasks = s["tasks"].as_array();
+            let total = tasks.map(|t| t.len()).unwrap_or(0);
+            let in_progress = tasks.map(|t| {
+                t.iter().filter(|tk| tk["status"].as_str() == Some("in_progress")).count()
+            }).unwrap_or(0);
+            let completed = tasks.map(|t| {
+                t.iter().filter(|tk| tk["status"].as_str() == Some("completed")).count()
+            }).unwrap_or(0);
+            // Zombie: all tasks stuck in_progress OR empty swarm (0 tasks ever created)
+            if total == 0 || (in_progress == total && completed == 0) {
+                swarms.push(s);
+            }
+        }
+    }
 
     if swarms.is_empty() {
-        println!("{} No active swarms to clean up", "\u{2b21}".dimmed());
+        println!("{} No swarms to clean up", "\u{2b21}".dimmed());
         return Ok(());
     }
 
@@ -370,6 +389,7 @@ async fn cleanup(stale_hours: u64, apply: bool) -> anyhow::Result<()> {
     for swarm in &swarms {
         let id = swarm["id"].as_str().unwrap_or("").to_string();
         let name = swarm["name"].as_str().unwrap_or("-").to_string();
+        let status = swarm["status"].as_str().unwrap_or("active");
         let tasks = swarm["tasks"].as_array();
         let total = tasks.map(|t| t.len()).unwrap_or(0);
         let completed = tasks
@@ -379,6 +399,19 @@ async fn cleanup(stale_hours: u64, apply: bool) -> anyhow::Result<()> {
                     .count()
             })
             .unwrap_or(0);
+
+        // Zombie failed swarm: already in failed state with tasks all stuck in_progress
+        // OR empty (no tasks ever created). Purge = transition to completed so they
+        // collapse into history and stop appearing as anomalies.
+        if status == "failed" {
+            let reason = if total == 0 {
+                "empty — no tasks ever created".to_string()
+            } else {
+                format!("zombie — {}/{} tasks stuck in_progress (agent died)", total, total)
+            };
+            actions.push(Action { id, name, transition: "purge", reason });
+            continue;
+        }
 
         // All tasks completed → mark swarm completed
         if total > 0 && completed == total {
@@ -478,7 +511,7 @@ async fn cleanup(stale_hours: u64, apply: bool) -> anyhow::Result<()> {
     let mut err = 0u32;
     for action in &actions {
         let result = match action.transition {
-            "complete" => {
+            "complete" | "purge" => {
                 nexus
                     .patch(&format!("/api/swarms/{}", action.id), &json!({}))
                     .await

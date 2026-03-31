@@ -607,6 +607,7 @@ pub trait IStatePort: Send + Sync {
     async fn swarm_complete(&self, id: &str) -> Result<(), StateError>;
     async fn swarm_fail(&self, id: &str, reason: &str) -> Result<(), StateError>;
     async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError>;
+    async fn swarm_list_failed(&self) -> Result<Vec<SwarmInfo>, StateError>;
     /// Returns all swarms for a project (all statuses — active, completed, failed).
     async fn swarm_list_by_project(&self, project_id: &str) -> Result<Vec<SwarmInfo>, StateError>;
     /// Returns a single swarm by ID regardless of status.

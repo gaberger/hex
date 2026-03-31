@@ -815,6 +815,23 @@ mod real {
             }).collect())
         }
 
+        async fn swarm_list_failed(&self) -> Result<Vec<SwarmInfo>, StateError> {
+            let rows = self.query_table("SELECT * FROM swarm WHERE status = 'failed'").await?;
+            Ok(rows.into_iter().filter_map(|r| {
+                Some(SwarmInfo {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    project_id: r.get("project_id")?.as_str()?.to_string(),
+                    name: r.get("name")?.as_str()?.to_string(),
+                    topology: r.get("topology")?.as_str()?.to_string(),
+                    status: r.get("status")?.as_str()?.to_string(),
+                    owner_agent_id: r.get("owner_agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_by: r.get("created_by").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    updated_at: r.get("updated_at")?.as_str()?.to_string(),
+                })
+            }).collect())
+        }
+
         async fn swarm_list_by_project(&self, project_id: &str) -> Result<Vec<SwarmInfo>, StateError> {
             let sql = format!("SELECT * FROM swarm WHERE project_id = '{}'", project_id);
             let rows = self.query_table(&sql).await?;
@@ -1538,6 +1555,7 @@ mod stub {
         async fn swarm_complete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError> { Err(Self::err()) }
+        async fn swarm_list_failed(&self) -> Result<Vec<SwarmInfo>, StateError> { Err(Self::err()) }
         async fn swarm_list_by_project(&self, _: &str) -> Result<Vec<SwarmInfo>, StateError> { Err(Self::err()) }
         async fn swarm_get(&self, _: &str) -> Result<Option<SwarmInfo>, StateError> { Err(Self::err()) }
         async fn swarm_owned_by_agent(&self, _: &str) -> Result<Option<SwarmInfo>, StateError> { Err(Self::err()) }

@@ -307,8 +307,11 @@ pub struct UnstagedState {
 /// Deterministic project ID: basename + DJB2 hash in base-36.
 /// Must produce identical output to the TypeScript `makeProjectId`.
 pub fn make_project_id(root_path: &str) -> String {
-    let basename = root_path.rsplit('/').next().unwrap_or("unknown");
-    let hash = root_path
+    // Normalize to lowercase so case-insensitive filesystems (macOS) don't
+    // produce different IDs for the same directory with different casing.
+    let normalized = root_path.to_lowercase();
+    let basename = normalized.rsplit('/').next().unwrap_or("unknown");
+    let hash = normalized
         .chars()
         .fold(0u32, |h, c| {
             (h.wrapping_shl(5)).wrapping_sub(h).wrapping_add(c as u32)

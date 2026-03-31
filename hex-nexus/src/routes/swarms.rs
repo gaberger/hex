@@ -148,6 +148,28 @@ pub async fn list_active_swarms(
     Ok(Json(Value::Array(enriched)))
 }
 
+/// GET /api/swarms/failed — list failed swarms enriched with tasks (for zombie cleanup)
+pub async fn list_failed_swarms(
+    State(state): State<SharedState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+
+    let swarms = port.swarm_list_failed().await.map_err(state_err)?;
+
+    let mut enriched = Vec::with_capacity(swarms.len());
+    for swarm in &swarms {
+        let tasks = port
+            .swarm_task_list(Some(&swarm.id))
+            .await
+            .unwrap_or_default();
+        let mut val = serde_json::to_value(swarm).unwrap();
+        val["tasks"] = serde_json::to_value(&tasks).unwrap();
+        enriched.push(val);
+    }
+
+    Ok(Json(Value::Array(enriched)))
+}
+
 // DEPRECATED(ADR-039): Browser will use SpacetimeDB direct subscription
 /// GET /api/swarms/:id — get swarm with tasks and agents
 pub async fn get_swarm(

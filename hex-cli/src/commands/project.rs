@@ -499,10 +499,16 @@ async fn report(client: &NexusClient, id: &str, json_output: bool) -> anyhow::Re
                 "  (no tasks)".dimmed().to_string()
             };
 
-            let extras = [
-                if s_prog > 0 { format!("{} running", s_prog).yellow().to_string() } else { String::new() },
-                if s_fail > 0 { format!("{} failed",  s_fail).red().to_string()    } else { String::new() },
-            ].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join("  ");
+            // Only show in-progress/failed counts for non-completed swarms —
+            // completed swarms may still have tasks in in_progress state if they were purged.
+            let extras = if status != "completed" {
+                [
+                    if s_prog > 0 { format!("{} running", s_prog).yellow().to_string() } else { String::new() },
+                    if s_fail > 0 { format!("{} failed",  s_fail).red().to_string()    } else { String::new() },
+                ].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join("  ")
+            } else {
+                String::new()
+            };
 
             print!("  {} {}  {}", icon, name_colored, task_bar);
             if !extras.is_empty() { print!("  {}", extras); }
