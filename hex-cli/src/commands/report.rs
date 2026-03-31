@@ -1177,6 +1177,7 @@ fn colorize_status(status: &SessionStatus) -> String {
         SessionStatus::InProgress => "in_progress".yellow().to_string(),
         SessionStatus::Paused => "paused".blue().to_string(),
         SessionStatus::Failed => "failed".red().to_string(),
+        SessionStatus::Incomplete => "incomplete".red().to_string(),
     }
 }
 

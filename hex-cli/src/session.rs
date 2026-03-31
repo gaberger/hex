@@ -23,6 +23,9 @@ pub enum SessionStatus {
     InProgress,
     Paused,
     Completed,
+    /// Pipeline advanced through all phases but no code was generated or tested.
+    /// Set retroactively for sessions where completed_steps is empty and quality_result is None.
+    Incomplete,
     Failed,
 }
 
@@ -32,9 +35,21 @@ impl std::fmt::Display for SessionStatus {
             Self::InProgress => write!(f, "in_progress"),
             Self::Paused => write!(f, "paused"),
             Self::Completed => write!(f, "completed"),
+            Self::Incomplete => write!(f, "incomplete"),
             Self::Failed => write!(f, "failed"),
         }
     }
+}
+
+/// Outcome passed to `finalize_session()` to drive the terminal state transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionOutcome {
+    /// User approved commit gate — all invariants must pass before Completed is set.
+    Approved,
+    /// User skipped or retried — session becomes Paused (resumable).
+    Skipped,
+    /// Hard abort — session becomes Paused.
+    Aborted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -310,7 +325,7 @@ impl DevSession {
                 .format("%Y-%m-%dT%H:%M:%S").to_string();
             let old = session.updated_at < cutoff;
             let should_remove = match session.status {
-                SessionStatus::Completed | SessionStatus::Failed => true,
+                SessionStatus::Completed | SessionStatus::Incomplete | SessionStatus::Failed => true,
                 // Stale in-progress with no work done
                 SessionStatus::InProgress if session.total_cost_usd == 0.0 => true,
                 // Any in-progress/paused session not touched in 7 days
@@ -488,6 +503,7 @@ mod tests {
         assert_eq!(SessionStatus::InProgress.to_string(), "in_progress");
         assert_eq!(SessionStatus::Paused.to_string(), "paused");
         assert_eq!(SessionStatus::Completed.to_string(), "completed");
+        assert_eq!(SessionStatus::Incomplete.to_string(), "incomplete");
         assert_eq!(SessionStatus::Failed.to_string(), "failed");
     }
 
