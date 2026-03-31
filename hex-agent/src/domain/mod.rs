@@ -8,6 +8,7 @@ pub use hex_core::domain::tokens;
 pub use hex_core::domain::workplan;
 
 // ── Agent-specific modules (NOT shared with hex-nexus) ───────────
+pub mod context;
 pub mod hex_knowledge;
 pub mod mcp;
 pub mod output_score;
