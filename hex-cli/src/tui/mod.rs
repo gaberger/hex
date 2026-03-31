@@ -2027,9 +2027,11 @@ impl TuiApp {
         match outcome {
             CompletionOutcome::Approved => {
                 // Invariant: if a swarm was created, at least one task must be done.
-                // Exception: supervisor path sets quality_result instead of completed_steps.
+                // Exceptions: (1) supervisor path sets quality_result instead of completed_steps;
+                // (2) reaching Commit phase proves the pipeline ran end-to-end.
                 let supervisor_ran = self.session.quality_result.is_some();
-                if self.session.swarm_id.is_some() && self.session.completed_steps.is_empty() && !supervisor_ran {
+                let reached_commit = self.session.current_phase == PipelinePhase::Commit;
+                if self.session.swarm_id.is_some() && self.session.completed_steps.is_empty() && !supervisor_ran && !reached_commit {
                     warn!("finalizing session as Completed but 0 swarm steps completed — marking Paused instead");
                     self.session.status = SessionStatus::Paused;
                 } else {
