@@ -21,6 +21,7 @@ use adapters::secondary::rl_client::{RlClientAdapter, NoopRlAdapter};
 use adapters::secondary::rate_limiter::RateLimiterAdapter;
 use adapters::secondary::token_metrics::TokenMetricsAdapter;
 use adapters::secondary::haiku_preflight::{HaikuPreflightAdapter, NoopPreflight};
+use adapters::secondary::claude_code_inference::{is_claude_code_session, which_claude, ClaudeCodeInferenceAdapter};
 use adapters::secondary::openai_compat::OpenAiCompatAdapter;
 use adapters::secondary::nexus_inference::NexusInferenceAdapter;
 use adapters::secondary::env_secrets::EnvSecretsAdapter;
@@ -101,6 +102,10 @@ struct Args {
     /// One-shot task prompt — skips the interactive REPL, sends this message, then exits.
     #[arg(long)]
     prompt: Option<String>,
+
+    /// Disable Claude Code bypass mode even when CLAUDECODE=1 is set
+    #[arg(long, default_value_t = false)]
+    no_claude_code_bypass: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -178,6 +183,14 @@ async fn main() -> anyhow::Result<()> {
         project_dir = %args.project_dir,
         "hex-agent starting"
     );
+
+    let use_bypass = !args.no_claude_code_bypass
+        && is_claude_code_session()
+        && which_claude().is_some();
+
+    if use_bypass {
+        tracing::info!("Claude Code session detected — using bypass mode (CLAUDECODE=1)");
+    }
 
     let project_dir = PathBuf::from(&args.project_dir)
         .canonicalize()
@@ -585,7 +598,9 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Startup quota check — fail fast if API key is bad
-    if !args.no_preflight {
+    if use_bypass {
+        tracing::info!("Skipping preflight — Claude Code bypass active");
+    } else if !args.no_preflight {
         match preflight.check_quota().await {
             Ok(()) => tracing::info!("Preflight quota check passed"),
             Err(e) => {
@@ -689,6 +704,23 @@ async fn main() -> anyhow::Result<()> {
         models.push(ModelSelection::Local);
         models
     });
+
+    // Claude Code bypass: use `claude -p` instead of direct API
+    if use_bypass {
+        if let Some(ref prompt) = args.prompt {
+            let adapter = ClaudeCodeInferenceAdapter::new(&args.project_dir);
+            match adapter.run_task(prompt).await {
+                Ok(response) => {
+                    print!("{}", response);
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::warn!("Claude Code bypass failed, falling back to direct API: {}", e);
+                    // fall through to normal path
+                }
+            }
+        }
+    }
 
     // One-shot mode: --prompt bypasses hub entirely — just run the prompt and exit.
     if args.prompt.is_some() {

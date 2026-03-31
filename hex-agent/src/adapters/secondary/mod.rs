@@ -30,3 +30,4 @@ pub mod code_phase_worker;
 pub mod task_executor;
 pub mod command_session;
 pub use command_session::CommandSessionAdapter;
+pub mod claude_code_inference;
