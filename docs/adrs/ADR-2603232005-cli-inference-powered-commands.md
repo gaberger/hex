@@ -225,7 +225,31 @@ hex inference add ollama http://localhost:11434
 hex dev "add response caching" --provider ollama
 ```
 
-### 8. Session Persistence
+### 8. Real-time Session Tracking via nexus Push
+
+The `hex dev` pipeline emits phase and cost events to nexus on every state change. nexus broadcasts via the existing SpacetimeDB WebSocket subscription, so the dashboard and `hex dev list` reflect live progress without polling.
+
+```
+hex dev (pipeline process)          hex-nexus                    Dashboard (WebSocket)
+   │                                    │                              │
+   ├─ phase transition (adr→plan) ─────▶│                              │
+   │  POST /api/push                    ├─ write workplan-state ──────▶│
+   │  { type: "dev_session",            │  SpacetimeDB table           │
+   │    data: { id, phase, cost,        │                              │
+   │            steps, status } }       ├─ broadcast subscription ────▶│ live update
+   │                                    │                              │
+   ├─ cost update ─────────────────────▶│                              │
+   │  (same endpoint, incremental)      ├─ broadcast ────────────────▶│ cost counter
+```
+
+The pipeline calls this on:
+- Every phase transition (adr, plan, swarm, code, validate, commit, complete)
+- Every completed workplan step
+- Every inference cost increment
+
+This reuses the same `/api/push` endpoint the hook handler uses for agent events (`hubPush`). Session ID is included so nexus can correlate updates across clients.
+
+### 9. Session Persistence
 
 Sessions survive interruptions and are stored in `~/.hex/sessions/dev/`:
 
@@ -294,6 +318,7 @@ Session state:
 | P13 | Interactive TUI event loop — tick drives pipeline, gate actions wired | Done |
 | P14 | Commit phase — summary review, shell drop, session completion | Done |
 | P15 | Keyboard overlays — `d` debug, `l` log, `m` model info, `Esc` dismiss | Done |
+| P16 | Real-time push: pipeline emits phase/cost/step events to `POST /api/push` on each transition; nexus broadcasts via SpacetimeDB WebSocket so dashboard and `hex dev list` show live state | Pending |
 
 ## References
 
