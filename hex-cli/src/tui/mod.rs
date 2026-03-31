@@ -1047,7 +1047,7 @@ impl TuiApp {
                     } else {
                         self.config.output_dir.clone()
                     };
-                    let language = infer_language_from_workplan(&workplan_data, &self.config.description);
+                    let language = infer_language_from_workplan(&workplan_data, &self.config.description, &self.config.output_dir);
 
                     let shared_session = std::sync::Arc::new(std::sync::Mutex::new(
                         self.session.clone(),
@@ -3440,7 +3440,7 @@ fn infer_language_from_description(description: &str) -> &'static str {
 
 /// Infer programming language from workplan title and step descriptions.
 /// Scans for language-specific keywords; defaults to "typescript".
-fn infer_language_from_workplan(workplan: &crate::pipeline::workplan_phase::WorkplanData, user_description: &str) -> &'static str {
+fn infer_language_from_workplan(workplan: &crate::pipeline::workplan_phase::WorkplanData, user_description: &str, output_dir: &str) -> &'static str {
     // When the description mentions multiple languages (e.g. "Go API with TypeScript client"),
     // the primary language is whichever appears first. We find the earliest match for each
     // language's keywords and pick the winner.
@@ -3482,6 +3482,15 @@ fn infer_language_from_workplan(workplan: &crate::pipeline::workplan_phase::Work
     if text.contains("go lang") || text.contains("golang") || text.contains("go module") || text.contains("go.mod") {
         return "go";
     }
+
+    // Filesystem detection — check output directory for language markers.
+    // This fires when the user description and workplan give no language signal
+    // (e.g. "add inference quality gate" in a Rust workspace).
+    let dir = std::path::Path::new(output_dir);
+    if dir.join("Cargo.toml").exists() { return "rust"; }
+    if dir.join("go.mod").exists()     { return "go"; }
+    if dir.join("pyproject.toml").exists() || dir.join("setup.py").exists() { return "python"; }
+
     "typescript"
 }
 
