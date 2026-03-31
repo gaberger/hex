@@ -15,6 +15,7 @@ pub mod batch;
 pub mod token_metrics;
 pub mod preflight;
 pub mod mcp_client;
+pub mod live_context;
 pub mod output_analyzer;
 pub mod permission;
 
@@ -36,6 +37,7 @@ pub use token_metrics::TokenMetricsPort;
 pub use preflight::PreflightPort;
 pub mod command_session;
 pub use command_session::IBatchExecutionPort;
+pub use live_context::{ILiveContextPort, LiveContextError};
 
 // Re-export domain types that adapters need (so adapters import from ports, not domain)
 #[allow(unused_imports)]
