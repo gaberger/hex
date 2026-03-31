@@ -62,7 +62,7 @@ download_hex() {
     fi
     
     # GitHub releases URL (placeholder - update when releases exist)
-    local base_url="https://github.com/anthropic-hex/hex/releases"
+    local base_url="https://github.com/gaberger/hex/releases"
     
     if [ "$version" = "latest" ]; then
         local url="$base_url/download/hex-${os}-${arch}"
