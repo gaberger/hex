@@ -28,6 +28,7 @@ impl ClaudeCodeInferenceAdapter {
             .arg(prompt)
             .arg("--output-format")
             .arg("text")
+            .arg("--dangerously-skip-permissions")
             .current_dir(&self.project_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

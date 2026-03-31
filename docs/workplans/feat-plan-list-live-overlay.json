@@ -1,0 +1,82 @@
+{
+  "id": "wp-plan-list-live-overlay",
+  "feature": "Workplan Live Execution Overlay in hex plan list",
+  "description": "hex plan list overlays live execution state from SpacetimeDB so completed/running counts are always accurate, not stale JSON file counts.",
+  "adr": "ADR-2603312300",
+  "priority": "medium",
+  "created_at": "2026-03-31T23:09:00Z",
+  "created_by": "planner",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Nexus lookup route",
+      "tier": 0,
+      "description": "Add a nexus endpoint to look up the latest execution for a given workplan filename",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add GET /api/workplan/by-path route",
+          "layer": "primary",
+          "description": "Add route handler in hex-nexus/src/routes/orchestration.rs: GET /api/workplan/by-path?path=<filename>. Query hexflo_memory_search('workplan:') via state port, deserialize each ExecutionState, filter by workplan_path ending with the given filename, sort by updated_at descending, return the most recent match. Return 404 if none found. Register route in hex-nexus/src/routes/mod.rs.",
+          "files": [
+            "hex-nexus/src/routes/orchestration.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "status": "pending",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "CLI overlay",
+      "tier": 1,
+      "description": "Wire live execution counts into hex plan list output",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Fetch live execution per workplan in plan list",
+          "layer": "primary",
+          "description": "In hex-cli/src/commands/plan.rs, the plan list command iterates workplan files. For each file, make a GET /api/workplan/by-path?path=<filename> call. If it returns an execution, replace the completed count with execution.completed_tasks and append the execution status as a suffix badge (e.g. '[running 3/28]', '[completed 28/28]', '[failed 5/28]'). If the nexus call fails or returns 404, fall back to the JSON-derived count silently.",
+          "files": ["hex-cli/src/commands/plan.rs"],
+          "deps": ["P1.1"],
+          "status": "pending",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Integration test",
+      "tier": 2,
+      "description": "Verify overlay works end-to-end",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Smoke test plan list with active execution",
+          "layer": "primary",
+          "description": "Manually verify: start hex_plan_execute on a workplan, immediately run hex plan list, confirm the active workplan shows live progress counts rather than 0. Document result in ADR-2603312300 as 'Accepted'.",
+          "files": ["docs/adrs/ADR-2603312300-workplan-live-execution-overlay.md"],
+          "deps": ["P2.1"],
+          "status": "pending",
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ]
+}
