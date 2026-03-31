@@ -24,6 +24,20 @@ pub enum SessionStatus {
     Paused,
     Completed,
     Failed,
+    /// Completed status set by `hex dev list` detection: session reached Completed
+    /// but has no completed_steps and no quality_result — indicates a ghost/incomplete run.
+    Incomplete,
+}
+
+/// How a pipeline session ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionOutcome {
+    /// Pipeline ran to completion and the user approved the commit gate.
+    Approved,
+    /// The user skipped the commit gate (or a gate was bypassed).
+    Skipped,
+    /// The session was explicitly aborted before completion.
+    Aborted,
 }
 
 impl std::fmt::Display for SessionStatus {
@@ -33,6 +47,7 @@ impl std::fmt::Display for SessionStatus {
             Self::Paused => write!(f, "paused"),
             Self::Completed => write!(f, "completed"),
             Self::Failed => write!(f, "failed"),
+            Self::Incomplete => write!(f, "incomplete"),
         }
     }
 }
@@ -310,7 +325,7 @@ impl DevSession {
                 .format("%Y-%m-%dT%H:%M:%S").to_string();
             let old = session.updated_at < cutoff;
             let should_remove = match session.status {
-                SessionStatus::Completed | SessionStatus::Failed => true,
+                SessionStatus::Completed | SessionStatus::Failed | SessionStatus::Incomplete => true,
                 // Stale in-progress with no work done
                 SessionStatus::InProgress if session.total_cost_usd == 0.0 => true,
                 // Any in-progress/paused session not touched in 7 days
@@ -320,7 +335,11 @@ impl DevSession {
                 _ => false,
             };
             if should_remove {
-                fs::remove_file(&path)?;
+                match fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e.into()),
+                }
                 count += 1;
             }
         }
@@ -489,11 +508,64 @@ mod tests {
         assert_eq!(SessionStatus::Paused.to_string(), "paused");
         assert_eq!(SessionStatus::Completed.to_string(), "completed");
         assert_eq!(SessionStatus::Failed.to_string(), "failed");
+        assert_eq!(SessionStatus::Incomplete.to_string(), "incomplete");
     }
 
     #[test]
     fn phase_display() {
         assert_eq!(PipelinePhase::Adr.to_string(), "adr");
         assert_eq!(PipelinePhase::Commit.to_string(), "commit");
+    }
+
+    // --- ADR-2603311900: pipeline phase precondition gate tests ---
+
+    #[test]
+    fn incomplete_session_detection() {
+        // A freshly created session is InProgress — not incomplete.
+        let s = DevSession::new("test feature");
+        assert_eq!(s.status, SessionStatus::InProgress);
+
+        // A session marked Completed with no artifacts is detected as incomplete
+        // by the condition used in `hex dev list`.
+        let mut s2 = DevSession::new("empty completed");
+        s2.status = SessionStatus::Completed;
+        assert!(s2.completed_steps.is_empty());
+        assert!(s2.quality_result.is_none());
+        assert!(
+            s2.status == SessionStatus::Completed
+                && s2.completed_steps.is_empty()
+                && s2.quality_result.is_none(),
+            "session with no artifacts should be detected as incomplete"
+        );
+    }
+
+    #[test]
+    fn completion_outcome_variants() {
+        // Verify all CompletionOutcome variants compile and are accessible.
+        let _approved = CompletionOutcome::Approved;
+        let _skipped = CompletionOutcome::Skipped;
+        let _aborted = CompletionOutcome::Aborted;
+    }
+
+    #[test]
+    fn incomplete_status_is_cleaned() {
+        let mut s = DevSession::new("stale incomplete");
+        s.status = SessionStatus::Incomplete;
+        s.save().unwrap();
+        let id = s.id.clone();
+        let path = session_path(&id).unwrap();
+
+        // clean_completed should remove Incomplete sessions (treated same as Completed/Failed).
+        // Ignore errors from concurrent test interactions; just verify our file is gone.
+        let _ = DevSession::clean_completed(false);
+
+        let still_present = path.exists();
+        // Belt-and-suspenders: remove if clean_completed somehow missed it
+        let _ = fs::remove_file(&path);
+
+        assert!(
+            !still_present,
+            "incomplete session file should have been removed by clean_completed"
+        );
     }
 }

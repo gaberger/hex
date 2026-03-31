@@ -35,7 +35,7 @@ use crate::pipeline::swarm_phase::{SwarmPhase, SwarmPhaseResult};
 use crate::pipeline::validate_phase::{ValidatePhase, ValidateResult};
 use crate::pipeline::workplan_phase::{WorkplanPhase, WorkplanPhaseResult, WorkplanData, workplan_summary};
 use crate::pipeline::{DevConfig, DevMode};
-use crate::session::{DevSession, PipelinePhase, SessionStatus, ToolCall};
+use crate::session::{CompletionOutcome, DevSession, PipelinePhase, SessionStatus, ToolCall};
 use gate::{GateDialog, GateResult};
 
 // ---------------------------------------------------------------------------
@@ -1347,8 +1347,7 @@ impl TuiApp {
             }
         }
 
-        self.session.status = SessionStatus::Completed;
-        self.session.save()?;
+        self.finalize_session(CompletionOutcome::Approved)?;
         println!("\nSession {} complete.", self.session.id);
         Ok(())
     }
@@ -1833,12 +1832,32 @@ impl TuiApp {
             PipelinePhase::Code => PipelinePhase::Validate,
             PipelinePhase::Validate => PipelinePhase::Commit,
             PipelinePhase::Commit => {
-                self.session.status = SessionStatus::Completed;
-                self.should_quit = true;
+                self.run_commit_phase();
                 return;
             }
         };
         let _ = self.session.update_phase(next);
+    }
+
+    /// Set the terminal session status based on how the pipeline ended.
+    /// This is the ONLY place that should set SessionStatus::Completed.
+    fn finalize_session(&mut self, outcome: CompletionOutcome) -> Result<()> {
+        match outcome {
+            CompletionOutcome::Approved => {
+                // Invariant: if a swarm was created, at least one task must be done
+                if self.session.swarm_id.is_some() && self.session.completed_steps.is_empty() {
+                    warn!("finalizing session as Completed but 0 swarm steps completed — marking Paused instead");
+                    self.session.status = SessionStatus::Paused;
+                } else {
+                    self.session.status = SessionStatus::Completed;
+                }
+            }
+            CompletionOutcome::Skipped | CompletionOutcome::Aborted => {
+                self.session.status = SessionStatus::Paused;
+            }
+        }
+        self.session.updated_at = chrono::Utc::now().to_rfc3339();
+        self.session.save()
     }
 
     /// Auto-approve the current phase when its gate was suppressed
@@ -2000,7 +2019,7 @@ impl TuiApp {
         match action {
             GateResult::Approved => {
                 info!("pipeline complete — session marked as completed");
-                self.session.status = SessionStatus::Completed;
+                let _ = self.finalize_session(CompletionOutcome::Approved);
                 self.should_quit = true;
                 true
             }
@@ -2023,7 +2042,7 @@ impl TuiApp {
                 false
             }
             GateResult::Skip | GateResult::Retry => {
-                self.session.status = SessionStatus::Completed;
+                let _ = self.finalize_session(CompletionOutcome::Skipped);
                 self.should_quit = true;
                 true
             }
