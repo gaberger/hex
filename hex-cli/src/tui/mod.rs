@@ -670,7 +670,7 @@ impl TuiApp {
                     let execute_fut = swarm_phase.execute(
                         &self.session.feature_description,
                         &workplan_data,
-                        self.session.agent_id.as_deref(),
+                        None,  // leave tasks unassigned so Docker workers can self-claim
                         self.session.project_id.as_deref(),
                     );
 

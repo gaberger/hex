@@ -1,0 +1,60 @@
+{
+  "feature": "workflow-reliability-hardening",
+  "adr": "ADR-2603311000",
+  "description": "Fix five structural root causes of recurring workflow failures: shared task completion type, inference quality gate, agent session lifecycle, pre-flight dispatch check, stale model pruning.",
+  "phases": [
+    {
+      "id": "P0",
+      "title": "Shared TaskCompletionBody in hex-core",
+      "description": "Add TaskCompletionBody + TaskStatus to hex-core/src/types/. Update hex-agent task_executor.rs and stdb_task_poller.rs to use the shared type. Update hex-nexus swarms route handler to deserialize the same type.",
+      "files": [
+        "hex-core/src/types/task_completion.rs",
+        "hex-core/src/lib.rs",
+        "hex-agent/src/adapters/secondary/task_executor.rs",
+        "hex-agent/src/adapters/secondary/stdb_task_poller.rs",
+        "hex-nexus/src/routes/swarms.rs"
+      ],
+      "acceptance": "cargo check passes across workspace; mismatched status string is a compile error"
+    },
+    {
+      "id": "P1",
+      "title": "Inference quality gate on registration",
+      "description": "In hex-cli inference add command: after persisting provider, call inference_test internally. If response is empty or HTTP error, delete the record and return an error. Add --prune flag to hex inference discover that removes all registered providers returning empty.",
+      "files": [
+        "hex-cli/src/commands/inference.rs"
+      ],
+      "acceptance": "hex inference add with a non-existent model ID fails with clear error; existing empty-returning models removed by --prune"
+    },
+    {
+      "id": "P2",
+      "title": "Agent session lifecycle — disconnect on session-end",
+      "description": "Add POST /api/hex-agents/:id/disconnect route to hex-nexus that sets endedAt=now, status=completed. Wire into hook-handler for session-end event: call hex agent disconnect $CLAUDE_SESSION_ID. Add hex agent disconnect CLI command.",
+      "files": [
+        "hex-nexus/src/routes/orchestration.rs",
+        "hex-cli/src/commands/agent.rs",
+        "hex-cli/assets/helpers/hook-handler"
+      ],
+      "acceptance": "After session ends, agent record shows status=completed and endedAt timestamp; no more perpetual running sessions"
+    },
+    {
+      "id": "P3",
+      "title": "Pre-flight check before task dispatch",
+      "status": "done",
+      "description": "In supervisor task dispatch (workplan_executor.rs or swarm_phase), before assigning a task to an agent: (1) verify agent heartbeat is within 45s, (2) verify nexus /api/health is reachable. On failure, log warning and skip to next available agent or surface error.",
+      "files": [
+        "hex-nexus/src/orchestration/workplan_executor.rs"
+      ],
+      "acceptance": "Dispatching to a dead agent logs warning and skips; healthy agent receives task normally"
+    },
+    {
+      "id": "P4",
+      "title": "Stale model pruning on nexus start",
+      "status": "done",
+      "description": "On hex nexus start, after loading inference providers, run a background prune pass: test each registered OpenRouter provider with a minimal prompt, remove those returning empty content. Log pruned models as warnings.",
+      "files": [
+        "hex-nexus/src/lib.rs"
+      ],
+      "acceptance": "Placeholder model IDs (non-existent gpt-5.x, grok-4.x) are removed from provider list on startup"
+    }
+  ]
+}

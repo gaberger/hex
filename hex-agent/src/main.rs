@@ -219,6 +219,9 @@ async fn main() -> anyhow::Result<()> {
         // P3: CodePhaseWorker — direct code phase, no inner pipeline
         let worker = CodePhaseWorker::from_env().await;
 
+        // Wait for inference adapter before claiming tasks (SSH tunnels can take 30-60s).
+        worker.wait_for_inference_ready(90).await;
+
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = shutdown.clone();
         tokio::spawn(async move {
@@ -244,15 +247,15 @@ async fn main() -> anyhow::Result<()> {
                         claimed.task_id, payload.description
                     );
 
-                    let result = match worker.execute(&payload).await {
-                        Ok(output) => output,
+                    let (result, success) = match worker.execute(&payload).await {
+                        Ok(output) => (output, true),
                         Err(e) => {
                             eprintln!("[hex-agent] task {} failed: {e}", claimed.task_id);
-                            format!("error: {e}")
+                            (format!("error: {e}"), false)
                         }
                     };
 
-                    if let Err(e) = poller.report_done(&claimed, &result).await {
+                    if let Err(e) = poller.report_done(&claimed, &result, success).await {
                         eprintln!(
                             "[hex-agent] report_done failed for {}: {e}",
                             claimed.task_id

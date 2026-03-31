@@ -1096,64 +1096,66 @@ async fn worker(
     // Main task poll loop
     let poll_duration = std::time::Duration::from_secs(poll_interval);
     loop {
-        // Step 1: claim a pending task (work-stealing via /api/work-items/incomplete)
-        if let Ok(resp) = nexus.get("/api/work-items/incomplete").await {
-            if let Some(all_incomplete) = resp.as_array() {
-                for candidate in all_incomplete {
-                    // Filter: only pending tasks (status="" or "pending"), and only from our swarm if specified.
-                    // Tasks are created with status="" (empty), not "pending", so we must accept both.
-                    let status = candidate["status"].as_str().unwrap_or("");
-                    if !matches!(status, "pending" | "") {
-                        continue;
-                    }
+        // Step 1: claim a pending task via /api/swarms/active (SpacetimeDB-backed).
+        // /api/work-items/incomplete uses the SQLite port and misses SpacetimeDB tasks.
+        if let Ok(resp) = nexus.get("/api/swarms/active").await {
+            if let Some(swarms) = resp.as_array() {
+                'claim: for swarm in swarms {
+                    // Filter by swarm_id if specified
                     if let Some(ref sid) = swarm_id {
-                        let task_swarm = candidate["swarm_id"]
-                            .as_str()
-                            .or_else(|| candidate["swarmId"].as_str())
-                            .unwrap_or("");
-                        if task_swarm != sid.as_str() {
+                        let sw_id = swarm["id"].as_str().unwrap_or("");
+                        if sw_id != sid.as_str() {
                             continue;
                         }
                     }
-                    let task_id = candidate["id"].as_str().unwrap_or("");
-                    if task_id.is_empty() {
-                        continue;
+                    if let Some(tasks) = swarm["tasks"].as_array() {
+                        for candidate in tasks {
+                            let status = candidate["status"].as_str().unwrap_or("");
+                            if !matches!(status, "pending" | "") {
+                                continue;
+                            }
+                            let task_id = candidate["id"].as_str().unwrap_or("");
+                            if task_id.is_empty() {
+                                continue;
+                            }
+                            // Skip already-assigned tasks
+                            let existing_agent = candidate["agent_id"]
+                                .as_str()
+                                .or_else(|| candidate["agentId"].as_str())
+                                .unwrap_or("");
+                            if !existing_agent.is_empty() && existing_agent != "null" {
+                                continue;
+                            }
+                            // Role guard
+                            let c_title = candidate["title"].as_str().unwrap_or("");
+                            let c_role: Option<String> = serde_json::from_str::<serde_json::Value>(c_title)
+                                .ok()
+                                .and_then(|v| v["role"].as_str().map(|s| s.to_string()));
+                            let role_ok = match &c_role {
+                                Some(r) => r == role,
+                                None => c_title.starts_with(&format!("{}: ", role)) || !c_title.contains(": "),
+                            };
+                            if !role_ok {
+                                continue;
+                            }
+                            println!("  [claim] attempting task {} for role {}", &task_id[..8.min(task_id.len())], role);
+                            let assign_result = nexus
+                                .patch(
+                                    &format!("/api/hexflo/tasks/{}", task_id),
+                                    &json!({ "agentId": agent_id }),
+                                )
+                                .await;
+                            match &assign_result {
+                                Ok(_) => {
+                                    println!("  [claim] ✓ claimed task {}", &task_id[..8.min(task_id.len())]);
+                                    break 'claim;
+                                }
+                                Err(e) => {
+                                    println!("  [claim] ✗ failed: {}", e);
+                                }
+                            }
+                        }
                     }
-                    // Skip already-assigned tasks (agentId non-null/non-empty).
-                    // /api/work-items/incomplete serializes SwarmTaskInfo with camelCase,
-                    // so the field is "agentId" — check both for defensive compatibility.
-                    let existing_agent = candidate["agentId"]
-                        .as_str()
-                        .or_else(|| candidate["agent_id"].as_str())
-                        .unwrap_or("");
-                    if !existing_agent.is_empty() && existing_agent != "null" {
-                        continue;
-                    }
-                    // Role guard: only claim tasks intended for this worker's role.
-                    let c_title = candidate["title"].as_str().unwrap_or("");
-                    let c_role: Option<String> = serde_json::from_str::<serde_json::Value>(c_title)
-                        .ok()
-                        .and_then(|v| v["role"].as_str().map(|s| s.to_string()));
-                    let role_ok = match &c_role {
-                        Some(r) => r == role,
-                        None => c_title.starts_with(&format!("{}: ", role)) || !c_title.contains(": "),
-                    };
-                    if !role_ok {
-                        continue;
-                    }
-                    // Assign via PATCH /api/hexflo/tasks/{id} — convenience route (no swarm ID needed).
-                    // SwarmTask has no version field, so we skip CAS version check.
-                    let assign_result = nexus
-                        .patch(
-                            &format!("/api/hexflo/tasks/{}", task_id),
-                            &json!({ "agentId": agent_id }),
-                        )
-                        .await;
-                    if assign_result.is_ok() {
-                        debug!(task_id, "claimed pending task via /api/swarms/tasks");
-                        break;
-                    }
-                    // Non-200 = race lost or error, try next candidate
                 }
             }
         }
@@ -1238,6 +1240,7 @@ async fn worker(
                                         &json!({
                                             "status": "completed",
                                             "result": summary,
+                                            "agent_id": agent_id,
                                         }),
                                     )
                                     .await;
@@ -1254,6 +1257,7 @@ async fn worker(
                                         &json!({
                                             "status": "failed",
                                             "result": format!("Error: {}", e),
+                                            "agent_id": agent_id,
                                         }),
                                     )
                                     .await;

@@ -29,7 +29,7 @@ impl Default for SpacetimeConfig {
     fn default() -> Self {
         Self {
             host: "http://localhost:3033".to_string(),
-            database: "hexflo-coordination".to_string(),
+            database: hex_core::stdb_database_for_module("hexflo-coordination").to_string(),
             auth_token: None,
         }
     }
@@ -91,10 +91,23 @@ mod real {
             }
             // SpacetimeDB v1 returns empty body on success for most reducers.
             // Some versions return whitespace or non-JSON text — treat as null.
+            // NOTE: Some SpacetimeDB versions return HTTP 200 even when the reducer
+            // returns Err(String). Detect error patterns in the body.
             let text = resp.text().await.unwrap_or_default();
             let trimmed = text.trim();
             if !trimmed.is_empty() {
-                tracing::debug!("call_reducer '{}': non-empty response: {}", reducer, &trimmed[..trimmed.len().min(200)]);
+                tracing::debug!("call_reducer '{}': response body: {}", reducer, &trimmed[..trimmed.len().min(500)]);
+                // Detect reducer-level error returned with HTTP 200
+                if let Ok(body_json) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                    if let Some(err) = body_json.get("error").and_then(|e| e.as_str()) {
+                        return Err(StateError::Storage(format!("Reducer {} failed (body error): {}", reducer, err)));
+                    }
+                    if let Some(msg) = body_json.get("message").and_then(|m| m.as_str()) {
+                        if msg.contains("failed") || msg.contains("error") || msg.contains("Error") {
+                            return Err(StateError::Storage(format!("Reducer {} failed (body message): {}", reducer, msg)));
+                        }
+                    }
+                }
             }
             if trimmed.is_empty() {
                 Ok(serde_json::Value::Null)

@@ -347,6 +347,29 @@ pub async fn project_report(
             }
         }
 
+        // Build task list with retry labels for duplicate step_ids
+        let mut step_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let task_list: Vec<serde_json::Value> = tasks.iter().map(|t| {
+            let (title, step_id) = normalize_task_title_with_step(&t.title);
+            let display_title = if let Some(sid) = step_id {
+                let count = step_counts.entry(sid).or_insert(0);
+                *count += 1;
+                if *count > 1 { format!("{} [retry {}]", title, count) } else { title }
+            } else {
+                title
+            };
+            json!({
+                "id": t.id,
+                "title": display_title,
+                "status": t.status,
+                "agentId": t.agent_id,
+                "result": t.result,
+                "dependsOn": t.depends_on,
+                "createdAt": t.created_at,
+                "completedAt": t.completed_at,
+            })
+        }).collect();
+
         swarm_reports.push(json!({
             "id": swarm.id,
             "name": swarm.name,
@@ -361,18 +384,12 @@ pub async fn project_report(
                 "inProgress": t_in_progress,
                 "failed": t_failed,
             },
-            "taskList": tasks.iter().map(|t| json!({
-                "id": t.id,
-                "title": normalize_task_title(&t.title),
-                "status": t.status,
-                "agentId": t.agent_id,
-                "result": t.result,
-                "dependsOn": t.depends_on,
-                "createdAt": t.created_at,
-                "completedAt": t.completed_at,
-            })).collect::<Vec<_>>(),
+            "taskList": task_list,
         }));
     }
+
+    // 5. Scan development artifacts from the filesystem
+    let artifacts = scan_project_artifacts(&project.root_path).await;
 
     let agent_count = historical_agents.len();
     let report = json!({
@@ -384,6 +401,7 @@ pub async fn project_report(
         },
         "agents": historical_agents,
         "swarms": swarm_reports,
+        "artifacts": artifacts,
         "summary": {
             "agentCount": agent_count,
             "swarmCount": project_swarms.len(),
@@ -397,16 +415,150 @@ pub async fn project_report(
     (StatusCode::OK, Json(report))
 }
 
-fn normalize_task_title(title: &str) -> String {
+/// Returns `(display_title, Option<step_id>)` for retry-labeling by callers.
+fn normalize_task_title_with_step(title: &str) -> (String, Option<String>) {
     let trimmed = title.trim();
     if trimmed.starts_with('{') {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
             if let Some(s) = v.get("description").and_then(|d| d.as_str()) {
-                return s.to_string();
+                let desc = s.lines().next().unwrap_or(s).to_string();
+                let step_id = v.get("step_id").and_then(|i| i.as_str()).map(str::to_string);
+                // If the payload already encodes an iteration, respect it
+                if let Some(n) = v.get("iteration").and_then(|i| i.as_u64()) {
+                    return (format!("{} [retry {}]", desc, n), step_id);
+                }
+                return (desc, step_id);
             }
         }
     }
-    title.to_string()
+    (title.to_string(), None)
+}
+
+
+/// Scan docs/ directory for ADRs, workplans, and specs.
+/// Returns a summary JSON with counts and active items for the report.
+async fn scan_project_artifacts(root_path: &str) -> serde_json::Value {
+    let root = std::path::Path::new(root_path);
+
+    // ── ADRs ──────────────────────────────────────────────────────────────────
+    let mut adr_accepted = 0u32;
+    let mut adr_proposed = 0u32;
+    let mut adr_deprecated = 0u32;
+    let mut adr_list: Vec<serde_json::Value> = Vec::new();
+
+    let adr_dir = root.join("docs").join("adrs");
+    if let Ok(mut entries) = tokio::fs::read_dir(&adr_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            // Extract ADR ID from filename: ADR-XXXXXX-<slug>.md → "ADR-XXXXXX"
+            let adr_id = fname.split('-').take(2).collect::<Vec<_>>().join("-");
+            // Read first 1 KB to find Status line (avoid reading entire file)
+            let mut status = "proposed".to_string();
+            if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                for line in content.lines().take(30) {
+                    let lower = line.to_lowercase();
+                    if lower.contains("status:") || lower.contains("## status") {
+                        if lower.contains("accepted") { status = "accepted".to_string(); }
+                        else if lower.contains("deprecated") || lower.contains("superseded") {
+                            status = "deprecated".to_string();
+                        } else if lower.contains("proposed") || lower.contains("draft") {
+                            status = "proposed".to_string();
+                        }
+                        break;
+                    }
+                }
+            }
+            match status.as_str() {
+                "accepted"   => adr_accepted += 1,
+                "deprecated" => adr_deprecated += 1,
+                _            => adr_proposed += 1,
+            }
+            // Derive title from slug portion of filename
+            let slug = fname
+                .trim_end_matches(".md")
+                .splitn(3, '-')
+                .nth(2)
+                .unwrap_or("")
+                .replace('-', " ");
+            adr_list.push(json!({ "id": adr_id, "slug": slug, "status": status, "file": fname }));
+        }
+    }
+    adr_list.sort_by(|a, b| {
+        a["file"].as_str().unwrap_or("").cmp(b["file"].as_str().unwrap_or(""))
+    });
+
+    // ── Workplans ─────────────────────────────────────────────────────────────
+    let mut workplan_list: Vec<serde_json::Value> = Vec::new();
+    let wp_dir = root.join("docs").join("workplans");
+    if let Ok(mut entries) = tokio::fs::read_dir(&wp_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let feature = v["feature"].as_str().unwrap_or(&fname).to_string();
+                    let phases = v["phases"].as_array();
+                    let total = phases.map(|p| p.len()).unwrap_or(0);
+                    let done = phases.map(|p| {
+                        p.iter().filter(|ph| ph["status"].as_str() == Some("done")).count()
+                    }).unwrap_or(0);
+                    let active = done < total;
+                    workplan_list.push(json!({
+                        "feature": feature,
+                        "file": fname,
+                        "totalPhases": total,
+                        "donePhases": done,
+                        "active": active,
+                    }));
+                }
+            }
+        }
+    }
+    workplan_list.sort_by(|a, b| {
+        // Active workplans first, then alphabetical
+        let a_active = a["active"].as_bool().unwrap_or(false);
+        let b_active = b["active"].as_bool().unwrap_or(false);
+        b_active.cmp(&a_active).then_with(|| {
+            a["feature"].as_str().unwrap_or("").cmp(b["feature"].as_str().unwrap_or(""))
+        })
+    });
+
+    // ── Specs ─────────────────────────────────────────────────────────────────
+    let mut spec_count = 0u32;
+    let spec_dir = root.join("docs").join("specs");
+    if let Ok(mut entries) = tokio::fs::read_dir(&spec_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                spec_count += 1;
+            }
+        }
+    }
+
+    json!({
+        "adrs": {
+            "total": adr_accepted + adr_proposed + adr_deprecated,
+            "accepted": adr_accepted,
+            "proposed": adr_proposed,
+            "deprecated": adr_deprecated,
+            "list": adr_list,
+        },
+        "workplans": {
+            "total": workplan_list.len(),
+            "active": workplan_list.iter().filter(|w| w["active"].as_bool().unwrap_or(false)).count(),
+            "list": workplan_list,
+        },
+        "specs": {
+            "total": spec_count,
+        },
+    })
 }
 
 pub async fn list_projects(
@@ -417,10 +569,48 @@ pub async fn list_projects(
         None => return Json(json!({ "projects": [] })),
     };
 
-    let projects = sp.project_list().await.unwrap_or_default();
+    let all_projects = sp.project_list().await.unwrap_or_default();
+
+    // Deduplicate by root_path — keep the entry with the latest registered_at.
+    // Multiple registrations of the same path accumulate when `hex dev` re-registers
+    // on every run without checking for an existing record.
+    let projects: Vec<_> = {
+        let mut by_path: std::collections::HashMap<String, _> = std::collections::HashMap::new();
+        for p in all_projects {
+            // Normalize key so /PARA/... and /para/... collapse to one entry
+            let key = p.root_path.to_lowercase();
+            let newer = by_path.get(&key)
+                .map(|existing: &crate::ports::state::ProjectRecord| p.registered_at > existing.registered_at)
+                .unwrap_or(true);
+            if newer {
+                by_path.insert(key, p);
+            }
+        }
+        // Sort by registered_at descending so newest appear first
+        let mut deduped: Vec<_> = by_path.into_values().collect();
+        deduped.sort_by(|a, b| b.registered_at.cmp(&a.registered_at));
+        deduped
+    };
+
+    // Enrich each project with inferred status — run git checks concurrently.
+    let futures: Vec<_> = projects.iter().map(|p| {
+        let root = p.root_path.clone();
+        async move {
+            let path_exists = std::path::Path::new(&root).exists();
+            let git_age_days = if path_exists {
+                git_commit_age_days(&root).await
+            } else {
+                None
+            };
+            infer_project_status(&root, path_exists, git_age_days)
+        }
+    }).collect();
+    let statuses = futures::future::join_all(futures).await;
+
     let list: Vec<serde_json::Value> = projects
         .iter()
-        .map(|p| {
+        .zip(statuses.iter())
+        .map(|(p, status)| {
             json!({
                 "id": p.id,
                 "name": p.name,
@@ -428,8 +618,52 @@ pub async fn list_projects(
                 "registeredAt": p.registered_at,
                 "lastPushAt": p.last_push_at,
                 "astIsStub": p.ast_is_stub,
+                "status": status,
             })
         })
         .collect();
     Json(json!({ "projects": list }))
+}
+
+/// Infer a human-readable project status from observable filesystem signals.
+fn infer_project_status(root_path: &str, path_exists: bool, git_age_days: Option<i64>) -> &'static str {
+    if !path_exists {
+        return "orphaned";
+    }
+    // Scratch: temp dirs, /workspace container mounts, example sub-projects, or home dir
+    let home = std::env::var("HOME").unwrap_or_default();
+    let is_scratch = root_path.starts_with("/tmp")
+        || root_path.starts_with("/private/tmp")
+        || root_path == "/workspace"
+        || root_path.contains("/examples/")
+        || (!home.is_empty() && root_path == home);
+    if is_scratch {
+        return "scratch";
+    }
+    match git_age_days {
+        None => "untracked",          // no git repo at path
+        Some(d) if d <= 7 => "active",
+        Some(d) if d <= 30 => "recent",
+        Some(_) => "idle",
+    }
+}
+
+/// Run `git log -1 --format=%ct` at `path` and return age in days.
+/// Returns `None` if the directory is not a git repo or git fails.
+async fn git_commit_age_days(path: &str) -> Option<i64> {
+    let out = tokio::process::Command::new("git")
+        .args(["-C", path, "log", "-1", "--format=%ct"])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let ts_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if ts_str.is_empty() {
+        return None;
+    }
+    let ts: i64 = ts_str.parse().ok()?;
+    let now = chrono::Utc::now().timestamp();
+    Some((now - ts) / 86_400)
 }

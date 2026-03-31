@@ -246,16 +246,34 @@ async fn session_start(project_dir: &Path) -> Result<()> {
             let _ = load_workplan_context(id).await;
 
             // ADR-2603301200: Inject architecture fingerprint into Claude Code context.
-            // The fingerprint text is printed to stdout so Claude Code picks it up
-            // as session context, preventing architectural drift in interactive sessions.
+            // stdout is picked up by Claude Code as session context — never skip this.
+            // Strategy: fetch cached fingerprint → auto-generate if missing → print.
             let client = crate::nexus_client::NexusClient::from_env();
-            if let Some(fp_text) = client.fetch_fingerprint_text(id).await {
-                println!("\n{}", fp_text);
+            let fp_text = match client.fetch_fingerprint_text(id).await {
+                Some(text) => Some(text),
+                None => {
+                    // Not cached — generate it now and re-fetch.
+                    let gen_url = format!("/api/projects/{}/fingerprint", id);
+                    let body = serde_json::json!({
+                        "project_root": project_dir.display().to_string(),
+                        "workplan_path": "",
+                    });
+                    let _ = client.post_long(&gen_url, &body).await;
+                    client.fetch_fingerprint_text(id).await
+                }
+            };
+            if let Some(text) = fp_text {
+                println!("\n{}", text);
+            } else {
+                // Generation failed — emit a minimal in-process block so context is never blank.
+                println!("\n{}", minimal_fingerprint_block(project_dir, name));
             }
         }
         Err(_) => {
             println!("  Nexus:   {} (run `hex nexus start`)", "offline".yellow());
             println!("  StDB:    {} (requires nexus)", "offline".dimmed());
+            // Nexus offline — emit minimal in-process fingerprint so context is never blank.
+            println!("\n{}", minimal_fingerprint_block(project_dir, name));
         }
     }
 
@@ -269,6 +287,92 @@ async fn session_start(project_dir: &Path) -> Result<()> {
     ensure_agent_hook(project_dir);
 
     Ok(())
+}
+
+/// Generate a minimal architecture fingerprint block from local project files.
+///
+/// Used as a fallback when nexus is offline or fingerprint generation failed.
+/// Reads go.mod / Cargo.toml / package.json for language detection and any
+/// active workplan for objective. Output matches the injection format from
+/// ADR-2603301200 §3, trimmed to the most essential fields.
+fn minimal_fingerprint_block(project_dir: &Path, project_name: &str) -> String {
+    let mut language = "unknown".to_string();
+    let mut framework = "unknown".to_string();
+    let mut output_type = "unknown".to_string();
+    let mut objective = String::new();
+
+    // Detect language + framework
+    if project_dir.join("Cargo.toml").exists() {
+        language = "rust".to_string();
+        // Peek at Cargo.toml for binary vs library
+        if let Ok(ct) = std::fs::read_to_string(project_dir.join("Cargo.toml")) {
+            if ct.contains("[[bin]]") || ct.contains("[package]") {
+                output_type = "binary".to_string();
+            }
+            if ct.contains("axum") {
+                framework = "axum".to_string();
+                output_type = "web-api".to_string();
+            } else if ct.contains("clap") {
+                framework = "clap".to_string();
+                output_type = "cli".to_string();
+            }
+        }
+    } else if project_dir.join("go.mod").exists() {
+        language = "go".to_string();
+        if let Ok(gm) = std::fs::read_to_string(project_dir.join("go.mod")) {
+            if gm.contains("gin-gonic") {
+                framework = "gin".to_string();
+                output_type = "web-api".to_string();
+            } else {
+                framework = "stdlib".to_string();
+            }
+        }
+    } else if project_dir.join("package.json").exists() {
+        language = "typescript".to_string();
+        if let Ok(pj) = std::fs::read_to_string(project_dir.join("package.json")) {
+            if pj.contains("\"react\"") { framework = "react".to_string(); output_type = "web-app".to_string(); }
+            else if pj.contains("\"next\"") { framework = "next.js".to_string(); output_type = "web-app".to_string(); }
+            else if pj.contains("\"axum\"") { framework = "axum".to_string(); }
+        }
+    }
+
+    // Extract objective from most recent workplan
+    let workplans_dir = project_dir.join("docs/workplans");
+    if workplans_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&workplans_dir) {
+            let mut files: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
+                .collect();
+            // Sort by modification time descending — most recent first
+            files.sort_by_key(|e| std::cmp::Reverse(
+                e.metadata().and_then(|m| m.modified()).ok()
+            ));
+            'outer: for entry in files.iter().take(3) {
+                if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                    if let Ok(wp) = serde_json::from_str::<serde_json::Value>(&content) {
+                        for field in &["objective", "description", "title"] {
+                            if let Some(s) = wp[field].as_str().filter(|s| !s.is_empty()) {
+                                objective = s.chars().take(120).collect();
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut block = format!(
+        "## Project Architecture Context\n\
+         Project: {} | Language: {} | Framework: {} | Output: {}\n",
+        project_name, language, framework, output_type
+    );
+    if !objective.is_empty() {
+        block.push_str(&format!("Objective: {}\n", objective));
+    }
+    block.push_str("Note: nexus offline — run `hex nexus start` then `hex fingerprint generate` for full context.\n---");
+    block
 }
 
 /// Ensure `.claude/settings.json` has the Agent PreToolUse hook (ADR-2603221939).

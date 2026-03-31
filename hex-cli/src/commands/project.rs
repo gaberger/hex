@@ -46,7 +46,14 @@ pub enum ProjectAction {
         confirm: bool,
     },
     /// List registered projects
-    List,
+    List {
+        /// Remove all orphaned entries (path no longer exists on disk)
+        #[arg(long)]
+        clean: bool,
+        /// Also remove scratch entries (/tmp, /examples) when used with --clean
+        #[arg(long)]
+        scratch: bool,
+    },
     /// Full project report: agents → swarms → tasks
     Report {
         /// Project ID, name, or prefix. Defaults to current directory name.
@@ -69,7 +76,7 @@ pub async fn run(action: ProjectAction) -> anyhow::Result<()> {
             archive(&client, &id, remove_claude).await
         }
         ProjectAction::Delete { id, confirm } => delete(&client, &id, confirm).await,
-        ProjectAction::List => list(&client).await,
+        ProjectAction::List { clean, scratch } => list(&client, clean, scratch).await,
         ProjectAction::Report { id, json } => report(&client, &id, json).await,
     }
 }
@@ -250,7 +257,7 @@ async fn delete(
     Ok(())
 }
 
-async fn list(client: &NexusClient) -> anyhow::Result<()> {
+async fn list(client: &NexusClient, clean: bool, scratch: bool) -> anyhow::Result<()> {
     let resp = client.get("/api/projects").await?;
 
     let projects = match resp["projects"].as_array() {
@@ -262,20 +269,77 @@ async fn list(client: &NexusClient) -> anyhow::Result<()> {
         }
     };
 
+    // --clean [--scratch]: remove orphaned (and optionally scratch) entries, then re-fetch
+    if clean {
+        let to_remove: Vec<_> = projects
+            .iter()
+            .filter(|p| {
+                let status = p["status"].as_str().unwrap_or("");
+                status == "orphaned" || (scratch && status == "scratch")
+            })
+            .collect();
+        if to_remove.is_empty() {
+            let what = if scratch { "orphaned or scratch" } else { "orphaned" };
+            println!("{} No {} projects found", "\u{2b21}".cyan(), what);
+        } else {
+            for p in &to_remove {
+                let id = p["id"].as_str().unwrap_or("?");
+                let path = p["rootPath"].as_str().unwrap_or("?");
+                let status = p["status"].as_str().unwrap_or("?");
+                match client.delete(&format!("/api/projects/{}", id)).await {
+                    Ok(_) => println!("{} Removed {} [{}]: {}", "\u{2717}".red(), status, id, path),
+                    Err(e) => println!("{} Failed to remove {}: {}", "\u{26a0}".yellow(), id, e),
+                }
+            }
+            println!();
+        }
+        // Re-fetch after cleanup
+        return Box::pin(list(client, false, false)).await;
+    }
+
     let rows: Vec<Vec<String>> = projects
         .iter()
         .map(|p| {
-            let id = p["id"].as_str().unwrap_or("?").to_string();
-            let name = p["name"].as_str().unwrap_or("?").bold().to_string();
-            let root = fmt_truncate(p["rootPath"].as_str().unwrap_or("?"), 60);
-            vec![id, name, root]
+            let id = fmt_truncate(p["id"].as_str().unwrap_or("?"), 36);
+            let name = fmt_truncate(p["name"].as_str().unwrap_or("?"), 40).bold().to_string();
+            let root = fmt_truncate(p["rootPath"].as_str().unwrap_or("?"), 50);
+            let status = status_badge(p["status"].as_str().unwrap_or("unknown"));
+            vec![id, name, root, status]
         })
         .collect();
 
-    println!("{}", pretty_table(&["ID", "Name", "Path"], &rows));
-    println!("  {} project{}", projects.len(), if projects.len() == 1 { "" } else { "s" });
+    println!("{}", pretty_table(&["ID", "Name", "Path", "Status"], &rows));
+
+    // Summary counts by status
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for p in &projects {
+        *counts.entry(p["status"].as_str().unwrap_or("unknown")).or_insert(0) += 1;
+    }
+    let summary: Vec<String> = ["active", "recent", "idle", "scratch", "untracked", "orphaned"]
+        .iter()
+        .filter_map(|s| counts.get(s).map(|n| format!("{} {}", n, s)))
+        .collect();
+    println!("  {} project{}  ({})", projects.len(),
+        if projects.len() == 1 { "" } else { "s" },
+        if summary.is_empty() { "none".to_string() } else { summary.join(" · ") }
+    );
+    if counts.get("orphaned").copied().unwrap_or(0) > 0 {
+        println!("  {} Run `hex project list --clean` to remove orphaned entries", "\u{26a0}".yellow());
+    }
 
     Ok(())
+}
+
+fn status_badge(status: &str) -> String {
+    match status {
+        "active"    => "● active".green().to_string(),
+        "recent"    => "● recent".cyan().to_string(),
+        "idle"      => "○ idle".dimmed().to_string(),
+        "scratch"   => "◌ scratch".dimmed().to_string(),
+        "untracked" => "? untracked".yellow().to_string(),
+        "orphaned"  => "✗ orphaned".red().to_string(),
+        other       => other.to_string(),
+    }
 }
 
 async fn report(client: &NexusClient, id: &str, json_output: bool) -> anyhow::Result<()> {
@@ -293,7 +357,6 @@ async fn report(client: &NexusClient, id: &str, json_output: bool) -> anyhow::Re
         .get(&format!("/api/projects/{}/report", resolved_id))
         .await
         .map_err(|e| {
-            // Enrich error: if 404, show available projects hint
             anyhow::anyhow!("{}\n  Tip: run `hex project list` to see registered project IDs", e)
         })?;
 
@@ -302,113 +365,202 @@ async fn report(client: &NexusClient, id: &str, json_output: bool) -> anyhow::Re
         return Ok(());
     }
 
+    let w = 65usize;
+    let rule = "─".repeat(w);
+    let top  = "═".repeat(w);
+
     // ── Header ───────────────────────────────────────────
-    let proj = &resp["project"];
+    let proj    = &resp["project"];
     let summary = &resp["summary"];
-    let name = proj["name"].as_str().unwrap_or("?");
-    let root = proj["rootPath"].as_str().unwrap_or("?");
+    let arts    = &resp["artifacts"];
+    let name    = proj["name"].as_str().unwrap_or("?");
+    let root    = proj["rootPath"].as_str().unwrap_or("?");
     let proj_id = proj["id"].as_str().unwrap_or("?");
 
     println!();
-    println!("{}", "═".repeat(65).cyan());
+    println!("{}", top.cyan());
     println!("  {} {}", "\u{2b21}".cyan(), name.bold());
-    println!("{}", "═".repeat(65).cyan());
-    println!("  {}  {}", "ID:  ".white().bold(), proj_id.dimmed());
-    println!("  {}  {}", "Path:".white().bold(), root);
+    println!("{}", top.cyan());
+    println!("  {}  {}", "id  ".dimmed(), proj_id.dimmed());
+    println!("  {}  {}", "path".dimmed(), root.dimmed());
 
-    // ── Summary counts ───────────────────────────────────
-    let agent_count = summary["agentCount"].as_u64().unwrap_or(0);
-    let swarm_count = summary["swarmCount"].as_u64().unwrap_or(0);
-    let tasks_total = summary["tasksTotal"].as_u64().unwrap_or(0);
-    let tasks_done = summary["tasksCompleted"].as_u64().unwrap_or(0);
-    let tasks_pending = summary["tasksPending"].as_u64().unwrap_or(0);
-    let tasks_failed = summary["tasksFailed"].as_u64().unwrap_or(0);
+    // ── Development Artifacts ────────────────────────────
+    let adrs      = &arts["adrs"];
+    let workplans = &arts["workplans"];
+    let specs     = &arts["specs"];
 
-    println!();
-    println!(
-        "  {}  {}  {}  {}",
-        format!("{} agents", agent_count).white().bold(),
-        format!("{} swarms", swarm_count).white().bold(),
-        format!("{}/{} tasks done", tasks_done, tasks_total).green(),
-        if tasks_failed > 0 {
-            format!("{} failed", tasks_failed).red().to_string()
-        } else {
-            format!("{} pending", tasks_pending).dimmed().to_string()
-        }
-    );
+    let adr_total      = adrs["total"].as_u64().unwrap_or(0);
+    let adr_accepted   = adrs["accepted"].as_u64().unwrap_or(0);
+    let adr_proposed   = adrs["proposed"].as_u64().unwrap_or(0);
+    let adr_deprecated = adrs["deprecated"].as_u64().unwrap_or(0);
+    let wp_total       = workplans["total"].as_u64().unwrap_or(0);
+    let wp_active      = workplans["active"].as_u64().unwrap_or(0);
+    let spec_total     = specs["total"].as_u64().unwrap_or(0);
 
-    // ── Agents ───────────────────────────────────────────
-    let agents = resp["agents"].as_array();
-    if let Some(agents) = agents.filter(|a| !a.is_empty()) {
+    if adr_total > 0 || wp_total > 0 || spec_total > 0 {
         println!();
-        println!("{}", "── Agents ────────────────────────────────────────────────────".dimmed());
-        for a in agents {
-            let aid = a["agentId"].as_str().or_else(|| a["id"].as_str()).unwrap_or("?");
-            let aname = a["name"].as_str().unwrap_or("?");
-            let status = a["status"].as_str().unwrap_or("?");
-            let model = a["model"].as_str().unwrap_or("");
-            let status_colored = colorize_agent_status(status);
-            let model_str = if model.is_empty() { String::new() } else { format!("  {}", model.dimmed()) };
-            println!("  {} {}  {}{}", "\u{25cf}".cyan(), aname.bold(), status_colored, model_str);
-            println!("    {}", aid.dimmed());
+        println!("{}", format!("── Development Artifacts {}", "─".repeat(w.saturating_sub(25))).dimmed());
+
+        if adr_total > 0 {
+            let adr_detail = [
+                if adr_accepted   > 0 { format!("{} accepted",   adr_accepted)   } else { String::new() },
+                if adr_proposed   > 0 { format!("{} proposed",   adr_proposed)   } else { String::new() },
+                if adr_deprecated > 0 { format!("{} deprecated", adr_deprecated) } else { String::new() },
+            ].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join("  ");
+            println!("  {} ADRs       {}", format!("{:>3}", adr_total).white().bold(), adr_detail.dimmed());
+        }
+        if wp_total > 0 {
+            let active_str = if wp_active > 0 {
+                format!("  ({} active)", wp_active).yellow().to_string()
+            } else {
+                "  (all done)".dimmed().to_string()
+            };
+            println!("  {} Workplans {}{}", format!("{:>3}", wp_total).white().bold(), String::new(), active_str);
+        }
+        if spec_total > 0 {
+            println!("  {} Specs", format!("{:>3}", spec_total).white().bold());
         }
     }
 
-    // ── Swarms + Tasks ───────────────────────────────────
+    // ── Active Workplans ─────────────────────────────────
+    if let Some(wp_list) = workplans["list"].as_array() {
+        let active_wps: Vec<_> = wp_list.iter()
+            .filter(|w| w["active"].as_bool().unwrap_or(false))
+            .collect();
+        if !active_wps.is_empty() {
+            println!();
+            println!("{}", format!("── Active Workplans {}", "─".repeat(w.saturating_sub(20))).dimmed());
+            for wp in &active_wps {
+                let feat    = wp["feature"].as_str().unwrap_or("?");
+                let total   = wp["totalPhases"].as_u64().unwrap_or(0);
+                let done    = wp["donePhases"].as_u64().unwrap_or(0);
+                let pending = total.saturating_sub(done);
+                let progress = if total > 0 {
+                    format!("P{}/{}", done, total)
+                } else {
+                    "no phases".to_string()
+                };
+                let pending_str = if pending > 0 {
+                    format!("  ({} remaining)", pending).yellow().to_string()
+                } else {
+                    String::new()
+                };
+                println!("  {} {}  {}{}",
+                    "⟳".yellow(),
+                    fmt_truncate(feat, 44).bold(),
+                    progress.dimmed(),
+                    pending_str,
+                );
+            }
+        }
+    }
+
+    // ── Swarms ───────────────────────────────────────────
     let swarms = resp["swarms"].as_array();
     if let Some(swarms) = swarms.filter(|s| !s.is_empty()) {
+        // Partition: active/failed first, then completed
+        let mut active_swarms: Vec<_>    = swarms.iter().filter(|s| matches!(s["status"].as_str(), Some("active") | Some("failed"))).collect();
+        let completed_swarms: Vec<_>     = swarms.iter().filter(|s| s["status"].as_str() == Some("completed")).collect();
+        active_swarms.extend(completed_swarms.iter().copied());
+
         println!();
-        println!("{}", "── Swarms ────────────────────────────────────────────────────".dimmed());
-        for swarm in swarms {
-            let sid = swarm["id"].as_str().unwrap_or("?");
-            let sname = swarm["name"].as_str().unwrap_or("?");
-            let status = swarm["status"].as_str().unwrap_or("?");
-            let topology = swarm["topology"].as_str().unwrap_or("?");
-            let st = &swarm["tasks"];
+        println!("{}", format!("── Swarms {}", "─".repeat(w.saturating_sub(10))).dimmed());
+        for swarm in &active_swarms {
+            let sname   = swarm["name"].as_str().unwrap_or("?");
+            let status  = swarm["status"].as_str().unwrap_or("?");
+            let st      = &swarm["tasks"];
             let s_total = st["total"].as_u64().unwrap_or(0);
-            let s_done = st["completed"].as_u64().unwrap_or(0);
-            let s_fail = st["failed"].as_u64().unwrap_or(0);
-            let s_prog = st["inProgress"].as_u64().unwrap_or(0);
+            let s_done  = st["completed"].as_u64().unwrap_or(0);
+            let s_fail  = st["failed"].as_u64().unwrap_or(0);
+            let s_prog  = st["inProgress"].as_u64().unwrap_or(0);
 
-            let status_colored = colorize_swarm_status(status);
-            println!(
-                "  {} {}  {}  [{}]",
-                "\u{2b21}".yellow(),
-                sname.bold(),
-                status_colored,
-                topology.dimmed()
-            );
-            println!("    {}", sid.dimmed());
-            println!(
-                "    Tasks: {}/{} done  {} in-progress  {} failed",
-                s_done, s_total,
-                s_prog,
-                s_fail
-            );
+            let (icon, name_colored) = match status {
+                "active"    => ("⟳".yellow().to_string(), sname.bold().yellow().to_string()),
+                "failed"    => ("✗".red().to_string(),    sname.bold().red().to_string()),
+                "completed" => ("✓".green().to_string(),  sname.dimmed().to_string()),
+                _           => ("○".normal().to_string(), sname.to_string()),
+            };
 
-            // Task list
-            if let Some(task_list) = swarm["taskList"].as_array() {
-                for task in task_list {
-                    let title = task["title"].as_str().unwrap_or("?");
-                    let tstatus = task["status"].as_str().unwrap_or("?");
-                    let agent = task["agentId"].as_str().unwrap_or("");
-                    let icon = task_status_icon(tstatus);
-                    let agent_str = if agent.is_empty() {
-                        String::new()
-                    } else {
-                        format!("  → {}", &agent[..agent.len().min(8)])
-                    };
-                    println!("      {} {}  {}{}", icon, fmt_truncate(title, 55), colorize_task_status(tstatus), agent_str.dimmed());
+            let task_bar = if s_total > 0 {
+                let bar_width = 16usize;
+                let filled = ((s_done as f64 / s_total as f64) * bar_width as f64) as usize;
+                let bar = format!("[{}{}]",
+                    "█".repeat(filled).green(),
+                    "░".repeat(bar_width.saturating_sub(filled)).dimmed()
+                );
+                format!("  {} {}/{}", bar, s_done, s_total)
+            } else {
+                "  (no tasks)".dimmed().to_string()
+            };
+
+            let extras = [
+                if s_prog > 0 { format!("{} running", s_prog).yellow().to_string() } else { String::new() },
+                if s_fail > 0 { format!("{} failed",  s_fail).red().to_string()    } else { String::new() },
+            ].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join("  ");
+
+            print!("  {} {}  {}", icon, name_colored, task_bar);
+            if !extras.is_empty() { print!("  {}", extras); }
+            println!();
+
+            // For active/failed swarms: show task detail (failed + in-progress only)
+            if status == "active" || status == "failed" {
+                if let Some(task_list) = swarm["taskList"].as_array() {
+                    let show: Vec<_> = task_list.iter()
+                        .filter(|t| matches!(t["status"].as_str(), Some("in_progress") | Some("failed")))
+                        .collect();
+                    for task in &show {
+                        let title   = task["title"].as_str().unwrap_or("?");
+                        let tstatus = task["status"].as_str().unwrap_or("?");
+                        let icon    = task_status_icon(tstatus);
+                        let display = if let Some(pos) = title.rfind(" [retry ") {
+                            format!("{}…{}", fmt_truncate(&title[..pos], 40), &title[pos..])
+                        } else {
+                            fmt_truncate(title, 50)
+                        };
+                        println!("      {} {}  {}", icon, display, colorize_task_status(tstatus));
+                    }
                 }
             }
-            println!();
         }
     } else {
         println!();
-        println!("  {}", "No swarms created for this project yet.".dimmed());
+        println!("  {}", "No swarms yet.".dimmed());
     }
 
-    println!("{}", "═".repeat(65).cyan());
+    // ── Agents ───────────────────────────────────────────
+    let agents = resp["agents"].as_array();
+    let live_agents: Vec<_> = agents.map(|a| {
+        a.iter().filter(|ag| !ag["historical"].as_bool().unwrap_or(false)).collect()
+    }).unwrap_or_default();
+
+    if !live_agents.is_empty() {
+        println!();
+        println!("{}", format!("── Agents {}", "─".repeat(w.saturating_sub(10))).dimmed());
+        for a in &live_agents {
+            let aname  = a["name"].as_str().unwrap_or("?");
+            let status = a["status"].as_str().unwrap_or("?");
+            let model  = a["model"].as_str().unwrap_or("");
+            let model_str = if model.is_empty() { String::new() } else { format!("  {}", model.dimmed()) };
+            println!("  {} {}  {}{}", "\u{25cf}".cyan(), aname.bold(), colorize_agent_status(status), model_str);
+        }
+    }
+
+    // ── Footer ────────────────────────────────────────────
+    let tasks_total  = summary["tasksTotal"].as_u64().unwrap_or(0);
+    let tasks_done   = summary["tasksCompleted"].as_u64().unwrap_or(0);
+    let tasks_failed = summary["tasksFailed"].as_u64().unwrap_or(0);
+    let swarm_count  = summary["swarmCount"].as_u64().unwrap_or(0);
+
+    println!();
+    println!("{}", rule.dimmed());
+    let footer_parts = [
+        if swarm_count > 0 { format!("{} swarms", swarm_count) } else { String::new() },
+        if tasks_total  > 0 { format!("{}/{} tasks done", tasks_done, tasks_total) } else { String::new() },
+        if tasks_failed > 0 { format!("{} failed", tasks_failed).red().to_string()  } else { String::new() },
+    ].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join("  ·  ");
+    if !footer_parts.is_empty() {
+        println!("  {}", footer_parts.dimmed());
+    }
     println!();
     Ok(())
 }
@@ -431,14 +583,6 @@ fn colorize_agent_status(s: &str) -> String {
     }
 }
 
-fn colorize_swarm_status(s: &str) -> String {
-    match s {
-        "active"    => s.green().to_string(),
-        "completed" => s.dimmed().to_string(),
-        "failed"    => s.red().to_string(),
-        _           => s.yellow().to_string(),
-    }
-}
 
 fn colorize_task_status(s: &str) -> String {
     match s {

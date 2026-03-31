@@ -36,7 +36,7 @@ pub const SPACETIMEDB_DEFAULT_HOST: &str = "http://127.0.0.1:3033";
 // hexflo-coordination → "hex" (backward compat), all others → directory name.
 
 /// Database name for the core coordination module (backward-compatible).
-pub const STDB_DATABASE_CORE: &str = "hex";
+pub const STDB_DATABASE_CORE: &str = "hexflo-coordination";
 
 /// Module-to-database mapping. Index matches MODULE_TIERS order in spacetime_launcher.
 /// Format: (module_directory_name, database_name)
@@ -88,5 +88,6 @@ pub use domain::messages::{ContentBlock, ConversationState, Message, Role, StopR
 pub use domain::tokens::{ContextPressure, PressureLevel, TokenBudget, TokenPartition, TokenUsage};
 pub use ports::context_compressor::IContextCompressorPort;
 pub use domain::tools::{ToolCall, ToolDefinition, ToolInputSchema, ToolResult};
+pub use domain::swarm_task::{SwarmTaskCompletion, SwarmTaskStatus};
 pub use domain::workplan::{PhaseGate, TaskStatus, Workplan, WorkplanPhase, WorkplanTask};
 pub use quantization::QuantizationLevel;

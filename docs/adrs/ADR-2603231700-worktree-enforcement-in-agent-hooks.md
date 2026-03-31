@@ -1,6 +1,6 @@
 # ADR-2603231700: Worktree Enforcement in Agent Hooks
 
-**Status:** Implemented
+**Status:** Accepted
 **Date:** 2026-03-23
 **Drivers:** Background agents bypass worktree isolation (ADR-004) because `pre-agent` hook only validates HEXFLO_TASK presence, not worktree assignment. This was observed during the OpenRouter integration (ADR-2603231600) where 9 agents edited files directly on `main` instead of isolated worktrees.
 **Relates to:** ADR-004 (Swarm Worktrees), ADR-050 (Hook-Enforced Lifecycle), ADR-2603221939 (Mandatory Swarm Tracking), ADR-061 (Workplan Lifecycle)

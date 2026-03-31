@@ -160,7 +160,7 @@ impl StdbTaskPoller {
         })
     }
 
-    /// Report task completion.
+    /// Report task completion (or failure).
     ///
     /// StDB path: calls `complete_task` reducer with JSON-encoded result.
     /// REST path: calls `TaskExecutor::report_done`.
@@ -168,6 +168,7 @@ impl StdbTaskPoller {
         &self,
         claimed: &ClaimedTask,
         result: &str,
+        success: bool,
     ) -> Result<(), String> {
         if claimed.via_stdb && self.stdb.is_connected() {
             let result_json = serde_json::json!({ "output": result }).to_string();
@@ -176,7 +177,7 @@ impl StdbTaskPoller {
                 .await
         } else {
             self.rest
-                .report_done(&claimed.task_id, result)
+                .report_done(&claimed.task_id, result, success)
                 .await
         }
     }
@@ -251,6 +252,7 @@ mod tests {
             description: raw.to_string(),
             model_hint: None,
             output_dir: None,
+            role: None,
         });
         assert_eq!(p.step_id, task_id);
         assert_eq!(p.description, raw);

@@ -60,6 +60,8 @@ pub enum InferenceAction {
         /// Provider ID
         provider_id: String,
     },
+    /// Register and calibrate the key default models (run once after install)
+    Setup,
 }
 
 pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
@@ -76,6 +78,7 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
             }
         }
         InferenceAction::Remove { provider_id } => remove_provider(&provider_id).await,
+        InferenceAction::Setup => setup_defaults().await,
     }
 }
 
@@ -196,7 +199,12 @@ async fn add_provider(
         let body = body;
 
         match client.post("/api/inference/register", &body).await {
-            Ok(_) => println!("  {} Registered with hex-nexus", "✓".green()),
+            Ok(_) => {
+                println!("  {} Registered with hex-nexus", "✓".green());
+                // Quality gate (ADR-2603311000): verify the model returns non-empty content.
+                // Empty responses mean the model ID doesn't exist or is rate-limited.
+                validate_model_response(provider_type, url, model_name, key).await;
+            }
             Err(e) => println!("  {} Nexus registration failed: {}", "!".yellow(), e),
         }
     } else {
@@ -217,6 +225,72 @@ async fn add_provider(
     println!("  HEX_OLLAMA_HOST={} HEX_OLLAMA_MODEL={} hex-agent --project-dir .", url, model_name);
 
     Ok(())
+}
+
+/// Quality gate (ADR-2603311000): send a minimal test prompt after registration.
+/// Warns loudly if the model returns empty content — this indicates a non-existent
+/// or placeholder model ID (e.g. "gpt-5.4", "grok-4.20") that will silently
+/// produce no output in the pipeline.
+async fn validate_model_response(provider_type: &str, url: &str, model: &str, api_key: Option<&str>) {
+    let base_url = url.trim_end_matches('/');
+    let endpoint = format!("{}/v1/chat/completions", base_url);
+
+    let payload = serde_json::json!({
+        "model": model,
+        "messages": [{ "role": "user", "content": "Reply with the single word: ok" }],
+        "max_tokens": 8,
+        "temperature": 0.0,
+    });
+
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
+
+    let mut req = http.post(&endpoint).json(&payload);
+    if let Some(key) = api_key {
+        req = req.header("Authorization", format!("Bearer {}", key));
+    } else if provider_type == "openrouter" {
+        if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
+            req = req.header("Authorization", format!("Bearer {}", key));
+        }
+    }
+
+    match req.send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let text = resp.text().await.unwrap_or_default();
+            let reply = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| {
+                    v["choices"][0]["message"]["content"]
+                        .as_str()
+                        .map(|s| s.trim().to_string())
+                })
+                .unwrap_or_default();
+
+            if reply.is_empty() {
+                println!(
+                    "  {} Model '{}' returned empty content — model ID may not exist or is rate-limited.",
+                    "⚠".yellow(), model
+                );
+                println!(
+                    "  {} Use `hex inference test {}` to recheck, or remove with `hex inference remove`.",
+                    "!".yellow(), model
+                );
+            } else {
+                println!("  {} Model validation passed (reply: {:?})", "✓".green(), reply);
+            }
+        }
+        Ok(resp) => {
+            println!(
+                "  {} Model validation returned HTTP {} — check model ID and API key.",
+                "⚠".yellow(), resp.status()
+            );
+        }
+        Err(e) => {
+            println!("  {} Model validation request failed: {}", "!".yellow(), e);
+        }
+    }
 }
 
 async fn list_providers() -> anyhow::Result<()> {
@@ -300,7 +374,6 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
         url: String,
         provider_type: String,
         model: String,
-        api_key_ref: String,
     }
 
     let nexus = crate::nexus_client::NexusClient::from_env();
@@ -309,7 +382,6 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
             url: target.to_string(),
             provider_type: String::new(),
             model: String::new(),
-            api_key_ref: String::new(),
         }
     } else if nexus.ensure_running().await.is_ok() {
         nexus.get("/api/inference/endpoints").await
@@ -329,21 +401,18 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
                                 .and_then(|v| v.into_iter().next())
                                 .unwrap_or_default()
                         },
-                        api_key_ref: String::new(), // resolved from env below
                     })
             })
             .unwrap_or_else(|| ProviderRecord {
                 url: format!("http://{}:11434", target),
                 provider_type: String::new(),
                 model: String::new(),
-                api_key_ref: String::new(),
             })
     } else {
         ProviderRecord {
             url: format!("http://{}:11434", target),
             provider_type: String::new(),
             model: String::new(),
-            api_key_ref: String::new(),
         }
     };
 
@@ -808,6 +877,165 @@ async fn remove_provider(provider_id: &str) -> anyhow::Result<()> {
     ).await {
         Ok(_) => println!("{} Removed provider: {}", "✓".green(), provider_id),
         Err(e) => println!("{} Failed to remove: {}", "✗".red(), e),
+    }
+
+    Ok(())
+}
+
+/// Key default models: one per task type, matching model_selection.rs defaults.
+/// ID format mirrors discover_openrouter: "openrouter-" + model.replace('/', "-").
+/// Note: only use model IDs confirmed available on OpenRouter (no `:free` suffix
+/// unless the model explicitly has a free variant — e.g. qwen3-coder:free exists,
+/// but llama-4-maverick:free and deepseek-r1:free do not).
+const DEFAULT_MODELS: &[(&str, &str)] = &[
+    ("qwen/qwen3-coder:free",      "code generation + editing"),
+    ("deepseek/deepseek-r1",       "reasoning + planning"),
+    ("openai/gpt-4o-mini",         "structured output"),
+    ("meta-llama/llama-4-maverick","general purpose"),
+];
+
+async fn setup_defaults() -> anyhow::Result<()> {
+    println!("{}", "── Inference Setup ──".cyan());
+    println!();
+
+    // Require OpenRouter API key
+    let api_key = std::env::var("OPENROUTER_API_KEY").ok()
+        .filter(|k| !k.is_empty())
+        .or_else(|| {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    NexusClient::from_env().get("/api/secrets/vault/OPENROUTER_API_KEY").await.ok()
+                        .and_then(|v| v.get("value").and_then(|s| s.as_str()).map(|s| s.to_string()))
+                        .filter(|s| !s.is_empty())
+                })
+            })
+        });
+
+    let Some(api_key) = api_key else {
+        println!("  {} OPENROUTER_API_KEY not set — skipping inference setup.", "!".yellow());
+        println!("  Set it first:  hex secrets set OPENROUTER_API_KEY sk-or-...");
+        println!("  Then re-run:   hex inference setup");
+        return Ok(());
+    };
+
+    let client = NexusClient::from_env();
+    let nexus_running = client.ensure_running().await.is_ok();
+    if !nexus_running {
+        println!("  {} hex-nexus not running — start it first: hex nexus start", "✗".red());
+        return Ok(());
+    }
+
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()?;
+
+    let or_url = "https://openrouter.ai/api/v1";
+    let mut calibrated = 0;
+
+    for (model_id, purpose) in DEFAULT_MODELS {
+        let provider_id = format!("openrouter-{}", model_id.replace('/', "-"));
+        print!("  {} {} ({})... ", "→".cyan(), model_id, purpose);
+
+        // Register if not already present
+        let reg_body = serde_json::json!({
+            "id": &provider_id,
+            "provider": "openrouter",
+            "url": or_url,
+            "model": model_id,
+            "models_json": serde_json::to_string(&vec![model_id]).unwrap_or_default(),
+            "requires_auth": true,
+            "secret_key": "OPENROUTER_API_KEY",
+            "quantization": "cloud",
+        });
+        let _ = client.post("/api/inference/register", &reg_body).await;
+
+        // Calibrate via test inference
+        let chat_url = format!("{}/chat/completions", or_url);
+        let test_body = serde_json::json!({
+            "model": model_id,
+            "messages": [{"role": "user", "content": "Reply with only the word 'ok'."}],
+            "max_tokens": 16,
+        });
+
+        let start = std::time::Instant::now();
+        let result = http.post(&chat_url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&test_body)
+            .send()
+            .await;
+
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        match result {
+            Ok(resp) if resp.status().is_success() => {
+                let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                let reply_ok = body
+                    .get("choices").and_then(|c| c.get(0))
+                    .and_then(|c| c.get("message")).and_then(|m| m.get("content"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.trim().is_empty())
+                    .unwrap_or(false);
+
+                let latency_bonus: f32 = if latency_ms < 3_000 { 0.15 }
+                    else if latency_ms < 8_000 { 0.08 }
+                    else if latency_ms < 20_000 { 0.02 }
+                    else { -0.05 };
+                let quality_score = (0.70_f32 + latency_bonus + if reply_ok { 0.15 } else { 0.0 }).clamp(0.0, 1.0);
+
+                let patch = serde_json::json!({ "quality_score": quality_score });
+                match client.patch(&format!("/api/inference/endpoints/{}", provider_id), &patch).await {
+                    Ok(_) => println!("{} q={:.2} ({}ms)", "✓".green(), quality_score, latency_ms),
+                    Err(e) => {
+                        println!("{} inference ok but calibration save failed: {}", "!".yellow(), e);
+                        continue;
+                    }
+                }
+                calibrated += 1;
+            }
+            Ok(resp) if resp.status().as_u16() == 429 => {
+                // Rate limited — wait 5s and retry once
+                print!("rate limited, retrying in 5s... ");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let start2 = std::time::Instant::now();
+                match http.post(&chat_url)
+                    .header("Authorization", format!("Bearer {}", api_key))
+                    .header("Content-Type", "application/json")
+                    .json(&test_body)
+                    .send()
+                    .await
+                {
+                    Ok(r) if r.status().is_success() => {
+                        let latency_ms2 = start2.elapsed().as_millis() as u64;
+                        let latency_bonus: f32 = if latency_ms2 < 3_000 { 0.15 }
+                            else if latency_ms2 < 8_000 { 0.08 }
+                            else if latency_ms2 < 20_000 { 0.02 }
+                            else { -0.05 };
+                        let quality_score = (0.70_f32 + latency_bonus + 0.15).clamp(0.0, 1.0);
+                        let patch = serde_json::json!({ "quality_score": quality_score });
+                        match client.patch(&format!("/api/inference/endpoints/{}", provider_id), &patch).await {
+                            Ok(_) => { println!("{} q={:.2} ({}ms)", "✓".green(), quality_score, latency_ms2); calibrated += 1; }
+                            Err(e) => println!("{} save failed: {}", "!".yellow(), e),
+                        }
+                    }
+                    _ => println!("{} still rate limited — run `hex inference test {}` later", "!".yellow(), provider_id),
+                }
+            }
+            Ok(resp) => {
+                println!("{} HTTP {}", "!".yellow(), resp.status());
+            }
+            Err(e) => {
+                println!("{} {}", "✗".red(), e);
+            }
+        }
+    }
+
+    println!();
+    if calibrated == DEFAULT_MODELS.len() {
+        println!("{} All {} models calibrated — run `hex nexus status` to verify.", "✓".green(), calibrated);
+    } else {
+        println!("{} {}/{} models calibrated.", "!".yellow(), calibrated, DEFAULT_MODELS.len());
     }
 
     Ok(())

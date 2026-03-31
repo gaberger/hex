@@ -8,4 +8,5 @@ pub mod secret_grant;
 pub mod skills;
 pub mod tokens;
 pub mod tools;
+pub mod swarm_task;
 pub mod workplan;

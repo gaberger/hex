@@ -397,6 +397,33 @@ impl WorkplanExecutor {
         workplan: &Workplan,
         phase: &WorkplanPhase,
     ) -> Result<PhaseResult, String> {
+        // P3: Pre-flight check — verify AgentManager is wired and state port is responsive
+        // before committing to spawning any agents. Fail fast with a clear message rather
+        // than spawning N agents that will all hit the same infrastructure problem.
+        if shared_state.agent_manager.is_none() {
+            tracing::warn!(phase = %phase.name, "pre-flight: AgentManager not initialized — aborting phase dispatch");
+            return Err(format!(
+                "Pre-flight failed for phase '{}': AgentManager not initialized",
+                phase.name
+            ));
+        }
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            state_port.hexflo_memory_retrieve("__preflight__"),
+        ).await {
+            Err(_elapsed) => {
+                tracing::warn!(phase = %phase.name, "pre-flight: state port unresponsive after 5s — aborting dispatch");
+                return Err(format!(
+                    "Pre-flight failed for phase '{}': state port unreachable (5s timeout)",
+                    phase.name
+                ));
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(phase = %phase.name, error = %e, "pre-flight: state port error — continuing (non-fatal)");
+            }
+            Ok(Ok(_)) => {}
+        }
+
         let mut agent_ids = Vec::new();
         let mut errors = Vec::new();
         let mut handles = Vec::new();

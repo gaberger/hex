@@ -1,6 +1,6 @@
 # ADR-2603231600: OpenRouter Inference Integration
 
-**Status:** Implemented
+**Status:** Accepted
 **Date:** 2026-03-23
 **Drivers:** Need access to 300+ open-source models (Llama 4, Qwen 3, DeepSeek R1, Mistral, Command R+, etc.) via a single API key, without managing individual provider accounts
 **Supersedes:** None (extends ADR-030)

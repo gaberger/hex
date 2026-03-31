@@ -1,6 +1,6 @@
 # ADR-2603271000: Quantization-Aware Inference Routing
 
-**Status:** Implemented
+**Status:** Accepted
 **Date:** 2026-03-27
 **Drivers:** TurboQuant (Google Research) demonstrates sub-4-bit quantization (2-bit) achieving near-FP16 accuracy at 4-8x memory reduction. hex's inference routing treats all registered providers as equivalent — it has no concept of quantization level, cannot prefer a cheaper quantized local model for simple tasks, and cannot upgrade to a full-precision provider when quality demands it.
 

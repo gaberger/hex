@@ -108,16 +108,22 @@ mod real {
         subscribed: Arc<AtomicBool>,
         connection: Arc<RwLock<Option<DbConnection>>>,
         agent_id: String,
+        /// nexus HTTP base URL for fallback when StDB is unavailable.
+        nexus_url: String,
+        /// Default model for nexus HTTP fallback.
+        default_model: String,
     }
 
     impl StdbInferenceAdapter {
-        pub fn new(agent_id: String, _nexus_url: &str, _model: &str) -> Self {
+        pub fn new(agent_id: String, nexus_url: &str, model: &str) -> Self {
             Self {
                 pending_queue: Arc::new(Mutex::new(VecDeque::new())),
                 in_flight: Arc::new(Mutex::new(HashMap::new())),
                 subscribed: Arc::new(AtomicBool::new(false)),
                 connection: Arc::new(RwLock::new(None)),
                 agent_id,
+                nexus_url: nexus_url.to_string(),
+                default_model: model.to_string(),
             }
         }
 
@@ -137,7 +143,9 @@ mod real {
             let subscribed_applied = self.subscribed.clone();
             let my_agent_id = self.agent_id.clone();
 
-            let build_result = DbConnection::builder()
+            let subscribed_disconnect = self.subscribed.clone();
+
+        let build_result = DbConnection::builder()
                 .with_uri(ws_url)
                 .with_database_name(database)
                 .on_connect(move |conn, _identity, _token| {
@@ -180,9 +188,12 @@ mod real {
                         ]);
                 })
                 .on_connect_error(|_ctx, err| {
-                    tracing::warn!(?err, "StdbInferenceAdapter: connect error, REST fallback");
+                    tracing::warn!(?err, "StdbInferenceAdapter: connect error, nexus HTTP fallback");
                 })
-                .on_disconnect(|_ctx, err| {
+                .on_disconnect(move |_ctx, err| {
+                    // Reset subscribed so is_connected() returns false — prevents calling
+                    // dead reducer channels after WS drop, which causes a panic.
+                    subscribed_disconnect.store(false, Ordering::Release);
                     if let Some(e) = err {
                         tracing::warn!(?e, "StdbInferenceAdapter: disconnected with error");
                     }
@@ -210,6 +221,87 @@ mod real {
                     tracing::error!(error = %e, "StdbInferenceAdapter: build failed — inference unavailable");
                 }
             }
+        }
+
+        /// HTTP fallback — POST to nexus `/api/inference/complete` when StDB is unavailable.
+        async fn call_via_nexus_http(
+            &self,
+            system: &str,
+            messages: &[Message],
+            max_tokens: u32,
+            model: &str,
+        ) -> Result<AnthropicResponse, AnthropicError> {
+            let messages_json: Vec<serde_json::Value> = messages
+                .iter()
+                .map(|m| {
+                    let role = match m.role {
+                        Role::User => "user",
+                        Role::Assistant => "assistant",
+                    };
+                    let text = m
+                        .content
+                        .iter()
+                        .filter_map(|b| {
+                            if let ContentBlock::Text { text } = b {
+                                Some(text.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    json!({ "role": role, "content": text })
+                })
+                .collect();
+
+            let body = json!({
+                "model": model,
+                "system": system,
+                "messages": messages_json,
+                "max_tokens": max_tokens,
+            });
+
+            let url = format!("{}/api/inference/complete", self.nexus_url);
+            let client = reqwest::Client::new();
+            let resp = client
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| AnthropicError::Http(format!("nexus HTTP: {e}")))?;
+
+            let status = resp.status();
+            let text = resp
+                .text()
+                .await
+                .map_err(|e| AnthropicError::Http(format!("nexus HTTP body: {e}")))?;
+
+            if !status.is_success() {
+                return Err(AnthropicError::Api {
+                    status: status.as_u16(),
+                    message: text,
+                });
+            }
+
+            let val: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|e| AnthropicError::Http(format!("nexus HTTP parse: {e}")))?;
+
+            let content_text = val["content"]
+                .as_str()
+                .or_else(|| val["text"].as_str())
+                .unwrap_or("")
+                .to_string();
+
+            Ok(AnthropicResponse {
+                content: vec![ContentBlock::Text { text: content_text }],
+                stop_reason: StopReason::EndTurn,
+                usage: TokenUsage {
+                    input_tokens: val["input_tokens"].as_u64().unwrap_or(0) as u32,
+                    output_tokens: val["output_tokens"].as_u64().unwrap_or(0) as u32,
+                    ..Default::default()
+                },
+                model: val["model"].as_str().unwrap_or(model).to_string(),
+            })
         }
 
         /// Submit a request via reducer and await the response (timeout: 600s).
@@ -300,12 +392,11 @@ mod real {
             model_override: Option<&str>,
             _options: Option<&ApiRequestOptions>,
         ) -> Result<AnthropicResponse, AnthropicError> {
-            let model = model_override.unwrap_or("auto");
+            let model = model_override.unwrap_or(&self.default_model);
 
             if !self.is_connected() {
-                return Err(AnthropicError::Http(
-                    "StdbInferenceAdapter: not connected to SpacetimeDB — inference unavailable".into(),
-                ));
+                tracing::warn!("StdbInferenceAdapter: StDB unavailable — falling back to nexus HTTP");
+                return self.call_via_nexus_http(system, messages, max_tokens, model).await;
             }
 
             self.call_via_stdb(system, messages, max_tokens, model).await

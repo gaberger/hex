@@ -267,8 +267,13 @@ pub async fn disconnect_agent(
         None => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "missing agentId" }))),
     };
 
+    // Mark agent as completed with endedAt timestamp (ADR-2603311000).
+    // Using agent_update_status instead of agent_remove so the session history
+    // is preserved for audit — only status + endedAt change.
     if let Some(sp) = state.state_port.as_ref() {
-        let _ = sp.agent_remove(&agent_id).await;
+        let _ = sp
+            .agent_update_status(&agent_id, crate::ports::state::AgentStatus::Completed, None)
+            .await;
     }
 
     // Broadcast disconnection event

@@ -132,6 +132,26 @@ impl CodePhaseWorker {
         Self { inference, project_path }
     }
 
+    /// Wait until the inference adapter is connected or the deadline passes.
+    ///
+    /// Call this after `from_env()` when running in daemon mode to avoid claiming
+    /// tasks before inference is ready (SSH tunnels can take 30-60s to establish).
+    pub async fn wait_for_inference_ready(&self, timeout_secs: u64) {
+        if self.inference.is_connected() {
+            return;
+        }
+        tracing::info!(timeout_secs, "CodePhaseWorker: waiting for inference adapter...");
+        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs);
+        while tokio::time::Instant::now() < deadline {
+            if self.inference.is_connected() {
+                tracing::info!("CodePhaseWorker: inference adapter ready");
+                return;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
+        tracing::warn!(timeout_secs, "CodePhaseWorker: inference still not connected after wait — proceeding anyway");
+    }
+
     /// Execute a `TaskPayload` — generate code, write files, compile-check.
     ///
     /// Returns a short result string suitable for storing in the task's `result` field.

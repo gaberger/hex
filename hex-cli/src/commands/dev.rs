@@ -218,8 +218,19 @@ async fn start_session(
     // inside the old one.  Always resolve to an absolute path based on the
     // git root so the generated project always lands at the correct location
     // regardless of the caller's working directory.
+    //
+    // Exception: "." and "./<path>" are explicit CWD references — resolve
+    // them against the actual CWD, not the git root.
     let output_dir = if std::path::Path::new(&output_dir).is_absolute() {
         output_dir
+    } else if output_dir == "." || output_dir.starts_with("./") {
+        // Caller explicitly said "here" — honour the CWD.
+        let cwd = std::env::current_dir().unwrap_or_default();
+        cwd.join(&output_dir)
+            .canonicalize()
+            .unwrap_or_else(|_| cwd.join(&output_dir))
+            .to_string_lossy()
+            .to_string()
     } else {
         let git_root = std::process::Command::new("git")
             .args(["rev-parse", "--show-toplevel"])

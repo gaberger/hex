@@ -749,21 +749,28 @@ async fn status() -> anyhow::Result<()> {
                 }
             }
 
-            // Inference providers
+            // Inference providers — only show calibrated ones (quality_score set via `hex inference test`)
             if let Ok(data) = nexus.get("/api/inference/endpoints").await {
                 let endpoints = data.get("endpoints").and_then(|v| v.as_array());
                 if let Some(eps) = endpoints {
-                    if eps.is_empty() {
-                        println!("  Inference: {} (hex inference add to register)", "none".dimmed());
+                    let calibrated: Vec<_> = eps.iter()
+                        .filter(|ep| ep.get("qualityScore").and_then(|v| v.as_f64()).is_some())
+                        .collect();
+                    if calibrated.is_empty() {
+                        println!("  Inference: {} (run hex inference test <id> to calibrate)", "none calibrated".dimmed());
                     } else {
-                        println!("  Inference: {} provider(s)", eps.len().to_string().green());
-                        for ep in eps {
-                            let provider = ep.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
-                            let model = ep.get("model").and_then(|v| v.as_str()).unwrap_or("default");
+                        println!("  Inference: {} calibrated provider(s)", calibrated.len().to_string().green());
+                        for ep in calibrated {
+                            // model is a JSON-encoded array — decode first element
+                            let model = ep.get("model").and_then(|v| v.as_str())
+                                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                                .and_then(|v| v.into_iter().next())
+                                .unwrap_or_else(|| "default".to_string());
                             let url = ep.get("url").and_then(|v| v.as_str()).unwrap_or("?");
+                            let score = ep.get("qualityScore").and_then(|v| v.as_f64()).unwrap_or(0.0);
                             let status = ep.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
                             let icon = if status == "healthy" || status == "ok" { "\u{25cf}".green() } else { "\u{25cb}".yellow() };
-                            println!("    {} {} {} ({})", icon, provider, model, url);
+                            println!("    {} {} ({}) q={:.2}", icon, model, url, score);
                         }
                     }
                 }

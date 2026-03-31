@@ -212,7 +212,7 @@ pub async fn init_project(
         // Write state.json pointing to SpacetimeDB
         let state = json!({
             "host": "http://127.0.0.1:3033",
-            "database": "hexflo-coordination"
+            "database": hex_core::stdb_database_for_module("hexflo-coordination")
         });
         let _ = std::fs::write(
             hex_dir.join("state.json"),

@@ -291,6 +291,44 @@ impl SpacetimeInferenceClient {
         Ok(None)
     }
 
+    /// Poll for a response by agent_id (used when request_id is unknown).
+    ///
+    /// `agent_id` should be a unique per-request value (e.g. `"nexus-<uuid>"`)
+    /// so that concurrent requests don't collide.
+    pub async fn poll_response_by_agent(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<InferenceResponseRow>, String> {
+        let query = format!(
+            "SELECT * FROM inference_response WHERE agent_id = '{}'",
+            agent_id.replace('\'', "''")
+        );
+        let rows = self.sql_query(&query).await?;
+
+        if let Some(row) = rows.first() {
+            if let Some(cols) = row.as_array() {
+                if cols.len() >= 13 {
+                    return Ok(Some(InferenceResponseRow {
+                        response_id: u64_col(cols, 0),
+                        request_id: u64_col(cols, 1),
+                        agent_id: str_col(cols, 2),
+                        status: str_col(cols, 3),
+                        content_json: str_col(cols, 4),
+                        model_used: str_col(cols, 5),
+                        input_tokens: u64_col(cols, 6),
+                        output_tokens: u64_col(cols, 7),
+                        cache_read_tokens: u64_col(cols, 8),
+                        cache_write_tokens: u64_col(cols, 9),
+                        latency_ms: u64_col(cols, 10),
+                        cost_usd: str_col(cols, 11),
+                        created_at: str_col(cols, 12),
+                    }));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     // ── Internals ───────────────────────────────────────────────────────
 
     async fn call_reducer(

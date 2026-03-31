@@ -190,10 +190,132 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
         let chat_client =
             adapters::spacetime_chat::SpacetimeChatClient::new(stdb_host, chat_db);
 
+        // Push resolved API keys into inference-gateway's private `inference_api_key` table.
+        // This is required for `execute_inference` to include auth headers — the table is
+        // only writable via `set_api_key` reducer, not populated automatically at startup.
+        {
+            let or_key = app_state.openrouter_api_key.clone();
+            let an_key = app_state.anthropic_api_key.clone();
+            if or_key.is_some() || an_key.is_some() {
+                match inference_client.list_providers().await {
+                    Ok(providers) => {
+                        for p in &providers {
+                            let key = match p.api_key_ref.as_str() {
+                                "OPENROUTER_API_KEY" => or_key.as_deref(),
+                                "ANTHROPIC_API_KEY" => an_key.as_deref(),
+                                _ => None,
+                            };
+                            if let Some(k) = key {
+                                if let Err(e) = inference_client.set_api_key(&p.provider_id, k).await {
+                                    tracing::warn!(provider = %p.provider_id, error = %e, "set_api_key at startup failed (non-fatal)");
+                                } else {
+                                    tracing::info!(provider = %p.provider_id, "inference API key pushed to WASM module");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, "Failed to list inference providers for key push (non-fatal)"),
+                }
+            }
+        }
+
         app_state.inference_stdb = Some(Arc::new(inference_client));
         app_state.chat_stdb = Some(Arc::new(chat_client));
         tracing::info!("SpacetimeDB inference-gateway + chat-relay clients initialized");
 
+        // P4: Background stale-model prune pass (ADR-2603311000).
+        // Test each registered OpenRouter provider with a minimal prompt.
+        // Providers returning empty content are removed — they are placeholder
+        // model IDs that don't exist yet (e.g. gpt-5.x, grok-4.x) and would
+        // waste the free-provider fallback budget on every request.
+        {
+            let prune_stdb = app_state.inference_stdb.clone();
+            let prune_or_key = app_state.openrouter_api_key.clone();
+            tokio::spawn(async move {
+                if let Some(stdb) = prune_stdb {
+                    let providers = match stdb.list_providers().await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "P4 prune: failed to list providers");
+                            return;
+                        }
+                    };
+                    let openrouter_candidates: Vec<_> = providers
+                        .into_iter()
+                        .filter(|p| p.provider_type == "openrouter")
+                        .collect();
+                    if openrouter_candidates.is_empty() {
+                        return;
+                    }
+                    tracing::info!(count = openrouter_candidates.len(), "P4 prune: testing registered OpenRouter providers");
+                    for p in &openrouter_candidates {
+                        // Resolve the API key for this provider
+                        let api_key = if p.api_key_ref.starts_with("sk-") {
+                            p.api_key_ref.clone()
+                        } else {
+                            prune_or_key.clone().unwrap_or_default()
+                        };
+                        if api_key.is_empty() {
+                            tracing::debug!(provider_id = %p.provider_id, "P4 prune: no key available — skipping");
+                            continue;
+                        }
+                        let model = p.models_json
+                            .trim_start_matches('[')
+                            .trim_end_matches(']')
+                            .split(',')
+                            .next()
+                            .unwrap_or(&p.models_json)
+                            .trim()
+                            .trim_matches('"')
+                            .to_string();
+                        let test_ep = crate::routes::secrets::InferenceEndpointEntry {
+                            id: p.provider_id.clone(),
+                            url: p.base_url.clone(),
+                            provider: "openrouter".into(),
+                            model: model.clone(),
+                            status: "unknown".into(),
+                            requires_auth: true,
+                            secret_key: api_key,
+                            health_checked_at: String::new(),
+                        };
+                        let test_messages = vec![
+                            serde_json::json!({"role": "user", "content": "Reply with the single word: ok"})
+                        ];
+                        match crate::routes::chat::call_inference_endpoint(&test_ep, &test_messages).await {
+                            Ok((content, _, _, _, _)) if content.trim().is_empty() => {
+                                tracing::warn!(
+                                    provider_id = %p.provider_id,
+                                    model = %model,
+                                    "P4 prune: provider returned empty content — removing stale model ID"
+                                );
+                                if let Err(e) = stdb.remove_provider(&p.provider_id).await {
+                                    tracing::warn!(provider_id = %p.provider_id, error = %e, "P4 prune: remove_provider failed");
+                                }
+                            }
+                            Ok((content, _, _, _, _)) => {
+                                tracing::info!(
+                                    provider_id = %p.provider_id,
+                                    model = %model,
+                                    content_len = content.len(),
+                                    "P4 prune: provider OK"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    provider_id = %p.provider_id,
+                                    model = %model,
+                                    error = %e,
+                                    "P4 prune: provider test error (keeping — may be transient)"
+                                );
+                            }
+                        }
+                        // Brief pause between tests to avoid rate-limit burst
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                    tracing::info!("P4 prune: stale model prune pass complete");
+                }
+            });
+        }
     }
 
     // Auto-hydrate SpacetimeDB schemas on startup (T9: zero-setup first boot).

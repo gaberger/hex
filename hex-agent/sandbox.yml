@@ -1,52 +1,80 @@
-# Docker AI Sandbox configuration for hex-agent containers.
-# Consumed by hex-nexus DockerSandboxAdapter (ADR-2603282000).
-version: "1"
+# hex-agent Docker AI Sandbox — network policy (ADR-2603282000)
+#
+# Defines the allowed network egress for hex-agent running inside a
+# Docker AI Sandbox microVM. Outbound connections are restricted to
+# the listed hosts; all other egress is dropped.
+#
+# Linux host note: Docker Desktop uses host.docker.internal; on Linux
+# the nexus injects SPACETIMEDB_HOST and HEX_NEXUS_HOST env vars with
+# the actual bridge IP (typically 172.17.0.1).
 
+name: hex-agent-sandbox
 image: hex-agent:latest
 
-# Resource limits per container
-resources:
-  cpu: "1.0"
-  memory: "512m"
-  pids: 64
-
-# Network policy -- allowlist only
 network:
-  mode: custom
+  # Allow-list — minimal set needed for agent operation
   allow:
-    - host: host.docker.internal
-      port: 5555
-      protocol: tcp
-      reason: hex-nexus coordination API
+    # SpacetimeDB WebSocket (coordination + inference relay)
     - host: host.docker.internal
       port: 3033
       protocol: tcp
-      reason: SpacetimeDB WebSocket
+      comment: SpacetimeDB WebSocket
+
+    # hex-nexus REST API (task polling, file writes, compile-check)
+    - host: host.docker.internal
+      port: 5555
+      protocol: tcp
+      comment: hex-nexus REST API
+
+    # Local Ollama inference (optional — only if HEX_MODEL_TIER=local)
+    - host: host.docker.internal
+      port: 11434
+      protocol: tcp
+      comment: Ollama local inference
+
+    # OpenRouter inference API
     - host: openrouter.ai
       port: 443
       protocol: tcp
-      reason: inference (OpenRouter)
-    - host: api.anthropic.com
+      comment: OpenRouter inference
+
+    # Rust package registry (cargo fetch during code-gen tasks)
+    - host: crates.io
       port: 443
       protocol: tcp
-      reason: inference (Anthropic direct)
-  deny_by_default: true
+      comment: Rust crate registry
+    - host: static.crates.io
+      port: 443
+      protocol: tcp
+      comment: Rust crate CDN
 
-# Volume mounts (worktree path injected at runtime by DockerSandboxAdapter)
-volumes:
-  - source: "${WORKTREE_PATH}"
+    # Node package registry (npm tasks)
+    - host: registry.npmjs.com
+      port: 443
+      protocol: tcp
+      comment: npm registry
+
+environment:
+  # Injected by hex-nexus when spawning the container
+  required:
+    - SPACETIMEDB_TOKEN
+    - HEX_NEXUS_URL
+    - HEX_AGENT_ID
+    - HEXFLO_TASK
+  optional:
+    - SPACETIMEDB_URL      # override default ws://host.docker.internal:3033
+    - HEX_NEXUS_HOST       # Linux bridge IP override
+    - SPACETIMEDB_HOST     # Linux bridge IP override
+    - HEX_MODEL_TIER       # local|cloud (default: cloud)
+    - OPENROUTER_API_KEY   # required when HEX_MODEL_TIER=cloud
+
+mounts:
+  # Worktree bind-mount: nexus provides the host path
+  - type: bind
+    source: "${WORKTREE_PATH}"
     target: /workspace
-    readonly: false
+    comment: "git worktree for this task (hex-coder writes here)"
 
-# Labels applied to every container
-labels:
-  hex.managed: "true"
-  hex.component: "agent"
-  hex.adr: "ADR-2603282000"
-
-# Startup health check
-healthcheck:
-  test: ["CMD", "hex-agent", "--version"]
-  interval: 10s
-  timeout: 5s
-  retries: 3
+resources:
+  memory: 2g
+  cpus: "2.0"

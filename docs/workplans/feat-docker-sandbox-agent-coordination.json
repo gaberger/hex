@@ -4,7 +4,7 @@
   "description": "Complete ADR-2603282000. P1 (MCP server), P2 (boundary enforcement), P3 (agentic loop), P5 (spawn endpoint), and P8-partial (coordination tests) are already implemented. This workplan covers the remaining phases: P4 (Dockerfile + sandbox.yml), P6 (hook worktree gate), P7 (hex swarm microVM-first), and P8-completion (MCP server tests).",
   "adr": "ADR-2603282000",
   "specs": "docs/specs/docker-sandbox-agent-coordination.json",
-  "status": "partial",
+  "status": "done",
   "created_at": "2026-03-28T00:00:00Z",
   "created_by": "planner",
   "phases": [

@@ -6,7 +6,8 @@
 use async_trait::async_trait;
 use hex_core::ports::agent_runtime::IAgentRuntimePort;
 use hex_core::domain::sandbox::{AgentTask, SandboxError, ToolResult};
-use serde::{Deserialize, Serialize};
+use hex_core::domain::swarm_task::SwarmTaskCompletion;
+use serde::Deserialize;
 
 /// Nexus REST client for HexFlo task lifecycle.
 pub struct TaskExecutor {
@@ -26,12 +27,7 @@ pub(crate) struct HexFloTask {
     pub(crate) title: String,
 }
 
-#[derive(Debug, Serialize)]
-struct CompleteBody<'a> {
-    status: &'a str,
-    result: &'a str,
-    agent_id: &'a str,
-}
+// CompleteBody replaced by hex_core::domain::swarm_task::SwarmTaskCompletion (ADR-2603311000)
 
 impl TaskExecutor {
     /// Create from environment variables:
@@ -118,13 +114,13 @@ impl TaskExecutor {
         }
     }
 
-    /// Report task completion to nexus.
-    pub async fn report_done(&self, task_id: &str, result: &str) -> Result<(), String> {
+    /// Report task completion (or failure) to nexus.
+    pub async fn report_done(&self, task_id: &str, result: &str, success: bool) -> Result<(), String> {
         let url = format!("{}/api/hexflo/tasks/{}", self.nexus_url, task_id);
-        let body = CompleteBody {
-            status: "completed",
-            result,
-            agent_id: &self.agent_id,
+        let body = if success {
+            SwarmTaskCompletion::success(result, &self.agent_id)
+        } else {
+            SwarmTaskCompletion::failure(result, &self.agent_id)
         };
         let resp = self.client
             .patch(&url)
@@ -163,16 +159,22 @@ impl TaskExecutor {
                         description: task.title.clone(),
                         model_hint: None,
                     };
-                    let result = match self.execute_task(agent_task).await {
+                    let (result, success) = match self.execute_task(agent_task).await {
                         Ok(tool_result) => {
-                            tool_result.output.unwrap_or_else(|| format!("Task '{}' completed", task.title))
+                            let ok = tool_result.success;
+                            let msg = if ok {
+                                tool_result.output.unwrap_or_else(|| format!("Task '{}' completed", task.title))
+                            } else {
+                                tool_result.error.unwrap_or_else(|| format!("Task '{}' failed", task.title))
+                            };
+                            (msg, ok)
                         }
                         Err(e) => {
                             eprintln!("[hex-agent] execute_task error: {e}");
-                            format!("error: {e}")
+                            (format!("error: {e}"), false)
                         }
                     };
-                    match self.report_done(&task.id, &result).await {
+                    match self.report_done(&task.id, &result, success).await {
                         Ok(()) => eprintln!("[hex-agent] completed task {}", task.id),
                         Err(e) => eprintln!("[hex-agent] failed to report task {}: {}", task.id, e),
                     }
@@ -255,7 +257,7 @@ impl IAgentRuntimePort for TaskExecutor {
     }
 
     async fn report_completion(&self, task_id: &str, result: &str) -> Result<(), SandboxError> {
-        self.report_done(task_id, result)
+        self.report_done(task_id, result, true)
             .await
             .map_err(SandboxError::Runtime)
     }

@@ -1,6 +1,6 @@
 # ADR-2603240104: Swarm Agent Personalities — Specialized Roles with Context-Aware Prompting
 
-**Status:** Implemented
+**Status:** Accepted
 **Date:** 2026-03-24
 **Drivers:** hex dev generates code but operates as a single pipeline — one model, one prompt, one pass. Real development requires specialized roles: a coder who writes, a reviewer who critiques, a tester who validates, a documenter who explains. Each role needs different context, different prompts, and different success criteria. The v2 swarm infrastructure (ADR-2603232340) provides the coordination layer — this ADR defines the agents that run on it.
 

@@ -200,6 +200,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
         println!("    {} Start hex-nexus:      hex nexus start", "\u{2022}".dimmed());
         println!("    {} Install templates:    hex init --force", "\u{2022}".dimmed());
     }
+    println!("    {} Calibrate models:     hex inference setup", "\u{2022}".dimmed());
     println!("    {} Check architecture:   hex analyze .", "\u{2022}".dimmed());
     println!("    {} Start the dashboard:  hex nexus start", "\u{2022}".dimmed());
     if !args.scaffold {

@@ -1435,13 +1435,16 @@ impl Supervisor {
         // `step_id`, `description`, `model_hint`, and `output_dir` without needing
         // a separate hexflo memory lookup (ADR-2603300100 P4.1).
         let title = if let Some(s) = step {
-            serde_json::json!({
+            let mut payload = serde_json::json!({
                 "role": role,
                 "step_id": s.id,
                 "description": s.description,
                 "output_dir": self.output_dir,
-            })
-            .to_string()
+            });
+            if iteration > 1 {
+                payload["iteration"] = serde_json::json!(iteration);
+            }
+            payload.to_string()
         } else {
             format!("{}: {} [iteration {}]", role, objective, iteration)
         };
@@ -1685,22 +1688,6 @@ impl Supervisor {
                                 ));
                             }
                             _ => {} // pending / in_progress — keep polling
-                        }
-                    }
-
-                    // Filesystem fallback: if the worker has generated source files
-                    // but the task-completion signal isn't arriving (e.g. SpacetimeDB
-                    // latency), proceed rather than timing out.
-                    if poll_start.elapsed().as_secs() > 30 {
-                        let src_dir = std::path::PathBuf::from(&self.output_dir).join("src");
-                        let has_files = src_dir.exists()
-                            && std::fs::read_dir(&src_dir)
-                                .ok()
-                                .and_then(|mut d| d.next())
-                                .is_some();
-                        if has_files {
-                            debug!(role, "filesystem fallback: src/ has files — treating as complete");
-                            break Ok(());
                         }
                     }
 

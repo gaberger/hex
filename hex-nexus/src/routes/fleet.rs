@@ -30,7 +30,18 @@ pub struct RegisterRequest {
     username: String,
     key_path: String,
     max_agents: Option<u32>,
+    /// If true (default), auto-provision hex-agent binary after registration.
+    /// Uses `local_binary_path` for SCP if provided, else falls back to
+    /// `cargo build` in `source_dir` on the remote (default: ~/projects/hex-intf).
+    #[serde(default = "default_true")]
+    auto_deploy: bool,
+    /// Local path to a pre-built hex-agent binary for SCP deploy.
+    local_binary_path: Option<String>,
+    /// Remote source directory for fallback `cargo build` (default: ~/projects/hex-intf).
+    source_dir: Option<String>,
 }
+
+fn default_true() -> bool { true }
 
 #[derive(Debug, Deserialize)]
 pub struct DeployRequest {
@@ -54,22 +65,46 @@ pub async fn register_node(
     Json(req): Json<RegisterRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let config = SshConfig {
-        host: req.host,
+        host: req.host.clone(),
         port: req.port.unwrap_or(22),
-        username: req.username,
-        key_path: req.key_path,
+        username: req.username.clone(),
+        key_path: req.key_path.clone(),
     };
 
     state
         .fleet
-        .register(req.id.clone(), config, req.max_agents.unwrap_or(4))
+        .register(req.id.clone(), config.clone(), req.max_agents.unwrap_or(4))
         .await;
+
+    // Spawn background provisioning — returns 201 immediately, deploy runs async.
+    if req.auto_deploy {
+        let local_binary = req.local_binary_path.clone();
+        let source_dir = req.source_dir
+            .clone()
+            .unwrap_or_else(|| "~/projects/hex-intf".to_string());
+        let node_id = req.id.clone();
+
+        tokio::spawn(async move {
+            tracing::info!(node_id = %node_id, "auto-provisioning hex-agent on registered host");
+            match crate::remote::provisioner::RemoteProvisioner::ensure_binary(
+                &config,
+                local_binary.as_deref(),
+                Some(&source_dir),
+            )
+            .await
+            {
+                Ok(()) => tracing::info!(node_id = %node_id, "hex-agent provisioned successfully"),
+                Err(e) => tracing::warn!(node_id = %node_id, error = %e, "hex-agent provisioning failed"),
+            }
+        });
+    }
 
     (
         StatusCode::CREATED,
         Json(serde_json::json!({
             "ok": true,
-            "node_id": req.id
+            "node_id": req.id,
+            "provisioning": req.auto_deploy,
         })),
     )
 }

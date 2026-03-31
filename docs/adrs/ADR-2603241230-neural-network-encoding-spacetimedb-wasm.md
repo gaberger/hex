@@ -1,6 +1,6 @@
 # ADR-2603241230: Neural Network Encoding in SpacetimeDB WASM
 
-**Status:** Implemented
+**Status:** Accepted
 **Date:** 2026-03-24
 **Drivers:** Research initiative to encode neural network architecture, weights, and autonomous experiment loops as SpacetimeDB transactional state — inspired by karpathy/autoresearch methodology
 **Supersedes:** None (extends ADR-031 RL-Driven Model Selection)

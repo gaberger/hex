@@ -3,6 +3,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use hex_core::domain::swarm_task::SwarmTaskStatus;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -35,7 +36,8 @@ pub struct CreateTaskRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateTaskRequest {
-    pub status: Option<String>,
+    /// Typed status — invalid strings return 422 at deserialization (ADR-2603311000).
+    pub status: Option<SwarmTaskStatus>,
     pub result: Option<String>,
     pub agent_id: Option<String>,
     /// CAS version — must match current task.version (ADR-2603241900).
@@ -284,21 +286,21 @@ pub async fn update_task(
 
     // Apply status change
     if let Some(ref status) = body.status {
-        match status.as_str() {
-            "completed" => {
+        match status {
+            SwarmTaskStatus::Completed => {
                 let result = body.result.as_deref().unwrap_or("");
                 port.swarm_task_complete(&task_id, result)
                     .await
                     .map_err(state_err)?;
             }
-            "failed" => {
+            SwarmTaskStatus::Failed => {
                 let reason = body.result.as_deref().unwrap_or("unknown failure");
                 port.swarm_task_fail(&task_id, reason)
                     .await
                     .map_err(state_err)?;
             }
             _ => {
-                // For other status values (e.g. "in_progress"), assign is
+                // For other status values (e.g. InProgress, Pending), assign is
                 // the closest semantic operation; the status will be
                 // reflected by the agent assignment above.
             }
@@ -311,7 +313,7 @@ pub async fn update_task(
         event: "task_updated".into(),
         data: json!({
             "task_id": task_id,
-            "status": body.status,
+            "status": body.status.as_ref().map(|s| s.as_str()),
             "result": body.result,
         }),
     });
