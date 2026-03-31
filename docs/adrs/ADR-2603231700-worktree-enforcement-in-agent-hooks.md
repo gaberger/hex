@@ -1,6 +1,6 @@
 # ADR-2603231700: Worktree Enforcement in Agent Hooks
 
-**Status:** Proposed
+**Status:** Implemented
 **Date:** 2026-03-23
 **Drivers:** Background agents bypass worktree isolation (ADR-004) because `pre-agent` hook only validates HEXFLO_TASK presence, not worktree assignment. This was observed during the OpenRouter integration (ADR-2603231600) where 9 agents edited files directly on `main` instead of isolated worktrees.
 **Relates to:** ADR-004 (Swarm Worktrees), ADR-050 (Hook-Enforced Lifecycle), ADR-2603221939 (Mandatory Swarm Tracking), ADR-061 (Workplan Lifecycle)
@@ -167,6 +167,12 @@ When Claude Code's Agent tool supports `isolation: "worktree"`, the orchestrator
 - ADR-004: Git Worktrees for Parallel Agent Isolation
 - ADR-050: Hook-Enforced Agent Lifecycle Pipeline
 - ADR-054: ADR Compliance Enforcement
+
+## Implementation Notes
+
+Implemented in:
+- `hex-cli/src/commands/hook.rs` — `SubagentStart` handler (~lines 440-690), `check_tier_gate` (~line 635), `ensure_worktree_exists` (~line 477)
+- `hex-cli/src/commands/agent_audit.rs` — agent audit trail flagging main-branch edits without worktree
 - ADR-2603221939: Mandatory Swarm Tracking for Background Agents
 - ADR-061: Workplan Lifecycle Management
 - Incident: OpenRouter integration (ADR-2603231600) — 9 agents on main, no worktree isolation

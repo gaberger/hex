@@ -2,7 +2,7 @@
   "title": "Plan: add hex agent status command",
   "feature": "",
   "language": "typescript",
-  "status": "done",
+  "status": "partial",
   "steps": [
     {
       "id": "step-1",

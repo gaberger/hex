@@ -1,6 +1,6 @@
 # ADR-2603241230: Neural Network Encoding in SpacetimeDB WASM
 
-**Status:** Proposed
+**Status:** Implemented
 **Date:** 2026-03-24
 **Drivers:** Research initiative to encode neural network architecture, weights, and autonomous experiment loops as SpacetimeDB transactional state — inspired by karpathy/autoresearch methodology
 **Supersedes:** None (extends ADR-031 RL-Driven Model Selection)
@@ -331,5 +331,12 @@ Neural network weights are NOT stored in SpacetimeDB tables (too large — even 
 - ADR-025: SpacetimeDB as Distributed State Backend
 - ADR-027: HexFlo Native Swarm Coordination
 - ADR-035: Hex Architecture v2: Rust-First, SpacetimeDB-Native
+
+## Implementation Notes
+
+Implemented in:
+- `hex-nexus/src/neural_lab_quant.rs` — quantization-aware neural lab runtime bridging WASM↔filesystem
+- `spacetime-modules/` — neural-lab WASM module with NetworkConfig, Experiment, ResearchFrontier tables and scheduled reducers
+- `hex-cli/src/commands/` — `hex neural-lab` CLI subcommands (experiment create/list, loop start/stop, frontier, config)
 - ADR-2603231500: SpacetimeDB Per-Module Databases
 - Autoresearch key metrics: 5-min time budget, val_bpb (bits per byte), MuonAdamW optimizer, keep/discard branching

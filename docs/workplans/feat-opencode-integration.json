@@ -2,7 +2,7 @@
   "title": "Plan: hex Context Injection into opencode (ADR-2603231800)",
   "feature": "opencode-integration",
   "language": "rust",
-  "status": "done",
+  "status": "planned",
   "description": "Implement hex CLI command to inject hex's complete context (MCP tools, agent definitions, skills, hooks, enforcement rules) into opencode's configuration system",
   "adr": "ADR-2603231800",
   "priority": "high",

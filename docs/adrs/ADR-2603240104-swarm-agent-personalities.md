@@ -1,6 +1,6 @@
 # ADR-2603240104: Swarm Agent Personalities — Specialized Roles with Context-Aware Prompting
 
-**Status:** Proposed
+**Status:** Implemented
 **Date:** 2026-03-24
 **Drivers:** hex dev generates code but operates as a single pipeline — one model, one prompt, one pass. Real development requires specialized roles: a coder who writes, a reviewer who critiques, a tester who validates, a documenter who explains. Each role needs different context, different prompts, and different success criteria. The v2 swarm infrastructure (ADR-2603232340) provides the coordination layer — this ADR defines the agents that run on it.
 
@@ -452,6 +452,12 @@ This reveals which roles need better prompts or different models.
 
 - ADR-2603232340: Validate Loop Until Grade A
 - ADR-2603232005: Self-Sufficient hex-agent with TUI
+
+## Implementation Notes
+
+Implemented in:
+- `hex-cli/assets/agents/hex/hex/` — 14 YAML agent personality definitions: hex-coder.yml, planner.yml, hex-reviewer.yml, hex-tester.yml, hex-fixer.yml, validation-judge.yml, swarm-coordinator.yml, behavioral-spec-writer.yml, dead-code-analyzer.yml, dependency-analyst.yml, integrator.yml, rust-refactorer.yml, scaffold-validator.yml, status-monitor.yml
+- Each YAML specifies model tier/preferred/fallback, context loading strategy (L1/L2/L3), workflow phases, feedback loop gates, and quality thresholds
 - ADR-2603240045: Free Model Performance Tracking
 - ADR-027: HexFlo Native Coordination
 - ADR-031: RL-Driven Model Selection

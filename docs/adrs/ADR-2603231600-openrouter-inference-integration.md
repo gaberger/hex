@@ -1,6 +1,6 @@
 # ADR-2603231600: OpenRouter Inference Integration
 
-**Status:** Proposed
+**Status:** Implemented
 **Date:** 2026-03-23
 **Drivers:** Need access to 300+ open-source models (Llama 4, Qwen 3, DeepSeek R1, Mistral, Command R+, etc.) via a single API key, without managing individual provider accounts
 **Supersedes:** None (extends ADR-030)
@@ -181,6 +181,12 @@ Budget-constrained:          OpenRouter(llama-4-scout) → Local → Haiku
 - **Cost**: OpenRouter markup is typically <5%; the convenience of single-key outweighs this
 - **Availability**: Local models (Ollama) remain as zero-dependency fallback; Anthropic/MiniMax direct remain for critical paths
 - **Rate limits**: Cache model metadata including rate limit hints; implement exponential backoff with provider rotation
+
+## Implementation Notes
+
+Implemented in:
+- `hex-nexus/src/adapters/spacetime_inference.rs` — OpenRouter provider adapter (OpenAI-compatible wire protocol, actual cost tracking from response)
+- `hex-cli/src/commands/inference.rs` — `hex inference add/list/test` commands for OpenRouter provider management
 
 ## Implementation
 

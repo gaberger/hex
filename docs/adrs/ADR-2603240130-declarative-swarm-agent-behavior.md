@@ -1,6 +1,6 @@
 # ADR-2603240130: Declarative Swarm Agent Behavior from YAML Definitions
 
-**Status:** Proposed
+**Status:** Implemented
 **Date:** 2026-03-24
 **Drivers:** Agent behaviors are hardcoded in `supervisor.rs` — model selection, context assembly, feedback loops, quality thresholds. But rich YAML agent definitions already exist in `hex-cli/assets/agents/hex/hex/*.yml` with model tiers, context loading strategies, workflow phases, feedback loops, and quality gates. The supervisor should read these YAMLs to configure agent behavior declaratively, not imperatively.
 
@@ -297,3 +297,10 @@ This is the single source of truth for swarm behavior — not code.
 - ADR-2603232340: Validate Loop Until Grade A
 - ADR-2603232005: Self-Sufficient hex-agent with TUI
 - Agent YAML definitions: `hex-cli/assets/agents/hex/hex/*.yml`
+
+## Implementation Notes
+
+Implemented in:
+- `hex-cli/assets/agents/hex/hex/` — 14 YAML agent definitions (hex-coder.yml, planner.yml, hex-reviewer.yml, hex-tester.yml, hex-fixer.yml, validation-judge.yml, swarm-coordinator.yml, etc.)
+- `hex-cli/assets/swarms/dev-pipeline.yml` — declarative swarm pipeline composition
+- `hex-cli/src/pipeline/supervisor.rs` — supervisor reads YAMLs at runtime via `AgentDefinition::load_all()` to drive all agent behavior declaratively
