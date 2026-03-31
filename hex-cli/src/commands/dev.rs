@@ -283,6 +283,24 @@ fn config_from_session(session: &DevSession) -> DevConfig {
     )
 }
 
+/// Check if a workplan matching `slug` already exists in `docs/workplans/`.
+/// Matches `feat-<slug>.json`, `<slug>.json`, or any filename containing the slug.
+fn existing_workplan_for_slug(slug: &str) -> bool {
+    let dir = std::path::Path::new("docs/workplans");
+    if !dir.is_dir() {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    entries.flatten().any(|e| {
+        let name = e.file_name().to_string_lossy().to_string();
+        name.ends_with(".json") && (
+            name == format!("feat-{}.json", slug) ||
+            name == format!("{}.json", slug) ||
+            name.contains(slug)
+        )
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn start_session(
     description: String,
@@ -299,7 +317,7 @@ async fn start_session(
 
     // ── Determine output directory ────────────────────────────────────
     let output_dir = if dir.is_empty() {
-        // Auto-generate: examples/<slug>/
+        // Build slug from description
         let slug = description
             .to_lowercase()
             .chars()
@@ -310,9 +328,21 @@ async fn start_session(
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join("-");
-        let slug = if slug.len() > 50 { &slug[..50] } else { &slug };
-        let slug = slug.trim_end_matches('-');
-        format!("examples/{}", slug)
+        let slug = if slug.len() > 50 { slug[..50].to_string() } else { slug };
+        let slug = slug.trim_end_matches('-').to_string();
+
+        // If a matching workplan already exists in docs/workplans/, this is
+        // an in-project feature — work in the project root, not examples/.
+        if existing_workplan_for_slug(&slug) {
+            println!(
+                "{} Found existing workplan for '{}' — working in project root instead of examples/",
+                "⬡".cyan(),
+                slug
+            );
+            ".".to_string()
+        } else {
+            format!("examples/{}", slug)
+        }
     } else {
         dir
     };
