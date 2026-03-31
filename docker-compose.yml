@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # SpacetimeDB - required for hex state coordination
+  spacetimedb:
+    image: clockworklabs/spacetime:0.12.1
+    ports:
+      - "3033:3033"
+    volumes:
+      - spacetimedb_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3033/v1/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hex-net
+
+  # hex-nexus - daemon that bridges SpacetimeDB with local filesystem
+  hex-nexus:
+    image: ghcr.io/anthropic-hex/hex-nexus:latest
+    ports:
+      - "5555:5555"
+    depends_on:
+      spacetimedb:
+        condition: service_healthy
+    environment:
+      - HEX_SPACETIMEDB_HOST=http://spacetimedb:3033
+      - RUST_LOG=info
+    volumes:
+      - ./.hex:/workspace/.hex
+    networks:
+      - hex-net
+    # Note: Build locally for now
+    # build:
+    #   context: .
+    #   dockerfile: hex-nexus/Dockerfile
+
+volumes:
+  spacetimedb_data:
+
+networks:
+  hex-net:
+    driver: bridge

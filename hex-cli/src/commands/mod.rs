@@ -1,5 +1,6 @@
 pub mod adr;
 pub mod assets_cmd;
+pub mod doctor;
 pub mod fingerprint;
 pub mod spec;
 pub mod dev;

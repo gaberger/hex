@@ -23,6 +23,7 @@ use commands::{
     spec::SpecAction,
     analyze,
     dev::DevAction,
+    doctor,
     git_cmd::GitAction,
     hook::HookEvent,
     inbox::InboxAction,
@@ -210,6 +211,27 @@ enum Commands {
         #[command(subcommand)]
         action: FingerprintAction,
     },
+    /// Installation verification and pipeline validation (ADR-067)
+    Doctor {
+        /// Show detailed output
+        #[arg(long, short)]
+        verbose: bool,
+        /// Attempt to fix issues automatically
+        #[arg(long, short)]
+        fix: bool,
+    },
+    /// Run full build pipeline (build → test → analyze → validate)
+    Validate {
+        /// Skip test phase
+        #[arg(long)]
+        skip_test: bool,
+        /// Fail on warnings
+        #[arg(long)]
+        strict: bool,
+        /// Run stages in parallel where possible
+        #[arg(long)]
+        parallel: bool,
+    },
 }
 
 #[tokio::main]
@@ -260,5 +282,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Report { action } => commands::report::run(action).await,
         Commands::Sandbox { action } => commands::sandbox::run(action).await,
         Commands::Fingerprint { action } => commands::fingerprint::run(action).await,
+        Commands::Doctor { verbose, fix } => doctor::run_doctor(verbose, fix).await,
+        Commands::Validate { skip_test, strict, parallel } => {
+            doctor::run_validate_pipeline(skip_test, strict, parallel).await
+        }
     }
 }

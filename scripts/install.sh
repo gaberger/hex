@@ -1,56 +1,202 @@
 #!/usr/bin/env bash
-# Install hex binaries to /usr/local/bin via symlinks.
+# hex-install.sh — One-liner install for hex CLI
 #
 # Usage:
-#   ./scripts/install.sh          # debug build (fast compile)
-#   ./scripts/install.sh release  # release build (optimized)
+#   curl -sSL https://get.hex.dev | bash
 #
-# Requires sudo for /usr/local/bin access.
+# This script:
+#   1. Detects OS and architecture
+#   2. Downloads the latest hex binary (or uses local build)
+#   3. Creates docker-compose.yml if docker is available
+#   4. Runs hex doctor to verify installation
+#
+# Environment:
+#   HEX_VERSION=26.4.0  # specific version (default: latest)
+#   HEX_CHANNEL=stable   # stable|latest (default: stable)
+#   HEX_SKIP_DOCKER=1   # skip docker-compose setup
 
 set -euo pipefail
 
-PROFILE="${1:-debug}"
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="$ROOT/target/$PROFILE"
-DEST="/usr/local/bin"
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-BINS=(hex hex-agent hex-nexus)
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_err() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
-echo "⬡ hex install ($PROFILE)"
-echo "  Root:   $ROOT"
-echo "  Target: $TARGET"
-echo "  Dest:   $DEST"
-echo
+# Detect OS
+detect_os() {
+    case "$(uname -s)" in
+        Linux*)     echo "linux" ;;
+        Darwin*)    echo "macos" ;;
+        MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
+        *)          echo "unknown" ;;
+    esac
+}
 
-# Build
-if [ "$PROFILE" = "release" ]; then
-    echo "  Building release..."
-    cargo build --release -p hex-cli -p hex-agent -p hex-nexus
-else
-    echo "  Building debug..."
-    cargo build -p hex-cli -p hex-agent -p hex-nexus
-fi
+# Detect architecture
+detect_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64)    echo "x86_64" ;;
+        aarch64|arm64)   echo "arm64" ;;
+        *)               echo "unknown" ;;
+    esac
+}
 
-echo
+# Download hex binary from GitHub releases
+download_hex() {
+    local version="${HEX_VERSION:-latest}"
+    local os="$1"
+    local arch="$2"
+    local dest="$3"
+    
+    # For local development, use the built binary
+    if [ -f "./target/release/hex" ]; then
+        log_info "Using local build"
+        cp "./target/release/hex" "$dest"
+        chmod +x "$dest"
+        return 0
+    fi
+    
+    # GitHub releases URL (placeholder - update when releases exist)
+    local base_url="https://github.com/anthropic-hex/hex/releases"
+    
+    if [ "$version" = "latest" ]; then
+        local url="$base_url/download/hex-${os}-${arch}"
+    else
+        local url="$base_url/download/v${version}/hex-${os}-${arch}"
+    fi
+    
+    log_info "Downloading hex from $url"
+    if curl -sSL --fail "$url" -o "$dest" 2>/dev/null; then
+        chmod +x "$dest"
+        return 0
+    fi
+    
+    # Fallback: build from source (if cargo available)
+    if command -v cargo &> /dev/null; then
+        log_warn "Download failed, building from source..."
+        cargo build --release -p hex-cli
+        cp "./target/release/hex" "$dest"
+        chmod +x "$dest"
+        return 0
+    fi
+    
+    return 1
+}
 
-# Verify binaries exist
-for bin in "${BINS[@]}"; do
-    if [ ! -f "$TARGET/$bin" ]; then
-        echo "  ✗ $bin not found at $TARGET/$bin"
+# Setup docker-compose for dependencies
+setup_docker() {
+    if [ "${HEX_SKIP_DOCKER:-0}" = "1" ]; then
+        log_info "Skipping docker setup (HEX_SKIP_DOCKER=1)"
+        return 0
+    fi
+    
+    if ! command -v docker &> /dev/null; then
+        log_warn "Docker not found, skipping docker-compose setup"
+        return 0
+    fi
+    
+    if ! docker info &> /dev/null; then
+        log_warn "Docker not running, skipping docker-compose setup"
+        return 0
+    fi
+    
+    # Create docker-compose.yml if it doesn't exist
+    if [ ! -f "docker-compose.yml" ]; then
+        log_info "Creating docker-compose.yml for hex dependencies..."
+        cat > docker-compose.yml << 'EOF'
+version: '3.8'
+
+services:
+  spacetimedb:
+    image: clockworklabs/spacetime:0.12.1
+    ports:
+      - "3033:3033"
+    volumes:
+      - spacetimedb_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3033/v1/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  hex-nexus:
+    build:
+      context: .
+      dockerfile: Dockerfile.nexus
+    ports:
+      - "5555:5555"
+    depends_on:
+      spacetimedb:
+        condition: service_healthy
+    environment:
+      - HEX_SPACETIMEDB_HOST=http://spacetimedb:3033
+      - RUST_LOG=info
+
+volumes:
+  spacetimedb_data:
+EOF
+        log_info "Created docker-compose.yml"
+    else
+        log_info "docker-compose.yml already exists"
+    fi
+    
+    return 0
+}
+
+# Main
+main() {
+    local os detect_os
+    local arch detect_arch
+    local install_dir="${HOME}/.hex/bin"
+    
+    os=$(detect_os)
+    arch=$(detect_arch)
+    
+    echo "⬡ hex installer"
+    echo "  OS:   $os"
+    echo "  Arch: $arch"
+    echo
+    
+    # Create install directory
+    mkdir -p "$install_dir"
+    
+    # Download binary
+    local hex_bin="$install_dir/hex"
+    if ! download_hex "$os" "$arch" "$hex_bin"; then
+        log_err "Failed to download hex binary"
         exit 1
     fi
-done
+    
+    # Add to PATH
+    local shell_rc="${HOME}/.bashrc"
+    if [ "$(uname -s)" = "Darwin" ]; then
+        shell_rc="${HOME}/.zshrc"
+    fi
+    
+    if ! grep -q "$install_dir" "$shell_rc" 2>/dev/null; then
+        echo "export PATH=\"\$PATH:$install_dir\"" >> "$shell_rc"
+        log_info "Added $install_dir to PATH (source ~/.bashrc or ~/.zshrc)"
+    fi
+    
+    # Setup docker if available
+    setup_docker
+    
+    # Verify installation
+    echo
+    log_info "Verifying installation..."
+    if command -v hex &> /dev/null; then
+        hex doctor || log_warn "hex doctor had issues (may need to start hex-nexus)"
+    else
+        log_warn "hex not in PATH, run: source ~/.bashrc"
+    fi
+    
+    echo
+    log_info "Installation complete!"
+}
 
-# Create symlinks
-echo "  Creating symlinks (may require password)..."
-for bin in "${BINS[@]}"; do
-    sudo ln -sf "$TARGET/$bin" "$DEST/$bin"
-    echo "  ✓ $DEST/$bin → $TARGET/$bin"
-done
-
-echo
-echo "⬡ Installed. Verify:"
-for bin in "${BINS[@]}"; do
-    VERSION=$("$DEST/$bin" --version 2>/dev/null || echo "ok")
-    echo "  $bin: $VERSION"
-done
+main "$@"
