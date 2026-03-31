@@ -808,6 +808,19 @@ async fn status() -> anyhow::Result<()> {
                 }
             }
 
+            // Cost metrics
+            if let Ok(cost) = nexus.get("/api/metrics/cost").await {
+                let total = cost.get("cost").and_then(|c| c.get("total_cost_usd")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let input = cost.get("cost").and_then(|c| c.get("input_tokens")).and_then(|v| v.as_u64()).unwrap_or(0);
+                let output = cost.get("cost").and_then(|c| c.get("output_tokens")).and_then(|v| v.as_u64()).unwrap_or(0);
+                let source = cost.get("source").and_then(|v| v.as_str()).unwrap_or("unknown");
+                if total > 0.0 {
+                    println!("  Cost:     ${:.4} USD ({} in / {} out)", total, input, output);
+                } else {
+                    println!("  Cost:    ${:.2} USD ({})", total, source);
+                }
+            }
+
             // Sessions
             match nexus.get("/api/sessions?project_id=&limit=5").await {
                 Ok(sessions) => {

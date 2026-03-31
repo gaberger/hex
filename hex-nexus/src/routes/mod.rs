@@ -13,6 +13,7 @@ pub mod git;
 pub mod hex_agents;
 pub mod hexflo;
 pub mod inference;
+pub mod metrics;
 pub mod orchestration;
 pub mod projects;
 pub mod push;
@@ -559,6 +560,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/rl/reward", post(rl::submit_reward)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/rl/stats", get(rl::get_stats))
+        .route("/api/metrics/cost", get(metrics::get_cost_metrics))
         .route("/api/rl/patterns", get(rl::search_patterns)
             .post(rl::store_pattern)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))

@@ -1,0 +1,30 @@
+{
+  "feature": "cost-reporting",
+  "description": "Expose USD cost tracking to dashboard, hex status, and HexFlo memory",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "Cost displays in hex-nexus dashboard",
+      "given": "hex-agent has recorded costs via TokenMetricsAdapter",
+      "when": "Dashboard is loaded",
+      "then": "Shows total cost USD and per-task breakdown"
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "Cost shows in hex status command",
+      "given": "User runs hex status",
+      "when": "Command executes",
+      "then": "Shows current session cost in output"
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "Cost stored in HexFlo memory for swarm visibility",
+      "given": "A task completes with cost",
+      "when": "Task completes",
+      "then": "Cost is stored in hexflo_memory table"
+    }
+  ]
+}

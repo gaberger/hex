@@ -1,0 +1,43 @@
+{
+  "id": "feat-cost-reporting",
+  "title": "Feature: Expose cost tracking to dashboard, hex status, HexFlo",
+  "specs": "docs/specs/cost-reporting.json",
+  "adr": "ADR-2603311730",
+  "created": "2026-03-31",
+  "status": "planned",
+  "topology": "pipeline",
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Add cost metrics API endpoint to hex-nexus",
+      "layer": "adapters/secondary",
+      "port": null,
+      "dependencies": [],
+      "tier": 1,
+      "specs": ["S01"],
+      "done_condition": "GET /api/metrics/cost returns JSON with total_cost_usd"
+    },
+    {
+      "id": "step-2",
+      "description": "Add cost display to hex status command",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "port": null,
+      "dependencies": ["step-1"],
+      "tier": 2,
+      "specs": ["S02"],
+      "done_condition": hex status shows cost in output
+    },
+    {
+      "id": "step-3",
+      "description": "Store cost in HexFlo memory on task complete",
+      "layer": "adapters/secondary",
+      "adapter": "hexflo-memory",
+      "port": null,
+      "dependencies": ["step-1"],
+      "tier": 1,
+      "specs": ["S03"],
+      "done_condition": Task completion stores cost to hexflo_memory"
+    }
+  ]
+}
