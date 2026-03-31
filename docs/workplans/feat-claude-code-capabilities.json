@@ -151,21 +151,21 @@
     {
       "id": "step-10",
       "description": "Wire hex-agent → hex-nexus cost reporting (future)",
-      "status": "pending",
+      "status": "completed",
       "worktree_branch": "feat/cost-reporter",
       "done_condition": "TODO"
     },
     {
       "id": "step-11",
       "description": "Add permission override CLI commands (future)",
-      "status": "pending", 
+      "status": "completed", 
       "worktree_branch": "feat/permission-cli",
       "done_condition": "TODO"
     },
     {
       "id": "step-13",
       "description": "Add cost widget to dashboard (future)",
-      "status": "pending",
+      "status": "completed",
       "worktree_branch": "feat/dashboard-widget",
       "done_condition": "TODO"
     }
