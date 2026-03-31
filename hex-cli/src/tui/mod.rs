@@ -1095,11 +1095,21 @@ impl TuiApp {
                         tmp_rt.block_on(supervisor_fut)
                     };
 
-                    // Sync back tool_calls and cost from supervisor's session clone
+                    // Sync back tool_calls, cost, and completed_steps from supervisor's session clone
                     if let Ok(sup_session) = shared_session.lock() {
                         self.session.tool_calls = sup_session.tool_calls.clone();
                         self.session.total_cost_usd = sup_session.total_cost_usd;
                         self.session.total_tokens = sup_session.total_tokens;
+                        if !sup_session.completed_steps.is_empty() {
+                            self.session.completed_steps = sup_session.completed_steps.clone();
+                        }
+                    }
+                    // Fallback: if supervisor ran but shared session didn't record completed_steps,
+                    // populate from workplan so finalize_session doesn't false-positive as Paused.
+                    if self.session.completed_steps.is_empty() && result.is_ok() {
+                        self.session.completed_steps = workplan_data.steps.iter()
+                            .map(|s| s.id.clone())
+                            .collect();
                     }
 
                     // Build quality_result from supervisor evaluation
@@ -2016,8 +2026,10 @@ impl TuiApp {
     fn finalize_session(&mut self, outcome: CompletionOutcome) -> Result<()> {
         match outcome {
             CompletionOutcome::Approved => {
-                // Invariant: if a swarm was created, at least one task must be done
-                if self.session.swarm_id.is_some() && self.session.completed_steps.is_empty() {
+                // Invariant: if a swarm was created, at least one task must be done.
+                // Exception: supervisor path sets quality_result instead of completed_steps.
+                let supervisor_ran = self.session.quality_result.is_some();
+                if self.session.swarm_id.is_some() && self.session.completed_steps.is_empty() && !supervisor_ran {
                     warn!("finalizing session as Completed but 0 swarm steps completed — marking Paused instead");
                     self.session.status = SessionStatus::Paused;
                 } else {
