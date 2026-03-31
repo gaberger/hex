@@ -51,6 +51,8 @@ hex-nexus = { path = "../hex-nexus", optional = true, features = ["spacetimedb"]
 
 [dev-dependencies]
 tempfile = "3"
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
 
 [features]
 default = ["spacetimedb"]

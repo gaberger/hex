@@ -299,9 +299,47 @@ impl IAgentRuntimePort for TaskExecutor {
 
         if is_code_phase {
             use super::code_phase_worker::CodePhaseWorker;
+            use super::live_context::LiveContextAdapter;
+            use crate::domain::context::ContextVariables;
+            use crate::ports::live_context::ILiveContextPort;
+
             eprintln!("[hex-agent] execute_task: routing to CodePhaseWorker (role={:?})", payload.role);
+
+            // Enrich the task description with live context from hex-nexus (best-effort).
+            let mut ctx_vars = ContextVariables::new()
+                .with_task(&payload.description)
+                .with_role("hex-coder");
+            let live_ctx = LiveContextAdapter::new(&self.nexus_url);
+            if let Err(e) = live_ctx.enrich(&mut ctx_vars, &payload.description, &[]).await {
+                eprintln!("[hex-agent] live context enrichment skipped: {e}");
+            }
+
+            let mut enriched = payload.description.clone();
+            if let Some(score) = ctx_vars.architecture_score {
+                enriched.push_str(&format!("\n\n## Architecture Health: {}/100", score));
+            }
+            if let Some(adrs) = &ctx_vars.relevant_adrs {
+                if !adrs.is_empty() {
+                    enriched.push_str(&format!("\n\n## Relevant ADRs\n{}", adrs.join("\n")));
+                }
+            }
+            if let Some(summary) = &ctx_vars.ast_summary {
+                enriched.push_str(&format!("\n\n## Code Summary\n{}", summary));
+            }
+            if let Some(diff) = &ctx_vars.recent_changes {
+                enriched.push_str(&format!("\n\n## Recent Changes\n{}", diff));
+            }
+            if let Some(memory) = &ctx_vars.hexflo_memory {
+                enriched.push_str(&format!("\n\n## Prior Agent Decisions\n{}", memory));
+            }
+
+            let enriched_payload = TaskPayload {
+                description: enriched,
+                ..payload
+            };
+
             let worker = CodePhaseWorker::from_env().await;
-            match worker.execute(&payload).await {
+            match worker.execute(&enriched_payload).await {
                 Ok(summary) => {
                     eprintln!("[hex-agent] execute_task CodePhaseWorker done: {summary}");
                     Ok(ToolResult {
