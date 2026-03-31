@@ -436,7 +436,7 @@ async fn report(client: &NexusClient, id: &str, json_output: bool) -> anyhow::Re
                 let done    = wp["donePhases"].as_u64().unwrap_or(0);
                 let pending = total.saturating_sub(done);
                 let progress = if total > 0 {
-                    format!("P{}/{}", done, total)
+                    format!("{}/{} phases done", done, total)
                 } else {
                     "no phases".to_string()
                 };
@@ -458,14 +458,20 @@ async fn report(client: &NexusClient, id: &str, json_output: bool) -> anyhow::Re
     // ── Swarms ───────────────────────────────────────────
     let swarms = resp["swarms"].as_array();
     if let Some(swarms) = swarms.filter(|s| !s.is_empty()) {
-        // Partition: active/failed first, then completed
-        let mut active_swarms: Vec<_>    = swarms.iter().filter(|s| matches!(s["status"].as_str(), Some("active") | Some("failed"))).collect();
-        let completed_swarms: Vec<_>     = swarms.iter().filter(|s| s["status"].as_str() == Some("completed")).collect();
-        active_swarms.extend(completed_swarms.iter().copied());
+        // Partition: active/failed shown in full; only last 5 completed shown; stale hidden
+        const MAX_COMPLETED: usize = 5;
+        let stale_count = swarms.iter().filter(|s| s["status"].as_str() == Some("stale")).count();
+        let active_swarms: Vec<_>    = swarms.iter().filter(|s| matches!(s["status"].as_str(), Some("active") | Some("failed"))).collect();
+        let completed_swarms: Vec<_> = swarms.iter().filter(|s| s["status"].as_str() == Some("completed")).collect();
+        let completed_hidden = completed_swarms.len().saturating_sub(MAX_COMPLETED);
+        let visible_completed = &completed_swarms[completed_swarms.len().saturating_sub(MAX_COMPLETED)..];
+
+        let mut show_swarms: Vec<_> = active_swarms.clone();
+        show_swarms.extend(visible_completed.iter().copied());
 
         println!();
         println!("{}", format!("── Swarms {}", "─".repeat(w.saturating_sub(10))).dimmed());
-        for swarm in &active_swarms {
+        for swarm in &show_swarms {
             let sname   = swarm["name"].as_str().unwrap_or("?");
             let status  = swarm["status"].as_str().unwrap_or("?");
             let st      = &swarm["tasks"];
@@ -521,6 +527,13 @@ async fn report(client: &NexusClient, id: &str, json_output: bool) -> anyhow::Re
                     }
                 }
             }
+        }
+        if completed_hidden > 0 {
+            println!("  {} … and {} more completed", "○".dimmed(), completed_hidden.to_string().dimmed());
+        }
+        if stale_count > 0 {
+            println!("  {} {} zombie swarms hidden (agent died mid-run — run `hex swarm cleanup --apply` to remove)",
+                "⚠".yellow(), stale_count);
         }
     } else {
         println!();
