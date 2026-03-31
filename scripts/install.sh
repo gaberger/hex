@@ -64,14 +64,25 @@ download_hex() {
     # GitHub releases URL (placeholder - update when releases exist)
     local base_url="https://github.com/gaberger/hex/releases"
     
+    # Map to actual release artifact names
+    local artifact_name=""
+    case "${os}-${arch}" in
+        linux-x86_64)   artifact_name="hex-x86_64-unknown-linux-gnu" ;;
+        linux-arm64)    artifact_name="hex-aarch64-unknown-linux-gnu" ;;
+        macos-x86_64)   artifact_name="hex-x86_64-apple-darwin" ;;
+        macos-arm64)    artifact_name="hex-aarch64-apple-darwin" ;;
+        *)              artifact_name="hex-${os}-${arch}" ;;
+    esac
+    
+    # Default to known release if not specified
     if [ "$version" = "latest" ]; then
-        local url="$base_url/download/hex-${os}-${arch}"
-    else
-        local url="$base_url/download/v${version}/hex-${os}-${arch}"
+        version="26.6.0"
     fi
     
+    local url="$base_url/download/v${version}/$artifact_name"
+    
     log_info "Downloading hex from $url"
-    if curl -sSL --fail "$url" -o "$dest" 2>/dev/null; then
+    if curl -sSLf -L "$url" -o "$dest" 2>/dev/null; then
         chmod +x "$dest"
         return 0
     fi
