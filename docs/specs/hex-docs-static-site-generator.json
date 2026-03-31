@@ -1,0 +1,130 @@
+{
+  "id": "hex-docs-static-site-generator",
+  "title": "hex docs — Static Site Generator",
+  "adr": "ADR-2603312000",
+  "status": "proposed",
+  "created": "2026-03-31",
+  "behaviors": [
+    {
+      "id": "B-001",
+      "description": "hex docs generate produces a self-contained static site",
+      "given": "hex docs generate is run from a hex project root",
+      "when": "the command completes",
+      "then": [
+        "A directory hex-docs/ (or --output path) is created",
+        "index.html exists and references no external URLs",
+        "All CSS is bundled in static/style.css",
+        "All pages are valid HTML5",
+        "No page requires a running server to render"
+      ]
+    },
+    {
+      "id": "B-002",
+      "description": "Commands section enumerates all top-level commands and subcommands",
+      "given": "the binary's clap Command tree is walked at generation time",
+      "when": "commands/index.html and per-command pages are generated",
+      "then": [
+        "Every top-level command from hex --help appears as a page",
+        "Each page lists all subcommands with their descriptions",
+        "Each page lists all flags with their types, defaults, and descriptions",
+        "Short and long forms of flags are both shown",
+        "Required vs optional flags are distinguished"
+      ]
+    },
+    {
+      "id": "B-003",
+      "description": "Skills section is generated from embedded skill frontmatter",
+      "given": "hex-cli/assets/skills/ contains SKILL.md files with YAML frontmatter",
+      "when": "skills/index.html and per-skill pages are generated",
+      "then": [
+        "All 20 hex-native skills appear in the index",
+        "Each skill page shows: name, trigger, description, full body content",
+        "The trigger is displayed as a copyable slash command (e.g. /hex-scaffold)",
+        "Skills are sorted alphabetically"
+      ]
+    },
+    {
+      "id": "B-004",
+      "description": "Agents section is generated from embedded agent YAMLs",
+      "given": "hex-cli/assets/agents/hex/hex/ contains .yml agent definitions",
+      "when": "agents/index.html and per-agent pages are generated",
+      "then": [
+        "All 14 agent roles appear with their name and description",
+        "Each agent page shows the full YAML source in a code block",
+        "Model tier, workflow phases, and quality thresholds are highlighted"
+      ]
+    },
+    {
+      "id": "B-005",
+      "description": "ADRs section renders all decision records",
+      "given": "docs/adrs/*.md files exist",
+      "when": "adrs/ section is generated",
+      "then": [
+        "ADR index groups records by status: Accepted, Proposed, Deprecated",
+        "Each ADR is rendered from markdown to HTML via pulldown-cmark",
+        "ADR frontmatter (Status, Date) is shown in a metadata block",
+        "Internal ADR cross-references (ADR-XXX) become hyperlinks"
+      ]
+    },
+    {
+      "id": "B-006",
+      "description": "Client-side search works without a server",
+      "given": "the generated site is opened in a browser from the filesystem",
+      "when": "a user types in the search box",
+      "then": [
+        "Results appear from commands, skills, agents, and ADRs",
+        "Search is against a pre-built JSON index bundled at generation time",
+        "No network request is made"
+      ]
+    },
+    {
+      "id": "B-007",
+      "description": "Site embeds generation metadata",
+      "given": "any page in the generated site",
+      "when": "the page footer is inspected",
+      "then": [
+        "hex version is shown (e.g. hex 26.4.0)",
+        "Generation timestamp is shown (ISO 8601)",
+        "A link to regenerate docs is shown (hex docs generate)"
+      ]
+    },
+    {
+      "id": "B-008",
+      "description": "hex docs serve opens docs via hex-nexus",
+      "given": "hex-nexus is running",
+      "when": "hex docs serve is run",
+      "then": [
+        "hex-nexus serves the generated site at /docs",
+        "The default browser opens http://localhost:5555/docs",
+        "If hex-docs/ does not exist, generate is run automatically first"
+      ]
+    },
+    {
+      "id": "B-009",
+      "description": "Output path is configurable",
+      "given": "hex docs generate --output /path/to/dir",
+      "when": "generation completes",
+      "then": [
+        "All output is written to the specified path",
+        "The path is created if it does not exist",
+        "A summary of pages generated is printed to stdout"
+      ]
+    }
+  ],
+  "non_goals": [
+    "Server-side rendering or dynamic content",
+    "Authentication or access control on docs",
+    "Hosting infrastructure (the command generates files only)",
+    "Versioned docs for multiple hex versions simultaneously"
+  ],
+  "acceptance_criteria": [
+    "hex docs generate completes in under 5 seconds on a cold run",
+    "Generated site passes HTML5 validation (no structural errors)",
+    "All 32 commands appear in commands/index.html",
+    "All 20 hex-native skills appear in skills/index.html",
+    "All 14 agents appear in agents/index.html",
+    "ADR index shows correct status groupings",
+    "Search returns results for 'scaffold', 'cleanup', 'swarm'",
+    "No page references external URLs (fully offline-capable)"
+  ]
+}
