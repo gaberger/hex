@@ -1,0 +1,86 @@
+{
+  "feature": "claude-code-capabilities-integration",
+  "description": "Add tool permission hooks and enhanced cost tracking to hex-agent",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "Tool permission check returns allow for trusted commands",
+      "given": "A tool execution request for 'Bash' with command 'ls -la'",
+      "when": "PermissionPort::check_permission is called",
+      "then": "Returns PermissionDecision::Allow (classifier auto-approved)",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "Security",
+      "description": "Tool permission check blocks dangerous commands",
+      "given": "A tool execution request for 'Bash' with command 'rm -rf /'",
+      "when": "PermissionPort::check_permission is called",
+      "then": "Returns PermissionDecision::Deny with reason 'dangerous command pattern'",
+      "negative_spec": false,
+      "domain_conventions": {
+        "blocked_patterns": ["rm -rf", "dd if=", "> /dev/sda"]
+      }
+    },
+    {
+      "id": "S03",
+      "category": "EdgeCase",
+      "description": "Tool permission persists across agent sessions",
+      "given": "A previous session where 'Bash' with 'git commit' was allowed",
+      "when": "New session starts and executes 'Bash' with 'git commit'",
+      "then": "Permission is auto-allowed from persisted state",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "ErrorHandling",
+      "description": "Cost calculation handles unknown models gracefully",
+      "given": "A tool execution with model 'unknown-model'",
+      "when": "TokenMetricsAdapter::calculate_cost is called",
+      "then": "Returns cost of 0 with warning logged, does not error",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "Cost tracking shows USD per request",
+      "given": "A Claude Sonnet 4 API call with 10000 input tokens and 5000 output tokens",
+      "when": "TokenMetricsAdapter::calculate_cost is called",
+      "then": "Returns approximately $0.45 (based on current Anthropic pricing)",
+      "negative_spec": false,
+      "domain_conventions": {
+        "pricing": {
+          "claude-sonnet-4-20250514": { "input_per_million": 3.0, "output_per_million": 15.0 }
+        }
+      }
+    },
+    {
+      "id": "S06",
+      "category": "EdgeCase",
+      "description": "Cost aggregates per HexFlo task",
+      "given": "A HexFlo task that makes 5 API calls with total $2.00 cost",
+      "when": "Task completes and cost is queried",
+      "then": "Returns aggregated cost of $2.00 for the task",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "NegativeSpec",
+      "description": "Permission hook does not block tool execution for non-critical operations",
+      "given": "A ReadFile tool with a safe path",
+      "when": "PermissionPort::check_permission is called",
+      "then": "Returns PermissionDecision::Allow (ReadFile is always allowed)",
+      "negative_spec": true
+    },
+    {
+      "id": "S08",
+      "category": "Performance",
+      "description": "Permission check completes within 10ms",
+      "given": "A tool execution request",
+      "when": "PermissionPort::check_permission is called",
+      "then": "Returns decision within 10ms (cached or simple pattern match)",
+      "negative_spec": false
+    }
+  ]
+}

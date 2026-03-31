@@ -1,0 +1,162 @@
+{
+  "id": "feat-claude-code-capabilities",
+  "title": "Feature: Integrate claude-code capabilities (permissions + cost tracking)",
+  "specs": "docs/specs/claude-code-capabilities-integration.json",
+  "adr": "ADR-2603311730",
+  "created": "2026-03-31",
+  "status": "in_progress",
+  "topology": "pipeline",
+    {
+      "id": "step-1",
+      "description": "Create PermissionPort interface in hex-agent/ports",
+      "layer": "ports",
+      "adapter": null,
+      "port": "PermissionPort",
+      "dependencies": [],
+      "tier": 0,
+      "specs": ["S01", "S02", "S07", "S08"],
+      "worktree_branch": "feat/claude-code-cap/ports",
+      "done_condition": "cargo check --package hex-agent compiles",
+      "status": "completed",
+      "commit_hash": "tier0-ports-pricing"
+    },
+    {
+      "id": "step-2",
+      "description": "Implement PermissionAdapter with classifier pattern matching",
+      "layer": "adapters/secondary",
+      "adapter": "permission",
+      "port": "PermissionPort",
+      "dependencies": ["step-1"],
+      "tier": 1,
+      "specs": ["S01", "S02", "S07", "S08"],
+      "worktree_branch": "feat/claude-code-cap/permission-adapter",
+      "done_condition": "cargo test permission tests pass",
+      "status": "completed",
+      "commit_hash": "permission-adapter-v1"
+    },
+    {
+      "id": "step-3",
+      "description": "Add SpacetimeDB persistence for permission decisions",
+      "layer": "adapters/secondary",
+      "adapter": "permission-persistence",
+      "port": null,
+      "dependencies": ["step-2"],
+      "tier": 1,
+      "specs": ["S03"],
+      "worktree_branch": "feat/claude-code-cap/permission-persistence",
+      "done_condition": "cargo test permission_persistence tests pass"
+    },
+    {
+      "id": "step-4",
+      "description": "Add model pricing types to hex-agent domain",
+      "layer": "domain",
+      "adapter": null,
+      "port": null,
+      "dependencies": [],
+      "tier": 0,
+      "specs": ["S04", "S05"],
+      "worktree_branch": "feat/claude-code-cap/domain",
+      "done_condition": "cargo check --package hex-agent compiles",
+      "status": "completed",
+      "commit_hash": "tier0-ports-pricing"
+    },
+    {
+      "id": "step-5",
+      "description": "Extend TokenMetricsAdapter with USD cost calculation",
+      "layer": "adapters/secondary",
+      "adapter": "token-metrics",
+      "port": null,
+      "dependencies": ["step-4"],
+      "tier": 1,
+      "specs": ["S04", "S05", "S08"],
+      "worktree_branch": "feat/claude-code-cap/token-metrics",
+      "done_condition": "cargo test token_metrics tests pass",
+      "status": "completed",
+      "commit_hash": "token-metrics-cost-v1"
+    },
+    {
+      "id": "step-6",
+      "description": "Add cost aggregation per HexFlo task in SpacetimeDB",
+      "layer": "adapters/secondary",
+      "adapter": "cost-aggregation",
+      "port": null,
+      "dependencies": ["step-5"],
+      "tier": 1,
+      "specs": ["S06"],
+      "worktree_branch": "feat/claude-code-cap/cost-aggregation",
+      "done_condition": "cargo test cost_aggregation tests pass"
+    },
+    {
+      "id": "step-7",
+      "description": "Wire permission checks into ToolExecutorAdapter",
+      "layer": "adapters/secondary",
+      "adapter": "tool-executor",
+      "port": null,
+      "dependencies": ["step-2"],
+      "tier": 2,
+      "specs": ["S01", "S02", "S07", "S08"],
+      "worktree_branch": "feat/claude-code-cap/tool-executor",
+      "done_condition": "cargo test tool_executor_with_permission tests pass",
+      "status": "completed",
+      "commit_hash": "tool-executor-permission-v1"
+    },
+    {
+      "id": "step-8",
+      "description": "Wire cost tracking into conversation loop",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": ["step-5", "step-6"],
+      "tier": 3,
+      "specs": ["S05", "S06"],
+      "worktree_branch": "feat/claude-code-cap/conversation-usecase",
+      "done_condition": "cargo test conversation_cost tests pass"
+    },
+    {
+      "id": "step-9",
+      "description": "Integration test - full permission + cost flow",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": ["step-7", "step-8"],
+      "tier": 5,
+      "specs": ["S01", "S02", "S03", "S05", "S06"],
+      "worktree_branch": "feat/claude-code-cap/integration",
+      "done_condition": "cargo test --package hex-agent integration passes"
+    }
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  },
+  "mergeOrder": [
+    "step-1 → step-2 (ports then adapter)",
+    "step-4 parallel to step-1 → step-5",
+    "step-2 → step-7 (permission wired into tool executor)",
+    "step-5, step-6 → step-8 (costs wired into conversation)",
+    "step-7, step-8 → step-9 (integration test last)"
+  ],
+  "riskRegister": [
+    {
+      "risk": "Permission false positives block legitimate tools",
+      "impact": "high",
+      "mitigation": "Whitelist safe patterns, allow user override via hex-cli"
+    },
+    {
+      "risk": "Pricing tables become outdated",
+      "impact": "medium",
+      "mitigation": "Externalize pricing to config file, update via hex-cli inference update"
+    },
+    {
+      "risk": "Permission check adds latency",
+      "impact": "low",
+      "mitigation": "Cache decisions with 5-minute TTL, simple pattern match is fast"
+    }
+  ],
+  "successCriteria": [
+    "hex-agent blocks 'rm -rf /' with PermissionDenied",
+    "hex-agent auto-approves 'git commit' after first approval",
+    "Cost shows USD amount in session summary",
+    "HexFlo task cost aggregates correctly"
+  ]
+}

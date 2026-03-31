@@ -1,6 +1,7 @@
 use crate::ports::{ToolCall, ToolResult};
 use crate::ports::tools::ToolExecutorPort;
 use crate::ports::mcp_client::McpClientPort;
+use crate::ports::permission::PermissionPort;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,16 +21,23 @@ const MAX_OUTPUT_BYTES: usize = 100 * 1024;
 pub struct ToolExecutorAdapter {
     working_dir: PathBuf,
     mcp_client: Option<Arc<dyn McpClientPort>>,
+    permission_adapter: Option<Arc<dyn PermissionPort>>,
 }
 
 impl ToolExecutorAdapter {
     pub fn new(working_dir: PathBuf) -> Self {
-        Self { working_dir, mcp_client: None }
+        Self { working_dir, mcp_client: None, permission_adapter: None }
     }
 
     /// Set an MCP client for routing mcp__* tool calls.
     pub fn with_mcp_client(mut self, client: Arc<dyn McpClientPort>) -> Self {
         self.mcp_client = Some(client);
+        self
+    }
+
+    /// Set a permission adapter for security checks.
+    pub fn with_permission_adapter(mut self, permission: Arc<dyn PermissionPort>) -> Self {
+        self.permission_adapter = Some(permission);
         self
     }
 
@@ -703,6 +711,30 @@ impl ToolExecutorAdapter {
 #[async_trait]
 impl ToolExecutorPort for ToolExecutorAdapter {
     async fn execute(&self, call: &ToolCall) -> ToolResult {
+        // Check permission before executing
+        if let Some(perm) = &self.permission_adapter {
+            let permission = perm.check_permission(&call.name, &call.input).await;
+            match permission.decision {
+                crate::ports::permission::PermissionDecision::Deny { reason } => {
+                    return ToolResult {
+                        tool_use_id: call.id.clone(),
+                        content: format!("Permission denied: {}", reason),
+                        is_error: true,
+                    };
+                }
+                crate::ports::permission::PermissionDecision::Pending { reason } => {
+                    return ToolResult {
+                        tool_use_id: call.id.clone(),
+                        content: format!("Permission pending: {}", reason),
+                        is_error: true,
+                    };
+                }
+                crate::ports::permission::PermissionDecision::Allow => {
+                    // Proceed with execution
+                }
+            }
+        }
+
         let mut result = match call.name.as_str() {
             "read_file" => self.read_file(&call.input).await,
             "write_file" => self.write_file(&call.input).await,
