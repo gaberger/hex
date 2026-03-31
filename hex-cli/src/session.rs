@@ -282,6 +282,8 @@ impl DevSession {
                 updated_at: session.updated_at,
                 total_cost_usd: session.total_cost_usd,
                 output_dir: session.output_dir,
+                completed_steps_count: session.completed_steps.len(),
+                has_quality_result: session.quality_result.is_some(),
             });
         }
         // newest first by updated_at
@@ -379,6 +381,10 @@ pub struct DevSessionSummary {
     pub total_cost_usd: f64,
     /// Output directory (set for example builds, None for in-project feature dev).
     pub output_dir: Option<String>,
+    /// Number of completed pipeline steps (0 = session produced no artifacts).
+    pub completed_steps_count: usize,
+    /// Whether a quality result was recorded (false = no code was validated).
+    pub has_quality_result: bool,
 }
 
 // ---------------------------------------------------------------------------
