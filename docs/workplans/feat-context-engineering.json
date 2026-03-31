@@ -1,0 +1,403 @@
+{
+  "id": "wp-context-engineering",
+  "feature": "Context Engineering for hex-agent",
+  "description": "Implement prompt engineering layer with refined patterns for effective tool usage, task execution, and context management in hex-agent",
+  "adr": "ADR-2603312100",
+  "priority": "high",
+  "created_at": "2026-03-31T21:00:00Z",
+  "created_by": "planner",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Domain Types for Context",
+      "tier": 0,
+      "description": "Create core domain types for prompt templates and context",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-agent",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Create PromptTemplate enum",
+          "layer": "domain",
+          "description": "Define PromptTemplate enum with variants for SystemPrompt, ToolPrompt, ServicePrompt. Include template variables support.",
+          "files": ["hex-agent/src/domain/context.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Create ContextBuilder struct",
+          "layer": "domain",
+          "description": "Implement ContextBuilder for composing prompts per agent role with variable substitution.",
+          "files": ["hex-agent/src/domain/context.rs"],
+          "deps": ["P1.1"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "Define agent role types",
+          "layer": "domain",
+          "description": "Add AgentRole enum (Coder, Planner, Reviewer, Integrator) and role-specific context.",
+          "files": ["hex-agent/src/domain/context.rs"],
+          "deps": ["P1.1"],
+          "status": "done",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "PromptPort Interface",
+      "tier": 0,
+      "description": "Define the port interface for prompt building",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-agent",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Define PromptPort trait",
+          "layer": "ports",
+          "description": "Create PromptPort with methods: build_system_prompt, build_tool_prompt, build_service_prompt",
+          "files": ["hex-agent/src/ports/prompt.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Define ContextError type",
+          "layer": "ports",
+          "description": "Create ContextError for prompt building failures (template not found, variable missing, etc.)",
+          "files": ["hex-agent/src/ports/prompt.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "ContextAdapter Implementation",
+      "tier": 1,
+      "description": "Implement the context adapter loading templates from assets",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-agent",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Implement ContextAdapter",
+          "layer": "secondary",
+          "description": "Implement ContextAdapter that loads prompt templates from hex-cli/assets/context-templates/",
+          "files": ["hex-agent/src/adapters/secondary/prompt.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Add template caching",
+          "layer": "secondary",
+          "description": "Implement LRU cache for composed prompts to avoid recomputation",
+          "files": ["hex-agent/src/adapters/secondary/prompt.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.3",
+          "name": "Add template variable substitution",
+          "layer": "secondary",
+          "description": "Implement variable substitution for {{project_name}}, {{task_description}}, {{agent_role}}, etc.",
+          "files": ["hex-agent/src/adapters/secondary/prompt.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Base Prompt Templates",
+      "tier": 1,
+      "description": "Create base prompt templates in hex-cli/assets",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Create system prompt templates",
+          "layer": "secondary",
+          "description": "Create system prompt templates: SIMPLE_INTRO, SIMPLE_SYSTEM, DOING_TASKS, EXECUTING_ACTIONS, USING_YOUR_TOOLS, TONE_AND_STYLE, OUTPUT_EFFICIENCY",
+          "files": ["hex-cli/assets/context-templates/system/"],
+          "status": "pending",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.2",
+          "name": "Create tool prompt templates",
+          "layer": "secondary",
+          "description": "Create tool-specific prompts for: Bash, Agent, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, TodoWrite, Skill",
+          "files": ["hex-cli/assets/context-templates/tools/"],
+          "status": "pending",
+          "deps": ["P4.1"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.3",
+          "name": "Create service prompt templates",
+          "layer": "secondary",
+          "description": "Create service prompts for: Session Memory, Memory Extraction, HexFlo memory (global/swarm/agent)",
+          "files": ["hex-cli/assets/context-templates/services/"],
+          "status": "pending",
+          "deps": ["P4.1"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Role-Specific Templates",
+      "tier": 1,
+      "description": "Create role-specific prompt variants for hex agents",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Create hex-coder templates",
+          "layer": "secondary",
+          "description": "Create role-specific system and tool prompts for hex-coder (TDD workflow, boundary rules, test focus)",
+          "files": ["hex-cli/assets/context-templates/roles/hex-coder/"],
+          "status": "pending",
+          "deps": ["P4.2"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.2",
+          "name": "Create hex-planner templates",
+          "layer": "secondary",
+          "description": "Create role-specific prompts for hex-planner (workplan decomposition, task assignment)",
+          "files": ["hex-cli/assets/context-templates/roles/hex-planner/"],
+          "status": "pending",
+          "deps": ["P5.1"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.3",
+          "name": "Create hex-reviewer templates",
+          "layer": "secondary",
+          "description": "Create role-specific prompts for hex-reviewer (code quality gates, boundary enforcement)",
+          "files": ["hex-cli/assets/context-templates/roles/hex-reviewer/"],
+          "status": "pending",
+          "deps": ["P5.2"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "name": "HexFlo Integration",
+      "tier": 2,
+      "description": "Wire context engineering into HexFlo task execution",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P6.1",
+          "name": "Add prompt injection to task execution",
+          "layer": "primary",
+          "description": "Modify hex-nexus orchestration to inject role-specific prompts into agent prompts",
+          "files": ["hex-nexus/src/orchestration/mod.rs"],
+          "status": "pending",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P6.2",
+          "name": "Add role assignment to agent registration",
+          "layer": "primary",
+          "description": "Update agent registration to include role (coder/planner/reviewer) and load appropriate templates",
+          "files": ["hex-nexus/src/orchestration/agent.rs"],
+          "status": "pending",
+          "deps": ["P6.1"],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P6.3",
+          "name": "Add tool prompt injection",
+          "layer": "primary",
+          "description": "Inject tool-specific prompts before tool execution in ToolExecutorAdapter",
+          "files": ["hex-agent/src/adapters/secondary/tools.rs"],
+          "status": "pending",
+          "deps": ["P6.1"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P7",
+      "name": "Template Hot-Reload",
+      "tier": 2,
+      "description": "Add capability to reload templates without restart",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P7.1",
+          "name": "Add template reload endpoint",
+          "layer": "primary",
+          "description": "Add /api/context/reload endpoint to trigger template cache invalidation",
+          "files": ["hex-nexus/src/routes/context.rs"],
+          "status": "pending",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P7.2",
+          "name": "Add file watcher for templates",
+          "layer": "secondary",
+          "description": "Watch hex-cli/assets/context-templates/ for changes and auto-reload",
+          "files": ["hex-agent/src/adapters/secondary/prompt.rs"],
+          "status": "pending",
+          "deps": ["P7.1"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P8",
+      "name": "Integration Tests",
+      "tier": 4,
+      "description": "Verify end-to-end context engineering works",
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-agent -- context",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P8.1",
+          "name": "Test prompt composition",
+          "layer": "domain",
+          "description": "Write tests for ContextBuilder composing prompts with variables",
+          "files": ["hex-agent/src/domain/context.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P8.2",
+          "name": "Test template loading",
+          "layer": "secondary",
+          "description": "Write tests for ContextAdapter loading templates from assets",
+          "files": ["hex-agent/src/adapters/secondary/prompt.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P8.3",
+          "name": "Test role-specific prompts",
+          "layer": "secondary",
+          "description": "Write tests verifying different roles get appropriate prompts",
+          "files": ["hex-agent/src/adapters/secondary/prompt.rs"],
+          "status": "done",
+          "deps": ["P8.2"],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P9",
+      "name": "Live Context Enrichment",
+      "tier": 3,
+      "description": "Inject live hex project state into prompts before agent dispatch — architecture score, ADRs, HexFlo memory, AST summaries, git diff, and specs",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P9.1",
+          "name": "Extend ContextVariables with live fields",
+          "layer": "domain",
+          "description": "Add fields to ContextVariables: architecture_score (Option<u8>), arch_violations (Option<Vec<String>>), relevant_adrs (Option<Vec<String>>), ast_summary (Option<String>), recent_changes (Option<String>), hexflo_memory (Option<String>), spec_content (Option<String>). Update get() to expose them.",
+          "files": ["hex-agent/src/domain/context.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P9.2",
+          "name": "Define ILiveContextPort trait",
+          "layer": "ports",
+          "description": "Create ILiveContextPort in hex-agent/src/ports/mod.rs with method enrich(vars: &mut ContextVariables, task: &str, files: &[String]) -> Result<()>. This is the boundary the adapter implements.",
+          "files": ["hex-agent/src/ports/mod.rs"],
+          "deps": ["P9.1"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P9.3",
+          "name": "Implement LiveContextAdapter",
+          "layer": "secondary",
+          "description": "Implement ILiveContextPort in hex-agent/src/adapters/secondary/live_context.rs. Calls hex-nexus REST endpoints in parallel: GET /api/analyze (arch score + violations), GET /api/hexflo/memory/search?q=<task> (prior decisions), GET /api/adrs/search?q=<task> (relevant ADRs), GET /api/summarize (AST summary of target files), GET /api/git/diff (recent changes). Merge results into ContextVariables fields.",
+          "files": ["hex-agent/src/adapters/secondary/live_context.rs"],
+          "deps": ["P9.2"],
+          "status": "pending",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P9.4",
+          "name": "Update prompt templates to use live variables",
+          "layer": "secondary",
+          "description": "Add {{architecture_score}}, {{arch_violations}}, {{relevant_adrs}}, {{ast_summary}}, {{recent_changes}}, {{hexflo_memory}}, {{spec_content}} placeholders to agent-coder, agent-reviewer, and agent-planner templates. Each variable should degrade gracefully when None (omit the section).",
+          "files": [
+            "hex-cli/assets/context-templates/roles/hex-coder/system.md",
+            "hex-cli/assets/context-templates/roles/hex-reviewer/system.md",
+            "hex-cli/assets/context-templates/roles/hex-planner/system.md"
+          ],
+          "deps": ["P9.1"],
+          "status": "pending",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P9.5",
+          "name": "Wire LiveContextAdapter into task dispatch",
+          "layer": "primary",
+          "description": "In hex-nexus orchestration (task execution path), before building the agent prompt, call LiveContextAdapter.enrich() with the task description and target files from the workplan step. Requires LiveContextAdapter to be wired via composition root.",
+          "files": [
+            "hex-nexus/src/orchestration/mod.rs",
+            "hex-nexus/src/composition_root.rs"
+          ],
+          "deps": ["P9.3", "P9.4", "P6.1"],
+          "status": "pending",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P9.6",
+          "name": "Add enrichment tests",
+          "layer": "secondary",
+          "description": "Write integration tests for LiveContextAdapter using a mock hex-nexus (wiremock or axum test server). Verify each endpoint is called, fields are populated, and missing endpoints degrade gracefully (None, not error).",
+          "files": ["hex-agent/src/adapters/secondary/live_context.rs"],
+          "deps": ["P9.3"],
+          "status": "pending",
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "feature": "pipeline-phase-precondition-gates",
+  "description": "Enforce that each hex dev pipeline phase validates upstream artifacts exist before executing, replacing silent skips with blocking gate dialogs",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "Session fields are written to JSON when each TUI phase completes",
+      "given": "A hex dev session running the workplan phase that successfully creates a workplan file",
+      "when": "The workplan phase completes and advances to swarm",
+      "then": "session.workplan_path is set to the workplan file path and session.save() is called before advancing",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "Code phase executes when workplan_path is set",
+      "given": "A hex dev session where session.workplan_path is Some(path) pointing to a valid workplan",
+      "when": "run_code_phase() is called",
+      "then": "Code generation proceeds — agents are dispatched for swarm tasks, no skip occurs",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "ErrorHandling",
+      "description": "Code phase shows blocking gate when workplan_path is None",
+      "given": "A hex dev session where session.workplan_path is None",
+      "when": "run_code_phase() is called",
+      "then": "A blocking PreconditionError gate dialog is shown: 'No workplan found. Return to Workplan phase?' with options [Retry | Abort]. The phase does NOT silently advance to Validate.",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "ErrorHandling",
+      "description": "Swarm phase shows blocking gate when workplan cannot be parsed",
+      "given": "A hex dev session where session.workplan_path is Some but the file does not parse as valid JSON",
+      "when": "run_swarm_phase() pre-condition check runs",
+      "then": "A blocking gate is shown: 'Workplan file is invalid. Return to Workplan phase?' The phase does NOT advance with a 'best-effort' comment.",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "ErrorHandling",
+      "description": "ADR skip does not cascade into workplan auto-skip",
+      "given": "A hex dev session where the user selects GateResult::Skip at the ADR gate",
+      "when": "The pipeline advances to Workplan phase",
+      "then": "The workplan phase pre-condition check finds session.adr_path=None and presents a gate: 'No ADR created. Continue without ADR?' with explicit [Confirm | Return to ADR]. It does not silently auto-skip.",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "ErrorHandling",
+      "description": "GateResult::Skip at Commit sets Paused not Completed",
+      "given": "A hex dev session in the Commit phase where the user selects Skip",
+      "when": "handle_commit_gate receives GateResult::Skip",
+      "then": "session.status is set to SessionStatus::Paused (not Completed). hex dev list shows the session as paused with a resume hint.",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "ErrorHandling",
+      "description": "advance_to_next_phase at Commit runs the gate, not bypasses it",
+      "given": "A hex dev session advancing past the Commit phase via keyboard shortcut",
+      "when": "advance_to_next_phase() is called with current_phase=Commit",
+      "then": "handle_commit_gate() is called to present the commit review gate. SessionStatus::Completed is only set after GateResult::Approved.",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "HappyPath",
+      "description": "finalize_session(Approved) sets Completed only when swarm tasks were done",
+      "given": "A hex dev session with swarm_id set and swarm tasks_completed > 0",
+      "when": "finalize_session(CompletionOutcome::Approved) is called",
+      "then": "session.status = SessionStatus::Completed and the session is saved",
+      "negative_spec": false
+    },
+    {
+      "id": "S09",
+      "category": "ErrorHandling",
+      "description": "finalize_session(Approved) fails when swarm has 0 tasks completed",
+      "given": "A hex dev session with swarm_id set and 0 swarm tasks completed",
+      "when": "finalize_session(CompletionOutcome::Approved) is called",
+      "then": "An error is returned: 'Cannot complete: 0/N swarm tasks completed'. session.status remains InProgress.",
+      "negative_spec": true
+    },
+    {
+      "id": "S10",
+      "category": "HappyPath",
+      "description": "hex dev list surfaces Incomplete sessions with warning",
+      "given": "A session with status=Completed but completed_steps is empty and quality_result is None (legacy incomplete session)",
+      "when": "hex dev list is run",
+      "then": "The session shows status 'incomplete' (not 'completed') with a hint: 'phases skipped — no code generated'",
+      "negative_spec": false
+    },
+    {
+      "id": "S11",
+      "category": "Security",
+      "description": "Session fields are not overwritten by later phases",
+      "given": "A session where session.adr_path was set in a previous run",
+      "when": "The ADR phase is re-run and produces a different path",
+      "then": "session.adr_path is updated to the new path (not silently ignored)",
+      "negative_spec": false
+    },
+    {
+      "id": "S12",
+      "category": "EdgeCase",
+      "description": "Pre-condition gate is not shown for phases that have no upstream requirement",
+      "given": "A hex dev session starting fresh at the ADR phase",
+      "when": "check_phase_preconditions(PipelinePhase::Adr) is called",
+      "then": "No error is returned — ADR is the first phase and has no upstream dependency",
+      "negative_spec": false
+    }
+  ]
+}

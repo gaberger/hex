@@ -1,0 +1,184 @@
+{
+  "id": "wp-add-inference-quality-gate",
+  "title": "Add inference quality gate: test provider connectivity after hex inference add and return error if empty response; add --prune flag to hex inference discover to remove failing providers",
+  "specs": null,
+  "adr": "ADR-2505251052",
+  "created": "2025-05-25",
+  "status": "planned",
+  "status_note": null,
+  "topology": "pipeline",
+  "budget": null,
+  "steps": [
+    {
+      "id": "P0.1",
+      "description": "Define ProviderHealthPort interface and PingResult domain model with necessary fields.",
+      "layer": "domain",
+      "adapter": null,
+      "port": "ProviderHealthPort",
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/inference/ports",
+      "done_condition": "ProviderHealthPort interface and PingResult model are implemented and pass type checks."
+    },
+    {
+      "id": "P0.2",
+      "description": "Add prune parameter to DiscoverInferenceProvidersUseCase signature.",
+      "layer": "ports",
+      "adapter": null,
+      "port": "DiscoverInferenceProvidersUseCase",
+      "dependencies": [],
+      "tier": 0,
+      "specs": [],
+      "worktree_branch": "feat/inference/ports",
+      "done_condition": "DiscoverInferenceProvidersUseCase updated with prune parameter and passes type checks."
+    },
+    {
+      "id": "P1.1",
+      "description": "Implement health check adapter for OpenAI inference provider following ProviderHealthPort.",
+      "layer": "adapters/secondary",
+      "adapter": "OpenAI",
+      "port": "ProviderHealthPort",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 1,
+      "specs": [],
+      "worktree_branch": "feat/inference/adapters-secondary",
+      "done_condition": "OpenAI health check adapter is implemented and passes tests."
+    },
+    {
+      "id": "P1.2",
+      "description": "Implement health check adapter for Anthropic inference provider following ProviderHealthPort.",
+      "layer": "adapters/secondary",
+      "adapter": "Anthropic",
+      "port": "ProviderHealthPort",
+      "dependencies": [
+        "P0.1"
+      ],
+      "tier": 1,
+      "specs": [],
+      "worktree_branch": "feat/inference/adapters-secondary",
+      "done_condition": "Anthropic health check adapter is implemented and passes tests."
+    },
+    {
+      "id": "P2.1",
+      "description": "Modify AddInferenceProviderUseCase to invoke health check and return error on empty/error responses.",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.1",
+        "P1.1",
+        "P1.2"
+      ],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/inference/usecases",
+      "done_condition": "AddInferenceProviderUseCase updated to handle health checks and return structured errors."
+    },
+    {
+      "id": "P2.2",
+      "description": "Update DiscoverInferenceProvidersUseCase to filter non-responsive providers based on health checks when prune is enabled.",
+      "layer": "usecases",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P0.2",
+        "P1.1",
+        "P1.2"
+      ],
+      "tier": 3,
+      "specs": [],
+      "worktree_branch": "feat/inference/usecases",
+      "done_condition": "DiscoverInferenceProvidersUseCase updated to prune non-responsive providers successfully."
+    },
+    {
+      "id": "P3.1",
+      "description": "Update CLI command for hex inference add to handle health check errors.",
+      "layer": "adapters/primary",
+      "adapter": "CLI",
+      "port": null,
+      "dependencies": [
+        "P2.1"
+      ],
+      "tier": 2,
+      "specs": [],
+      "worktree_branch": "feat/inference/adapters-primary",
+      "done_condition": "CLI for hex inference add correctly handles health check errors and provides user feedback."
+    },
+    {
+      "id": "P3.2",
+      "description": "Add --prune flag functionality to hex inference discover CLI command mapped to the use case parameter.",
+      "layer": "adapters/primary",
+      "adapter": "CLI",
+      "port": null,
+      "dependencies": [
+        "P2.2"
+      ],
+      "tier": 2,
+      "specs": [],
+      "worktree_branch": "feat/inference/adapters-primary",
+      "done_condition": "Hex inference discover CLI correctly implements --prune flag and displays results appropriately."
+    },
+    {
+      "id": "P4.1",
+      "description": "Wire up the health check implementations to the composition root.",
+      "layer": "composition-root",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P1.1",
+        "P1.2"
+      ],
+      "tier": 4,
+      "specs": [],
+      "worktree_branch": "feat/inference/composition-root",
+      "done_condition": "Health check adapters are wired up correctly in the composition root."
+    },
+    {
+      "id": "P5.1",
+      "description": "Create integration tests for health checks and connectivity validations.",
+      "layer": "integration",
+      "adapter": null,
+      "port": null,
+      "dependencies": [
+        "P5.1"
+      ],
+      "tier": 5,
+      "specs": [],
+      "worktree_branch": "feat/inference/integration-tests",
+      "done_condition": "Integration tests for health checks and validations are written and passing."
+    }
+  ],
+  "mergeOrder": [
+    "P0.1 - ProviderHealthPort and PingResult are completed",
+    "P0.2 - DiscoverInferenceProvidersUseCase updated",
+    "P1.1, P1.2 - Health check adapters for OpenAI and Anthropic are implemented",
+    "P2.1 - AddInferenceProviderUseCase modified",
+    "P2.2 - DiscoverInferenceProvidersUseCase updated for pruning",
+    "P3.1, P3.2 - CLI commands updated",
+    "P4.1 - Health check wiring in composition root",
+    "P5.1 - Integration tests complete"
+  ],
+  "riskRegister": [
+    {
+      "impact": "medium",
+      "mitigation": "Optimize health check implementation for speed.",
+      "risk": "Health checks may add latency to add and discover commands."
+    },
+    {
+      "impact": "high",
+      "mitigation": "Implement retry logic for health checks.",
+      "risk": "Temporary network issues may lead to false negatives when testing provider health."
+    }
+  ],
+  "successCriteria": [
+    "Health checks are integrated and provide immediate feedback on provider status.",
+    "--prune flag works as intended, filtering out non-responsive providers."
+  ],
+  "dependencies": {
+    "cargo": [],
+    "npm": []
+  }
+}
