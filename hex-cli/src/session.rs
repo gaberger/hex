@@ -264,17 +264,24 @@ impl DevSession {
                 status: session.status,
                 current_phase: session.current_phase,
                 created_at: session.created_at,
+                updated_at: session.updated_at,
                 total_cost_usd: session.total_cost_usd,
+                output_dir: session.output_dir,
             });
         }
-        // newest first
-        summaries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        // newest first by updated_at
+        summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         Ok(summaries)
     }
 
     /// Remove stale sessions (Failed, or InProgress with $0 cost).
     /// Completed sessions are the audit trail and are preserved.
-    pub fn clean_completed() -> Result<usize> {
+    /// Remove stale sessions from disk.
+    ///
+    /// Always removes: `Completed`, `Failed`, corrupt files, zero-cost in_progress.
+    /// Also removes in_progress/paused older than 7 days.
+    /// With `force=true`: removes ALL in_progress/paused regardless of age.
+    pub fn clean_completed(force: bool) -> Result<usize> {
         let dir = sessions_dir()?;
         if !dir.exists() {
             return Ok(0);
@@ -299,10 +306,17 @@ impl DevSession {
                     continue;
                 }
             };
+            let cutoff = (chrono::Utc::now() - chrono::Duration::days(7))
+                .format("%Y-%m-%dT%H:%M:%S").to_string();
+            let old = session.updated_at < cutoff;
             let should_remove = match session.status {
-                SessionStatus::Failed => true,
+                SessionStatus::Completed | SessionStatus::Failed => true,
                 // Stale in-progress with no work done
                 SessionStatus::InProgress if session.total_cost_usd == 0.0 => true,
+                // Any in-progress/paused session not touched in 7 days
+                SessionStatus::InProgress | SessionStatus::Paused if old => true,
+                // Force: remove all remaining in-progress/paused
+                SessionStatus::InProgress | SessionStatus::Paused if force => true,
                 _ => false,
             };
             if should_remove {
@@ -342,7 +356,10 @@ pub struct DevSessionSummary {
     pub status: SessionStatus,
     pub current_phase: PipelinePhase,
     pub created_at: String,
+    pub updated_at: String,
     pub total_cost_usd: f64,
+    /// Output directory (set for example builds, None for in-project feature dev).
+    pub output_dir: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
