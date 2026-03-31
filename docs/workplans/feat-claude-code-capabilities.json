@@ -135,30 +135,6 @@
       "commit_hash": "integration-tests-v1"
     },
     {
-      "id": "step-10",
-      "description": "Wire hex-agent → hex-nexus cost reporting",
-      "layer": "adapters/secondary",
-      "adapter": "cost-reporter",
-      "port": null,
-      "dependencies": ["step-9"],
-      "tier": 2,
-      "specs": ["S05", "S06"],
-      "worktree_branch": "feat/claude-code-cap/cost-reporter",
-      "done_condition": "POST /api/metrics/cost updates dashboard with real data"
-    },
-    {
-      "id": "step-11",
-      "description": "Add permission override CLI commands",
-      "layer": "adapters/primary",
-      "adapter": "cli",
-      "port": null,
-      "dependencies": ["step-3"],
-      "tier": 2,
-      "specs": ["S02"],
-      "worktree_branch": "feat/claude-code-cap/permission-cli",
-      "done_condition": "hex permissions allow/deny commands work"
-    },
-    {
       "id": "step-12",
       "description": "Externalize pricing to config file",
       "layer": "domain",
@@ -168,19 +144,30 @@
       "tier": 0,
       "specs": ["S04"],
       "worktree_branch": "feat/claude-code-cap/pricing-config",
-      "done_condition": "Pricing loaded from .hex/pricing.json"
+      "done_condition": "Pricing loaded from .hex/pricing.json",
+      "status": "completed",
+      "commit_hash": "pricing-config-v1"
+    },
+    {
+      "id": "step-10",
+      "description": "Wire hex-agent → hex-nexus cost reporting (future)",
+      "status": "pending",
+      "worktree_branch": "feat/cost-reporter",
+      "done_condition": "TODO"
+    },
+    {
+      "id": "step-11",
+      "description": "Add permission override CLI commands (future)",
+      "status": "pending", 
+      "worktree_branch": "feat/permission-cli",
+      "done_condition": "TODO"
     },
     {
       "id": "step-13",
-      "description": "Add cost widget to dashboard",
-      "layer": "adapters/primary",
-      "adapter": "dashboard",
-      "port": null,
-      "dependencies": ["step-10"],
-      "tier": 2,
-      "specs": ["S01"],
-      "worktree_branch": "feat/claude-code-cap/dashboard-widget",
-      "done_condition": "Dashboard shows cost chart"
+      "description": "Add cost widget to dashboard (future)",
+      "status": "pending",
+      "worktree_branch": "feat/dashboard-widget",
+      "done_condition": "TODO"
     }
   ],
   "dependencies": {
