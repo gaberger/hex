@@ -285,8 +285,37 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
 
         // ── Swarm ──
         "hex_hexflo_swarm_init" => {
+            // Resolve project_id: explicit arg → CWD lookup → directory name fallback
+            let project_id: String = if let Some(pid) = args.get("project_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty() && *s != ".") {
+                pid.to_string()
+            } else if let Ok(projects_resp) = nexus.get("/api/projects").await {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let cwd_str = cwd.to_string_lossy().to_string();
+                projects_resp["projects"]
+                    .as_array()
+                    .and_then(|list| {
+                        list.iter().find(|p| {
+                            p["rootPath"].as_str().map(|rp| rp == cwd_str).unwrap_or(false)
+                        })
+                    })
+                    .and_then(|p| p["id"].as_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| {
+                        cwd.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown")
+                            .to_string()
+                    })
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_default()
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string()
+            };
             let body = serde_json::json!({
-                "project_id": args.get("project_id").and_then(|v| v.as_str()).unwrap_or("."),
+                "projectId": project_id,
                 "name": args.get("name").and_then(|v| v.as_str()).unwrap_or("default"),
                 "topology": args.get("topology").and_then(|v| v.as_str()).unwrap_or("hierarchical"),
             });
