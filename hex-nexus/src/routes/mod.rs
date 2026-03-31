@@ -28,6 +28,7 @@ pub mod openapi;
 pub mod command_sessions;
 pub mod inbox;
 pub mod sandbox;
+pub mod skills;
 pub mod ws;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
@@ -487,6 +488,7 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/swarms/active", get(swarms::list_active_swarms))
         .route("/api/swarms/failed", get(swarms::list_failed_swarms))
+        .route("/api/swarms/all", get(swarms::list_all_swarms))
         .route("/api/swarms/{id}", get(swarms::get_swarm)
             .patch(swarms::complete_swarm))
         .route("/api/swarms/{id}/fail", post(swarms::fail_swarm)
@@ -596,6 +598,7 @@ pub fn build_router(state: SharedState) -> Router {
         // Project-scoped workplan files (dashboard passes ?root= as fallback)
         .route("/api/projects/{id}/workplans", get(project_workplan_files))
         .route("/api/projects/{id}/report", get(projects::project_report))
+        .route("/api/projects/{id}/swarms", get(projects::project_swarms))
         // Project-scoped file browsing (ADR-045)
         .route("/api/{project_id}/browse", get(browse::browse_dir))
         .route("/api/{project_id}/read/{*path}", get(browse::read_file))
@@ -666,6 +669,12 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/projects/{id}/adrs/{adr_id}", get(adrs::get_project_adr)
             .put(adrs::save_project_adr)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
+
+        // Skill registry (ADR-042)
+        // NOTE: /sync must be registered BEFORE /{name} to avoid path conflict
+        .route("/api/skills/sync", post(skills::sync_skills))
+        .route("/api/skills", get(skills::list_skills))
+        .route("/api/skills/{name}", get(skills::get_skill))
 
         // Generic file read/write (path-traversal protected)
         .route("/api/files", get(files::read_file)

@@ -60,9 +60,10 @@ async fn status() -> anyhow::Result<()> {
     nexus.ensure_running().await?;
 
     let project_id = resolve_project_id();
-    let resp = nexus
+    let raw = nexus
         .get(&format!("/api/{}/git/status", project_id))
         .await?;
+    let resp = if raw["data"].is_object() { raw["data"].clone() } else { raw };
 
     println!("{}", "Git Status".bold());
     println!("{}", "─".repeat(60));
@@ -137,9 +138,10 @@ async fn log(limit: u32) -> anyhow::Result<()> {
     nexus.ensure_running().await?;
 
     let project_id = resolve_project_id();
-    let resp = nexus
+    let raw = nexus
         .get(&format!("/api/{}/git/log?limit={}", project_id, limit))
         .await?;
+    let resp = if raw["data"].is_object() { raw["data"].clone() } else { raw };
 
     println!("{}", "Git Log".bold());
     println!("{}", "─".repeat(60));
@@ -188,9 +190,10 @@ async fn diff() -> anyhow::Result<()> {
     nexus.ensure_running().await?;
 
     let project_id = resolve_project_id();
-    let resp = nexus
+    let raw = nexus
         .get(&format!("/api/{}/git/diff", project_id))
         .await?;
+    let resp = if raw["data"].is_object() { raw["data"].clone() } else { raw };
 
     println!("{}", "Git Diff".bold());
     println!("{}", "─".repeat(60));
@@ -242,9 +245,10 @@ async fn branches() -> anyhow::Result<()> {
     nexus.ensure_running().await?;
 
     let project_id = resolve_project_id();
-    let resp = nexus
+    let raw = nexus
         .get(&format!("/api/{}/git/branches", project_id))
         .await?;
+    let resp = if raw["data"].is_object() || raw["data"].is_array() { raw["data"].clone() } else { raw };
 
     println!("{}", "Git Branches".bold());
     println!("{}", "─".repeat(60));
