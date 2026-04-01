@@ -20,11 +20,13 @@ use crossterm::ExecutableCommand;
 use futures_util::StreamExt;
 use ratatui::prelude::*;
 use ratatui::widgets::{Paragraph, Wrap};
-use tokio::sync::mpsc;
+use std::sync::Arc;
+use tokio::sync::{mpsc, Mutex};
 
 use crate::commands::chat::ChatArgs;
 use crate::nexus_client::NexusClient;
 use crate::tui::markdown;
+use crate::tui::mcp_client::McpClient;
 use crate::tui::session::{ChatSession, SessionMessage};
 use crate::tui::skills::{self, SkillResult};
 
@@ -91,6 +93,10 @@ struct ChatApp {
     context_system: Option<String>,
     nexus_url: String,
     auth_token: Option<String>,
+    /// Embedded MCP client — `None` if spawn failed (falls back to hardcoded tools).
+    mcp: Option<Arc<Mutex<McpClient>>>,
+    /// Tool schemas from MCP (or hardcoded fallback), sent with every inference turn.
+    tool_schemas: Vec<serde_json::Value>,
     token_rx: mpsc::Receiver<StreamEvent>,
     token_tx: mpsc::Sender<StreamEvent>,
     error_msg: Option<String>,
@@ -102,6 +108,8 @@ impl ChatApp {
     fn new(
         nexus_url: String,
         auth_token: Option<String>,
+        mcp: Option<Arc<Mutex<McpClient>>>,
+        tool_schemas: Vec<serde_json::Value>,
         system: Option<String>,
         model: Option<String>,
         context_system: Option<String>,
@@ -122,6 +130,8 @@ impl ChatApp {
             context_system,
             nexus_url,
             auth_token,
+            mcp,
+            tool_schemas,
             token_rx,
             token_tx,
             error_msg: None,
@@ -192,12 +202,14 @@ impl ChatApp {
 
         let nexus_url = self.nexus_url.clone();
         let auth_token = self.auth_token.clone();
+        let mcp = self.mcp.clone();
+        let tool_schemas = self.tool_schemas.clone();
         let model = if self.model == "default" { None } else { Some(self.model.clone()) };
         let system = self.merged_system();
         let tx = self.token_tx.clone();
 
         tokio::spawn(async move {
-            stream_request(nexus_url, auth_token, api_messages, model, system, tx).await;
+            stream_request(nexus_url, auth_token, mcp, tool_schemas, api_messages, model, system, tx).await;
         });
     }
 
@@ -475,12 +487,13 @@ async fn execute_hex_tool(nexus_url: &str, auth_token: Option<&str>, name: &str,
 async fn stream_request(
     nexus_url: String,
     auth_token: Option<String>,
+    mcp: Option<Arc<Mutex<McpClient>>>,
+    tools: Vec<serde_json::Value>,
     messages: Vec<serde_json::Value>,
     model: Option<String>,
     system: Option<String>,
     tx: mpsc::Sender<StreamEvent>,
 ) {
-    let tools = hex_tool_schemas();
     let mut current_messages = messages;
 
     // Tool-use loop: up to 5 rounds before forcing a final answer.
@@ -509,8 +522,12 @@ async fn stream_request(
                 arguments: args.clone(),
             }).await;
 
-            // Execute
-            let result = execute_hex_tool(&nexus_url, auth_token.as_deref(), name, &args).await;
+            // Execute via MCP if available, otherwise fall back to direct REST
+            let result = if let Some(ref mcp_arc) = mcp {
+                mcp_arc.lock().await.call_tool(name, args.clone()).await
+            } else {
+                execute_hex_tool(&nexus_url, auth_token.as_deref(), name, &args).await
+            };
 
             // Display result in TUI
             let _ = tx.send(StreamEvent::ToolResult {
@@ -1045,6 +1062,15 @@ pub async fn run(args: ChatArgs) -> Result<()> {
         None
     };
 
+    // --- Spawn embedded MCP client (falls back to hardcoded tools on failure) ---
+    let (mcp, tool_schemas) = match McpClient::spawn().await {
+        Ok(mut client) => {
+            let schemas = client.list_tools().await.unwrap_or_else(|_| hex_tool_schemas());
+            (Some(Arc::new(Mutex::new(client))), schemas)
+        }
+        Err(_) => (None, hex_tool_schemas()),
+    };
+
     // --- Project context injection (concurrent fetch, skip if --no-context or resuming) ---
     let context_system = if args.no_context || resume_session.is_some() {
         None
@@ -1053,7 +1079,7 @@ pub async fn run(args: ChatArgs) -> Result<()> {
         if ctx.is_empty() { None } else { Some(ctx) }
     };
 
-    let mut app = ChatApp::new(nexus_url, auth_token, args.system, args.model, context_system);
+    let mut app = ChatApp::new(nexus_url, auth_token, mcp, tool_schemas, args.system, args.model, context_system);
 
     // Restore prior session if requested
     if let Some(sess) = resume_session {

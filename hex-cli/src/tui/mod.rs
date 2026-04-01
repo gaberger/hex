@@ -6,6 +6,7 @@
 
 pub mod chat;
 pub mod controls;
+pub mod mcp_client;
 pub mod gate;
 pub mod markdown;
 pub mod messages;
