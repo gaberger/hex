@@ -19,7 +19,7 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use futures_util::StreamExt;
 use ratatui::prelude::*;
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
@@ -70,6 +70,13 @@ enum StreamEvent {
         content: String,
     },
     Error(String),
+    /// Open an overlay (model picker) with items fetched async.
+    OverlayOpen(Vec<serde_json::Value>),
+}
+
+enum Overlay {
+    ModelPicker { items: Vec<serde_json::Value>, cursor: usize },
+    SessionSidebar { sessions: Vec<ChatSession>, cursor: usize },
 }
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -105,6 +112,10 @@ struct ChatApp {
     notification_count: u32,
     /// User-defined skills loaded from .claude/skills/ at session start.
     user_skills: Vec<(String, String)>,
+    /// Files added to context via /add — injected into system prompt.
+    context_files: Vec<(String, String)>,
+    /// Active overlay (model picker, session sidebar).
+    overlay: Option<Overlay>,
 }
 
 impl ChatApp {
@@ -143,6 +154,8 @@ impl ChatApp {
             spinner_tick: 0,
             session,
             notification_count: 0,
+            context_files: Vec::new(),
+            overlay: None,
         }
     }
 
@@ -169,14 +182,35 @@ impl ChatApp {
         });
     }
 
-    /// Build the merged system prompt: context first, then user --system.
+    /// Build the merged system prompt: context first, then user --system, then context files.
     fn merged_system(&self) -> Option<String> {
-        match (&self.context_system, &self.system) {
+        let base = match (&self.context_system, &self.system) {
             (Some(ctx), Some(sys)) => Some(format!("{}\n\n{}", ctx, sys)),
             (Some(ctx), None) => Some(ctx.clone()),
             (None, Some(sys)) => Some(sys.clone()),
             (None, None) => None,
+        };
+
+        if self.context_files.is_empty() {
+            return base;
         }
+
+        let mut out = base.unwrap_or_default();
+        out.push_str("\n\n## Files in context\n");
+        let mut total_bytes = 0usize;
+        for (path, content) in &self.context_files {
+            if total_bytes >= 200 * 1024 {
+                break;
+            }
+            let truncated: &str = if content.len() > 50 * 1024 {
+                &content[..50 * 1024]
+            } else {
+                content.as_str()
+            };
+            total_bytes += truncated.len();
+            out.push_str(&format!("\n### {}\n```\n{}\n```\n", path, truncated));
+        }
+        Some(out)
     }
 
     fn send_message(&mut self) {
@@ -268,6 +302,16 @@ impl ChatApp {
                         }
                     }
                 }
+                Ok(StreamEvent::OverlayOpen(items)) => {
+                    if items.is_empty() {
+                        self.messages.push(ChatMessage {
+                            role: Role::Skill,
+                            content: "No providers configured — run: hex inference add".to_string(),
+                        });
+                    } else {
+                        self.overlay = Some(Overlay::ModelPicker { items, cursor: 0 });
+                    }
+                }
                 Err(_) => break,
             }
         }
@@ -341,8 +385,135 @@ impl ChatApp {
                     content: text,
                 });
             }
+            SkillResult::AddFile { path, content } => {
+                let bytes = content.len();
+                self.context_files.retain(|(p, _)| p != &path);
+                self.context_files.push((path.clone(), content));
+                self.messages.push(ChatMessage {
+                    role: Role::Skill,
+                    content: format!("Added: {} ({} bytes)", path, bytes),
+                });
+            }
+            SkillResult::ListFiles => {
+                if self.context_files.is_empty() {
+                    self.messages.push(ChatMessage {
+                        role: Role::Skill,
+                        content: "No files in context.".to_string(),
+                    });
+                } else {
+                    let lines: Vec<String> = std::iter::once("Files in context:".to_string())
+                        .chain(
+                            self.context_files
+                                .iter()
+                                .map(|(p, c)| format!("  {} ({} bytes)", p, c.len())),
+                        )
+                        .collect();
+                    self.messages.push(ChatMessage {
+                        role: Role::Skill,
+                        content: lines.join("\n"),
+                    });
+                }
+            }
+            SkillResult::RemoveFile(name) => {
+                let before = self.context_files.len();
+                self.context_files.retain(|(p, _)| p != &name);
+                let msg = if self.context_files.len() < before {
+                    format!("Removed: {}", name)
+                } else {
+                    format!("Not found in context: {}", name)
+                };
+                self.messages.push(ChatMessage { role: Role::Skill, content: msg });
+            }
+            SkillResult::OpenModelPicker => {
+                let nexus_url = self.nexus_url.clone();
+                let auth_token = self.auth_token.clone();
+                let tx = self.token_tx.clone();
+                tokio::spawn(async move {
+                    let url = format!("{}/api/inference/endpoints", nexus_url);
+                    let client = reqwest::Client::new();
+                    let mut req = client.get(&url);
+                    if let Some(token) = &auth_token {
+                        req = req.bearer_auth(token);
+                    }
+                    let items = match req.send().await {
+                        Ok(resp) => resp.json::<Vec<serde_json::Value>>().await.unwrap_or_default(),
+                        Err(_) => vec![],
+                    };
+                    let _ = tx.send(StreamEvent::OverlayOpen(items)).await;
+                });
+            }
         }
         self.auto_scroll = true;
+    }
+
+    fn overlay_key(&mut self, code: KeyCode) {
+        match &mut self.overlay {
+            Some(Overlay::ModelPicker { items, cursor }) => match code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < items.len() {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    let items_clone = items.clone();
+                    if let Some(item) = items_clone.get(*cursor) {
+                        let name = item
+                            .get("name")
+                            .or_else(|| item.get("id"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        self.model = name.clone();
+                        self.messages.push(ChatMessage {
+                            role: Role::Skill,
+                            content: format!("Switched to model: {}", name),
+                        });
+                    }
+                    self.overlay = None;
+                }
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.overlay = None;
+                }
+                _ => {}
+            },
+            Some(Overlay::SessionSidebar { sessions, cursor }) => match code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    let len = sessions.len();
+                    if *cursor + 1 < len {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    let sessions_clone = sessions.clone();
+                    if let Some(sess) = sessions_clone.get(*cursor) {
+                        self.restore_session(sess.clone());
+                        self.messages.push(ChatMessage {
+                            role: Role::Skill,
+                            content: format!(
+                                "Resumed session from {}",
+                                &sess.updated_at[..10]
+                            ),
+                        });
+                    }
+                    self.overlay = None;
+                }
+                KeyCode::Esc | KeyCode::F(2) | KeyCode::Char('q') => {
+                    self.overlay = None;
+                }
+                _ => {}
+            },
+            None => {}
+        }
     }
 }
 
@@ -839,6 +1010,10 @@ fn render(f: &mut Frame, app: &ChatApp, width: u16) {
     render_separator(f, chunks[2], width);
     render_input(f, app, chunks[3]);
     render_status(f, app, chunks[4]);
+
+    if let Some(overlay) = &app.overlay {
+        render_overlay(f, overlay, app);
+    }
 }
 
 fn render_title(f: &mut Frame, app: &ChatApp, area: Rect) {
@@ -876,10 +1051,19 @@ fn render_messages(f: &mut Frame, app: &ChatApp, area: Rect, width: u16) {
         }
 
         if msg.role == Role::Tool {
-            // ⚙ tool_name(args)  /  └─ result preview
+            // ⚙ tool_name(args)  /  └─ result preview (with inline diff coloring)
             for (li, line) in msg.content.lines().enumerate() {
                 let style = if li == 0 {
+                    // Header line: always Yellow Bold
                     Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                } else if line.starts_with("+++") || line.starts_with("---") {
+                    Style::default().fg(Color::Cyan)
+                } else if line.starts_with("@@") {
+                    Style::default().fg(Color::Cyan)
+                } else if line.starts_with('+') {
+                    Style::default().fg(Color::Green)
+                } else if line.starts_with('-') {
+                    Style::default().fg(Color::Red)
                 } else {
                     Style::default().fg(Color::Gray)
                 };
@@ -1021,20 +1205,25 @@ fn render_input(f: &mut Frame, app: &ChatApp, area: Rect) {
 fn render_status(f: &mut Frame, app: &ChatApp, area: Rect) {
     let model_short = app.model.split('/').last().unwrap_or(&app.model);
     let tok = app.total_input_tokens + app.total_output_tokens;
+    let files_badge = if app.context_files.is_empty() {
+        String::new()
+    } else {
+        format!(" · {} file(s)", app.context_files.len())
+    };
     let notif = if app.notification_count > 0 {
-        format!("  · 🔔 {}", app.notification_count)
+        format!("  · [{}]", app.notification_count)
     } else {
         String::new()
     };
     let status = if tok > 0 {
         format!(
-            "  {} · {} tok{}  ·  q/Ctrl+C quit  ·  ↑↓ scroll  ·  Shift+Enter newline",
-            model_short, tok, notif
+            "  {} · {} tok{}{}  ·  q/Ctrl+C quit  ·  ↑↓ scroll  ·  Shift+Enter newline  ·  F2 sessions",
+            model_short, tok, files_badge, notif
         )
     } else {
         format!(
-            "  {}{}  ·  q/Ctrl+C quit  ·  ↑↓ scroll  ·  Shift+Enter newline",
-            model_short, notif
+            "  {}{}{}  ·  q/Ctrl+C quit  ·  ↑↓ scroll  ·  Shift+Enter newline  ·  F2 sessions",
+            model_short, files_badge, notif
         )
     };
     let p = Paragraph::new(status)
@@ -1186,6 +1375,12 @@ async fn run_event_loop(
 
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
+                // If an overlay is active, route all key events to it
+                if app.overlay.is_some() {
+                    app.overlay_key(key.code);
+                    continue;
+                }
+
                 match (key.code, key.modifiers) {
                     (KeyCode::Char('q'), KeyModifiers::NONE)
                     | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
@@ -1236,6 +1431,11 @@ async fn run_event_loop(
                         app.scroll = app.scroll.saturating_add(1);
                     }
 
+                    (KeyCode::F(2), _) => {
+                        let sessions = ChatSession::list_recent(10).unwrap_or_default();
+                        app.overlay = Some(Overlay::SessionSidebar { sessions, cursor: 0 });
+                    }
+
                     (KeyCode::Char(c), KeyModifiers::NONE)
                     | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
                         app.input.push(c);
@@ -1247,4 +1447,97 @@ async fn run_event_loop(
         }
     }
     Ok(())
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    Rect { x, y, width: width.min(area.width), height: height.min(area.height) }
+}
+
+fn render_overlay(f: &mut Frame, overlay: &Overlay, app: &ChatApp) {
+    match overlay {
+        Overlay::ModelPicker { items, cursor } => {
+            let height = (items.len() as u16 + 4).min(20);
+            let width = 60u16.min(f.area().width.saturating_sub(4));
+            let area = centered_rect(width, height, f.area());
+            f.render_widget(Clear, area);
+            let block = Block::default()
+                .title(" Select Model (up/down navigate, Enter select, Esc cancel) ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan));
+            let inner = block.inner(area);
+            f.render_widget(block, area);
+            let list_items: Vec<ListItem> = items
+                .iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    let name = item
+                        .get("name")
+                        .or_else(|| item.get("id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let style = if i == *cursor {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    ListItem::new(format!("  {}", name)).style(style)
+                })
+                .collect();
+            let list = List::new(list_items);
+            f.render_widget(list, inner);
+        }
+        Overlay::SessionSidebar { sessions, cursor } => {
+            let sidebar_w = 32u16.min(f.area().width / 3);
+            let area = Rect {
+                x: f.area().width.saturating_sub(sidebar_w),
+                y: 0,
+                width: sidebar_w,
+                height: f.area().height,
+            };
+            f.render_widget(Clear, area);
+            let block = Block::default()
+                .title(" Sessions (F2 close) ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan));
+            let inner = block.inner(area);
+            f.render_widget(block, area);
+            let list_items: Vec<ListItem> = sessions
+                .iter()
+                .enumerate()
+                .map(|(i, sess)| {
+                    let date = &sess.updated_at[..10.min(sess.updated_at.len())];
+                    let preview = sess.preview();
+                    let text = format!("{} {}", date, preview);
+                    let truncated: String = text
+                        .chars()
+                        .take((sidebar_w as usize).saturating_sub(4))
+                        .collect();
+                    let style = if i == *cursor {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    ListItem::new(truncated).style(style)
+                })
+                .collect();
+            if list_items.is_empty() {
+                let p = Paragraph::new("  No saved sessions.")
+                    .style(Style::default().fg(Color::Gray));
+                f.render_widget(p, inner);
+            } else {
+                let list = List::new(list_items);
+                f.render_widget(list, inner);
+            }
+        }
+    }
+    // suppress unused warning — app is available for future use
+    let _ = app;
 }

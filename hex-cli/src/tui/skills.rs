@@ -21,6 +21,14 @@ pub enum SkillResult {
     Unknown(String),
     /// Inject this text as a user message and trigger inference.
     InjectMessage(String),
+    /// File was successfully added to context.
+    AddFile { path: String, content: String },
+    /// List currently loaded context files.
+    ListFiles,
+    /// Remove a file from context by name.
+    RemoveFile(String),
+    /// Open the model picker overlay.
+    OpenModelPicker,
 }
 
 /// Returns true if the trimmed input starts with '/'.
@@ -86,19 +94,23 @@ pub async fn dispatch(input: &str, nexus_url: &str, user_skills: &[(String, Stri
             "Available slash commands:".to_string(),
             "  /help              — show this help".to_string(),
             "  /clear             — clear conversation history".to_string(),
-            "  /model <name>      — switch model for this session".to_string(),
+            "  /model [name]      — switch model (no arg opens picker overlay)".to_string(),
             "  /context           — show current project context".to_string(),
             "  /adr <query>       — search ADRs".to_string(),
             "  /plan              — list active workplans / swarms".to_string(),
             "  /save              — save session to ~/.hex/sessions/".to_string(),
             "  /skills            — list user-defined skill commands".to_string(),
+            "  /add <path>        — add a file to the inference context".to_string(),
+            "  /files             — list files currently in context".to_string(),
+            "  /remove <name>     — remove a file from context".to_string(),
             "  /hex <cmd>         — run a hex CLI command (e.g. /hex plan list)".to_string(),
             "  /<skill-name>      — invoke a skill from .claude/skills/".to_string(),
+            "  F2                 — open session sidebar".to_string(),
         ]),
         "/clear" => SkillResult::ClearHistory,
         "/model" => {
             if rest.is_empty() {
-                SkillResult::Lines(vec!["Usage: /model <name>  (e.g. /model qwen/qwen3-8b)".to_string()])
+                SkillResult::OpenModelPicker
             } else {
                 SkillResult::SwitchModel(rest.to_string())
             }
@@ -123,6 +135,24 @@ pub async fn dispatch(input: &str, nexus_url: &str, user_skills: &[(String, Stri
                     lines.push(format!("  /{:<20} — {}", name, desc));
                 }
                 SkillResult::Lines(lines)
+            }
+        }
+        "/add" => {
+            if rest.is_empty() {
+                SkillResult::Lines(vec!["Usage: /add <path>".to_string()])
+            } else {
+                match std::fs::read_to_string(rest) {
+                    Ok(content) => SkillResult::AddFile { path: rest.to_string(), content },
+                    Err(e) => SkillResult::Lines(vec![format!("Error reading {}: {}", rest, e)]),
+                }
+            }
+        }
+        "/files" => SkillResult::ListFiles,
+        "/remove" => {
+            if rest.is_empty() {
+                SkillResult::Lines(vec!["Usage: /remove <filename>".to_string()])
+            } else {
+                SkillResult::RemoveFile(rest.to_string())
             }
         }
         "/hex" => {
