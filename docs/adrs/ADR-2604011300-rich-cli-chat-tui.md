@@ -1,9 +1,10 @@
 # ADR-2604011300: Rich CLI Chat TUI (`hex chat`)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-01
+**Updated:** 2026-04-01
 **Drivers:** hex works well inside Claude Code via MCP, but has no standalone conversational interface — users cannot interact with their hex-connected inference providers directly from a terminal session without Claude Code running.
-**Supersedes:** N/A
+**Supersedes:** ADR-036 (hex-chat session architecture — deprecated 2026-03-22)
 
 <!-- ID format: YYMMDDHHMM — use your local time. Example: 2603221500 = 2026-03-22 15:00 -->
 
@@ -12,6 +13,8 @@
 hex's inference gateway (SpacetimeDB + hex-nexus bridge) can route requests to any LLM provider. However, the only way to use this today is through the MCP tools exposed to Claude Code. When a user wants a quick conversational interaction — asking about project architecture, querying ADRs, or exploring workplan status — they must have Claude Code open.
 
 Claude Code itself implements a rich CLI experience: streaming token output, multi-line input, conversation history, markdown + syntax highlighting, tool use display, and vim key bindings. This is built on **Ink** (React reconciler targeting terminal output) with a custom Yoga layout engine.
+
+**opencode** (`github.com/anomalyco/opencode`) is a second reference implementation: a Rust-native TUI chat client with provider switching, file context display, inline diff rendering, and a session sidebar. Its architecture directly parallels what hex needs — it is the closest analog in the Rust ecosystem.
 
 For hex, the equivalent must be implemented in Rust within `hex-cli`. The idiomatic Rust TUI stack is **ratatui** (retained-mode widget library) + **crossterm** (cross-platform terminal I/O). This combination provides the same interactive feel as Ink without a JavaScript runtime.
 
@@ -22,13 +25,14 @@ For hex, the equivalent must be implemented in Rust within `hex-cli`. The idioma
 - hex has hexagonal architecture — the TUI is a primary adapter, not a domain concern
 - Session state must be persisted (conversation history) for multi-turn context
 - The chat command must remain aware of the current hex project (ADRs, workplans, agents)
+- The model needs the full hex tool surface (40+ tools) without a hardcoded schema list
 
 **Alternatives considered:**
 1. **Ship a Node.js chat binary separately** — rejected; adds runtime dependency, splits the UX
 2. **Use `cursive`** — higher-level but less flexible; ratatui has stronger ecosystem and is the de facto standard
 3. **Plain readline loop** — no streaming, no syntax highlighting, no tool use display; far below target UX
 4. **Embed a web view (Tauri)** — overkill for CLI; desktop app is already handled by hex-desktop
-5. **ratatui + crossterm** — direct Rust, composable, proven in production (Helix, Gitui, etc.)
+5. **ratatui + crossterm** — direct Rust, composable, proven in production (Helix, Gitui, opencode, etc.)
 
 ## Decision
 
@@ -42,43 +46,62 @@ We will add a `hex chat` subcommand to `hex-cli` that provides a rich, interacti
 hex-cli/src/
   commands/
     chat.rs          # Entry point: parses flags, wires deps, launches TUI
-  chat/
-    mod.rs           # TUI app struct, ratatui event loop
-    input.rs         # Multi-line input widget (crossterm keypress handling)
-    messages.rs      # Message list widget (streaming render, scroll)
-    renderer.rs      # Markdown → ANSI (pulldown-cmark + syntect)
-    history.rs       # Session persistence (~/.hex/sessions/chat-{id}.json)
-    keymap.rs        # Key bindings (insert / normal / command modes)
-    state.rs         # App state machine (idle | streaming | tool_call | error)
-    tool_display.rs  # Tool use display (hex tool calls rendered inline)
+  tui/
+    chat.rs          # TUI app struct, ratatui event loop (actual implementation)
+    mcp_client.rs    # Embedded MCP client — spawns hex mcp, discovers tools dynamically
+    session.rs       # Session persistence (~/.hex/sessions/chat-{id}.json)
+    skills.rs        # Slash command parser, user skill loader, /hex command
+    markdown.rs      # Markdown → ANSI (pulldown-cmark)
 ```
-
-`hex-core` ports used:
-- `IInferencePort` — sends messages, receives token stream
-- `ISessionPort` — loads/saves conversation history
-- `IProjectContextPort` — injects project context (active ADRs, agent names, workplan status)
 
 hex-nexus provides the concrete adapters via its REST API; `hex chat` calls them through the same HTTP client used by all other hex-cli commands.
 
 ### Key Features
 
-**Streaming output**: The message rendering widget consumes a `tokio::sync::mpsc::Receiver<String>` of tokens. Each token triggers a ratatui re-render of the current assistant message bubble, producing the typewriter effect familiar from Claude Code.
+**Streaming output**: The message rendering widget consumes a `tokio::sync::mpsc::Receiver<StreamEvent>` of tokens. Each token triggers a ratatui re-render of the current assistant message bubble, producing the typewriter effect familiar from Claude Code.
 
-**Multi-line input**: `input.rs` implements a minimal editor widget — Enter to submit, Shift+Enter for newline, Up/Down for history navigation, Ctrl+C to cancel. Optional vim mode (insert/normal) gated behind `--vim` flag.
+**Multi-line input**: Enter to submit, Shift+Enter for newline, Up/Down for history scroll, Ctrl+C to cancel.
 
-**Markdown rendering**: `renderer.rs` converts assistant output through `pulldown-cmark` → custom ANSI emitter using `syntect` for code block syntax highlighting. Tables, bold, italic, and inline code are all supported.
+**Markdown rendering**: Assistant output is parsed through `pulldown-cmark` → custom ANSI emitter with syntax highlighting for code blocks.
 
-**Tool use display**: When the model emits a tool call, `tool_display.rs` renders a collapsible block showing tool name, arguments, and result. hex tools (`hex_analyze`, `hex_adr_search`, etc.) are automatically available as tools in the session.
+**Embedded MCP client** (`tui/mcp_client.rs`): On session start, spawns `hex mcp` (same binary) as a child process via stdio JSON-RPC. Calls `tools/list` to discover all 40+ hex tools dynamically. Tool calls in the inference loop are routed through `McpClient::call_tool()`. Falls back to a hardcoded 5-tool schema if spawn fails.
 
-**Project context injection**: On session start, `IProjectContextPort` loads a compact context block: active ADR titles, current workplan status, and agent roster. This is prepended as a system message so the model is project-aware without manual copy-paste.
+**Tool use display**: When the model emits a tool call, the TUI renders:
+```
+  ⚙ hex_adr_search("authentication")
+  └─ 3 results found
+```
 
-**Session persistence**: Conversations are stored in `~/.hex/sessions/chat-{uuid}.json` in the same shape as the existing `agent-{session-id}.json` files. `hex chat --resume` lists and resumes prior sessions.
+**Project context injection**: On session start, concurrent fetch of `/api/status`, `/api/hexflo/swarms`, `/api/adrs`, and `/api/inference/list` builds a system prompt block that makes the model project-aware without manual copy-paste.
+
+**Session persistence**: Conversations are stored in `~/.hex/sessions/chat-{uuid}.json`. `hex chat --resume` lists and resumes prior sessions.
+
+**Lifecycle hooks**: Fires `hex hook session-start` / `session-end` at TUI init/quit, and `hex hook route` before each inference turn (for inbox notification checks). Hook output surfaces as a dim italic system message.
+
+**User skills**: Loads `.claude/skills/*.md` from project and global dirs at startup. Each skill becomes a slash command. `/skills` lists them. Project-local files override global on name collision.
+
+**hex command execution**: `/hex <subcommand>` runs any `hex` CLI subcommand and streams output into the TUI. The model can also invoke `hex_exec` via MCP (routes through `POST /api/exec`).
+
+**Notification badge**: When `hex hook route` detects a priority-2 inbox message, the status bar shows `🔔 N` and inference is held.
+
+### opencode-Inspired Enhancements (Planned)
+
+The following features are planned based on patterns in opencode's TUI:
+
+| Feature | opencode Pattern | hex chat Target |
+|---------|-----------------|-----------------|
+| File context display | Shows files currently in scope as a sidebar/overlay | Show files referenced in tool results or manually added via `/add <path>` |
+| Inline diff viewer | Renders before/after diffs for code changes inline in message stream | Render diffs when `hex_analyze` or `hex_git_diff` tool results contain diff output |
+| Provider/model switcher | Interactive model picker with latency/cost indicators | `/model` picker showing available providers from `/api/inference/list` with cost metadata |
+| Session sidebar | Left panel listing recent sessions with preview | `hex chat --resume` picker; eventual in-session sidebar toggle |
+| Compact mode | `--no-tui` plain output | Already implemented via `--no-tui` flag |
 
 ### Constraints
 
 - `hex chat` **must not** import from any `adapters/secondary/` directly — only from `hex-core` ports.
 - The ratatui event loop runs in the `hex-cli` binary only; no TUI code in `hex-nexus`.
-- Token streaming uses Server-Sent Events (SSE) from the nexus `POST /api/inference/chat/stream` endpoint — this endpoint must be added to hex-nexus as part of this ADR's implementation.
+- Token streaming uses Server-Sent Events (SSE) from the nexus `POST /api/inference/chat/stream` endpoint.
+- `hex_exec` tool must use argv-split (never `sh -c`) to prevent shell injection.
 
 ## Consequences
 
@@ -87,17 +110,19 @@ hex-nexus provides the concrete adapters via its REST API; `hex chat` calls them
 - Consistent UX with Claude Code's streaming + syntax highlighting experience, all in Rust
 - Project-aware context injection means the model always knows ADR/workplan state without manual setup
 - Sessions are persistent and resumable — long-running exploration work is not lost
-- Tool use display makes hex tool invocations visible and debuggable in chat
+- Embedded MCP client gives the model the full 40+ hex tool surface without a hardcoded schema
+- Lifecycle hooks integrate hex's enforcement and inbox systems into every conversation
+- User skills make `.claude/skills/*.md` available as slash commands — no separate skill runner needed
 
 **Negative:**
-- Adds `ratatui`, `crossterm`, `pulldown-cmark`, and `syntect` to `hex-cli` dependencies (~500KB to binary)
-- SSE streaming endpoint must be added to hex-nexus (`/api/inference/chat/stream`)
+- Adds `ratatui`, `crossterm`, `pulldown-cmark`, `syntect`, `dialoguer`, `dirs` to `hex-cli` (~500KB)
+- MCP client spawns a child process on every session — minimal overhead but adds startup latency
 - Terminal width/height edge cases require testing across macOS, Linux, Windows Terminal
 
 **Mitigations:**
-- ratatui and crossterm are already used by other hex-adjacent Rust tools (Helix, Gitui) — well-tested
-- SSE endpoint is a small addition to hex-nexus axum router, reusing existing inference_tx channel
-- A `--no-tui` flag falls back to plain stdout streaming for CI / pipe contexts
+- ratatui and crossterm are proven in production (Helix, Gitui, opencode)
+- MCP spawn failure falls back gracefully to hardcoded schemas
+- `--no-tui` flag for CI/pipe contexts bypasses all TUI overhead
 
 ## Implementation
 
@@ -107,9 +132,39 @@ hex-nexus provides the concrete adapters via its REST API; `hex chat` calls them
 | P2 | Implement `hex chat` command + ratatui TUI (streaming, markdown, flowing layout) | **Complete** (b9b70e83) |
 | P3 | Project context injection — fetch hex state on startup, build system prompt | **Complete** (90eb8dd3) |
 | P4 | Slash commands (`/help`, `/clear`, `/model`, `/context`, `/adr`, `/plan`, `/save`) | **Complete** (90eb8dd3) |
-| P5 | Tool use loop — define tool schemas, parse model tool_calls, execute via nexus, display inline | **Complete** (654d4012) |
+| P5 | Tool use loop — OpenAI function calling, stream tool_calls, execute via nexus | **Complete** (654d4012) |
 | P6 | Session persistence — auto-save to `~/.hex/sessions/`, `hex chat --resume` picker | **Complete** (90eb8dd3) |
-| P7 | Hooks — `on_session_start`, `on_message_send`, `on_message_receive`, `on_session_end` | Pending |
+| P7 | Hooks — session-start/end, route hook, notification badge | **Complete** (1bdf7cf4) |
+| P8 | Embedded MCP client — spawn `hex mcp`, `tools/list`, dynamic tool routing | **Complete** (753d5476) |
+| P9 | Dynamic user skills — load `.claude/skills/`, `/skills`, `/hex <cmd>` | **Complete** (c9d1d9ef, 1bdf7cf4) |
+| P10 | `hex_exec` MCP tool + `POST /api/exec` nexus endpoint | **Complete** (3f7c77dc) |
+| P11 | opencode-parity: file context display, inline diff viewer, model picker overlay | Planned |
+
+### Slash Commands (current)
+
+| Command | Action |
+|---------|--------|
+| `/help` | List all available slash commands including user skills |
+| `/clear` | Clear conversation history (keeps system context) |
+| `/model <name>` | Switch model for the session |
+| `/context` | Show the current injected system context |
+| `/adr <query>` | Search ADRs via nexus |
+| `/plan` | List workplans with status |
+| `/save` | Save session to `~/.hex/sessions/chat-{uuid}.json` |
+| `/skills` | List user-defined skills from `.claude/skills/` |
+| `/hex <cmd>` | Run any hex CLI subcommand, stream output into TUI |
+| `/<skill-name>` | Invoke a user skill — injects body as message |
+
+### MCP Client Protocol (P8)
+
+`McpClient` spawns `hex mcp` via `tokio::process::Command`, communicates over stdio JSON-RPC:
+
+1. `initialize` → server responds with capabilities
+2. `initialized` notification → server echoes response
+3. `tools/list` → returns all tool schemas; converted to OpenAI function-calling format
+4. Per tool call: `tools/call {name, arguments}` → `{content: [{type:"text", text:"..."}]}`
+
+All requests serialized through `tokio::sync::Mutex<McpClient>` — one request at a time.
 
 ### Context Injection (P3)
 
@@ -118,70 +173,36 @@ On `hex chat` startup, before the first turn, build a system message from live h
 ```
 You are an AI assistant for the hex project. Current state:
 
-Project: {project_name} ({project_id})
+Project: {name} ({buildHash})
 Active workplans: {workplan summaries}
 Recent ADRs: {adr titles + status}
-Registered agents: {agent names}
 Inference providers: {provider list}
 
 Available commands: hex analyze, hex adr search, hex plan list, hex plan status, ...
 ```
 
-Injected as the `system` field. User `--system` flag appends to this. Fetched via nexus REST API at session start.
+Fetched concurrently via `tokio::join!` on 4 nexus endpoints. `--no-context` skips injection. `--system` appends to this.
 
-### Slash Commands (P4)
+### hex_exec Security (P10)
 
-Slash commands are parsed client-side before inference — no model involved. They execute hex operations and display results inline in the message area.
-
-| Command | Action |
-|---------|--------|
-| `/help` | List available slash commands |
-| `/clear` | Clear conversation history (keeps system context) |
-| `/model <name>` | Switch model for the session |
-| `/context` | Show the current injected system context |
-| `/adr <query>` | Search ADRs via `/api/adrs/search` |
-| `/plan` | List workplans with status |
-| `/save` | Save session to `~/.hex/sessions/chat-{uuid}.json` |
-
-### Tool Use Loop (P5)
-
-For models supporting tool use (OpenAI-compat with `tools` parameter), define schemas for hex operations. The SSE stream carries tool call events; the TUI parses them, executes via nexus, and injects results.
-
-Tool schemas: `hex_status`, `hex_adr_search`, `hex_plan_list`, `hex_plan_status`, `hex_analyze`, `hex_git_log`, `hex_inference_list`.
-
-SSE tool call event format (added to nexus stream handler):
-```json
-{"tool_call": {"id": "tc_01", "name": "hex_adr_search", "arguments": {"query": "authentication"}}}
-{"tool_result": {"id": "tc_01", "content": "[{...}]"}}
-```
-
-TUI renders tool calls as collapsed inline blocks:
-```
-  ⚙ hex_adr_search("authentication")
-  └─ 3 results found
-```
-
-### Session Persistence (P6)
-
-Sessions auto-saved to `~/.hex/sessions/chat-{uuid}.json` after each turn:
-```json
-{"id": "...", "created_at": "...", "messages": [...], "model": "...", "project_id": "..."}
-```
-
-`hex chat --resume` shows an arrow-key picker of recent sessions.
+`POST /api/exec` and `/hex <cmd>` both:
+- Split subcommand string on whitespace → explicit `argv` array
+- Pass to `tokio::process::Command::new(exe).args(argv)` — **never `sh -c`**
+- Shell metacharacters (`;`, `|`, `&&`) become literal arguments, rejected by clap
+- 30-second timeout; output capped at 200 lines in TUI
 
 ## References
 
-- Reference implementation: `/Volumes/ExtendedStorage/dev/claude-code/src/` (Ink + React TUI)
-  - `src/ink/` — custom Ink renderer (Yoga layout, React reconciler)
-  - `src/vim/` — vim key bindings
-  - `src/history.ts` — conversation history
-  - `src/components/` — message, tool use, streaming widgets
+- [opencode](https://github.com/anomalyco/opencode) — Rust-native TUI chat client; reference for file context display, diff viewer, provider switcher patterns
+- Claude Code reference: Ink + React TUI (`src/ink/`, `src/vim/`, `src/history.ts`, `src/components/`)
 - `hex-nexus/src/orchestration/mod.rs` — existing inference_tx channel wiring
+- `hex-cli/src/tui/mcp_client.rs` — embedded MCP client implementation
+- `hex-cli/src/tui/skills.rs` — slash command dispatcher + user skill loader
+- ADR-2603231800 — hex context injection into opencode (complementary: inject hex into opencode)
 - ADR-2604010000 — Unified execution path (inference routing)
 - ADR-2604011200 — SpacetimeDB native autonomous dispatch
 - ADR-027 — HexFlo swarm coordination (session-level agent context)
-- ADR-060 — Inbox notifications (surface in chat sidebar)
+- ADR-060 — Inbox notifications (route hook surfaces these in chat)
 - [ratatui](https://ratatui.rs) — Rust TUI framework
 - [crossterm](https://github.com/crossterm-rs/crossterm) — cross-platform terminal I/O
 - [syntect](https://github.com/trishume/syntect) — syntax highlighting for Rust
