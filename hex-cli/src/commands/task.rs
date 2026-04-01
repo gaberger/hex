@@ -171,8 +171,16 @@ async fn list() -> anyhow::Result<()> {
             let raw_title = task["title"].as_str().unwrap_or("-");
             let title = extract_task_title(raw_title);
             let status = task["status"].as_str().unwrap_or("pending");
-            // agentId is serialized as camelCase by SwarmTaskInfo (rename_all = "camelCase").
-            // Unassigned tasks have agent_id = "" (empty string, not null) — this is expected.
+            // SwarmTaskInfo (hex-nexus/src/ports/state.rs) uses #[serde(rename_all = "camelCase")],
+            // so `agent_id: String` serializes as "agentId" in JSON. The field is non-optional:
+            //   - Assigned tasks:   agentId = the assigning agent's UUID (set by STDB task_assign reducer)
+            //   - Unassigned tasks: agentId = "" (empty string) — IF the STDB row stores "" not null
+            // The snake_case fallback guards against any future adapter that omits the camelCase rename.
+            //
+            // P1 NOTE: spacetime_state.rs swarm_task_list uses `r.get("agent_id")?.as_str()?.to_string()`
+            // which silently drops tasks where agent_id is null in STDB (filter_map returns None).
+            // If unassigned tasks are missing from `hex task list`, fix spacetime_state.rs:974 to:
+            //   agent_id: r.get("agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             let agent_id = task["agentId"]
                 .as_str()
                 .or_else(|| task["agent_id"].as_str())

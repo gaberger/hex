@@ -353,22 +353,20 @@ impl LocalAdrReviewer {
 
     fn extract_adr_refs(text: &str) -> Vec<String> {
         let mut refs = Vec::new();
-        let mut i = 0;
-        let bytes = text.as_bytes();
-        while i < bytes.len() {
-            if i + 4 <= bytes.len() {
-                let window = &text[i..];
-                if window.starts_with("ADR-") || window.starts_with("adr-") {
-                    let rest = &window[4..];
-                    let num_end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-                    if num_end > 0 {
-                        refs.push(format!("ADR-{}", &rest[..num_end]));
-                        i += 4 + num_end;
-                        continue;
-                    }
+        let mut skip_until = 0;
+        for (i, _) in text.char_indices() {
+            if i < skip_until {
+                continue;
+            }
+            let window = &text[i..];
+            if window.starts_with("ADR-") || window.starts_with("adr-") {
+                let rest = &window[4..];
+                let num_end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+                if num_end > 0 {
+                    refs.push(format!("ADR-{}", &rest[..num_end]));
+                    skip_until = i + 4 + num_end;
                 }
             }
-            i += 1;
         }
         refs
     }
