@@ -14,7 +14,10 @@ use std::time::Duration;
 
 use anyhow::Result;
 use chrono::Utc;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
+    MouseEvent, MouseEventKind,
+};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -1536,6 +1539,7 @@ pub async fn run(args: ChatArgs) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     stdout.execute(EnterAlternateScreen)?;
+    stdout.execute(EnableMouseCapture)?;
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -1556,6 +1560,7 @@ pub async fn run(args: ChatArgs) -> Result<()> {
 
     // Always restore terminal
     disable_raw_mode()?;
+    terminal.backend_mut().execute(DisableMouseCapture)?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
@@ -1577,7 +1582,22 @@ async fn run_event_loop(
         terminal.draw(|f| render(f, app, width))?;
 
         if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
+            match event::read()? {
+            Event::Mouse(MouseEvent { kind, .. }) => {
+                match kind {
+                    MouseEventKind::ScrollUp => {
+                        app.auto_scroll = false;
+                        app.scroll = app.scroll.saturating_sub(3);
+                    }
+                    MouseEventKind::ScrollDown => {
+                        let max = app.scroll_max.get();
+                        app.scroll = app.scroll.saturating_add(3).min(max);
+                        if app.scroll >= max { app.auto_scroll = true; }
+                    }
+                    _ => {}
+                }
+            }
+            Event::Key(key) => {
                 // If an overlay is active, route all key events to it
                 if app.overlay.is_some() {
                     app.overlay_key(key.code);
@@ -1671,6 +1691,8 @@ async fn run_event_loop(
                     _ => {}
                 }
             }
+            _ => {}
+            } // end match event::read()
         }
     }
     Ok(())
