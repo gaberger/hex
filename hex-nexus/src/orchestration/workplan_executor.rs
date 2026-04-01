@@ -429,9 +429,48 @@ impl WorkplanExecutor {
         let mut handles = Vec::new();
 
         for task in &phase.tasks {
+            // Create a HexFlo task for this workplan task so the SubagentStop hook
+            // can mark it complete when the spawned agent finishes (ADR-2604010000 P3.2).
+            let hexflo_task_id = {
+                let hft_id = Uuid::new_v4().to_string();
+                let title = format!("{}: {}", task.id, task.name);
+                // Use workplan.id as swarm_id; if empty fall back to a placeholder so
+                // the task is still created and trackable.
+                let swarm_id = if !workplan.id.is_empty() {
+                    workplan.id.clone()
+                } else {
+                    "workplan-default".to_string()
+                };
+                match state_port.swarm_task_create(&hft_id, &swarm_id, &title, "").await {
+                    Ok(_) => {
+                        tracing::debug!(
+                            hexflo_task_id = %hft_id,
+                            swarm_id = %swarm_id,
+                            title = %title,
+                            "Created HexFlo task for workplan task"
+                        );
+                        hft_id
+                    }
+                    Err(e) => {
+                        // Non-fatal: log and continue without HexFlo tracking.
+                        tracing::warn!(
+                            error = %e,
+                            title = %title,
+                            "Failed to create HexFlo task — continuing without tracking"
+                        );
+                        String::new()
+                    }
+                }
+            };
+
             // Build the prompt from task name + description + files list.
             let prompt = {
-                let mut p = format!("# Task: {}\n\n", task.name);
+                let mut p = String::new();
+                // Prepend HEXFLO_TASK token so hooks can identify and update the task.
+                if !hexflo_task_id.is_empty() {
+                    p.push_str(&format!("HEXFLO_TASK:{}\n", hexflo_task_id));
+                }
+                p.push_str(&format!("# Task: {}\n\n", task.name));
                 if !task.description.is_empty() {
                     p.push_str(&task.description);
                     p.push_str("\n\n");
