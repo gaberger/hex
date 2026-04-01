@@ -90,6 +90,7 @@ struct ChatApp {
     /// Project context injected on startup (from nexus APIs).
     context_system: Option<String>,
     nexus_url: String,
+    auth_token: Option<String>,
     token_rx: mpsc::Receiver<StreamEvent>,
     token_tx: mpsc::Sender<StreamEvent>,
     error_msg: Option<String>,
@@ -100,6 +101,7 @@ struct ChatApp {
 impl ChatApp {
     fn new(
         nexus_url: String,
+        auth_token: Option<String>,
         system: Option<String>,
         model: Option<String>,
         context_system: Option<String>,
@@ -119,6 +121,7 @@ impl ChatApp {
             system,
             context_system,
             nexus_url,
+            auth_token,
             token_rx,
             token_tx,
             error_msg: None,
@@ -188,12 +191,13 @@ impl ChatApp {
         self.auto_scroll = true;
 
         let nexus_url = self.nexus_url.clone();
+        let auth_token = self.auth_token.clone();
         let model = if self.model == "default" { None } else { Some(self.model.clone()) };
         let system = self.merged_system();
         let tx = self.token_tx.clone();
 
         tokio::spawn(async move {
-            stream_request(nexus_url, api_messages, model, system, tx).await;
+            stream_request(nexus_url, auth_token, api_messages, model, system, tx).await;
         });
     }
 
@@ -407,7 +411,7 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
 }
 
 /// Execute a hex tool by calling the nexus REST API and return a compact result string.
-async fn execute_hex_tool(nexus_url: &str, name: &str, args: &serde_json::Value) -> String {
+async fn execute_hex_tool(nexus_url: &str, auth_token: Option<&str>, name: &str, args: &serde_json::Value) -> String {
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
@@ -416,32 +420,41 @@ async fn execute_hex_tool(nexus_url: &str, name: &str, args: &serde_json::Value)
         Err(_) => return "{\"error\":\"client build failed\"}".to_string(),
     };
 
+    // Helper: build a GET request with optional Bearer token.
+    let authed = |url: String| {
+        let mut req = client.get(url);
+        if let Some(tok) = auth_token {
+            req = req.header("Authorization", format!("Bearer {}", tok));
+        }
+        req
+    };
+
     let result = match name {
         "hex_adr_search" => {
             let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-            client.get(format!("{}/api/adrs", nexus_url))
+            authed(format!("{}/api/adrs", nexus_url))
                 .query(&[("q", q)])
                 .send().await.ok()
                 .and_then(|r| if r.status().is_success() { Some(r) } else { None })
         }
         "hex_plan_list" => {
-            client.get(format!("{}/api/hexflo/swarms", nexus_url))
+            authed(format!("{}/api/hexflo/swarms", nexus_url))
                 .send().await.ok()
                 .and_then(|r| if r.status().is_success() { Some(r) } else { None })
         }
         "hex_status" => {
-            client.get(format!("{}/api/status", nexus_url))
+            authed(format!("{}/api/status", nexus_url))
                 .send().await.ok()
                 .and_then(|r| if r.status().is_success() { Some(r) } else { None })
         }
         "hex_inference_list" => {
-            client.get(format!("{}/api/inference/list", nexus_url))
+            authed(format!("{}/api/inference/list", nexus_url))
                 .send().await.ok()
                 .and_then(|r| if r.status().is_success() { Some(r) } else { None })
         }
         "hex_git_log" => {
             let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10);
-            client.get(format!("{}/api/git/log", nexus_url))
+            authed(format!("{}/api/git/log", nexus_url))
                 .query(&[("limit", limit.to_string().as_str())])
                 .send().await.ok()
                 .and_then(|r| if r.status().is_success() { Some(r) } else { None })
@@ -461,6 +474,7 @@ async fn execute_hex_tool(nexus_url: &str, name: &str, args: &serde_json::Value)
 
 async fn stream_request(
     nexus_url: String,
+    auth_token: Option<String>,
     messages: Vec<serde_json::Value>,
     model: Option<String>,
     system: Option<String>,
@@ -496,7 +510,7 @@ async fn stream_request(
             }).await;
 
             // Execute
-            let result = execute_hex_tool(&nexus_url, name, &args).await;
+            let result = execute_hex_tool(&nexus_url, auth_token.as_deref(), name, &args).await;
 
             // Display result in TUI
             let _ = tx.send(StreamEvent::ToolResult {
@@ -1003,6 +1017,7 @@ pub async fn run(args: ChatArgs) -> Result<()> {
     })?;
 
     let nexus_url = nexus.url().to_string();
+    let auth_token = std::env::var("HEX_DASHBOARD_TOKEN").ok();
 
     // --- Session resume (happens before raw mode so dialoguer can render) ---
     let resume_session: Option<ChatSession> = if let Some(uuid) = &args.resume {
@@ -1038,7 +1053,7 @@ pub async fn run(args: ChatArgs) -> Result<()> {
         if ctx.is_empty() { None } else { Some(ctx) }
     };
 
-    let mut app = ChatApp::new(nexus_url, args.system, args.model, context_system);
+    let mut app = ChatApp::new(nexus_url, auth_token, args.system, args.model, context_system);
 
     // Restore prior session if requested
     if let Some(sess) = resume_session {
