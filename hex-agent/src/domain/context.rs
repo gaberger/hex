@@ -451,8 +451,49 @@ impl ContextBuilder {
         self.substitute_variables(base)
     }
 
+    /// Returns the primary HexFlo memory scope for this role.
+    /// Derived from the role's service templates: the most specific
+    /// HexFlo scope is preferred (agent > swarm > global).
     pub fn get_hexflo_scope(&self) -> Option<&'static str> {
-        None
+        let services = self.role.service_templates();
+        if services.contains(&ServiceTemplate::HexFloAgent) {
+            Some("agent")
+        } else if services.contains(&ServiceTemplate::HexFloSwarm) {
+            Some("swarm")
+        } else if services.contains(&ServiceTemplate::HexFloGlobal) {
+            Some("global")
+        } else {
+            None
+        }
+    }
+
+    /// Compose all prompt sections for this role in order:
+    /// system sections → tool sections → service sections.
+    /// Returns a `Vec<(PromptTemplate, String)>` so callers can
+    /// assemble, label, or filter sections as needed.
+    pub fn compose_role_sections(&self) -> Vec<(PromptTemplate, String)> {
+        let mut sections = Vec::new();
+
+        for &tmpl in self.role.system_templates() {
+            sections.push((
+                PromptTemplate::SystemPrompt(tmpl),
+                self.build_system_prompt(tmpl),
+            ));
+        }
+        for &tool in self.role.tool_templates() {
+            sections.push((
+                PromptTemplate::ToolPrompt(tool),
+                self.build_tool_prompt(tool),
+            ));
+        }
+        for &svc in self.role.service_templates() {
+            sections.push((
+                PromptTemplate::ServicePrompt(svc),
+                self.build_service_prompt(svc),
+            ));
+        }
+
+        sections
     }
 
     fn substitute_variables(&self, template: String) -> String {
@@ -606,6 +647,52 @@ mod tests {
         // Integrators coordinate across swarm + track agent state
         assert!(role.service_templates().contains(&ServiceTemplate::HexFloSwarm));
         assert!(role.service_templates().contains(&ServiceTemplate::HexFloAgent));
+    }
+
+    #[test]
+    fn test_get_hexflo_scope() {
+        // Coder → agent (most specific scope)
+        assert_eq!(ContextBuilder::new(AgentRole::Coder).get_hexflo_scope(), Some("agent"));
+        // Planner has swarm + global but not agent → swarm wins
+        assert_eq!(ContextBuilder::new(AgentRole::Planner).get_hexflo_scope(), Some("swarm"));
+        // Reviewer → agent
+        assert_eq!(ContextBuilder::new(AgentRole::Reviewer).get_hexflo_scope(), Some("agent"));
+        // Integrator has both swarm + agent → agent wins (most specific)
+        assert_eq!(ContextBuilder::new(AgentRole::Integrator).get_hexflo_scope(), Some("agent"));
+    }
+
+    #[test]
+    fn test_compose_role_sections_coder() {
+        let builder = ContextBuilder::new(AgentRole::Coder)
+            .with_variables(ContextVariables::new().with_project("myproj"));
+        let sections = builder.compose_role_sections();
+
+        // Must produce system + tool + service sections (non-empty)
+        assert!(!sections.is_empty());
+
+        // Every system template for Coder appears
+        let system_count = sections
+            .iter()
+            .filter(|(t, _)| matches!(t, PromptTemplate::SystemPrompt(_)))
+            .count();
+        assert_eq!(system_count, AgentRole::Coder.system_templates().len());
+
+        // Every tool template for Coder appears
+        let tool_count = sections
+            .iter()
+            .filter(|(t, _)| matches!(t, PromptTemplate::ToolPrompt(_)))
+            .count();
+        assert_eq!(tool_count, AgentRole::Coder.tool_templates().len());
+
+        // Every service template for Coder appears
+        let svc_count = sections
+            .iter()
+            .filter(|(t, _)| matches!(t, PromptTemplate::ServicePrompt(_)))
+            .count();
+        assert_eq!(svc_count, AgentRole::Coder.service_templates().len());
+
+        // All content strings are non-empty
+        assert!(sections.iter().all(|(_, content)| !content.is_empty()));
     }
 
     #[test]
