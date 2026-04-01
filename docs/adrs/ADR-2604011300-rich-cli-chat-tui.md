@@ -107,7 +107,7 @@ hex-nexus provides the concrete adapters via its REST API; `hex chat` calls them
 | P2 | Implement `hex chat` command + ratatui TUI (streaming, markdown, flowing layout) | **Complete** (b9b70e83) |
 | P3 | Project context injection — fetch hex state on startup, build system prompt | **Complete** (90eb8dd3) |
 | P4 | Slash commands (`/help`, `/clear`, `/model`, `/context`, `/adr`, `/plan`, `/save`) | **Complete** (90eb8dd3) |
-| P5 | Tool use loop — define tool schemas, parse model tool_calls, execute via nexus, display inline | Pending |
+| P5 | Tool use loop — define tool schemas, parse model tool_calls, execute via nexus, display inline | **Complete** (654d4012) |
 | P6 | Session persistence — auto-save to `~/.hex/sessions/`, `hex chat --resume` picker | **Complete** (90eb8dd3) |
 | P7 | Hooks — `on_session_start`, `on_message_send`, `on_message_receive`, `on_session_end` | Pending |
 
