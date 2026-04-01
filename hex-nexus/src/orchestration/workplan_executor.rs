@@ -504,15 +504,13 @@ impl WorkplanExecutor {
             };
 
             // Build the prompt from task name + description + files list.
-            let prompt = {
+            let base_prompt = {
                 let mut p = String::new();
                 // Prepend HEXFLO_TASK token so hooks can identify and update the task.
                 if !hexflo_task_id.is_empty() {
                     p.push_str(&format!("HEXFLO_TASK:{}\n", hexflo_task_id));
                 }
                 // P6.1: Inject agent role so spawned agents know their role context.
-                // TODO(P9.5): enrich context before prompt — wire LiveContextAdapter here
-                // once composition root provides it, to populate arch score, ADRs, etc.
                 if let Some(ref agent_role) = task.agent {
                     if !agent_role.is_empty() {
                         p.push_str(&format!("You are a {} agent.\n\n", agent_role));
@@ -535,6 +533,14 @@ impl WorkplanExecutor {
                 }
                 p
             };
+
+            // P9.5: Enrich task prompt with live context before dispatch
+            let prompt = Self::enrich_prompt(
+                state_port,
+                &task,
+                workplan,
+                base_prompt,
+            ).await;
 
             // ADR-004: derive worktree branch from workplan id + task id.
             let worktree_branch = if !workplan.id.is_empty() && !task.id.is_empty() {
@@ -881,6 +887,53 @@ impl WorkplanExecutor {
     /// ADR-046: Get a specific workplan execution by ID.
     pub async fn get_by_id(&self, id: &str) -> Result<Option<ExecutionState>, String> {
         Self::load_execution(self.state_port.as_ref(), id).await
+    }
+
+    /// P9.5: Enrich a task prompt with live context from the state port.
+    /// Gracefully degrades — any section that fails is silently skipped.
+    async fn enrich_prompt(
+        state_port: &Arc<dyn IStatePort>,
+        task: &WorkplanTask,
+        workplan: &Workplan,
+        base_prompt: String,
+    ) -> String {
+        let mut sections = Vec::new();
+
+        // 1. Prior HexFlo decisions for this task
+        if let Ok(memory) = state_port
+            .hexflo_memory_search(&task.description)
+            .await
+        {
+            if !memory.is_empty() {
+                let entries: Vec<String> = memory
+                    .iter()
+                    .take(3)
+                    .map(|(k, v)| format!("  {}: {}", k, v.chars().take(120).collect::<String>()))
+                    .collect();
+                sections.push(format!("## Prior Decisions\n{}", entries.join("\n")));
+            }
+        }
+
+        // 2. Target files from task (if any)
+        if !task.files.is_empty() {
+            sections.push(format!(
+                "## Target Files\n{}",
+                task.files.join("\n")
+            ));
+        }
+
+        // 3. Workplan context
+        sections.push(format!(
+            "## Workplan Context\nWorkplan: {}\nPhase layer: {}",
+            workplan.id,
+            task.layer.as_deref().unwrap_or("unknown")
+        ));
+
+        if sections.is_empty() {
+            return base_prompt;
+        }
+
+        format!("{}\n\n---\n{}", base_prompt, sections.join("\n\n"))
     }
 
     /// Mark execution with a new status, optionally recording errors.
