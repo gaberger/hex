@@ -25,7 +25,7 @@ colored = "2"
 anyhow = "1"
 dirs = "5"
 libc = "0.2"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 dialoguer = "0.11"
