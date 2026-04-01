@@ -49,8 +49,6 @@ enum Role {
     Assistant,
     /// Inline system/skill output — rendered dim italic.
     Skill,
-    /// Tool call display: ⚙ name(args) / └─ result
-    Tool,
 }
 
 #[derive(Debug, Clone)]
@@ -70,11 +68,9 @@ enum StreamEvent {
     ToolCall {
         _id: String,
         name: String,
-        arguments: serde_json::Value,
     },
     ToolResult {
         _id: String,
-        content: String,
     },
     Error(String),
     /// Open the model picker overlay with items fetched async.
@@ -119,6 +115,8 @@ struct ChatApp {
     context_files: Vec<(String, String)>,
     /// Active overlay (model picker, session sidebar).
     overlay: Option<Overlay>,
+    /// Name of the tool currently executing (shown in title, cleared on result).
+    spinner_label: Option<String>,
 }
 
 impl ChatApp {
@@ -158,6 +156,7 @@ impl ChatApp {
             notification_count: 0,
             context_files: Vec::new(),
             overlay: None,
+            spinner_label: None,
         }
     }
 
@@ -259,20 +258,13 @@ impl ChatApp {
                         }
                     }
                 }
-                Ok(StreamEvent::ToolCall { _id: _, name, arguments }) => {
-                    let pretty = format_tool_args(&name, &arguments);
-                    self.messages.push(ChatMessage {
-                        role: Role::Tool,
-                        content: format!("⚙ {}", pretty),
-                    });
+                Ok(StreamEvent::ToolCall { _id: _, name }) => {
+                    // Tool calls are hidden from the conversation view — only the
+                    // final assistant response is shown. Update spinner label only.
+                    self.spinner_label = Some(name);
                 }
-                Ok(StreamEvent::ToolResult { _id: _, content }) => {
-                    let preview: String = content.chars().take(120).collect();
-                    if let Some(last) = self.messages.iter_mut().rev().find(|m| m.role == Role::Tool) {
-                        if !last.content.contains('\n') {
-                            last.content.push_str(&format!("\n  └─ {}", preview));
-                        }
-                    }
+                Ok(StreamEvent::ToolResult { _id: _ }) => {
+                    self.spinner_label = None;
                     if self.messages.last().map(|m| m.role != Role::Assistant).unwrap_or(true) {
                         self.messages.push(ChatMessage { role: Role::Assistant, content: String::new() });
                     }
@@ -559,32 +551,6 @@ fn hex_tool_schemas() -> Vec<serde_json::Value> {
     ]
 }
 
-fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
-    let inner = if let Some(obj) = args.as_object() {
-        if obj.is_empty() {
-            String::new()
-        } else if obj.len() == 1 {
-            obj.values()
-                .next()
-                .map(|v| match v {
-                    serde_json::Value::String(s) => format!("\"{}\"", s),
-                    other => other.to_string(),
-                })
-                .unwrap_or_default()
-        } else {
-            obj.iter()
-                .map(|(k, v)| match v {
-                    serde_json::Value::String(s) => format!("{}=\"{}\"", k, s),
-                    other => format!("{}={}", k, other),
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-        }
-    } else {
-        args.to_string()
-    };
-    format!("{}({})", name, inner)
-}
 
 async fn execute_hex_tool(nexus_url: &str, auth_token: Option<&str>, name: &str, args: &serde_json::Value) -> String {
     let client = match reqwest::Client::builder()
@@ -678,7 +644,6 @@ async fn stream_request(
             let _ = tx.send(StreamEvent::ToolCall {
                 _id: id.to_string(),
                 name: name.to_string(),
-                arguments: args.clone(),
             }).await;
 
             let result = if let Some(ref mcp_arc) = mcp {
@@ -689,7 +654,6 @@ async fn stream_request(
 
             let _ = tx.send(StreamEvent::ToolResult {
                 _id: id.to_string(),
-                content: result.clone(),
             }).await;
 
             tc_msgs.push(serde_json::json!({
@@ -960,25 +924,6 @@ fn build_message_lines(msg: &ChatMessage, width: u16) -> Vec<Line<'static>> {
                 ]));
             }
         }
-        Role::Tool => {
-            for (li, line) in msg.content.lines().enumerate() {
-                let style = if li == 0 {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                } else if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@") {
-                    Style::default().fg(Color::Cyan)
-                } else if line.starts_with('+') {
-                    Style::default().fg(Color::Green)
-                } else if line.starts_with('-') {
-                    Style::default().fg(Color::Red)
-                } else {
-                    Style::default().fg(Color::Gray)
-                };
-                lines.push(Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(line.to_string(), style),
-                ]));
-            }
-        }
         Role::User => {
             lines.push(Line::from(Span::styled(
                 "  you".to_string(),
@@ -1142,7 +1087,11 @@ fn render_title(f: &mut Frame, app: &ChatApp, area: Rect) {
         "⬡"
     };
 
-    let left = format!(" {} hex chat — {} ", spinner, app.model);
+    let left = if let Some(tool) = &app.spinner_label {
+        format!(" {} hex chat — {} · {} ", spinner, app.model, tool)
+    } else {
+        format!(" {} hex chat — {} ", spinner, app.model)
+    };
 
     let ctx_indicator = if app.context_system.is_some() { " ctx" } else { "" };
     let file_count = if app.context_files.is_empty() {
