@@ -38,6 +38,11 @@ pub struct InferenceCompleteRequest {
     /// Maximum tokens to generate.
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
+    /// Tool schemas (OpenAI function-calling format). When present, the model
+    /// may emit tool_call events; finish_reason "tool_calls" triggers a done
+    /// event with a `tool_calls` array for the client to execute.
+    #[serde(default)]
+    pub tools: Option<Vec<serde_json::Value>>,
 }
 
 fn default_max_tokens() -> u32 {
@@ -867,6 +872,7 @@ pub async fn inference_stream(
     let requested_model = body.model.clone();
     let messages = body.messages.clone();
     let max_tokens = body.max_tokens;
+    let tools = body.tools.clone();
 
     tokio::spawn(async move {
         match pick_stream_provider(&state, requested_model.as_deref()).await {
@@ -876,7 +882,7 @@ pub async fn inference_stream(
                 ))).await;
             }
             Some(ep) => {
-                stream_inference(&ep, &messages, max_tokens, &mut tx).await;
+                stream_inference(&ep, &messages, max_tokens, tools.as_deref(), &mut tx).await;
             }
         }
     });
@@ -977,10 +983,14 @@ type SseTx = futures::channel::mpsc::Sender<
 >;
 
 /// Perform a streaming HTTP request and forward token deltas onto `tx`.
+///
+/// When the model requests tool calls (`finish_reason: "tool_calls"`), the
+/// done event includes a `tool_calls` array for the client to execute.
 async fn stream_inference(
     ep: &crate::routes::secrets::InferenceEndpointEntry,
     messages: &[serde_json::Value],
     max_tokens: u32,
+    tools: Option<&[serde_json::Value]>,
     tx: &mut SseTx,
 ) {
     use axum::response::sse::Event;
@@ -1002,20 +1012,22 @@ async fn stream_inference(
     };
 
     let (url, body) = if is_openrouter {
-        (
-            "https://openrouter.ai/api/v1/chat/completions".to_string(),
-            json!({ "model": ep.model, "messages": messages, "max_tokens": max_tokens, "stream": true }),
-        )
+        let mut b = json!({ "model": ep.model, "messages": messages, "max_tokens": max_tokens, "stream": true });
+        if let Some(t) = tools.filter(|t| !t.is_empty()) {
+            b["tools"] = serde_json::Value::Array(t.to_vec());
+        }
+        ("https://openrouter.ai/api/v1/chat/completions".to_string(), b)
     } else if is_ollama {
         (
             format!("{}/api/chat", ep.url.trim_end_matches('/')),
             json!({ "model": ep.model, "messages": messages, "stream": true }),
         )
     } else {
-        (
-            format!("{}/v1/chat/completions", ep.url.trim_end_matches('/')),
-            json!({ "model": ep.model, "messages": messages, "max_tokens": max_tokens, "stream": true }),
-        )
+        let mut b = json!({ "model": ep.model, "messages": messages, "max_tokens": max_tokens, "stream": true });
+        if let Some(t) = tools.filter(|t| !t.is_empty()) {
+            b["tools"] = serde_json::Value::Array(t.to_vec());
+        }
+        (format!("{}/v1/chat/completions", ep.url.trim_end_matches('/')), b)
     };
 
     let mut req = client.post(&url).json(&body);
@@ -1052,6 +1064,9 @@ async fn stream_inference(
     let mut line_buf = String::new();
     let mut output_tokens: u64 = 0;
     let model_name = ep.model.clone();
+    // Accumulate streamed tool_call argument deltas: index → (id, name, args_so_far)
+    let mut pending_tool_calls: std::collections::BTreeMap<usize, (String, String, String)> =
+        Default::default();
 
     while let Some(chunk) = byte_stream.next().await {
         let bytes = match chunk {
@@ -1101,6 +1116,34 @@ async fn stream_inference(
                         // OpenAI-compatible SSE delta
                         if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
                             if let Some(choice) = choices.first() {
+                                // Accumulate tool_call argument deltas
+                                if let Some(tc_arr) = choice.get("delta")
+                                    .and_then(|d| d.get("tool_calls"))
+                                    .and_then(|v| v.as_array())
+                                {
+                                    for tc in tc_arr {
+                                        let idx = tc.get("index")
+                                            .and_then(|v| v.as_u64())
+                                            .unwrap_or(0) as usize;
+                                        let e = pending_tool_calls.entry(idx).or_default();
+                                        if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                                            e.0 = id.to_string();
+                                        }
+                                        if let Some(name) = tc.get("function")
+                                            .and_then(|f| f.get("name"))
+                                            .and_then(|v| v.as_str())
+                                        {
+                                            e.1 = name.to_string();
+                                        }
+                                        if let Some(args) = tc.get("function")
+                                            .and_then(|f| f.get("arguments"))
+                                            .and_then(|v| v.as_str())
+                                        {
+                                            e.2.push_str(args);
+                                        }
+                                    }
+                                }
+
                                 let finish = choice.get("finish_reason")
                                     .and_then(|r| r.as_str()).unwrap_or("");
                                 if !finish.is_empty() && finish != "null" {
@@ -1110,8 +1153,29 @@ async fn stream_inference(
                                     let out_tok = val.get("usage")
                                         .and_then(|u| u.get("completion_tokens"))
                                         .and_then(|v| v.as_u64()).unwrap_or(output_tokens);
-                                    let ev = json!({"done":true,"model":model_name,"input_tokens":in_tok,"output_tokens":out_tok});
-                                    let _ = tx.send(Ok(Event::default().data(ev.to_string()))).await;
+
+                                    if finish == "tool_calls" && !pending_tool_calls.is_empty() {
+                                        // Emit done with tool_calls for the client to execute
+                                        let calls: Vec<serde_json::Value> = pending_tool_calls
+                                            .values()
+                                            .map(|(id, name, args_str)| {
+                                                let args = serde_json::from_str::<serde_json::Value>(args_str)
+                                                    .unwrap_or(json!({}));
+                                                json!({"id": id, "name": name, "arguments": args})
+                                            })
+                                            .collect();
+                                        let ev = json!({
+                                            "done": true,
+                                            "model": model_name,
+                                            "input_tokens": in_tok,
+                                            "output_tokens": out_tok,
+                                            "tool_calls": calls,
+                                        });
+                                        let _ = tx.send(Ok(Event::default().data(ev.to_string()))).await;
+                                    } else {
+                                        let ev = json!({"done":true,"model":model_name,"input_tokens":in_tok,"output_tokens":out_tok});
+                                        let _ = tx.send(Ok(Event::default().data(ev.to_string()))).await;
+                                    }
                                     return;
                                 }
                                 if let Some(tok) = choice.get("delta")

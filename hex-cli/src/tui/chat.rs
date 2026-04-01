@@ -38,6 +38,8 @@ enum Role {
     Assistant,
     /// Inline system/skill output — rendered dim italic, no label.
     Skill,
+    /// Tool call display block: ⚙ name(args) / └─ result
+    Tool,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +55,17 @@ enum StreamEvent {
         model: String,
         input_tokens: u64,
         output_tokens: u64,
+    },
+    /// Model requested a tool call — display inline.
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    /// Result of an executed tool call — appended to the matching display block.
+    ToolResult {
+        id: String,
+        content: String,
     },
     Error(String),
 }
@@ -155,11 +168,11 @@ impl ChatApp {
         self.input.clear();
         self.error_msg = None;
 
-        // Build messages array from conversation history (skip Skill messages)
+        // Build messages array from conversation history (skip Skill and Tool display messages)
         let mut api_messages: Vec<serde_json::Value> = self
             .messages
             .iter()
-            .filter(|m| m.role != Role::Skill)
+            .filter(|m| m.role == Role::User || m.role == Role::Assistant)
             .map(|m| {
                 serde_json::json!({
                     "role": if m.role == Role::User { "user" } else { "assistant" },
@@ -188,8 +201,31 @@ impl ChatApp {
         loop {
             match self.token_rx.try_recv() {
                 Ok(StreamEvent::Token(tok)) => {
+                    // Tokens go into the last Assistant message
                     if let Some(last) = self.messages.last_mut() {
-                        last.content.push_str(&tok);
+                        if last.role == Role::Assistant {
+                            last.content.push_str(&tok);
+                        }
+                    }
+                }
+                Ok(StreamEvent::ToolCall { id: _, name, arguments }) => {
+                    let pretty = format_tool_args(&name, &arguments);
+                    self.messages.push(ChatMessage {
+                        role: Role::Tool,
+                        content: format!("⚙ {}", pretty),
+                    });
+                }
+                Ok(StreamEvent::ToolResult { id: _, content }) => {
+                    // Append result preview to the last Tool message
+                    let preview: String = content.chars().take(120).collect();
+                    if let Some(last) = self.messages.iter_mut().rev().find(|m| m.role == Role::Tool) {
+                        if !last.content.contains('\n') {
+                            last.content.push_str(&format!("\n  └─ {}", preview));
+                        }
+                    }
+                    // Start a fresh assistant message for the continuation
+                    if self.messages.last().map(|m| m.role != Role::Assistant).unwrap_or(true) {
+                        self.messages.push(ChatMessage { role: Role::Assistant, content: String::new() });
                     }
                 }
                 Ok(StreamEvent::Done { model, input_tokens, output_tokens }) => {
@@ -222,13 +258,9 @@ impl ChatApp {
         self.session.messages = self
             .messages
             .iter()
-            .filter(|m| m.role != Role::Skill)
+            .filter(|m| m.role == Role::User || m.role == Role::Assistant)
             .map(|m| SessionMessage {
-                role: match m.role {
-                    Role::User => "user".to_string(),
-                    Role::Assistant => "assistant".to_string(),
-                    Role::Skill => "system".to_string(),
-                },
+                role: if m.role == Role::User { "user" } else { "assistant" }.to_string(),
                 content: m.content.clone(),
             })
             .collect();
@@ -285,6 +317,145 @@ impl ChatApp {
 }
 
 // ---------------------------------------------------------------------------
+// Tool use helpers
+// ---------------------------------------------------------------------------
+
+/// Tool schemas exposed to the model (OpenAI function-calling format).
+fn hex_tool_schemas() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "hex_adr_search",
+                "description": "Search Architecture Decision Records in the current hex project.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Full-text search query"}
+                    },
+                    "required": ["query"]
+                }
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "hex_plan_list",
+                "description": "List active HexFlo swarms and their task progress.",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "hex_status",
+                "description": "Get current hex project status: name, ID, nexus version.",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "hex_inference_list",
+                "description": "List registered inference providers.",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "hex_git_log",
+                "description": "Get recent git commit history for the current project.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "description": "Number of commits (default 10)"}
+                    }
+                }
+            }
+        }),
+    ]
+}
+
+/// Format a tool call for inline display: `name(arg)` or `name(key=val, ...)`.
+fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
+    let inner = if let Some(obj) = args.as_object() {
+        if obj.is_empty() {
+            String::new()
+        } else if obj.len() == 1 {
+            // Single arg: show value only
+            obj.values()
+                .next()
+                .map(|v| match v {
+                    serde_json::Value::String(s) => format!("\"{}\"", s),
+                    other => other.to_string(),
+                })
+                .unwrap_or_default()
+        } else {
+            obj.iter()
+                .map(|(k, v)| match v {
+                    serde_json::Value::String(s) => format!("{}=\"{}\"", k, s),
+                    other => format!("{}={}", k, other),
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    } else {
+        args.to_string()
+    };
+    format!("{}({})", name, inner)
+}
+
+/// Execute a hex tool by calling the nexus REST API and return a compact result string.
+async fn execute_hex_tool(nexus_url: &str, name: &str, args: &serde_json::Value) -> String {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return "{\"error\":\"client build failed\"}".to_string(),
+    };
+
+    let result = match name {
+        "hex_adr_search" => {
+            let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+            client.get(format!("{}/api/adrs", nexus_url))
+                .query(&[("q", q)])
+                .send().await.ok()
+                .and_then(|r| if r.status().is_success() { Some(r) } else { None })
+        }
+        "hex_plan_list" => {
+            client.get(format!("{}/api/hexflo/swarms", nexus_url))
+                .send().await.ok()
+                .and_then(|r| if r.status().is_success() { Some(r) } else { None })
+        }
+        "hex_status" => {
+            client.get(format!("{}/api/status", nexus_url))
+                .send().await.ok()
+                .and_then(|r| if r.status().is_success() { Some(r) } else { None })
+        }
+        "hex_inference_list" => {
+            client.get(format!("{}/api/inference/list", nexus_url))
+                .send().await.ok()
+                .and_then(|r| if r.status().is_success() { Some(r) } else { None })
+        }
+        "hex_git_log" => {
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10);
+            client.get(format!("{}/api/git/log", nexus_url))
+                .query(&[("limit", limit.to_string().as_str())])
+                .send().await.ok()
+                .and_then(|r| if r.status().is_success() { Some(r) } else { None })
+        }
+        other => return format!("{{\"error\":\"unknown tool: {}\"}}", other),
+    };
+
+    match result {
+        Some(r) => r.text().await.unwrap_or_else(|_| "{}".to_string()),
+        None => format!("{{\"error\":\"tool {} failed — nexus unreachable\"}}", name),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SSE streaming request
 // ---------------------------------------------------------------------------
 
@@ -295,12 +466,82 @@ async fn stream_request(
     system: Option<String>,
     tx: mpsc::Sender<StreamEvent>,
 ) {
-    let mut body = serde_json::json!({ "messages": messages });
+    let tools = hex_tool_schemas();
+    let mut current_messages = messages;
+
+    // Tool-use loop: up to 5 rounds before forcing a final answer.
+    for _round in 0..5 {
+        let tool_calls = stream_one_turn(
+            &nexus_url, &current_messages, model.as_deref(), system.as_deref(), &tools, &tx
+        ).await;
+
+        if tool_calls.is_empty() {
+            return; // Done event already sent
+        }
+
+        // Execute tool calls and extend messages for next turn
+        let mut tc_msgs: Vec<serde_json::Value> = Vec::new();
+        let mut tr_msgs: Vec<serde_json::Value> = Vec::new();
+
+        for tc in &tool_calls {
+            let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("tc_0");
+            let name = tc.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let args = tc.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+
+            // Display tool call in TUI
+            let _ = tx.send(StreamEvent::ToolCall {
+                id: id.to_string(),
+                name: name.to_string(),
+                arguments: args.clone(),
+            }).await;
+
+            // Execute
+            let result = execute_hex_tool(&nexus_url, name, &args).await;
+
+            // Display result in TUI
+            let _ = tx.send(StreamEvent::ToolResult {
+                id: id.to_string(),
+                content: result.clone(),
+            }).await;
+
+            tc_msgs.push(serde_json::json!({
+                "id": id, "type": "function",
+                "function": {"name": name, "arguments": serde_json::to_string(&args).unwrap_or_default()}
+            }));
+            tr_msgs.push(serde_json::json!({
+                "role": "tool", "tool_call_id": id, "content": result
+            }));
+        }
+
+        // Append assistant (tool_calls) + tool result messages
+        current_messages.push(serde_json::json!({
+            "role": "assistant", "content": null, "tool_calls": tc_msgs
+        }));
+        current_messages.extend(tr_msgs);
+    }
+
+    // Shouldn't reach here, but send done to unblock TUI
+    let _ = tx.send(StreamEvent::Done {
+        model: "unknown".to_string(), input_tokens: 0, output_tokens: 0,
+    }).await;
+}
+
+/// Stream one inference turn. Returns tool_calls JSON array if model requested
+/// tools (Done event is NOT sent). Returns empty vec on normal completion (Done IS sent).
+async fn stream_one_turn(
+    nexus_url: &str,
+    messages: &[serde_json::Value],
+    model: Option<&str>,
+    system: Option<&str>,
+    tools: &[serde_json::Value],
+    tx: &mpsc::Sender<StreamEvent>,
+) -> Vec<serde_json::Value> {
+    let mut body = serde_json::json!({ "messages": messages, "tools": tools });
     if let Some(m) = model {
-        body["model"] = serde_json::Value::String(m);
+        body["model"] = serde_json::Value::String(m.to_string());
     }
     if let Some(s) = system {
-        body["system"] = serde_json::Value::String(s);
+        body["system"] = serde_json::Value::String(s.to_string());
     }
 
     let client = match reqwest::Client::builder()
@@ -310,7 +551,7 @@ async fn stream_request(
         Ok(c) => c,
         Err(e) => {
             let _ = tx.send(StreamEvent::Error(e.to_string())).await;
-            return;
+            return vec![];
         }
     };
 
@@ -323,7 +564,7 @@ async fn stream_request(
         Ok(r) => r,
         Err(e) => {
             let _ = tx.send(StreamEvent::Error(e.to_string())).await;
-            return;
+            return vec![];
         }
     };
 
@@ -333,7 +574,7 @@ async fn stream_request(
         let _ = tx
             .send(StreamEvent::Error(format!("HTTP {}: {}", status, text)))
             .await;
-        return;
+        return vec![];
     }
 
     let mut stream = resp.bytes_stream();
@@ -344,7 +585,7 @@ async fn stream_request(
             Ok(c) => c,
             Err(e) => {
                 let _ = tx.send(StreamEvent::Error(e.to_string())).await;
-                return;
+                return vec![];
             }
         };
         buf.push_str(&String::from_utf8_lossy(&chunk));
@@ -367,18 +608,28 @@ async fn stream_request(
                             val.get("input_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
                         let output_tokens =
                             val.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+
+                        // Check if model requested tool calls
+                        if let Some(calls) = val.get("tool_calls").and_then(|v| v.as_array()) {
+                            if !calls.is_empty() {
+                                return calls.to_vec(); // caller handles execution + continuation
+                            }
+                        }
+
                         let _ = tx
                             .send(StreamEvent::Done { model, input_tokens, output_tokens })
                             .await;
-                        return;
+                        return vec![];
                     } else if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
                         let _ = tx.send(StreamEvent::Error(err.to_string())).await;
-                        return;
+                        return vec![];
                     }
                 }
             }
         }
     }
+
+    vec![]
 }
 
 // ---------------------------------------------------------------------------
@@ -575,11 +826,28 @@ fn render_messages(f: &mut Frame, app: &ChatApp, area: Rect, width: u16) {
             continue;
         }
 
+        if msg.role == Role::Tool {
+            // ⚙ tool_name(args)  /  └─ result preview
+            for (li, line) in msg.content.lines().enumerate() {
+                let style = if li == 0 {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM)
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(line.to_string(), style),
+                ]));
+            }
+            lines.push(Line::from(""));
+            continue;
+        }
+
         // Role label
         let (label, label_color) = match msg.role {
             Role::User => ("  you", Color::Green),
             Role::Assistant => ("  hex", Color::Cyan),
-            Role::Skill => unreachable!(),
+            Role::Skill | Role::Tool => unreachable!(),
         };
         lines.push(Line::from(Span::styled(
             label.to_string(),
@@ -640,7 +908,7 @@ fn render_messages(f: &mut Frame, app: &ChatApp, area: Rect, width: u16) {
                     }
                 }
             }
-            Role::Skill => unreachable!(),
+            Role::Skill | Role::Tool => unreachable!(),
         }
 
         lines.push(Line::from(""));
