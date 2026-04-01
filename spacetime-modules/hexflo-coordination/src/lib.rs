@@ -57,6 +57,28 @@ pub struct SwarmTask {
     pub completed_at: String,
 }
 
+/// An inference task dispatched by the workplan executor to a Claude Code agent.
+/// Replaces hexflo_memory "inference:queue:*" keys with first-class STDB rows.
+#[table(name = inference_task, public)]
+#[derive(Clone, Debug)]
+pub struct InferenceTask {
+    #[primary_key]
+    pub id: String,
+    pub workplan_id: String,
+    pub task_id: String,
+    pub phase: String,
+    pub prompt: String,
+    pub role: String,
+    /// "Pending" | "InProgress" | "Completed" | "Failed"
+    pub status: String,
+    /// Agent that claimed this task (empty until claimed)
+    pub agent_id: String,
+    pub result: String,
+    pub error: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// An agent participating in a swarm.
 #[table(name = swarm_agent, public)]
 #[derive(Clone, Debug)]
@@ -1140,6 +1162,112 @@ pub fn task_reclaim(
             ..task
         });
     }
+
+    Ok(())
+}
+
+// ============================================================
+//  Inference Task Reducers
+// ============================================================
+
+/// Create a new inference task with status=Pending.
+#[reducer]
+pub fn inference_task_create(
+    ctx: &ReducerContext,
+    id: String,
+    workplan_id: String,
+    task_id: String,
+    phase: String,
+    prompt: String,
+    role: String,
+    timestamp: String,
+) -> Result<(), String> {
+    if ctx.db.inference_task().id().find(&id).is_some() {
+        return Err(format!("InferenceTask '{}' already exists", id));
+    }
+
+    ctx.db.inference_task().insert(InferenceTask {
+        id,
+        workplan_id,
+        task_id,
+        phase,
+        prompt,
+        role,
+        status: "Pending".to_string(),
+        agent_id: String::new(),
+        result: String::new(),
+        error: String::new(),
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
+    });
+
+    Ok(())
+}
+
+/// Claim an inference task: CAS Pending→InProgress.
+/// Returns Err("already_claimed:<agent_id>") if not Pending.
+#[reducer]
+pub fn inference_task_claim(
+    ctx: &ReducerContext,
+    id: String,
+    agent_id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let task = ctx.db.inference_task().id().find(&id)
+        .ok_or_else(|| format!("InferenceTask '{}' not found", id))?;
+
+    if task.status != "Pending" {
+        return Err(format!("already_claimed:{}", task.agent_id));
+    }
+
+    ctx.db.inference_task().id().update(InferenceTask {
+        status: "InProgress".to_string(),
+        agent_id,
+        updated_at: timestamp,
+        ..task
+    });
+
+    Ok(())
+}
+
+/// Mark an inference task as completed with a result.
+#[reducer]
+pub fn inference_task_complete(
+    ctx: &ReducerContext,
+    id: String,
+    result: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let task = ctx.db.inference_task().id().find(&id)
+        .ok_or_else(|| format!("InferenceTask '{}' not found", id))?;
+
+    ctx.db.inference_task().id().update(InferenceTask {
+        status: "Completed".to_string(),
+        result,
+        updated_at: timestamp,
+        ..task
+    });
+
+    Ok(())
+}
+
+/// Mark an inference task as failed with an error message.
+#[reducer]
+pub fn inference_task_fail(
+    ctx: &ReducerContext,
+    id: String,
+    error: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let task = ctx.db.inference_task().id().find(&id)
+        .ok_or_else(|| format!("InferenceTask '{}' not found", id))?;
+
+    ctx.db.inference_task().id().update(InferenceTask {
+        status: "Failed".to_string(),
+        error,
+        updated_at: timestamp,
+        ..task
+    });
 
     Ok(())
 }
