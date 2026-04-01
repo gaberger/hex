@@ -738,6 +738,9 @@ pub struct UpdateQueueStatusRequest {
 }
 
 /// GET /api/inference/queue/pending — list pending inference tasks from STDB.
+///
+/// Returns tasks in the InferenceTaskPush shape (snake_case) so that
+/// `hex inference watch` startup reconciliation can deserialize them directly.
 pub async fn queue_pending(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
@@ -750,7 +753,18 @@ pub async fn queue_pending(
     };
 
     match port.inference_task_list_pending().await {
-        Ok(tasks) => (StatusCode::OK, Json(json!(tasks))),
+        Ok(tasks) => {
+            // Map to InferenceTaskPush shape (snake_case) for watch compatibility.
+            let pushes: Vec<serde_json::Value> = tasks.iter().map(|t| json!({
+                "id": t.id,
+                "workplan_id": t.workplan_id,
+                "task_id": t.task_id,
+                "phase": t.phase,
+                "prompt": t.prompt,
+                "role": t.role,
+            })).collect();
+            (StatusCode::OK, Json(json!(pushes)))
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e.to_string() })),

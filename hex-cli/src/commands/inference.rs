@@ -1119,6 +1119,35 @@ async fn connect_and_watch(
 
     let (mut ws, _) = tokio_tungstenite::connect_async(ws_url).await?;
 
+    // Startup reconciliation: fetch any Pending tasks that were enqueued
+    // before this watch process connected (missed broadcast events).
+    let http = reqwest::Client::new();
+    let pending_url = format!("{}/api/inference/queue/pending", nexus_base);
+    if let Ok(resp) = http.get(&pending_url).send().await {
+        if let Ok(tasks) = resp.json::<Vec<InferenceTaskPush>>().await {
+            for task in tasks {
+                let push_id = task.id.clone();
+                let agent_id_owned = agent_id.to_string();
+                let nexus_base_owned = nexus_base.to_string();
+                let claim_url = format!("{}/api/inference/queue/{}", nexus_base, push_id);
+                let claim_resp = http
+                    .patch(&claim_url)
+                    .header("X-Hex-Agent-Id", &agent_id_owned)
+                    .json(&serde_json::json!({ "status": "claimed" }))
+                    .send()
+                    .await;
+                if claim_resp.and_then(|r| Ok(r.status().is_success())).unwrap_or(false) {
+                    if !daemon {
+                        println!("{} inference-watch: claimed (startup) {}", "⬡".green(), push_id);
+                    }
+                    tokio::spawn(async move {
+                        dispatch_inference_task(task, agent_id_owned, nexus_base_owned).await;
+                    });
+                }
+            }
+        }
+    }
+
     while let Some(msg) = ws.next().await {
         match msg? {
             Message::Text(text) => {
