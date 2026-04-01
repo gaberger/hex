@@ -638,6 +638,9 @@ pub fn build_router(state: SharedState) -> Router {
         // Synchronous inference completion (hex-agent HTTP bridge)
         .route("/api/inference/complete", post(inference::inference_complete)
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
+        // Path B task dispatch queue (ADR-2604010000 P2.2)
+        .route("/api/inference/queue", post(inference::inference_queue)
+            .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         // ═══════════════════════════════════════════════════════════
         // HEXFLO COORDINATION — write routes stay, reads via SpacetimeDB
         // ═══════════════════════════════════════════════════════════

@@ -615,20 +615,8 @@ pub async fn inference_complete(
 
 // ── Path B: Inference Queue (ADR-2604010000) ──────────────────────────────
 
-/// Status of an entry in the inference execution queue.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum QueueStatus {
-    Pending,
-    Claimed,
-    Completed,
-}
-
-/// A queued inference request that a Path B worker will pick up and execute.
-///
-/// Entries are stored in HexFlo memory under the key `inference:queue:{id}`.
-/// Workers poll for `Pending` entries, claim them (CAS to `Claimed`), run the
-/// inference, then mark them `Completed` and write the result back.
+/// An entry in the inference dispatch queue. Stored in HexFlo memory so workers
+/// can claim tasks via GET /api/inference/queue/pending.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceQueueEntry {
     pub id: String,
@@ -636,7 +624,8 @@ pub struct InferenceQueueEntry {
     pub workplan_id: String,
     pub prompt: String,
     pub role: String,
-    pub status: QueueStatus,
+    /// "pending" | "claimed" | "completed"
+    pub status: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -648,7 +637,7 @@ impl InferenceQueueEntry {
             workplan_id,
             prompt,
             role,
-            status: QueueStatus::Pending,
+            status: "pending".to_string(),
             created_at: Utc::now(),
         }
     }
@@ -657,4 +646,85 @@ impl InferenceQueueEntry {
     pub fn memory_key(&self) -> String {
         format!("inference:queue:{}", self.id)
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InferenceQueueRequest {
+    pub task_id: String,
+    pub workplan_id: String,
+    pub prompt: String,
+    pub role: String,
+}
+
+/// POST /api/inference/queue — enqueue an inference task for Path B dispatch.
+///
+/// Creates an `InferenceQueueEntry` with status "pending", persists it in
+/// HexFlo memory under `inference:queue:{id}`, sends an inbox notification,
+/// and returns the queue entry ID so the caller can poll or claim it.
+pub async fn inference_queue(
+    State(state): State<SharedState>,
+    Json(body): Json<InferenceQueueRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let entry = InferenceQueueEntry::new(
+        body.task_id.clone(),
+        body.workplan_id.clone(),
+        body.prompt.clone(),
+        body.role.clone(),
+    );
+    let key = entry.memory_key();
+    let id = entry.id.clone();
+
+    let value = match serde_json::to_string(&entry) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to serialize InferenceQueueEntry");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("serialization failed: {}", e) })),
+            );
+        }
+    };
+
+    // Persist to HexFlo memory via state_port.
+    if let Some(sp) = state.state_port.as_deref() {
+        if let Err(e) = sp.hexflo_memory_store(&key, &value, "global").await {
+            tracing::error!(error = %e, key = %key, "failed to store inference queue entry");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("memory store failed: {}", e) })),
+            );
+        }
+
+        // Best-effort inbox notification — do not fail the request if notify fails.
+        let msg = format!("Inference task queued: {} ({})", body.task_id, body.role);
+        if let Err(e) = sp
+            .inbox_notify("system", 1, "inference_queue", &msg)
+            .await
+        {
+            tracing::warn!(error = %e, "inbox_notify failed for inference queue entry");
+        }
+    } else {
+        tracing::warn!("state_port not available — inference queue entry not persisted");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "State port not available" })),
+        );
+    }
+
+    tracing::info!(
+        queue_id = %id,
+        task_id = %body.task_id,
+        workplan_id = %body.workplan_id,
+        role = %body.role,
+        "inference task queued"
+    );
+
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "queue_id": id,
+            "task_id": body.task_id,
+            "status": "pending",
+        })),
+    )
 }
