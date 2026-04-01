@@ -60,13 +60,13 @@ enum StreamEvent {
     },
     /// Model requested a tool call — display inline.
     ToolCall {
-        id: String,
+        _id: String,
         name: String,
         arguments: serde_json::Value,
     },
     /// Result of an executed tool call — appended to the matching display block.
     ToolResult {
-        id: String,
+        _id: String,
         content: String,
     },
     Error(String),
@@ -103,6 +103,8 @@ struct ChatApp {
     spinner_tick: u8,
     session: ChatSession,
     notification_count: u32,
+    /// User-defined skills loaded from .claude/skills/ at session start.
+    user_skills: Vec<(String, String)>,
 }
 
 impl ChatApp {
@@ -111,6 +113,7 @@ impl ChatApp {
         auth_token: Option<String>,
         mcp: Option<Arc<Mutex<McpClient>>>,
         tool_schemas: Vec<serde_json::Value>,
+        user_skills: Vec<(String, String)>,
         system: Option<String>,
         model: Option<String>,
         context_system: Option<String>,
@@ -133,6 +136,7 @@ impl ChatApp {
             auth_token,
             mcp,
             tool_schemas,
+            user_skills,
             token_rx,
             token_tx,
             error_msg: None,
@@ -226,14 +230,14 @@ impl ChatApp {
                         }
                     }
                 }
-                Ok(StreamEvent::ToolCall { id: _, name, arguments }) => {
+                Ok(StreamEvent::ToolCall { _id: _, name, arguments }) => {
                     let pretty = format_tool_args(&name, &arguments);
                     self.messages.push(ChatMessage {
                         role: Role::Tool,
                         content: format!("⚙ {}", pretty),
                     });
                 }
-                Ok(StreamEvent::ToolResult { id: _, content }) => {
+                Ok(StreamEvent::ToolResult { _id: _, content }) => {
                     // Append result preview to the last Tool message
                     let preview: String = content.chars().take(120).collect();
                     if let Some(last) = self.messages.iter_mut().rev().find(|m| m.role == Role::Tool) {
@@ -527,7 +531,7 @@ async fn stream_request(
 
             // Display tool call in TUI
             let _ = tx.send(StreamEvent::ToolCall {
-                id: id.to_string(),
+                _id: id.to_string(),
                 name: name.to_string(),
                 arguments: args.clone(),
             }).await;
@@ -541,7 +545,7 @@ async fn stream_request(
 
             // Display result in TUI
             let _ = tx.send(StreamEvent::ToolResult {
-                id: id.to_string(),
+                _id: id.to_string(),
                 content: result.clone(),
             }).await;
 
@@ -1113,6 +1117,9 @@ pub async fn run(args: ChatArgs) -> Result<()> {
         Err(_) => (None, hex_tool_schemas()),
     };
 
+    // --- Load user-defined skills from .claude/skills/ ---
+    let user_skills = skills::load_user_skills();
+
     // --- Project context injection (concurrent fetch, skip if --no-context or resuming) ---
     let context_system = if args.no_context || resume_session.is_some() {
         None
@@ -1121,7 +1128,7 @@ pub async fn run(args: ChatArgs) -> Result<()> {
         if ctx.is_empty() { None } else { Some(ctx) }
     };
 
-    let mut app = ChatApp::new(nexus_url, auth_token, mcp, tool_schemas, args.system, args.model, context_system);
+    let mut app = ChatApp::new(nexus_url, auth_token, mcp, tool_schemas, user_skills, args.system, args.model, context_system);
 
     // Restore prior session if requested
     if let Some(sess) = resume_session {
@@ -1196,7 +1203,7 @@ async fn run_event_loop(
                         if !input.is_empty() && !app.streaming {
                             if skills::is_slash_command(&input) {
                                 let nexus_url = app.nexus_url.clone();
-                                let result = skills::dispatch(&input, &nexus_url, &[]).await;
+                                let result = skills::dispatch(&input, &nexus_url, &app.user_skills).await;
                                 app.apply_skill_result(result);
                                 app.input.clear();
                             } else {
