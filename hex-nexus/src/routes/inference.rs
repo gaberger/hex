@@ -732,12 +732,12 @@ pub async fn inference_queue(
 #[derive(Debug, Deserialize)]
 pub struct UpdateQueueStatusRequest {
     pub status: String,
+    pub result: Option<String>,
+    pub error: Option<String>,
+    pub agent_id: Option<String>,
 }
 
-/// GET /api/inference/queue/pending — list pending inference queue entries from HexFlo memory.
-///
-/// Searches memory for keys with the "inference:queue:" prefix, deserializes each value as
-/// InferenceQueueEntry, filters to status == "pending", and returns sorted by created_at asc.
+/// GET /api/inference/queue/pending — list pending inference tasks from STDB.
 pub async fn queue_pending(
     State(state): State<SharedState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
@@ -749,31 +749,23 @@ pub async fn queue_pending(
         ),
     };
 
-    let results = match port.hexflo_memory_search("inference:queue:").await {
-        Ok(entries) => entries,
-        Err(e) => return (
+    match port.inference_task_list_pending().await {
+        Ok(tasks) => (StatusCode::OK, Json(json!(tasks))),
+        Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e.to_string() })),
         ),
-    };
-
-    let mut pending: Vec<InferenceQueueEntry> = results
-        .into_iter()
-        .filter_map(|(_k, v)| serde_json::from_str::<InferenceQueueEntry>(&v).ok())
-        .filter(|e| e.status == "pending")
-        .collect();
-
-    pending.sort_by_key(|e| e.created_at);
-
-    (StatusCode::OK, Json(json!(pending)))
+    }
 }
 
-/// PATCH /api/inference/queue/{id} — update the status of a queue entry.
+/// PATCH /api/inference/queue/{id} — claim, complete, or fail an inference_task in STDB.
 ///
-/// Loads entry from memory key `inference:queue:{id}`, updates the status field,
-/// stores it back, and returns the updated entry.
+/// status="claimed"   → inference_task_claim (CAS: Pending → InProgress)
+/// status="completed" → inference_task_complete
+/// status="failed"    → inference_task_fail
 pub async fn queue_update(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Path(id): Path<String>,
     Json(body): Json<UpdateQueueStatusRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
@@ -785,44 +777,46 @@ pub async fn queue_update(
         ),
     };
 
-    let key = format!("inference:queue:{}", id);
+    let now = chrono::Utc::now().to_rfc3339();
 
-    let raw = match port.hexflo_memory_retrieve(&key).await {
-        Ok(Some(v)) => v,
-        Ok(None) => return (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": format!("Queue entry {} not found", id) })),
+    match body.status.as_str() {
+        "claimed" => {
+            // Agent ID from X-Hex-Agent-Id header, body.agent_id, or "unknown"
+            let agent_id = headers
+                .get("x-hex-agent-id")
+                .and_then(|v| v.to_str().ok())
+                .or(body.agent_id.as_deref())
+                .unwrap_or("unknown")
+                .to_string();
+            match port.inference_task_claim(&id, &agent_id, &now).await {
+                Ok(_) => (StatusCode::OK, Json(json!({ "id": id, "status": "InProgress" }))),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("already_claimed") || msg.contains("Conflict") {
+                        (StatusCode::CONFLICT, Json(json!({ "error": msg })))
+                    } else {
+                        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": msg })))
+                    }
+                }
+            }
+        }
+        "completed" => {
+            let result = body.result.as_deref().unwrap_or("");
+            match port.inference_task_complete(&id, result, &now).await {
+                Ok(_) => (StatusCode::OK, Json(json!({ "id": id, "status": "Completed" }))),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+            }
+        }
+        "failed" => {
+            let error = body.error.as_deref().unwrap_or("unknown error");
+            match port.inference_task_fail(&id, error, &now).await {
+                Ok(_) => (StatusCode::OK, Json(json!({ "id": id, "status": "Failed" }))),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+            }
+        }
+        other => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("unknown status: {}", other) })),
         ),
-        Err(e) => return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": e.to_string() })),
-        ),
-    };
-
-    let mut entry: InferenceQueueEntry = match serde_json::from_str(&raw) {
-        Ok(e) => e,
-        Err(e) => return (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "error": format!("Failed to deserialize entry: {}", e) })),
-        ),
-    };
-
-    entry.status = body.status.clone();
-
-    let updated_raw = match serde_json::to_string(&entry) {
-        Ok(s) => s,
-        Err(e) => return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Serialization failed: {}", e) })),
-        ),
-    };
-
-    if let Err(e) = port.hexflo_memory_store(&key, &updated_raw, "global").await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": e.to_string() })),
-        );
     }
-
-    (StatusCode::OK, Json(json!(entry)))
 }
