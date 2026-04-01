@@ -266,7 +266,7 @@ async fn session_start(project_dir: &Path) -> Result<()> {
                 println!("\n{}", text);
             } else {
                 // Generation failed — emit a minimal in-process block so context is never blank.
-                println!("\n{}", minimal_fingerprint_block(project_dir, name));
+                println!("\n{}", minimal_fingerprint_block_cached(project_dir, name));
             }
         }
         Err(_) => {
@@ -296,6 +296,14 @@ async fn session_start(project_dir: &Path) -> Result<()> {
 /// active workplan for objective. Output matches the injection format from
 /// ADR-2603301200 §3, trimmed to the most essential fields.
 fn minimal_fingerprint_block(project_dir: &Path, project_name: &str) -> String {
+    minimal_fingerprint_block_inner(project_dir, project_name, false)
+}
+
+fn minimal_fingerprint_block_cached(project_dir: &Path, project_name: &str) -> String {
+    minimal_fingerprint_block_inner(project_dir, project_name, true)
+}
+
+fn minimal_fingerprint_block_inner(project_dir: &Path, project_name: &str, nexus_online: bool) -> String {
     let mut language = "unknown".to_string();
     let mut framework = "unknown".to_string();
     let mut output_type = "unknown".to_string();
@@ -371,7 +379,12 @@ fn minimal_fingerprint_block(project_dir: &Path, project_name: &str) -> String {
     if !objective.is_empty() {
         block.push_str(&format!("Objective: {}\n", objective));
     }
-    block.push_str("Note: nexus offline — run `hex nexus start` then `hex fingerprint generate` for full context.\n---");
+    let note = if nexus_online {
+        "Note: fingerprint not cached — run `hex fingerprint generate` for full context."
+    } else {
+        "Note: nexus offline — run `hex nexus start` then `hex fingerprint generate` for full context."
+    };
+    block.push_str(&format!("{}\n---", note));
     block
 }
 
