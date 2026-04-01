@@ -132,7 +132,7 @@ async fn write_opencode_config(nexus_url: &str, extra_system: Option<&str>) -> a
 
     let config = serde_json::json!({
         "$schema": "https://opencode.ai/config.json",
-        "instructions": instructions,
+        "instructions": [instructions],
         "mcp": {
             "hex": {
                 "type": "local",
