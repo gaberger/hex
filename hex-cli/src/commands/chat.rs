@@ -130,7 +130,7 @@ async fn write_opencode_config(nexus_url: &str, extra_system: Option<&str>) -> a
         (true, None) => return Ok(()),
     };
 
-    let config = serde_json::json!({
+    let mut config = serde_json::json!({
         "$schema": "https://opencode.ai/config.json",
         "instructions": [instructions],
         "mcp": {
@@ -142,9 +142,205 @@ async fn write_opencode_config(nexus_url: &str, extra_system: Option<&str>) -> a
         }
     });
 
+    // Inject skills as opencode slash commands
+    let skills = load_skills(nexus_url);
+    if let serde_json::Value::Object(ref m) = skills {
+        if !m.is_empty() {
+            config["command"] = skills;
+        }
+    }
+
+    // Inject agents as opencode agent configs
+    let agents = load_agents();
+    if let serde_json::Value::Object(ref m) = agents {
+        if !m.is_empty() {
+            config["agent"] = agents;
+        }
+    }
+
+    // Inject hex-nexus as an OpenAI-compatible provider
+    if !nexus_url.is_empty() {
+        config["provider"] = serde_json::json!({
+            "hex": {
+                "api": "openai",
+                "name": "hex-nexus inference router",
+                "options": {
+                    "baseURL": format!("{}/v1", nexus_url)
+                }
+            }
+        });
+    }
+
     let path = std::env::current_dir()?.join("opencode.json");
     std::fs::write(&path, serde_json::to_string_pretty(&config)?)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Frontmatter parser for skill .md files
+// ---------------------------------------------------------------------------
+
+fn parse_skill(content: &str) -> Option<(String, String, String)> {
+    let content = content.trim();
+    if !content.starts_with("---") {
+        return None;
+    }
+    let rest = &content[3..];
+    let end = rest.find("\n---")?;
+    let frontmatter = &rest[..end];
+    let body = rest[end + 4..].trim_start_matches('\n').to_string();
+    let mut name = String::new();
+    let mut description = String::new();
+    for line in frontmatter.lines() {
+        if let Some(v) = line.strip_prefix("name:") {
+            name = v.trim().to_string();
+        }
+        if let Some(v) = line.strip_prefix("description:") {
+            description = v.trim().to_string();
+        }
+        if let Some(v) = line.strip_prefix("trigger:") {
+            if name.is_empty() {
+                name = v.trim().trim_start_matches('/').to_string();
+            }
+        }
+    }
+    if name.is_empty() {
+        return None;
+    }
+    Some((name, description, body))
+}
+
+// ---------------------------------------------------------------------------
+// Skills loader — embedded assets + filesystem overrides
+// ---------------------------------------------------------------------------
+
+fn load_skills(_nexus_url: &str) -> serde_json::Value {
+    let mut map: std::collections::HashMap<String, serde_json::Value> =
+        std::collections::HashMap::new();
+
+    // 1. Load from embedded assets (skills/ prefix)
+    for path in crate::assets::Assets::iter() {
+        if path.starts_with("skills/") && path.ends_with(".md") {
+            if let Some(content) = crate::assets::Assets::get_str(&path) {
+                if let Some((name, description, body)) = parse_skill(&content) {
+                    map.insert(
+                        name,
+                        serde_json::json!({ "template": body, "description": description }),
+                    );
+                }
+            }
+        }
+    }
+
+    // 2. Project-local overrides: .claude/skills/ in CWD
+    if let Ok(cwd) = std::env::current_dir() {
+        load_skills_from_dir(&cwd.join(".claude/skills"), &mut map);
+    }
+
+    // 3. Global overrides: ~/.claude/skills/
+    if let Some(home) = dirs::home_dir() {
+        load_skills_from_dir(&home.join(".claude/skills"), &mut map);
+    }
+
+    serde_json::Value::Object(
+        map.into_iter()
+            .collect::<serde_json::Map<String, serde_json::Value>>(),
+    )
+}
+
+fn load_skills_from_dir(
+    dir: &std::path::Path,
+    map: &mut std::collections::HashMap<String, serde_json::Value>,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if let Some((name, description, body)) = parse_skill(&content) {
+            // Project-local wins over embedded; global wins only if not already set
+            map.insert(
+                name,
+                serde_json::json!({ "template": body, "description": description }),
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Agents loader — embedded agent YAMLs
+// ---------------------------------------------------------------------------
+
+fn map_model(preferred: &str) -> &str {
+    match preferred {
+        "gpt-4o-mini" => "openai/gpt-4o-mini",
+        "haiku" => "anthropic/claude-haiku-4-5-20251001",
+        "sonnet" => "anthropic/claude-sonnet-4-6",
+        other => other,
+    }
+}
+
+fn load_agents() -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+
+    for path in crate::assets::Assets::iter() {
+        if path.starts_with("agents/hex/hex/") && path.ends_with(".yml") {
+            if let Some(content) = crate::assets::Assets::get_str(&path) {
+                let parsed: serde_json::Value = match serde_yaml::from_str(&content) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                let name = match parsed.get("name").and_then(|v| v.as_str()) {
+                    Some(n) => n.to_string(),
+                    None => continue,
+                };
+                let description = parsed
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let preferred_model = parsed
+                    .get("model")
+                    .and_then(|m| m.get("preferred"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("sonnet");
+                let model = map_model(preferred_model).to_string();
+
+                let prompt = parsed
+                    .get("constraints")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .take(3)
+                            .filter_map(|c| c.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_default();
+
+                map.insert(
+                    name,
+                    serde_json::json!({
+                        "model": model,
+                        "description": description,
+                        "prompt": prompt,
+                        "mode": "all"
+                    }),
+                );
+            }
+        }
+    }
+
+    serde_json::Value::Object(map)
 }
 
 async fn fetch_hex_context(nexus_url: &str) -> String {
