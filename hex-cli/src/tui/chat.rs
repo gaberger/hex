@@ -361,7 +361,8 @@ impl ChatApp {
                 });
             }
             SkillResult::InjectMessage(text) => {
-                self.messages.push(ChatMessage { role: Role::Skill, content: text });
+                self.input = text;
+                self.send_message();
             }
             SkillResult::AddFile { path, content } => {
                 let bytes = content.len();
