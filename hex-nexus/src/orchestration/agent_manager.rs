@@ -402,40 +402,26 @@ impl AgentManager {
             tracing::debug!(agent_id = %id, host = %stdb_cfg.host, db = %stdb_cfg.database, "Injecting SpacetimeDB config");
         }
 
-        // Inject Claude Code bypass env vars so hex-agent uses `claude -p` instead of direct
-        // Anthropic API calls. Enables workplan execution without vault API credits when the
-        // `claude` CLI is available in PATH (ADR-2603312210).
-        let bypass_active = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-            .any(|dir| dir.join("claude").exists());
-        if bypass_active {
-            cmd.env("CLAUDECODE", "1");
-            cmd.env("CLAUDE_CODE_ENTRYPOINT", "cli");
-            tracing::info!(agent_id = %id, "claude CLI found — injecting bypass mode env vars");
-            // Pass prompt as --prompt flag so hex-agent's bypass condition (args.prompt.is_some())
-            // activates. Stdin delivery skips the bypass path entirely.
-            if let Some(ref prompt) = config.prompt {
-                cmd.arg("--prompt").arg(prompt);
-            }
+        // Always deliver the task prompt via --prompt flag (ADR-2604010000).
+        // Stdin is null — prompt delivery via pipe is removed.
+        if let Some(ref prompt) = config.prompt {
+            cmd.arg("--prompt").arg(prompt);
         }
 
-        // Pipe stdin for chat messages, capture stdout/stderr
-        cmd.stdin(std::process::Stdio::piped());
+        // Propagate Claude Code session context if nexus itself is inside one.
+        // hex-agent uses this to select Path B (inference queue) vs Path A (direct).
+        if std::env::var("CLAUDECODE").as_deref() == Ok("1") {
+            cmd.env("CLAUDECODE", "1");
+            cmd.env("CLAUDE_CODE_ENTRYPOINT", "cli");
+            tracing::info!(agent_id = %id, "propagating Claude Code session context to agent");
+        }
+
+        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
         let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn hex-agent: {}", e))?;
         let pid = child.id().unwrap_or(0);
-
-        // Write task prompt to stdin when not using bypass mode (bypass uses --prompt flag above).
-        if !bypass_active {
-            if let Some(ref prompt) = config.prompt {
-                if let Some(mut stdin) = child.stdin.take() {
-                    use tokio::io::AsyncWriteExt;
-                    let _ = stdin.write_all(prompt.as_bytes()).await;
-                    // stdin drops here, closing the pipe
-                }
-            }
-        }
 
         // If wait_for_completion, block until child exits and surface non-zero exit as error.
         if config.wait_for_completion {
