@@ -7,6 +7,7 @@ use crate::coordination::HexFlo;
 use crate::orchestration::agent_manager::AgentManager;
 use crate::orchestration::context_pressure::ContextPressureTracker;
 use crate::orchestration::workplan_executor::WorkplanExecutor;
+use crate::ports::live_context::ILiveContextPort;
 use crate::ports::session::ISessionPort;
 use crate::ports::state::IStatePort;
 use crate::remote::fleet::FleetManager;
@@ -49,6 +50,8 @@ pub struct AppState {
     // Session persistence (ADR-036 / ADR-042 P2.5) — chat conversation history
     // SpacetimeDB primary, SQLite fallback
     pub session_port: Option<Arc<dyn ISessionPort>>,
+    // Live context enrichment port (P9.5) — enriches task prompts before dispatch
+    pub live_context: Option<Arc<dyn ILiveContextPort>>,
     // Context window pressure tracker (ADR-2603281000 P1) — keyed by session_id/agent_id
     pub context_pressure: Arc<Mutex<HashMap<String, ContextPressureTracker>>>,
     // Architecture fingerprints (ADR-2603301200) — in-memory, regenerated per hex dev run
@@ -82,6 +85,7 @@ impl AppState {
             inference_stdb: None,
             chat_stdb: None,
             session_port: None,
+            live_context: None,
             context_pressure: Arc::new(Mutex::new(HashMap::new())),
             fingerprints: RwLock::new(HashMap::new()),
         }

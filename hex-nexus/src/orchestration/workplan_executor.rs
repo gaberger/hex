@@ -543,11 +543,12 @@ impl WorkplanExecutor {
                 if !hexflo_task_id.is_empty() {
                     p.push_str(&format!("HEXFLO_TASK:{}\n", hexflo_task_id));
                 }
-                // P6.1: Inject agent role so spawned agents know their role context.
+                // P6.1: Inject role-specific preamble so spawned agents know their
+                // role, core responsibilities, and behavioural constraints before
+                // reading the task body. Delegates to build_role_preamble() in mod.rs.
                 if let Some(ref agent_role) = task.agent {
-                    if !agent_role.is_empty() {
-                        p.push_str(&format!("You are a {} agent.\n\n", agent_role));
-                    }
+                    let preamble = crate::orchestration::build_role_preamble(agent_role);
+                    p.push_str(&preamble);
                 }
                 p.push_str(&format!("# Task: {}\n\n", task.name));
                 if !task.description.is_empty() {
@@ -570,6 +571,7 @@ impl WorkplanExecutor {
             // P9.5: Enrich task prompt with live context before dispatch
             let prompt = Self::enrich_prompt(
                 state_port,
+                shared_state,
                 &task,
                 workplan,
                 base_prompt,
@@ -664,6 +666,7 @@ impl WorkplanExecutor {
                                     started_at: chrono::Utc::now().to_rfc3339(),
                                     ended_at: Some(chrono::Utc::now().to_rfc3339()),
                                     metrics: None,
+                                    role: None,
                                 }),
                                 "Failed" => {
                                     break Err(format!("inference task {} failed: {}", queue_id, task.error));
@@ -1003,10 +1006,13 @@ impl WorkplanExecutor {
         Self::load_execution(self.state_port.as_ref(), id).await
     }
 
-    /// P9.5: Enrich a task prompt with live context from the state port.
-    /// Gracefully degrades — any section that fails is silently skipped.
+    /// P9.5: Enrich a task prompt with live context before agent dispatch.
+    /// Combines HexFlo memory (from state port), workplan metadata, and
+    /// live project state from `ILiveContextPort` (architecture score, ADRs,
+    /// git diff). Gracefully degrades — any section that fails is skipped.
     async fn enrich_prompt(
         state_port: &Arc<dyn IStatePort>,
+        shared_state: &crate::state::SharedState,
         task: &WorkplanTask,
         workplan: &Workplan,
         base_prompt: String,
@@ -1032,7 +1038,7 @@ impl WorkplanExecutor {
         if !task.files.is_empty() {
             sections.push(format!(
                 "## Target Files\n{}",
-                task.files.join("\n")
+                task.files.iter().map(|f| format!("- {}", f)).collect::<Vec<_>>().join("\n")
             ));
         }
 
@@ -1042,6 +1048,14 @@ impl WorkplanExecutor {
             workplan.id,
             task.layer.as_deref().unwrap_or("unknown")
         ));
+
+        // 4. Live project context via ILiveContextPort (P9.5)
+        if let Some(ref lc) = shared_state.live_context {
+            let live = lc.enrich(&task.description, &task.files).await;
+            if !live.is_empty() {
+                sections.push(format!("## Live Context\n{}", live));
+            }
+        }
 
         if sections.is_empty() {
             return base_prompt;

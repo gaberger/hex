@@ -1,3 +1,4 @@
+pub mod live_context;
 pub mod context_compressor;
 pub mod docker_sandbox;
 pub mod ssh_tunnel;

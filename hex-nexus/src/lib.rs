@@ -16,6 +16,7 @@ pub use hex_core;
 
 pub mod adapters;
 pub mod analysis;
+pub mod composition_root;
 pub mod complexity;
 pub mod neural_lab_quant;
 pub mod quant_router;
@@ -475,6 +476,12 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             }
         }
     }
+
+    // P9.5: Wire live context adapter (composition root) — must be set before
+    // WorkplanExecutor is created so enrich_prompt can call it.
+    app_state.live_context = Some(
+        composition_root::build_live_context_adapter(config.port),
+    );
 
     // Wrap in Arc, then create WorkplanExecutor (needs SharedState = Arc<AppState>)
     let state = Arc::new(app_state);
