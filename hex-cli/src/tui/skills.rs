@@ -19,6 +19,8 @@ pub enum SkillResult {
     Noop,
     /// Unknown command — show error hint.
     Unknown(String),
+    /// Inject this text as a user message and trigger inference.
+    InjectMessage(String),
 }
 
 /// Returns true if the trimmed input starts with '/'.
@@ -26,8 +28,53 @@ pub fn is_slash_command(input: &str) -> bool {
     input.trim_start().starts_with('/')
 }
 
+/// Load user-defined skills from .claude/skills/ directories.
+/// Returns (slash_name, markdown_body) pairs.
+/// Scans: (1) CWD/.claude/skills/*.md, (2) ~/.claude/skills/*.md
+/// Project-local files override global on name collision.
+pub fn load_user_skills() -> Vec<(String, String)> {
+    use std::collections::HashMap;
+    let mut skills: HashMap<String, String> = HashMap::new();
+
+    // Global first (lower priority)
+    if let Some(home) = dirs::home_dir() {
+        let global_dir = home.join(".claude/skills");
+        load_skills_from_dir(&global_dir, &mut skills);
+    }
+
+    // Project-local (overrides global)
+    let local_dir = std::path::Path::new(".claude/skills");
+    load_skills_from_dir(local_dir, &mut skills);
+
+    let mut result: Vec<(String, String)> = skills.into_iter().collect();
+    result.sort_by(|a, b| a.0.cmp(&b.0));
+    result
+}
+
+fn load_skills_from_dir(dir: &std::path::Path, skills: &mut std::collections::HashMap<String, String>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let name = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let body = match std::fs::read_to_string(&path) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        skills.insert(name, body);
+    }
+}
+
 /// Dispatch a slash command and return its result.
-pub async fn dispatch(input: &str, nexus_url: &str) -> SkillResult {
+pub async fn dispatch(input: &str, nexus_url: &str, user_skills: &[(String, String)]) -> SkillResult {
     let trimmed = input.trim();
     let (cmd, rest) = match trimmed.find(' ') {
         Some(pos) => (&trimmed[..pos], trimmed[pos + 1..].trim()),
@@ -44,6 +91,9 @@ pub async fn dispatch(input: &str, nexus_url: &str) -> SkillResult {
             "  /adr <query>       — search ADRs".to_string(),
             "  /plan              — list active workplans / swarms".to_string(),
             "  /save              — save session to ~/.hex/sessions/".to_string(),
+            "  /skills            — list user-defined skill commands".to_string(),
+            "  /hex <cmd>         — run a hex CLI command (e.g. /hex plan list)".to_string(),
+            "  /<skill-name>      — invoke a skill from .claude/skills/".to_string(),
         ]),
         "/clear" => SkillResult::ClearHistory,
         "/model" => {
@@ -57,7 +107,44 @@ pub async fn dispatch(input: &str, nexus_url: &str) -> SkillResult {
         "/adr" => search_adrs(nexus_url, rest).await,
         "/plan" => list_plans(nexus_url).await,
         "/save" => SkillResult::Save,
-        _ => SkillResult::Unknown(cmd.to_string()),
+        "/skills" => {
+            if user_skills.is_empty() {
+                SkillResult::Lines(vec!["No skills found in .claude/skills/ or ~/.claude/skills/".to_string()])
+            } else {
+                let mut lines = vec!["Available skills:".to_string()];
+                for (name, body) in user_skills {
+                    let desc = body.lines()
+                        .find(|l| !l.trim().is_empty() && !l.starts_with('#'))
+                        .unwrap_or("")
+                        .trim_start_matches(|c: char| c == '-' || c == ' ')
+                        .chars()
+                        .take(60)
+                        .collect::<String>();
+                    lines.push(format!("  /{:<20} — {}", name, desc));
+                }
+                SkillResult::Lines(lines)
+            }
+        }
+        "/hex" => {
+            if rest.is_empty() {
+                SkillResult::Lines(vec!["Usage: /hex <subcommand>  (e.g. /hex plan list)".to_string()])
+            } else {
+                run_hex_command(rest).await
+            }
+        }
+        _ => {
+            // Check user skills before returning Unknown
+            let skill_name = cmd.trim_start_matches('/');
+            if let Some((_, body)) = user_skills.iter().find(|(n, _)| n == skill_name) {
+                let truncated = if body.len() > 8000 {
+                    format!("{}… (truncated)", &body[..8000])
+                } else {
+                    body.clone()
+                };
+                return SkillResult::InjectMessage(truncated);
+            }
+            SkillResult::Unknown(format!("{} — try /skills to list available commands", cmd))
+        }
     }
 }
 
@@ -170,5 +257,39 @@ async fn list_plans(nexus_url: &str) -> SkillResult {
         None => lines.push("  (could not reach nexus)".to_string()),
     }
 
+    SkillResult::Lines(lines)
+}
+
+async fn run_hex_command(subcommand: &str) -> SkillResult {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => return SkillResult::Lines(vec!["Error: cannot find hex binary".to_string()]),
+    };
+    // Split on whitespace — never use sh -c
+    let argv: Vec<&str> = subcommand.split_whitespace().collect();
+    if argv.is_empty() {
+        return SkillResult::Lines(vec!["Usage: /hex <subcommand>".to_string()]);
+    }
+
+    let output = match tokio::process::Command::new(&exe)
+        .args(&argv)
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => return SkillResult::Lines(vec![format!("Error spawning hex: {}", e)]),
+    };
+
+    let text = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+
+    let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+    if lines.len() > 200 {
+        lines.truncate(200);
+        lines.push("... (output truncated at 200 lines)".to_string());
+    }
+    if lines.is_empty() {
+        lines.push("(no output)".to_string());
+    }
     SkillResult::Lines(lines)
 }

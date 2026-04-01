@@ -102,6 +102,7 @@ struct ChatApp {
     error_msg: Option<String>,
     spinner_tick: u8,
     session: ChatSession,
+    notification_count: u32,
 }
 
 impl ChatApp {
@@ -137,6 +138,7 @@ impl ChatApp {
             error_msg: None,
             spinner_tick: 0,
             session,
+            notification_count: 0,
         }
     }
 
@@ -325,6 +327,14 @@ impl ChatApp {
                         "Unknown command: {} — type /help for available commands",
                         cmd
                     ),
+                });
+            }
+            SkillResult::InjectMessage(text) => {
+                // Display skill body as a system message; full inference wiring
+                // is completed in the subsequent chat.rs wiring step.
+                self.messages.push(ChatMessage {
+                    role: Role::Skill,
+                    content: text,
                 });
             }
         }
@@ -1007,20 +1017,52 @@ fn render_input(f: &mut Frame, app: &ChatApp, area: Rect) {
 fn render_status(f: &mut Frame, app: &ChatApp, area: Rect) {
     let model_short = app.model.split('/').last().unwrap_or(&app.model);
     let tok = app.total_input_tokens + app.total_output_tokens;
+    let notif = if app.notification_count > 0 {
+        format!("  · 🔔 {}", app.notification_count)
+    } else {
+        String::new()
+    };
     let status = if tok > 0 {
         format!(
-            "  {} · {} tok  ·  q/Ctrl+C quit  ·  ↑↓ scroll  ·  Shift+Enter newline",
-            model_short, tok
+            "  {} · {} tok{}  ·  q/Ctrl+C quit  ·  ↑↓ scroll  ·  Shift+Enter newline",
+            model_short, tok, notif
         )
     } else {
         format!(
-            "  {}  ·  q/Ctrl+C quit  ·  ↑↓ scroll  ·  Shift+Enter newline",
-            model_short
+            "  {}{}  ·  q/Ctrl+C quit  ·  ↑↓ scroll  ·  Shift+Enter newline",
+            model_short, notif
         )
     };
     let p = Paragraph::new(status)
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(p, area);
+}
+
+// ---------------------------------------------------------------------------
+// Hook helpers
+// ---------------------------------------------------------------------------
+
+/// Fire a hex hook event and return its output as a trimmed string.
+/// Spawns `hex hook <event>` using the current binary path.
+/// Returns None on spawn failure; non-zero exit appends "(exit N)" to output.
+async fn run_hook(event: &str) -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let output = tokio::process::Command::new(&exe)
+        .arg("hook")
+        .arg(event)
+        .output()
+        .await
+        .ok()?;
+    let mut text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        if text.is_empty() {
+            text = format!("(exit {})", code);
+        } else {
+            text.push_str(&format!(" (exit {})", code));
+        }
+    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 // ---------------------------------------------------------------------------
@@ -1099,6 +1141,14 @@ pub async fn run(args: ChatArgs) -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    // Fire session-start hook
+    if let Some(output) = run_hook("session-start").await {
+        app.messages.push(ChatMessage {
+            role: Role::Skill,
+            content: output,
+        });
+    }
+
     if !app.input.is_empty() {
         app.send_message();
     }
@@ -1131,7 +1181,11 @@ async fn run_event_loop(
             if let Event::Key(key) = event::read()? {
                 match (key.code, key.modifiers) {
                     (KeyCode::Char('q'), KeyModifiers::NONE)
-                    | (KeyCode::Char('c'), KeyModifiers::CONTROL) => break,
+                    | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                        // Fire session-end hook
+                        let _ = run_hook("session-end").await;
+                        break;
+                    }
 
                     (KeyCode::Enter, KeyModifiers::SHIFT) => {
                         app.input.push('\n');
@@ -1142,10 +1196,22 @@ async fn run_event_loop(
                         if !input.is_empty() && !app.streaming {
                             if skills::is_slash_command(&input) {
                                 let nexus_url = app.nexus_url.clone();
-                                let result = skills::dispatch(&input, &nexus_url).await;
+                                let result = skills::dispatch(&input, &nexus_url, &[]).await;
                                 app.apply_skill_result(result);
                                 app.input.clear();
                             } else {
+                                // Fire route hook — check inbox, enforce lifecycle
+                                if let Some(hook_output) = run_hook("route").await {
+                                    let is_priority = hook_output.contains("\"priority\":2")
+                                        || hook_output.contains("\"priority\": 2");
+                                    app.messages.push(ChatMessage {
+                                        role: Role::Skill,
+                                        content: hook_output.clone(),
+                                    });
+                                    if is_priority {
+                                        app.notification_count += 1;
+                                    }
+                                }
                                 app.send_message();
                             }
                         }
