@@ -23,6 +23,8 @@ pub struct AgentInstance {
     pub started_at: String,
     pub ended_at: Option<String>,
     pub metrics: Option<AgentMetricsData>,
+    /// Agent role for context engineering: "coder", "planner", "reviewer", or "integrator".
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -136,6 +138,7 @@ fn agent_info_to_instance(info: AgentInfo, pid: u32) -> AgentInstance {
         started_at: info.started_at,
         ended_at: None,
         metrics: None,
+        role: None,
     }
 }
 
@@ -297,6 +300,7 @@ impl AgentManager {
                 started_at: now.clone(),
                 ended_at: None,
                 metrics: None,
+                role: None,
             };
 
             let info = instance_to_agent_info(&instance);
@@ -455,6 +459,7 @@ impl AgentManager {
             started_at: now.clone(),
             ended_at: None,
             metrics: None,
+            role: None,
         };
 
         // Persist via state port

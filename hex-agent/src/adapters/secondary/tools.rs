@@ -2,6 +2,8 @@ use crate::ports::{ToolCall, ToolResult};
 use crate::ports::tools::ToolExecutorPort;
 use crate::ports::mcp_client::McpClientPort;
 use crate::ports::permission::PermissionPort;
+use crate::ports::prompt::PromptPort;
+use crate::domain::context::ToolTemplate;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,11 +24,12 @@ pub struct ToolExecutorAdapter {
     working_dir: PathBuf,
     mcp_client: Option<Arc<dyn McpClientPort>>,
     permission_adapter: Option<Arc<dyn PermissionPort>>,
+    prompt_port: Option<Arc<dyn PromptPort>>,
 }
 
 impl ToolExecutorAdapter {
     pub fn new(working_dir: PathBuf) -> Self {
-        Self { working_dir, mcp_client: None, permission_adapter: None }
+        Self { working_dir, mcp_client: None, permission_adapter: None, prompt_port: None }
     }
 
     /// Set an MCP client for routing mcp__* tool calls.
@@ -39,6 +42,33 @@ impl ToolExecutorAdapter {
     pub fn with_permission_adapter(mut self, permission: Arc<dyn PermissionPort>) -> Self {
         self.permission_adapter = Some(permission);
         self
+    }
+
+    /// Set a prompt port for tool-specific guidance injection.
+    pub fn with_prompt_port(mut self, port: Arc<dyn PromptPort>) -> Self {
+        self.prompt_port = Some(port);
+        self
+    }
+
+    /// Return context-engineering guidance for a named tool, if available.
+    /// Maps tool call names to ToolTemplate variants and loads the template.
+    pub async fn tool_guidance(&self, tool_name: &str) -> Option<String> {
+        let port = self.prompt_port.as_ref()?;
+        let template = match tool_name {
+            "bash" => ToolTemplate::Bash,
+            "agent" => ToolTemplate::Agent,
+            "read_file" | "read" => ToolTemplate::Read,
+            "write_file" | "write" => ToolTemplate::Write,
+            "edit_file" | "edit" => ToolTemplate::Edit,
+            "glob_files" | "glob" => ToolTemplate::Glob,
+            "grep_search" | "grep" => ToolTemplate::Grep,
+            "web_search" => ToolTemplate::WebSearch,
+            "web_fetch" => ToolTemplate::WebFetch,
+            "todo_write" => ToolTemplate::TodoWrite,
+            "skill" => ToolTemplate::Skill,
+            _ => return None,
+        };
+        port.build_tool_prompt(template).await.ok()
     }
 
     /// Resolve a path relative to working_dir, with traversal protection.
@@ -735,6 +765,10 @@ impl ToolExecutorPort for ToolExecutorAdapter {
             }
         }
 
+        // Inject tool-specific guidance before execution so the LLM receives
+        // context-engineering hints alongside the tool result.
+        let guidance = self.tool_guidance(&call.name).await;
+
         let mut result = match call.name.as_str() {
             "read_file" => self.read_file(&call.input).await,
             "write_file" => self.write_file(&call.input).await,
@@ -756,6 +790,14 @@ impl ToolExecutorPort for ToolExecutorAdapter {
             unknown => tool_error("unknown", &format!("Unknown tool: {}", unknown)),
         };
         result.tool_use_id = call.id.clone();
+        // Prepend guidance so the LLM sees tool-specific best-practice hints
+        // with every result. Guidance is separated by a horizontal rule so it
+        // is visually distinct from the actual tool output.
+        if let Some(hint) = guidance {
+            if !hint.trim().is_empty() && !result.is_error {
+                result.content = format!("{}\n\n---\n\n{}", hint.trim(), result.content);
+            }
+        }
         // Truncate oversized output to prevent context window blowout
         if result.content.len() > MAX_OUTPUT_BYTES {
             result.content.truncate(MAX_OUTPUT_BYTES);

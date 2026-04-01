@@ -4,7 +4,7 @@
   "specs": "docs/specs/claude-code-capabilities-integration.json",
   "adr": "ADR-2603311730",
   "created": "2026-03-31",
-  "status": "in_progress",
+  "status": "done",
   "topology": "pipeline",
   "budget": "~50000 tokens",
   "prior_work": {
@@ -49,7 +49,9 @@
       "tier": 1,
       "specs": ["S03"],
       "worktree_branch": "feat/claude-code-cap/permission-persistence",
-      "done_condition": "cargo test permission_persistence tests pass"
+      "done_condition": "cargo test permission_persistence tests pass",
+      "status": "completed",
+      "commit_hash": "permission-persistence-v1"
     },
     {
       "id": "step-4",
@@ -79,7 +81,8 @@
       "status": "completed",
       "commit_hash": "token-metrics-cost-v1"
     },
-    "id": "step-6",
+    {
+      "id": "step-6",
       "description": "Add cost aggregation per HexFlo task in SpacetimeDB",
       "layer": "adapters/secondary",
       "adapter": "cost-aggregation",

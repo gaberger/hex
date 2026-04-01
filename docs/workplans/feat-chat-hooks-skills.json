@@ -1,23 +1,21 @@
 {
   "id": "feat-chat-hooks-skills",
-  "feature": "hex chat — Hooks, Dynamic Skills, and Command Execution",
+  "feature": "hex chat \u2014 Hooks, Dynamic Skills, and Command Execution",
   "description": "Implements ADR-2604011300 P7 (hooks) plus dynamic user skill loading (/skills, user-defined slash commands) and hex command execution (/hex <cmd>, hex_exec model tool). Brings hex chat to Claude Code parity for the session lifecycle and skill system.",
   "adr": "ADR-2604011300",
   "specs": "docs/specs/chat-hooks-skills.json",
   "priority": "high",
   "created_at": "2026-04-01T00:00:00Z",
   "created_by": "planner",
-
   "prior_work": {
     "done": [
-      "hex-cli/src/tui/chat.rs — full streaming TUI with tool use loop (P1–P6 complete)",
-      "hex-cli/src/tui/mcp_client.rs — embedded MCP client, full 40+ tool surface",
-      "hex-cli/src/tui/skills.rs — 7 built-in slash commands",
-      "hex-cli/src/tui/session.rs — session persistence",
-      "hex-cli/src/commands/hook.rs — SessionStart, SessionEnd, Route hooks exist in CLI"
+      "hex-cli/src/tui/chat.rs \u2014 full streaming TUI with tool use loop (P1\u2013P6 complete)",
+      "hex-cli/src/tui/mcp_client.rs \u2014 embedded MCP client, full 40+ tool surface",
+      "hex-cli/src/tui/skills.rs \u2014 7 built-in slash commands",
+      "hex-cli/src/tui/session.rs \u2014 session persistence",
+      "hex-cli/src/commands/hook.rs \u2014 SessionStart, SessionEnd, Route hooks exist in CLI"
     ]
   },
-
   "phases": [
     {
       "id": "P1",
@@ -34,41 +32,65 @@
           "id": "P1.1",
           "name": "Add run_hook() helper to chat.rs",
           "layer": "primary",
-          "description": "Add async fn run_hook(event: &str) -> Option<String> to chat.rs. Spawns 'hex hook <event>' as a subprocess, captures stdout, returns trimmed output. Non-zero exit appends '(exit N)' to output. Never panics — returns None on spawn failure. Used by all hook call sites.",
+          "description": "Add async fn run_hook(event: &str) -> Option<String> to chat.rs. Spawns 'hex hook <event>' as a subprocess, captures stdout, returns trimmed output. Non-zero exit appends '(exit N)' to output. Never panics \u2014 returns None on spawn failure. Used by all hook call sites.",
           "deps": [],
-          "files": ["hex-cli/src/tui/chat.rs"],
+          "files": [
+            "hex-cli/src/tui/chat.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S09"]
+          "specs": [
+            "S09"
+          ]
         },
         {
           "id": "P1.2",
           "name": "Fire session-start hook after TUI init",
           "layer": "primary",
           "description": "In chat.rs run() after enable_raw_mode() and terminal setup, call run_hook('session-start'). If output is non-empty, push a Role::Skill message at the top of the message list before the first draw. Satisfies S01.",
-          "deps": ["P1.1"],
-          "files": ["hex-cli/src/tui/chat.rs"],
+          "deps": [
+            "P1.1"
+          ],
+          "files": [
+            "hex-cli/src/tui/chat.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S01", "S09"]
+          "specs": [
+            "S01",
+            "S09"
+          ]
         },
         {
           "id": "P1.3",
           "name": "Fire session-end hook on quit",
           "layer": "primary",
           "description": "In the event loop break path (q / Ctrl+C), call run_hook('session-end') before disable_raw_mode(). The session is already auto-saved; the hook runs after save. Satisfies S02.",
-          "deps": ["P1.1"],
-          "files": ["hex-cli/src/tui/chat.rs"],
+          "deps": [
+            "P1.1"
+          ],
+          "files": [
+            "hex-cli/src/tui/chat.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S02"]
+          "specs": [
+            "S02"
+          ]
         },
         {
           "id": "P1.4",
           "name": "Fire route hook before each inference turn",
           "layer": "primary",
-          "description": "In send_message(), before spawning the stream_request task, call run_hook('route'). If the output contains a priority-2 inbox notification pattern (JSON with priority==2), push a Role::Skill message and do NOT spawn inference — set a pending_message field instead. User must /ack or Ctrl+A to proceed. This satisfies S03, S12. Also increment a notification_count: u32 on ChatApp; status bar shows '🔔 N' when > 0.",
-          "deps": ["P1.1"],
-          "files": ["hex-cli/src/tui/chat.rs"],
+          "description": "In send_message(), before spawning the stream_request task, call run_hook('route'). If the output contains a priority-2 inbox notification pattern (JSON with priority==2), push a Role::Skill message and do NOT spawn inference \u2014 set a pending_message field instead. User must /ack or Ctrl+A to proceed. This satisfies S03, S12. Also increment a notification_count: u32 on ChatApp; status bar shows '\ud83d\udd14 N' when > 0.",
+          "deps": [
+            "P1.1"
+          ],
+          "files": [
+            "hex-cli/src/tui/chat.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S03", "S12"]
+          "specs": [
+            "S03",
+            "S12"
+          ]
         }
       ]
     },
@@ -87,31 +109,55 @@
           "id": "P2.1",
           "name": "Add skill loader to skills.rs",
           "layer": "primary",
-          "description": "Add fn load_user_skills() -> Vec<(String, String)> to skills.rs. Returns (slash_name, markdown_body) pairs. Scan: (1) .claude/skills/*.md relative to CWD, (2) ~/.claude/skills/*.md. Filename stem becomes the slash command name (kebab-case preserved). Project files override global on name collision. Returns empty vec if no skills found — no error.",
+          "description": "Add fn load_user_skills() -> Vec<(String, String)> to skills.rs. Returns (slash_name, markdown_body) pairs. Scan: (1) .claude/skills/*.md relative to CWD, (2) ~/.claude/skills/*.md. Filename stem becomes the slash command name (kebab-case preserved). Project files override global on name collision. Returns empty vec if no skills found \u2014 no error.",
           "deps": [],
-          "files": ["hex-cli/src/tui/skills.rs"],
+          "files": [
+            "hex-cli/src/tui/skills.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S04", "S05", "S08"]
+          "specs": [
+            "S04",
+            "S05",
+            "S08"
+          ]
         },
         {
           "id": "P2.2",
           "name": "Load skills at ChatApp startup and store in state",
           "layer": "primary",
-          "description": "In chat.rs run(), call load_user_skills() after MCP spawn. Store Vec<(String, String)> in ChatApp as user_skills field. This is read-only after load — no dynamic refresh needed.",
-          "deps": ["P2.1"],
-          "files": ["hex-cli/src/tui/chat.rs"],
+          "description": "In chat.rs run(), call load_user_skills() after MCP spawn. Store Vec<(String, String)> in ChatApp as user_skills field. This is read-only after load \u2014 no dynamic refresh needed.",
+          "deps": [
+            "P2.1"
+          ],
+          "files": [
+            "hex-cli/src/tui/chat.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S04", "S08"]
+          "specs": [
+            "S04",
+            "S08"
+          ]
         },
         {
           "id": "P2.3",
           "name": "Add /skills command and dynamic skill dispatch to dispatcher",
           "layer": "primary",
-          "description": "In skills.rs dispatch(), before the match: (a) add '/skills' command that returns Lines listing all user_skills names + first non-empty line of each body as description. (b) After the built-in match falls through to _, check user_skills for a matching name. If found, return SkillResult::InjectMessage(body) — a new variant that tells ChatApp to put the skill markdown body into the input box (user can edit before sending) OR send directly. Pass user_skills: &[(String,String)] as a new parameter to dispatch(). Update all call sites. Satisfies S04, S05, S10.",
-          "deps": ["P2.1", "P2.2"],
-          "files": ["hex-cli/src/tui/skills.rs", "hex-cli/src/tui/chat.rs"],
+          "description": "In skills.rs dispatch(), before the match: (a) add '/skills' command that returns Lines listing all user_skills names + first non-empty line of each body as description. (b) After the built-in match falls through to _, check user_skills for a matching name. If found, return SkillResult::InjectMessage(body) \u2014 a new variant that tells ChatApp to put the skill markdown body into the input box (user can edit before sending) OR send directly. Pass user_skills: &[(String,String)] as a new parameter to dispatch(). Update all call sites. Satisfies S04, S05, S10.",
+          "deps": [
+            "P2.1",
+            "P2.2"
+          ],
+          "files": [
+            "hex-cli/src/tui/skills.rs",
+            "hex-cli/src/tui/chat.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S04", "S05", "S08", "S10"]
+          "specs": [
+            "S04",
+            "S05",
+            "S08",
+            "S10"
+          ]
         }
       ]
     },
@@ -130,37 +176,49 @@
           "id": "P3.1",
           "name": "Add /hex slash command with live output streaming",
           "layer": "primary",
-          "description": "In skills.rs, add '/hex' command. Parse rest as argv (split on whitespace). Spawn hex binary (std::env::current_exe()) with those args, capture combined stdout+stderr line by line. Return SkillResult::Lines with all output lines. Truncate at 200 lines to avoid flooding the TUI. Never use sh -c — use Command::new(exe).args(argv). Satisfies S06, S11.",
+          "description": "In skills.rs, add '/hex' command. Parse rest as argv (split on whitespace). Spawn hex binary (std::env::current_exe()) with those args, capture combined stdout+stderr line by line. Return SkillResult::Lines with all output lines. Truncate at 200 lines to avoid flooding the TUI. Never use sh -c \u2014 use Command::new(exe).args(argv). Satisfies S06, S11.",
           "deps": [],
-          "files": ["hex-cli/src/tui/skills.rs"],
+          "files": [
+            "hex-cli/src/tui/skills.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S06", "S11"]
+          "specs": [
+            "S06",
+            "S11"
+          ]
         },
         {
           "id": "P3.2",
           "name": "Add POST /api/exec endpoint to hex-nexus",
           "layer": "secondary",
-          "description": "Add POST /api/exec to hex-nexus axum router. Body: {\"subcommand\": \"plan list\"}. Splits subcommand on whitespace, prepends hex binary path, spawns process, captures output (stdout+stderr), returns {\"output\": \"...\", \"exit_code\": 0}. Timeout: 30s. Never shell-interpolates — argv only. Guards against empty subcommand. Satisfies S07, S11.",
+          "description": "Add POST /api/exec to hex-nexus axum router. Body: {\"subcommand\": \"plan list\"}. Splits subcommand on whitespace, prepends hex binary path, spawns process, captures output (stdout+stderr), returns {\"output\": \"...\", \"exit_code\": 0}. Timeout: 30s. Never shell-interpolates \u2014 argv only. Guards against empty subcommand. Satisfies S07, S11.",
           "deps": [],
           "files": [
             "hex-nexus/src/routes/exec.rs",
             "hex-nexus/src/routes/mod.rs"
           ],
           "agent": "hex-coder",
-          "specs": ["S07", "S11"]
+          "specs": [
+            "S07",
+            "S11"
+          ]
         },
         {
           "id": "P3.3",
           "name": "Add hex_exec tool schema to mcp-tools.json",
           "layer": "primary",
           "description": "Add hex_exec tool entry to hex-cli/assets/schemas/mcp-tools.json. Schema: {name: string 'hex_exec', description: 'Execute a hex CLI subcommand and return its output', inputSchema: {type: object, properties: {subcommand: {type: string, description: 'hex subcommand and args, e.g. \"plan list\" or \"adr search auth\"'}}, required: ['subcommand']}}. In mcp.rs dispatch_tool(), add hex_exec case that calls POST /api/exec. Satisfies S07.",
-          "deps": ["P3.2"],
+          "deps": [
+            "P3.2"
+          ],
           "files": [
             "hex-cli/assets/schemas/mcp-tools.json",
             "hex-cli/src/commands/mcp.rs"
           ],
           "agent": "hex-coder",
-          "specs": ["S07"]
+          "specs": [
+            "S07"
+          ]
         }
       ]
     },
@@ -179,37 +237,48 @@
           "id": "P4.1",
           "name": "Add notification badge to status bar",
           "layer": "primary",
-          "description": "In render_status(), if app.notification_count > 0 append ' · 🔔 N unread' to the status string in Color::Yellow. Clear notification_count when user uses /inbox or types /ack. Satisfies S12.",
-          "deps": ["P1.4"],
-          "files": ["hex-cli/src/tui/chat.rs"],
+          "description": "In render_status(), if app.notification_count > 0 append ' \u00b7 \ud83d\udd14 N unread' to the status string in Color::Yellow. Clear notification_count when user uses /inbox or types /ack. Satisfies S12.",
+          "deps": [
+            "P1.4"
+          ],
+          "files": [
+            "hex-cli/src/tui/chat.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S12"]
+          "specs": [
+            "S12"
+          ]
         },
         {
           "id": "P4.2",
           "name": "Update /help with new slash commands",
           "layer": "primary",
           "description": "Update /help output in skills.rs dispatch to include: /skills (list available skills), /hex <cmd> (run hex command), and note that user skills are loaded from .claude/skills/. Keep existing 7 commands.",
-          "deps": ["P2.3", "P3.1"],
-          "files": ["hex-cli/src/tui/skills.rs"],
+          "deps": [
+            "P2.3",
+            "P3.1"
+          ],
+          "files": [
+            "hex-cli/src/tui/skills.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S05", "S06"]
+          "specs": [
+            "S05",
+            "S06"
+          ]
         }
       ]
     }
   ],
-
   "dependencies": {
     "cargo": []
   },
-
   "mergeOrder": [
-    "P1 (hooks) and P2 (skills) and P3.1 (P3 primary) are independent — run in parallel",
+    "P1 (hooks) and P2 (skills) and P3.1 (P3 primary) are independent \u2014 run in parallel",
     "P3.2 (nexus exec endpoint) parallel with P1/P2",
     "P3.3 after P3.2",
-    "P4 after all P1–P3 tasks complete"
+    "P4 after all P1\u2013P3 tasks complete"
   ],
-
   "riskRegister": [
     {
       "risk": "hex hook session-start is slow (registers agent, hits nexus) and blocks TUI startup",
@@ -217,7 +286,7 @@
       "mitigation": "Run hook in a background tokio task; push output to TUI via the existing token_tx channel rather than blocking"
     },
     {
-      "risk": "Route hook fires on every user message — adds latency if nexus is slow",
+      "risk": "Route hook fires on every user message \u2014 adds latency if nexus is slow",
       "impact": "low",
       "mitigation": "10s timeout on hook subprocess; if timeout, skip hook output and continue normally"
     },
@@ -227,7 +296,6 @@
       "mitigation": "Truncate skill body to 8000 chars before injection; show truncation notice"
     }
   ],
-
   "successCriteria": [
     "hex chat starts and shows session-start hook output (agent registration, project context) before the input prompt",
     "/skills lists all .claude/skills/*.md files by name",
@@ -235,5 +303,6 @@
     "Model can call hex_exec tool and get hex adr list output back",
     "Quitting with q fires session-end hook",
     "cargo build -p hex-cli -p hex-nexus --release succeeds with no errors"
-  ]
+  ],
+  "status": "done"
 }

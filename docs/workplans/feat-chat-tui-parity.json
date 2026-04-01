@@ -1,22 +1,20 @@
 {
   "id": "feat-chat-tui-parity",
-  "feature": "hex chat — opencode TUI Parity (P11)",
+  "feature": "hex chat \u2014 opencode TUI Parity (P11)",
   "description": "Implements ADR-2604011300 P11: inline diff viewer, interactive model picker overlay, file context injection via /add, and session sidebar toggled by F2.",
   "adr": "ADR-2604011300",
   "specs": "docs/specs/chat-tui-parity.json",
   "priority": "high",
   "created_at": "2026-04-01T00:00:00Z",
   "created_by": "planner",
-
   "prior_work": {
     "done": [
-      "hex-cli/src/tui/chat.rs — full streaming TUI with hooks, MCP client, tool use loop (P1-P10 complete)",
-      "hex-cli/src/tui/skills.rs — slash commands, user skills, /hex command",
-      "hex-cli/src/tui/session.rs — session persistence with list_recent() and preview()",
-      "hex-cli/src/tui/mcp_client.rs — embedded MCP client"
+      "hex-cli/src/tui/chat.rs \u2014 full streaming TUI with hooks, MCP client, tool use loop (P1-P10 complete)",
+      "hex-cli/src/tui/skills.rs \u2014 slash commands, user skills, /hex command",
+      "hex-cli/src/tui/session.rs \u2014 session persistence with list_recent() and preview()",
+      "hex-cli/src/tui/mcp_client.rs \u2014 embedded MCP client"
     ]
   },
-
   "phases": [
     {
       "id": "P1",
@@ -33,11 +31,15 @@
           "id": "P1.1",
           "name": "Add is_diff_content() helper and colorize diff lines in render_messages",
           "layer": "primary",
-          "description": "In chat.rs, add fn is_diff_content(content: &str) -> bool that returns true if any line starts with '+++ ' or '--- ' or '@@ '. In render_messages(), when rendering a Role::Tool message, check each line: if it starts with '+' → Color::Green, '-' → Color::Red, '@@ ' → Color::Cyan, otherwise Color::Gray. Apply this to the full tool content block. Satisfies S01.",
+          "description": "In chat.rs, add fn is_diff_content(content: &str) -> bool that returns true if any line starts with '+++ ' or '--- ' or '@@ '. In render_messages(), when rendering a Role::Tool message, check each line: if it starts with '+' \u2192 Color::Green, '-' \u2192 Color::Red, '@@ ' \u2192 Color::Cyan, otherwise Color::Gray. Apply this to the full tool content block. Satisfies S01.",
           "deps": [],
-          "files": ["hex-cli/src/tui/chat.rs"],
+          "files": [
+            "hex-cli/src/tui/chat.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S01"]
+          "specs": [
+            "S01"
+          ]
         }
       ]
     },
@@ -56,21 +58,35 @@
           "id": "P2.1",
           "name": "Add context_files field and /add, /files, /remove commands to skills.rs",
           "layer": "primary",
-          "description": "In skills.rs: Add SkillResult::AddFile { path: String, content: String } and SkillResult::RemoveFile(String) variants. Add '/add' arm: reads file at rest path, returns AddFile or Lines([error]) if not found. Add '/files' arm: requires files list — return SkillResult::ListFiles (new variant that ChatApp handles to display). Add '/remove' arm: returns RemoveFile(name). Update /help. Add dispatch() 'files' parameter: &[(String,String)] for context_files. Satisfies S05, S06, S10.",
+          "description": "In skills.rs: Add SkillResult::AddFile { path: String, content: String } and SkillResult::RemoveFile(String) variants. Add '/add' arm: reads file at rest path, returns AddFile or Lines([error]) if not found. Add '/files' arm: requires files list \u2014 return SkillResult::ListFiles (new variant that ChatApp handles to display). Add '/remove' arm: returns RemoveFile(name). Update /help. Add dispatch() 'files' parameter: &[(String,String)] for context_files. Satisfies S05, S06, S10.",
           "deps": [],
-          "files": ["hex-cli/src/tui/skills.rs"],
+          "files": [
+            "hex-cli/src/tui/skills.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S05", "S06", "S10"]
+          "specs": [
+            "S05",
+            "S06",
+            "S10"
+          ]
         },
         {
           "id": "P2.2",
           "name": "Add context_files to ChatApp and wire /add into merged_system",
           "layer": "primary",
-          "description": "In chat.rs: Add context_files: Vec<(String, String)> field (path, content) to ChatApp struct. Initialize as Vec::new() in ChatApp::new(). In apply_skill_result(): handle AddFile by pushing to context_files; RemoveFile by removing by name; ListFiles by building a Lines message. In merged_system(): if context_files is non-empty, append '\\n\\n## Files in context\\n' followed by each file as fenced code block. In render_status(): if context_files non-empty, append ' · N file(s)' to status string. Update dispatch() call sites to pass &app.context_files. Satisfies S05, S06, S07.",
-          "deps": ["P2.1"],
-          "files": ["hex-cli/src/tui/chat.rs"],
+          "description": "In chat.rs: Add context_files: Vec<(String, String)> field (path, content) to ChatApp struct. Initialize as Vec::new() in ChatApp::new(). In apply_skill_result(): handle AddFile by pushing to context_files; RemoveFile by removing by name; ListFiles by building a Lines message. In merged_system(): if context_files is non-empty, append '\\n\\n## Files in context\\n' followed by each file as fenced code block. In render_status(): if context_files non-empty, append ' \u00b7 N file(s)' to status string. Update dispatch() call sites to pass &app.context_files. Satisfies S05, S06, S07.",
+          "deps": [
+            "P2.1"
+          ],
+          "files": [
+            "hex-cli/src/tui/chat.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S05", "S06", "S07"]
+          "specs": [
+            "S05",
+            "S06",
+            "S07"
+          ]
         }
       ]
     },
@@ -91,39 +107,70 @@
           "layer": "primary",
           "description": "In chat.rs, add: enum Overlay { ModelPicker { items: Vec<serde_json::Value>, cursor: usize }, SessionSidebar { sessions: Vec<ChatSession>, cursor: usize } }. Add overlay: Option<Overlay> field to ChatApp, initialized None. Add fn overlay_key() method to ChatApp that handles Up/Down/Enter/Esc for each overlay variant. For ModelPicker Enter: set self.model to selected item's name field (or 'name'/'id' from JSON), close overlay. For SessionSidebar Enter: call restore_session() with selected session, close overlay. Satisfies S04, S09.",
           "deps": [],
-          "files": ["hex-cli/src/tui/chat.rs"],
+          "files": [
+            "hex-cli/src/tui/chat.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S04", "S09"]
+          "specs": [
+            "S04",
+            "S09"
+          ]
         },
         {
           "id": "P3.2",
           "name": "Model picker: /model no-args triggers async fetch + opens overlay",
           "layer": "primary",
           "description": "In skills.rs, change '/model' no-args case from Lines([usage]) to return SkillResult::OpenModelPicker. In chat.rs, add SkillResult::OpenModelPicker handling in apply_skill_result(): spawn a tokio task that fetches GET {nexus_url}/api/inference/endpoints (with auth header from app.auth_token), parses JSON array, and sends StreamEvent::OverlayOpen(items) via token_tx. Add StreamEvent::OverlayOpen(Vec<serde_json::Value>) variant. In handle_token_events(): on OverlayOpen, set app.overlay = Some(Overlay::ModelPicker { items, cursor: 0 }). If items empty, push Skill message with S11 fallback text instead. Satisfies S02, S03, S11.",
-          "deps": ["P3.1"],
-          "files": ["hex-cli/src/tui/chat.rs", "hex-cli/src/tui/skills.rs"],
+          "deps": [
+            "P3.1"
+          ],
+          "files": [
+            "hex-cli/src/tui/chat.rs",
+            "hex-cli/src/tui/skills.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S02", "S03", "S11"]
+          "specs": [
+            "S02",
+            "S03",
+            "S11"
+          ]
         },
         {
           "id": "P3.3",
           "name": "Session sidebar: F2 key opens sidebar from disk",
           "layer": "primary",
           "description": "In run_event_loop() key handler, add arm for KeyCode::F(2): call ChatSession::list_recent(10), set app.overlay = Some(Overlay::SessionSidebar { sessions, cursor: 0 }). In the key event handler at the top of the loop, check if app.overlay.is_some() first: if yes, call app.overlay_key(key.code) and skip normal input handling. Satisfies S08, S09.",
-          "deps": ["P3.1"],
-          "files": ["hex-cli/src/tui/chat.rs"],
+          "deps": [
+            "P3.1"
+          ],
+          "files": [
+            "hex-cli/src/tui/chat.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S08", "S09"]
+          "specs": [
+            "S08",
+            "S09"
+          ]
         },
         {
           "id": "P3.4",
           "name": "Render overlays: centered model picker + right session sidebar",
           "layer": "primary",
           "description": "In chat.rs render(), after all normal widgets, check app.overlay: For ModelPicker: compute centered rect (60% width, min(item_count+4, 20) height); clear it with Clear widget; render Block with title 'Select Model'; render StatefulList or Paragraph with each item's name, highlighting cursor row in Cyan Bold. For SessionSidebar: use a right-side 30-column area (full height); clear it with Clear; render Block 'Sessions (F2)'; each row: date + preview, cursor row highlighted Cyan. Update /help text to mention /add, /files, F2. Satisfies S08, S03, S04.",
-          "deps": ["P3.1", "P3.2", "P3.3"],
-          "files": ["hex-cli/src/tui/chat.rs"],
+          "deps": [
+            "P3.1",
+            "P3.2",
+            "P3.3"
+          ],
+          "files": [
+            "hex-cli/src/tui/chat.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S03", "S04", "S08"]
+          "specs": [
+            "S03",
+            "S04",
+            "S08"
+          ]
         }
       ]
     },
@@ -143,29 +190,38 @@
           "name": "Update status bar hint and /help",
           "layer": "primary",
           "description": "In render_status(), add 'F2 sessions' to the hint string. In /help in skills.rs, add '/add <path>' and '/files' and '/remove <name>' entries, and note 'F2: session sidebar'. Satisfies completeness of all new features.",
-          "deps": ["P1.1", "P2.2", "P3.4"],
-          "files": ["hex-cli/src/tui/chat.rs", "hex-cli/src/tui/skills.rs"],
+          "deps": [
+            "P1.1",
+            "P2.2",
+            "P3.4"
+          ],
+          "files": [
+            "hex-cli/src/tui/chat.rs",
+            "hex-cli/src/tui/skills.rs"
+          ],
           "agent": "hex-coder",
-          "specs": ["S02", "S05", "S08"]
+          "specs": [
+            "S02",
+            "S05",
+            "S08"
+          ]
         }
       ]
     }
   ],
-
   "mergeOrder": [
-    "P1.1 and P2.1 and P3.1 are independent — parallel",
+    "P1.1 and P2.1 and P3.1 are independent \u2014 parallel",
     "P2.2 after P2.1",
     "P3.2 after P3.1",
     "P3.3 after P3.1",
     "P3.4 after P3.1, P3.2, P3.3",
     "P4.1 after all prior phases"
   ],
-
   "riskRegister": [
     {
       "risk": "Overlay Clear widget requires ratatui >= 0.26 for proper layering",
       "impact": "low",
-      "mitigation": "Clear is available since ratatui 0.20 — already in deps"
+      "mitigation": "Clear is available since ratatui 0.20 \u2014 already in deps"
     },
     {
       "risk": "context_files with large files bloats system prompt, hitting token limits",
@@ -178,7 +234,6 @@
       "mitigation": "Also bind Ctrl+S as fallback for session sidebar"
     }
   ],
-
   "successCriteria": [
     "Diff output in tool results shows +/- lines in green/red",
     "/model with no args opens a picker showing nexus providers",
@@ -186,5 +241,6 @@
     "/add src/main.rs adds the file and confirms; /files lists it; model sees it in next turn",
     "F2 opens session sidebar; Enter resumes selected session",
     "cargo build -p hex-cli --release succeeds with no errors"
-  ]
+  ],
+  "status": "done"
 }

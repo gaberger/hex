@@ -1,0 +1,89 @@
+{
+  "id": "feat-cicd-release-pipeline",
+  "title": "CI/CD Release Pipeline — GitHub Actions cross-platform binary builds",
+  "description": "Create GitHub Actions workflow to build and release hex-cli + hex-nexus binaries for macOS ARM64 and Linux x86_64. Triggered on version tags. Uploads artifacts to GitHub Releases. This is the production distribution mechanism.",
+  "feature": "cicd-release-pipeline",
+  "adr": "docs/adrs/ADR-2604011200-spacetimedb-native-autonomous-dispatch.md",
+  "created": "2026-04-01",
+  "status": "done",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "GitHub Actions workflow",
+      "tier": 0,
+      "description": "Create .github/workflows/release.yml that builds hex-cli and hex-nexus for macOS ARM64 (macos-14) and Linux x86_64 (ubuntu-22.04) on push to version tags (v*.*.*). Uses cross-compilation via cargo with appropriate targets.",
+      "gate": {
+        "type": "build",
+        "command": "cat .github/workflows/release.yml | head -5",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P0.T1",
+          "name": "Create release.yml GitHub Actions workflow",
+          "adapter": ".github/workflows/",
+          "description": "Create .github/workflows/release.yml with the following workflow:\n\n1. Trigger: `on: push: tags: ['v*.*.*']` and `workflow_dispatch` (for manual testing)\n\n2. Jobs matrix:\n   - `build-macos-arm64`: runs-on: macos-14, target: aarch64-apple-darwin\n   - `build-linux-x86_64`: runs-on: ubuntu-22.04, target: x86_64-unknown-linux-gnu\n\n3. Each job:\n   - actions/checkout@v4\n   - actions/cache for ~/.cargo/registry + target/\n   - rustup target add <target>\n   - cargo build --release --target <target> -p hex-cli\n   - cargo build --release --target <target> -p hex-nexus\n   - tar czf hex-<version>-<target>.tar.gz -C target/<target>/release hex hex-nexus\n   - actions/upload-artifact@v4\n\n4. Job `release` (needs: [build-macos-arm64, build-linux-x86_64]):\n   - actions/download-artifact@v4 for all artifacts\n   - softprops/action-gh-release@v2 to create GitHub release with all tarballs\n   - Generate SHA256 checksums\n\n5. For Linux: install build dependencies (pkg-config, libssl-dev, libsqlite3-dev)\n6. For macOS: MACOSX_DEPLOYMENT_TARGET=11.0\n\nNote: The existing .github/workflows/release.yml may already exist — read it first and extend/replace as needed.",
+          "files": [".github/workflows/release.yml"],
+          "done_condition": "release.yml exists; workflow triggers on version tags; builds both platforms; uploads to GitHub Releases"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Version management",
+      "tier": 1,
+      "description": "Add a version bump script and ensure Cargo.toml versions are consistent across all crates. Create a release checklist.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli 2>&1 | tail -2",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.T1",
+          "name": "Create scripts/release.sh version bump script",
+          "adapter": "scripts/",
+          "description": "Create scripts/release.sh that:\n1. Accepts a version argument: `./scripts/release.sh 0.5.0`\n2. Updates version in all Cargo.toml files (hex-cli, hex-nexus, hex-agent, hex-core, hex-parser, hex-desktop)\n3. Runs `cargo check` to verify Cargo.lock updates\n4. Creates a git commit: `chore(release): bump version to v{version}`\n5. Creates a git tag: `v{version}`\n6. Prints next steps: `git push origin main --tags` to trigger the release workflow\n\nMake it executable (chmod +x).",
+          "files": ["scripts/release.sh"],
+          "done_condition": "scripts/release.sh exists and is executable; updates all Cargo.toml versions consistently"
+        },
+        {
+          "id": "P1.T2",
+          "name": "Verify crate versions are consistent",
+          "adapter": "Cargo.toml",
+          "description": "Check all workspace member Cargo.toml files (hex-cli, hex-nexus, hex-agent, hex-core, hex-parser). They should all have matching versions. If they don't, update them to be consistent (use the current hex-cli version as the canonical version). Also verify the workspace Cargo.toml has a [workspace.package] version field that all members inherit if using workspace inheritance.",
+          "files": ["Cargo.toml", "hex-cli/Cargo.toml", "hex-nexus/Cargo.toml", "hex-agent/Cargo.toml"],
+          "done_condition": "All crate versions consistent; cargo check passes"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Installation script",
+      "tier": 2,
+      "description": "Create a one-line install script that downloads the appropriate binary for the user's platform and installs it to /usr/local/bin.",
+      "gate": {
+        "type": "build",
+        "command": "test -f scripts/install.sh && echo ok",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P2.T1",
+          "name": "Create scripts/install.sh",
+          "adapter": "scripts/",
+          "description": "Create scripts/install.sh:\n\n```bash\n#!/bin/bash\nset -e\nVERSION=${1:-latest}\nOS=$(uname -s | tr '[:upper:]' '[:lower:]')\nARCH=$(uname -m)\n\n# Resolve target\nif [ \"$OS\" = \"darwin\" ] && [ \"$ARCH\" = \"arm64\" ]; then\n  TARGET=\"aarch64-apple-darwin\"\nelif [ \"$OS\" = \"linux\" ] && [ \"$ARCH\" = \"x86_64\" ]; then\n  TARGET=\"x86_64-unknown-linux-gnu\"\nelse\n  echo \"Unsupported platform: $OS/$ARCH\"\n  exit 1\nfi\n\n# Get latest version if not specified\nif [ \"$VERSION\" = \"latest\" ]; then\n  VERSION=$(curl -s https://api.github.com/repos/OWNER/hex/releases/latest | grep tag_name | cut -d'\"' -f4)\nfi\n\nURL=\"https://github.com/OWNER/hex/releases/download/${VERSION}/hex-${VERSION}-${TARGET}.tar.gz\"\necho \"Downloading hex ${VERSION} for ${TARGET}...\"\ncurl -L \"$URL\" | tar xz -C /tmp\nsudo mv /tmp/hex /usr/local/bin/hex\nsudo mv /tmp/hex-nexus /usr/local/bin/hex-nexus\necho \"hex ${VERSION} installed successfully\"\nhex --version\n```\n\nReplace OWNER with the actual GitHub organization/user. Make executable.",
+          "files": ["scripts/install.sh"],
+          "done_condition": "scripts/install.sh exists; is executable; detects platform correctly; downloads from GitHub Releases"
+        }
+      ]
+    }
+  ],
+  "successCriteria": [
+    "git push origin v0.5.0 triggers workflow and produces downloadable binaries",
+    "macOS ARM64 binary runs: hex --version",
+    "Linux x86_64 binary runs: hex --version",
+    "scripts/install.sh downloads and installs hex in one command",
+    "All crate versions consistent"
+  ]
+}

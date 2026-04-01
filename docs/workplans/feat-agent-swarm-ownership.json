@@ -2,7 +2,7 @@
   "id": "feat-agent-swarm-ownership",
   "title": "Agent-Swarm Ownership Hierarchy with Conflict Detection",
   "adr": "ADR-2603241900",
-  "status": "partial",
+  "status": "done",
   "phases": [
     {
       "id": "T0",

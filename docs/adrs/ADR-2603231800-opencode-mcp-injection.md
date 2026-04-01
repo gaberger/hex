@@ -1,7 +1,8 @@
 # ADR-2603231800: hex Context Injection into opencode
 
-**Status:** Accepted
+**Status:** Accepted — Partial Implementation
 **Date:** 2026-03-23
+**Updated:** 2026-04-01
 **Drivers:** Enable opencode to leverage hex's full agent ecosystem including skills, hooks, enforcement rules, and HexFlo coordination
 
 ## Context
@@ -183,19 +184,31 @@ hex will inject the following structure into opencode settings:
 
 ## Implementation
 
+### Delivered via `hex chat` (2026-04-01)
+
+Rather than a separate `hex opencode inject` command, hex context is injected
+automatically on every `hex chat` invocation. This ensures context is always
+fresh (ADRs, workplans, providers fetched live from nexus) without a manual
+injection step.
+
+`hex chat` (commit 88261578):
+1. Fetches project context from nexus (status, swarms, ADRs, inference providers)
+2. Writes `opencode.json` to CWD with `instructions` + `mcp.hex` config
+3. `exec opencode` — replaces the hex process with opencode
+
+The MCP server (Layer 1) is already configured in `~/.config/opencode/opencode.json`
+globally and is written to the project-level `opencode.json` on each `hex chat`.
+
 | Phase | Description | Status |
 |-------|-------------|--------|
-| P1 | Create `opencode.rs` command module in hex-cli | Pending |
-| P2 | Implement MCP server injection | Pending |
-| P3 | Implement agent definitions converter | Pending |
-| P4 | Implement skills injector | Pending |
-| P5 | Implement hooks injector | Pending |
-| P6 | Implement enforcement rules injector | Pending |
-| P7 | Implement project config injector | Pending |
-| P8 | Implement `remove` subcommand | Pending |
-| P9 | Implement `status` subcommand | Pending |
-| P10 | Add tests for context merging | Pending |
-| P11 | Document in hex README | Pending |
+| P1 | MCP server injection (Layer 1) | **Complete** (global config + hex chat) |
+| P2 | Project context as opencode `instructions` | **Complete** (hex chat, 88261578) |
+| P3 | Agent definitions converter (Layer 2) | Pending |
+| P4 | Skills injector (Layer 3) | Pending |
+| P5 | Hooks injector (Layer 4) | Pending |
+| P6 | Enforcement rules injector (Layer 5) | Pending |
+| P7 | `hex opencode status` subcommand | Pending |
+| P8 | `hex opencode remove` subcommand | Pending |
 
 ## References
 

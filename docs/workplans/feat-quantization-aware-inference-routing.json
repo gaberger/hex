@@ -3,7 +3,7 @@
   "feature": "Quantization-Aware Inference Routing",
   "description": "Add QuantizationLevel as a first-class type in hex-core, extend inference provider records, add quantization policy to agent YAMLs, implement complexity-aware provider selection in hex-nexus, and close the loop with Neural Lab quality calibration. Enables local Q2/Q4 models for routine tasks with automatic escalation to cloud for complex ones.",
   "adr": "ADR-2603271000",
-  "status": "complete",
+  "status": "done",
   "created_at": "2026-03-27T10:00:00Z",
   "created_by": "planner",
   "phases": [

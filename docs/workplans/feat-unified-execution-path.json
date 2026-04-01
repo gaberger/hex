@@ -115,7 +115,7 @@
           "files": [
             "hex-nexus/src/orchestration/workplan_executor.rs"
           ],
-          "status": "pending",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
@@ -126,7 +126,7 @@
           "files": [
             "hex-nexus/src/orchestration/workplan_executor.rs"
           ],
-          "status": "pending",
+          "status": "done",
           "agent": "hex-coder",
           "deps": ["P3.1"]
         }
@@ -253,7 +253,7 @@
           "files": [
             "docs/adrs/ADR-2604010000-unified-execution-path.md"
           ],
-          "status": "pending",
+          "status": "done",
           "agent": "hex-coder",
           "deps": ["P3.2", "P4.1", "P5.1"]
         }

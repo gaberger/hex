@@ -301,8 +301,8 @@ async fn run_tests(cwd: &std::path::Path) -> anyhow::Result<()> {
         let output = cmd.output().await?;
         
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        
+        let _stderr = String::from_utf8_lossy(&output.stderr);
+
         // Check for actual test failures (e.g., "1 fail", "5 fail")
         // npm test can return non-zero for filter warnings even when tests pass
         let has_actual_failures = stdout.contains(" fail") 

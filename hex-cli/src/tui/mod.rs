@@ -4,15 +4,10 @@
 //! pipeline: a progress bar across phases, a scrollable task list, live
 //! cost/token tracking, and gate dialogs for human approval.
 
-pub mod chat;
 pub mod controls;
-pub mod mcp_client;
 pub mod gate;
-pub mod markdown;
 pub mod messages;
 pub mod pipeline_bar;
-pub mod session;
-pub mod skills;
 pub mod status_bar;
 pub mod task_list;
 

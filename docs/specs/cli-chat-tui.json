@@ -1,0 +1,240 @@
+{
+  "feature": "cli-chat-tui",
+  "description": "Rich interactive TUI chat experience for `hex chat` — ratatui + crossterm, streaming SSE tokens, conversation history, and project context injection",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "User can start an interactive chat session and receive a streaming response",
+      "given": "hex-nexus is running with at least one registered inference provider",
+      "when": "`hex chat` is run in a terminal",
+      "then": "A full-screen ratatui TUI appears; user types a message, presses Enter, and tokens stream into the assistant message area one by one",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "Conversation history is preserved across turns within a session",
+      "given": "A hex chat session with two prior user+assistant message pairs",
+      "when": "User sends a third message",
+      "then": "All prior messages are included in the API request messages array, enabling multi-turn context; prior messages remain visible in the scroll area",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "Streaming SSE endpoint delivers token deltas to the TUI in real time",
+      "given": "A POST to /api/inference/chat/stream with a valid messages array",
+      "when": "The upstream provider returns an SSE stream with delta chunks",
+      "then": "Each chunk arrives as `data: {\"token\":\"...\"}` and the final chunk as `data: {\"done\":true,\"model\":\"...\",\"input_tokens\":N,\"output_tokens\":N}`",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "Token and model counts are displayed in the status bar",
+      "given": "A completed streaming exchange",
+      "when": "The `done` event is received",
+      "then": "The status bar updates to show cumulative `input_tokens + output_tokens` and the model name used",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "`--no-tui` flag routes through plain stdout for pipe-friendly usage",
+      "given": "`hex chat --no-tui --message 'hello'` is called",
+      "when": "The command runs",
+      "then": "The assistant response is printed to stdout as plain text with no ANSI escape codes and exits with code 0",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "ErrorHandling",
+      "description": "Chat command fails gracefully when nexus is not running",
+      "given": "hex-nexus daemon is not running",
+      "when": "`hex chat` is invoked",
+      "then": "The command prints a user-friendly error `Cannot reach hex-nexus — run: hex nexus start` and exits with code 1 (no panic, no raw mode left engaged)",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "ErrorHandling",
+      "description": "Streaming errors are displayed inline without crashing the TUI",
+      "given": "A streaming request that receives `data: {\"error\":\"...\"}`",
+      "when": "The error event is parsed by the TUI",
+      "then": "The error text appears in the assistant message area in red; the TUI remains interactive so the user can try again",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "EdgeCase",
+      "description": "Pressing Enter on an empty input does nothing",
+      "given": "The input buffer is empty",
+      "when": "User presses Enter",
+      "then": "No API request is made; no empty user message appears in the conversation area",
+      "negative_spec": true
+    },
+    {
+      "id": "S09",
+      "category": "EdgeCase",
+      "description": "Key input is ignored while a response is streaming",
+      "given": "An active streaming response is in progress",
+      "when": "User presses Enter or types characters",
+      "then": "No new request is sent; the input buffer accepts typed characters but Enter is a no-op until streaming completes",
+      "negative_spec": true
+    },
+    {
+      "id": "S10",
+      "category": "EdgeCase",
+      "description": "Terminal raw mode is always restored on exit, even after a panic",
+      "given": "Any exit path — user quits with q/Ctrl+C, error occurs, or streaming is cancelled",
+      "when": "The TUI process exits",
+      "then": "The terminal is restored to cooked mode and the alternate screen is left; no garbage ANSI codes remain in the shell",
+      "negative_spec": false
+    },
+    {
+      "id": "S11",
+      "category": "HappyPath",
+      "description": "Ollama streaming format is parsed correctly",
+      "given": "A registered Ollama provider returning NDJSON with `{\"message\":{\"content\":\"tok\"},\"done\":false}`",
+      "when": "The streaming endpoint receives the Ollama response",
+      "then": "Each NDJSON line is converted to `{\"token\":\"tok\"}` SSE events; the final `{\"done\":true}` line emits the completion event",
+      "negative_spec": false
+    },
+    {
+      "id": "S12",
+      "category": "Integration",
+      "description": "Provider selection falls back to OpenRouter when no registered providers match",
+      "given": "No registered providers; OPENROUTER_API_KEY is set in env",
+      "when": "POST /api/inference/chat/stream is called without a model override",
+      "then": "A synthetic OpenRouter endpoint using `openai/gpt-4o-mini` is selected and streaming proceeds normally",
+      "negative_spec": false
+    },
+    {
+      "id": "S13",
+      "category": "HappyPath",
+      "description": "Assistant responses render markdown — code blocks, bold, inline code, bullet lists",
+      "given": "An assistant message containing markdown: a fenced code block, **bold** text, `inline code`, and a bullet list",
+      "when": "The message is rendered in the TUI",
+      "then": "Code blocks appear with a visually distinct background and a language label; bold text is rendered with BOLD modifier; inline code is colored; bullet points use • glyphs — all without raw markdown syntax visible",
+      "negative_spec": false
+    },
+    {
+      "id": "S14",
+      "category": "HappyPath",
+      "description": "Conversation flows as a natural scrollback — no heavy window borders around messages",
+      "given": "A hex chat session with multiple turns",
+      "when": "The TUI renders",
+      "then": "Messages appear as a continuous flowing conversation: each turn shows a dimmed role label followed by the message content; there is no bordered 'Messages' panel; the layout feels like a terminal REPL, not a windowed app",
+      "negative_spec": false
+    },
+    {
+      "id": "S15",
+      "category": "HappyPath",
+      "description": "Shift+Enter inserts a newline into the input, Enter submits",
+      "given": "User is composing a multi-line message",
+      "when": "User presses Shift+Enter",
+      "then": "A newline is inserted into the input buffer and the input area expands to show all lines; pressing Enter (without Shift) submits the message",
+      "negative_spec": false
+    },
+    {
+      "id": "S16",
+      "category": "HappyPath",
+      "description": "Role labels are visually distinct and color-coded",
+      "given": "A conversation with both user and assistant messages",
+      "when": "The TUI renders",
+      "then": "User messages show a green 'you' label; assistant messages show a cyan 'hex' label; both are dimmed so content stands out; a thin horizontal rule separates each message turn",
+      "negative_spec": false
+    },
+    {
+      "id": "S17",
+      "category": "HappyPath",
+      "description": "Project context is injected into every session as a system prompt",
+      "given": "hex-nexus is running with a registered project and at least one ADR or workplan",
+      "when": "`hex chat` starts",
+      "then": "A system message is prepended to the conversation containing: project name, active workplan summaries, recent ADR titles, and available hex commands — the model can answer questions like 'what workplans are active' without the user providing context",
+      "negative_spec": false
+    },
+    {
+      "id": "S18",
+      "category": "HappyPath",
+      "description": "`/help` slash command displays available commands inline",
+      "given": "User is in a hex chat session",
+      "when": "User types `/help` and presses Enter",
+      "then": "A formatted list of slash commands and their descriptions appears in the message area; no inference request is sent",
+      "negative_spec": false
+    },
+    {
+      "id": "S19",
+      "category": "HappyPath",
+      "description": "`/clear` resets conversation history but keeps system context",
+      "given": "A session with multiple prior messages",
+      "when": "User types `/clear`",
+      "then": "All messages are removed from the visible area and from the API messages array; the injected system context is preserved; a confirmation line appears",
+      "negative_spec": false
+    },
+    {
+      "id": "S20",
+      "category": "HappyPath",
+      "description": "`/model <name>` switches the active model for the session",
+      "given": "Session using model A",
+      "when": "User types `/model qwen/qwen3.5-9b`",
+      "then": "Subsequent inference requests use the new model; the title bar updates to show the new model name",
+      "negative_spec": false
+    },
+    {
+      "id": "S21",
+      "category": "HappyPath",
+      "description": "`/adr <query>` searches ADRs and displays results inline",
+      "given": "hex-nexus has indexed ADRs",
+      "when": "User types `/adr authentication`",
+      "then": "Matching ADR titles, IDs, and status appear in the message area; no inference request is sent",
+      "negative_spec": false
+    },
+    {
+      "id": "S22",
+      "category": "HappyPath",
+      "description": "`/plan` lists active workplans with status",
+      "given": "At least one workplan exists",
+      "when": "User types `/plan`",
+      "then": "A list of workplans with their phase/task completion counts appears inline; no inference request is sent",
+      "negative_spec": false
+    },
+    {
+      "id": "S23",
+      "category": "HappyPath",
+      "description": "Tool use: model can call hex_adr_search and receive results",
+      "given": "Session with a tool-capable model (OpenAI-compat with tools support)",
+      "when": "User asks 'find ADRs about authentication' and the model emits a tool_call for hex_adr_search",
+      "then": "The TUI shows a collapsed '⚙ hex_adr_search(...)' block; the tool executes via nexus; results are injected into the conversation; the model continues its response using the results",
+      "negative_spec": false
+    },
+    {
+      "id": "S24",
+      "category": "HappyPath",
+      "description": "Session is auto-saved after each completed turn",
+      "given": "A completed assistant response (done event received)",
+      "when": "The turn completes",
+      "then": "The full conversation is written to `~/.hex/sessions/chat-{uuid}.json` with messages, model, timestamp, and project_id",
+      "negative_spec": false
+    },
+    {
+      "id": "S25",
+      "category": "HappyPath",
+      "description": "`hex chat --resume` shows a session picker and restores a prior session",
+      "given": "At least one saved session in `~/.hex/sessions/`",
+      "when": "User runs `hex chat --resume`",
+      "then": "An arrow-key selection list of recent sessions (timestamp + first user message preview) appears; selecting one restores the full conversation history and continues the session",
+      "negative_spec": false
+    },
+    {
+      "id": "S26",
+      "category": "EdgeCase",
+      "description": "Unknown slash commands show an error inline without sending to the model",
+      "given": "User types `/unknown`",
+      "when": "Enter is pressed",
+      "then": "An inline error 'Unknown command: /unknown — type /help for available commands' appears; no inference request is made",
+      "negative_spec": true
+    }
+  ]
+}

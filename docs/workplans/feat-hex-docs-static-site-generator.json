@@ -4,8 +4,8 @@
   "specs": null,
   "adr": "ADR-2506101449",
   "created": "2025-06-10",
-  "status": "planned",
-  "status_note": null,
+  "status": "superseded",
+  "status_note": "Orphaned workplan — ADR-2506101449 was never created. Project shifted to Rust; superseded by hex-nexus dashboard for documentation hosting.",
   "topology": "pipeline",
   "budget": "1000",
   "steps": [

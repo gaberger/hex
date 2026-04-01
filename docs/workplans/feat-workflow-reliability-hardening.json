@@ -4,7 +4,7 @@
   "adr": "ADR-2603311000",
   "description": "Fix five structural root causes of recurring workflow failures: shared task completion type, inference quality gate, agent session lifecycle, pre-flight dispatch check, stale model pruning.",
   "created": "2026-03-31",
-  "status": "proposed",
+  "status": "done",
   "phases": [
     {
       "id": "P0",

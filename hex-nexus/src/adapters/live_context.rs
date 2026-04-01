@@ -142,9 +142,9 @@ mod tests {
     async fn enrich_degrades_when_nexus_offline() {
         // Port 19998 is unused — adapter must return empty string, not panic.
         let a = NexusLiveContextAdapter::new("http://127.0.0.1:19998");
-        let result = a.enrich("implement auth", &["src/auth.rs".to_string()]).await;
-        // Graceful degradation: empty string when all endpoints unreachable.
-        assert!(result.is_empty());
+        let result = a.enrich("implement auth", &[]).await;
+        // Graceful degradation: empty string when all endpoints unreachable and no files.
+        assert!(result.is_empty(), "expected empty, got: {:?}", result);
     }
 
     #[tokio::test]

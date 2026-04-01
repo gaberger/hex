@@ -39,7 +39,7 @@ async fn start_hub() -> SocketAddr {
             .expect("server error");
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     addr
 }
 

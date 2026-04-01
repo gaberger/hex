@@ -19,6 +19,12 @@ pub trait PromptPort: Send + Sync {
         service: ServiceTemplate,
     ) -> Result<String, ContextError>;
 
+    /// Build and cache the full composed prompt for a role (all sections joined).
+    /// Variable substitution is intentionally excluded — apply `ContextBuilder`
+    /// with live `ContextVariables` on the returned template string at the
+    /// use-case layer.
+    async fn build_composed_prompt(&self, role: AgentRole) -> Result<String, ContextError>;
+
     async fn reload_templates(&self) -> Result<(), ContextError>;
 }
 

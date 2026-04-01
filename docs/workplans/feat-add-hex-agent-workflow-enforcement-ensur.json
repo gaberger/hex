@@ -2,7 +2,7 @@
   "title": "Plan: add hex-agent workflow enforcement ensuring ADR-first development",
   "feature": "",
   "language": "typescript",
-  "status": "planned",
+  "status": "done",
   "steps": [
     {
       "id": "step-1",
@@ -10,7 +10,7 @@
       "adapter": "core/domain",
       "tier": 0,
       "dependencies": [],
-      "status": "pending"
+      "status": "completed"
     }
   ],
   "phases": [],

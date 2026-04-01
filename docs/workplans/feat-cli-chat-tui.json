@@ -1,0 +1,128 @@
+{
+  "id": "wp-cli-chat-tui",
+  "feature": "Rich CLI Chat TUI (`hex chat`)",
+  "description": "Adds `hex chat` \u2014 a full-screen ratatui TUI that streams tokens from the hex inference gateway. Backed by a new SSE streaming endpoint in hex-nexus and a ratatui primary adapter in hex-cli.",
+  "adr": "ADR-2604011300",
+  "priority": "normal",
+  "created_at": "2026-04-01T13:00:00Z",
+  "created_by": "planner",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Wire SSE streaming route in hex-nexus",
+      "tier": 2,
+      "description": "The stream handler + helpers (inference_stream, pick_stream_provider, stream_inference) were already appended to hex-nexus/src/routes/inference.rs as prior work. This phase registers the route in routes/mod.rs so the endpoint is reachable.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Register POST /api/inference/chat/stream route in routes/mod.rs",
+          "layer": "primary",
+          "description": "In hex-nexus/src/routes/mod.rs, add `.route(\"/api/inference/chat/stream\", post(inference::inference_stream))` near the other /api/inference/* routes (around line 644). The handler function already exists in inference.rs. After adding, run `cargo check -p hex-nexus` to confirm it compiles. Fix any import issues (axum::response::sse may need to be added to the use statement in inference.rs). Commit: `git add hex-nexus/src/routes/mod.rs hex-nexus/src/routes/inference.rs && git commit -m 'feat(nexus): add POST /api/inference/chat/stream SSE endpoint'`",
+          "deps": [],
+          "files": [
+            "hex-nexus/src/routes/mod.rs",
+            "hex-nexus/src/routes/inference.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Enable streaming in hex-cli reqwest",
+      "tier": 1,
+      "description": "Add the `stream` feature to the reqwest dependency in hex-cli so bytes_stream() is available for consuming SSE responses.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add `stream` to reqwest features in hex-cli/Cargo.toml",
+          "layer": "secondary",
+          "description": "In hex-cli/Cargo.toml, change `reqwest = { version = \"0.12\", default-features = false, features = [\"rustls-tls\", \"json\"] }` to `reqwest = { version = \"0.12\", default-features = false, features = [\"rustls-tls\", \"json\", \"stream\"] }`. Run `cargo check -p hex-cli` to confirm. Commit: `git add hex-cli/Cargo.toml && git commit -m 'chore(hex-cli): add stream feature to reqwest for SSE consumption'`",
+          "deps": [],
+          "files": [
+            "hex-cli/Cargo.toml"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "CLI primary adapters \u2014 chat command + TUI",
+      "tier": 2,
+      "description": "Create the `hex chat` command (primary adapter) and the ratatui TUI (also primary adapter). These two tasks are independent of each other and can run in parallel.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Create hex-cli/src/commands/chat.rs and wire into main.rs",
+          "layer": "primary",
+          "description": "Create hex-cli/src/commands/chat.rs with: (1) `pub struct ChatArgs` (clap::Args) with fields: `message: Option<String>` (short -m), `model: Option<String>` (short -M), `no_tui: bool`, `system: Option<String>`. (2) `pub async fn run(args: ChatArgs) -> anyhow::Result<()>` that either calls `crate::tui::chat::run(args).await` or `run_plain(args).await` based on `args.no_tui`. (3) `async fn run_plain(args: ChatArgs) -> anyhow::Result<()>` that calls `NexusClient::from_env().ensure_running().await?`, POSTs to `/api/inference/complete` with the message, prints the `content` field to stdout. Wire: add `pub mod chat` to commands/mod.rs. In main.rs add `Chat(commands::chat::ChatArgs)` variant to `Commands` enum with doc `/// Interactive AI chat session (TUI)` and arm `Commands::Chat(args) => commands::chat::run(args).await` to the match. Commit: `git add hex-cli/src/commands/chat.rs hex-cli/src/commands/mod.rs hex-cli/src/main.rs && git commit -m 'feat(hex-cli): add hex chat command entry point'`",
+          "deps": [
+            "P2.1"
+          ],
+          "files": [
+            "hex-cli/src/commands/chat.rs",
+            "hex-cli/src/commands/mod.rs",
+            "hex-cli/src/main.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Create hex-cli/src/tui/chat.rs \u2014 ratatui streaming chat TUI",
+          "layer": "primary",
+          "description": "Create hex-cli/src/tui/chat.rs. Follow the existing patterns in src/tui/mod.rs (enable_raw_mode, EnterAlternateScreen, CrosstermBackend, Terminal, event::poll loop). Required components: (1) `ChatMessage { role: Role, content: String }` and `enum Role { User, Assistant }`. (2) `enum StreamEvent { Token(String), Done { model: String, input_tokens: u64, output_tokens: u64 }, Error(String) }`. (3) `struct ChatApp` with: messages: Vec<ChatMessage>, input: String, scroll: u16, auto_scroll: bool, streaming: bool, model: String, total_input_tokens: u64, total_output_tokens: u64, system: Option<String>, nexus_url: String, token_rx: tokio::sync::mpsc::Receiver<StreamEvent>, token_tx: tokio::sync::mpsc::Sender<StreamEvent>, error_msg: Option<String>, spinner_tick: u8. (4) `fn send_message(&mut self)`: builds messages Vec<serde_json::Value> from conversation history, adds current input as user message, pushes ChatMessage{User, content} and empty ChatMessage{Assistant}, sets streaming=true, spawns tokio::spawn(stream_request(...)). (5) `async fn stream_request(nexus_url, messages, model, system, tx)`: POSTs to `{nexus_url}/api/inference/chat/stream`, reads response.bytes_stream() using futures_util::StreamExt, buffers lines, parses SSE `data: {...}` events, sends StreamEvent::Token/Done/Error. (6) `fn render(f: &mut Frame, app: &ChatApp)` using Layout with Constraint::Length(1)|Min(3)|Length(3)|Length(1). render_title shows spinner (SPINNER_FRAMES array) + model. render_messages builds Vec<Line> with role label, separator, content lines, streaming cursor `\u258c`. render_input shows Paragraph with border, yellow when streaming. render_status shows token count + key hints. (7) `pub async fn run(args: ChatArgs) -> anyhow::Result<()>` that calls nexus.ensure_running(), enables raw mode + alternate screen, creates Terminal, runs the event loop (poll 50ms, try_recv tokens, draw, handle key events: Enter=send_message, Backspace, Up/Down scroll, Ctrl+C/q quit), then restores terminal. Register in tui/mod.rs as `pub mod chat`. Commit: `git add hex-cli/src/tui/chat.rs hex-cli/src/tui/mod.rs && git commit -m 'feat(hex-cli): ratatui streaming chat TUI'`",
+          "deps": [
+            "P3.1"
+          ],
+          "files": [
+            "hex-cli/src/tui/chat.rs",
+            "hex-cli/src/tui/mod.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Integration validation",
+      "tier": 4,
+      "description": "Build both crates, run a smoke test of --no-tui mode, and verify all specs are satisfied.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "End-to-end smoke test and spec verification",
+          "layer": "primary",
+          "description": "Run `cargo build -p hex-cli -p hex-nexus`. Run `hex chat --help` and verify the subcommand appears. If nexus is running with a provider, run `hex chat --no-tui --message 'say the word ok'` and verify text output. Verify `hex chat` (TUI) launches without panic and Ctrl+C restores terminal. Check all 12 specs in docs/specs/cli-chat-tui.json against the implementation. Fix any issues found. Commit all fixes. Final commit: `git add -u && git commit -m 'feat(cli-chat-tui): integration complete \u2014 all specs verified'`",
+          "deps": [
+            "P3.1",
+            "P3.2"
+          ],
+          "files": [],
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ],
+  "status": "done"
+}

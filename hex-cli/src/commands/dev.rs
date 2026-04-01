@@ -215,9 +215,9 @@ async fn resume_latest() -> Result<()> {
                 let age = if s.updated_at < now_ts {
                     let updated = &s.updated_at;
                     // Simple string comparison gives rough age in days
-                    let days_ago = (chrono::DateTime::parse_from_rfc3339(updated)
+                    let days_ago = chrono::DateTime::parse_from_rfc3339(updated)
                         .map(|t| (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_hours())
-                        .unwrap_or(0));
+                        .unwrap_or(0);
                     if days_ago < 24 { format!("{}h ago", days_ago) }
                     else { format!("{}d ago", days_ago / 24) }
                 } else { "just now".to_string() };

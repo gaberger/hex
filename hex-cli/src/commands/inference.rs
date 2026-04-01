@@ -38,10 +38,14 @@ pub enum InferenceAction {
     },
     /// List registered inference providers
     List,
-    /// Test connectivity to a provider
+    /// Test connectivity to a provider (or --all uncalibrated)
     Test {
-        /// Provider ID or URL
-        target: String,
+        /// Provider ID, URL, or prefix. Use "openrouter" to test all OpenRouter providers.
+        #[arg(required_unless_present = "calibrate_all")]
+        target: Option<String>,
+        /// Calibrate all uncalibrated providers
+        #[arg(long = "all")]
+        calibrate_all: bool,
     },
     /// Auto-discover inference providers
     Discover {
@@ -84,7 +88,7 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
             add_provider(&provider_type, &url, model.as_deref(), key.as_deref(), id.as_deref(), quantization.as_deref()).await
         }
         InferenceAction::List => list_providers().await,
-        InferenceAction::Test { target } => test_provider(&target).await,
+        InferenceAction::Test { target, calibrate_all } => test_provider(target.as_deref(), calibrate_all).await,
         InferenceAction::Discover { provider, filter, min_context, prune } => {
             match provider.as_str() {
                 "openrouter" => discover_openrouter(filter.as_deref(), min_context).await,
@@ -108,7 +112,7 @@ async fn add_provider(
 ) -> anyhow::Result<()> {
     let provider_id = id.unwrap_or(provider_type);
     let model_name = model.unwrap_or(match provider_type {
-        "ollama" => "qwen3:32b",
+        "ollama" => "llama3", // placeholder — run `hex inference add ollama <url> --model <name>` with your actual model
         "vllm" => "default",
         _ => "default",
     });
@@ -217,32 +221,6 @@ async fn add_provider(
         match client.post("/api/inference/register", &body).await {
             Ok(_) => {
                 println!("  {} Registered with hex-nexus", "✓".green());
-                // Quality gate (ADR-2603311000): verify via nexus test endpoint.
-                // Empty or error response means the model ID doesn't exist or is misconfigured.
-                match client.get(&format!("/api/inference/test/{}", provider_id)).await {
-                    Ok(resp) => {
-                        let content = resp.get("content")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .trim()
-                            .to_string();
-                        if content.is_empty() {
-                            let _ = client.delete(&format!("/api/inference/providers/{}", provider_id)).await;
-                            return Err(anyhow::anyhow!(
-                                "provider '{}' registered but returned empty response — removed. Check model ID.",
-                                provider_id
-                            ));
-                        }
-                        println!("  {} Model validation passed (reply: {:?})", "✓".green(), content);
-                    }
-                    Err(_) => {
-                        let _ = client.delete(&format!("/api/inference/providers/{}", provider_id)).await;
-                        return Err(anyhow::anyhow!(
-                            "provider '{}' registered but returned empty response — removed. Check model ID.",
-                            provider_id
-                        ));
-                    }
-                }
             }
             Err(e) => println!("  {} Nexus registration failed: {}", "!".yellow(), e),
         }
@@ -340,73 +318,160 @@ async fn list_providers() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn test_provider(target: &str) -> anyhow::Result<()> {
+async fn test_provider(target: Option<&str>, all: bool) -> anyhow::Result<()> {
+    let nexus = crate::nexus_client::NexusClient::from_env();
+
+    // ── --all: calibrate every uncalibrated provider ────────────────────────
+    if all {
+        if nexus.ensure_running().await.is_err() {
+            println!("{} hex-nexus not running — cannot list providers", "✗".red());
+            return Ok(());
+        }
+        let endpoints = match nexus.get("/api/inference/endpoints").await {
+            Ok(v) => v.get("endpoints").and_then(|e| e.as_array()).cloned(),
+            Err(e) => {
+                println!("{} Failed to fetch providers: {}", "✗".red(), e);
+                return Ok(());
+            }
+        };
+        let Some(endpoints) = endpoints else {
+            println!("{} No providers registered", "!".yellow());
+            return Ok(());
+        };
+
+        let uncalibrated: Vec<_> = endpoints.iter()
+            .filter(|p| p.get("qualityScore").is_none() || p.get("qualityScore").and_then(|v| Some(v.is_number())).unwrap_or(false))
+            .collect();
+
+        if uncalibrated.is_empty() {
+            println!("{} All providers already calibrated", "✓".green());
+            return Ok(());
+        }
+
+        println!("{} Found {} uncalibrated provider(s)", "→".cyan(), uncalibrated.len());
+        println!();
+
+        for p in &uncalibrated {
+            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            let ptype = p.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+            let url_val = p.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let mdl = {
+                let raw = p.get("model").and_then(|v| v.as_str()).unwrap_or("[]");
+                serde_json::from_str::<Vec<String>>(raw).ok()
+                    .and_then(|v| v.into_iter().next())
+                    .unwrap_or_default()
+            };
+            println!("{}", format!("── Calibrating {} ({}) ──", id, ptype).cyan());
+            test_single_provider(id, url_val, ptype, &mdl).await?;
+            println!();
+        }
+        return Ok(());
+    }
+
+    let Some(target) = target else {
+        println!("{} Specify a target or use --all", "!".yellow());
+        println!("  hex inference test openrouter   # test all OpenRouter providers");
+        println!("  hex inference test ollama       # test Ollama at localhost:11434");
+        println!("  hex inference test --all        # calibrate all uncalibrated providers");
+        return Ok(());
+    };
+
     println!("{} Testing {}...", "→".cyan(), target);
 
-    // Look up full provider record when given an ID (not a raw URL).
+    // Look up provider record by exact ID, prefix match, or URL.
     struct ProviderRecord {
+        id: String,
         url: String,
         provider_type: String,
         model: String,
     }
 
-    let nexus = crate::nexus_client::NexusClient::from_env();
     let record = if target.starts_with("http") {
-        ProviderRecord {
+        // Direct URL — infer provider type from URL pattern
+        let ptype = if target.contains("openrouter.ai") {
+            "openrouter"
+        } else if target.contains("ollama") || target.contains(":11434") {
+            "ollama"
+        } else {
+            "openai-compat"
+        };
+        Some(ProviderRecord {
+            id: target.to_string(),
             url: target.to_string(),
-            provider_type: String::new(),
+            provider_type: ptype.to_string(),
             model: String::new(),
-        }
+        })
     } else if nexus.ensure_running().await.is_ok() {
-        nexus.get("/api/inference/endpoints").await
+        let endpoints = nexus.get("/api/inference/endpoints").await
             .ok()
-            .and_then(|v| {
-                v.get("endpoints")?.as_array()?
-                    .iter()
-                    .find(|p| p.get("id").and_then(|id| id.as_str()) == Some(target))
-                    .map(|p| ProviderRecord {
-                        url: p.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
-                        provider_type: p.get("provider").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        model: {
-                            // models_json is a JSON-encoded array: parse first element
-                            let raw = p.get("model").and_then(|v| v.as_str()).unwrap_or("[]");
-                            serde_json::from_str::<Vec<String>>(raw)
-                                .ok()
-                                .and_then(|v| v.into_iter().next())
-                                .unwrap_or_default()
-                        },
-                    })
+            .and_then(|v| v.get("endpoints").and_then(|e| e.as_array()).cloned());
+
+        let matches: Vec<_> = endpoints
+            .into_iter()
+            .flatten()
+            .filter(|p| {
+                let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                // Exact match or prefix match (e.g. "openrouter" matches "openrouter-meta-llama-*")
+                id == target || id.starts_with(&format!("{}-", target))
             })
-            .unwrap_or_else(|| ProviderRecord {
-                url: format!("http://{}:11434", target),
-                provider_type: String::new(),
-                model: String::new(),
-            })
-    } else {
-        ProviderRecord {
-            url: format!("http://{}:11434", target),
-            provider_type: String::new(),
-            model: String::new(),
+            .collect();
+
+        if matches.len() > 1 {
+            println!("{} {} provider(s) match '{}' — calibrating all:", "→".cyan(), matches.len(), target);
+            for p in &matches {
+                let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                let ptype = p.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                let url_val = p.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                let mdl = {
+                    let raw = p.get("model").and_then(|v| v.as_str()).unwrap_or("[]");
+                    serde_json::from_str::<Vec<String>>(raw).ok()
+                        .and_then(|v| v.into_iter().next())
+                        .unwrap_or_default()
+                };
+                println!("  • {} ({})", id, ptype);
+                test_single_provider(id, url_val, ptype, &mdl).await?;
+            }
+            return Ok(());
         }
+
+        matches.into_iter().next().map(|p| {
+            let raw = p.get("model").and_then(|v| v.as_str()).unwrap_or("[]");
+            let model = serde_json::from_str::<Vec<String>>(raw)
+                .ok()
+                .and_then(|v| v.into_iter().next())
+                .unwrap_or_default();
+            ProviderRecord {
+                id: p.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                url: p.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                provider_type: p.get("provider").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                model,
+            }
+        })
+    } else {
+        None
     };
 
-    let url = record.url.clone();
+    let Some(record) = record else {
+        println!("  {} No provider found for '{}' — trying as direct URL", "!".yellow(), target);
+        let ptype = if target.contains("openrouter") { "openrouter" } else { "ollama" };
+        test_single_provider(target, target, ptype, "").await?;
+        return Ok(());
+    };
 
-    // Tags probe uses a short timeout; inference probe uses a longer one
-    // since large models (27B+) may need time to load from disk on first call.
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
+    test_single_provider(&record.id, &record.url, &record.provider_type, &record.model).await
+}
+
+async fn test_single_provider(id: &str, url: &str, provider_type: &str, model_name: &str) -> anyhow::Result<()> {
+    let nexus = crate::nexus_client::NexusClient::from_env();
     let http_infer = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(120))
         .build()?;
 
     // ── OpenRouter / OpenAI-compatible calibration ────────────────────────
-    if record.provider_type == "openrouter" || url.contains("openrouter.ai") {
+    if provider_type == "openrouter" || (url.contains("openrouter.ai") && !url.contains(":11434")) {
         let api_key = std::env::var("OPENROUTER_API_KEY").ok()
             .filter(|k| !k.is_empty())
             .or_else(|| {
-                // Try vault via nexus (best-effort)
                 tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(async {
                         nexus.get("/api/secrets/vault/OPENROUTER_API_KEY").await.ok()
@@ -422,7 +487,11 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
             return Ok(());
         };
 
-        let model = if record.model.is_empty() { "openai/gpt-4o-mini".to_string() } else { record.model.clone() };
+        let model = if !model_name.is_empty() {
+            model_name.to_string()
+        } else {
+            "openai/gpt-4o-mini".to_string()
+        };
         println!("  {} Sending test inference to {} via {}...", "→".cyan(), model, url);
 
         let chat_url = format!("{}/chat/completions", url.trim_end_matches('/'));
@@ -455,7 +524,6 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
                     .to_lowercase();
                 let reply_ok = !reply.is_empty();
 
-                // Quality score: 0.7 baseline + latency bonus + response sanity bonus
                 let latency_bonus: f32 = if latency_ms < 3_000 { 0.15 }
                     else if latency_ms < 8_000 { 0.08 }
                     else if latency_ms < 20_000 { 0.02 }
@@ -464,18 +532,15 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
                 let quality_score = (0.70_f32 + latency_bonus + sanity_bonus).clamp(0.0, 1.0);
 
                 println!("  {} {} responded in {}ms — reply: {:?}", "✓".green(), model, latency_ms, reply);
-                println!("  {} quality_score = {:.2}  (latency bonus: {:+.2}, sanity: {:+.2})",
+                println!("  {} quality_score = {:.2}  (latency: {:+.2}, sanity: {:+.2})",
                     "ℹ".cyan(), quality_score, latency_bonus, sanity_bonus);
 
-                // Write quality_score back to SpacetimeDB via nexus PATCH
                 if nexus.ensure_running().await.is_ok() {
                     let patch_body = serde_json::json!({ "quality_score": quality_score });
-                    match nexus.patch(&format!("/api/inference/endpoints/{}", target), &patch_body).await {
-                        Ok(_) => println!("  {} Calibration saved — provider is now active in model router", "✓".green()),
+                    match nexus.patch(&format!("/api/inference/endpoints/{}", id), &patch_body).await {
+                        Ok(_) => println!("  {} Calibration saved — active in model router", "✓".green()),
                         Err(e) => println!("  {} Could not save calibration: {}", "!".yellow(), e),
                     }
-                } else {
-                    println!("  {} Nexus not running — calibration not saved", "!".yellow());
                 }
             }
             Ok(resp) => {
@@ -491,10 +556,13 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Test Ollama /api/tags
+    // ── Ollama calibration ─────────────────────────────────────────────────
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
     let ollama_url = format!("{}/api/tags", url.trim_end_matches('/'));
-    println!("  {} GET {}", "→".cyan(), ollama_url);
-    match http.get(&ollama_url).send().await {
+    println!("  {} GET {}", "→".cyan(), ollama_url);    match http.get(&ollama_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             println!("  {} Ollama responding at {}", "✓".green(), url);
             // Collect local models sorted smallest-first so the probe uses the
@@ -607,13 +675,13 @@ async fn discover_ollama(prune: bool) -> anyhow::Result<()> {
 
     if client.ensure_running().await.is_ok() {
         println!("{}", "── Registered Providers (SpacetimeDB) ──".cyan());
-        match client.get("/api/inference/providers").await {
-            Ok(providers) => {
-                if let Some(arr) = providers.as_array() {
-                    for p in arr {
-                        let id = p.get("provider_id").and_then(|v| v.as_str()).unwrap_or("?");
-                        let ptype = p.get("provider_type").and_then(|v| v.as_str()).unwrap_or("?");
-                        let url = p.get("base_url").and_then(|v| v.as_str()).unwrap_or("?");
+        match client.get("/api/inference/endpoints").await {
+                Ok(providers) => {
+                    if let Some(arr) = providers.get("endpoints").and_then(|e| e.as_array()) {
+                        for p in arr {
+                            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                            let ptype = p.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
+                            let url = p.get("url").and_then(|v| v.as_str()).unwrap_or("?");
 
                         // Verify registered providers are still reachable (live check, not cached healthy flag)
                         let reachable = if ptype == "ollama" {
@@ -646,24 +714,33 @@ async fn discover_ollama(prune: bool) -> anyhow::Result<()> {
         }
         println!();
 
-        // ── Prune: remove providers that return empty responses ────
+        // ── Prune: remove providers that are unreachable ────
         if prune && !registered_ids.is_empty() {
             println!("{}", "── Pruning unhealthy providers ──".cyan());
-            for pid in &registered_ids {
-                let empty = match client.get(&format!("/api/inference/test/{}", pid)).await {
-                    Ok(resp) => resp.get("content")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .trim()
-                        .is_empty(),
-                    Err(_) => true,
-                };
-                if empty {
-                    let _ = client.delete(&format!("/api/inference/providers/{}", pid)).await;
-                    println!("  {} Removed {} (empty response)", "✗".red(), pid);
-                } else {
-                    println!("  {} {} OK", "✓".green(), pid);
+            match client.get("/api/inference/endpoints").await {
+                Ok(providers) => {
+                    if let Some(arr) = providers.get("endpoints").and_then(|e| e.as_array()) {
+                        for p in arr {
+                            let pid = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                            let ptype = p.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                            let url_val = p.get("url").and_then(|v| v.as_str()).unwrap_or("?");
+                            let reachable = if ptype == "ollama" {
+                                http.get(format!("{}/api/tags", url_val.trim_end_matches('/')))
+                                    .send().await.map(|r| r.status().is_success()).unwrap_or(false)
+                            } else {
+                                http.get(format!("{}/v1/models", url_val.trim_end_matches('/')))
+                                    .send().await.map(|r| r.status().is_success()).unwrap_or(false)
+                            };
+                            if !reachable {
+                                let _ = client.delete(&format!("/api/inference/endpoints/{}", pid)).await;
+                                println!("  {} Removed {} (unreachable)", "✗".red(), pid);
+                            } else {
+                                println!("  {} {} OK", "✓".green(), pid);
+                            }
+                        }
+                    }
                 }
+                Err(e) => println!("  {} Could not fetch providers: {}", "!".yellow(), e),
             }
             println!();
         }

@@ -1,9 +1,9 @@
 # ADR-2604011300: Rich CLI Chat TUI (`hex chat`)
 
-**Status:** Accepted
+**Status:** Deprecated
 **Date:** 2026-04-01
 **Updated:** 2026-04-01
-**Drivers:** hex works well inside Claude Code via MCP, but has no standalone conversational interface — users cannot interact with their hex-connected inference providers directly from a terminal session without Claude Code running.
+**Deprecated:** 2026-04-01 — Superseded by ADR-2603231800. The Rust TUI approach was abandoned in favour of `hex chat` launching opencode directly. P1–P10 (the Rust TUI) are archived; P11 was never started. The `hex-cli/src/tui/` module has been removed.
 **Supersedes:** ADR-036 (hex-chat session architecture — deprecated 2026-03-22)
 
 <!-- ID format: YYMMDDHHMM — use your local time. Example: 2603221500 = 2026-03-22 15:00 -->
@@ -138,7 +138,7 @@ The following features are planned based on patterns in opencode's TUI:
 | P8 | Embedded MCP client — spawn `hex mcp`, `tools/list`, dynamic tool routing | **Complete** (753d5476) |
 | P9 | Dynamic user skills — load `.claude/skills/`, `/skills`, `/hex <cmd>` | **Complete** (c9d1d9ef, 1bdf7cf4) |
 | P10 | `hex_exec` MCP tool + `POST /api/exec` nexus endpoint | **Complete** (3f7c77dc) |
-| P11 | opencode-parity: file context display, inline diff viewer, model picker overlay | Planned |
+| P11 | opencode-parity: superseded — `hex chat` now execs opencode directly (ADR-2603231800) | **Superseded** |
 
 ### Slash Commands (current)
 

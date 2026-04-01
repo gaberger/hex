@@ -4,7 +4,7 @@
   "specs": "docs/specs/feat-pipeline-phase-precondition-gates.json",
   "adr": "ADR-2603311900",
   "created": "2026-03-31",
-  "status": "complete",
+  "status": "done",
   "topology": "pipeline",
   "budget": "40000",
   "steps": [
@@ -18,7 +18,8 @@
       "tier": 0,
       "specs": ["S06", "S10"],
       "worktree_branch": "feat/phase-gates/session-types",
-      "done_condition": "cargo check passes. SessionStatus::Incomplete compiles. hex dev list shows 'incomplete' for sessions with completed_steps=[] and quality_result=None."
+      "done_condition": "cargo check passes. SessionStatus::Incomplete compiles. hex dev list shows 'incomplete' for sessions with completed_steps=[] and quality_result=None.",
+      "status": "completed"
     },
     {
       "id": "P0.2",
@@ -30,7 +31,8 @@
       "tier": 0,
       "specs": ["S01", "S11"],
       "worktree_branch": "feat/phase-gates/session-field-population",
-      "done_condition": "After running hex dev TUI through workplan phase: session JSON on disk has workplan_path set. After swarm phase: swarm_id set. Verified by reading ~/.hex/sessions/dev/<id>.json."
+      "done_condition": "After running hex dev TUI through workplan phase: session JSON on disk has workplan_path set. After swarm phase: swarm_id set. Verified by reading ~/.hex/sessions/dev/<id>.json.",
+      "status": "completed"
     },
     {
       "id": "P1.1",
@@ -42,7 +44,8 @@
       "tier": 1,
       "specs": ["S03", "S04", "S05", "S12"],
       "worktree_branch": "feat/phase-gates/precondition-checks",
-      "done_condition": "When session.workplan_path=None, run_code_phase presents a blocking dialog instead of silently skipping. cargo test passes. The 'warn + skip to Validate' path in run_code_phase is removed."
+      "done_condition": "When session.workplan_path=None, run_code_phase presents a blocking dialog instead of silently skipping. cargo test passes. The 'warn + skip to Validate' path in run_code_phase is removed.",
+      "status": "completed"
     },
     {
       "id": "P1.2",
@@ -54,7 +57,8 @@
       "tier": 1,
       "specs": ["S08", "S09"],
       "worktree_branch": "feat/phase-gates/finalize-session",
-      "done_condition": "cargo check passes. All 4 direct SessionStatus::Completed assignments replaced. Calling finalize_session(Approved) with 0 swarm tasks returns an error. Calling with tasks_completed > 0 sets Completed."
+      "done_condition": "cargo check passes. All 4 direct SessionStatus::Completed assignments replaced. Calling finalize_session(Approved) with 0 swarm tasks returns an error. Calling with tasks_completed > 0 sets Completed.",
+      "status": "completed"
     },
     {
       "id": "P1.3",
@@ -66,7 +70,8 @@
       "tier": 1,
       "specs": ["S06"],
       "worktree_branch": "feat/phase-gates/finalize-session",
-      "done_condition": "Selecting Skip at commit gate: session.status = Paused in the saved JSON. hex dev list shows the session as paused."
+      "done_condition": "Selecting Skip at commit gate: session.status = Paused in the saved JSON. hex dev list shows the session as paused.",
+      "status": "completed"
     },
     {
       "id": "P1.4",
@@ -78,7 +83,8 @@
       "tier": 1,
       "specs": ["S07"],
       "worktree_branch": "feat/phase-gates/finalize-session",
-      "done_condition": "Advancing past Commit via keyboard: commit gate dialog appears. SessionStatus::Completed only set after user selects Approve."
+      "done_condition": "Advancing past Commit via keyboard: commit gate dialog appears. SessionStatus::Completed only set after user selects Approve.",
+      "status": "completed"
     },
     {
       "id": "P2.1",
@@ -90,7 +96,8 @@
       "tier": 2,
       "specs": ["S10"],
       "worktree_branch": "feat/phase-gates/cli-display",
-      "done_condition": "hex dev list --all shows session 6481890c with status 'incomplete' and hint text. New Paused sessions show 'paused'."
+      "done_condition": "hex dev list --all shows session 6481890c with status 'incomplete' and hint text. New Paused sessions show 'paused'.",
+      "status": "completed"
     },
     {
       "id": "P2.2",
@@ -102,7 +109,8 @@
       "tier": 2,
       "specs": ["S01", "S02"],
       "worktree_branch": "feat/phase-gates/cli-display",
-      "done_condition": "hex report latest shows Phase 1/2/3 from session fields (not git fallback) for sessions created after this fix. Existing sessions still use git fallback."
+      "done_condition": "hex report latest shows Phase 1/2/3 from session fields (not git fallback) for sessions created after this fix. Existing sessions still use git fallback.",
+      "status": "completed"
     },
     {
       "id": "P3.1",
@@ -114,7 +122,8 @@
       "tier": 5,
       "specs": ["S01", "S02", "S03", "S06", "S07", "S08", "S09", "S10"],
       "worktree_branch": "feat/phase-gates/integration",
-      "done_condition": "cargo test passes. End-to-end test shows: session fields populated, code phase not skipped, completion requires task execution, skip at commit = paused."
+      "done_condition": "cargo test passes. End-to-end test shows: session fields populated, code phase not skipped, completion requires task execution, skip at commit = paused.",
+      "status": "completed"
     }
   ],
   "mergeOrder": [

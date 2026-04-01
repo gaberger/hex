@@ -34,3 +34,4 @@ pub mod command_session;
 pub use command_session::CommandSessionAdapter;
 pub mod claude_code_inference;
 pub mod live_context;
+pub mod permission;

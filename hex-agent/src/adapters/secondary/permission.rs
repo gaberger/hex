@@ -1,5 +1,4 @@
 use crate::ports::permission::{PermissionDecision, PermissionPort, ToolPermission};
-use crate::domain::pricing::default_pricing;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -8,6 +7,14 @@ use std::time::{Duration, Instant};
 
 const CACHE_TTL_SECS: u64 = 300;
 
+/// Path for persisted permission approvals.
+fn permissions_file() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".hex")
+        .join("permissions.json")
+}
+
 #[derive(Clone)]
 struct CachedDecision {
     decision: PermissionDecision,
@@ -15,21 +22,16 @@ struct CachedDecision {
 }
 
 pub struct PermissionAdapter {
-    allowed_tools: Arc<RwLock<HashMap<String, AllowedTool>>>,
     blocked_patterns: Vec<String>,
     cache: Arc<RwLock<HashMap<String, CachedDecision>>>,
-}
-
-#[derive(Clone)]
-struct AllowedTool {
-    name: String,
-    approved_at: Instant,
+    /// Tool names persisted across restarts (loaded from ~/.hex/permissions.json).
+    persistent_approvals: Arc<RwLock<std::collections::HashSet<String>>>,
 }
 
 impl PermissionAdapter {
     pub fn new() -> Self {
+        let persistent_approvals = Self::load_persistent_approvals();
         Self {
-            allowed_tools: Arc::new(RwLock::new(HashMap::new())),
             blocked_patterns: vec![
                 "rm -rf".to_string(),
                 "dd if=".to_string(),
@@ -38,7 +40,41 @@ impl PermissionAdapter {
                 ":(){:|:&};:".to_string(),
             ],
             cache: Arc::new(RwLock::new(HashMap::new())),
+            persistent_approvals: Arc::new(RwLock::new(persistent_approvals)),
         }
+    }
+
+    /// Load previously approved tool names from ~/.hex/permissions.json.
+    fn load_persistent_approvals() -> std::collections::HashSet<String> {
+        let path = permissions_file();
+        let content = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => return std::collections::HashSet::new(),
+        };
+        serde_json::from_str::<Vec<String>>(&content)
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
+    }
+
+    /// Persist an approved tool name to ~/.hex/permissions.json.
+    async fn persist_approval(&self, tool_name: &str) {
+        let mut approvals = self.persistent_approvals.write().await;
+        if approvals.insert(tool_name.to_string()) {
+            // Only write when something changed.
+            let list: Vec<&String> = approvals.iter().collect();
+            if let Ok(json) = serde_json::to_string(&list) {
+                let path = permissions_file();
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&path, json);
+            }
+        }
+    }
+
+    async fn is_persistently_approved(&self, tool_name: &str) -> bool {
+        self.persistent_approvals.read().await.contains(tool_name)
     }
 
     fn check_blocked(&self, tool_name: &str, args: &serde_json::Value) -> Option<PermissionDecision> {
@@ -116,9 +152,21 @@ impl PermissionPort for PermissionAdapter {
             };
         }
 
+        // Check persistent approvals — survives restarts.
+        if self.is_persistently_approved(tool_name).await {
+            let decision = PermissionDecision::Allow;
+            self.set_cache(cache_key, decision.clone()).await;
+            return ToolPermission {
+                tool_name: tool_name.to_string(),
+                args: args.clone(),
+                decision,
+            };
+        }
+
         let decision = PermissionDecision::Allow;
+        self.persist_approval(tool_name).await;
         self.set_cache(cache_key, decision.clone()).await;
-        
+
         ToolPermission {
             tool_name: tool_name.to_string(),
             args: args.clone(),
@@ -140,7 +188,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    fn test_blocks_dangerous_command() {
+    async fn test_blocks_dangerous_command() {
         let adapter = PermissionAdapter::new();
         let args = serde_json::json!({"command": "rm -rf /"});
         
@@ -155,7 +203,7 @@ mod tests {
     }
 
     #[tokio::test]
-    fn test_allows_readfile() {
+    async fn test_allows_readfile() {
         let adapter = PermissionAdapter::new();
         let args = serde_json::json!({"file_path": "/etc/passwd"});
         
@@ -165,12 +213,25 @@ mod tests {
     }
 
     #[tokio::test]
-    fn test_allows_safe_bash() {
+    async fn test_allows_safe_bash() {
         let adapter = PermissionAdapter::new();
         let args = serde_json::json!({"command": "ls -la"});
-        
+
         let result = adapter.check_permission("Bash", &args).await;
-        
+
         assert!(matches!(result.decision, PermissionDecision::Allow));
+    }
+
+    #[tokio::test]
+    async fn test_permission_persistence_in_memory() {
+        let adapter = PermissionAdapter::new();
+
+        // Not yet persistently approved in this instance.
+        assert!(!adapter.is_persistently_approved("HexTestTool").await);
+
+        // Persist an approval — should be immediately visible in-memory.
+        adapter.persist_approval("HexTestTool").await;
+
+        assert!(adapter.is_persistently_approved("HexTestTool").await);
     }
 }

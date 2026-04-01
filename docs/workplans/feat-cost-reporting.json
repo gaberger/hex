@@ -4,7 +4,7 @@
   "specs": "docs/specs/cost-reporting.json",
   "adr": "ADR-2603311730",
   "created": "2026-03-31",
-  "status": "planned",
+  "status": "done",
   "topology": "pipeline",
   "steps": [
     {
@@ -15,7 +15,8 @@
       "dependencies": [],
       "tier": 1,
       "specs": ["S01"],
-      "done_condition": "GET /api/metrics/cost returns JSON with total_cost_usd"
+      "done_condition": "GET /api/metrics/cost returns JSON with total_cost_usd",
+      "status": "completed"
     },
     {
       "id": "step-2",
@@ -26,7 +27,8 @@
       "dependencies": ["step-1"],
       "tier": 2,
       "specs": ["S02"],
-      "done_condition": hex status shows cost in output
+      "done_condition": "hex status shows cost in output",
+      "status": "completed"
     },
     {
       "id": "step-3",
@@ -37,7 +39,8 @@
       "dependencies": ["step-1"],
       "tier": 1,
       "specs": ["S03"],
-      "done_condition": Task completion stores cost to hexflo_memory"
+      "done_condition": "Task completion stores cost to hexflo_memory",
+      "status": "completed"
     }
   ]
 }

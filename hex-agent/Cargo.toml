@@ -37,6 +37,7 @@ thiserror = "2"
 async-trait = "0.1"
 anyhow = "1"
 lru = "0.12"
+notify = "6"
 
 # Markdown frontmatter parsing
 gray_matter = "0.2"
