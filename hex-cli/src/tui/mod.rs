@@ -4,6 +4,7 @@
 //! pipeline: a progress bar across phases, a scrollable task list, live
 //! cost/token tracking, and gate dialogs for human approval.
 
+pub mod chat;
 pub mod controls;
 pub mod gate;
 pub mod messages;
