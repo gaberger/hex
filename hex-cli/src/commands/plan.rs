@@ -460,6 +460,9 @@ async fn list_plans() -> anyhow::Result<()> {
     );
     println!();
 
+    let nexus = NexusClient::from_env();
+    let nexus_available = nexus.ensure_running().await.is_ok();
+
     let mut rows: Vec<PlanRow> = Vec::new();
 
     for entry in &entries {
@@ -477,7 +480,27 @@ async fn list_plans() -> anyhow::Result<()> {
                             if dt.is_empty() { name.to_string() } else { truncate(dt, 40) }
                         };
 
-                        let progress_str = if total == 0 {
+                        // Try to fetch live execution overlay from nexus.
+                        let live_badge = if nexus_available {
+                            let api_path = format!("/api/workplan/by-path?path={}", name);
+                            nexus.get(&api_path).await.ok().and_then(|v| {
+                                let exec_status = v.get("status")?.as_str()?.to_string();
+                                let exec_done = v.get("completed_tasks")?.as_u64()? as u32;
+                                let exec_total = v.get("total_tasks")?.as_u64()? as u32;
+                                Some((exec_status, exec_done, exec_total))
+                            })
+                        } else {
+                            None
+                        };
+
+                        let progress_str = if let Some((ref exec_status, exec_done, exec_total)) = live_badge {
+                            let base = if exec_total == 0 {
+                                "(no tasks)".dimmed().to_string()
+                            } else {
+                                progress(exec_done, exec_total)
+                            };
+                            format!("{} [{}]", base, format!("{} {}/{}", exec_status, exec_done, exec_total).cyan())
+                        } else if total == 0 {
                             "(no tasks)".dimmed().to_string()
                         } else {
                             progress(done as u32, total as u32)
