@@ -510,6 +510,14 @@ impl WorkplanExecutor {
                 if !hexflo_task_id.is_empty() {
                     p.push_str(&format!("HEXFLO_TASK:{}\n", hexflo_task_id));
                 }
+                // P6.1: Inject agent role so spawned agents know their role context.
+                // TODO(P9.5): enrich context before prompt — wire LiveContextAdapter here
+                // once composition root provides it, to populate arch score, ADRs, etc.
+                if let Some(ref agent_role) = task.agent {
+                    if !agent_role.is_empty() {
+                        p.push_str(&format!("You are a {} agent.\n\n", agent_role));
+                    }
+                }
                 p.push_str(&format!("# Task: {}\n\n", task.name));
                 if !task.description.is_empty() {
                     p.push_str(&task.description);

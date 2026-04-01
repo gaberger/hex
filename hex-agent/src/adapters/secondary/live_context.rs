@@ -7,7 +7,8 @@ use crate::ports::live_context::ILiveContextPort;
 
 pub struct LiveContextAdapter {
     client: Client,
-    nexus_url: String,
+    /// Base URL of hex-nexus REST API (e.g. "http://localhost:5555").
+    pub nexus_base_url: String,
 }
 
 impl LiveContextAdapter {
@@ -18,12 +19,12 @@ impl LiveContextAdapter {
             .unwrap_or_default();
         Self {
             client,
-            nexus_url: nexus_url.into(),
+            nexus_base_url: nexus_url.into(),
         }
     }
 
     async fn fetch_analyze(&self) -> (Option<u8>, Option<Vec<String>>) {
-        let url = format!("{}/api/analyze?path=.", self.nexus_url);
+        let url = format!("{}/api/analyze?path=.", self.nexus_base_url);
         let resp = match self.client.get(&url).send().await {
             Ok(r) => r,
             Err(_) => return (None, None),
@@ -47,7 +48,7 @@ impl LiveContextAdapter {
     async fn fetch_adrs(&self, task: &str) -> Option<Vec<String>> {
         let url = format!(
             "{}/api/adrs/search?q={}",
-            self.nexus_url,
+            self.nexus_base_url,
             urlencoding_simple(task)
         );
         let resp = match self.client.get(&url).send().await {
@@ -78,7 +79,7 @@ impl LiveContextAdapter {
         let joined = files.join(",");
         let url = format!(
             "{}/api/summarize?files={}",
-            self.nexus_url,
+            self.nexus_base_url,
             urlencoding_simple(&joined)
         );
         let resp = match self.client.get(&url).send().await {
@@ -95,7 +96,7 @@ impl LiveContextAdapter {
     }
 
     async fn fetch_diff(&self) -> Option<String> {
-        let url = format!("{}/api/git/diff", self.nexus_url);
+        let url = format!("{}/api/git/diff", self.nexus_base_url);
         let resp = match self.client.get(&url).send().await {
             Ok(r) => r,
             Err(_) => return None,
@@ -112,7 +113,7 @@ impl LiveContextAdapter {
     async fn fetch_memory(&self, task: &str) -> Option<String> {
         let url = format!(
             "{}/api/hexflo/memory/search?q={}",
-            self.nexus_url,
+            self.nexus_base_url,
             urlencoding_simple(task)
         );
         let resp = match self.client.get(&url).send().await {
@@ -293,6 +294,25 @@ mod tests {
         assert!(vars.relevant_adrs.is_none());
         assert!(vars.ast_summary.is_none());
         assert!(vars.recent_changes.is_none());
+        assert!(vars.hexflo_memory.is_none());
+    }
+
+    // P9.6: Required tests — constructor field and offline degradation
+    #[test]
+    fn test_live_context_adapter_new() {
+        let adapter = LiveContextAdapter::new("http://localhost:5555");
+        assert_eq!(adapter.nexus_base_url, "http://localhost:5555");
+    }
+
+    #[tokio::test]
+    async fn test_enrich_degrades_gracefully_on_offline_nexus() {
+        let adapter = LiveContextAdapter::new("http://127.0.0.1:19999"); // unused port
+        let mut vars = ContextVariables::new();
+        // Should not error even when nexus is offline
+        let result = adapter.enrich(&mut vars, "test task", &[]).await;
+        assert!(result.is_ok());
+        // Fields should be None (graceful degradation)
+        assert!(vars.architecture_score.is_none());
         assert!(vars.hexflo_memory.is_none());
     }
 

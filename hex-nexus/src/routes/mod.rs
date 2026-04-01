@@ -31,6 +31,7 @@ pub mod inbox;
 pub mod sandbox;
 pub mod skills;
 pub mod ws;
+pub mod context;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
@@ -593,6 +594,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/workplan/list", get(orchestration::list_workplans))
         .route("/api/workplan/{id}", get(orchestration::get_workplan))
         .route("/api/workplan/{id}/report", get(orchestration::workplan_report))
+        // Context engineering (ADR-2603312100) — hot-reload context caches
+        .route("/api/context/reload", post(context::reload_context))
         // MCP tool registry — serves config/mcp-tools.json for dashboard discovery
         .route("/api/tools", get(tools_registry))
         // Workplan file definitions — reads docs/workplans/*.json from disk
