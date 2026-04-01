@@ -118,6 +118,44 @@ fn find_opencode() -> Result<std::path::PathBuf> {
 // Context injection — writes opencode.json in CWD
 // ---------------------------------------------------------------------------
 
+/// Write the hex-sidebar.tsx plugin file with nexus URL substituted.
+/// Returns true if the plugin was written successfully.
+fn write_hex_sidebar_plugin(nexus_url: &str) -> bool {
+    let plugin_content = match crate::assets::Assets::get_str("plugins/hex-sidebar.tsx") {
+        Some(c) => c,
+        None => {
+            eprintln!("Warning: hex-sidebar.tsx asset not found, skipping plugin");
+            return false;
+        }
+    };
+
+    // Substitute the nexus URL placeholder
+    let plugin_content = plugin_content.replace("__HEX_NEXUS_URL__", nexus_url);
+
+    // Create plugins directory if it doesn't exist
+    let plugins_dir = match std::env::current_dir() {
+        Ok(dir) => dir.join(".opencode/plugins"),
+        Err(e) => {
+            eprintln!("Warning: could not get CWD: {}", e);
+            return false;
+        }
+    };
+
+    if let Err(e) = std::fs::create_dir_all(&plugins_dir) {
+        eprintln!("Warning: could not create plugins directory: {}", e);
+        return false;
+    }
+
+    let plugin_path = plugins_dir.join("hex-sidebar.tsx");
+    if let Err(e) = std::fs::write(&plugin_path, &plugin_content) {
+        eprintln!("Warning: could not write plugin file: {}", e);
+        return false;
+    }
+
+    println!("Wrote hex sidebar plugin to {}", plugin_path.display());
+    true
+}
+
 /// Write a project-level opencode.json with hex context as instructions.
 /// Regenerated on every `hex chat` so context stays current.
 async fn write_opencode_config(nexus_url: &str, extra_system: Option<&str>) -> anyhow::Result<()> {
@@ -141,6 +179,13 @@ async fn write_opencode_config(nexus_url: &str, extra_system: Option<&str>) -> a
             }
         }
     });
+
+    // Inject hex-sidebar TUI plugin
+    let plugin_written = write_hex_sidebar_plugin(nexus_url);
+    if plugin_written {
+        // Create plugins directory entry
+        config["plugin"] = serde_json::json!(["./plugins/hex-sidebar.tsx"]);
+    }
 
     // Inject skills as opencode slash commands
     let skills = load_skills(nexus_url);
@@ -170,6 +215,17 @@ async fn write_opencode_config(nexus_url: &str, extra_system: Option<&str>) -> a
             }
         });
     }
+
+    // Full autonomous looping — allow all permissions so hex agents run without prompts
+    config["permission"] = serde_json::json!({
+        "doom_loop": "allow",
+        "bash": "allow",
+        "edit": "allow",
+        "webfetch": "allow",
+        "websearch": "allow",
+        "external_directory": "allow"
+    });
+    config["autoupdate"] = serde_json::json!(false);
 
     let path = std::env::current_dir()?.join("opencode.json");
     std::fs::write(&path, serde_json::to_string_pretty(&config)?)?;

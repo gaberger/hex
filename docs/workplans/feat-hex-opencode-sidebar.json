@@ -1,0 +1,147 @@
+{
+  "id": "feat-hex-opencode-sidebar",
+  "title": "Feature: hex live status panel in opencode right sidebar",
+  "specs": "docs/specs/hex-opencode-sidebar.json",
+  "adr": "ADR-2603231800",
+  "created": "2026-04-01",
+  "status": "planned",
+  "topology": "hierarchical",
+  "budget": "~25000 tokens",
+  "relates_to": "feat-hex-opencode-first-class",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Research: opencode TUI plugin API shape",
+      "tier": 0,
+      "description": "Read the @opencode-ai/plugin/dist/tui.d.ts and tui.js to understand the exact slot registration API, SolidJS signal usage in @opentui/solid, and what TuiSlotContext provides (theme, dimensions). Also check how the existing opencode built-in sidebar plugins are structured in the opencode source to use as a reference pattern.",
+      "gate": {
+        "type": "build",
+        "command": "echo 'research phase — no gate'",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Document TuiSlotPlugin API and sidebar slot context",
+          "layer": "domain",
+          "description": "Read ~/.opencode/node_modules/@opencode-ai/plugin/dist/tui.d.ts in full. Find TuiSlotPlugin type (line 270), TuiSlotContext (line 266), TuiSlotMap sidebar_content shape (line 259). Determine: (1) what props sidebar_content receives, (2) how to use createSignal from @opentui/solid, (3) how to use fetch() inside a TUI plugin (or if api.client.fetch is preferred). Document findings as inline comments in the plugin template.",
+          "deps": [],
+          "files": [],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Implement hex-sidebar.tsx plugin template",
+      "tier": 1,
+      "description": "Write the TSX plugin as a static template string embedded in hex-cli. The nexus URL is templated in at write time. Plugin registers into sidebar_content at order 150 using SolidJS signals for reactive data. Satisfies S01-S08, S10.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Write hex-sidebar.tsx plugin as embedded asset",
+          "layer": "primary",
+          "description": "Create hex-cli/assets/plugins/hex-sidebar.tsx. The plugin:\n1. Exports `{ tui: async (api) => { ... } }` as TuiPluginModule\n2. Uses `createSignal` + `onMount` + `onCleanup` from '@opentui/solid'\n3. On mount: fetches /api/status, /api/hexflo/swarms, /api/adrs, /api/inference/endpoints from NEXUS_URL (templated placeholder __HEX_NEXUS_URL__)\n4. Sets up 30-second interval to refresh (S06)\n5. Calls `api.slots.register({ order: 150, slots: { sidebar_content: () => renderHexPanel() } })`\n6. Panel content (must fit 42-char width, S08):\n   - Header: '⬡ hex' with project name + 8-char build hash\n   - Nexus connectivity dot (green/red)\n   - Swarms section: active swarms with 'N/M tasks' (S03)\n   - ADRs section: 4 most recent with truncated ID + status (S04)\n   - Providers section: up to 3 with live/offline indicator (S05)\n   - Offline fallback: single 'nexus offline' message (S07)\n7. All text truncated to 38 chars max (S08)\n8. No external fetch URLs — only __HEX_NEXUS_URL__ (S10)",
+          "deps": ["P1.1"],
+          "files": [
+            "hex-cli/assets/plugins/hex-sidebar.tsx"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "hex-cli: write plugin file and register in opencode.json",
+      "tier": 2,
+      "description": "Expand write_opencode_config() in chat.rs to write .opencode/plugins/hex-sidebar.tsx with nexus URL substituted, and add plugin registration to opencode.json. Satisfies S09.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Write plugin file from embedded asset with nexus URL templated in",
+          "layer": "primary",
+          "description": "In write_opencode_config() in hex-cli/src/commands/chat.rs:\n1. Read the embedded asset 'plugins/hex-sidebar.tsx' via crate::assets::Assets::get_str()\n2. Replace placeholder '__HEX_NEXUS_URL__' with the actual nexus_url value\n3. Create .opencode/plugins/ directory in CWD if not exists\n4. Write the substituted content to .opencode/plugins/hex-sidebar.tsx\n5. If the asset read fails, skip silently (graceful degradation)",
+          "deps": [],
+          "files": [
+            "hex-cli/src/commands/chat.rs"
+          ],
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Add plugin registration to opencode.json",
+          "layer": "primary",
+          "description": "In write_opencode_config(), add 'plugin' field to the opencode.json config object:\n```json\n\"plugin\": [\"./plugins/hex-sidebar.tsx\"]\n```\nOnly add when the plugin file was written successfully. The path is relative to the opencode.json location (CWD).",
+          "deps": ["P3.1"],
+          "files": [
+            "hex-cli/src/commands/chat.rs"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Update ADR-2603231800: mark P8 complete",
+      "tier": 3,
+      "description": "Update docs/adrs/ADR-2603231800-opencode-mcp-injection.md implementation table to mark P8 complete.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Mark P8 complete in ADR-2603231800",
+          "layer": "domain",
+          "description": "Update docs/adrs/ADR-2603231800-opencode-mcp-injection.md: mark P8 (hex sidebar TUI plugin) as Complete with commit hash.",
+          "deps": [],
+          "files": [
+            "docs/adrs/ADR-2603231800-opencode-mcp-injection.md"
+          ],
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ],
+  "riskRegister": [
+    {
+      "risk": "opencode TUI plugin API shape differs from type definitions — JSX element type mismatch",
+      "impact": "high",
+      "mitigation": "P1.1 research phase documents exact API before writing plugin. Use 'as any' cast as fallback if types don't align exactly."
+    },
+    {
+      "risk": "fetch() inside @opentui/solid may not work (terminal environment, no browser APIs)",
+      "impact": "medium",
+      "mitigation": "Check TuiPluginApi for a built-in http method. Fall back to Node.js built-in fetch (available in Bun/Node 18+). opencode runs in Bun which has global fetch."
+    },
+    {
+      "risk": "SolidJS createSignal/onMount imports differ between @opentui/solid and solid-js",
+      "impact": "medium",
+      "mitigation": "Import strictly from '@opentui/solid' as shown in the type definitions."
+    },
+    {
+      "risk": "Panel text overflow breaks opencode layout at narrow terminal widths",
+      "impact": "low",
+      "mitigation": "Cap all strings at 38 chars with truncation; test at 80-char terminal width."
+    }
+  ],
+  "successCriteria": [
+    "hex chat writes .opencode/plugins/hex-sidebar.tsx alongside opencode.json",
+    "opencode loads without errors and shows a hex section in the right panel",
+    "The hex panel displays project name, nexus status, active swarms, recent ADRs, and providers",
+    "The panel refreshes every 30 seconds with live nexus data",
+    "When nexus is offline, panel shows 'nexus offline' — opencode still functions normally"
+  ]
+}

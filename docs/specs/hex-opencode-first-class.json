@@ -1,0 +1,87 @@
+{
+  "feature": "hex-opencode-first-class",
+  "description": "Make hex a first-class citizen inside opencode: skills as slash commands, agents as agent personas, and inference routed through hex-nexus",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "Hex skills are injected as opencode slash commands",
+      "given": "Embedded hex skills exist in hex-cli/assets/skills/ and optionally in .claude/skills/",
+      "when": "hex chat is invoked and write_opencode_config runs",
+      "then": "opencode.json contains a command entry for each skill, with key = skill name (without leading /), template = skill body, description = skill description from frontmatter",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "Project-local skills override embedded skills on name collision",
+      "given": "A skill named hex-adr-create exists in both hex-cli/assets/skills/ and .claude/skills/",
+      "when": "write_opencode_config runs",
+      "then": "The .claude/skills/ version takes precedence in the injected command entry",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "Hex agent YAMLs are injected as opencode agent configs",
+      "given": "17 agent YAML definitions exist in hex-cli/assets/agents/hex/hex/",
+      "when": "write_opencode_config runs",
+      "then": "opencode.json contains an agent entry for each YAML, with model derived from the YAML's model.preferred field and prompt from description + constraints",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "Inference routes through hex-nexus OpenAI-compatible proxy",
+      "given": "hex-nexus is running and has registered inference providers",
+      "when": "opencode makes an inference request using the hex provider",
+      "then": "The request hits hex-nexus POST /v1/chat/completions, which routes to the configured provider (Ollama, OpenRouter, Anthropic, etc.)",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "hex-nexus exposes a model list via GET /v1/models",
+      "given": "hex-nexus is running with at least one registered inference provider",
+      "when": "opencode queries GET /v1/models from the hex provider",
+      "then": "Returns a JSON array of available models in OpenAI format: { id, object: 'model', owned_by: 'hex-nexus' }",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "ErrorHandling",
+      "description": "Graceful degradation when nexus is offline at chat startup",
+      "given": "hex-nexus is not running when hex chat is invoked",
+      "when": "write_opencode_config attempts to fetch skills/agents/context",
+      "then": "opencode.json is written with MCP only (no instructions, no provider injection) — opencode still launches successfully",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "Security",
+      "description": "OpenAI proxy forwards only to registered providers — no arbitrary URL forwarding",
+      "given": "A request arrives at POST /v1/chat/completions with model = 'attacker/model'",
+      "when": "hex-nexus processes the request",
+      "then": "The request is routed only to providers registered in the nexus inference table; unknown provider prefixes return 400",
+      "negative_spec": true
+    },
+    {
+      "id": "S08",
+      "category": "EdgeCase",
+      "description": "Skills with no description frontmatter are still injected",
+      "given": "A skill file has a trigger but no description field",
+      "when": "write_opencode_config runs",
+      "then": "The command entry is injected with an empty/omitted description — opencode.json remains valid",
+      "negative_spec": false
+    },
+    {
+      "id": "S09",
+      "category": "EdgeCase",
+      "description": "Skill body containing JSON-special characters is safely escaped",
+      "given": "A skill template contains backslashes, double quotes, or newlines",
+      "when": "the skill is serialized into opencode.json",
+      "then": "serde_json serializes the template string correctly — the file parses as valid JSON",
+      "negative_spec": false
+    }
+  ]
+}

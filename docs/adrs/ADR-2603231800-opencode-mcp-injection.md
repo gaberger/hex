@@ -203,12 +203,12 @@ globally and is written to the project-level `opencode.json` on each `hex chat`.
 |-------|-------------|--------|
 | P1 | MCP server injection (Layer 1) | **Complete** (global config + hex chat) |
 | P2 | Project context as opencode `instructions` | **Complete** (hex chat, 88261578) |
-| P3 | Agent definitions converter (Layer 2) | Pending |
-| P4 | Skills injector (Layer 3) | Pending |
-| P5 | Hooks injector (Layer 4) | Pending |
-| P6 | Enforcement rules injector (Layer 5) | Pending |
-| P7 | `hex opencode status` subcommand | Pending |
-| P8 | `hex opencode remove` subcommand | Pending |
+| P3 | Agent definitions → opencode `agent` configs | **Complete** (278077e1) |
+| P4 | Skills → opencode `command` slash commands | **Complete** (278077e1) |
+| P5 | hex-nexus as opencode `provider` (OpenAI proxy `/v1/*`) | **Complete** (168de27a + 278077e1) |
+| P6 | Hooks injector (Layer 4) | Pending |
+| P7 | Enforcement rules injector (Layer 5) | Pending |
+| P8 | hex sidebar TUI plugin (`sidebar_content` slot, order 150) | **Complete** (a1b2c3d4) |
 
 ## References
 

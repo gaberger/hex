@@ -1,0 +1,96 @@
+{
+  "feature": "hex-opencode-sidebar",
+  "description": "A live hex status panel injected into opencode's right sidebar via the TUI plugin slot system",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "Hex sidebar panel appears in opencode's right panel at startup",
+      "given": "hex chat is invoked and opencode.json is written with the plugin registered",
+      "when": "opencode launches and loads the hex-sidebar plugin",
+      "then": "A 'hex' section appears in the right panel between the context section (order 100) and the MCP section (order 200), at order 150",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "Sidebar shows live project status: name, build hash, nexus connectivity",
+      "given": "hex-nexus is running and GET /api/status returns project metadata",
+      "when": "the sidebar renders",
+      "then": "Displays project name, build hash (truncated to 8 chars), and a nexus connectivity indicator (connected/offline)",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "Sidebar shows active swarms with task progress",
+      "given": "GET /api/hexflo/swarms returns at least one active swarm",
+      "when": "the sidebar renders the swarms section",
+      "then": "Each active swarm shows name and completed/total task count (e.g. '2/9 tasks'). Idle swarms are omitted.",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "Sidebar shows recent ADRs (up to 4)",
+      "given": "GET /api/adrs returns ADR list",
+      "when": "the sidebar renders the ADRs section",
+      "then": "Displays the 4 most recent ADRs with ID (truncated) and status label. Accepted shown in normal color, Deprecated dimmed.",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "Sidebar shows registered inference providers with health indicators",
+      "given": "GET /api/inference/endpoints returns providers",
+      "when": "the sidebar renders the providers section",
+      "then": "Each provider shows name and a live/offline indicator. At most 3 providers shown to fit the 42-char panel width.",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "HappyPath",
+      "description": "Sidebar auto-refreshes every 30 seconds",
+      "given": "The sidebar plugin is loaded and opencode is active",
+      "when": "30 seconds elapse since the last fetch",
+      "then": "All data sections are re-fetched from hex-nexus and the display updates",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "ErrorHandling",
+      "description": "Sidebar shows 'nexus offline' gracefully when nexus is unreachable",
+      "given": "hex-nexus is not running",
+      "when": "the sidebar attempts to fetch /api/status",
+      "then": "A single 'nexus offline' message is shown instead of crashing or showing empty sections. opencode continues to work normally.",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "EdgeCase",
+      "description": "Sidebar content fits within the 42-character panel width",
+      "given": "A project name longer than 30 characters or a swarm name that would overflow",
+      "when": "the sidebar renders any text",
+      "then": "All text is truncated with '…' to fit within 38 chars (leaving 2-char padding each side)",
+      "negative_spec": false
+    },
+    {
+      "id": "S09",
+      "category": "HappyPath",
+      "description": "Plugin file and opencode.json plugin registration are written by hex chat",
+      "given": "hex chat is invoked in a project directory",
+      "when": "write_opencode_config runs",
+      "then": ".opencode/plugins/hex-sidebar.tsx is written to CWD with the nexus URL templated in, and opencode.json includes plugin: [['./plugins/hex-sidebar.tsx']]",
+      "negative_spec": false
+    },
+    {
+      "id": "S10",
+      "category": "Security",
+      "description": "Plugin only fetches from the configured nexus URL — no external URLs",
+      "given": "The nexus URL is injected at write time from the trusted NexusClient config",
+      "when": "the plugin makes HTTP requests",
+      "then": "All fetch() calls use the hardcoded nexus URL from the template — no user-supplied URLs, no external network calls",
+      "negative_spec": true
+    }
+  ]
+}
