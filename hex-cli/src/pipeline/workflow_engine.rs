@@ -724,21 +724,28 @@ mod tests {
         let results = engine.execute_phases(wf);
         assert_eq!(results.len(), 5);
 
-        // pre_validate has a blocking gate
+        // pre_validate has a declarative boundary_check gate (no required_categories)
+        // → gate passes immediately, gate_failure is None
         assert_eq!(results[0].phase_id, "pre_validate");
-        assert!(results[0].gate_failure.is_some());
-        let gate = results[0].gate_failure.as_ref().unwrap();
-        assert_eq!(gate.gate_name, "boundary_check");
-        assert!(gate.blocking);
-        assert!(!gate.on_fail_instructions.is_empty());
+        assert!(results[0].gate_failure.is_none());
+        // Verify the gate definition is present in the source workflow
+        let pre_validate = &wf.phases[0];
+        let gate_def = pre_validate.gate.as_ref().unwrap();
+        assert_eq!(gate_def.name, "boundary_check");
+        assert!(gate_def.blocking);
+        assert!(gate_def.on_fail.is_some());
 
         // red/green/refactor have no gates
         assert!(results[1].gate_failure.is_none());
         assert!(results[2].gate_failure.is_none());
         assert!(results[3].gate_failure.is_none());
 
-        // test_coverage_gate has a blocking gate
+        // test_coverage_gate: has required_categories=[unit,error_paths] → runs
+        // `hex analyze` → fails in /tmp/test (no source) → gate_failure is Some
         assert!(results[4].gate_failure.is_some());
+        let cov_gate = results[4].gate_failure.as_ref().unwrap();
+        assert_eq!(cov_gate.gate_name, "test_types");
+        assert!(cov_gate.blocking);
     }
 
     #[test]
