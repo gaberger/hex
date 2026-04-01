@@ -54,6 +54,9 @@ pub enum InferenceAction {
         /// Minimum context window size
         #[arg(long)]
         min_context: Option<u64>,
+        /// Remove registered providers that return empty responses
+        #[arg(long)]
+        prune: bool,
     },
     /// Remove a registered provider
     Remove {
@@ -82,10 +85,10 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         }
         InferenceAction::List => list_providers().await,
         InferenceAction::Test { target } => test_provider(&target).await,
-        InferenceAction::Discover { provider, filter, min_context } => {
+        InferenceAction::Discover { provider, filter, min_context, prune } => {
             match provider.as_str() {
                 "openrouter" => discover_openrouter(filter.as_deref(), min_context).await,
-                _ => discover_ollama().await,
+                _ => discover_ollama(prune).await,
             }
         }
         InferenceAction::Remove { provider_id } => remove_provider(&provider_id).await,
@@ -214,9 +217,32 @@ async fn add_provider(
         match client.post("/api/inference/register", &body).await {
             Ok(_) => {
                 println!("  {} Registered with hex-nexus", "✓".green());
-                // Quality gate (ADR-2603311000): verify the model returns non-empty content.
-                // Empty responses mean the model ID doesn't exist or is rate-limited.
-                validate_model_response(provider_type, url, model_name, key).await;
+                // Quality gate (ADR-2603311000): verify via nexus test endpoint.
+                // Empty or error response means the model ID doesn't exist or is misconfigured.
+                match client.get(&format!("/api/inference/test/{}", provider_id)).await {
+                    Ok(resp) => {
+                        let content = resp.get("content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+                        if content.is_empty() {
+                            let _ = client.delete(&format!("/api/inference/providers/{}", provider_id)).await;
+                            return Err(anyhow::anyhow!(
+                                "provider '{}' registered but returned empty response — removed. Check model ID.",
+                                provider_id
+                            ));
+                        }
+                        println!("  {} Model validation passed (reply: {:?})", "✓".green(), content);
+                    }
+                    Err(_) => {
+                        let _ = client.delete(&format!("/api/inference/providers/{}", provider_id)).await;
+                        return Err(anyhow::anyhow!(
+                            "provider '{}' registered but returned empty response — removed. Check model ID.",
+                            provider_id
+                        ));
+                    }
+                }
             }
             Err(e) => println!("  {} Nexus registration failed: {}", "!".yellow(), e),
         }
@@ -240,71 +266,6 @@ async fn add_provider(
     Ok(())
 }
 
-/// Quality gate (ADR-2603311000): send a minimal test prompt after registration.
-/// Warns loudly if the model returns empty content — this indicates a non-existent
-/// or placeholder model ID (e.g. "gpt-5.4", "grok-4.20") that will silently
-/// produce no output in the pipeline.
-async fn validate_model_response(provider_type: &str, url: &str, model: &str, api_key: Option<&str>) {
-    let base_url = url.trim_end_matches('/');
-    let endpoint = format!("{}/v1/chat/completions", base_url);
-
-    let payload = serde_json::json!({
-        "model": model,
-        "messages": [{ "role": "user", "content": "Reply with the single word: ok" }],
-        "max_tokens": 8,
-        "temperature": 0.0,
-    });
-
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .unwrap_or_default();
-
-    let mut req = http.post(&endpoint).json(&payload);
-    if let Some(key) = api_key {
-        req = req.header("Authorization", format!("Bearer {}", key));
-    } else if provider_type == "openrouter" {
-        if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
-            req = req.header("Authorization", format!("Bearer {}", key));
-        }
-    }
-
-    match req.send().await {
-        Ok(resp) if resp.status().is_success() => {
-            let text = resp.text().await.unwrap_or_default();
-            let reply = serde_json::from_str::<serde_json::Value>(&text)
-                .ok()
-                .and_then(|v| {
-                    v["choices"][0]["message"]["content"]
-                        .as_str()
-                        .map(|s| s.trim().to_string())
-                })
-                .unwrap_or_default();
-
-            if reply.is_empty() {
-                println!(
-                    "  {} Model '{}' returned empty content — model ID may not exist or is rate-limited.",
-                    "⚠".yellow(), model
-                );
-                println!(
-                    "  {} Use `hex inference test {}` to recheck, or remove with `hex inference remove`.",
-                    "!".yellow(), model
-                );
-            } else {
-                println!("  {} Model validation passed (reply: {:?})", "✓".green(), reply);
-            }
-        }
-        Ok(resp) => {
-            println!(
-                "  {} Model validation returned HTTP {} — check model ID and API key.",
-                "⚠".yellow(), resp.status()
-            );
-        }
-        Err(e) => {
-            println!("  {} Model validation request failed: {}", "!".yellow(), e);
-        }
-    }
-}
 
 async fn list_providers() -> anyhow::Result<()> {
     let client = NexusClient::from_env();
@@ -629,7 +590,7 @@ async fn test_provider(target: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn discover_ollama() -> anyhow::Result<()> {
+async fn discover_ollama(prune: bool) -> anyhow::Result<()> {
     println!("{}", "── Discovering Inference Providers ──".cyan());
     println!();
 
@@ -642,6 +603,7 @@ async fn discover_ollama() -> anyhow::Result<()> {
     // ── 1. Query SpacetimeDB via nexus (source of truth) ──────────
     let client = NexusClient::from_env();
     let mut registered_urls: Vec<String> = Vec::new();
+    let mut registered_ids: Vec<String> = Vec::new();
 
     if client.ensure_running().await.is_ok() {
         println!("{}", "── Registered Providers (SpacetimeDB) ──".cyan());
@@ -670,6 +632,7 @@ async fn discover_ollama() -> anyhow::Result<()> {
                         let status = if reachable { "online" } else { "offline" };
                         println!("  {} {} ({}) — {} [{}]", icon, id, ptype, url, status);
                         registered_urls.push(url.to_string());
+                        registered_ids.push(id.to_string());
                         if reachable { found += 1; }
                     }
                     if arr.is_empty() {
@@ -682,6 +645,28 @@ async fn discover_ollama() -> anyhow::Result<()> {
             }
         }
         println!();
+
+        // ── Prune: remove providers that return empty responses ────
+        if prune && !registered_ids.is_empty() {
+            println!("{}", "── Pruning unhealthy providers ──".cyan());
+            for pid in &registered_ids {
+                let empty = match client.get(&format!("/api/inference/test/{}", pid)).await {
+                    Ok(resp) => resp.get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .is_empty(),
+                    Err(_) => true,
+                };
+                if empty {
+                    let _ = client.delete(&format!("/api/inference/providers/{}", pid)).await;
+                    println!("  {} Removed {} (empty response)", "✗".red(), pid);
+                } else {
+                    println!("  {} {} OK", "✓".green(), pid);
+                }
+            }
+            println!();
+        }
     }
 
     // ── 2. LAN scan for unregistered Ollama instances ─────────────
