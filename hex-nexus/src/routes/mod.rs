@@ -592,6 +592,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/workplan/resume", post(orchestration::resume_workplan))
         // Workplan reporting (ADR-046)
         .route("/api/workplan/list", get(orchestration::list_workplans))
+        .route("/api/workplan/by-path", get(orchestration::workplan_by_path))
         .route("/api/workplan/{id}", get(orchestration::get_workplan))
         .route("/api/workplan/{id}/report", get(orchestration::workplan_report))
         // Context engineering (ADR-2603312100) — hot-reload context caches
