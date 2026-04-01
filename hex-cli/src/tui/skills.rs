@@ -101,14 +101,14 @@ async fn fetch_context(nexus_url: &str) -> SkillResult {
 
     match &status {
         Some(s) => {
-            if let Some(name) = s.get("project_name").and_then(|v| v.as_str()) {
+            if let Some(name) = s.get("name").and_then(|v| v.as_str()) {
                 lines.push(format!("  Project: {}", name));
-            }
-            if let Some(id) = s.get("project_id").and_then(|v| v.as_str()) {
-                lines.push(format!("  ID: {}", id));
             }
             if let Some(ver) = s.get("version").and_then(|v| v.as_str()) {
                 lines.push(format!("  Nexus: v{}", ver));
+            }
+            if let Some(hash) = s.get("buildHash").and_then(|v| v.as_str()) {
+                lines.push(format!("  Build: {}", hash));
             }
         }
         None => {

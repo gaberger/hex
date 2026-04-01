@@ -688,11 +688,15 @@ async fn fetch_project_context(nexus_url: &str) -> String {
 
     let project_name = status
         .as_ref()
-        .and_then(|s| s.get("project_name").and_then(|v| v.as_str()))
+        .and_then(|s| s.get("name").and_then(|v| v.as_str()))
         .unwrap_or("unknown");
     let project_id = status
         .as_ref()
-        .and_then(|s| s.get("project_id").and_then(|v| v.as_str()))
+        .and_then(|s| {
+            s.get("project_id")
+                .or_else(|| s.get("buildHash"))
+                .and_then(|v| v.as_str())
+        })
         .unwrap_or("unknown");
 
     let swarm_summary = swarms
