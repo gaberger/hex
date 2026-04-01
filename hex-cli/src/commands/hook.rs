@@ -484,6 +484,32 @@ pub async fn register_session_agent(project_dir: &Path, project_name: &str) -> R
         state.save()?;
 
         println!("  Agent:   {} ({})", "registered".green(), agent_name);
+
+        // Auto-launch inference watch sidecar (ADR-2604011200)
+        let hex_bin = std::env::current_exe()
+            .unwrap_or_else(|_| std::path::PathBuf::from("hex"));
+        let sessions_dir = dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+            .join(".hex/sessions");
+        let pid_file = sessions_dir.join(format!("inference-watch-{}.pid", agent_id));
+
+        let already_running = pid_file.exists() && {
+            let pid_str = std::fs::read_to_string(&pid_file).unwrap_or_default();
+            let pid: u32 = pid_str.trim().parse().unwrap_or(0);
+            // Check if process is still alive (Unix: send signal 0)
+            pid > 0 && unsafe { libc::kill(pid as i32, 0) == 0 }
+        };
+
+        if !already_running {
+            if let Ok(child) = std::process::Command::new(&hex_bin)
+                .args(["inference", "watch", "--daemon"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                let _ = std::fs::write(&pid_file, child.id().to_string());
+            }
+        }
     }
 
     Ok(())
