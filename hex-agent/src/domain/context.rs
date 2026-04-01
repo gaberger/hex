@@ -318,6 +318,24 @@ impl ContextBuilder {
     }
 
     fn substitute_variables(&self, template: String) -> String {
+        let arch_score = self
+            .variables
+            .architecture_score
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let arch_violations = self
+            .variables
+            .arch_violations
+            .as_ref()
+            .map(|v| v.join("\n"))
+            .unwrap_or_default();
+        let relevant_adrs = self
+            .variables
+            .relevant_adrs
+            .as_ref()
+            .map(|v| v.join("\n"))
+            .unwrap_or_default();
+
         template
             .replace(
                 "{{project_name}}",
@@ -340,6 +358,9 @@ impl ContextBuilder {
                 "{{constraints}}",
                 self.variables.constraints.as_deref().unwrap_or(""),
             )
+            .replace("{{architecture_score}}", &arch_score)
+            .replace("{{arch_violations}}", &arch_violations)
+            .replace("{{relevant_adrs}}", &relevant_adrs)
             .replace(
                 "{{ast_summary}}",
                 self.variables.ast_summary.as_deref().unwrap_or(""),
