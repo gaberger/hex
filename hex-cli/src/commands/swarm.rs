@@ -156,7 +156,18 @@ async fn init(name: &str, topology: &str, explicit_project_id: Option<&str>, jso
                 "topology": topology,
             }),
         )
-        .await?;
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("already owns an active swarm") {
+                anyhow::anyhow!(
+                    "{}\n\nTo fix: run `hex swarm cleanup --apply` to clear stale swarms, or `hex swarm complete <id>` to close a specific one.",
+                    msg
+                )
+            } else {
+                e
+            }
+        })?;
 
     if json_output {
         println!("{}", serde_json::to_string_pretty(&resp)?);
