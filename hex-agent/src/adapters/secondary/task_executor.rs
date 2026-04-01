@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use hex_core::ports::agent_runtime::IAgentRuntimePort;
 use hex_core::domain::sandbox::{AgentTask, SandboxError, ToolResult};
-use hex_core::domain::swarm_task::SwarmTaskCompletion;
+use hex_core::{TaskCompletionBody, TaskStatus};
 use serde::Deserialize;
 
 /// Nexus REST client for HexFlo task lifecycle.
@@ -150,10 +150,12 @@ impl TaskExecutor {
     /// Report task completion (or failure) to nexus.
     pub async fn report_done(&self, task_id: &str, result: &str, success: bool) -> Result<(), String> {
         let url = format!("{}/api/hexflo/tasks/{}", self.nexus_url, task_id);
-        let body = if success {
-            SwarmTaskCompletion::success(result, &self.agent_id)
-        } else {
-            SwarmTaskCompletion::failure(result, &self.agent_id)
+        let body = TaskCompletionBody {
+            task_id: task_id.to_string(),
+            status: if success { TaskStatus::Completed } else { TaskStatus::Failed },
+            result: Some(result.to_string()),
+            error: None,
+            agent_id: Some(self.agent_id.clone()),
         };
         let resp = self.client
             .patch(&url)

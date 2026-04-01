@@ -72,6 +72,108 @@ impl AgentRole {
             AgentRole::Integrator => "hex-integrator",
         }
     }
+
+    /// System prompt sections relevant to this role.
+    pub fn system_templates(&self) -> &'static [SystemTemplate] {
+        match self {
+            AgentRole::Coder => &[
+                SystemTemplate::SimpleIntro,
+                SystemTemplate::SimpleSystem,
+                SystemTemplate::DoingTasks,
+                SystemTemplate::ExecutingActions,
+                SystemTemplate::UsingYourTools,
+                SystemTemplate::ToneAndStyle,
+                SystemTemplate::OutputEfficiency,
+            ],
+            AgentRole::Planner => &[
+                SystemTemplate::SimpleIntro,
+                SystemTemplate::SimpleSystem,
+                SystemTemplate::DoingTasks,
+                SystemTemplate::ToneAndStyle,
+                SystemTemplate::OutputEfficiency,
+            ],
+            AgentRole::Reviewer => &[
+                SystemTemplate::SimpleIntro,
+                SystemTemplate::SimpleSystem,
+                SystemTemplate::DoingTasks,
+                SystemTemplate::ToneAndStyle,
+                SystemTemplate::OutputEfficiency,
+            ],
+            AgentRole::Integrator => &[
+                SystemTemplate::SimpleIntro,
+                SystemTemplate::SimpleSystem,
+                SystemTemplate::DoingTasks,
+                SystemTemplate::ExecutingActions,
+                SystemTemplate::UsingYourTools,
+                SystemTemplate::ToneAndStyle,
+                SystemTemplate::OutputEfficiency,
+            ],
+        }
+    }
+
+    /// Tool prompt sections relevant to this role.
+    pub fn tool_templates(&self) -> &'static [ToolTemplate] {
+        match self {
+            AgentRole::Coder => &[
+                ToolTemplate::Bash,
+                ToolTemplate::Read,
+                ToolTemplate::Write,
+                ToolTemplate::Edit,
+                ToolTemplate::Glob,
+                ToolTemplate::Grep,
+                ToolTemplate::TodoWrite,
+            ],
+            AgentRole::Planner => &[
+                ToolTemplate::Agent,
+                ToolTemplate::Read,
+                ToolTemplate::Glob,
+                ToolTemplate::Grep,
+                ToolTemplate::TodoWrite,
+                ToolTemplate::WebSearch,
+            ],
+            AgentRole::Reviewer => &[
+                ToolTemplate::Read,
+                ToolTemplate::Glob,
+                ToolTemplate::Grep,
+                ToolTemplate::WebSearch,
+                ToolTemplate::WebFetch,
+            ],
+            AgentRole::Integrator => &[
+                ToolTemplate::Bash,
+                ToolTemplate::Agent,
+                ToolTemplate::Read,
+                ToolTemplate::Edit,
+                ToolTemplate::Glob,
+                ToolTemplate::Grep,
+                ToolTemplate::TodoWrite,
+            ],
+        }
+    }
+
+    /// Service (memory/coordination) sections relevant to this role.
+    pub fn service_templates(&self) -> &'static [ServiceTemplate] {
+        match self {
+            AgentRole::Coder => &[
+                ServiceTemplate::SessionMemory,
+                ServiceTemplate::HexFloAgent,
+            ],
+            AgentRole::Planner => &[
+                ServiceTemplate::SessionMemory,
+                ServiceTemplate::MemoryExtraction,
+                ServiceTemplate::HexFloSwarm,
+                ServiceTemplate::HexFloGlobal,
+            ],
+            AgentRole::Reviewer => &[
+                ServiceTemplate::SessionMemory,
+                ServiceTemplate::HexFloAgent,
+            ],
+            AgentRole::Integrator => &[
+                ServiceTemplate::SessionMemory,
+                ServiceTemplate::HexFloSwarm,
+                ServiceTemplate::HexFloAgent,
+            ],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -181,9 +283,45 @@ impl ContextVariables {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptTemplate {
-    System(SystemTemplate),
-    Tool(ToolTemplate),
-    Service(ServiceTemplate),
+    SystemPrompt(SystemTemplate),
+    ToolPrompt(ToolTemplate),
+    ServicePrompt(ServiceTemplate),
+}
+
+impl PromptTemplate {
+    /// Returns the template variable keys that this prompt variant may interpolate.
+    pub fn variable_keys(&self) -> &'static [&'static str] {
+        match self {
+            PromptTemplate::SystemPrompt(_) => &[
+                "project_name",
+                "agent_role",
+                "workspace_root",
+                "current_phase",
+                "constraints",
+            ],
+            PromptTemplate::ToolPrompt(_) => &[],
+            PromptTemplate::ServicePrompt(svc) => match svc {
+                ServiceTemplate::SessionMemory | ServiceTemplate::MemoryExtraction => &[
+                    "project_name",
+                    "agent_role",
+                ],
+                ServiceTemplate::HexFloGlobal
+                | ServiceTemplate::HexFloSwarm
+                | ServiceTemplate::HexFloAgent => &[
+                    "project_name",
+                    "task_description",
+                    "agent_role",
+                    "architecture_score",
+                    "arch_violations",
+                    "relevant_adrs",
+                    "ast_summary",
+                    "recent_changes",
+                    "hexflo_memory",
+                    "spec_content",
+                ],
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -412,6 +550,62 @@ mod tests {
     fn test_agent_role_str() {
         assert_eq!(AgentRole::Coder.as_str(), "hex-coder");
         assert_eq!(AgentRole::Planner.as_str(), "hex-planner");
+        assert_eq!(AgentRole::Reviewer.as_str(), "hex-reviewer");
+        assert_eq!(AgentRole::Integrator.as_str(), "hex-integrator");
+    }
+
+    #[test]
+    fn test_coder_role_context() {
+        let role = AgentRole::Coder;
+        // Coders need write tools
+        assert!(role.tool_templates().contains(&ToolTemplate::Write));
+        assert!(role.tool_templates().contains(&ToolTemplate::Edit));
+        assert!(role.tool_templates().contains(&ToolTemplate::Bash));
+        // Coders don't need Agent dispatch
+        assert!(!role.tool_templates().contains(&ToolTemplate::Agent));
+        // Coders use agent-scoped memory
+        assert!(role.service_templates().contains(&ServiceTemplate::HexFloAgent));
+        assert!(!role.service_templates().contains(&ServiceTemplate::HexFloSwarm));
+        // Coders need execution-safety prompts
+        assert!(role.system_templates().contains(&SystemTemplate::ExecutingActions));
+        assert!(role.system_templates().contains(&SystemTemplate::UsingYourTools));
+    }
+
+    #[test]
+    fn test_planner_role_context() {
+        let role = AgentRole::Planner;
+        // Planners orchestrate agents, don't write files directly
+        assert!(role.tool_templates().contains(&ToolTemplate::Agent));
+        assert!(!role.tool_templates().contains(&ToolTemplate::Write));
+        assert!(!role.tool_templates().contains(&ToolTemplate::Edit));
+        // Planners need swarm + global memory for coordination
+        assert!(role.service_templates().contains(&ServiceTemplate::HexFloSwarm));
+        assert!(role.service_templates().contains(&ServiceTemplate::HexFloGlobal));
+        assert!(role.service_templates().contains(&ServiceTemplate::MemoryExtraction));
+    }
+
+    #[test]
+    fn test_reviewer_role_context() {
+        let role = AgentRole::Reviewer;
+        // Reviewers are read-only
+        assert!(!role.tool_templates().contains(&ToolTemplate::Write));
+        assert!(!role.tool_templates().contains(&ToolTemplate::Edit));
+        assert!(!role.tool_templates().contains(&ToolTemplate::Bash));
+        assert!(role.tool_templates().contains(&ToolTemplate::Read));
+        assert!(role.tool_templates().contains(&ToolTemplate::Grep));
+        // Reviewers don't need execution-safety prompts
+        assert!(!role.system_templates().contains(&SystemTemplate::ExecutingActions));
+    }
+
+    #[test]
+    fn test_integrator_role_context() {
+        let role = AgentRole::Integrator;
+        // Integrators run commands and spawn agents
+        assert!(role.tool_templates().contains(&ToolTemplate::Bash));
+        assert!(role.tool_templates().contains(&ToolTemplate::Agent));
+        // Integrators coordinate across swarm + track agent state
+        assert!(role.service_templates().contains(&ServiceTemplate::HexFloSwarm));
+        assert!(role.service_templates().contains(&ServiceTemplate::HexFloAgent));
     }
 
     #[test]

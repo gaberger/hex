@@ -1,11 +1,14 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g., 26.4.0)'
-        required: true
+        description: 'Release version (e.g., 26.4.0) — used only for workflow_dispatch'
+        required: false
         type: string
         default: '26.6.0'
       prerelease:
@@ -16,142 +19,216 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RELEASE_VERSION: ${{ github.inputs.version || '26.6.0' }}
 
 jobs:
-  # Build for multiple platforms
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Linux x86_64
-          - runs-on: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact: hex-x86_64-unknown-linux-gnu
-          # Linux ARM64
-          - runs-on: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            artifact: hex-aarch64-unknown-linux-gnu
-          # macOS x86_64
-          - runs-on: macos-13
-            target: x86_64-apple-darwin
-            artifact: hex-x86_64-apple-darwin
-          # macOS ARM64
-          - runs-on: macos-14
-            target: aarch64-apple-darwin
-            artifact: hex-aarch64-apple-darwin
-
-    runs-on: ${{ matrix.runs-on }}
+  build-macos-arm64:
+    runs-on: macos-14
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      TARGET: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install cross-compile toolchain
-        if: matrix.target != 'x86_64-unknown-linux-gnu'
-        run: |
-          # For ARM64 Linux
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            sudo apt-get update
-            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_AR=aarch64-linux-gnu-ar" >> $GITHUB_ENV
-          fi
-
-      - name: Install Rust target
-        run: rustup target add ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
         with:
-          workspaces: ". -> target"
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache build target
+        uses: actions/cache@v4
+        with:
+          path: target/
+          key: ${{ runner.os }}-cargo-target-aarch64-apple-darwin-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-aarch64-apple-darwin-
+
+      - name: Add Rust target
+        run: rustup target add "$TARGET"
+
+      - name: Ensure dashboard assets directory exists
+        run: mkdir -p hex-nexus/assets/dist
 
       - name: Build hex-cli
-        run: |
-          mkdir -p hex-nexus/assets/dist
-          cargo build -p hex-cli --release --target ${{ matrix.target }}
+        run: cargo build --release --target "$TARGET" -p hex-cli
 
-      - name: Rename binary
-        shell: bash
+      - name: Build hex-nexus
+        run: cargo build --release --target "$TARGET" -p hex-nexus
+
+      - name: Determine version
+        id: version
+        env:
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          GIT_REF: ${{ github.ref }}
         run: |
-          # Rename to platform-specific name
-          cp "target/${{ matrix.target }}/release/hex" "hex-${{ matrix.target }}"
-          chmod +x "hex-${{ matrix.target }}"
+          if [[ "$GIT_REF" == refs/tags/* ]]; then
+            VERSION="${GIT_REF#refs/tags/v}"
+          else
+            VERSION="${DISPATCH_VERSION:-26.6.0}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tarball=hex-${VERSION}-${TARGET}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Create tarball
+        env:
+          TARBALL: ${{ steps.version.outputs.tarball }}
+        run: |
+          tar czf "$TARBALL" \
+            -C "target/${TARGET}/release" \
+            hex hex-nexus
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: hex-${{ matrix.target }}
+          name: hex-macos-arm64
+          path: ${{ steps.version.outputs.tarball }}
           retention-days: 7
 
-  # Create release and upload binaries
+  build-linux-x86_64:
+    runs-on: ubuntu-22.04
+    env:
+      TARGET: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev libsqlite3-dev
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache build target
+        uses: actions/cache@v4
+        with:
+          path: target/
+          key: ${{ runner.os }}-cargo-target-x86_64-unknown-linux-gnu-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-x86_64-unknown-linux-gnu-
+
+      - name: Add Rust target
+        run: rustup target add "$TARGET"
+
+      - name: Ensure dashboard assets directory exists
+        run: mkdir -p hex-nexus/assets/dist
+
+      - name: Build hex-cli
+        run: cargo build --release --target "$TARGET" -p hex-cli
+
+      - name: Build hex-nexus
+        run: cargo build --release --target "$TARGET" -p hex-nexus
+
+      - name: Determine version
+        id: version
+        env:
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          GIT_REF: ${{ github.ref }}
+        run: |
+          if [[ "$GIT_REF" == refs/tags/* ]]; then
+            VERSION="${GIT_REF#refs/tags/v}"
+          else
+            VERSION="${DISPATCH_VERSION:-26.6.0}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tarball=hex-${VERSION}-${TARGET}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Create tarball
+        env:
+          TARBALL: ${{ steps.version.outputs.tarball }}
+        run: |
+          tar czf "$TARBALL" \
+            -C "target/${TARGET}/release" \
+            hex hex-nexus
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hex-linux-x86_64
+          path: ${{ steps.version.outputs.tarball }}
+          retention-days: 7
+
   release:
-    needs: build
-    runs-on: ubuntu-latest
-    # Don't fail if some builds failed - release with what we have
-    if: always()
+    needs: [build-macos-arm64, build-linux-x86_64]
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download macOS ARM64 artifact
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: hex-macos-arm64
+          path: artifacts/
+
+      - name: Download Linux x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hex-linux-x86_64
+          path: artifacts/
 
       - name: List artifacts
-        run: find artifacts -type f
+        run: find artifacts/ -type f
 
-      - name: Prepare release files
+      - name: Generate SHA256 checksums
         run: |
-          mkdir -p release-files
-          # Map artifact directories to release files
-          for dir in artifacts/hex-*; do
-            if [ -d "$dir" ]; then
-              bin=$(basename "$dir")
-              src=$(find "$dir" -type f -maxdepth 1 | head -1)
-              if [ -n "$src" ]; then
-                # Extract platform from artifact name (e.g., hex-x86_64-unknown-linux-gnu -> hex-x86_64-unknown-linux-gnu)
-                name="$bin"
-                cp "$src" "release-files/$name"
-                echo "  ✓ $name"
-              fi
-            fi
-          done
-          ls -la release-files/
+          cd artifacts
+          sha256sum *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
-      - name: Create Release
+      - name: Determine tag name
+        id: tag
+        env:
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          GIT_REF: ${{ github.ref }}
+        run: |
+          if [[ "$GIT_REF" == refs/tags/* ]]; then
+            TAG="${GIT_REF#refs/tags/}"
+          else
+            TAG="v${DISPATCH_VERSION:-26.6.0}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.RELEASE_VERSION }}
-          name: hex v${{ env.RELEASE_VERSION }}
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: hex ${{ steps.tag.outputs.tag }}
           draft: false
-          prerelease: ${{ github.inputs.prerelease || false }}
+          prerelease: ${{ github.event.inputs.prerelease || false }}
           generate_release_notes: true
           files: |
-            release-files/hex-x86_64-unknown-linux-gnu
-            release-files/hex-aarch64-unknown-linux-gnu
-            release-files/hex-x86_64-apple-darwin
-            release-files/hex-aarch64-apple-darwin
+            artifacts/*.tar.gz
+            artifacts/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Print download commands
+      - name: Print install instructions
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          echo "## Download Commands" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "# Linux x86_64" >> $GITHUB_STEP_SUMMARY
-          echo "curl -LO https://github.com/gaberger/hex/releases/download/v${{ env.RELEASE_VERSION }}/hex-x86_64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
-          echo "chmod +x hex-x86_64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
-          echo "sudo mv hex-x86_64-unknown-linux-gnu /usr/local/bin/hex" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# Linux ARM64" >> $GITHUB_STEP_SUMMARY
-          echo "curl -LO https://github.com/gaberger/hex/releases/download/v${{ env.RELEASE_VERSION }}/hex-aarch64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
-          echo "chmod +x hex-aarch64-unknown-linux-gnu" >> $GITHUB_STEP_SUMMARY
-          echo "sudo mv hex-aarch64-unknown-linux-gnu /usr/local/bin/hex" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# macOS ARM64" >> $GITHUB_STEP_SUMMARY
-          echo "curl -LO https://github.com/gaberger/hex/releases/download/v${{ env.RELEASE_VERSION }}/hex-aarch64-apple-darwin" >> $GITHUB_STEP_SUMMARY
-          echo "chmod +x hex-aarch64-apple-darwin" >> $GITHUB_STEP_SUMMARY
-          echo "sudo mv hex-aarch64-apple-darwin /usr/local/bin/hex" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          VERSION="${TAG#v}"
+          echo "## Install Instructions" >> "$GITHUB_STEP_SUMMARY"
+          printf '```bash\n' >> "$GITHUB_STEP_SUMMARY"
+          echo "# macOS ARM64" >> "$GITHUB_STEP_SUMMARY"
+          echo "curl -LO https://github.com/gaberger/hex/releases/download/${TAG}/hex-${VERSION}-aarch64-apple-darwin.tar.gz" >> "$GITHUB_STEP_SUMMARY"
+          echo "tar xzf hex-${VERSION}-aarch64-apple-darwin.tar.gz" >> "$GITHUB_STEP_SUMMARY"
+          echo "sudo mv hex /usr/local/bin/hex" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "# Linux x86_64" >> "$GITHUB_STEP_SUMMARY"
+          echo "curl -LO https://github.com/gaberger/hex/releases/download/${TAG}/hex-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" >> "$GITHUB_STEP_SUMMARY"
+          echo "tar xzf hex-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" >> "$GITHUB_STEP_SUMMARY"
+          echo "sudo mv hex /usr/local/bin/hex" >> "$GITHUB_STEP_SUMMARY"
+          printf '```\n' >> "$GITHUB_STEP_SUMMARY"

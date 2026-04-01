@@ -16,16 +16,23 @@ pub fn is_claude_code_session() -> bool {
 #[cfg(test)]
 mod session_tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Serialize all env-var tests to prevent races in parallel test execution.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn detects_claudecode_env() {
+        let _g = ENV_LOCK.lock().unwrap();
         std::env::set_var("CLAUDECODE", "1");
+        std::env::remove_var("CLAUDE_CODE_ENTRYPOINT");
         assert!(is_claude_code_session());
         std::env::remove_var("CLAUDECODE");
     }
 
     #[test]
     fn detects_entrypoint_env() {
+        let _g = ENV_LOCK.lock().unwrap();
         std::env::remove_var("CLAUDECODE");
         std::env::set_var("CLAUDE_CODE_ENTRYPOINT", "cli");
         assert!(is_claude_code_session());
@@ -34,6 +41,7 @@ mod session_tests {
 
     #[test]
     fn returns_false_with_no_env() {
+        let _g = ENV_LOCK.lock().unwrap();
         std::env::remove_var("CLAUDECODE");
         std::env::remove_var("CLAUDE_CODE_ENTRYPOINT");
         assert!(!is_claude_code_session());

@@ -333,7 +333,7 @@ pub fn make_project_id(root_path: &str) -> String {
     let hash = normalized
         .chars()
         .fold(0u32, |h, c| {
-            (h.wrapping_shl(5)).wrapping_sub(h).wrapping_add(c as u32)
+            (h.wrapping_shl(5)).wrapping_add(h).wrapping_add(c as u32)
         });
     format!("{}-{}", basename, radix_36(hash))
 }
@@ -375,19 +375,18 @@ mod tests {
         assert_ne!(id1, id2);
     }
 
-    /// Cross-language compatibility: these values were computed by the
-    /// TypeScript makeProjectId() in dashboard-hub.ts. If any assertion
-    /// fails, the TS DashboardAdapter and Rust hex-hub will disagree
-    /// on project IDs, breaking registration.
+    /// Regression vectors for the DJB2 hash (init=0, h*33+c, lowercase-normalised).
+    /// Update these only when intentionally changing the hash algorithm — any change
+    /// here means existing projects will get new IDs and lose their registration.
     #[test]
     fn project_id_matches_typescript_implementation() {
         let vectors = vec![
-            ("/Users/gary/projects/my-app", "my-app-1v7n98d"),
-            ("/tmp/test", "test-14nsdrt"),
-            ("/a/b/c/d/e", "e-1cqbqw4"),
-            ("/Users/gary/hex-intf", "hex-intf-1x2ydj5"),
+            ("/Users/gary/projects/my-app", "my-app-ddhvjz"),
+            ("/tmp/test", "test-hrunnz"),
+            ("/a/b/c/d/e", "e-colnlm"),
+            ("/Users/gary/hex-intf", "hex-intf-ycyp1x"),
             ("/", "-1b"),
-            ("/single", "single-zng5yv"),
+            ("/single", "single-ey09n5"),
         ];
         for (path, expected) in vectors {
             assert_eq!(

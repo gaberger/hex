@@ -9,6 +9,7 @@
 //! back to `TaskExecutor::poll_task()` REST polling (existing behaviour).
 
 use std::sync::Arc;
+use hex_core::{TaskCompletionBody, TaskStatus};
 use serde::{Deserialize, Serialize};
 
 use super::stdb_connection::StdbConnection;
@@ -171,7 +172,14 @@ impl StdbTaskPoller {
         success: bool,
     ) -> Result<(), String> {
         if claimed.via_stdb && self.stdb.is_connected() {
-            let result_json = serde_json::json!({ "output": result }).to_string();
+            let completion = TaskCompletionBody {
+                task_id: claimed.task_id.clone(),
+                status: if success { TaskStatus::Completed } else { TaskStatus::Failed },
+                result: Some(result.to_string()),
+                error: None,
+                agent_id: None,
+            };
+            let result_json = serde_json::to_string(&completion).unwrap_or_default();
             self.stdb
                 .complete_task(&claimed.task_id, &result_json)
                 .await

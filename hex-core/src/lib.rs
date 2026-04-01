@@ -17,6 +17,7 @@ pub mod domain;
 pub mod ports;
 pub mod quantization;
 pub mod rules;
+pub mod types;
 
 // ── Infrastructure Constants ──────────────────────────────
 // Shared across hex-cli, hex-nexus, and hex-agent to prevent string drift.
@@ -91,3 +92,4 @@ pub use domain::tools::{ToolCall, ToolDefinition, ToolInputSchema, ToolResult};
 pub use domain::swarm_task::{SwarmTaskCompletion, SwarmTaskStatus};
 pub use domain::workplan::{PhaseGate, TaskStatus, Workplan, WorkplanPhase, WorkplanTask};
 pub use quantization::QuantizationLevel;
+pub use types::TaskCompletionBody;

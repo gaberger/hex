@@ -4,6 +4,7 @@ use axum::{
     Json,
 };
 use hex_core::domain::swarm_task::SwarmTaskStatus;
+use hex_core::{TaskCompletionBody, TaskStatus};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -373,15 +374,28 @@ pub async fn update_task(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// PATCH /api/swarms/tasks/:taskId — convenience route (no swarm ID needed)
-/// Used by MCP tools where task ID is globally unique.
+/// PATCH /api/swarms/tasks/:taskId and PATCH /api/hexflo/tasks/:taskId
+///
+/// Accepts [`TaskCompletionBody`] (the shared hex-core type) from agents and MCP tools.
+/// Converts to [`UpdateTaskRequest`] internally so the CAS and status-change logic
+/// in [`update_task`] is reused unchanged.
 pub async fn update_task_by_id(
     state: State<SharedState>,
     Path(task_id): Path<String>,
-    body: Json<UpdateTaskRequest>,
+    Json(completion): Json<TaskCompletionBody>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // Delegate to update_task with a dummy swarm ID (handler ignores it)
-    update_task(state, Path(("_".to_string(), task_id)), body).await
+    let req = UpdateTaskRequest {
+        status: Some(match completion.status {
+            TaskStatus::Completed => SwarmTaskStatus::Completed,
+            TaskStatus::Failed => SwarmTaskStatus::Failed,
+            TaskStatus::InProgress => SwarmTaskStatus::InProgress,
+            TaskStatus::Pending | TaskStatus::Blocked => SwarmTaskStatus::Pending,
+        }),
+        result: completion.result.or(completion.error),
+        agent_id: completion.agent_id,
+        version: None,
+    };
+    update_task(state, Path(("_".to_string(), task_id)), Json(req)).await
 }
 
 /// GET /api/hexflo/tasks/:taskId — get task with parent swarm status
