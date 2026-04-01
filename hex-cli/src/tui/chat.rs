@@ -814,14 +814,14 @@ fn render_messages(f: &mut Frame, app: &ChatApp, area: Rect, width: u16) {
 
     for (i, msg) in app.messages.iter().enumerate() {
         if msg.role == Role::Skill {
-            // Dim italic system output — no label, no rule
+            // Italic system output — no label, no rule
             for line in msg.content.lines() {
                 lines.push(Line::from(vec![
                     Span::raw("  "),
                     Span::styled(
                         line.to_string(),
                         Style::default()
-                            .fg(Color::DarkGray)
+                            .fg(Color::Gray)
                             .add_modifier(Modifier::ITALIC),
                     ),
                 ]));
@@ -834,9 +834,9 @@ fn render_messages(f: &mut Frame, app: &ChatApp, area: Rect, width: u16) {
             // ⚙ tool_name(args)  /  └─ result preview
             for (li, line) in msg.content.lines().enumerate() {
                 let style = if li == 0 {
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM)
+                    Style::default().fg(Color::Gray)
                 };
                 lines.push(Line::from(vec![
                     Span::raw("  "),
@@ -857,14 +857,13 @@ fn render_messages(f: &mut Frame, app: &ChatApp, area: Rect, width: u16) {
             label.to_string(),
             Style::default()
                 .fg(label_color)
-                .add_modifier(Modifier::BOLD)
-                .add_modifier(Modifier::DIM),
+                .add_modifier(Modifier::BOLD),
         )));
 
         // Thin rule under role label
         lines.push(Line::from(Span::styled(
             format!("  {}", "─".repeat(rule_width)),
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
+            Style::default().fg(Color::DarkGray),
         )));
 
         // Message content
@@ -935,7 +934,7 @@ fn render_messages(f: &mut Frame, app: &ChatApp, area: Rect, width: u16) {
 fn render_separator(f: &mut Frame, area: Rect, width: u16) {
     let rule = "─".repeat(width as usize);
     let p = Paragraph::new(rule)
-        .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM));
+        .style(Style::default().fg(Color::DarkGray));
     f.render_widget(p, area);
 }
 
@@ -943,21 +942,14 @@ fn render_input(f: &mut Frame, app: &ChatApp, area: Rect) {
     let display: Vec<Line> = if app.streaming {
         vec![Line::from(vec![
             Span::styled("  … ", Style::default().fg(Color::Yellow)),
-            Span::styled(
-                "streaming…",
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::DIM),
-            ),
+            Span::styled("streaming…", Style::default().fg(Color::Gray)),
         ])]
     } else if app.input.is_empty() {
         vec![Line::from(vec![
-            Span::styled("  ❯ ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  ❯ ", Style::default().fg(Color::Gray)),
             Span::styled(
                 "type a message or /help…",
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::DIM),
+                Style::default().fg(Color::DarkGray),
             ),
         ])]
     } else {
@@ -996,7 +988,7 @@ fn render_status(f: &mut Frame, app: &ChatApp, area: Rect) {
         )
     };
     let p = Paragraph::new(status)
-        .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM));
+        .style(Style::default().fg(Color::DarkGray));
     f.render_widget(p, area);
 }
 
