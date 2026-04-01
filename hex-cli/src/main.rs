@@ -20,6 +20,7 @@ pub mod tui;
 use commands::{
     adr::AdrAction,
     agent::AgentAction,
+    chat::ChatArgs,
     context::ContextAction,
     spec::SpecAction,
     analyze,
@@ -154,6 +155,8 @@ enum Commands {
         #[command(subcommand)]
         action: ReadmeAction,
     },
+    /// Interactive AI chat session (TUI by default, --no-tui for plain stdout)
+    Chat(ChatArgs),
     /// Initialize hex in a project directory
     Init(InitArgs),
     /// Claude Code hook handler (called by .claude/settings.json hooks)
@@ -274,6 +277,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Plan { action } => commands::plan::run(action).await,
         Commands::Inference { action } => commands::inference::run(action).await,
         Commands::Readme { action } => commands::readme::run(action).await,
+        Commands::Chat(args) => commands::chat::run(args).await,
         Commands::Init(args) => commands::init::run(args).await,
         Commands::Hook { event } => commands::hook::run(event).await,
         Commands::Mcp => commands::mcp::run_mcp_server().await,
