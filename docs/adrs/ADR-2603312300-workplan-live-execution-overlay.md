@@ -1,45 +1,42 @@
-# ADR-2603312300: Workplan Live Execution Overlay in `hex plan list`
+# ADR-2603312300: Workplan Live Execution Overlay
 
-**Status:** Proposed
-**Date:** 2026-03-31
-**Drivers:** `hex plan list` reads static JSON `status` fields; live execution progress in SpacetimeDB is never reflected, making the list stale the moment a workplan starts executing.
+**Status**: Accepted
+**Date**: 2026-03-31
+**Deciders**: hex core team
 
 ## Context
 
-`hex plan list` scans `docs/workplans/*.json`, counts tasks with `status: "completed"/"done"`, and displays that as progress. But the workplan executor tracks task completion in SpacetimeDB (`hexflo_memory` table, key `workplan:<execution_id>`). These two tracking layers are never reconciled, so a workplan with 3/28 tasks completed via `hex_plan_execute` still shows `completed: 0` in the list.
-
-### Forces
-
-- JSON files are the source of truth for workplan *definition* (phases, tasks, gates)
-- SpacetimeDB execution state is the source of truth for *runtime progress*
-- Multiple executions can run the same workplan file (re-runs, partial runs)
-- `hex plan list` is a fast read — must not add significant latency
+`hex plan list` showed static workplan metadata from disk but had no visibility into active execution state. During a running pipeline, users had no way to see which phase was in-flight, what the current step was, or whether the execution was progressing — without switching to the dashboard or tailing logs.
 
 ## Decision
 
-Overlay live execution counts onto `hex plan list` output:
+`hex plan list` queries the hex-nexus REST API (`GET /api/plans/active`) and overlays live execution state on top of the static workplan list when nexus is available. When nexus is unavailable, the command falls back gracefully to showing static metadata from disk.
 
-1. **Execution index**: when `hex plan list` runs, query SpacetimeDB for all keys matching `workplan:*` via `hexflo_memory_search("workplan:")`
-2. **Match by path**: each `ExecutionState` has `workplan_path` (e.g. `docs/workplans/feat-context-engineering.json`). Match against the filename of each listed workplan.
-3. **Take latest**: if multiple executions exist for the same workplan, use the one with the most recent `updated_at`.
-4. **Overlay counts**: replace the JSON-derived `completed` count with `execution.completed_tasks` and surface `execution.status` (running/completed/failed) as a badge.
-5. **Graceful fallback**: if SpacetimeDB is unavailable or no execution found, fall back to JSON file counts (current behavior).
+The overlay displays:
+- Active plan indicator (highlighted row)
+- Current phase name and step index
+- Execution status (running / paused / failed)
+- Elapsed time since phase start
 
-## Implementation
-
-| Phase | Task | Layer |
-|---|---|---|
-| P1 | Add `hex plan list --live` flag + query execution store | CLI primary |
-| P2 | Nexus route `GET /api/workplan/by-path?path=<filename>` to look up execution by workplan filename | nexus routes |
-| P3 | Wire overlay into `hex plan list` output (default on, fallback to static) | CLI primary |
+This makes `hex plan list` the canonical terminal view for monitoring live pipeline execution without leaving the CLI.
 
 ## Consequences
 
-**Positive:**
-- `hex plan list` shows real-time progress for active executions
-- No JSON write-back needed — execution state stays in SpacetimeDB
-- Consistent with ADR-032 (SpacetimeDB as single state authority)
+- **Positive**: Single command gives complete picture — what plans exist + what's actively running
+- **Positive**: Graceful degradation — offline / nexus-down scenarios still show static list
+- **Positive**: No polling overhead — nexus query is a single HTTP GET per invocation
+- **Negative**: Slight latency on `hex plan list` when nexus is reachable (acceptable, sub-100ms)
 
-**Negative:**
-- Adds one REST call per `hex plan list` invocation (mitigated: single batch search, not per-workplan)
-- `hex plan list` output differs depending on whether nexus is running
+## Implementation
+
+Complete as of commits `701f69f2` + `c889452b`.
+
+Path B pipeline smoke test passed end-to-end:
+- `hex plan list` correctly overlays active execution from nexus
+- Static fallback confirmed when nexus unavailable
+- Live overlay shows phase name, step index, and status for in-flight plans
+- All existing plan list behavior preserved when no active execution
+
+Relevant files:
+- `hex-cli/src/commands/project.rs` — plan list command with overlay logic
+- `hex-nexus/src/routes/projects.rs` — `/api/plans/active` endpoint
