@@ -1,0 +1,117 @@
+{
+  "feature": "chat-hooks-skills",
+  "description": "Claude Code-parity hooks, dynamic user skill loading, and hex command execution for hex chat",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "Session start hook fires when hex chat begins",
+      "given": "A project directory with hex hooks configured",
+      "when": "hex chat launches and the TUI enters its event loop",
+      "then": "hex hook session-start is spawned, its stdout output appears as a Skill message in the TUI",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "Session end hook fires on quit",
+      "given": "An active hex chat session",
+      "when": "The user presses q or Ctrl+C to quit",
+      "then": "hex hook session-end is spawned before the TUI tears down; session is auto-saved",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "Route hook fires before each user message is sent to inference",
+      "given": "An active hex chat session with inbox notifications pending",
+      "when": "The user submits a message",
+      "then": "hex hook route runs; any priority-2 inbox notifications are surfaced as a Skill message above the user turn and inference is held until acknowledged",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "User skills from .claude/skills/*.md are available as slash commands",
+      "given": "A project with .claude/skills/my-skill.md present",
+      "when": "The user types /my-skill in hex chat",
+      "then": "The skill markdown body is injected as a user message and inference is triggered",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "/skills lists all available skills",
+      "given": "A project with skills in .claude/skills/ and global ~/.claude/skills/",
+      "when": "The user types /skills",
+      "then": "A Skill message is shown listing all available skill names with their first-line description",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "HappyPath",
+      "description": "/hex <subcommand> executes a hex CLI command and streams output into the TUI",
+      "given": "hex chat is running and hex binary is on PATH",
+      "when": "User types /hex plan list",
+      "then": "hex plan list is executed, output lines are streamed as a Skill message in real time",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "HappyPath",
+      "description": "hex_exec tool allows the model to run hex subcommands",
+      "given": "The model is connected to MCP tools including hex_exec",
+      "when": "The model invokes hex_exec with {\"subcommand\": \"plan list\"}",
+      "then": "hex plan list is executed via hex-nexus /api/exec and the output is returned as the tool result",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "EdgeCase",
+      "description": "Skills from both global and project directories are merged; project overrides global",
+      "given": "~/.claude/skills/my-skill.md and .claude/skills/my-skill.md both exist with different content",
+      "when": "/my-skill is invoked",
+      "then": "The project-local version is used",
+      "negative_spec": false
+    },
+    {
+      "id": "S09",
+      "category": "ErrorHandling",
+      "description": "Hook failure does not crash the chat session",
+      "given": "hex hook session-start exits non-zero",
+      "when": "hex chat starts",
+      "then": "The hook exit code is shown as a dim Skill message but the TUI starts normally",
+      "negative_spec": false
+    },
+    {
+      "id": "S10",
+      "category": "ErrorHandling",
+      "description": "Unknown slash command gives helpful error, not crash",
+      "given": "No skill named 'foo' exists",
+      "when": "User types /foo",
+      "then": "A Skill message shows: unknown command '/foo' — try /skills to list available commands",
+      "negative_spec": false
+    },
+    {
+      "id": "S11",
+      "category": "Security",
+      "description": "hex_exec tool only runs hex subcommands, not arbitrary shell",
+      "given": "Model attempts hex_exec with {\"subcommand\": \"plan list; rm -rf /\"}",
+      "then": "The subcommand string is argv-split and passed to the hex binary directly — no shell interpolation; the semicolon is treated as a literal argument and rejected by clap",
+      "negative_spec": true,
+      "when": "hex_exec is invoked with shell metacharacters in the subcommand",
+      "domain_conventions": {
+        "security": "Use tokio::process::Command with explicit arg list, never sh -c"
+      }
+    },
+    {
+      "id": "S12",
+      "category": "HappyPath",
+      "description": "Status bar shows hook/inbox notification count when non-zero",
+      "given": "hex inbox has 2 unread notifications",
+      "when": "The user submits a message and route hook runs",
+      "then": "The status bar shows a notification badge until all priority-2 items are acknowledged",
+      "negative_spec": false
+    }
+  ]
+}
