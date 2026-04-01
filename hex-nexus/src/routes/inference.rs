@@ -13,7 +13,7 @@
 //!   - Minimum 2s inter-candidate sleep prevents thundering-herd rate exhaustion
 //!   - Model routing uses exact JSON array match, not substring search
 
-use axum::{extract::State, Json};
+use axum::{extract::{Path, State}, Json};
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -609,4 +609,115 @@ pub async fn inference_complete(
             })))
         }
     }
+}
+
+// ── Inference queue (ADR-2604010000) ─────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InferenceQueueEntry {
+    pub id: String,
+    pub task_id: String,
+    pub workplan_id: String,
+    pub prompt: String,
+    pub role: String,
+    pub status: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateQueueStatusRequest {
+    pub status: String,
+}
+
+/// GET /api/inference/queue/pending — list pending inference queue entries from HexFlo memory.
+///
+/// Searches memory for keys with the "inference:queue:" prefix, deserializes each value as
+/// InferenceQueueEntry, filters to status == "pending", and returns sorted by created_at asc.
+pub async fn queue_pending(
+    State(state): State<SharedState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let port = match &state.state_port {
+        Some(p) => p,
+        None => return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "IStatePort not initialized" })),
+        ),
+    };
+
+    let results = match port.hexflo_memory_search("inference:queue:").await {
+        Ok(entries) => entries,
+        Err(e) => return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    };
+
+    let mut pending: Vec<InferenceQueueEntry> = results
+        .into_iter()
+        .filter_map(|(_k, v)| serde_json::from_str::<InferenceQueueEntry>(&v).ok())
+        .filter(|e| e.status == "pending")
+        .collect();
+
+    pending.sort_by_key(|e| e.created_at);
+
+    (StatusCode::OK, Json(json!(pending)))
+}
+
+/// PATCH /api/inference/queue/{id} — update the status of a queue entry.
+///
+/// Loads entry from memory key `inference:queue:{id}`, updates the status field,
+/// stores it back, and returns the updated entry.
+pub async fn queue_update(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateQueueStatusRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let port = match &state.state_port {
+        Some(p) => p,
+        None => return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "IStatePort not initialized" })),
+        ),
+    };
+
+    let key = format!("inference:queue:{}", id);
+
+    let raw = match port.hexflo_memory_retrieve(&key).await {
+        Ok(Some(v)) => v,
+        Ok(None) => return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Queue entry {} not found", id) })),
+        ),
+        Err(e) => return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    };
+
+    let mut entry: InferenceQueueEntry = match serde_json::from_str(&raw) {
+        Ok(e) => e,
+        Err(e) => return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": format!("Failed to deserialize entry: {}", e) })),
+        ),
+    };
+
+    entry.status = body.status.clone();
+
+    let updated_raw = match serde_json::to_string(&entry) {
+        Ok(s) => s,
+        Err(e) => return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("Serialization failed: {}", e) })),
+        ),
+    };
+
+    if let Err(e) = port.hexflo_memory_store(&key, &updated_raw, "global").await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        );
+    }
+
+    (StatusCode::OK, Json(json!(entry)))
 }
