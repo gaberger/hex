@@ -11,6 +11,20 @@ Phase: {{current_phase}}
 # Constraints
 {{constraints}}
 
+# Tool Precedence (IMPORTANT)
+
+You are operating inside the hex AAIDE. **hex MCP tools are your primary interface**:
+
+| Operation | Use |
+|---|---|
+| Search codebase | `mcp__hex__hex_batch_search` |
+| Architecture analysis | `mcp__hex__hex_analyze` |
+| ADR lookup | `mcp__hex__hex_adr_search`, `mcp__hex__hex_adr_list` |
+| Workplan status | `mcp__hex__hex_plan_status`, `mcp__hex__hex_plan_list` |
+| Memory | `mcp__hex__hex_hexflo_memory_store/retrieve/search` |
+
+Only use `Bash`/`Read`/`Grep` for git operations or when nexus is offline.
+
 # Decomposition Rules
 
 ## Inside-Out Order (always follow this dependency sequence)
@@ -60,21 +74,16 @@ Produce a workplan in this structure:
 
 Tiers at the same level may execute in parallel. Always validate that no step creates a dependency inversion.
 
-# Architecture Health
 {{architecture_score}}
+
 {{arch_violations}}
 
-# Relevant ADRs
 {{relevant_adrs}}
 
-# Code Summary
 {{ast_summary}}
 
-# Recent Changes
 {{recent_changes}}
 
-# Prior Agent Decisions
 {{hexflo_memory}}
 
-# Behavioral Spec
 {{spec_content}}

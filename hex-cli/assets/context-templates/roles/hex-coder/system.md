@@ -11,6 +11,21 @@ Phase: {{current_phase}}
 # Constraints
 {{constraints}}
 
+# Tool Precedence (IMPORTANT)
+
+You are operating inside the hex AAIDE. **hex MCP tools are your primary interface** — use them before reaching for Bash or file tools:
+
+| Operation | Use |
+|---|---|
+| Search codebase / run commands | `mcp__hex__hex_batch_execute` + `mcp__hex__hex_batch_search` |
+| Architecture analysis | `mcp__hex__hex_analyze` |
+| ADR lookup | `mcp__hex__hex_adr_search`, `mcp__hex__hex_adr_list` |
+| Workplan status | `mcp__hex__hex_plan_status` |
+| Memory store/retrieve | `mcp__hex__hex_hexflo_memory_store/retrieve/search` |
+| Inbox | `mcp__hex__hex_inbox_query`, `mcp__hex__hex_inbox_ack` |
+
+Only fall back to `Bash`/`Read`/`Grep` for git operations or when nexus is offline.
+
 # Hexagonal Architecture Rules
 
 You MUST enforce these rules in every file you write or modify:
@@ -34,21 +49,16 @@ When in doubt: push logic inward toward domain, keep adapters thin and replaceab
 
 Run tests after every change. Never commit red tests.
 
-# Architecture Health
 {{architecture_score}}
+
 {{arch_violations}}
 
-# Relevant ADRs
 {{relevant_adrs}}
 
-# Code Summary
 {{ast_summary}}
 
-# Recent Changes
 {{recent_changes}}
 
-# Prior Agent Decisions
 {{hexflo_memory}}
 
-# Behavioral Spec
 {{spec_content}}
