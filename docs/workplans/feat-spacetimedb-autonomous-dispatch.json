@@ -1,0 +1,249 @@
+{
+  "id": "feat-spacetimedb-autonomous-dispatch",
+  "feature": "spacetimedb-autonomous-dispatch",
+  "title": "SpacetimeDB-Native Autonomous Inference Dispatch (ADR-2604011200)",
+  "description": "Close the final AAIDE autonomy gap: replace hexflo_memory inference queue with a dedicated SpacetimeDB inference_task table. Add /ws/inference WebSocket relay in hex-nexus. Add hex inference watch sidecar. Workplan executor subscribes to STDB events instead of polling. Result: workplan phases advance without UserPromptSubmit dependency.",
+  "status": "proposed",
+  "created": "2026-04-01",
+  "adr": "docs/adrs/ADR-2604011200-spacetimedb-native-autonomous-dispatch.md",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "STDB: inference_task table + reducers",
+      "tier": 0,
+      "description": "Add inference_task table and CRUD reducers to hexflo-coordination WASM module. This is the event-sourced backbone — all other phases depend on it.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build --target wasm32-unknown-unknown -p hexflo-coordination 2>&1 | tail -3",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P0.T1",
+          "name": "Add inference_task table to hexflo-coordination",
+          "adapter": "spacetime-modules/hexflo-coordination/src/lib.rs",
+          "description": "In spacetime-modules/hexflo-coordination/src/lib.rs, add the inference_task table after the existing swarm_task table:\n\n```rust\n#[table(name = inference_task, public)]\n#[derive(Clone, Debug)]\npub struct InferenceTask {\n    #[primary_key]\n    pub id: String,\n    pub workplan_id: String,\n    pub task_id: String,\n    pub phase: String,\n    pub prompt: String,\n    pub role: String,\n    /// \"Pending\" | \"InProgress\" | \"Completed\" | \"Failed\"\n    pub status: String,\n    /// Agent that claimed this task (empty until claimed)\n    pub agent_id: String,\n    pub result: String,\n    pub error: String,\n    pub created_at: String,\n    pub updated_at: String,\n}\n```\n\nThen add these reducers:\n\n1. `inference_task_create(ctx, id, workplan_id, task_id, phase, prompt, role, created_at)` — inserts row with status=Pending\n2. `inference_task_claim(ctx, id, agent_id, updated_at)` — CAS: only transitions Pending→InProgress; return Err if already claimed\n3. `inference_task_complete(ctx, id, result, updated_at)` — transitions InProgress→Completed, sets result\n4. `inference_task_fail(ctx, id, error, updated_at)` — transitions any non-Completed→Failed, sets error\n\nFor `inference_task_claim`, use the same CAS pattern as `task_assign`: check status==Pending before updating, return `already_claimed:{agent_id}` error if not.",
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs"
+          ],
+          "done_condition": "cargo build --target wasm32-unknown-unknown -p hexflo-coordination passes; inference_task table and 4 reducers present"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "State port + adapters: inference_task methods",
+      "tier": 1,
+      "description": "Extend IStatePort with inference task methods. Implement in SpacetimeDB adapter (real calls) and stub adapter (Err stubs). Add InferenceTaskInfo struct to ports/state.rs.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-nexus 2>&1 | tail -5",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.T1",
+          "name": "Add InferenceTaskInfo and port methods to ports/state.rs",
+          "adapter": "hex-nexus/src/ports/state.rs",
+          "description": "In hex-nexus/src/ports/state.rs:\n\n1. Add InferenceTaskInfo struct (derive Serialize, Deserialize, Clone, Debug):\n```rust\n#[derive(Debug, Clone, Serialize, Deserialize)]\n#[serde(rename_all = \"camelCase\")]\npub struct InferenceTaskInfo {\n    pub id: String,\n    pub workplan_id: String,\n    pub task_id: String,\n    pub phase: String,\n    pub prompt: String,\n    pub role: String,\n    pub status: String,\n    pub agent_id: String,\n    pub result: String,\n    pub error: String,\n    pub created_at: String,\n    pub updated_at: String,\n}\n```\n\n2. Add to IStatePort trait (async_trait):\n```rust\nasync fn inference_task_create(&self, id: &str, workplan_id: &str, task_id: &str, phase: &str, prompt: &str, role: &str, created_at: &str) -> Result<(), StateError>;\nasync fn inference_task_claim(&self, id: &str, agent_id: &str, updated_at: &str) -> Result<(), StateError>;\nasync fn inference_task_complete(&self, id: &str, result: &str, updated_at: &str) -> Result<(), StateError>;\nasync fn inference_task_fail(&self, id: &str, error: &str, updated_at: &str) -> Result<(), StateError>;\nasync fn inference_task_get(&self, id: &str) -> Result<Option<InferenceTaskInfo>, StateError>;\nasync fn inference_task_list_pending(&self) -> Result<Vec<InferenceTaskInfo>, StateError>;\n```",
+          "files": [
+            "hex-nexus/src/ports/state.rs"
+          ],
+          "done_condition": "IStatePort trait compiles with new methods; InferenceTaskInfo struct present"
+        },
+        {
+          "id": "P1.T2",
+          "name": "Implement inference_task methods in SpacetimeDB adapter",
+          "adapter": "hex-nexus/src/adapters/spacetime_state.rs",
+          "description": "In hex-nexus/src/adapters/spacetime_state.rs, implement the 6 new IStatePort methods for the SpacetimeDB adapter.\n\nFollow the exact pattern of existing reducer calls. For example:\n\n```rust\nasync fn inference_task_create(&self, id: &str, workplan_id: &str, task_id: &str, phase: &str, prompt: &str, role: &str, created_at: &str) -> Result<(), StateError> {\n    self.call_reducer(\"inference_task_create\",\n        serde_json::json!([id, workplan_id, task_id, phase, prompt, role, created_at])\n    ).await\n}\n\nasync fn inference_task_claim(&self, id: &str, agent_id: &str, updated_at: &str) -> Result<(), StateError> {\n    let result = self.call_reducer(\"inference_task_claim\",\n        serde_json::json!([id, agent_id, updated_at])\n    ).await;\n    match result {\n        Ok(_) => Ok(()),\n        Err(StateError::Storage(ref msg)) if msg.contains(\"already_claimed\") => {\n            Err(StateError::Conflict(msg.clone()))\n        }\n        Err(e) => Err(e),\n    }\n}\n```\n\nFor the stub adapter (the NoopState/DisconnectedState at the bottom of the file), add stubs:\n```rust\nasync fn inference_task_create(&self, ..) -> Result<(), StateError> { Err(Self::err()) }\nasync fn inference_task_claim(&self, ..) -> Result<(), StateError> { Err(Self::err()) }\nasync fn inference_task_complete(&self, ..) -> Result<(), StateError> { Err(Self::err()) }\nasync fn inference_task_fail(&self, ..) -> Result<(), StateError> { Err(Self::err()) }\nasync fn inference_task_get(&self, ..) -> Result<Option<InferenceTaskInfo>, StateError> { Err(Self::err()) }\nasync fn inference_task_list_pending(&self) -> Result<Vec<InferenceTaskInfo>, StateError> { Err(Self::err()) }\n```\n\nAlso implement for the SQLite fallback if it exists (return Err(StateError::Storage(\"not supported in SQLite fallback\".into())) for all methods — inference tasks are STDB-only).",
+          "files": [
+            "hex-nexus/src/adapters/spacetime_state.rs"
+          ],
+          "done_condition": "cargo check -p hex-nexus passes; all 6 methods implemented in both real and stub adapters"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "hex-nexus: /ws/inference WebSocket relay",
+      "tier": 2,
+      "description": "Add /ws/inference WebSocket endpoint to hex-nexus. Maintain a registry of connected CC agents. When STDB fires inference_task insertion, broadcast InferenceTaskPush to all subscribers. This is the push channel that replaces UserPromptSubmit inbox polling.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-nexus 2>&1 | tail -5",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.T1",
+          "name": "Add InferenceWsRegistry to nexus AppState",
+          "adapter": "hex-nexus/src/lib.rs",
+          "description": "Add a WebSocket registry to the nexus AppState for inference subscribers.\n\nIn hex-nexus/src/lib.rs (or wherever AppState is defined), add:\n\n```rust\nuse tokio::sync::broadcast;\n\n/// Push channel for inference task dispatch.\n/// Receivers: connected `hex inference watch` processes.\npub type InferenceTxBus = broadcast::Sender<InferenceTaskPush>;\n\n#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct InferenceTaskPush {\n    pub id: String,\n    pub workplan_id: String,\n    pub task_id: String,\n    pub phase: String,\n    pub prompt: String,\n    pub role: String,\n}\n```\n\nAdd `inference_tx: InferenceTxBus` to AppState. Initialize in `build_app()` with `broadcast::channel(64)`. The STDB subscription handler fires `inference_tx.send(push)` when a new Pending inference_task row arrives.",
+          "files": [
+            "hex-nexus/src/lib.rs"
+          ],
+          "done_condition": "InferenceTxBus and InferenceTaskPush types present in AppState; cargo check passes"
+        },
+        {
+          "id": "P2.T2",
+          "name": "Add /ws/inference WebSocket handler and route",
+          "adapter": "hex-nexus/src/routes/",
+          "description": "Create hex-nexus/src/routes/inference_ws.rs:\n\n```rust\nuse axum::{\n    extract::{ws::{WebSocket, WebSocketUpgrade, Message}, State},\n    response::IntoResponse,\n};\nuse crate::{AppState, InferenceTaskPush};\n\npub async fn ws_inference_handler(\n    ws: WebSocketUpgrade,\n    State(state): State<AppState>,\n) -> impl IntoResponse {\n    ws.on_upgrade(move |socket| handle_inference_ws(socket, state))\n}\n\nasync fn handle_inference_ws(mut socket: WebSocket, state: AppState) {\n    let mut rx = state.inference_tx.subscribe();\n    loop {\n        tokio::select! {\n            Ok(push) = rx.recv() => {\n                let json = serde_json::to_string(&push).unwrap_or_default();\n                if socket.send(Message::Text(json)).await.is_err() {\n                    break; // client disconnected\n                }\n            }\n            Some(Ok(Message::Close(_))) = socket.recv() => break,\n            else => break,\n        }\n    }\n}\n```\n\nRegister in the router (find where other routes are registered, e.g. src/routes/mod.rs or lib.rs):\n```rust\n.route(\"/ws/inference\", get(inference_ws::ws_inference_handler))\n```",
+          "files": [
+            "hex-nexus/src/routes/inference_ws.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "done_condition": "/ws/inference route registered; cargo check passes"
+        },
+        {
+          "id": "P2.T3",
+          "name": "Wire STDB inference_task subscription to broadcast bus",
+          "adapter": "hex-nexus/src/adapters/spacetime_state.rs",
+          "description": "In hex-nexus, the STDB subscription handler already processes row updates for swarm tables. Extend it to watch inference_task insertions.\n\nFind the STDB subscription callback (likely in adapters/spacetime_state.rs or a spawn task in lib.rs that calls subscribe_to_tables). Add inference_task to the subscribed tables:\n\n```rust\n// In subscribe query:\n\"SELECT * FROM inference_task\"\n```\n\nIn the row-update handler, when a new InferenceTask row arrives with status==\"Pending\":\n```rust\nif row.status == \"Pending\" {\n    let push = InferenceTaskPush {\n        id: row.id.clone(),\n        workplan_id: row.workplan_id.clone(),\n        task_id: row.task_id.clone(),\n        phase: row.phase.clone(),\n        prompt: row.prompt.clone(),\n        role: row.role.clone(),\n    };\n    let _ = inference_tx.send(push); // broadcast to all /ws/inference subscribers\n}\n```\n\nAlso send an inbox notification (as before) for backwards compatibility with the existing hook-based path.",
+          "files": [
+            "hex-nexus/src/adapters/spacetime_state.rs"
+          ],
+          "done_condition": "STDB subscription includes inference_task; new Pending rows are broadcast on inference_tx; cargo check passes"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Workplan executor: write to STDB inference_task",
+      "tier": 2,
+      "description": "Update workplan_executor.rs Path B to write to STDB inference_task instead of hexflo_memory. Subscribe to STDB completion events instead of polling memory keys.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-nexus 2>&1 | tail -5",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.T1",
+          "name": "Replace hexflo_memory queue with inference_task_create in executor",
+          "adapter": "hex-nexus/src/orchestration/workplan_executor.rs",
+          "description": "In hex-nexus/src/orchestration/workplan_executor.rs, in the `use_path_b` branch:\n\nREPLACE:\n```rust\n// Write task to HexFlo memory queue\nlet queue_id = uuid::Uuid::new_v4().to_string();\nlet key = format!(\"inference:queue:{}\", queue_id);\nlet payload = serde_json::json!({\n    \"id\": queue_id,\n    \"task_id\": task.id,\n    \"workplan_id\": &execution.feature,\n    \"prompt\": prompt_text,\n    \"role\": role,\n    \"status\": \"Pending\",\n    \"created_at\": now,\n});\nhexflo.memory_store(&key, &payload.to_string(), \"global\").await?;\n```\n\nWITH:\n```rust\n// Write task to STDB inference_task table (ADR-2604011200)\nlet queue_id = uuid::Uuid::new_v4().to_string();\nlet phase_name = current_phase.name.as_deref().unwrap_or(\"unknown\");\nstate.inference_task_create(\n    &queue_id,\n    &execution.feature,\n    &task.id,\n    phase_name,\n    &prompt_text,\n    &role,\n    &now,\n).await.map_err(|e| format!(\"inference_task_create failed: {}\", e))?;\n```\n\nNote: `state` is the IStatePort — it must be threaded into the executor. Check whether executor already holds a reference to AppState or needs to receive the state port as a parameter. If needed, add `state: Arc<dyn IStatePort>` to the ExecutionContext struct.",
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
+          "done_condition": "Path B writes to STDB via inference_task_create; hexflo_memory queue write removed; cargo check passes"
+        },
+        {
+          "id": "P3.T2",
+          "name": "Replace memory polling with STDB task subscription in executor",
+          "adapter": "hex-nexus/src/orchestration/workplan_executor.rs",
+          "description": "In workplan_executor.rs, replace the 5-second polling loop that reads hexflo_memory for task completion:\n\nREPLACE:\n```rust\nloop {\n    tokio::time::sleep(Duration::from_secs(5)).await;\n    let val = hexflo.memory_retrieve(&key).await\n        .ok().flatten()\n        .and_then(|s| serde_json::from_str::<Value>(&s).ok())\n        .unwrap_or_default();\n    let status = val[\"status\"].as_str().unwrap_or(\"\");\n    if status == \"Completed\" { break; }\n    if status == \"Failed\" { return Err(\"task failed\".into()); }\n    elapsed += 5;\n    if elapsed > timeout_secs { return Err(\"timeout\".into()); }\n}\n```\n\nWITH:\n```rust\n// Poll STDB inference_task for completion (subscribe-based would be ideal,\n// but polling the STDB row is still far cheaper than memory key polling\n// since STDB rows are indexed and queryable)\nloop {\n    tokio::time::sleep(Duration::from_secs(2)).await;\n    match state.inference_task_get(&queue_id).await {\n        Ok(Some(task)) => match task.status.as_str() {\n            \"Completed\" => break,\n            \"Failed\" => return Err(format!(\"inference task failed: {}\", task.error)),\n            _ => {},\n        },\n        Ok(None) => {},\n        Err(e) => tracing::warn!(\"inference_task_get error: {}\", e),\n    }\n    elapsed += 2;\n    if elapsed > timeout_secs {\n        let _ = state.inference_task_fail(&queue_id, \"executor timeout\", &chrono::Utc::now().to_rfc3339()).await;\n        return Err(\"inference task timeout\".into());\n    }\n}\n```\n\nAlso send the inbox notification as before (for backwards compat with sessions not running `hex inference watch`).",
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
+          "done_condition": "Executor polls STDB inference_task_get instead of hexflo_memory; timeout calls inference_task_fail; cargo check passes"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "hex-cli: hex inference watch command",
+      "tier": 2,
+      "description": "Add 'hex inference watch' CLI command. Connects to /ws/inference, receives InferenceTaskPush messages, claims tasks via inference_task_claim, dispatches Claude subagents (via MCP stdio or direct spawn), marks complete. This is the autonomous sidecar that closes the UserPromptSubmit gap.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli 2>&1 | tail -5",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.T1",
+          "name": "Add hex inference watch command to CLI",
+          "adapter": "hex-cli/src/commands/",
+          "description": "Create hex-cli/src/commands/inference.rs with the `watch` subcommand.\n\nThe command:\n1. Reads agent_id from session file (NexusClient::from_env() auto-resolves)\n2. Connects to ws://localhost:5555/ws/inference via tokio-tungstenite\n3. On each InferenceTaskPush message:\n   a. PATCH /api/inference/tasks/{id}/claim with agent_id (calls inference_task_claim)\n   b. If claim succeeds (200): spawn `claude -p --dangerously-skip-permissions` with the prompt\n   c. On subprocess exit: read stdout, PATCH /api/inference/tasks/{id}/complete with result\n   d. If claim fails (409 Conflict): skip — another agent claimed it\n4. Reconnects automatically if WebSocket drops (exponential backoff, max 30s)\n5. Logs each dispatch: `⬡  inference-watch: dispatching P1.T2 (feat-auth)`\n\nAdd REST endpoints to hex-nexus routes for the PATCH calls:\n- `PATCH /api/inference/tasks/:id/claim` → calls state.inference_task_claim\n- `PATCH /api/inference/tasks/:id/complete` → calls state.inference_task_complete  \n- `PATCH /api/inference/tasks/:id/fail` → calls state.inference_task_fail\n- `GET /api/inference/tasks/pending` → calls state.inference_task_list_pending\n\nThese routes go in a new file hex-nexus/src/routes/inference.rs.\n\nIn hex-cli/src/commands/mod.rs and main.rs, add the Inference subcommand:\n```rust\nInference { action: InferenceAction }\n// InferenceAction::Watch { agent_id: Option<String> }\n```\n\nAdd dependency to hex-cli/Cargo.toml if tokio-tungstenite not already present:\n```toml\ntokio-tungstenite = { version = \"0.21\", features = [\"native-tls\"] }\n```",
+          "files": [
+            "hex-cli/src/commands/inference.rs",
+            "hex-cli/src/commands/mod.rs",
+            "hex-cli/src/main.rs",
+            "hex-cli/Cargo.toml",
+            "hex-nexus/src/routes/inference.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "done_condition": "hex inference watch command exists; cargo check passes on both crates; ws://localhost:5555/ws/inference connectable"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Session start hook: auto-launch inference watch",
+      "tier": 2,
+      "description": "Update hex hook session-start to spawn 'hex inference watch' as a background process after agent registration. This makes the autonomous dispatch sidecar invisible to the user — it starts automatically when a CC session registers.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli 2>&1 | tail -5",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P5.T1",
+          "name": "Spawn hex inference watch from session-start hook",
+          "adapter": "hex-cli/src/commands/hook.rs",
+          "description": "In hex-cli/src/commands/hook.rs, in the session_start handler (after agent registration succeeds):\n\n1. Check if `hex inference watch` is already running (check for lock file at `~/.hex/sessions/inference-watch-{agent_id}.pid`)\n2. If not running, spawn as a detached background process:\n```rust\nlet hex_bin = std::env::current_exe()\n    .unwrap_or_else(|_| std::path::PathBuf::from(\"hex\"));\nlet child = std::process::Command::new(&hex_bin)\n    .args([\"inference\", \"watch\", \"--agent-id\", &agent_id, \"--daemon\"])\n    .stdout(std::process::Stdio::null())\n    .stderr(std::process::Stdio::null())\n    .spawn()\n    .ok();\nif let Some(child) = child {\n    // Write PID to lock file\n    let pid_path = sessions_dir.join(format!(\"inference-watch-{}.pid\", &agent_id));\n    let _ = std::fs::write(&pid_path, child.id().to_string());\n    println!(\"⬡  inference-watch started (pid {})\", child.id());\n}\n```\n\n3. The `--daemon` flag in `hex inference watch` causes it to also clean up the PID file on exit.\n\nThe lock file prevents duplicate watchers if session-start fires multiple times.",
+          "files": [
+            "hex-cli/src/commands/hook.rs"
+          ],
+          "done_condition": "session-start spawns inference watch if not running; PID file written; no duplicate processes"
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "name": "Dashboard: inference task visibility",
+      "tier": 3,
+      "description": "Add inference task status to the hex dashboard. Show live Pending/InProgress/Completed counts, task IDs, and workplan attribution. Uses SpacetimeDB subscription already present in the frontend client.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-nexus 2>&1 | tail -3",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P6.T1",
+          "name": "Add InferenceTask SpacetimeDB subscription to dashboard",
+          "adapter": "hex-nexus/assets/src/",
+          "description": "In hex-nexus/assets/src/ (Solid.js dashboard), add a SpacetimeDB subscription for the inference_task table.\n\nThe STDB client bindings are auto-generated in hex-nexus/assets/src/spacetimedb/. After deploying the updated WASM module, regenerate the client bindings:\n```bash\nspacetime generate --lang typescript --out-dir hex-nexus/assets/src/spacetimedb\n```\n\nIn the dashboard, add an InferenceTasks panel (similar to the swarm tasks panel):\n- Subscribe to inference_task table\n- Show a live counter: Pending / InProgress / Completed\n- Show a table of active (Pending + InProgress) tasks with columns: Task ID, Workplan, Phase, Agent, Status\n- InProgress rows should highlight with a spinner\n- Completed rows fade out after 5 seconds\n\nAdd to the main dashboard layout alongside the swarm panel.",
+          "files": [
+            "hex-nexus/assets/src/spacetimedb/",
+            "hex-nexus/assets/src/App.tsx"
+          ],
+          "done_condition": "Dashboard shows inference task lifecycle in real-time; rebuild: cargo build -p hex-nexus --release"
+        }
+      ]
+    },
+    {
+      "id": "P7",
+      "name": "End-to-end verification: fully autonomous workplan",
+      "tier": 5,
+      "description": "Prove the AAIDE vision: run a multi-phase workplan to completion with ZERO UserPromptSubmit events from a human after execution starts. Measure latency from task-queued to agent-dispatched.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli -p hex-nexus 2>&1 | tail -3",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P7.T1",
+          "name": "Smoke test: autonomous workplan execution",
+          "adapter": "integration",
+          "description": "1. Start fresh: ensure `hex inference watch` is NOT running (kill any existing processes)\n2. Start a new CC session (simulates a fresh developer starting work)\n3. Verify `hex hook session-start` auto-launches inference watch: `ps aux | grep inference-watch`\n4. Execute a multi-phase workplan: `mcp__hex__hex_plan_execute` on a 2+ phase workplan\n5. After execution starts, DO NOT send any user messages — set a 10-minute timer\n6. After timer expires, check `mcp__hex__hex_plan_report` — verify all phases completed\n7. Check STDB inference_task table: all rows should be Completed with non-empty result\n8. Check latency: inference_task.updated_at - inference_task.created_at for InProgress transition should be < 500ms\n9. Verify no hexflo_memory keys with prefix 'inference:queue:' exist (old path fully retired)\n\nSuccess: all phases complete without manual intervention. The developer started a workplan, walked away, came back to a finished feature.",
+          "files": [],
+          "done_condition": "Workplan completes autonomously; all inference_task rows Completed in STDB; dispatch latency < 500ms; hexflo_memory queue keys absent"
+        }
+      ]
+    }
+  ],
+  "successCriteria": [
+    "hex plan execute completes all phases without any UserPromptSubmit from a human after start",
+    "inference_task rows visible in SpacetimeDB with full Pending→InProgress→Completed lifecycle",
+    "Dashboard shows live inference task status alongside swarm tasks",
+    "Dispatch latency (task queued → agent dispatched) < 500ms",
+    "hex inference watch reconnects automatically after nexus restart",
+    "hexflo_memory inference:queue:* namespace retired and removed",
+    "cargo check passes on hex-cli, hex-nexus with no new warnings"
+  ]
+}
