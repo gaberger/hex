@@ -171,6 +171,8 @@ async fn list() -> anyhow::Result<()> {
             let raw_title = task["title"].as_str().unwrap_or("-");
             let title = extract_task_title(raw_title);
             let status = task["status"].as_str().unwrap_or("pending");
+            // agentId is serialized as camelCase by SwarmTaskInfo (rename_all = "camelCase").
+            // Unassigned tasks have agent_id = "" (empty string, not null) — this is expected.
             let agent_id = task["agentId"]
                 .as_str()
                 .or_else(|| task["agent_id"].as_str())
