@@ -569,8 +569,82 @@ impl WorkplanExecutor {
             let agent_mgr = shared_state.agent_manager.clone();
             let workplan_id = workplan.id.clone();
 
+            // ADR-2604010000 P3B.2: Route to Path B (inference queue) when running inside
+            // a Claude Code session (CLAUDECODE=1 in nexus env). Path A (spawn hex-agent)
+            // is used otherwise. Pre-extract fields before config is moved into the closure.
+            let use_path_b = crate::orchestration::is_claude_code_session();
+            let path_b_agent_name = config.agent_name.clone().unwrap_or_default();
+            let path_b_project_dir = config.project_dir.clone();
+            let path_b_model = config.model.clone().unwrap_or_default();
+            let path_b_prompt = config.prompt.clone().unwrap_or_default();
+
             handles.push(tokio::spawn(async move {
-                let spawn_result = if let Some(ref mgr) = agent_mgr {
+                let spawn_result = if use_path_b {
+                    // Path B: store queue entry in HexFlo memory, broadcast inbox
+                    // notification, then poll until the outer Claude Code session
+                    // marks the entry Completed or Failed (or 30-min timeout).
+                    let queue_id = uuid::Uuid::new_v4().to_string();
+                    let queue_key = format!("inference:queue:{}", queue_id);
+                    let entry_json = serde_json::json!({
+                        "id": queue_id,
+                        "task_id": task_id,
+                        "workplan_id": workplan_id,
+                        "prompt": path_b_prompt,
+                        "role": path_b_agent_name.clone(),
+                        "status": "Pending",
+                        "created_at": chrono::Utc::now().to_rfc3339(),
+                    }).to_string();
+                    if let Err(e) = sp.hexflo_memory_store(&queue_key, &entry_json, "global").await {
+                        tracing::warn!(queue_id = %queue_id, error = %e, "Path B: failed to store queue entry");
+                    }
+                    let payload = serde_json::json!({
+                        "queue_id": queue_id,
+                        "task_id": task_id,
+                        "workplan_id": workplan_id,
+                        "summary": format!("Task queued: {}", task_label),
+                    }).to_string();
+                    let _ = sp.inbox_notify_all("", 1, "inference-queue", &payload).await;
+                    tracing::info!(queue_id = %queue_id, task_id = %task_id, "Path B: task enqueued for outer Claude Code session");
+                    // Poll every 5 seconds until Completed/Failed or 30-minute timeout.
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1800);
+                    loop {
+                        if std::time::Instant::now() > deadline {
+                            break Err(format!("Path B timeout: queue entry {queue_id} not completed within 30 minutes"));
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        if let Ok(Some(raw)) = sp.hexflo_memory_retrieve(&queue_key).await {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                                match v.get("status").and_then(|s| s.as_str()).unwrap_or("") {
+                                    "Completed" => {
+                                        let agent_id = v.get("agent_id")
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("path-b")
+                                            .to_string();
+                                        break Ok(crate::orchestration::agent_manager::AgentInstance {
+                                            id: agent_id,
+                                            process_id: 0,
+                                            agent_name: path_b_agent_name,
+                                            project_dir: path_b_project_dir,
+                                            model: path_b_model,
+                                            status: crate::orchestration::agent_manager::AgentStatus::Completed,
+                                            started_at: chrono::Utc::now().to_rfc3339(),
+                                            ended_at: Some(chrono::Utc::now().to_rfc3339()),
+                                            metrics: None,
+                                        });
+                                    }
+                                    "Failed" => {
+                                        let error = v.get("error")
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("Path B task failed")
+                                            .to_string();
+                                        break Err(error);
+                                    }
+                                    _ => {} // Pending or Claimed — keep polling
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(ref mgr) = agent_mgr {
                     mgr.spawn_agent(config).await
                 } else {
                     Err("AgentManager not initialized".to_string())

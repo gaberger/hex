@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
 use http::StatusCode;
@@ -458,6 +458,54 @@ pub async fn list_workplans(
             Json(json!({ "error": e })),
         ),
     }
+}
+
+/// GET /api/workplan/by-path?path=<filename> — find most recent execution for a workplan file
+///
+/// Searches HexFlo memory for all keys prefixed with `workplan:`, deserializes each
+/// `ExecutionState`, filters to those whose `workplan_path` ends with the given filename,
+/// and returns the most recently updated match. Returns 404 if none found.
+#[derive(Debug, Deserialize)]
+pub struct ByPathQuery {
+    pub path: String,
+}
+
+pub async fn workplan_by_path(
+    State(state): State<SharedState>,
+    Query(params): Query<ByPathQuery>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let sp = match state.state_port.as_ref() {
+        Some(sp) => sp,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "State port not available" }))),
+    };
+
+    let entries = match sp.hexflo_memory_search("workplan:").await {
+        Ok(e) => e,
+        Err(e) => return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    };
+
+    let filename = &params.path;
+    let mut matches: Vec<crate::orchestration::workplan_executor::ExecutionState> = entries
+        .into_iter()
+        .filter_map(|(_, value)| serde_json::from_str(&value).ok())
+        .filter(|es: &crate::orchestration::workplan_executor::ExecutionState| {
+            es.workplan_path.ends_with(filename.as_str())
+        })
+        .collect();
+
+    if matches.is_empty() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("No workplan execution found for '{}'", filename) })),
+        );
+    }
+
+    matches.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+    (StatusCode::OK, Json(json!({ "ok": true, "data": matches[0] })))
 }
 
 /// GET /api/workplan/{id} — detailed status of a specific workplan execution
