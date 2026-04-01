@@ -62,6 +62,17 @@ pub enum InferenceAction {
     },
     /// Register and calibrate the key default models (run once after install)
     Setup,
+    /// Watch for queued inference tasks and dispatch them autonomously via claude subprocess
+    Watch {
+        /// Agent ID (auto-resolved from session file if omitted)
+        #[arg(long)]
+        agent_id: Option<String>,
+        /// Run as background daemon (suppress output)
+        #[arg(long)]
+        daemon: bool,
+    },
+    /// List pending inference queue tasks
+    Queue,
 }
 
 pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
@@ -79,6 +90,8 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         }
         InferenceAction::Remove { provider_id } => remove_provider(&provider_id).await,
         InferenceAction::Setup => setup_defaults().await,
+        InferenceAction::Watch { agent_id, daemon } => watch(agent_id, daemon).await,
+        InferenceAction::Queue => queue_list().await,
     }
 }
 
@@ -1038,5 +1051,183 @@ async fn setup_defaults() -> anyhow::Result<()> {
         println!("{} {}/{} models calibrated.", "!".yellow(), calibrated, DEFAULT_MODELS.len());
     }
 
+    Ok(())
+}
+
+// ── hex inference watch ────────────────────────────────────────────────────
+
+/// InferenceTaskPush mirrors the server-side struct in hex-nexus/src/state.rs.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct InferenceTaskPush {
+    id: String,
+    workplan_id: String,
+    task_id: String,
+    phase: String,
+    prompt: String,
+    role: String,
+}
+
+/// Connect to /ws/inference and dispatch incoming tasks autonomously.
+///
+/// Each message received is an InferenceTaskPush. We:
+///   1. Claim the task via PATCH /api/inference/queue/{id} {"status":"claimed"}
+///   2. Spawn a tokio task that calls `claude --dangerously-skip-permissions -p <prompt>`
+///   3. Report result/failure back via PATCH /api/inference/queue/{id}
+///
+/// The loop reconnects on disconnect (5-second backoff).
+async fn watch(agent_id_opt: Option<String>, daemon: bool) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    let agent_id = agent_id_opt
+        .or_else(crate::nexus_client::read_session_agent_id)
+        .unwrap_or_else(|| "unknown".to_string());
+
+    if !daemon {
+        let short_id = &agent_id[..8.min(agent_id.len())];
+        println!("{} inference-watch: connecting (agent {})", "⬡".cyan(), short_id);
+    }
+
+    let base_url = nexus.url().to_string();
+    let ws_url = base_url
+        .replace("http://", "ws://")
+        .replace("https://", "wss://");
+    let ws_url = format!("{}/ws/inference", ws_url);
+
+    loop {
+        match connect_and_watch(&ws_url, &agent_id, &base_url, daemon).await {
+            Ok(()) => break,
+            Err(e) => {
+                if !daemon {
+                    eprintln!("{} inference-watch: reconnecting ({})...", "⬡".yellow(), e);
+                }
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn connect_and_watch(
+    ws_url: &str,
+    agent_id: &str,
+    nexus_base: &str,
+    daemon: bool,
+) -> anyhow::Result<()> {
+    use futures_util::StreamExt;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url).await?;
+
+    while let Some(msg) = ws.next().await {
+        match msg? {
+            Message::Text(text) => {
+                if let Ok(push) = serde_json::from_str::<InferenceTaskPush>(&text) {
+                    if !daemon {
+                        println!(
+                            "{} inference-watch: dispatching {}/{}",
+                            "⬡".cyan(),
+                            push.workplan_id,
+                            push.task_id
+                        );
+                    }
+
+                    // Claim the task (CAS — first agent to patch wins).
+                    let claim_url = format!("{}/api/inference/queue/{}", nexus_base, push.id);
+                    let http = reqwest::Client::new();
+                    let claim_resp = http
+                        .patch(&claim_url)
+                        .header("X-Hex-Agent-Id", agent_id)
+                        .json(&serde_json::json!({ "status": "claimed" }))
+                        .send()
+                        .await;
+
+                    let claimed = claim_resp
+                        .and_then(|r| Ok(r.status().is_success()))
+                        .unwrap_or(false);
+
+                    if claimed {
+                        let push_id = push.id.clone();
+                        let agent_id_owned = agent_id.to_string();
+                        let nexus_base_owned = nexus_base.to_string();
+                        tokio::spawn(async move {
+                            dispatch_inference_task(push, agent_id_owned, nexus_base_owned).await;
+                        });
+                        if !daemon {
+                            println!("{} inference-watch: claimed {}", "⬡".green(), push_id);
+                        }
+                    } else if !daemon {
+                        println!("{} inference-watch: claim lost for {} (another agent won)", "⬡".yellow(), push.id);
+                    }
+                }
+            }
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+async fn dispatch_inference_task(push: InferenceTaskPush, agent_id: String, nexus_base: String) {
+    let prompt = format!("HEXFLO_TASK:{}\n\n{}", push.task_id, push.prompt);
+
+    let result = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("claude")
+            .args(["--dangerously-skip-permissions", "-p", &prompt])
+            .output()
+    })
+    .await;
+
+    let http = reqwest::Client::new();
+
+    let url = format!("{}/api/inference/queue/{}", nexus_base, push.id);
+    let body = match result {
+        Ok(Ok(out)) if out.status.success() => {
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            let snippet = text[..200.min(text.len())].to_string();
+            serde_json::json!({ "status": "completed", "result": snippet })
+        }
+        Ok(Ok(out)) => {
+            let text = String::from_utf8_lossy(&out.stderr).to_string();
+            let snippet = text[..200.min(text.len())].to_string();
+            serde_json::json!({ "status": "failed", "error": snippet })
+        }
+        Ok(Err(e)) => {
+            serde_json::json!({ "status": "failed", "error": e.to_string() })
+        }
+        Err(e) => {
+            serde_json::json!({ "status": "failed", "error": e.to_string() })
+        }
+    };
+    let _ = http
+        .patch(&url)
+        .header("X-Hex-Agent-Id", &agent_id)
+        .json(&body)
+        .send()
+        .await;
+}
+
+/// `hex inference queue` — list pending inference tasks from the nexus.
+async fn queue_list() -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    let resp = nexus.get("/api/inference/queue/pending").await?;
+    let tasks = resp.as_array().cloned().unwrap_or_default();
+
+    if tasks.is_empty() {
+        println!("{} No pending inference tasks", "⬡".cyan());
+        return Ok(());
+    }
+
+    println!("{} Pending inference tasks:", "⬡".cyan());
+    for t in &tasks {
+        let id = t["id"].as_str().unwrap_or("-");
+        let wid = t["workplan_id"].as_str().unwrap_or("-");
+        let tid = t["task_id"].as_str().unwrap_or("-");
+        let status = t["status"].as_str().unwrap_or("-");
+        let role = t["role"].as_str().unwrap_or("-");
+        println!("  {} — {}/{} [{}] role={}", id, wid, tid, status, role);
+    }
     Ok(())
 }
