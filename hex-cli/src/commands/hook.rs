@@ -1819,6 +1819,24 @@ async fn check_inbox() -> Result<()> {
         let payload = n["payload"].as_str().unwrap_or("{}");
         let id = n["id"].as_u64().unwrap_or(0);
         println!("  [{}] #{}: {}", kind, id, payload);
+
+        // ADR-2604010000 Path B: inference-queue notifications require the outer
+        // Claude Code session to spawn an Agent tool with the queued prompt, then
+        // PATCH the queue entry status to Completed/Failed.
+        if kind == "inference-queue" {
+            if let Ok(p) = serde_json::from_str::<serde_json::Value>(payload) {
+                let queue_id = p["queue_id"].as_str().unwrap_or("");
+                let task_id = p["task_id"].as_str().unwrap_or("");
+                let workplan_id = p["workplan_id"].as_str().unwrap_or("");
+                let summary = p["summary"].as_str().unwrap_or("");
+                println!();
+                println!("  PATH-B-TASK: queue_id={} task_id={} workplan_id={}", queue_id, task_id, workplan_id);
+                println!("  ACTION: Spawn Agent tool with prompt from hex memory get inference:queue:{}", queue_id);
+                println!("  AFTER: PATCH /api/inference/queue/{} with {{\"status\":\"Completed\",\"agent_id\":\"<agent_id>\"}}", queue_id);
+                println!("  SUMMARY: {}", summary);
+                println!("  ACK notification #{} after dispatching agent.", id);
+            }
+        }
     }
     println!();
 

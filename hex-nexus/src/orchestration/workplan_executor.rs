@@ -603,7 +603,8 @@ impl WorkplanExecutor {
                         "workplan_id": workplan_id,
                         "summary": format!("Task queued: {}", task_label),
                     }).to_string();
-                    let _ = sp.inbox_notify_all("", 1, "inference-queue", &payload).await;
+                    // Priority 2 = critical (checked by check_inbox on every user prompt via ADR-060)
+                    let _ = sp.inbox_notify_all("", 2, "inference-queue", &payload).await;
                     tracing::info!(queue_id = %queue_id, task_id = %task_id, "Path B: task enqueued for outer Claude Code session");
                     // Poll every 5 seconds until Completed/Failed or 30-minute timeout.
                     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1800);
