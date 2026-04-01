@@ -1,7 +1,6 @@
 # ADR-2404241436: Real-time Development Session Tracking via Push API
 
-## Status
-proposed
+**Status:** proposed
 
 ## Date
 2024-04-24

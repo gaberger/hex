@@ -1,7 +1,6 @@
 # ADR-2504181120: Inference Provider Quality Gates and Pruning
 
-## Status
-proposed
+**Status:** proposed
 
 ## Date
 2025-04-18

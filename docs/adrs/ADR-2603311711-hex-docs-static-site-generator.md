@@ -1,7 +1,6 @@
 # ADR-2506101449: Static Site Generator for hex Documentation
 
-## Status
-proposed
+**Status:** proposed
 
 ## Date
 2025-06-10

@@ -1,6 +1,6 @@
 # ADR-2603312210: Claude Code Bypass Mode for hex-agent
 
-**Status:** Proposed
+**Status:** Retired — superseded by ADR-2604010000 (Unified Execution Path)
 **Date:** 2026-03-31
 **Drivers:** `hex_plan_execute` fails when the Anthropic API key in the secrets vault has no credits, even when invoked from within an active Claude Code session that already has valid credentials.
 
