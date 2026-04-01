@@ -13,7 +13,8 @@
 //!   - Minimum 2s inter-candidate sleep prevents thundering-herd rate exhaustion
 //!   - Model routing uses exact JSON array match, not substring search
 
-use axum::{extract::State, Json};
+use axum::Json;
+use axum::extract::State;
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -609,4 +610,104 @@ pub async fn inference_complete(
             })))
         }
     }
+}
+
+// ── Inference Queue (ADR-2604010000 Path B) ──────────────────────────────
+
+/// An entry in the inference dispatch queue. Stored in HexFlo memory so workers
+/// can claim tasks via GET /api/inference/queue/claim.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InferenceQueueEntry {
+    pub id: String,
+    pub task_id: String,
+    pub workplan_id: String,
+    pub prompt: String,
+    pub role: String,
+    /// "pending" | "claimed" | "completed"
+    pub status: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InferenceQueueRequest {
+    pub task_id: String,
+    pub workplan_id: String,
+    pub prompt: String,
+    pub role: String,
+}
+
+/// POST /api/inference/queue — enqueue an inference task for Path B dispatch.
+///
+/// Creates an `InferenceQueueEntry` with status "pending", persists it in
+/// HexFlo memory under `inference:queue:{id}`, sends an inbox notification,
+/// and returns the queue entry ID so the caller can poll or claim it.
+pub async fn inference_queue(
+    State(state): State<SharedState>,
+    Json(body): Json<InferenceQueueRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let id = uuid::Uuid::new_v4().to_string();
+    let entry = InferenceQueueEntry {
+        id: id.clone(),
+        task_id: body.task_id.clone(),
+        workplan_id: body.workplan_id.clone(),
+        prompt: body.prompt.clone(),
+        role: body.role.clone(),
+        status: "pending".to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+
+    let key = format!("inference:queue:{id}");
+    let value = match serde_json::to_string(&entry) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to serialize InferenceQueueEntry");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("serialization failed: {}", e) })),
+            );
+        }
+    };
+
+    // Persist to HexFlo memory via state_port.
+    if let Some(sp) = state.state_port.as_deref() {
+        if let Err(e) = sp.hexflo_memory_store(&key, &value, "global").await {
+            tracing::error!(error = %e, key = %key, "failed to store inference queue entry");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("memory store failed: {}", e) })),
+            );
+        }
+
+        // Best-effort inbox notification — do not fail the request if notify fails.
+        let msg = format!("Inference task queued: {} ({})", body.task_id, body.role);
+        if let Err(e) = sp
+            .inbox_notify("system", 1, "inference_queue", &msg)
+            .await
+        {
+            tracing::warn!(error = %e, "inbox_notify failed for inference queue entry");
+        }
+    } else {
+        tracing::warn!("state_port not available — inference queue entry not persisted");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "State port not available" })),
+        );
+    }
+
+    tracing::info!(
+        queue_id = %id,
+        task_id = %body.task_id,
+        workplan_id = %body.workplan_id,
+        role = %body.role,
+        "inference task queued"
+    );
+
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "queue_id": id,
+            "task_id": body.task_id,
+            "status": "pending",
+        })),
+    )
 }
