@@ -418,6 +418,15 @@ impl WorkplanExecutor {
         }
 
         Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Completed, None).await.ok();
+        // P5.2: Store full execution record in memory ledger (ADR-2604010000)
+        let exec_key = format!("workplan:{}:execution:{}", workplan.id, execution_id);
+        let exec_val = serde_json::json!({
+            "workplan_id": workplan.id,
+            "execution_id": execution_id,
+            "status": "completed",
+            "completed_at": chrono::Utc::now().to_rfc3339(),
+        }).to_string();
+        let _ = state_port.hexflo_memory_store(&exec_key, &exec_val, "global").await;
         tracing::info!(execution_id = %execution_id, "Workplan execution completed");
     }
 
@@ -544,6 +553,7 @@ impl WorkplanExecutor {
             let task_label = format!("{}: {}", task_id, task.name);
             let sp = Arc::clone(state_port);
             let agent_mgr = shared_state.agent_manager.clone();
+            let workplan_id = workplan.id.clone();
 
             handles.push(tokio::spawn(async move {
                 let spawn_result = if let Some(ref mgr) = agent_mgr {
@@ -559,6 +569,16 @@ impl WorkplanExecutor {
                             agent_id: Some(agent.id.clone()),
                             result: None,
                         }).await;
+                        // P5.1: Store task outcome in memory ledger (ADR-2604010000)
+                        let outcome_key = format!("workplan:{}:task:{}:outcome", workplan_id, task_id);
+                        let outcome_val = serde_json::json!({
+                            "task_id": task_id,
+                            "workplan_id": workplan_id,
+                            "status": "completed",
+                            "agent_id": agent.id,
+                            "completed_at": chrono::Utc::now().to_rfc3339(),
+                        }).to_string();
+                        let _ = sp.hexflo_memory_store(&outcome_key, &outcome_val, "global").await;
                         Ok((task_id, agent.id))
                     }
                     Err(e) => {
@@ -568,6 +588,16 @@ impl WorkplanExecutor {
                             agent_id: None,
                             result: Some(e.clone()),
                         }).await;
+                        // P5.1: Store task failure in memory ledger (ADR-2604010000)
+                        let outcome_key = format!("workplan:{}:task:{}:outcome", workplan_id, task_id);
+                        let outcome_val = serde_json::json!({
+                            "task_id": task_id,
+                            "workplan_id": workplan_id,
+                            "status": "failed",
+                            "error": e,
+                            "completed_at": chrono::Utc::now().to_rfc3339(),
+                        }).to_string();
+                        let _ = sp.hexflo_memory_store(&outcome_key, &outcome_val, "global").await;
                         Err(format!("Task '{}': {}", task_label, e))
                     }
                 }
