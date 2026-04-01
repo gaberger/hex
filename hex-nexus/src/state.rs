@@ -27,6 +27,8 @@ pub struct AppState {
     pub activities: RwLock<VecDeque<ActivityEntry>>,
     // WebSocket broadcast channel (ephemeral)
     pub ws_tx: broadcast::Sender<WsEnvelope>,
+    // Inference task push channel (ADR-2604011200) — feeds /ws/inference subscribers
+    pub inference_tx: InferenceTxBus,
     pub auth_token: Option<String>,
     pub fleet: FleetManager,
     pub anthropic_api_key: Option<String>,
@@ -56,6 +58,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(auth_token: Option<String>, anthropic_api_key: Option<String>) -> Self {
         let (ws_tx, _) = broadcast::channel(512);
+        let (inference_tx, _) = broadcast::channel(64);
         if anthropic_api_key.is_some() {
             tracing::info!("ANTHROPIC_API_KEY loaded — chat LLM bridge enabled");
         } else {
@@ -66,6 +69,7 @@ impl AppState {
             results: RwLock::new(HashMap::new()),
             activities: RwLock::new(VecDeque::new()),
             ws_tx,
+            inference_tx,
             auth_token,
             fleet: FleetManager::new(),
             anthropic_api_key,
@@ -136,6 +140,21 @@ pub struct WsEnvelope {
     pub event: String,
     pub data: serde_json::Value,
 }
+
+// ── Inference Task Push (ADR-2604011200) ────────────────
+
+/// Push payload for /ws/inference subscribers.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InferenceTaskPush {
+    pub id: String,
+    pub workplan_id: String,
+    pub task_id: String,
+    pub phase: String,
+    pub prompt: String,
+    pub role: String,
+}
+
+pub type InferenceTxBus = broadcast::Sender<InferenceTaskPush>;
 
 // ── Command Types (Hub → Project) ───────────
 
