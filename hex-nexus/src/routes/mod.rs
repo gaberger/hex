@@ -648,6 +648,8 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         .route("/api/inference/queue/pending", get(inference::queue_pending))
         .route("/api/inference/queue/{id}", patch(inference::queue_update))
+        // SSE streaming chat endpoint (hex chat TUI — wp-cli-chat-tui)
+        .route("/api/inference/chat/stream", post(inference::inference_stream))
         // ═══════════════════════════════════════════════════════════
         // HEXFLO COORDINATION — write routes stay, reads via SpacetimeDB
         // ═══════════════════════════════════════════════════════════

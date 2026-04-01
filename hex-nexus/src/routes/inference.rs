@@ -834,3 +834,305 @@ pub async fn queue_update(
         ),
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streaming chat endpoint (ADR-2604011300)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// POST /api/inference/chat/stream — streaming LLM completion via Server-Sent Events.
+///
+/// Same provider selection as /api/inference/complete but passes stream=true to
+/// the upstream. Emits SSE events with token deltas terminated by a done event.
+///
+/// Event data shapes:
+///   `{"token":"hello"}`
+///   `{"done":true,"model":"...","input_tokens":42,"output_tokens":7}`
+///   `{"error":"..."}`   — fatal error; stream closes after this event
+pub async fn inference_stream(
+    State(state): State<SharedState>,
+    Json(body): Json<InferenceCompleteRequest>,
+) -> axum::response::Response {
+    use axum::response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse,
+    };
+    use futures::channel::mpsc;
+    use futures::SinkExt;
+    use std::convert::Infallible;
+
+    let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(128);
+    let mut tx = tx;
+
+    let state = state.clone();
+    let requested_model = body.model.clone();
+    let messages = body.messages.clone();
+    let max_tokens = body.max_tokens;
+
+    tokio::spawn(async move {
+        match pick_stream_provider(&state, requested_model.as_deref()).await {
+            None => {
+                let _ = tx.send(Ok(Event::default().data(
+                    r#"{"error":"no inference provider configured — run `hex inference add` or set OPENROUTER_API_KEY"}"#,
+                ))).await;
+            }
+            Some(ep) => {
+                stream_inference(&ep, &messages, max_tokens, &mut tx).await;
+            }
+        }
+    });
+
+    Sse::new(rx)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+/// Select a single provider for the streaming path (simplified — no retry chain).
+async fn pick_stream_provider(
+    state: &crate::state::AppState,
+    requested_model: Option<&str>,
+) -> Option<crate::routes::secrets::InferenceEndpointEntry> {
+    // 1. Registered SpacetimeDB providers
+    if let Some(ref stdb) = state.inference_stdb {
+        if let Ok(providers) = stdb.list_providers().await {
+            let matched = if let Some(model) = requested_model {
+                providers.iter().find(|p| {
+                    serde_json::from_str::<Vec<String>>(&p.models_json)
+                        .map(|ms| ms.iter().any(|m| m == model))
+                        .unwrap_or_else(|_| p.models_json.contains(model))
+                }).or_else(|| {
+                    if model.contains('/') {
+                        providers.iter().find(|p| {
+                            p.provider_type == "openrouter" && !p.api_key_ref.is_empty()
+                        })
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                providers.first()
+            };
+
+            if let Some(p) = matched {
+                let first_model = p.models_json
+                    .trim_start_matches('[').trim_end_matches(']')
+                    .split(',').next().unwrap_or(&p.models_json)
+                    .trim().trim_matches('"').to_string();
+                let model = requested_model.map(|s| s.to_string()).unwrap_or(first_model);
+                let mut ep = crate::routes::secrets::InferenceEndpointEntry {
+                    id: p.provider_id.clone(),
+                    url: p.base_url.clone(),
+                    provider: p.provider_type.clone(),
+                    model,
+                    status: "unknown".into(),
+                    requires_auth: !p.api_key_ref.is_empty(),
+                    secret_key: p.api_key_ref.clone(),
+                    health_checked_at: p.last_health_check.clone(),
+                };
+                // Resolve secret key reference
+                if ep.requires_auth && !ep.secret_key.is_empty() && !ep.secret_key.starts_with("sk-") {
+                    let key_ref = ep.secret_key.clone();
+                    if let Ok(val) = std::env::var(&key_ref) {
+                        ep.secret_key = val;
+                    } else if let Some(ref ss) = state.spacetime_secrets {
+                        if let Ok(Ok(Some(val))) = tokio::time::timeout(
+                            std::time::Duration::from_secs(3),
+                            ss.vault_get(&key_ref),
+                        ).await {
+                            ep.secret_key = val;
+                        }
+                    }
+                }
+                return Some(ep);
+            }
+        }
+    }
+
+    // 2. Synthetic OpenRouter endpoint from key in vault or env
+    let or_key = state.openrouter_api_key.clone()
+        .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+        .or_else(|| {
+            state.anthropic_api_key.as_ref()
+                .filter(|k| k.starts_with("sk-or-v1-"))
+                .cloned()
+        })?;
+
+    let model = requested_model.map(|m| {
+        if m.contains('/') { m.to_string() } else { format!("openai/{}", m) }
+    }).unwrap_or_else(|| "openai/gpt-4o-mini".to_string());
+
+    Some(crate::routes::secrets::InferenceEndpointEntry {
+        id: "openrouter-stream".into(),
+        url: "https://openrouter.ai/api/v1".into(),
+        provider: "openrouter".into(),
+        model,
+        status: "ok".into(),
+        requires_auth: true,
+        secret_key: or_key,
+        health_checked_at: String::new(),
+    })
+}
+
+type SseTx = futures::channel::mpsc::Sender<
+    Result<axum::response::sse::Event, std::convert::Infallible>,
+>;
+
+/// Perform a streaming HTTP request and forward token deltas onto `tx`.
+async fn stream_inference(
+    ep: &crate::routes::secrets::InferenceEndpointEntry,
+    messages: &[serde_json::Value],
+    max_tokens: u32,
+    tx: &mut SseTx,
+) {
+    use axum::response::sse::Event;
+    use futures::{SinkExt, StreamExt};
+
+    let is_openrouter = ep.provider == "openrouter" || ep.url.contains("openrouter.ai");
+    let is_ollama = ep.provider == "ollama";
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let msg = json!({"error": format!("client build failed: {e}")});
+            let _ = tx.send(Ok(Event::default().data(msg.to_string()))).await;
+            return;
+        }
+    };
+
+    let (url, body) = if is_openrouter {
+        (
+            "https://openrouter.ai/api/v1/chat/completions".to_string(),
+            json!({ "model": ep.model, "messages": messages, "max_tokens": max_tokens, "stream": true }),
+        )
+    } else if is_ollama {
+        (
+            format!("{}/api/chat", ep.url.trim_end_matches('/')),
+            json!({ "model": ep.model, "messages": messages, "stream": true }),
+        )
+    } else {
+        (
+            format!("{}/v1/chat/completions", ep.url.trim_end_matches('/')),
+            json!({ "model": ep.model, "messages": messages, "max_tokens": max_tokens, "stream": true }),
+        )
+    };
+
+    let mut req = client.post(&url).json(&body);
+    if is_openrouter {
+        if ep.secret_key.is_empty() {
+            let _ = tx.send(Ok(Event::default().data(r#"{"error":"OPENROUTER_API_KEY not configured"}"#))).await;
+            return;
+        }
+        req = req
+            .header("Authorization", format!("Bearer {}", ep.secret_key))
+            .header("HTTP-Referer", "https://github.com/hex-intf")
+            .header("X-Title", "hex-agent");
+    } else if !ep.secret_key.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", ep.secret_key));
+    }
+
+    let resp = match req.send().await {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            let status = r.status().as_u16();
+            let text = r.text().await.unwrap_or_default();
+            let msg = json!({"error": format!("HTTP {status}: {}", &text[..text.len().min(200)])});
+            let _ = tx.send(Ok(Event::default().data(msg.to_string()))).await;
+            return;
+        }
+        Err(e) => {
+            let msg = json!({"error": format!("connection failed: {e}")});
+            let _ = tx.send(Ok(Event::default().data(msg.to_string()))).await;
+            return;
+        }
+    };
+
+    let mut byte_stream = resp.bytes_stream();
+    let mut line_buf = String::new();
+    let mut output_tokens: u64 = 0;
+    let model_name = ep.model.clone();
+
+    while let Some(chunk) = byte_stream.next().await {
+        let bytes = match chunk {
+            Ok(b) => b,
+            Err(e) => {
+                let msg = json!({"error": format!("stream read error: {e}")});
+                let _ = tx.send(Ok(Event::default().data(msg.to_string()))).await;
+                return;
+            }
+        };
+
+        line_buf.push_str(&String::from_utf8_lossy(&bytes));
+
+        loop {
+            match line_buf.find('\n') {
+                None => break,
+                Some(pos) => {
+                    let line = line_buf[..pos].trim().to_string();
+                    line_buf = line_buf[pos + 1..].to_string();
+
+                    if line.is_empty() || line == "data: [DONE]" {
+                        continue;
+                    }
+
+                    let json_str = line.strip_prefix("data: ").unwrap_or(&line);
+                    let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) else {
+                        continue;
+                    };
+
+                    if is_ollama {
+                        if val.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
+                            let ev = json!({"done":true,"model":model_name,"input_tokens":0u64,"output_tokens":output_tokens});
+                            let _ = tx.send(Ok(Event::default().data(ev.to_string()))).await;
+                            return;
+                        }
+                        if let Some(tok) = val.get("message")
+                            .and_then(|m| m.get("content"))
+                            .and_then(|c| c.as_str())
+                        {
+                            if !tok.is_empty() {
+                                output_tokens += 1;
+                                let ev = json!({"token": tok});
+                                let _ = tx.send(Ok(Event::default().data(ev.to_string()))).await;
+                            }
+                        }
+                    } else {
+                        // OpenAI-compatible SSE delta
+                        if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
+                            if let Some(choice) = choices.first() {
+                                let finish = choice.get("finish_reason")
+                                    .and_then(|r| r.as_str()).unwrap_or("");
+                                if !finish.is_empty() && finish != "null" {
+                                    let in_tok = val.get("usage")
+                                        .and_then(|u| u.get("prompt_tokens"))
+                                        .and_then(|v| v.as_u64()).unwrap_or(0);
+                                    let out_tok = val.get("usage")
+                                        .and_then(|u| u.get("completion_tokens"))
+                                        .and_then(|v| v.as_u64()).unwrap_or(output_tokens);
+                                    let ev = json!({"done":true,"model":model_name,"input_tokens":in_tok,"output_tokens":out_tok});
+                                    let _ = tx.send(Ok(Event::default().data(ev.to_string()))).await;
+                                    return;
+                                }
+                                if let Some(tok) = choice.get("delta")
+                                    .and_then(|d| d.get("content"))
+                                    .and_then(|c| c.as_str())
+                                {
+                                    if !tok.is_empty() {
+                                        output_tokens += 1;
+                                        let ev = json!({"token": tok});
+                                        let _ = tx.send(Ok(Event::default().data(ev.to_string()))).await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Stream ended without an explicit done event
+    let ev = json!({"done":true,"model":model_name,"input_tokens":0u64,"output_tokens":output_tokens});
+    let _ = tx.send(Ok(Event::default().data(ev.to_string()))).await;
+}
