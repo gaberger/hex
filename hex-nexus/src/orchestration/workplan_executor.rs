@@ -618,7 +618,6 @@ impl WorkplanExecutor {
                     // notification, then poll until the outer Claude Code session
                     // marks the entry Completed or Failed (or 30-min timeout).
                     let queue_id = uuid::Uuid::new_v4().to_string();
-                    let queue_key = format!("inference:queue:{}", queue_id);
                     let created_at = chrono::Utc::now().to_rfc3339();
                     if let Err(e) = sp.inference_task_create(
                         &queue_id,
@@ -646,43 +645,43 @@ impl WorkplanExecutor {
                         let _ = sp.inbox_notify_all("", 2, "inference-queue", &payload).await;
                         tracing::info!(queue_id = %queue_id, task_id = %task_id, "Path B: task enqueued, broadcast notification (no session found)");
                     }
-                    // Poll every 5 seconds until Completed/Failed or 30-minute timeout.
-                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1800);
+                    // Poll STDB inference_task for completion (2s interval, faster than 5s memory poll)
+                    let mut elapsed_secs = 0u64;
+                    let timeout_secs = 1800u64; // 30 minutes
                     loop {
-                        if std::time::Instant::now() > deadline {
-                            break Err(format!("Path B timeout: queue entry {queue_id} not completed within 30 minutes"));
-                        }
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        if let Ok(Some(raw)) = sp.hexflo_memory_retrieve(&queue_key).await {
-                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-                                match v.get("status").and_then(|s| s.as_str()).unwrap_or("") {
-                                    "Completed" => {
-                                        let agent_id = v.get("agent_id")
-                                            .and_then(|s| s.as_str())
-                                            .unwrap_or("path-b")
-                                            .to_string();
-                                        break Ok(crate::orchestration::agent_manager::AgentInstance {
-                                            id: agent_id,
-                                            process_id: 0,
-                                            agent_name: path_b_agent_name,
-                                            project_dir: path_b_project_dir,
-                                            model: path_b_model,
-                                            status: crate::orchestration::agent_manager::AgentStatus::Completed,
-                                            started_at: chrono::Utc::now().to_rfc3339(),
-                                            ended_at: Some(chrono::Utc::now().to_rfc3339()),
-                                            metrics: None,
-                                        });
-                                    }
-                                    "Failed" => {
-                                        let error = v.get("error")
-                                            .and_then(|s| s.as_str())
-                                            .unwrap_or("Path B task failed")
-                                            .to_string();
-                                        break Err(error);
-                                    }
-                                    _ => {} // Pending or Claimed — keep polling
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        elapsed_secs += 2;
+
+                        match sp.inference_task_get(&queue_id).await {
+                            Ok(Some(ref task)) => match task.status.as_str() {
+                                "Completed" => break Ok(crate::orchestration::agent_manager::AgentInstance {
+                                    id: queue_id.clone(),
+                                    process_id: 0,
+                                    agent_name: path_b_agent_name,
+                                    project_dir: path_b_project_dir,
+                                    model: path_b_model,
+                                    status: crate::orchestration::agent_manager::AgentStatus::Completed,
+                                    started_at: chrono::Utc::now().to_rfc3339(),
+                                    ended_at: Some(chrono::Utc::now().to_rfc3339()),
+                                    metrics: None,
+                                }),
+                                "Failed" => {
+                                    break Err(format!("inference task {} failed: {}", queue_id, task.error));
                                 }
+                                _ => {} // Pending or InProgress — keep waiting
+                            },
+                            Ok(None) => {
+                                // Row not found yet — STDB may not have synced; keep waiting
                             }
+                            Err(e) => {
+                                tracing::warn!("inference_task_get error for {}: {}", queue_id, e);
+                            }
+                        }
+
+                        if elapsed_secs >= timeout_secs {
+                            let now = chrono::Utc::now().to_rfc3339();
+                            let _ = sp.inference_task_fail(&queue_id, "executor timeout", &now).await;
+                            break Err(format!("inference task {} timed out after {}s", queue_id, timeout_secs));
                         }
                     }
                 } else if let Some(ref mgr) = agent_mgr {
