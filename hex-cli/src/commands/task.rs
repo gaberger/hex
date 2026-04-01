@@ -149,6 +149,9 @@ async fn list() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Sort by swarm_name so tasks from the same swarm are contiguous
+    all_tasks.sort_by(|a, b| a.0.cmp(&b.0));
+
     // Count stats
     let completed = all_tasks.iter().filter(|(_, _, t)| t["status"].as_str() == Some("completed")).count();
     let total = all_tasks.len();
@@ -162,7 +165,8 @@ async fn list() -> anyhow::Result<()> {
     println!();
     let rows: Vec<Vec<String>> = all_tasks
         .iter()
-        .map(|(swarm_name, _swarm_id, task)| {
+        .map(|(swarm_name, swarm_id, task)| {
+            let _ = swarm_id; // available for swarm boundary detection if needed
             let tid = task["id"].as_str().unwrap_or("-");
             let raw_title = task["title"].as_str().unwrap_or("-");
             let title = extract_task_title(raw_title);
