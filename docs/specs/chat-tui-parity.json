@@ -1,0 +1,114 @@
+{
+  "feature": "chat-tui-parity",
+  "description": "opencode-parity TUI enhancements for hex chat: inline diff viewer, model picker overlay, file context injection, session sidebar",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "Diff output in tool results is rendered with syntax highlighting",
+      "given": "A tool result (Role::Tool message) whose content contains unified diff lines",
+      "when": "render_messages renders the tool message",
+      "then": "Lines starting with '+' are Green, '-' are Red, '@@' are Cyan; context lines are Gray",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "/model with no args opens an interactive model picker overlay",
+      "given": "An active hex chat session",
+      "when": "The user types /model and presses Enter",
+      "then": "A centered popup overlay appears listing all providers from /api/inference/endpoints",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "Model picker lists provider names from nexus",
+      "given": "The model picker overlay is open",
+      "when": "The overlay is rendered",
+      "then": "Each row shows provider name; the currently active model row is highlighted",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "Enter in model picker switches model; Esc dismisses without change",
+      "given": "The model picker overlay is open with cursor on row N",
+      "when": "User presses Enter",
+      "then": "Session model switches to the selected provider name; overlay closes; status bar reflects new model",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "/add <path> reads a file and adds it to the session context",
+      "given": "An active hex chat session",
+      "when": "User types /add src/main.rs",
+      "then": "The file is read from disk and stored; a Skill message confirms 'Added: src/main.rs (N bytes)'",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "HappyPath",
+      "description": "/files lists all files currently in context",
+      "given": "One or more files added via /add",
+      "when": "User types /files",
+      "then": "A Skill message lists each file path with its byte count",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "HappyPath",
+      "description": "Files added via /add are injected into the system prompt for each inference turn",
+      "given": "Files have been added via /add",
+      "when": "User submits a message and inference is called",
+      "then": "merged_system() appends file contents under a '## Files in context' heading",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "HappyPath",
+      "description": "F2 toggles a session sidebar showing recent sessions",
+      "given": "An active hex chat session with saved sessions in ~/.hex/sessions/",
+      "when": "User presses F2",
+      "then": "A sidebar (25 columns wide) appears on the right listing up to 10 recent sessions with date and first-message preview",
+      "negative_spec": false
+    },
+    {
+      "id": "S09",
+      "category": "HappyPath",
+      "description": "Enter in session sidebar resumes the selected session",
+      "given": "The session sidebar is open with cursor on row N",
+      "when": "User presses Enter",
+      "then": "The selected session is loaded (conversation restored); sidebar closes",
+      "negative_spec": false
+    },
+    {
+      "id": "S10",
+      "category": "EdgeCase",
+      "description": "/add with a path that does not exist shows an error Skill message",
+      "given": "File /nonexistent/path.rs does not exist",
+      "when": "User types /add /nonexistent/path.rs",
+      "then": "A Skill error message is shown; no file is added to context",
+      "negative_spec": false
+    },
+    {
+      "id": "S11",
+      "category": "EdgeCase",
+      "description": "Model picker shows fallback message when nexus has no providers configured",
+      "given": "/api/inference/endpoints returns an empty array",
+      "when": "User opens model picker via /model",
+      "then": "Overlay shows 'No providers configured — run: hex inference add' and closes on any key",
+      "negative_spec": false
+    },
+    {
+      "id": "S12",
+      "category": "Security",
+      "description": "/add does not follow symlinks outside the working directory",
+      "given": "A symlink pointing outside the project root",
+      "when": "User types /add <symlink-path>",
+      "then": "The file is still read (normal file system read); path is not canonicalized to bypass display — displayed as provided",
+      "negative_spec": false
+    }
+  ]
+}
