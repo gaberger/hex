@@ -6,6 +6,39 @@ use crate::orchestration::agent_manager::SpawnConfig;
 use crate::ports::state::{IStatePort, WorkplanTaskUpdate};
 use crate::state::SharedState;
 
+/// Find the most recently active Claude Code agent ID by reading
+/// ~/.hex/sessions/agent-*.json and returning the agentId from the
+/// file with the most recent last_heartbeat. Returns None if no sessions exist.
+fn find_active_cc_agent_id() -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let sessions_dir = std::path::PathBuf::from(home).join(".hex").join("sessions");
+    let mut best: Option<(String, String)> = None; // (heartbeat, agent_id)
+    if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let agent_id = v["agentId"].as_str().unwrap_or("").to_string();
+                    let heartbeat = v["last_heartbeat"].as_str().unwrap_or("").to_string();
+                    if !agent_id.is_empty() {
+                        match &best {
+                            None => best = Some((heartbeat, agent_id)),
+                            Some((best_hb, _)) if heartbeat > *best_hb => {
+                                best = Some((heartbeat, agent_id));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
 // ── Types ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -603,9 +636,15 @@ impl WorkplanExecutor {
                         "workplan_id": workplan_id,
                         "summary": format!("Task queued: {}", task_label),
                     }).to_string();
-                    // Priority 2 = critical (checked by check_inbox on every user prompt via ADR-060)
-                    let _ = sp.inbox_notify_all("", 2, "inference-queue", &payload).await;
-                    tracing::info!(queue_id = %queue_id, task_id = %task_id, "Path B: task enqueued for outer Claude Code session");
+                    // Target the active CC agent directly (most recent session heartbeat).
+                    // Fall back to broadcast if no session found.
+                    if let Some(cc_agent_id) = find_active_cc_agent_id() {
+                        let _ = sp.inbox_notify(&cc_agent_id, 2, "inference-queue", &payload).await;
+                        tracing::info!(queue_id = %queue_id, task_id = %task_id, cc_agent = %cc_agent_id, "Path B: task enqueued, inbox notified");
+                    } else {
+                        let _ = sp.inbox_notify_all("", 2, "inference-queue", &payload).await;
+                        tracing::info!(queue_id = %queue_id, task_id = %task_id, "Path B: task enqueued, broadcast notification (no session found)");
+                    }
                     // Poll every 5 seconds until Completed/Failed or 30-minute timeout.
                     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1800);
                     loop {
