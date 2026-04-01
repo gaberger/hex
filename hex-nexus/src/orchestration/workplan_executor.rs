@@ -299,6 +299,37 @@ impl WorkplanExecutor {
         execution_id: String,
         workplan: Workplan,
     ) {
+        // ADR-2604010000 P3.1: Initialize a HexFlo swarm for this workplan execution.
+        // The swarm_id tracks all per-task HexFlo tasks created in P3.2.
+        // Use the workplan id as the swarm name; fall back to execution_id if empty.
+        let swarm_name = if !workplan.id.is_empty() {
+            workplan.id.clone()
+        } else {
+            execution_id.clone()
+        };
+        let swarm_id = Uuid::new_v4().to_string();
+        match state_port
+            .swarm_init(&swarm_id, &swarm_name, "hex-pipeline", "", "workplan-executor")
+            .await
+        {
+            Ok(()) => {
+                tracing::info!(
+                    execution_id = %execution_id,
+                    swarm_id = %swarm_id,
+                    swarm_name = %swarm_name,
+                    "HexFlo swarm initialized for workplan execution"
+                );
+            }
+            Err(e) => {
+                // Non-fatal: swarm tracking is best-effort; execution continues.
+                tracing::warn!(
+                    execution_id = %execution_id,
+                    error = %e,
+                    "Failed to initialize HexFlo swarm — continuing without swarm tracking"
+                );
+            }
+        }
+
         let mut all_agent_ids = Vec::new();
 
         for phase in &workplan.phases {
