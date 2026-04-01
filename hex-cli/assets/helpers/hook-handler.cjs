@@ -162,6 +162,27 @@ function hubEvent(eventType, data) {
   });
 }
 
+function hubPatch(urlPath, body) {
+  const conn = getHubConnection();
+  if (!conn) return; // hub not running — skip silently
+  const payload = JSON.stringify(body);
+  const req = http.request({
+    hostname: '127.0.0.1',
+    port: conn.port,
+    path: urlPath,
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload),
+      ...(conn.token ? { 'Authorization': `Bearer ${conn.token}` } : {}),
+    },
+    timeout: 1500,
+  });
+  req.on('error', () => {}); // non-fatal
+  req.on('timeout', () => req.destroy());
+  req.end(payload);
+}
+
 function hubDelete(urlPath) {
   const conn = getHubConnection();
   if (!conn) return; // hub not running — skip silently
@@ -398,11 +419,29 @@ const handlers = {
     if (session && session.metric) {
       try { session.metric('tasks'); } catch (e) { /* no active session */ }
     }
+    // Extract HEXFLO_TASK:{id} from prompt and mark task in_progress (ADR-2604010000 P4.1)
+    const hexfloMatch = prompt && prompt.match(/HEXFLO_TASK:([a-f0-9-]+)/);
+    if (hexfloMatch) {
+      const taskId = hexfloMatch[1];
+      try {
+        const sessionId = process.env.CLAUDE_SESSION_ID;
+        if (sessionId) {
+          const sessionFile = require('path').join(require('os').homedir(), '.hex', 'sessions', `agent-${sessionId}.json`);
+          let agentData = {};
+          try { agentData = JSON.parse(fs.readFileSync(sessionFile, 'utf8')); } catch (_) {}
+          agentData.current_task_id = taskId;
+          fs.writeFileSync(sessionFile, JSON.stringify(agentData));
+          const agentId = agentData.agent_id || '';
+          hubPatch(`/api/hexflo/tasks/${taskId}`, { status: 'in_progress', agent_id: agentId });
+        }
+      } catch (e) { /* non-fatal */ }
+      console.log(`[OK] Task started (HEXFLO_TASK:${taskId})`);
+    }
     // Route the task if router is available
     if (router && router.routeTask && prompt) {
       const result = router.routeTask(prompt);
       console.log(`[INFO] Task routed to: ${result.agent} (confidence: ${result.confidence})`);
-    } else {
+    } else if (!hexfloMatch) {
       console.log('[OK] Task started');
     }
   },
@@ -415,6 +454,29 @@ const handlers = {
     if (s.activeAgents === 0) s.idleAgents = 0; // reset idle when all done
     writeHexStatus(s); // also pushes to hub via bridge
     hubEvent('agent-complete', { activeAgents: s.activeAgents, completed: s.completedTasks, total: s.tasks });
+    // Capture commit SHA and mark HexFlo task completed (ADR-2604010000 P4.1)
+    try {
+      const sessionId = process.env.CLAUDE_SESSION_ID;
+      if (sessionId) {
+        const sessionFile = require('path').join(require('os').homedir(), '.hex', 'sessions', `agent-${sessionId}.json`);
+        const agentData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+        const taskId = agentData.current_task_id;
+        if (taskId) {
+          let commitSha = '';
+          try {
+            // execFileSync: static args only, no shell, no injection risk
+            commitSha = require('child_process').execFileSync(
+              'git', ['log', '--format=%H', '-1'], { timeout: 3000 }
+            ).toString().trim();
+          } catch (_) { /* no commits or not a git repo */ }
+          const result = commitSha ? `commit:${commitSha}` : 'completed';
+          hubPatch(`/api/hexflo/tasks/${taskId}`, { status: 'completed', result });
+          agentData.current_task_id = null;
+          fs.writeFileSync(sessionFile, JSON.stringify(agentData));
+          console.log(`[OK] HexFlo task ${taskId} marked completed (${result})`);
+        }
+      }
+    } catch (e) { /* non-fatal */ }
     // Implicit success feedback for intelligence
     if (intelligence && intelligence.feedback) {
       try {
