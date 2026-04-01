@@ -1,0 +1,260 @@
+{
+  "id": "wp-unified-execution-path",
+  "feature": "Unified Execution Path",
+  "description": "Remove claude -p bypass (ADR-2603312210 retired). Implement correct two-path execution: Path A (daemon → inference gateway → RL → vault) and Path B (Claude Code → inference queue → inbox → Agent tool). Close ADR-061 gaps: HexFlo task per workplan task, commit_sha correlation. Add HexFlo memory ledger conventions.",
+  "adr": "ADR-2604010000",
+  "priority": "high",
+  "created_at": "2026-04-01T00:00:00Z",
+  "created_by": "planner",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Remove bypass, add path detection",
+      "tier": 0,
+      "description": "Remove claude -p subprocess spawn from agent_manager. Add CLAUDECODE env detection to route between Path A (daemon) and Path B (Claude Code queue).",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Remove bypass spawn code from agent_manager",
+          "layer": "primary",
+          "description": "In hex-nexus/src/orchestration/agent_manager.rs, remove all code related to the claude -p bypass: the unconditional CLAUDECODE injection, the --prompt arg pass-through, and the stdin null assignment. Replace with a clean spawn that always passes --prompt when config.prompt is set, and injects CLAUDECODE only when std::env::var('CLAUDECODE').as_deref() == Ok('1') (i.e. nexus itself is inside a Claude Code session, meaning Path B applies). The spawn should always use Stdio::null() for stdin and Stdio::piped() for stdout/stderr.",
+          "files": [
+            "hex-nexus/src/orchestration/agent_manager.rs"
+          ],
+          "status": "completed",
+          "commit": "0d3b0fc9",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Add is_claude_code_session() to nexus",
+          "layer": "primary",
+          "description": "Add a module-level function is_claude_code_session() -> bool in hex-nexus/src/orchestration/mod.rs that checks std::env::var('CLAUDECODE').as_deref() == Ok('1') || std::env::var('CLAUDE_CODE_ENTRYPOINT').is_ok(). Use this in agent_manager to determine Path A vs Path B. Add unit tests.",
+          "files": [
+            "hex-nexus/src/orchestration/mod.rs"
+          ],
+          "status": "completed",
+          "commit": "8c8dc243",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Inference queue endpoint (Path B)",
+      "tier": 1,
+      "description": "Add POST /api/inference/queue endpoint that creates a pending inference task and sends an inbox notification to the active Claude Code agent (ADR-060) so the outer session can pick it up and spawn an Agent tool.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add InferenceQueueEntry type and storage",
+          "layer": "primary",
+          "description": "In hex-nexus/src/routes/inference.rs, add InferenceQueueEntry { id: Uuid, task_id: String, workplan_id: String, prompt: String, role: String, status: QueueStatus, created_at: DateTime<Utc> }. Store entries in HexFlo memory under key 'inference:queue:{id}'. QueueStatus: Pending | Claimed | Completed.",
+          "files": [
+            "hex-nexus/src/routes/inference.rs"
+          ],
+          "status": "completed",
+          "commit": "4927a3a6",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Add POST /api/inference/queue route",
+          "layer": "primary",
+          "description": "Add route handler: POST /api/inference/queue accepts { task_id, workplan_id, prompt, role }. Creates InferenceQueueEntry in HexFlo memory. Sends inbox notification (ADR-060) to the registered Claude Code agent with priority 1, message containing the queue entry ID and a summary of the task. Returns { queue_id } to caller. Register route in hex-nexus/src/routes/mod.rs.",
+          "files": [
+            "hex-nexus/src/routes/inference.rs",
+            "hex-nexus/src/routes/mod.rs"
+          ],
+          "status": "completed",
+          "commit": "4927a3a6",
+          "agent": "hex-coder",
+          "deps": ["P2.1"]
+        },
+        {
+          "id": "P2.3",
+          "name": "Add GET /api/inference/queue/pending route",
+          "layer": "primary",
+          "description": "Add route handler: GET /api/inference/queue/pending returns all InferenceQueueEntry items with status Pending, sorted by created_at ascending. The outer Claude Code session polls this to find work. Also add PATCH /api/inference/queue/{id} to update status (Claimed/Completed).",
+          "files": [
+            "hex-nexus/src/routes/inference.rs"
+          ],
+          "status": "completed",
+          "commit": "4b29e94a",
+          "agent": "hex-coder",
+          "deps": ["P2.1"]
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "HexFlo task per workplan task (closes ADR-061 gap 1)",
+      "tier": 1,
+      "description": "Update workplan executor to create a HexFlo swarm task for each workplan task before spawning an agent. Task ID in HexFlo must match the workplan task ID exactly (P1.2, etc.).",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Create HexFlo swarm on execution start",
+          "layer": "primary",
+          "description": "In hex-nexus/src/orchestration/workplan_executor.rs, at the start of execute_workplan(), call state_port.hexflo_swarm_init(workplan.id.clone(), 'hierarchical') to create a swarm. Store the swarm_id in the execution state. If swarm already exists (re-run), reuse it.",
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
+          "status": "pending",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Create HexFlo task per workplan task before spawn",
+          "layer": "primary",
+          "description": "In the task-spawn loop (workplan_executor.rs, for task in &phase.tasks), before calling agent_manager.spawn_agent(), call state_port.hexflo_task_create(swarm_id, task.id.clone(), task.name.clone()). Store the returned HexFlo task ID. Pass it to the agent via the prompt prefix 'HEXFLO_TASK:{hexflo_task_id}\\n'.",
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
+          "status": "pending",
+          "agent": "hex-coder",
+          "deps": ["P3.1"]
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Commit SHA correlation (closes ADR-061 gap 2)",
+      "tier": 2,
+      "description": "Update SubagentStop hook handler to capture commit_sha from the worktree and write it to the HexFlo task result.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-cli",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Write commit_sha to HexFlo task in SubagentStop hook",
+          "layer": "primary",
+          "description": "In the SubagentStop hook handler (hex-cli/assets/helpers/hook-handler or the hook-handler binary), after marking the HexFlo task complete, run 'git -C {worktree_dir} log -1 --format=%H' to get the latest commit SHA in the worktree. PATCH /api/hexflo/tasks/{task_id} with { commit_sha }. If git command fails or no commits exist, skip silently (not all tasks produce commits).",
+          "files": [
+            "hex-cli/assets/helpers/hook-handler"
+          ],
+          "status": "completed",
+          "commit": "3b4ed86f",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "HexFlo memory ledger",
+      "tier": 2,
+      "description": "After each task completes, store the outcome under the documented namespace contract from ADR-2604010000. Store aggregated model performance for RL feedback.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Store task outcome in HexFlo memory ledger",
+          "layer": "primary",
+          "description": "In workplan_executor.rs, after each task agent exits (success or fail), call state_port.hexflo_memory_store with key 'workplan:{workplan_id}:task:{task_id}:outcome' and value JSON: { model: String, tokens: u32, iterations: u32, gate_passed: bool, commit_sha: Option<String>, duration_ms: u64, status: 'success'|'failed' }. The model and token fields come from the agent exit metadata (stdout includes token counts from claude -p output or inference gateway response).",
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
+          "status": "completed",
+          "commit": "a285f687",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.2",
+          "name": "Store full execution record on workplan complete",
+          "layer": "primary",
+          "description": "At the end of execute_workplan() (all phases done or fatal failure), store key 'workplan:{workplan_id}:execution:{execution_id}' with the full ExecutionState serialized to JSON. This is the durable audit record referenced by ADR-2604010000.",
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
+          "status": "completed",
+          "commit": "a285f687",
+          "agent": "hex-coder",
+          "deps": ["P5.1"]
+        }
+      ]
+    },
+    {
+      "id": "P3B",
+      "name": "Path B executor routing (gap — never implemented)",
+      "tier": 1,
+      "description": "The workplan executor still calls spawn_agent unconditionally. It must check is_claude_code_session() and route to POST /api/inference/queue when CLAUDECODE=1 instead of spawning hex-agent directly. Also wire HexFlo swarm + per-task creation into the executor (P3.1/P3.2 were never implemented).",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3B.1",
+          "name": "Executor: HexFlo swarm init + per-task creation",
+          "layer": "primary",
+          "description": "In workplan_executor.rs execute_workplan(): call hexflo_swarm_init at start. In the task-spawn loop, call hexflo_task_create before spawn_agent. Prefix prompt with HEXFLO_TASK:{task_id}.",
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
+          "status": "pending",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3B.2",
+          "name": "Executor: Path B routing — queue instead of spawn when CLAUDECODE=1",
+          "layer": "primary",
+          "description": "In the task-spawn block, check is_claude_code_session(). If true: POST to /api/inference/queue with {task_id, workplan_id, prompt, role} and await inbox notification. If false: call spawn_agent (Path A). This makes the executor route correctly based on execution context.",
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
+          "status": "pending",
+          "agent": "hex-coder",
+          "deps": ["P3B.1"]
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "name": "Integration test + ADR-061 gap verification",
+      "tier": 3,
+      "description": "Verify the full pipeline works: execute a workplan, confirm HexFlo tasks are created per workplan task, confirm commit_sha appears in task results, confirm memory ledger entries exist.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus -p hex-cli",
+        "blocking": false
+      },
+      "tasks": [
+        {
+          "id": "P6.1",
+          "name": "Smoke test: execute workplan and verify HexFlo task-level tracking",
+          "layer": "primary",
+          "description": "Execute feat-plan-list-live-overlay.json (3 tasks). After completion: (1) hex task list should show P1.1, P2.1, P3.1 as individual HexFlo tasks. (2) hex memory get workplan:wp-plan-list-live-overlay:task:P1.1:outcome should return valid JSON. (3) The task result should contain a non-empty commit_sha. Document pass/fail in ADR-2604010000 Implementation section.",
+          "files": [
+            "docs/adrs/ADR-2604010000-unified-execution-path.md"
+          ],
+          "status": "pending",
+          "agent": "hex-coder",
+          "deps": ["P3.2", "P4.1", "P5.1"]
+        }
+      ]
+    }
+  ]
+}
