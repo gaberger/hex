@@ -971,6 +971,81 @@ mod real {
             }).collect())
         }
 
+        async fn inference_task_create(&self, id: &str, workplan_id: &str, task_id: &str, phase: &str, prompt: &str, role: &str, created_at: &str) -> Result<(), StateError> {
+            self.call_reducer("inference_task_create",
+                serde_json::json!([id, workplan_id, task_id, phase, prompt, role, created_at])
+            ).await?;
+            Ok(())
+        }
+
+        async fn inference_task_claim(&self, id: &str, agent_id: &str, updated_at: &str) -> Result<(), StateError> {
+            let result = self.call_reducer("inference_task_claim",
+                serde_json::json!([id, agent_id, updated_at])
+            ).await;
+            match result {
+                Ok(_) => Ok(()),
+                Err(StateError::Storage(ref msg)) if msg.contains("already_claimed") => {
+                    Err(StateError::Conflict(msg.clone()))
+                }
+                Err(e) => Err(e),
+            }
+        }
+
+        async fn inference_task_complete(&self, id: &str, result: &str, updated_at: &str) -> Result<(), StateError> {
+            self.call_reducer("inference_task_complete",
+                serde_json::json!([id, result, updated_at])
+            ).await?;
+            Ok(())
+        }
+
+        async fn inference_task_fail(&self, id: &str, error: &str, updated_at: &str) -> Result<(), StateError> {
+            self.call_reducer("inference_task_fail",
+                serde_json::json!([id, error, updated_at])
+            ).await?;
+            Ok(())
+        }
+
+        async fn inference_task_get(&self, id: &str) -> Result<Option<InferenceTaskInfo>, StateError> {
+            let sql = format!("SELECT * FROM inference_task WHERE id = '{}'", id);
+            let rows = self.query_table(&sql).await?;
+            Ok(rows.into_iter().next().and_then(|r| {
+                Some(InferenceTaskInfo {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    workplan_id: r.get("workplan_id")?.as_str()?.to_string(),
+                    task_id: r.get("task_id")?.as_str()?.to_string(),
+                    phase: r.get("phase")?.as_str()?.to_string(),
+                    prompt: r.get("prompt")?.as_str()?.to_string(),
+                    role: r.get("role")?.as_str()?.to_string(),
+                    status: r.get("status")?.as_str()?.to_string(),
+                    agent_id: r.get("agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    result: r.get("result").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    error: r.get("error").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    updated_at: r.get("updated_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                })
+            }))
+        }
+
+        async fn inference_task_list_pending(&self) -> Result<Vec<InferenceTaskInfo>, StateError> {
+            let rows = self.query_table("SELECT * FROM inference_task WHERE status = 'Pending'").await?;
+            Ok(rows.into_iter().filter_map(|r| {
+                Some(InferenceTaskInfo {
+                    id: r.get("id")?.as_str()?.to_string(),
+                    workplan_id: r.get("workplan_id")?.as_str()?.to_string(),
+                    task_id: r.get("task_id")?.as_str()?.to_string(),
+                    phase: r.get("phase")?.as_str()?.to_string(),
+                    prompt: r.get("prompt")?.as_str()?.to_string(),
+                    role: r.get("role")?.as_str()?.to_string(),
+                    status: r.get("status")?.as_str()?.to_string(),
+                    agent_id: r.get("agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    result: r.get("result").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    error: r.get("error").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    created_at: r.get("created_at")?.as_str()?.to_string(),
+                    updated_at: r.get("updated_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                })
+            }).collect())
+        }
+
         async fn swarm_agent_register(&self, id: &str, swarm_id: &str, name: &str, role: &str, worktree_path: &str) -> Result<(), StateError> {
             let now = chrono::Utc::now().to_rfc3339();
             self.call_reducer("agent_register", serde_json::json!([id, swarm_id, name, role, worktree_path, now])).await?;
@@ -1587,6 +1662,12 @@ mod stub {
         async fn swarm_task_complete(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_task_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_task_list(&self, _: Option<&str>) -> Result<Vec<SwarmTaskInfo>, StateError> { Err(Self::err()) }
+        async fn inference_task_create(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn inference_task_claim(&self, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn inference_task_complete(&self, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn inference_task_fail(&self, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn inference_task_get(&self, _: &str) -> Result<Option<InferenceTaskInfo>, StateError> { Err(Self::err()) }
+        async fn inference_task_list_pending(&self) -> Result<Vec<InferenceTaskInfo>, StateError> { Err(Self::err()) }
         async fn swarm_agent_register(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_agent_heartbeat(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_agent_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
