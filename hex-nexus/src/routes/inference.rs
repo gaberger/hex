@@ -14,9 +14,11 @@
 //!   - Model routing uses exact JSON array match, not substring search
 
 use axum::{extract::State, Json};
+use chrono::{DateTime, Utc};
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use uuid::Uuid;
 
 use crate::complexity::score_complexity;
 use crate::ports::secret_grant::ISecretGrantPort;
@@ -608,5 +610,51 @@ pub async fn inference_complete(
                 "message": "Request exceeded 600s deadline"
             })))
         }
+    }
+}
+
+// ── Path B: Inference Queue (ADR-2604010000) ──────────────────────────────
+
+/// Status of an entry in the inference execution queue.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueStatus {
+    Pending,
+    Claimed,
+    Completed,
+}
+
+/// A queued inference request that a Path B worker will pick up and execute.
+///
+/// Entries are stored in HexFlo memory under the key `inference:queue:{id}`.
+/// Workers poll for `Pending` entries, claim them (CAS to `Claimed`), run the
+/// inference, then mark them `Completed` and write the result back.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InferenceQueueEntry {
+    pub id: String,
+    pub task_id: String,
+    pub workplan_id: String,
+    pub prompt: String,
+    pub role: String,
+    pub status: QueueStatus,
+    pub created_at: DateTime<Utc>,
+}
+
+impl InferenceQueueEntry {
+    pub fn new(task_id: String, workplan_id: String, prompt: String, role: String) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            task_id,
+            workplan_id,
+            prompt,
+            role,
+            status: QueueStatus::Pending,
+            created_at: Utc::now(),
+        }
+    }
+
+    /// HexFlo memory key for this entry.
+    pub fn memory_key(&self) -> String {
+        format!("inference:queue:{}", self.id)
     }
 }
