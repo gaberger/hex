@@ -204,11 +204,6 @@ impl NexusClient {
         &self.base_url
     }
 
-    /// Base URL (getter for use in WebSocket and other clients).
-    pub fn base_url(&self) -> &str {
-        &self.base_url
-    }
-
     /// Fetch the architecture fingerprint injection block for a project (ADR-2603301200).
     ///
     /// Returns the formatted text block ready to prepend to an inference system prompt,
