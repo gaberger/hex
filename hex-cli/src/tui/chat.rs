@@ -17,11 +17,12 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use futures_util::StreamExt;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 use tokio::sync::mpsc;
 
 use crate::commands::chat::ChatArgs;
 use crate::nexus_client::NexusClient;
+use crate::tui::markdown;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -266,22 +267,29 @@ async fn stream_request(
 // Rendering
 // ---------------------------------------------------------------------------
 
-fn render(f: &mut Frame, app: &ChatApp) {
+fn render(f: &mut Frame, app: &ChatApp, width: u16) {
     let area = f.area();
+
+    // Dynamic input height: 1 line per input line, min 1, max 6
+    let input_lines = app.input.lines().count().max(1) as u16;
+    let input_h = input_lines.min(6);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Min(3),
-            Constraint::Length(3),
-            Constraint::Length(1),
+            Constraint::Length(1),      // title bar
+            Constraint::Min(3),         // messages (borderless, flowing)
+            Constraint::Length(1),      // thin separator
+            Constraint::Length(input_h), // input (prompt-style)
+            Constraint::Length(1),      // status bar
         ])
         .split(area);
 
     render_title(f, app, chunks[0]);
-    render_messages(f, app, chunks[1]);
-    render_input(f, app, chunks[2]);
-    render_status(f, app, chunks[3]);
+    render_messages(f, app, chunks[1], width);
+    render_separator(f, chunks[2], width);
+    render_input(f, app, chunks[3]);
+    render_status(f, app, chunks[4]);
 }
 
 fn render_title(f: &mut Frame, app: &ChatApp, area: Rect) {
@@ -296,47 +304,86 @@ fn render_title(f: &mut Frame, app: &ChatApp, area: Rect) {
     f.render_widget(p, area);
 }
 
-fn render_messages(f: &mut Frame, app: &ChatApp, area: Rect) {
+fn render_messages(f: &mut Frame, app: &ChatApp, area: Rect, width: u16) {
     let mut lines: Vec<Line> = Vec::new();
+    let rule_width = width.saturating_sub(4) as usize;
 
     for (i, msg) in app.messages.iter().enumerate() {
         // Role label
         let (label, label_color) = match msg.role {
-            Role::User => ("You", Color::Green),
-            Role::Assistant => ("hex", Color::Cyan),
+            Role::User => ("  you", Color::Green),
+            Role::Assistant => ("  hex", Color::Cyan),
         };
-        lines.push(Line::from(vec![Span::styled(
-            format!("╭─ {} ─────────────────────────", label),
-            Style::default().fg(label_color).add_modifier(Modifier::DIM),
-        )]));
-
-        // Content lines
-        let content = if msg.role == Role::Assistant
-            && app.streaming
-            && i == app.messages.len() - 1
-        {
-            format!("{}▌", msg.content)
-        } else {
-            msg.content.clone()
-        };
-
-        let style = if msg.role == Role::Assistant
-            && app.error_msg.is_some()
-            && i == app.messages.len() - 1
-        {
-            Style::default().fg(Color::Red)
-        } else {
+        lines.push(Line::from(Span::styled(
+            label.to_string(),
             Style::default()
-        };
+                .fg(label_color)
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::DIM),
+        )));
 
-        for line in content.lines() {
-            lines.push(Line::from(Span::styled(line.to_string(), style)));
+        // Thin rule under role label
+        lines.push(Line::from(Span::styled(
+            format!("  {}", "─".repeat(rule_width)),
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
+        )));
+
+        // Message content
+        let is_last = i == app.messages.len() - 1;
+        match msg.role {
+            Role::User => {
+                for line in msg.content.lines() {
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::raw(line.to_string()),
+                    ]));
+                }
+            }
+            Role::Assistant => {
+                let content = if app.streaming && is_last {
+                    format!("{}▌", msg.content)
+                } else {
+                    msg.content.clone()
+                };
+
+                let is_error = app.error_msg.is_some() && is_last;
+
+                if is_error {
+                    // Error: plain red text, no markdown
+                    for line in content.lines() {
+                        lines.push(Line::from(vec![
+                            Span::raw("  "),
+                            Span::styled(line.to_string(), Style::default().fg(Color::Red)),
+                        ]));
+                    }
+                } else if app.streaming && is_last {
+                    // Still streaming: render as plain text to avoid flickering
+                    // as markdown parser needs complete input to work well
+                    for line in content.lines() {
+                        lines.push(Line::from(vec![
+                            Span::raw("  "),
+                            Span::raw(line.to_string()),
+                        ]));
+                    }
+                } else {
+                    // Complete: render with markdown
+                    let md_lines = markdown::render_markdown(&content, width.saturating_sub(4));
+                    for md_line in md_lines {
+                        // Indent markdown output by 2 spaces
+                        let mut spans = vec![Span::raw("  ")];
+                        spans.extend(md_line.spans);
+                        lines.push(Line::from(spans));
+                    }
+                }
+            }
         }
-        lines.push(Line::from("")); // spacer
+
+        // Spacer between messages
+        lines.push(Line::from(""));
     }
 
     let total_lines = lines.len() as u16;
-    let visible = area.height.saturating_sub(2); // account for border
+    let visible = area.height;
 
     let scroll = if app.auto_scroll {
         total_lines.saturating_sub(visible)
@@ -345,37 +392,79 @@ fn render_messages(f: &mut Frame, app: &ChatApp, area: Rect) {
     };
 
     let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(" Messages "))
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0));
     f.render_widget(p, area);
 }
 
+fn render_separator(f: &mut Frame, area: Rect, width: u16) {
+    let rule = "─".repeat(width as usize);
+    let p = Paragraph::new(rule)
+        .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM));
+    f.render_widget(p, area);
+}
+
 fn render_input(f: &mut Frame, app: &ChatApp, area: Rect) {
-    let border_style = if app.streaming {
-        Style::default().fg(Color::Yellow)
+    let display: Vec<Line> = if app.streaming {
+        vec![Line::from(vec![
+            Span::styled("  … ", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                "streaming…",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ])]
+    } else if app.input.is_empty() {
+        vec![Line::from(vec![
+            Span::styled("  ❯ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                "type a message…",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ])]
     } else {
-        Style::default().fg(Color::White)
+        app.input
+            .lines()
+            .enumerate()
+            .map(|(i, line)| {
+                if i == 0 {
+                    Line::from(vec![
+                        Span::styled("  ❯ ", Style::default().fg(Color::Cyan)),
+                        Span::raw(line.to_string()),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::raw("    "),
+                        Span::raw(line.to_string()),
+                    ])
+                }
+            })
+            .collect()
     };
-    let hint = if app.streaming { " (streaming…)" } else { " (Enter to send)" };
-    let p = Paragraph::new(app.input.as_str())
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style)
-                .title(format!(" Input{} ", hint)),
-        )
-        .wrap(Wrap { trim: false });
+
+    let p = Paragraph::new(display).wrap(Wrap { trim: false });
     f.render_widget(p, area);
 }
 
 fn render_status(f: &mut Frame, app: &ChatApp, area: Rect) {
-    let total_tokens = app.total_input_tokens + app.total_output_tokens;
-    let status = format!(
-        " tokens: {} (in: {} out: {}) | q/Ctrl+C: quit | ↑↓: scroll ",
-        total_tokens, app.total_input_tokens, app.total_output_tokens
-    );
-    let p = Paragraph::new(status).style(Style::default().fg(Color::DarkGray));
+    let model_short = app.model.split('/').last().unwrap_or(&app.model);
+    let tok = app.total_input_tokens + app.total_output_tokens;
+    let status = if tok > 0 {
+        format!(
+            "  {} · {} tok  ·  q/Ctrl+C quit  ·  ↑↓ scroll  ·  Shift+Enter newline",
+            model_short, tok
+        )
+    } else {
+        format!(
+            "  {}  ·  q/Ctrl+C quit  ·  ↑↓ scroll  ·  Shift+Enter newline",
+            model_short
+        )
+    };
+    let p = Paragraph::new(status)
+        .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM));
     f.render_widget(p, area);
 }
 
@@ -436,7 +525,8 @@ async fn run_event_loop(
         }
 
         // Draw frame
-        terminal.draw(|f| render(f, app))?;
+        let width = terminal.size()?.width;
+        terminal.draw(|f| render(f, app, width))?;
 
         // Poll for keyboard events (50ms timeout)
         if event::poll(Duration::from_millis(50))? {
@@ -445,6 +535,11 @@ async fn run_event_loop(
                     // Quit
                     (KeyCode::Char('q'), KeyModifiers::NONE)
                     | (KeyCode::Char('c'), KeyModifiers::CONTROL) => break,
+
+                    // Shift+Enter: insert newline
+                    (KeyCode::Enter, KeyModifiers::SHIFT) => {
+                        app.input.push('\n');
+                    }
 
                     // Send message
                     (KeyCode::Enter, KeyModifiers::NONE) => {
