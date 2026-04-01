@@ -59,9 +59,14 @@ pub fn which_claude() -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Serialize all env-var tests — env is process-global, parallel mutation causes races.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn detects_claudecode_env_var() {
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("CLAUDECODE", "1");
         assert!(is_claude_code_session());
         std::env::remove_var("CLAUDECODE");
@@ -69,6 +74,7 @@ mod tests {
 
     #[test]
     fn detects_entrypoint_env_var() {
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::remove_var("CLAUDECODE");
         std::env::set_var("CLAUDE_CODE_ENTRYPOINT", "cli");
         assert!(is_claude_code_session());
@@ -77,6 +83,7 @@ mod tests {
 
     #[test]
     fn negative_case_no_env_vars() {
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::remove_var("CLAUDECODE");
         std::env::remove_var("CLAUDE_CODE_ENTRYPOINT");
         assert!(!is_claude_code_session());
