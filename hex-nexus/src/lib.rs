@@ -480,7 +480,11 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
     let state = Arc::new(app_state);
 
     if state.agent_manager.is_some() {
-        if let Ok(state_port) = state_config::create_default_state_backend() {
+        // Pass inference_tx so workplan executor's inference_task_create broadcasts
+        // to /ws/inference subscribers (ADR-2604011200 P2.T3 + P3.T1).
+        if let Ok(state_port) = state_config::create_default_state_backend_with_inference(
+            state.inference_tx.clone(),
+        ) {
             let wp = Arc::new(orchestration::workplan_executor::WorkplanExecutor::new(
                 state_port,
                 state.clone(),
