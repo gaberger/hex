@@ -57,6 +57,9 @@ mod real {
         _connected: RwLock<bool>,
         /// HTTP client for calling hexflo-coordination reducers via SpacetimeDB HTTP API.
         http: reqwest::Client,
+        /// Optional broadcast channel for pushing InferenceTaskPush to /ws/inference subscribers.
+        /// Set via `with_inference_tx()` after construction when AppState's channel is available.
+        inference_tx: Option<crate::state::InferenceTxBus>,
     }
 
     impl SpacetimeStateAdapter {
@@ -67,7 +70,15 @@ mod real {
                 event_tx,
                 _connected: RwLock::new(false),
                 http: reqwest::Client::new(),
+                inference_tx: None,
             }
+        }
+
+        /// Wire in the inference broadcast channel so `inference_task_create` can push
+        /// to /ws/inference subscribers without polling.
+        pub fn with_inference_tx(mut self, tx: crate::state::InferenceTxBus) -> Self {
+            self.inference_tx = Some(tx);
+            self
         }
 
         /// Call a SpacetimeDB reducer via the HTTP API.
@@ -975,6 +986,20 @@ mod real {
             self.call_reducer("inference_task_create",
                 serde_json::json!([id, workplan_id, task_id, phase, prompt, role, created_at])
             ).await?;
+            // Broadcast to /ws/inference subscribers (ADR-2604011200 P2.T3).
+            // The reducer inserts the row with status=Pending, so we broadcast immediately
+            // after a successful insert rather than polling the table.
+            if let Some(ref tx) = self.inference_tx {
+                let push = crate::state::InferenceTaskPush {
+                    id: id.to_string(),
+                    workplan_id: workplan_id.to_string(),
+                    task_id: task_id.to_string(),
+                    phase: phase.to_string(),
+                    prompt: prompt.to_string(),
+                    role: role.to_string(),
+                };
+                let _ = tx.send(push);
+            }
             Ok(())
         }
 

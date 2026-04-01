@@ -91,7 +91,7 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
 
     // Wire IStatePort → AgentManager + HexFlo (ADR-025 Phase 2/4, ADR-032 Phase 3)
     // Backend: SpacetimeDB (only backend, ADR-032)
-    match state_config::create_default_state_backend() {
+    match state_config::create_default_state_backend_with_inference(app_state.inference_tx.clone()) {
         Ok(state_port) => {
             let secret_resolver: orchestration::agent_manager::SecretResolver =
                 Arc::new(|key: &str| std::env::var(key).ok());

@@ -150,3 +150,27 @@ pub fn create_default_state_backend() -> Result<Arc<dyn IStatePort>, StateError>
     let config = resolve_config();
     create_state_backend(&config)
 }
+
+/// Like `create_default_state_backend` but wires an `InferenceTxBus` so that
+/// `inference_task_create` broadcasts to /ws/inference subscribers immediately
+/// on insert (ADR-2604011200 P2.T3).
+pub fn create_default_state_backend_with_inference(
+    inference_tx: crate::state::InferenceTxBus,
+) -> Result<Arc<dyn IStatePort>, StateError> {
+    use crate::adapters::spacetime_state::{SpacetimeConfig, SpacetimeStateAdapter};
+
+    let config = resolve_config();
+    let stdb_config = SpacetimeConfig {
+        host: config.host.clone(),
+        database: config.database.clone(),
+        auth_token: config.auth_token.clone(),
+    };
+    let adapter = SpacetimeStateAdapter::new(stdb_config)
+        .with_inference_tx(inference_tx);
+    tracing::info!(
+        host = %config.host,
+        database = %config.database,
+        "SpacetimeStateAdapter created with inference_tx (connect() must be called separately)",
+    );
+    Ok(Arc::new(adapter))
+}
