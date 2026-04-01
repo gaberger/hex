@@ -940,6 +940,22 @@
         },
         "required": []
       }
+    },
+    {
+      "name": "hex_exec",
+      "category": "exec",
+      "description": "Execute a hex CLI subcommand and return its output. Use for running hex commands like 'plan list', 'adr search <query>', 'analyze .', 'status', etc.",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "subcommand": {
+            "type": "string",
+            "description": "The hex subcommand and arguments, e.g. \"plan list\" or \"adr search authentication\""
+          }
+        },
+        "required": ["subcommand"]
+      }
     }
   ]
 }

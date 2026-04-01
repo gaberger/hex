@@ -1033,6 +1033,29 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 .map_err(|_| r#"{"error": "hex-nexus not running"}"#.to_string())
         }
 
+        "hex_exec" => {
+            let subcommand = args.get("subcommand")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            match nexus.post("/api/exec", &serde_json::json!({"subcommand": subcommand})).await {
+                Ok(val) => {
+                    let output = val.get("output")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    return serde_json::json!({
+                        "content": [{ "type": "text", "text": output }],
+                        "isError": false
+                    });
+                }
+                Err(e) => return serde_json::json!({
+                    "content": [{ "type": "text", "text": format!("{{\"error\":\"{}\"}}", e) }],
+                    "isError": true
+                }),
+            }
+        }
+
         _ => Err(format!("Unknown tool: {}", name)),
     };
 

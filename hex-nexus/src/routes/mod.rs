@@ -27,6 +27,7 @@ pub mod neural_lab;
 pub mod test_sessions;
 pub mod openapi;
 pub mod command_sessions;
+pub mod exec;
 pub mod inbox;
 pub mod sandbox;
 pub mod skills;
@@ -466,6 +467,7 @@ pub fn build_router(state: SharedState) -> Router {
         // ADR number reservation (atomic next-number for multi-agent coordination)
         .route("/api/adr/reserve", post(adr_reserve_number))
         .route("/api/adr/next", get(adr_next_number))
+        .route("/api/exec", post(exec::exec_handler))
         // Commands (browser/MCP → hub → project, bidirectional)
         .route("/api/{project_id}/command", post(commands::send_command)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
