@@ -38,6 +38,7 @@ serde_yaml = "0.9"
 rust-embed = "8"
 # TUI for `hex dev` (ADR-2603232005)
 ratatui = "0.29"
+pulldown-cmark = { version = "0.12", default-features = false }
 crossterm = "0.28"
 # Structured CLI table output (ADR-2603241226)
 tabled = { version = "0.17", features = ["ansi"] }

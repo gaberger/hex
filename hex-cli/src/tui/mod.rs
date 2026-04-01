@@ -7,6 +7,7 @@
 pub mod chat;
 pub mod controls;
 pub mod gate;
+pub mod markdown;
 pub mod messages;
 pub mod pipeline_bar;
 pub mod status_bar;
