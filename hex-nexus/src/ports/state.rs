@@ -249,6 +249,23 @@ pub struct SwarmTaskInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct InferenceTaskInfo {
+    pub id: String,
+    pub workplan_id: String,
+    pub task_id: String,
+    pub phase: String,
+    pub prompt: String,
+    pub role: String,
+    pub status: String,
+    pub agent_id: String,
+    pub result: String,
+    pub error: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SwarmAgentInfo {
     pub id: String,
     pub swarm_id: String,
@@ -638,6 +655,13 @@ pub trait IStatePort: Send + Sync {
     async fn swarm_task_complete(&self, task_id: &str, result: &str) -> Result<(), StateError>;
     async fn swarm_task_fail(&self, task_id: &str, reason: &str) -> Result<(), StateError>;
     async fn swarm_task_list(&self, swarm_id: Option<&str>) -> Result<Vec<SwarmTaskInfo>, StateError>;
+
+    async fn inference_task_create(&self, id: &str, workplan_id: &str, task_id: &str, phase: &str, prompt: &str, role: &str, created_at: &str) -> Result<(), StateError>;
+    async fn inference_task_claim(&self, id: &str, agent_id: &str, updated_at: &str) -> Result<(), StateError>;
+    async fn inference_task_complete(&self, id: &str, result: &str, updated_at: &str) -> Result<(), StateError>;
+    async fn inference_task_fail(&self, id: &str, error: &str, updated_at: &str) -> Result<(), StateError>;
+    async fn inference_task_get(&self, id: &str) -> Result<Option<InferenceTaskInfo>, StateError>;
+    async fn inference_task_list_pending(&self) -> Result<Vec<InferenceTaskInfo>, StateError>;
 
     async fn swarm_agent_register(
         &self,
