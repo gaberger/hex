@@ -1,11 +1,12 @@
 //! `hex chat` TUI — full-screen ratatui streaming chat (ADR-2604011300).
 //!
 //! Layout (top to bottom):
-//!   [title bar  — 1 line  ] spinner + model name
-//!   [messages   — fill    ] scrollable conversation history
-//!   [separator  — 1 line  ] full-width dim rule
-//!   [input      — dynamic ] ❯ prompt, auto-height, Shift+Enter newline
-//!   [status bar — 1 line  ] token counts + key hints
+//!   [title bar          — 1 line ] spinner + model + context badges
+//!   [sessions | messages— fill   ] left: persistent sessions panel; right: messages
+//!   [          | files  — 1 line ] files chip bar (only if context files present)
+//!   [          | sep    — 1 line ] full-width dim rule
+//!   [          | input  — dynamic] ❯ prompt, auto-height, Shift+Enter newline
+//!   [status bar         — 1 line ] token counts + key hints
 
 use std::io;
 use std::time::Duration;
@@ -74,6 +75,7 @@ enum StreamEvent {
     OverlayOpen(Vec<serde_json::Value>),
 }
 
+#[allow(dead_code)]
 enum Overlay {
     ModelPicker { items: Vec<serde_json::Value>, cursor: usize },
     SessionSidebar { sessions: Vec<ChatSession>, cursor: usize },
@@ -116,6 +118,8 @@ struct ChatApp {
     context_files: Vec<(String, String)>,
     /// Active overlay (model picker, session sidebar).
     overlay: Option<Overlay>,
+    /// Recent sessions for the sessions panel — loaded at startup, refreshed on session save.
+    recent_sessions: Vec<ChatSession>,
 }
 
 impl ChatApp {
@@ -156,6 +160,7 @@ impl ChatApp {
             notification_count: 0,
             context_files: Vec::new(),
             overlay: None,
+            recent_sessions: ChatSession::list_recent(10).unwrap_or_default(),
         }
     }
 
@@ -330,6 +335,8 @@ impl ChatApp {
                 content: m.content.clone(),
             })
             .collect();
+        // Refresh sidebar cache so the sessions panel stays current after each turn.
+        self.recent_sessions = ChatSession::list_recent(10).unwrap_or_default();
     }
 
     /// Apply the result of a slash command dispatch.
@@ -988,31 +995,144 @@ async fn fetch_project_context(nexus_url: &str) -> String {
 // Rendering
 // ---------------------------------------------------------------------------
 
-fn render(f: &mut Frame, app: &ChatApp, width: u16) {
+fn render(f: &mut Frame, app: &ChatApp, _width: u16) {
     let area = f.area();
 
-    let input_lines = app.input.lines().count().max(1) as u16;
-    let input_h = input_lines.min(6);
-
-    let chunks = Layout::default()
+    // Vertical: title(1) + body(fill) + status(1)
+    let vert = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Min(3),
-            Constraint::Length(1),
-            Constraint::Length(input_h),
-            Constraint::Length(1),
+            Constraint::Length(1), // title
+            Constraint::Min(3),    // body
+            Constraint::Length(1), // status
         ])
         .split(area);
 
-    render_title(f, app, chunks[0]);
-    render_messages(f, app, chunks[1], width);
-    render_separator(f, chunks[2], width);
-    render_input(f, app, chunks[3]);
-    render_status(f, app, chunks[4]);
+    render_title(f, app, vert[0]);
+    render_status(f, app, vert[2]);
 
+    // Body: horizontal split — sessions panel (22) + main area (fill)
+    // Only show sessions panel if terminal is wide enough (>=60 cols)
+    let show_sidebar = area.width >= 60;
+    let sidebar_w: u16 = 22;
+
+    let (sessions_area, main_area) = if show_sidebar {
+        let horiz = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(sidebar_w),
+                Constraint::Min(20),
+            ])
+            .split(vert[1]);
+        (Some(horiz[0]), horiz[1])
+    } else {
+        (None, vert[1])
+    };
+
+    if let Some(sa) = sessions_area {
+        render_sessions_panel(f, app, sa);
+    }
+
+    // Main area: messages(fill) + files_bar(1 if files) + sep(1) + input(dynamic)
+    let input_lines = app.input.lines().count().max(1) as u16;
+    let input_h = input_lines.min(6);
+    let has_files = !app.context_files.is_empty();
+
+    let mut main_constraints: Vec<Constraint> = vec![Constraint::Min(3)];
+    if has_files {
+        main_constraints.push(Constraint::Length(1));
+    }
+    main_constraints.push(Constraint::Length(1));
+    main_constraints.push(Constraint::Length(input_h));
+
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(main_constraints)
+        .split(main_area);
+
+    let mut idx = 0usize;
+    render_messages(f, app, main_chunks[idx], main_area.width);
+    idx += 1;
+    if has_files {
+        render_files_bar(f, app, main_chunks[idx]);
+        idx += 1;
+    }
+    render_separator(f, main_chunks[idx], main_area.width);
+    idx += 1;
+    render_input(f, app, main_chunks[idx]);
+
+    // Overlays (drawn on top of everything)
     if let Some(overlay) = &app.overlay {
         render_overlay(f, overlay, app);
+    }
+}
+
+fn render_sessions_panel(f: &mut Frame, app: &ChatApp, area: Rect) {
+    if area.height < 2 {
+        return;
+    }
+
+    let sessions = &app.recent_sessions;
+
+    // Inner area excludes the right-edge divider column
+    let inner = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width.saturating_sub(1),
+        height: area.height,
+    };
+
+    // Draw "│" divider column along the right edge of the panel
+    let divider_col = area.x + area.width.saturating_sub(1);
+    for row in area.y..area.y + area.height {
+        let div_area = Rect { x: divider_col, y: row, width: 1, height: 1 };
+        let div_p = Paragraph::new("│").style(Style::default().fg(Color::DarkGray));
+        f.render_widget(div_p, div_area);
+    }
+
+    // Header
+    let header_area = Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 };
+    let header = Paragraph::new(" Sessions")
+        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+    f.render_widget(header, header_area);
+
+    // Thin rule under header
+    let rule_area = Rect { x: inner.x, y: inner.y + 1, width: inner.width, height: 1 };
+    let rule = Paragraph::new(format!(" {}", "─".repeat(inner.width.saturating_sub(1) as usize)))
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(rule, rule_area);
+
+    // Session entries (start at row 2)
+    let available_rows = area.height.saturating_sub(2);
+    for (i, sess) in sessions.iter().take(available_rows as usize).enumerate() {
+        let row = area.y + 2 + i as u16;
+        if row >= area.y + area.height {
+            break;
+        }
+
+        let is_current = sess.id == app.session.id;
+        let date = &sess.updated_at[..10.min(sess.updated_at.len())];
+        let preview: String = sess.preview().chars().take(inner.width.saturating_sub(3) as usize).collect();
+
+        let date_style = if is_current {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let prefix = if is_current { " > " } else { "   " };
+        let date_area = Rect { x: inner.x, y: row, width: inner.width, height: 1 };
+        let date_text = format!("{}{}", prefix, date);
+        let date_p = Paragraph::new(date_text).style(date_style);
+        f.render_widget(date_p, date_area);
+
+        // Preview line one row below date — only if space and not last entry consuming two rows
+        let preview_row = row + 1;
+        if preview_row < area.y + area.height && (i + 1) * 2 <= available_rows as usize {
+            let preview_area = Rect { x: inner.x, y: preview_row, width: inner.width, height: 1 };
+            let preview_p = Paragraph::new(format!("   {}", preview))
+                .style(Style::default().fg(Color::DarkGray));
+            f.render_widget(preview_p, preview_area);
+        }
     }
 }
 
@@ -1022,10 +1142,35 @@ fn render_title(f: &mut Frame, app: &ChatApp, area: Rect) {
     } else {
         "⬡"
     };
-    let title = format!(" {} hex chat — {} ", spinner, app.model);
-    let p = Paragraph::new(title)
+
+    // Left side: spinner + model
+    let left = format!(" {} hex chat — {} ", spinner, app.model);
+
+    // Right side: context indicator + file/notification badges
+    let ctx_indicator = if app.context_system.is_some() { " ctx" } else { "" };
+    let file_count = if app.context_files.is_empty() {
+        String::new()
+    } else {
+        format!(" · {} ◆", app.context_files.len())
+    };
+    let notif = if app.notification_count > 0 {
+        format!(" · {} !", app.notification_count)
+    } else {
+        String::new()
+    };
+    let right = format!("{}{}{}  ", ctx_indicator, file_count, notif);
+
+    let left_p = Paragraph::new(left)
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
-    f.render_widget(p, area);
+    f.render_widget(left_p, area);
+
+    if area.width as usize > right.len() + 20 {
+        let right_x = area.x + area.width - right.len() as u16;
+        let right_area = Rect { x: right_x, y: area.y, width: right.len() as u16, height: 1 };
+        let right_p = Paragraph::new(right)
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(right_p, right_area);
+    }
 }
 
 fn render_messages(f: &mut Frame, app: &ChatApp, area: Rect, width: u16) {
@@ -1202,28 +1347,36 @@ fn render_input(f: &mut Frame, app: &ChatApp, area: Rect) {
     f.render_widget(p, area);
 }
 
+fn render_files_bar(f: &mut Frame, app: &ChatApp, area: Rect) {
+    let mut spans = vec![
+        Span::styled(" @ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+    ];
+    for (path, _) in &app.context_files {
+        let name = std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path);
+        spans.push(Span::styled(
+            format!("[{}] ", name),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ));
+    }
+    let p = Paragraph::new(Line::from(spans));
+    f.render_widget(p, area);
+}
+
 fn render_status(f: &mut Frame, app: &ChatApp, area: Rect) {
     let model_short = app.model.split('/').last().unwrap_or(&app.model);
     let tok = app.total_input_tokens + app.total_output_tokens;
-    let files_badge = if app.context_files.is_empty() {
-        String::new()
-    } else {
-        format!(" · {} file(s)", app.context_files.len())
-    };
-    let notif = if app.notification_count > 0 {
-        format!("  · [{}]", app.notification_count)
-    } else {
-        String::new()
-    };
     let status = if tok > 0 {
         format!(
-            "  {} · {} tok{}{}  ·  q/Ctrl+C quit  ·  ↑↓ scroll  ·  Shift+Enter newline  ·  F2 sessions",
-            model_short, tok, files_badge, notif
+            "  {} · {} tok  ·  q quit  ·  ↑↓ scroll  ·  Shift+Enter newline  ·  F2 sessions  ·  /add <path>",
+            model_short, tok
         )
     } else {
         format!(
-            "  {}{}{}  ·  q/Ctrl+C quit  ·  ↑↓ scroll  ·  Shift+Enter newline  ·  F2 sessions",
-            model_short, files_badge, notif
+            "  {}  ·  q quit  ·  ↑↓ scroll  ·  Shift+Enter newline  ·  F2 sessions  ·  /add <path>",
+            model_short
         )
     };
     let p = Paragraph::new(status)
@@ -1310,11 +1463,19 @@ pub async fn run(args: ChatArgs) -> Result<()> {
     let user_skills = skills::load_user_skills();
 
     // --- Project context injection (concurrent fetch, skip if --no-context or resuming) ---
-    let context_system = if args.no_context || resume_session.is_some() {
-        None
+    let (context_system, context_summary) = if args.no_context || resume_session.is_some() {
+        (None, None)
     } else {
         let ctx = fetch_project_context(&nexus_url).await;
-        if ctx.is_empty() { None } else { Some(ctx) }
+        if ctx.is_empty() {
+            (None, None)
+        } else {
+            let summary = ctx.lines()
+                .find(|l| l.starts_with("Project:"))
+                .map(|l| format!("Context loaded — {}", l))
+                .unwrap_or_else(|| "Project context loaded.".to_string());
+            (Some(ctx), Some(summary))
+        }
     };
 
     let mut app = ChatApp::new(nexus_url, auth_token, mcp, tool_schemas, user_skills, args.system, args.model, context_system);
@@ -1322,6 +1483,14 @@ pub async fn run(args: ChatArgs) -> Result<()> {
     // Restore prior session if requested
     if let Some(sess) = resume_session {
         app.restore_session(sess);
+    }
+
+    // Show context summary as an inline skill message
+    if let Some(summary) = context_summary {
+        app.messages.push(ChatMessage {
+            role: Role::Skill,
+            content: summary,
+        });
     }
 
     // If --message was passed, pre-load input
@@ -1432,7 +1601,7 @@ async fn run_event_loop(
                     }
 
                     (KeyCode::F(2), _) => {
-                        let sessions = ChatSession::list_recent(10).unwrap_or_default();
+                        let sessions = app.recent_sessions.clone();
                         app.overlay = Some(Overlay::SessionSidebar { sessions, cursor: 0 });
                     }
 
