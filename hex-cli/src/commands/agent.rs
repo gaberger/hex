@@ -820,12 +820,10 @@ async fn disconnect(agent_id: &str) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
 
-    // ADR-058: use unified agent registry endpoint
-    let path = format!("/api/hex-agents/{}", agent_id);
-    nexus.delete(&path).await?;
+    let path = format!("/api/hex-agents/{}/disconnect", agent_id);
+    nexus.post(&path, &json!({})).await?;
 
-    println!("{} Agent disconnected", "\u{2b21}".green());
-    println!("  Agent ID: {}", agent_id);
+    println!("{} agent {} disconnected", "\u{2b21}".green(), agent_id);
 
     // Clean up any swarms owned by this agent where all tasks are done
     if let Ok(resp) = nexus.get("/api/swarms/active").await {

@@ -392,6 +392,10 @@ const handlers = {
         if (agentData && agentData.agent_id) {
           hubDelete(`/api/hex-agents/${agentData.agent_id}`);
         }
+        // Disconnect via CLI to ensure SpacetimeDB state is also updated (covers ADR-025 fallback)
+        try {
+          require('child_process').execFileSync('hex', ['agent', 'disconnect', sessionId], { timeout: 3000 });
+        } catch (_) { /* hex binary may not be in PATH or nexus offline — non-fatal */ }
       }
     } catch (e) { /* non-fatal — agent may already be gone */ }
     hubEvent('session-end', { timestamp: Date.now() });

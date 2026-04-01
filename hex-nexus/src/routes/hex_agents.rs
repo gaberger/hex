@@ -158,6 +158,30 @@ pub async fn disconnect_agent(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// POST /api/hex-agents/:id/disconnect — mark agent as completed and return updated record
+pub async fn disconnect_agent_post(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    let port = state_port(&state)?;
+
+    // 404 if agent not found
+    match port.hex_agent_get(&id).await {
+        Ok(None) => return Err((StatusCode::NOT_FOUND, Json(json!({ "error": "Agent not found" })))),
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })))),
+        Ok(Some(_)) => {}
+    }
+
+    port.hex_agent_disconnect(&id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+
+    // Return updated agent record
+    let agent = port.hex_agent_get(&id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+
+    Ok((StatusCode::OK, Json(json!({ "agent": agent }))))
+}
+
 /// POST /api/hex-agents/evict — clean up dead agents
 pub async fn evict_dead(
     State(state): State<SharedState>,

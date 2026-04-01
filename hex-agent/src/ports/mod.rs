@@ -39,6 +39,7 @@ pub use preflight::PreflightPort;
 pub mod command_session;
 pub use command_session::IBatchExecutionPort;
 pub use live_context::{ILiveContextPort, LiveContextError};
+pub use prompt::{PromptPort, ContextError as PromptContextError};
 
 // Re-export domain types that adapters need (so adapters import from ports, not domain)
 #[allow(unused_imports)]
