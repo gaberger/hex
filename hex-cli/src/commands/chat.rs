@@ -25,6 +25,18 @@ pub struct ChatArgs {
     /// System prompt to prepend to the conversation
     #[arg(short = 's', long)]
     pub system: Option<String>,
+
+    /// Skip project context injection (context is injected by default)
+    #[arg(long)]
+    pub no_context: bool,
+
+    /// Resume a saved session by UUID
+    #[arg(short = 'r', long, value_name = "UUID")]
+    pub resume: Option<String>,
+
+    /// Show interactive picker for saved sessions
+    #[arg(long)]
+    pub resume_pick: bool,
 }
 
 pub async fn run(args: ChatArgs) -> Result<()> {
