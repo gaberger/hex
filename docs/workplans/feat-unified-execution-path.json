@@ -214,7 +214,9 @@
           "files": [
             "hex-nexus/src/orchestration/workplan_executor.rs"
           ],
-          "status": "pending",
+          "status": "completed",
+          "commit": "bb2eae7c",
+          "note": "swarm_init + per-task HexFlo creation were already implemented in run_phases and execute_phase",
           "agent": "hex-coder"
         },
         {
@@ -225,7 +227,8 @@
           "files": [
             "hex-nexus/src/orchestration/workplan_executor.rs"
           ],
-          "status": "pending",
+          "status": "completed",
+          "commit": "bb2eae7c",
           "agent": "hex-coder",
           "deps": ["P3B.1"]
         }
