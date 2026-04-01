@@ -8,6 +8,7 @@
 //!   [          | input  — dynamic] ❯ prompt, auto-height, Shift+Enter newline
 //!   [status bar         — 1 line ] token counts + key hints
 
+use std::cell::Cell;
 use std::io;
 use std::time::Duration;
 
@@ -120,6 +121,10 @@ struct ChatApp {
     overlay: Option<Overlay>,
     /// Recent sessions for the sessions panel — loaded at startup, refreshed on session save.
     recent_sessions: Vec<ChatSession>,
+    /// Max scroll offset (total_lines - visible); set by render_messages each frame.
+    scroll_max: Cell<u16>,
+    /// Height of the messages area in rows; set by render() each frame for Page Up/Down.
+    messages_height: Cell<u16>,
 }
 
 impl ChatApp {
@@ -161,6 +166,8 @@ impl ChatApp {
             context_files: Vec::new(),
             overlay: None,
             recent_sessions: ChatSession::list_recent(10).unwrap_or_default(),
+            scroll_max: Cell::new(0),
+            messages_height: Cell::new(24),
         }
     }
 
@@ -1293,16 +1300,43 @@ fn render_messages(f: &mut Frame, app: &ChatApp, area: Rect, width: u16) {
 
     let total_lines = lines.len() as u16;
     let visible = area.height;
+    let max = total_lines.saturating_sub(visible);
+    app.scroll_max.set(max);
+    app.messages_height.set(visible);
+
     let scroll = if app.auto_scroll {
-        total_lines.saturating_sub(visible)
+        max
     } else {
-        app.scroll
+        app.scroll.min(max)
+    };
+
+    // Scrollbar: render a 1-col indicator on the right edge when content overflows
+    if total_lines > visible && area.width > 2 {
+        let bar_area = Rect { x: area.x + area.width - 1, y: area.y, width: 1, height: visible };
+        let pct = if max == 0 { 100u16 } else { (scroll * 100 / max).min(100) };
+        let thumb_row = (pct * visible / 100).min(visible.saturating_sub(1));
+        for row in 0..visible {
+            let cell_area = Rect { x: bar_area.x, y: bar_area.y + row, width: 1, height: 1 };
+            let ch = if row == thumb_row { "█" } else { "░" };
+            let style = if row == thumb_row {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            f.render_widget(Paragraph::new(ch).style(style), cell_area);
+        }
+    }
+
+    let msg_area = if total_lines > visible && area.width > 2 {
+        Rect { x: area.x, y: area.y, width: area.width.saturating_sub(1), height: area.height }
+    } else {
+        area
     };
 
     let p = Paragraph::new(lines)
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0));
-    f.render_widget(p, area);
+    f.render_widget(p, msg_area);
 }
 
 fn render_separator(f: &mut Frame, area: Rect, width: u16) {
@@ -1370,12 +1404,12 @@ fn render_status(f: &mut Frame, app: &ChatApp, area: Rect) {
     let tok = app.total_input_tokens + app.total_output_tokens;
     let status = if tok > 0 {
         format!(
-            "  {} · {} tok  ·  q quit  ·  ↑↓ scroll  ·  Shift+Enter newline  ·  F2 sessions  ·  /add <path>",
+            "  {} · {} tok  ·  q quit  ·  ↑↓/PgUp/PgDn/Home/End scroll  ·  Shift+Enter newline  ·  F2 sessions  ·  /add <path>",
             model_short, tok
         )
     } else {
         format!(
-            "  {}  ·  q quit  ·  ↑↓ scroll  ·  Shift+Enter newline  ·  F2 sessions  ·  /add <path>",
+            "  {}  ·  q quit  ·  ↑↓/PgUp/PgDn/Home/End scroll  ·  Shift+Enter newline  ·  F2 sessions  ·  /add <path>",
             model_short
         )
     };
@@ -1594,10 +1628,34 @@ async fn run_event_loop(
 
                     (KeyCode::Up, _) => {
                         app.auto_scroll = false;
-                        app.scroll = app.scroll.saturating_sub(1);
+                        app.scroll = app.scroll.saturating_sub(3);
                     }
                     (KeyCode::Down, _) => {
-                        app.scroll = app.scroll.saturating_add(1);
+                        let max = app.scroll_max.get();
+                        app.scroll = app.scroll.saturating_add(3).min(max);
+                        if app.scroll >= max {
+                            app.auto_scroll = true;
+                        }
+                    }
+                    (KeyCode::PageUp, _) => {
+                        app.auto_scroll = false;
+                        let step = app.messages_height.get().saturating_sub(2).max(1);
+                        app.scroll = app.scroll.saturating_sub(step);
+                    }
+                    (KeyCode::PageDown, _) => {
+                        let max = app.scroll_max.get();
+                        let step = app.messages_height.get().saturating_sub(2).max(1);
+                        app.scroll = app.scroll.saturating_add(step).min(max);
+                        if app.scroll >= max {
+                            app.auto_scroll = true;
+                        }
+                    }
+                    (KeyCode::Home, _) => {
+                        app.auto_scroll = false;
+                        app.scroll = 0;
+                    }
+                    (KeyCode::End, _) => {
+                        app.auto_scroll = true;
                     }
 
                     (KeyCode::F(2), _) => {
