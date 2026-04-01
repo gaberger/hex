@@ -610,6 +610,7 @@ impl WorkplanExecutor {
             let path_b_project_dir = config.project_dir.clone();
             let path_b_model = config.model.clone().unwrap_or_default();
             let path_b_prompt = config.prompt.clone().unwrap_or_default();
+            let path_b_phase_name = phase.name.clone();
 
             handles.push(tokio::spawn(async move {
                 let spawn_result = if use_path_b {
@@ -618,17 +619,17 @@ impl WorkplanExecutor {
                     // marks the entry Completed or Failed (or 30-min timeout).
                     let queue_id = uuid::Uuid::new_v4().to_string();
                     let queue_key = format!("inference:queue:{}", queue_id);
-                    let entry_json = serde_json::json!({
-                        "id": queue_id,
-                        "task_id": task_id,
-                        "workplan_id": workplan_id,
-                        "prompt": path_b_prompt,
-                        "role": path_b_agent_name.clone(),
-                        "status": "Pending",
-                        "created_at": chrono::Utc::now().to_rfc3339(),
-                    }).to_string();
-                    if let Err(e) = sp.hexflo_memory_store(&queue_key, &entry_json, "global").await {
-                        tracing::warn!(queue_id = %queue_id, error = %e, "Path B: failed to store queue entry");
+                    let created_at = chrono::Utc::now().to_rfc3339();
+                    if let Err(e) = sp.inference_task_create(
+                        &queue_id,
+                        &workplan_id,
+                        &task_id,
+                        &path_b_phase_name,
+                        &path_b_prompt,
+                        &path_b_agent_name,
+                        &created_at,
+                    ).await {
+                        tracing::warn!(queue_id = %queue_id, error = %e, "Path B: failed to create inference task");
                     }
                     let payload = serde_json::json!({
                         "queue_id": queue_id,
