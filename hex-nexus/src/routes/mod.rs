@@ -32,6 +32,7 @@ pub mod sandbox;
 pub mod skills;
 pub mod ws;
 pub mod context;
+pub mod inference_ws;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
@@ -766,6 +767,7 @@ pub fn build_router(state: SharedState) -> Router {
         // WebSocket
         .route("/ws", get(ws::ws_handler))
         .route("/ws/chat", get(chat::chat_ws_handler))
+        .route("/ws/inference", get(inference_ws::ws_inference_handler))
         // Middleware (order: outermost runs first → auth → agent_guard → enforcement → deprecation → handler)
         .layer(axum::middleware::from_fn(deprecation_layer))
         .layer(axum::middleware::from_fn_with_state(state.clone(), enforcement_layer))
