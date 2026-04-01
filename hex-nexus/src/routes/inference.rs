@@ -1200,3 +1200,153 @@ async fn stream_inference(
     let ev = json!({"done":true,"model":model_name,"input_tokens":0u64,"output_tokens":output_tokens});
     let _ = tx.send(Ok(Event::default().data(ev.to_string()))).await;
 }
+
+// ── OpenAI-compatible proxy routes (/v1/models, /v1/chat/completions) ────────
+
+/// GET /v1/models — returns registered inference providers in OpenAI models-list format.
+///
+/// Always includes a "hex/default" entry. Additional entries are derived from
+/// all providers registered via `hex inference add` (stored in SpacetimeDB).
+pub async fn openai_models(
+    State(state): State<SharedState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let mut data: Vec<serde_json::Value> = vec![
+        json!({
+            "id": "hex/default",
+            "object": "model",
+            "owned_by": "hex-nexus",
+            "created": 0
+        }),
+    ];
+
+    if let Some(ref stdb) = state.inference_stdb {
+        if let Ok(providers) = stdb.list_providers().await {
+            for p in providers {
+                // Use the provider name or id as the model id, prefixed with "hex/".
+                let model_id = format!("hex/{}", p.provider_id);
+                data.push(json!({
+                    "id": model_id,
+                    "object": "model",
+                    "owned_by": "hex-nexus",
+                    "created": 0
+                }));
+            }
+        }
+    }
+
+    (StatusCode::OK, Json(json!({
+        "object": "list",
+        "data": data
+    })))
+}
+
+/// POST /v1/chat/completions — OpenAI-compatible chat completions proxy.
+///
+/// Accepts an OpenAI-format request body and delegates to the existing
+/// inference routing logic (same provider selection as /api/inference/complete).
+///
+/// - Non-streaming: returns an OpenAI-format choices response.
+/// - Streaming (`"stream": true`): delegates to inference_stream SSE path.
+///
+/// Security (spec S07): model must be "hex/default", a "hex/<id>" prefix, or
+/// absent. An unrecognised non-hex model prefix returns HTTP 400.
+pub async fn openai_chat_completions(
+    State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // Extract fields from the OpenAI-format body.
+    let model_raw = body.get("model").and_then(|v| v.as_str()).unwrap_or("hex/default");
+    let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let messages = body.get("messages")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let max_tokens = body.get("max_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(4096) as u32;
+
+    // Security S07: reject non-hex model prefixes (unknown providers).
+    // Allow: absent, "hex/default", "hex/<anything>", or bare model names
+    // that don't look like a foreign vendor namespace.
+    if model_raw.contains('/') && !model_raw.starts_with("hex/") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "message": format!("Unknown model prefix '{}'. Use 'hex/default' or a registered 'hex/<id>' model.", model_raw),
+                    "type": "invalid_request_error",
+                    "code": "model_not_found"
+                }
+            })),
+        ).into_response();
+    }
+
+    // Map "hex/default" or "hex/<id>" → the underlying model for routing.
+    // Strip the "hex/" prefix so the existing provider selection sees the bare id.
+    let resolved_model: Option<String> = if model_raw == "hex/default" {
+        None // let provider selection pick the default
+    } else if let Some(stripped) = model_raw.strip_prefix("hex/") {
+        Some(stripped.to_string())
+    } else {
+        Some(model_raw.to_string())
+    };
+
+    if stream {
+        // Delegate to the existing SSE streaming path.
+        let stream_body = InferenceCompleteRequest {
+            model: resolved_model,
+            messages,
+            system: None,
+            max_tokens,
+            tools: None,
+        };
+        return inference_stream(State(state), Json(stream_body)).await;
+    }
+
+    // Non-streaming: reuse inference_complete and wrap the response in
+    // OpenAI choices format.
+    let complete_body = InferenceCompleteRequest {
+        model: resolved_model,
+        messages,
+        system: None,
+        max_tokens,
+        tools: None,
+    };
+
+    let (status, Json(inner)) =
+        inference_complete(State(state), headers, Json(complete_body)).await;
+
+    if !status.is_success() {
+        return (status, Json(inner)).into_response();
+    }
+
+    let content = inner.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let model_used = inner.get("model").and_then(|v| v.as_str()).unwrap_or(model_raw).to_string();
+    let input_tokens = inner.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let output_tokens = inner.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    let openai_resp = json!({
+        "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+        "object": "chat.completion",
+        "created": chrono::Utc::now().timestamp(),
+        "model": model_used,
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": content
+            },
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens
+        }
+    });
+
+    (StatusCode::OK, Json(openai_resp)).into_response()
+}

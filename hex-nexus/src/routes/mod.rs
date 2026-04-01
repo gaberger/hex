@@ -652,6 +652,9 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/inference/queue/{id}", patch(inference::queue_update))
         // SSE streaming chat endpoint (hex chat TUI — wp-cli-chat-tui)
         .route("/api/inference/chat/stream", post(inference::inference_stream))
+        // OpenAI-compatible proxy (opencode first-class — feat-hex-opencode-first-class)
+        .route("/v1/models", get(inference::openai_models))
+        .route("/v1/chat/completions", post(inference::openai_chat_completions))
         // ═══════════════════════════════════════════════════════════
         // HEXFLO COORDINATION — write routes stay, reads via SpacetimeDB
         // ═══════════════════════════════════════════════════════════
