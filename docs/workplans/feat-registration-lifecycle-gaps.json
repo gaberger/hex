@@ -22,7 +22,7 @@
       ],
       "worktree_branch": "feat/reg-gaps/cli-connect",
       "done_condition": "hex agent connect writes ~/.hex/sessions/agent-{session_id}.json on the calling host with correct agentId and project",
-      "status": "done"
+      "status": "completed"
     },
     {
       "id": "step-2",
@@ -37,7 +37,7 @@
       ],
       "worktree_branch": "feat/reg-gaps/server-connect",
       "done_condition": "Connect response includes projectId; project auto-registered in SpacetimeDB project table",
-      "status": "done"
+      "status": "completed"
     },
     {
       "id": "step-3",
@@ -57,7 +57,7 @@
       ],
       "worktree_branch": "feat/reg-gaps/resolve-agent",
       "done_condition": "resolve_agent_id returns correct ID when CLAUDE_SESSION_ID set, when HEX_AGENT_ID set, and when falling back to file scan (skipping nexus files)",
-      "status": "done"
+      "status": "completed"
     },
     {
       "id": "step-4",
@@ -76,7 +76,7 @@
       ],
       "worktree_branch": "feat/reg-gaps/integration",
       "done_condition": "hex inbox list works on bazzite after hex agent connect; project visible in spacetime sql",
-      "status": "done"
+      "status": "completed"
     }
   ],
   "dependencies": {

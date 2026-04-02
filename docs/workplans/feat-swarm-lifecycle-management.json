@@ -10,7 +10,7 @@
       "title": "Add PATCH /api/swarms/:id/fail REST route",
       "adapter": "hex-nexus/src/routes/swarms.rs",
       "tier": 1,
-      "status": "done",
+      "status": "completed",
       "description": "Add fail_swarm handler that accepts JSON body { reason: string }, calls port.swarm_fail(id, reason), broadcasts WebSocket event swarm_failed. Register route in swarm router.",
       "files": [
         "hex-nexus/src/routes/swarms.rs"
@@ -23,7 +23,7 @@
       "adapter": "hex-cli/src/commands/",
       "tier": 2,
       "depends_on": [],
-      "status": "done",
+      "status": "completed",
       "description": "Add 'complete' subcommand under 'swarm' that sends PATCH /api/swarms/:id to hex-nexus. Print confirmation with swarm name.",
       "files": [
         "hex-cli/src/commands/swarm.rs",
@@ -37,7 +37,7 @@
       "adapter": "hex-cli/src/commands/",
       "tier": 2,
       "depends_on": ["S01"],
-      "status": "done",
+      "status": "completed",
       "description": "Add 'fail' subcommand under 'swarm' that sends PATCH /api/swarms/:id/fail with reason to hex-nexus. Default reason: 'manually failed'.",
       "files": [
         "hex-cli/src/commands/swarm.rs"
@@ -50,7 +50,7 @@
       "adapter": "hex-cli/src/mcp/",
       "tier": 2,
       "depends_on": ["S01"],
-      "status": "done",
+      "status": "completed",
       "description": "Register two new MCP tools that delegate to the REST endpoints. swarm_complete takes id, swarm_fail takes id + reason.",
       "files": [
         "hex-cli/src/mcp/tools.rs"
@@ -63,7 +63,7 @@
       "adapter": "hex-cli/src/commands/",
       "tier": 3,
       "depends_on": ["S02", "S03"],
-      "status": "done",
+      "status": "completed",
       "description": "Add 'cleanup' subcommand that: (1) fetches all active swarms via GET /api/swarms, (2) classifies each as completable (all tasks completed), stale (all tasks pending + older than --stale-hours, default 24), or keep (partial progress), (3) in dry-run mode (default) prints a table of proposed changes, (4) with --apply flag executes the transitions via complete/fail endpoints.",
       "files": [
         "hex-cli/src/commands/swarm.rs"
@@ -76,7 +76,7 @@
       "adapter": "operational",
       "tier": 4,
       "depends_on": ["S05"],
-      "status": "done",
+      "status": "completed",
       "description": "Execute hex swarm cleanup --apply to archive the 21 stale swarms. Verify task list is clean. Keep smoke-test-2 active (partial progress).",
       "verify": "hex swarm status shows only smoke-test-2 as active"
     }

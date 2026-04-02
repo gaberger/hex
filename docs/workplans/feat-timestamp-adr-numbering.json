@@ -18,7 +18,7 @@
       "tier": 0,
       "specs": [],
       "done_condition": "No duplicate ADR numbers exist; both former ADR-059 files have unique IDs; all cross-references updated",
-      "status": "done"
+      "status": "completed"
     },
     {
       "id": "step-2",
@@ -32,7 +32,7 @@
       "tier": 1,
       "specs": [],
       "done_condition": "hex adr schema outputs ADR-YYMMDDHHMM format; no SpacetimeDB reservation call; cargo test passes",
-      "status": "done"
+      "status": "completed"
     },
     {
       "id": "step-3",
@@ -46,7 +46,7 @@
       "tier": 1,
       "specs": [],
       "done_condition": "hex adr list displays both legacy 3-digit and new 10-digit IDs without truncation",
-      "status": "done"
+      "status": "completed"
     },
     {
       "id": "step-4",
@@ -60,7 +60,7 @@
       "tier": 1,
       "specs": [],
       "done_condition": "parseADRMarkdown correctly parses timestamp-ID ADRs; sort places legacy before timestamp; bun test passes",
-      "status": "done"
+      "status": "completed"
     },
     {
       "id": "step-5",
@@ -72,7 +72,7 @@
       "tier": 0,
       "specs": [],
       "done_condition": "Workplan schema validates both ADR-066 and ADR-2603221500 format references",
-      "status": "done"
+      "status": "completed"
     },
     {
       "id": "step-6",
@@ -86,7 +86,7 @@
       "tier": 2,
       "specs": [],
       "done_condition": "TEMPLATE.md shows YYMMDDHHMM format; /hex-adr-create skill generates correct filenames",
-      "status": "done"
+      "status": "completed"
     },
     {
       "id": "step-7",
@@ -101,7 +101,7 @@
       "tier": 2,
       "specs": [],
       "done_condition": "All existing tests pass; new tests verify timestamp ID generation and parsing",
-      "status": "done"
+      "status": "completed"
     }
   ]
 }
