@@ -29,6 +29,11 @@ pub enum EnforceAction {
     Mode,
     /// Output a system prompt for non-MCP models (ADR-2603221959 P6)
     Prompt,
+    /// Check a file path against adr-rules.toml (for Claude Code hook integration)
+    CheckFile {
+        /// File path to check
+        path: String,
+    },
 }
 
 pub async fn run(action: EnforceAction) -> anyhow::Result<()> {
@@ -39,6 +44,7 @@ pub async fn run(action: EnforceAction) -> anyhow::Result<()> {
         EnforceAction::Enable { rule_id } => toggle(&rule_id, true).await,
         EnforceAction::Mode => show_mode().await,
         EnforceAction::Prompt => generate_prompt().await,
+        EnforceAction::CheckFile { path } => check_file(&path),
     }
 }
 
@@ -239,6 +245,120 @@ fn load_local_rules() -> Vec<LocalRule> {
     }
 
     Vec::new()
+}
+
+// ── adr-rules.toml (new format: [rules] + [[hex_layer_rules]]) ─────────────
+
+#[derive(Debug, serde::Deserialize)]
+struct AdrRulesFile {
+    #[serde(default)]
+    rules: AdrRulesSection,
+    #[serde(default)]
+    hex_layer_rules: Vec<HexLayerRule>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct AdrRulesSection {
+    #[serde(default)]
+    forbidden_paths: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct HexLayerRule {
+    path_pattern: String,
+    layer: String,
+}
+
+/// Find `.hex/adr-rules.toml` starting from cwd, walking up to root,
+/// then falling back to `~/.hex/adr-rules.toml`.
+fn find_adr_rules_toml() -> Option<std::path::PathBuf> {
+    // Walk from cwd upward
+    if let Ok(mut dir) = std::env::current_dir() {
+        loop {
+            let candidate = dir.join(".hex/adr-rules.toml");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+    }
+    // Fallback: ~/.hex/adr-rules.toml
+    if let Some(home) = dirs::home_dir() {
+        let candidate = home.join(".hex/adr-rules.toml");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn load_adr_rules_file(path: &std::path::Path) -> Option<AdrRulesFile> {
+    let content = std::fs::read_to_string(path).ok()?;
+    toml::from_str(&content).ok()
+}
+
+/// `hex enforce check-file <path>`
+///
+/// Exit 0 = allowed, exit 1 = blocked (writes reason to stderr).
+/// If no rules file is found, exits 0 (unconfigured = allow).
+fn check_file(path: &str) -> anyhow::Result<()> {
+    let rules_path = match find_adr_rules_toml() {
+        Some(p) => p,
+        None => {
+            // No rules configured — allow
+            std::process::exit(0);
+        }
+    };
+
+    let rules = match load_adr_rules_file(&rules_path) {
+        Some(r) => r,
+        None => {
+            // Malformed rules file — allow (don't block on parse error)
+            std::process::exit(0);
+        }
+    };
+
+    // 1. Check forbidden_paths (blocking)
+    for forbidden in &rules.rules.forbidden_paths {
+        if path.contains(forbidden.as_str()) {
+            eprintln!(
+                "hex enforce: BLOCKED — path '{}' matches forbidden pattern '{}'",
+                path, forbidden
+            );
+            std::process::exit(1);
+        }
+    }
+
+    // 2. Check hex_layer_rules (non-blocking warning)
+    if !rules.hex_layer_rules.is_empty() {
+        // Is the file under src/?
+        let under_src = path.contains("/src/") || path.starts_with("src/");
+        if under_src {
+            let matched = rules
+                .hex_layer_rules
+                .iter()
+                .any(|r| path.contains(r.path_pattern.as_str()));
+            if !matched {
+                // Warn but do not block
+                let known_layers: Vec<&str> = rules
+                    .hex_layer_rules
+                    .iter()
+                    .map(|r| r.layer.as_str())
+                    .collect();
+                eprintln!(
+                    "hex enforce: WARNING — '{}' is under src/ but matches no hex layer (known: {}). \
+                     Check your .hex/adr-rules.toml.",
+                    path,
+                    known_layers.join(", ")
+                );
+            }
+        }
+    }
+
+    // All checks passed (or only warnings issued)
+    std::process::exit(0);
 }
 
 fn resolve_mode() -> String {
