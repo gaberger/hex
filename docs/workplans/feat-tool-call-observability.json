@@ -2,93 +2,119 @@
   "title": "Feature: Tool Call Observability via WebSocket Event Log (ADR-2604012137)",
   "feature": "tool-call-observability",
   "language": "rust",
-  "status": "planned",
+  "status": "completed",
   "adr": "ADR-2604012137",
   "description": "Add lightweight tool-call event log to hex-nexus: SQLite tool_events table + POST /api/events endpoint + WebSocket broadcast to dashboard. Inspired by agents-observe pattern. Works without SpacetimeDB.",
   "priority": "medium",
   "steps": [
     {
       "id": "step-1",
-      "description": "Add tool_events table to SQLite schema in hex-nexus/src/adapters/sqlite_state.rs. Columns: id, session_id, agent_id, event_type, tool_name, input_json (truncated 4KB), result_json (truncated 4KB), exit_code, duration_ms, created_at. Add index on (session_id, created_at DESC).",
+      "description": "Add tool_events table to SQLite schema in hex-nexus. Columns: id, session_id, agent_id, event_type, tool_name, input_json (4KB truncated), result_json (4KB truncated), exit_code, duration_ms, model_used, context_strategy, rl_action, input_tokens, output_tokens, cost_usd, hex_layer, created_at. Indexes on (session_id, created_at DESC) and (session_id, model_used). Full audit trace per tool call.",
       "adapter": "adapters/secondary",
       "tier": 0,
       "dependencies": [],
-      "status": "planned"
+      "status": "completed"
     },
     {
       "id": "step-2",
       "description": "Add POST /api/events route to hex-nexus. Accepts {session_id, agent_id?, event_type, tool_name?, input_json?, result_json?, exit_code?, duration_ms?}. Writes to tool_events SQLite table. Returns {id, created_at}.",
       "adapter": "adapters/primary",
       "tier": 1,
-      "dependencies": ["step-1"],
-      "status": "planned"
+      "dependencies": [
+        "step-1"
+      ],
+      "status": "completed"
     },
     {
       "id": "step-3",
       "description": "Add GET /api/events?session_id=<id>&limit=100 route. Returns tool_events rows ordered by created_at DESC. Used for initial dashboard load (before WebSocket catches up).",
       "adapter": "adapters/primary",
       "tier": 1,
-      "dependencies": ["step-1"],
-      "status": "planned"
+      "dependencies": [
+        "step-1"
+      ],
+      "status": "completed"
     },
     {
       "id": "step-4",
       "description": "Extend hex-nexus WebSocket broadcast to include tool_events. On each INSERT into tool_events, broadcast {type: 'tool_event', data: <row>} to all connected dashboard WebSocket clients subscribed to the relevant session_id.",
       "adapter": "adapters/primary",
       "tier": 2,
-      "dependencies": ["step-2"],
-      "status": "planned"
+      "dependencies": [
+        "step-2"
+      ],
+      "status": "completed"
     },
     {
       "id": "step-5",
       "description": "Add hex hook observe <pre|post> subcommand to hex-cli/src/commands/hook.rs. Reads hook event JSON from stdin (same as existing hook commands), extracts tool_name + input/result, POSTs to /api/events non-blocking (fire and forget, 100ms timeout). Used as a standalone non-blocking hook.",
       "adapter": "adapters/primary",
       "tier": 2,
-      "dependencies": ["step-2"],
-      "status": "planned"
+      "dependencies": [
+        "step-2"
+      ],
+      "status": "completed"
     },
     {
       "id": "step-6",
       "description": "Add TTL cleanup: delete tool_events older than 7 days. Run as part of hex-nexus startup cleanup routine (same location as stale agent cleanup). Prevents unbounded growth.",
       "adapter": "adapters/secondary",
       "tier": 2,
-      "dependencies": ["step-1"],
-      "status": "planned"
+      "dependencies": [
+        "step-1"
+      ],
+      "status": "completed"
     },
     {
       "id": "step-7",
       "description": "Add Activity panel to hex dashboard (hex-nexus/assets/src/). Solid.js component showing tool-call timeline: PreToolUse+PostToolUse pairs collapsed into one row, expandable input/output, session filter, agent filter, latency column. Subscribes to WebSocket tool_event messages and loads initial data from GET /api/events.",
       "adapter": "adapters/primary",
       "tier": 3,
-      "dependencies": ["step-3", "step-4"],
-      "status": "planned"
+      "dependencies": [
+        "step-3",
+        "step-4"
+      ],
+      "status": "completed"
     },
     {
       "id": "step-8",
       "description": "Update hex-cli/assets/templates/hex-claude-settings.json to add hex hook observe pre/post as non-blocking hooks alongside the enforcement hooks from ADR-2604012110. Document in hooks-prototype/README.md.",
       "adapter": "adapters/primary",
       "tier": 3,
-      "dependencies": ["step-5"],
-      "status": "planned"
+      "dependencies": [
+        "step-5"
+      ],
+      "status": "completed"
     }
   ],
   "phases": [
     {
       "id": "phase-1",
       "name": "SQLite schema + REST API",
-      "steps": ["step-1", "step-2", "step-3"],
+      "steps": [
+        "step-1",
+        "step-2",
+        "step-3"
+      ],
       "description": "Event storage + query endpoints"
     },
     {
       "id": "phase-2",
       "name": "WebSocket broadcast + CLI hook",
-      "steps": ["step-4", "step-5", "step-6"],
+      "steps": [
+        "step-4",
+        "step-5",
+        "step-6"
+      ],
       "description": "Live push + hook integration + cleanup"
     },
     {
       "id": "phase-3",
       "name": "Dashboard Activity panel",
-      "steps": ["step-7", "step-8"],
+      "steps": [
+        "step-7",
+        "step-8"
+      ],
       "description": "UI + settings template update"
     }
   ],

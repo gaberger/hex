@@ -48,8 +48,12 @@
           "name": "Fetch live execution per workplan in plan list",
           "layer": "primary",
           "description": "In hex-cli/src/commands/plan.rs, the plan list command iterates workplan files. For each file, make a GET /api/workplan/by-path?path=<filename> call. If it returns an execution, replace the completed count with execution.completed_tasks and append the execution status as a suffix badge (e.g. '[running 3/28]', '[completed 28/28]', '[failed 5/28]'). If the nexus call fails or returns 404, fall back to the JSON-derived count silently.",
-          "files": ["hex-cli/src/commands/plan.rs"],
-          "deps": ["P1.1"],
+          "files": [
+            "hex-cli/src/commands/plan.rs"
+          ],
+          "deps": [
+            "P1.1"
+          ],
           "status": "done",
           "agent": "hex-coder"
         }
@@ -71,12 +75,17 @@
           "name": "Smoke test plan list with active execution",
           "layer": "primary",
           "description": "Manually verify: start hex_plan_execute on a workplan, immediately run hex plan list, confirm the active workplan shows live progress counts rather than 0. Document result in ADR-2603312300 as 'Accepted'.",
-          "files": ["docs/adrs/ADR-2603312300-workplan-live-execution-overlay.md"],
-          "deps": ["P2.1"],
+          "files": [
+            "docs/adrs/ADR-2603312300-workplan-live-execution-overlay.md"
+          ],
+          "deps": [
+            "P2.1"
+          ],
           "status": "done",
           "agent": "hex-coder"
         }
       ]
     }
-  ]
+  ],
+  "status": "done"
 }

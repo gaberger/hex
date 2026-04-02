@@ -59,8 +59,6 @@ toml = "0.8"
 hex-core = { path = "../hex-core" }
 # Docker container lifecycle for sandbox agent coordination (feat-docker-sandbox)
 bollard = "0.17"
-# SQLite for offline-first session persistence (ADR-036)
-rusqlite = { version = "0.34", features = ["bundled"], optional = true }
 # SpacetimeDB client SDK — optional, enabled via --features spacetimedb
 spacetimedb-sdk = { version = "2.0", optional = true }
 
@@ -69,6 +67,5 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 tempfile = "3"
 
 [features]
-default = ["spacetimedb", "sqlite-session"]
-sqlite-session = ["rusqlite"]
+default = ["spacetimedb"]
 spacetimedb = ["spacetimedb-sdk"]

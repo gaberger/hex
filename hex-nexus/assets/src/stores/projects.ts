@@ -87,7 +87,7 @@ export async function registerProject(path: string): Promise<boolean> {
     const name = initResult?.name ?? path.split("/").pop() ?? `project-${Date.now()}`;
     const id = path.split("/").pop() || `project-${Date.now()}`;
     const timestamp = new Date().toISOString();
-    conn.reducers.registerProject(id, name, path, timestamp);
+    conn.reducers.registerProject(id, name, "", path, timestamp, false);
     addToast("success", `Project registered: ${path}`);
     return true;
   } catch (err: any) {

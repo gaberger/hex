@@ -16,4 +16,5 @@ export default {
   description: __t.string(),
   path: __t.string(),
   registeredAt: __t.string(),
+  astIsStub: __t.bool(),
 };

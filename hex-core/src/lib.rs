@@ -37,13 +37,13 @@ pub const SPACETIMEDB_DEFAULT_HOST: &str = "http://127.0.0.1:3033";
 // hexflo-coordination → "hex" (backward compat), all others → directory name.
 
 /// Database name for the core coordination module (backward-compatible).
-pub const STDB_DATABASE_CORE: &str = "hexflo-coordination";
+pub const STDB_DATABASE_CORE: &str = "hex";
 
 /// Module-to-database mapping. Index matches MODULE_TIERS order in spacetime_launcher.
 /// Format: (module_directory_name, database_name)
 pub const STDB_MODULE_DATABASES: &[(&str, &str)] = &[
     // Tier 0: Foundation
-    ("hexflo-coordination", "hexflo-coordination"),
+    ("hexflo-coordination", "hex"),
     ("agent-registry", "agent-registry"),
     ("fleet-state", "fleet-state"),
     ("file-lock-manager", "file-lock-manager"),

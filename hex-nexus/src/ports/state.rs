@@ -373,7 +373,7 @@ pub struct ProjectRecord {
     pub swarm: Option<serde_json::Value>,
     #[serde(default)]
     pub graph: Option<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, alias = "ast_is_stub")]
     pub ast_is_stub: bool,
 }
 

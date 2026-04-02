@@ -34,6 +34,7 @@ pub mod skills;
 pub mod ws;
 pub mod context;
 pub mod inference_ws;
+pub mod events;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
@@ -116,6 +117,7 @@ async fn get_version() -> Json<serde_json::Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "buildHash": env!("HEX_HUB_BUILD_HASH"),
         "name": "hex-hub",
+        "buildProfile": if cfg!(debug_assertions) { "debug" } else { "release" },
     }))
 }
 
@@ -440,6 +442,8 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT)))
         .route("/api/event", post(push::push_event)
             .layer(DefaultBodyLimit::max(EVENT_BODY_LIMIT)))
+        // Tool-call event log (ADR-2604012137) — SQLite + WebSocket broadcast
+        .route("/api/events", post(events::post_event).get(events::list_events))
         // Per-project queries (browser reads)
         .route("/api/{project_id}/health", get(query::get_health))
         .route("/api/{project_id}/tokens/overview", get(query::get_tokens_overview))

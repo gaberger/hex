@@ -4,3 +4,4 @@ export { default as ProjectDetail } from "./ProjectDetail";
 export { default as ADRBrowser } from "./ADRBrowser";
 export { default as ConfigPage } from "./ConfigPage";
 export { default as FileTreeView } from "./FileTreeView";
+export { default as ActivityPanel } from "./ActivityPanel";

@@ -17,6 +17,9 @@ export default __t.row({
   status: __t.string(),
   agentId: __t.string().name("agent_id"),
   result: __t.string(),
+  dependsOn: __t.string().name("depends_on"),
+  version: __t.u64(),
+  claimedBy: __t.string().name("claimed_by"),
   createdAt: __t.string().name("created_at"),
   completedAt: __t.string().name("completed_at"),
 });

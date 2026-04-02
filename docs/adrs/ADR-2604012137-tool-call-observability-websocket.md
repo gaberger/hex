@@ -37,19 +37,44 @@ Hooks post events via a small shell one-liner or by extending `hex hook route` â
 
 ```sql
 CREATE TABLE tool_events (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL,
-    agent_id   TEXT,
-    event_type TEXT NOT NULL,  -- PreToolUse | PostToolUse | SubagentStart | SubagentStop | Stop
-    tool_name  TEXT,
-    input_json TEXT,
-    result_json TEXT,
-    exit_code  INTEGER,
-    duration_ms INTEGER,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id   TEXT NOT NULL,
+    agent_id     TEXT,
+    event_type   TEXT NOT NULL,  -- PreToolUse | PostToolUse | SubagentStart | SubagentStop | Stop
+    tool_name    TEXT,
+    -- Tool input/output (truncated at 4KB each)
+    input_json   TEXT,
+    result_json  TEXT,
+    exit_code    INTEGER,
+    duration_ms  INTEGER,
+    -- Full audit fields: model routing + context + cost
+    model_used      TEXT,        -- e.g. "claude-sonnet-4-6", "MiniMax-M2.7", "local"
+    context_strategy TEXT,       -- "aggressive" | "balanced" | "conservative"
+    rl_action       TEXT,        -- raw RL compound action: "model:minimax|context:conservative"
+    input_tokens    INTEGER,
+    output_tokens   INTEGER,
+    cost_usd        REAL,
+    hex_layer       TEXT,        -- "domain" | "ports" | "adapters/primary" | etc.
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX tool_events_session ON tool_events(session_id, created_at DESC);
+CREATE INDEX tool_events_model ON tool_events(session_id, model_used);
 ```
+
+### Audit Trace Per Tool Call
+
+Every tool call produces a correlated record linking:
+- **What happened**: tool_name + input + result
+- **Which model handled it**: model_used + rl_action (which Q-table decision drove routing)
+- **Context strategy**: how much history/tool-result budget was allocated
+- **Cost**: input_tokens + output_tokens + cost_usd (links to existing USD cost tracking)
+- **Hex layer**: which architecture boundary was being modified
+
+This enables queries like:
+- "Show all Bash tool calls this session with their cost"
+- "Which model handled each code generation task?"
+- "What was the avg latency for Opus vs MiniMax on Write operations?"
+- "Did any domain-layer edits happen without RL routing through Haiku?"
 
 ---
 

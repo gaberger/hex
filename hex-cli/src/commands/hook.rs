@@ -170,6 +170,12 @@ pub enum HookEvent {
     SubagentStart,
     /// Subagent completed — auto-complete task
     SubagentStop,
+    /// Before a tool call — fire-and-forget POST to /api/events (ADR-2604012137)
+    ObservePre,
+    /// After a tool call — fire-and-forget POST to /api/events (ADR-2604012137)
+    ObservePost,
+    /// On Stop — fire-and-forget POST to /api/events with hook output (ADR-2604012137)
+    ObserveStop,
 }
 
 pub async fn run(event: HookEvent) -> Result<()> {
@@ -187,6 +193,9 @@ pub async fn run(event: HookEvent) -> Result<()> {
         HookEvent::Route => route(&project_dir).await,
         HookEvent::SubagentStart => subagent_start().await,
         HookEvent::SubagentStop => subagent_stop().await,
+        HookEvent::ObservePre => observe("PreToolUse").await,
+        HookEvent::ObservePost => observe("PostToolUse").await,
+        HookEvent::ObserveStop => observe("Stop").await,
     }
 }
 
@@ -228,11 +237,14 @@ async fn session_start(project_dir: &Path) -> Result<()> {
             if stdb_ok {
                 println!("  StDB:    {}", "connected".green());
             } else {
-                println!("  StDB:    {} (nexus using SQLite fallback)", "offline".yellow());
+                println!("  StDB:    {} (run `hex nexus start` to connect)", "offline".red());
             }
 
             // Register this Claude Code session as an agent (ADR-048, ADR-058)
             let _ = register_session_agent(project_dir, name).await;
+
+            // Ensure this project is registered in the dashboard (idempotent)
+            let _ = ensure_project_registered(project_dir, name).await;
 
             // Evict dead agents from previous sessions (ADR-058)
             if let Ok(evict_client) = nexus_client(3) {
@@ -1925,6 +1937,36 @@ async fn save_restart_checkpoint(state: &SessionState, client: &reqwest::Client)
 
 // ── Nexus communication ──────────────────────────────────────────────
 
+/// Idempotent project registration — registers if not already in the dashboard.
+/// Called from session_start so the project always appears in the control plane.
+async fn ensure_project_registered(project_dir: &Path, name: &str) -> Result<()> {
+    let client = nexus_client(3)?;
+    let root = project_dir.to_string_lossy().to_string();
+
+    // Check if already registered
+    if let Ok(resp) = client.get(nexus_url("/api/projects")).send().await {
+        if let Ok(body) = resp.json::<serde_json::Value>().await {
+            if let Some(projects) = body.get("projects").and_then(|v| v.as_array()) {
+                let already = projects.iter().any(|p| {
+                    p.get("rootPath").and_then(|v| v.as_str()) == Some(&root)
+                });
+                if already {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    let body = serde_json::json!({ "rootPath": root, "name": name });
+    let _ = client
+        .post(nexus_url("/api/projects/register"))
+        .json(&body)
+        .send()
+        .await;
+
+    Ok(())
+}
+
 async fn check_nexus_health() -> Result<serde_json::Value> {
     let client = nexus_client(2)?;
     let resp = client.get(nexus_url("/api/health")).send().await?.error_for_status()?;
@@ -2321,4 +2363,74 @@ fn find_ancestor_claude_pid() -> Option<u32> {
 
     // Fallback: immediate parent (best effort)
     Some(std::os::unix::process::parent_id())
+}
+
+// ── Observe (ADR-2604012137) ─────────────────────────────────────────────────
+
+/// Non-blocking tool-call observer: reads Claude Code hook JSON from stdin and
+/// POSTs it to `/api/events` with a 100 ms timeout (fire-and-forget).
+///
+/// Invoked as a non-blocking hook:
+/// ```json
+/// { "PreToolUse":  [{ "type": "command", "command": "hex hook observe-pre",  "blocking": false }] }
+/// { "PostToolUse": [{ "type": "command", "command": "hex hook observe-post", "blocking": false }] }
+/// ```
+async fn observe(event_type: &str) -> Result<()> {
+    // Read Claude Code hook JSON from stdin (non-blocking on missing data).
+    let stdin = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
+    if stdin.trim().is_empty() {
+        return Ok(());
+    }
+
+    let hook: serde_json::Value = match serde_json::from_str(&stdin) {
+        Ok(v) => v,
+        Err(_) => return Ok(()), // Malformed stdin — skip silently
+    };
+
+    let session_id = std::env::var("CLAUDE_SESSION_ID")
+        .or_else(|_| {
+            hook.get("session_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or(std::env::VarError::NotPresent)
+        })
+        .unwrap_or_default();
+
+    if session_id.is_empty() {
+        return Ok(()); // Cannot correlate without session_id
+    }
+
+    let tool_name = hook.get("tool_name").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    // input_json: the tool_input field (PreToolUse) or same (PostToolUse)
+    let input_json = hook.get("tool_input").map(|v| v.to_string());
+
+    // result_json: tool_response present in PostToolUse
+    let result_json = hook.get("tool_response").map(|v| v.to_string());
+
+    // Resolve agent_id from session state file (best-effort)
+    let agent_id = SessionState::load().map(|s| s.agent_id).filter(|s| !s.is_empty());
+
+    let body = serde_json::json!({
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "event_type": event_type,
+        "tool_name": tool_name,
+        "input_json": input_json,
+        "result_json": result_json,
+    });
+
+    // Fire-and-forget: 100 ms timeout, no retry, ignore errors.
+    let client = match nexus_client(1) {
+        Ok(c) => c,
+        Err(_) => return Ok(()),
+    };
+    let url = nexus_url("/api/events");
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        client.post(&url).json(&body).send(),
+    )
+    .await;
+
+    Ok(())
 }

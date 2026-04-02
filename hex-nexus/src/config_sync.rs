@@ -126,6 +126,7 @@ pub async fn auto_register_project(project_root: &Path, stdb_host: &str, stdb_db
             manifest.description,
             root_path,
             now,
+            false,
         ]),
     )
     .await

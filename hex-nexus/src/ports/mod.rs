@@ -1,3 +1,4 @@
+pub mod events;
 pub mod live_context;
 pub mod secret_grant;
 pub mod session;

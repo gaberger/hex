@@ -226,10 +226,9 @@ mod tests {
     async fn test_permission_persistence_in_memory() {
         let adapter = PermissionAdapter::new();
 
-        // Not yet persistently approved in this instance.
-        assert!(!adapter.is_persistently_approved("HexTestTool").await);
-
-        // Persist an approval — should be immediately visible in-memory.
+        // After persist_approval, the tool must be visible in-memory immediately.
+        // We don't assert the "not yet approved" state because ~/.hex/permissions.json
+        // may already contain this tool from a previous test run.
         adapter.persist_approval("HexTestTool").await;
 
         assert!(adapter.is_persistently_approved("HexTestTool").await);

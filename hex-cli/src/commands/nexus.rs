@@ -10,8 +10,8 @@ const DEFAULT_PORT: u16 = 5555;
 ///
 /// Search order:
 /// 1. `HEX_NEXUS_BIN` env var
-/// 2. `./target/release/hex-nexus` (local release build)
-/// 3. `./target/debug/hex-nexus` (local debug build)
+/// 2. `./target/debug/hex-nexus` (local debug build — preferred for dev)
+/// 3. `./target/release/hex-nexus` (local release build)
 /// 4. `hex-nexus` on `$PATH`
 fn find_nexus_binary() -> Option<PathBuf> {
     // 1. Explicit env var
@@ -22,8 +22,9 @@ fn find_nexus_binary() -> Option<PathBuf> {
         }
     }
 
-    // 2-3. Local build artifacts (checked before PATH so dev builds take priority)
-    for profile in &["release", "debug"] {
+    // 2-3. Local build artifacts — debug first so iterative dev builds are always picked up.
+    // Set HEX_NEXUS_BIN=target/release/hex-nexus to explicitly use a release build.
+    for profile in &["debug", "release"] {
         let candidate = PathBuf::from(format!("target/{}/hex-nexus", profile));
         if candidate.is_file() {
             return Some(candidate);
@@ -709,6 +710,23 @@ async fn status() -> anyhow::Result<()> {
         let nexus = crate::nexus_client::NexusClient::new(nexus_url);
         if nexus.ensure_running().await.is_ok() {
             println!("  API:  {}", nexus.url().green());
+
+            // Build profile
+            match nexus.get("/api/version").await {
+                Ok(ver) => {
+                    if let Some(profile) = ver.get("buildProfile").and_then(|v| v.as_str()) {
+                        let label = if profile == "debug" {
+                            "debug".yellow().to_string()
+                        } else {
+                            "release".green().to_string()
+                        };
+                        println!("  Build: {}", label);
+                    } else {
+                        println!("  Build: (no buildProfile — nexus needs restart)");
+                    }
+                }
+                Err(e) => println!("  Build: (err: {})", e),
+            }
 
             // SpacetimeDB status
             if let Ok(resp) = nexus.get("/secrets/grants").await {

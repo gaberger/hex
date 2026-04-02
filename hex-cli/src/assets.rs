@@ -86,4 +86,28 @@ mod tests {
         let count = Assets::iter().count();
         assert!(count >= 3, "should have at least 3 embedded assets, got {}", count);
     }
+
+    #[test]
+    fn skills_are_embedded_and_parseable() {
+        let skill_paths: Vec<_> = Assets::iter()
+            .filter(|p| p.starts_with("skills/") && p.ends_with(".md"))
+            .collect();
+        println!("skill paths: {:?}", skill_paths);
+        assert!(!skill_paths.is_empty(), "no .md files found under skills/ prefix");
+        // Verify at least one parses successfully
+        let parsed = skill_paths.iter().filter_map(|p| {
+            Assets::get_str(p).and_then(|c| {
+                let c = c.trim().to_string();
+                if !c.starts_with("---") { return None; }
+                let rest = &c[3..];
+                let end = rest.find("\n---")?;
+                let fm = &rest[..end];
+                let name: String = fm.lines()
+                    .find_map(|l| l.strip_prefix("name:").map(|v| v.trim().to_string()))?;
+                Some(name)
+            })
+        }).collect::<Vec<_>>();
+        println!("parsed skill names: {:?}", parsed);
+        assert!(!parsed.is_empty(), "no skills parsed successfully from embedded assets");
+    }
 }

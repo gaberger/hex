@@ -283,6 +283,7 @@ pub struct Project {
     pub description: String,
     pub path: String,
     pub registered_at: String,
+    pub ast_is_stub: bool,
 }
 
 /// Register or update a project.
@@ -294,6 +295,7 @@ pub fn register_project(
     description: String,
     path: String,
     registered_at: String,
+    ast_is_stub: bool,
 ) -> Result<(), String> {
     if path.is_empty() {
         return Err("Project path is required".to_string());
@@ -304,6 +306,7 @@ pub fn register_project(
             description,
             path,
             registered_at,
+            ast_is_stub,
             ..existing
         });
     } else {
@@ -313,6 +316,7 @@ pub fn register_project(
             description,
             path,
             registered_at,
+            ast_is_stub,
         });
     }
     Ok(())

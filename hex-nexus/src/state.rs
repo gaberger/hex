@@ -56,6 +56,8 @@ pub struct AppState {
     pub context_pressure: Arc<Mutex<HashMap<String, ContextPressureTracker>>>,
     // Architecture fingerprints (ADR-2603301200) — in-memory, regenerated per hex dev run
     pub fingerprints: RwLock<HashMap<String, crate::analysis::fingerprint_extractor::ArchitectureFingerprint>>,
+    // Tool-call event log (ADR-2604012137, ADR-2604020900) — in-memory ring buffer, WebSocket broadcast on insert
+    pub event_adapter: std::sync::Arc<crate::adapters::events::InMemoryEventAdapter>,
 }
 
 impl AppState {
@@ -88,6 +90,7 @@ impl AppState {
             live_context: None,
             context_pressure: Arc::new(Mutex::new(HashMap::new())),
             fingerprints: RwLock::new(HashMap::new()),
+            event_adapter: std::sync::Arc::new(crate::adapters::events::InMemoryEventAdapter::new()),
         }
     }
 

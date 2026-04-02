@@ -1,0 +1,99 @@
+{
+  "feature": "spacetimedb-direct-query-cli",
+  "description": "hex stdb subcommand for running SQL queries and listing tables directly against SpacetimeDB without needing the nexus daemon",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "SQL SELECT query returns pretty-printed table output",
+      "given": "SpacetimeDB is running at the default host and the 'hex' database has rows in the 'project' table",
+      "when": "hex stdb query 'SELECT * FROM project' is run",
+      "then": "Output is a formatted table with column headers and aligned rows, one row per result",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "tables subcommand lists all tables in the database",
+      "given": "SpacetimeDB is running and the 'hex' database has multiple tables",
+      "when": "hex stdb tables is run",
+      "then": "Output lists every table name, one per line",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "--json flag outputs raw JSON",
+      "given": "SpacetimeDB is running with data in the 'swarm' table",
+      "when": "hex stdb query 'SELECT * FROM swarm' --json is run",
+      "then": "Output is valid JSON matching the SpacetimeDB SQL API schema+rows format",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "--db flag targets a non-default database",
+      "given": "SpacetimeDB is running with an 'inference-gateway' database",
+      "when": "hex stdb query 'SELECT * FROM inference_provider' --db inference-gateway is run",
+      "then": "Output shows rows from the inference-gateway database, not the default 'hex' database",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "ErrorHandling",
+      "description": "Unreachable SpacetimeDB shows a friendly error",
+      "given": "SpacetimeDB is not running",
+      "when": "hex stdb query 'SELECT * FROM project' is run",
+      "then": "Prints 'Cannot reach SpacetimeDB at <host> — is it running?' and exits non-zero",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "ErrorHandling",
+      "description": "Invalid SQL returns the SpacetimeDB error message",
+      "given": "SpacetimeDB is running",
+      "when": "hex stdb query 'SELECT * FROM nonexistent_table' is run",
+      "then": "Prints the error message returned by SpacetimeDB and exits non-zero",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "EdgeCase",
+      "description": "Query returning zero rows shows headers only with a zero-rows note",
+      "given": "SpacetimeDB is running and the 'swarm' table is empty",
+      "when": "hex stdb query 'SELECT * FROM swarm' is run",
+      "then": "Prints column headers and '(0 rows)' — does not error",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "EdgeCase",
+      "description": "Does not require nexus daemon to be running",
+      "given": "hex-nexus daemon is stopped but SpacetimeDB is running",
+      "when": "hex stdb query 'SELECT * FROM project' is run",
+      "then": "Query succeeds — hex stdb connects directly to SpacetimeDB, not via nexus",
+      "negative_spec": false
+    },
+    {
+      "id": "S09",
+      "category": "EdgeCase",
+      "description": "--count flag prints only the row count",
+      "given": "SpacetimeDB is running with 3 rows in the 'project' table",
+      "when": "hex stdb query 'SELECT * FROM project' --count is run",
+      "then": "Prints '3' and exits zero",
+      "negative_spec": false
+    },
+    {
+      "id": "S10",
+      "category": "ErrorHandling",
+      "description": "Mutation SQL is rejected with a clear message",
+      "given": "SpacetimeDB is running",
+      "when": "hex stdb query 'DELETE FROM project' is run",
+      "then": "SpacetimeDB returns an error (SQL API is read-only); hex prints the error and exits non-zero",
+      "negative_spec": true,
+      "domain_conventions": {
+        "readonly": "SpacetimeDB SQL API only supports SELECT — mutations must go through reducers"
+      }
+    }
+  ]
+}

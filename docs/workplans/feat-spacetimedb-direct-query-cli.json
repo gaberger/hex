@@ -1,0 +1,105 @@
+{
+  "id": "feat-spacetimedb-direct-query-cli",
+  "title": "Feature: hex stdb — direct SpacetimeDB query CLI",
+  "specs": "docs/specs/spacetimedb-direct-query-cli.json",
+  "adr": "ADR-2604021215",
+  "created": "2026-04-02",
+  "status": "planned",
+  "topology": "pipeline",
+  "budget": "~8000 tokens",
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Add StdbAction enum and `hex stdb` subcommand skeleton to hex-cli/src/commands/stdb.rs with `query` and `tables` subcommands. Wire into hex-cli/src/main.rs command router. No logic yet — just argument parsing with --db, --json, --count flags.",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "dependencies": [],
+      "tier": 0,
+      "specs": ["S01", "S02", "S03", "S04"],
+      "worktree_branch": "feat/spacetimedb-direct-query-cli/cli-skeleton",
+      "done_condition": "cargo check passes; hex stdb --help prints usage without error"
+    },
+    {
+      "id": "step-2",
+      "description": "Implement `hex stdb query <SQL>` in stdb.rs: POST to /v1/database/{db}/sql, parse schema+rows JSON response, render as aligned table (headers + rows). Use HEX_SPACETIMEDB_HOST env / default 127.0.0.1:3033. Handle 0-row result (print headers + '(0 rows)'). Handle HTTP errors with friendly message.",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "dependencies": ["step-1"],
+      "tier": 1,
+      "specs": ["S01", "S03", "S05", "S06", "S07", "S08", "S10"],
+      "worktree_branch": "feat/spacetimedb-direct-query-cli/query-impl",
+      "done_condition": "hex stdb query 'SELECT * FROM project' prints formatted table; hex stdb query 'SELECT * FROM project' --json prints raw JSON; error cases exit non-zero with message"
+    },
+    {
+      "id": "step-3",
+      "description": "Implement `hex stdb tables` in stdb.rs: query 'SELECT table_name FROM information_schema.tables' or equivalent SpacetimeDB introspection query. Print one table name per line. Add --db flag support.",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "dependencies": ["step-1"],
+      "tier": 1,
+      "specs": ["S02", "S04"],
+      "worktree_branch": "feat/spacetimedb-direct-query-cli/tables-impl",
+      "done_condition": "hex stdb tables lists table names; hex stdb tables --db inference-gateway lists inference-gateway tables"
+    },
+    {
+      "id": "step-4",
+      "description": "Implement --count flag in query subcommand: print only the integer row count and exit. Add --db flag resolution: --db flag > HEX_SPACETIMEDB_DATABASE env > 'hex' default.",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "dependencies": ["step-2"],
+      "tier": 2,
+      "specs": ["S04", "S09"],
+      "worktree_branch": "feat/spacetimedb-direct-query-cli/flags",
+      "done_condition": "hex stdb query 'SELECT * FROM project' --count prints integer; --db inference-gateway targets correct database"
+    },
+    {
+      "id": "step-5",
+      "description": "Add MCP tool hex_stdb_query to hex-cli MCP server: accepts sql (string) and db (optional string, default 'hex'), returns rows as JSON array. Wire into mcp_tools dispatch. Document in CLAUDE.md tool table.",
+      "layer": "adapters/primary",
+      "adapter": "mcp",
+      "dependencies": ["step-2"],
+      "tier": 2,
+      "specs": ["S01", "S03", "S05"],
+      "worktree_branch": "feat/spacetimedb-direct-query-cli/mcp-tool",
+      "done_condition": "mcp__hex__hex_stdb_query tool callable from Claude Code; returns parsed rows array"
+    },
+    {
+      "id": "step-6",
+      "description": "Integration: merge all branches into main in order (step-1 → step-2, step-3 → step-4, step-5). Run cargo build --workspace. Run hex stdb query 'SELECT * FROM project' end-to-end against live SpacetimeDB. Verify all specs S01-S10.",
+      "layer": "integration",
+      "adapter": "integration",
+      "dependencies": ["step-4", "step-5"],
+      "tier": 5,
+      "specs": ["S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09", "S10"],
+      "done_condition": "cargo build succeeds; all 10 specs verified manually or via smoke test"
+    }
+  ],
+  "dependencies": {
+    "cargo": []
+  },
+  "mergeOrder": [
+    "step-1 first (skeleton required by all)",
+    "step-2 and step-3 parallel (both depend on step-1 only)",
+    "step-4 and step-5 parallel (both depend on step-2)",
+    "step-6 last (integration)"
+  ],
+  "riskRegister": [
+    {
+      "risk": "SpacetimeDB introspection query for table listing may differ by version",
+      "impact": "low",
+      "mitigation": "Test against local STDB; fallback to hardcoded known table list if introspection fails"
+    },
+    {
+      "risk": "Column alignment breaks on very wide values",
+      "impact": "low",
+      "mitigation": "Truncate cells to terminal width; always available via --json for full data"
+    }
+  ],
+  "successCriteria": [
+    "hex stdb query 'SELECT * FROM project' shows the project table contents as a formatted table",
+    "hex stdb tables lists all tables in the hex database",
+    "hex stdb query ... --db inference-gateway targets the correct database",
+    "Command works when hex-nexus is not running",
+    "mcp__hex__hex_stdb_query returns parsed rows usable in Claude Code sessions"
+  ]
+}

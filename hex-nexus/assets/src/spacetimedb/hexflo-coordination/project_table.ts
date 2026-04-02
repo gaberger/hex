@@ -16,4 +16,5 @@ export default __t.row({
   description: __t.string(),
   path: __t.string(),
   registeredAt: __t.string().name("registered_at"),
+  astIsStub: __t.bool().name("ast_is_stub"),
 });

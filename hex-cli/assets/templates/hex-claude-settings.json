@@ -53,6 +53,14 @@
           "blocking": true,
           "timeout": 5000
         }]
+      },
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "hex hook observe-pre",
+          "blocking": false,
+          "timeout": 500
+        }]
       }
     ],
     "PostToolUse": [
@@ -72,9 +80,25 @@
           "blocking": false,
           "timeout": 10000
         }]
+      },
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "hex hook observe-post",
+          "blocking": false,
+          "timeout": 500
+        }]
       }
     ],
     "Stop": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "hex hook observe-stop",
+          "blocking": false,
+          "timeout": 500
+        }]
+      },
       {
         "hooks": [{
           "type": "command",

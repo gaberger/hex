@@ -448,34 +448,14 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
                 chat_db
             );
         } else {
-            tracing::info!(
-                "SpacetimeDB chat-relay not reachable — falling back to SQLite sessions"
+            tracing::warn!(
+                "SpacetimeDB chat-relay not reachable at {}/{} — session persistence unavailable",
+                stdb_host,
+                chat_db
             );
-            #[cfg(feature = "sqlite-session")]
-            {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                let hex_dir = std::path::PathBuf::from(home).join(".hex");
-                let _ = std::fs::create_dir_all(&hex_dir);
-                let db_path = hex_dir.join("hub.db");
-                match adapters::sqlite_session::SqliteSessionAdapter::from_path(
-                    db_path.to_str().unwrap_or("/tmp/.hex/hub.db"),
-                )
-                .await
-                {
-                    Ok(adapter) => {
-                        app_state.session_port = Some(Arc::new(adapter));
-                        tracing::info!(
-                            "Session persistence active (SQLite fallback: {:?})",
-                            db_path
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!("Session persistence unavailable: {e}");
-                    }
-                }
-            }
         }
     }
+    // Tool-call event log uses in-memory ring buffer (ADR-2604020900) — initialized in AppState::new().
 
     // P9.5: Wire live context adapter (composition root) — must be set before
     // WorkplanExecutor is created so enrich_prompt can call it.

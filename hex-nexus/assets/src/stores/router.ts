@@ -35,7 +35,8 @@ export type Route =
   | { page: "project-files"; projectId: string }
   | { page: "project-file"; projectId: string; filePath: string }
   | { page: "project-chat"; projectId: string; sessionId?: string }
-  | { page: "project-config"; projectId: string; section: string };
+  | { page: "project-config"; projectId: string; section: string }
+  | { page: "project-activity"; projectId: string };
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -179,6 +180,10 @@ export function initRouterStore() {
           crumbs.push({ label: r.sessionId || "Chat", icon: "message-square" });
           break;
 
+        case "project-activity":
+          crumbs.push({ label: "Activity", icon: "activity" });
+          break;
+
         case "project-config": {
           const sectionLabels: Record<string, string> = {
             blueprint: "Blueprint",
@@ -255,6 +260,8 @@ function routeToHash(r: Route): string {
         : `#/project/${r.projectId}/chat`;
     case "project-config":
       return `#/project/${r.projectId}/config/${r.section}`;
+    case "project-activity":
+      return `#/project/${r.projectId}/activity`;
     default:
       return "#/";
   }
@@ -314,6 +321,9 @@ function hashToRoute(hash: string): Route {
 
       case "config":
         return { page: "project-config", projectId, section: parts[3] || "blueprint" };
+
+      case "activity":
+        return { page: "project-activity", projectId };
 
       default:
         return { page: "project", projectId };

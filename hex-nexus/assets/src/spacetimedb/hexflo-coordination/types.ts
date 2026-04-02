@@ -35,6 +35,53 @@ export const AgentInbox = __t.object("AgentInbox", {
 });
 export type AgentInbox = __Infer<typeof AgentInbox>;
 
+export const ArchitectureFingerprint = __t.object("ArchitectureFingerprint", {
+  projectId: __t.string(),
+  language: __t.string(),
+  framework: __t.string(),
+  outputType: __t.string(),
+  architectureStyle: __t.string(),
+  constraints: __t.string(),
+  activeAdrs: __t.string(),
+  workplanObjective: __t.string(),
+  fingerprintTokens: __t.u32(),
+  generatedAt: __t.string(),
+});
+export type ArchitectureFingerprint = __Infer<typeof ArchitectureFingerprint>;
+
+export const EnforcementRule = __t.object("EnforcementRule", {
+  id: __t.string(),
+  adr: __t.string(),
+  operation: __t.string(),
+  condition: __t.string(),
+  severity: __t.string(),
+  enabled: __t.u8(),
+  projectId: __t.string(),
+  message: __t.string(),
+  filePatterns: __t.string(),
+  violationPatterns: __t.string(),
+  createdAt: __t.string(),
+  updatedAt: __t.string(),
+});
+export type EnforcementRule = __Infer<typeof EnforcementRule>;
+
+export const FixTask = __t.object("FixTask", {
+  id: __t.string(),
+  gateTaskId: __t.string(),
+  swarmId: __t.string(),
+  fixType: __t.string(),
+  targetFile: __t.string(),
+  errorContext: __t.string(),
+  modelUsed: __t.string(),
+  tokens: __t.u64(),
+  costUsd: __t.string(),
+  status: __t.string(),
+  result: __t.string(),
+  createdAt: __t.string(),
+  completedAt: __t.string(),
+});
+export type FixTask = __Infer<typeof FixTask>;
+
 export const HexAgent = __t.object("HexAgent", {
   id: __t.string(),
   name: __t.string(),
@@ -73,6 +120,22 @@ export const InferenceServer = __t.object("InferenceServer", {
 });
 export type InferenceServer = __Infer<typeof InferenceServer>;
 
+export const InferenceTask = __t.object("InferenceTask", {
+  id: __t.string(),
+  workplanId: __t.string(),
+  taskId: __t.string(),
+  phase: __t.string(),
+  prompt: __t.string(),
+  role: __t.string(),
+  status: __t.string(),
+  agentId: __t.string(),
+  result: __t.string(),
+  error: __t.string(),
+  createdAt: __t.string(),
+  updatedAt: __t.string(),
+});
+export type InferenceTask = __Infer<typeof InferenceTask>;
+
 export const McpTool = __t.object("McpTool", {
   name: __t.string(),
   category: __t.string(),
@@ -91,6 +154,7 @@ export const Project = __t.object("Project", {
   description: __t.string(),
   path: __t.string(),
   registeredAt: __t.string(),
+  astIsStub: __t.bool(),
 });
 export type Project = __Infer<typeof Project>;
 
@@ -102,6 +166,24 @@ export const ProjectConfig = __t.object("ProjectConfig", {
   syncedAt: __t.string(),
 });
 export type ProjectConfig = __Infer<typeof ProjectConfig>;
+
+export const QualityGateTask = __t.object("QualityGateTask", {
+  id: __t.string(),
+  swarmId: __t.string(),
+  tier: __t.u32(),
+  gateType: __t.string(),
+  targetDir: __t.string(),
+  language: __t.string(),
+  status: __t.string(),
+  score: __t.u32(),
+  grade: __t.string(),
+  violationsCount: __t.u32(),
+  errorOutput: __t.string(),
+  iteration: __t.u32(),
+  createdAt: __t.string(),
+  completedAt: __t.string(),
+});
+export type QualityGateTask = __Infer<typeof QualityGateTask>;
 
 export const RemoteAgent = __t.object("RemoteAgent", {
   agentId: __t.string(),
@@ -133,6 +215,7 @@ export const Swarm = __t.object("Swarm", {
   name: __t.string(),
   topology: __t.string(),
   status: __t.string(),
+  ownerAgentId: __t.string(),
   createdBy: __t.string(),
   createdAt: __t.string(),
   updatedAt: __t.string(),
@@ -157,6 +240,9 @@ export const SwarmTask = __t.object("SwarmTask", {
   status: __t.string(),
   agentId: __t.string(),
   result: __t.string(),
+  dependsOn: __t.string(),
+  version: __t.u64(),
+  claimedBy: __t.string(),
   createdAt: __t.string(),
   completedAt: __t.string(),
 });

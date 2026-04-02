@@ -162,15 +162,14 @@ async fn write_opencode_config(nexus_url: &str, extra_system: Option<&str>) -> a
     let context = fetch_hex_context(nexus_url).await;
 
     let instructions = match (context.is_empty(), extra_system) {
-        (false, Some(extra)) => format!("{}\n\n{}", context, extra),
-        (false, None) => context,
-        (true, Some(extra)) => extra.to_string(),
-        (true, None) => return Ok(()),
+        (false, Some(extra)) => Some(format!("{}\n\n{}", context, extra)),
+        (false, None) => Some(context),
+        (true, Some(extra)) => Some(extra.to_string()),
+        (true, None) => None,
     };
 
     let mut config = serde_json::json!({
         "$schema": "https://opencode.ai/config.json",
-        "instructions": [instructions],
         "mcp": {
             "hex": {
                 "type": "local",
@@ -180,11 +179,16 @@ async fn write_opencode_config(nexus_url: &str, extra_system: Option<&str>) -> a
         }
     });
 
+    // Inject live project context as instructions (only when nexus is reachable)
+    if let Some(instr) = instructions {
+        config["instructions"] = serde_json::json!([instr]);
+    }
+
     // Inject hex-sidebar TUI plugin
     let plugin_written = write_hex_sidebar_plugin(nexus_url);
     if plugin_written {
         // Create plugins directory entry
-        config["plugin"] = serde_json::json!(["./plugins/hex-sidebar.tsx"]);
+        config["plugin"] = serde_json::json!(["./.opencode/plugins/hex-sidebar.tsx"]);
     }
 
     // Inject skills as opencode slash commands
@@ -508,4 +512,31 @@ async fn run_plain(args: ChatArgs) -> Result<()> {
     let json = nexus.post_long("/api/inference/complete", &req_body).await?;
     println!("{}", json["content"].as_str().unwrap_or_default());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_skills_returns_embedded_skills() {
+        let skills = load_skills("");
+        let map = skills.as_object().expect("skills should be an object");
+        println!("skill count: {}", map.len());
+        for (k, v) in map.iter().take(5) {
+            println!("  skill: {} -> description: {}", k, v["description"]);
+        }
+        assert!(!map.is_empty(), "load_skills should return at least one skill");
+    }
+
+    #[test]
+    fn parse_skill_flat_format() {
+        let content = "---\nname: test-skill\ndescription: Test description\n---\n\n# Body content\nSome content here\n";
+        let result = parse_skill(content);
+        assert!(result.is_some(), "should parse skill with name field");
+        let (name, desc, body) = result.unwrap();
+        assert_eq!(name, "test-skill");
+        assert_eq!(desc, "Test description");
+        assert!(body.contains("Body content"));
+    }
 }

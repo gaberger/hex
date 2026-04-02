@@ -4,14 +4,14 @@
   "specs": null,
   "adr": "ADR-2310201230",
   "created": "2023-10-20",
-  "status": "planned",
+  "status": "done",
   "status_note": null,
   "topology": "pipeline",
   "budget": "5",
   "steps": [
     {
       "id": "P0",
-      "description": "Implement the full feature in src/main.rs — single-binary rust project\n\nFeature requirements: Build a real-time collaborative task board in Rust with axum WebSockets, in-memory state, REST API for CRUD, and a live broadcast channel so all connected clients see updates instantly",
+      "description": "Implement the full feature in src/main.rs \u2014 single-binary rust project\n\nFeature requirements: Build a real-time collaborative task board in Rust with axum WebSockets, in-memory state, REST API for CRUD, and a live broadcast channel so all connected clients see updates instantly",
       "layer": "primary",
       "adapter": null,
       "port": null,
@@ -19,7 +19,8 @@
       "tier": 0,
       "specs": [],
       "worktree_branch": null,
-      "done_condition": "src/main.rs compiles and fully implements: Build a real-time collaborative task board in Rust with axum WebSockets, in-memory state, REST API for CRUD, and a live broadcast channel so all connected clients see updates instantly; Cargo.toml has correct dependencies"
+      "done_condition": "src/main.rs compiles and fully implements: Build a real-time collaborative task board in Rust with axum WebSockets, in-memory state, REST API for CRUD, and a live broadcast channel so all connected clients see updates instantly; Cargo.toml has correct dependencies",
+      "status": "completed"
     }
   ],
   "mergeOrder": [

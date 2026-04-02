@@ -14,5 +14,6 @@ export default {
   id: __t.string(),
   swarmId: __t.string(),
   title: __t.string(),
+  dependsOn: __t.string(),
   timestamp: __t.string(),
 };

@@ -46,7 +46,20 @@ import AgentMarkInactiveReducer from "./agent_mark_inactive_reducer";
 import AgentMarkStaleReducer from "./agent_mark_stale_reducer";
 import AgentRegisterReducer from "./agent_register_reducer";
 import AgentRemoveReducer from "./agent_remove_reducer";
+import CompleteFixTaskReducer from "./complete_fix_task_reducer";
+import CompleteQualityGateReducer from "./complete_quality_gate_reducer";
+import CoordinationCleanupReducer from "./coordination_cleanup_reducer";
+import CreateFixTaskReducer from "./create_fix_task_reducer";
+import CreateQualityGateReducer from "./create_quality_gate_reducer";
+import DeleteFingerprintReducer from "./delete_fingerprint_reducer";
+import EnforcementRuleDeleteReducer from "./enforcement_rule_delete_reducer";
+import EnforcementRuleToggleReducer from "./enforcement_rule_toggle_reducer";
+import EnforcementRuleUpsertReducer from "./enforcement_rule_upsert_reducer";
 import ExpireStaleNotificationsReducer from "./expire_stale_notifications_reducer";
+import InferenceTaskClaimReducer from "./inference_task_claim_reducer";
+import InferenceTaskCompleteReducer from "./inference_task_complete_reducer";
+import InferenceTaskCreateReducer from "./inference_task_create_reducer";
+import InferenceTaskFailReducer from "./inference_task_fail_reducer";
 import McpToolSyncReducer from "./mcp_tool_sync_reducer";
 import MemoryClearScopeReducer from "./memory_clear_scope_reducer";
 import MemoryDeleteReducer from "./memory_delete_reducer";
@@ -63,6 +76,7 @@ import RemoveRemoteAgentReducer from "./remove_remote_agent_reducer";
 import SwarmCompleteReducer from "./swarm_complete_reducer";
 import SwarmFailReducer from "./swarm_fail_reducer";
 import SwarmInitReducer from "./swarm_init_reducer";
+import SwarmTransferReducer from "./swarm_transfer_reducer";
 import SyncAgentDefReducer from "./sync_agent_def_reducer";
 import SyncConfigReducer from "./sync_config_reducer";
 import SyncSkillReducer from "./sync_skill_reducer";
@@ -71,18 +85,24 @@ import TaskCompleteReducer from "./task_complete_reducer";
 import TaskCreateReducer from "./task_create_reducer";
 import TaskFailReducer from "./task_fail_reducer";
 import TaskReclaimReducer from "./task_reclaim_reducer";
+import UpsertFingerprintReducer from "./upsert_fingerprint_reducer";
 
 // Import all procedure arg schemas
 
 // Import all table schema definitions
 import AgentDefinitionRow from "./agent_definition_table";
 import AgentInboxRow from "./agent_inbox_table";
+import ArchitectureFingerprintRow from "./architecture_fingerprint_table";
+import EnforcementRuleRow from "./enforcement_rule_table";
+import FixTaskRow from "./fix_task_table";
 import HexAgentRow from "./hex_agent_table";
 import HexfloMemoryRow from "./hexflo_memory_table";
 import InferenceServerRow from "./inference_server_table";
+import InferenceTaskRow from "./inference_task_table";
 import McpToolRow from "./mcp_tool_table";
 import ProjectRow from "./project_table";
 import ProjectConfigRow from "./project_config_table";
+import QualityGateTaskRow from "./quality_gate_task_table";
 import RemoteAgentRow from "./remote_agent_table";
 import SkillRegistryRow from "./skill_registry_table";
 import SwarmRow from "./swarm_table";
@@ -115,6 +135,39 @@ const tablesSchema = __schema({
       { name: 'agent_inbox_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, AgentInboxRow),
+  architecture_fingerprint: __table({
+    name: 'architecture_fingerprint',
+    indexes: [
+      { accessor: 'project_id', name: 'architecture_fingerprint_project_id_idx_btree', algorithm: 'btree', columns: [
+        'projectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'architecture_fingerprint_project_id_key', constraint: 'unique', columns: ['projectId'] },
+    ],
+  }, ArchitectureFingerprintRow),
+  enforcement_rule: __table({
+    name: 'enforcement_rule',
+    indexes: [
+      { accessor: 'id', name: 'enforcement_rule_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'enforcement_rule_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, EnforcementRuleRow),
+  fix_task: __table({
+    name: 'fix_task',
+    indexes: [
+      { accessor: 'id', name: 'fix_task_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'fix_task_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, FixTaskRow),
   hex_agent: __table({
     name: 'hex_agent',
     indexes: [
@@ -148,6 +201,17 @@ const tablesSchema = __schema({
       { name: 'inference_server_server_id_key', constraint: 'unique', columns: ['serverId'] },
     ],
   }, InferenceServerRow),
+  inference_task: __table({
+    name: 'inference_task',
+    indexes: [
+      { accessor: 'id', name: 'inference_task_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'inference_task_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, InferenceTaskRow),
   mcp_tool: __table({
     name: 'mcp_tool',
     indexes: [
@@ -181,6 +245,17 @@ const tablesSchema = __schema({
       { name: 'project_config_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, ProjectConfigRow),
+  quality_gate_task: __table({
+    name: 'quality_gate_task',
+    indexes: [
+      { accessor: 'id', name: 'quality_gate_task_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'quality_gate_task_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, QualityGateTaskRow),
   remote_agent: __table({
     name: 'remote_agent',
     indexes: [
@@ -252,7 +327,20 @@ const reducersSchema = __reducers(
   __reducerSchema("agent_mark_stale", AgentMarkStaleReducer),
   __reducerSchema("agent_register", AgentRegisterReducer),
   __reducerSchema("agent_remove", AgentRemoveReducer),
+  __reducerSchema("complete_fix_task", CompleteFixTaskReducer),
+  __reducerSchema("complete_quality_gate", CompleteQualityGateReducer),
+  __reducerSchema("coordination_cleanup", CoordinationCleanupReducer),
+  __reducerSchema("create_fix_task", CreateFixTaskReducer),
+  __reducerSchema("create_quality_gate", CreateQualityGateReducer),
+  __reducerSchema("delete_fingerprint", DeleteFingerprintReducer),
+  __reducerSchema("enforcement_rule_delete", EnforcementRuleDeleteReducer),
+  __reducerSchema("enforcement_rule_toggle", EnforcementRuleToggleReducer),
+  __reducerSchema("enforcement_rule_upsert", EnforcementRuleUpsertReducer),
   __reducerSchema("expire_stale_notifications", ExpireStaleNotificationsReducer),
+  __reducerSchema("inference_task_claim", InferenceTaskClaimReducer),
+  __reducerSchema("inference_task_complete", InferenceTaskCompleteReducer),
+  __reducerSchema("inference_task_create", InferenceTaskCreateReducer),
+  __reducerSchema("inference_task_fail", InferenceTaskFailReducer),
   __reducerSchema("mcp_tool_sync", McpToolSyncReducer),
   __reducerSchema("memory_clear_scope", MemoryClearScopeReducer),
   __reducerSchema("memory_delete", MemoryDeleteReducer),
@@ -269,6 +357,7 @@ const reducersSchema = __reducers(
   __reducerSchema("swarm_complete", SwarmCompleteReducer),
   __reducerSchema("swarm_fail", SwarmFailReducer),
   __reducerSchema("swarm_init", SwarmInitReducer),
+  __reducerSchema("swarm_transfer", SwarmTransferReducer),
   __reducerSchema("sync_agent_def", SyncAgentDefReducer),
   __reducerSchema("sync_config", SyncConfigReducer),
   __reducerSchema("sync_skill", SyncSkillReducer),
@@ -277,6 +366,7 @@ const reducersSchema = __reducers(
   __reducerSchema("task_create", TaskCreateReducer),
   __reducerSchema("task_fail", TaskFailReducer),
   __reducerSchema("task_reclaim", TaskReclaimReducer),
+  __reducerSchema("upsert_fingerprint", UpsertFingerprintReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

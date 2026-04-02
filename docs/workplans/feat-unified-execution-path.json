@@ -1,7 +1,7 @@
 {
   "id": "wp-unified-execution-path",
   "feature": "Unified Execution Path",
-  "description": "Remove claude -p bypass (ADR-2603312210 retired). Implement correct two-path execution: Path A (daemon → inference gateway → RL → vault) and Path B (Claude Code → inference queue → inbox → Agent tool). Close ADR-061 gaps: HexFlo task per workplan task, commit_sha correlation. Add HexFlo memory ledger conventions.",
+  "description": "Remove claude -p bypass (ADR-2603312210 retired). Implement correct two-path execution: Path A (daemon \u2192 inference gateway \u2192 RL \u2192 vault) and Path B (Claude Code \u2192 inference queue \u2192 inbox \u2192 Agent tool). Close ADR-061 gaps: HexFlo task per workplan task, commit_sha correlation. Add HexFlo memory ledger conventions.",
   "adr": "ADR-2604010000",
   "priority": "high",
   "created_at": "2026-04-01T00:00:00Z",
@@ -79,7 +79,9 @@
           "status": "completed",
           "commit": "4927a3a6",
           "agent": "hex-coder",
-          "deps": ["P2.1"]
+          "deps": [
+            "P2.1"
+          ]
         },
         {
           "id": "P2.3",
@@ -92,7 +94,9 @@
           "status": "completed",
           "commit": "4b29e94a",
           "agent": "hex-coder",
-          "deps": ["P2.1"]
+          "deps": [
+            "P2.1"
+          ]
         }
       ]
     },
@@ -128,7 +132,9 @@
           ],
           "status": "done",
           "agent": "hex-coder",
-          "deps": ["P3.1"]
+          "deps": [
+            "P3.1"
+          ]
         }
       ]
     },
@@ -191,13 +197,15 @@
           "status": "completed",
           "commit": "a285f687",
           "agent": "hex-coder",
-          "deps": ["P5.1"]
+          "deps": [
+            "P5.1"
+          ]
         }
       ]
     },
     {
       "id": "P3B",
-      "name": "Path B executor routing (gap — never implemented)",
+      "name": "Path B executor routing (gap \u2014 never implemented)",
       "tier": 1,
       "description": "The workplan executor still calls spawn_agent unconditionally. It must check is_claude_code_session() and route to POST /api/inference/queue when CLAUDECODE=1 instead of spawning hex-agent directly. Also wire HexFlo swarm + per-task creation into the executor (P3.1/P3.2 were never implemented).",
       "gate": {
@@ -221,7 +229,7 @@
         },
         {
           "id": "P3B.2",
-          "name": "Executor: Path B routing — queue instead of spawn when CLAUDECODE=1",
+          "name": "Executor: Path B routing \u2014 queue instead of spawn when CLAUDECODE=1",
           "layer": "primary",
           "description": "In the task-spawn block, check is_claude_code_session(). If true: POST to /api/inference/queue with {task_id, workplan_id, prompt, role} and await inbox notification. If false: call spawn_agent (Path A). This makes the executor route correctly based on execution context.",
           "files": [
@@ -230,7 +238,9 @@
           "status": "completed",
           "commit": "bb2eae7c",
           "agent": "hex-coder",
-          "deps": ["P3B.1"]
+          "deps": [
+            "P3B.1"
+          ]
         }
       ]
     },
@@ -255,9 +265,14 @@
           ],
           "status": "done",
           "agent": "hex-coder",
-          "deps": ["P3.2", "P4.1", "P5.1"]
+          "deps": [
+            "P3.2",
+            "P4.1",
+            "P5.1"
+          ]
         }
       ]
     }
-  ]
+  ],
+  "status": "done"
 }

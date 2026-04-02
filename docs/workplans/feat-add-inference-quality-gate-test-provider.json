@@ -4,7 +4,7 @@
   "specs": null,
   "adr": "ADR-2504181120",
   "created": "2025-04-18",
-  "status": "planned",
+  "status": "done",
   "status_note": null,
   "topology": "pipeline",
   "budget": "TBD",
@@ -19,7 +19,8 @@
       "tier": 0,
       "specs": [],
       "worktree_branch": "feat/inference/ports",
-      "done_condition": "ProviderHealthCheck port is created and tested"
+      "done_condition": "ProviderHealthCheck port is created and tested",
+      "status": "completed"
     },
     {
       "id": "P0.2",
@@ -31,7 +32,8 @@
       "tier": 0,
       "specs": [],
       "worktree_branch": "feat/inference/domain",
-      "done_condition": "ProviderValidationError type is defined and documented"
+      "done_condition": "ProviderValidationError type is defined and documented",
+      "status": "completed"
     },
     {
       "id": "P1.1",
@@ -45,7 +47,8 @@
       "tier": 1,
       "specs": [],
       "worktree_branch": "feat/inference/adapters/secondary",
-      "done_condition": "Validation adapters are implemented and unit tested"
+      "done_condition": "Validation adapters are implemented and unit tested",
+      "status": "completed"
     },
     {
       "id": "P1.2",
@@ -60,7 +63,8 @@
       "tier": 2,
       "specs": [],
       "worktree_branch": "feat/inference/adapters/primary",
-      "done_condition": "CLI command incorporates validation and returns errors for invalid providers"
+      "done_condition": "CLI command incorporates validation and returns errors for invalid providers",
+      "status": "completed"
     },
     {
       "id": "P2.1",
@@ -75,7 +79,8 @@
       "tier": 3,
       "specs": [],
       "worktree_branch": "feat/inference/usecases",
-      "done_condition": "ValidateProvider usecase is implemented and tested"
+      "done_condition": "ValidateProvider usecase is implemented and tested",
+      "status": "completed"
     },
     {
       "id": "P2.2",
@@ -90,7 +95,8 @@
       "tier": 3,
       "specs": [],
       "worktree_branch": "feat/inference/usecases",
-      "done_condition": "PruneProviders usecase is implemented and tests are passing"
+      "done_condition": "PruneProviders usecase is implemented and tests are passing",
+      "status": "completed"
     },
     {
       "id": "P3.1",
@@ -106,7 +112,8 @@
       "tier": 4,
       "specs": [],
       "worktree_branch": "feat/inference/integration",
-      "done_condition": "Integration wiring between usecases and CLI command is complete"
+      "done_condition": "Integration wiring between usecases and CLI command is complete",
+      "status": "completed"
     }
   ],
   "mergeOrder": [

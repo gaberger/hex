@@ -4,7 +4,7 @@ use http::StatusCode;
 use rust_embed::Embed;
 
 #[derive(Embed)]
-#[folder = "assets/"]
+#[folder = "assets/dist/"]
 struct DashboardAssets;
 
 pub async fn serve_index() -> Response {
@@ -21,10 +21,10 @@ pub async fn serve_chat() -> Response {
     serve_asset("index.html").await
 }
 
-/// Serve any static asset from the embedded assets directory (css/, js/ subdirs).
-/// Route is /assets/{*path}, but rust-embed keys include the "assets/" prefix.
+/// Serve any static asset from the embedded dist/assets directory (css/, js/ subdirs).
+/// Route is /assets/{*path}; with folder="assets/dist/", keys are "assets/{path}".
 pub async fn serve_static(Path(path): Path<String>) -> Response {
-    serve_asset(&format!("assets/{}", path)).await
+    serve_asset(&format!("assets/{path}")).await
 }
 
 async fn serve_asset(name: &str) -> Response {

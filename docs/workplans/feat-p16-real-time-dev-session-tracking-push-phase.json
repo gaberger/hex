@@ -4,7 +4,7 @@
   "specs": null,
   "adr": "ADR-2404241436",
   "created": "2024-04-24",
-  "status": "planned",
+  "status": "done",
   "status_note": null,
   "topology": "pipeline",
   "budget": "TBD",
@@ -19,7 +19,8 @@
       "tier": 0,
       "specs": [],
       "worktree_branch": "feat/real-time-dev-session-tracking/domain",
-      "done_condition": "DevSession aggregate is implemented with all required fields."
+      "done_condition": "DevSession aggregate is implemented with all required fields.",
+      "status": "completed"
     },
     {
       "id": "P0.2",
@@ -31,7 +32,8 @@
       "tier": 0,
       "specs": [],
       "worktree_branch": "feat/real-time-dev-session-tracking/ports",
-      "done_condition": "Both port interfaces are defined and ready for implementation."
+      "done_condition": "Both port interfaces are defined and ready for implementation.",
+      "status": "completed"
     },
     {
       "id": "P1.1",
@@ -46,7 +48,8 @@
       "tier": 1,
       "specs": [],
       "worktree_branch": "feat/real-time-dev-session-tracking/adapters/secondary",
-      "done_condition": "SpacetimeDB adapter can successfully persist `DevSession` instances."
+      "done_condition": "SpacetimeDB adapter can successfully persist `DevSession` instances.",
+      "status": "completed"
     },
     {
       "id": "P1.2",
@@ -60,7 +63,8 @@
       "tier": 1,
       "specs": [],
       "worktree_branch": "feat/real-time-dev-session-tracking/adapters/secondary",
-      "done_condition": "WebSocket notifier can successfully broadcast `DevSession` updates."
+      "done_condition": "WebSocket notifier can successfully broadcast `DevSession` updates.",
+      "status": "completed"
     },
     {
       "id": "P2.1",
@@ -75,7 +79,8 @@
       "tier": 2,
       "specs": [],
       "worktree_branch": "feat/real-time-dev-session-tracking/adapters/primary",
-      "done_condition": "Push HTTP adapter can handle `dev_session` type and post updates correctly."
+      "done_condition": "Push HTTP adapter can handle `dev_session` type and post updates correctly.",
+      "status": "completed"
     },
     {
       "id": "P3.1",
@@ -90,7 +95,8 @@
       "tier": 3,
       "specs": [],
       "worktree_branch": "feat/real-time-dev-session-tracking/usecases",
-      "done_condition": "`UpdateDevSessionUseCase` is implemented and tests pass."
+      "done_condition": "`UpdateDevSessionUseCase` is implemented and tests pass.",
+      "status": "completed"
     },
     {
       "id": "P3.2",
@@ -105,7 +111,8 @@
       "tier": 3,
       "specs": [],
       "worktree_branch": "feat/real-time-dev-session-tracking/usecases",
-      "done_condition": "`ListDevSessionsUseCase` is implemented and returns live session states correctly."
+      "done_condition": "`ListDevSessionsUseCase` is implemented and returns live session states correctly.",
+      "status": "completed"
     },
     {
       "id": "P4.1",
@@ -123,7 +130,8 @@
       "tier": 4,
       "specs": [],
       "worktree_branch": "feat/real-time-dev-session-tracking/composition-root",
-      "done_condition": "All components are correctly wired and can communicate as expected."
+      "done_condition": "All components are correctly wired and can communicate as expected.",
+      "status": "completed"
     },
     {
       "id": "P5.1",
@@ -137,7 +145,8 @@
       "tier": 5,
       "specs": [],
       "worktree_branch": "feat/real-time-dev-session-tracking/integration",
-      "done_condition": "All integration tests pass successfully, confirming the feature works as intended."
+      "done_condition": "All integration tests pass successfully, confirming the feature works as intended.",
+      "status": "completed"
     }
   ],
   "mergeOrder": [

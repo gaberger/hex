@@ -23,7 +23,9 @@
           "name": "Create PromptTemplate enum",
           "layer": "domain",
           "description": "Define PromptTemplate enum with variants for SystemPrompt, ToolPrompt, ServicePrompt. Include template variables support.",
-          "files": ["hex-agent/src/domain/context.rs"],
+          "files": [
+            "hex-agent/src/domain/context.rs"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -32,8 +34,12 @@
           "name": "Create ContextBuilder struct",
           "layer": "domain",
           "description": "Implement ContextBuilder for composing prompts per agent role with variable substitution.",
-          "files": ["hex-agent/src/domain/context.rs"],
-          "deps": ["P1.1"],
+          "files": [
+            "hex-agent/src/domain/context.rs"
+          ],
+          "deps": [
+            "P1.1"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -42,8 +48,12 @@
           "name": "Define agent role types",
           "layer": "domain",
           "description": "Add AgentRole enum (Coder, Planner, Reviewer, Integrator) and role-specific context.",
-          "files": ["hex-agent/src/domain/context.rs"],
-          "deps": ["P1.1"],
+          "files": [
+            "hex-agent/src/domain/context.rs"
+          ],
+          "deps": [
+            "P1.1"
+          ],
           "status": "done",
           "agent": "hex-coder"
         }
@@ -65,7 +75,9 @@
           "name": "Define PromptPort trait",
           "layer": "ports",
           "description": "Create PromptPort with methods: build_system_prompt, build_tool_prompt, build_service_prompt",
-          "files": ["hex-agent/src/ports/prompt.rs"],
+          "files": [
+            "hex-agent/src/ports/prompt.rs"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -74,7 +86,9 @@
           "name": "Define ContextError type",
           "layer": "ports",
           "description": "Create ContextError for prompt building failures (template not found, variable missing, etc.)",
-          "files": ["hex-agent/src/ports/prompt.rs"],
+          "files": [
+            "hex-agent/src/ports/prompt.rs"
+          ],
           "status": "done",
           "agent": "hex-coder"
         }
@@ -96,7 +110,9 @@
           "name": "Implement ContextAdapter",
           "layer": "secondary",
           "description": "Implement ContextAdapter that loads prompt templates from hex-cli/assets/context-templates/",
-          "files": ["hex-agent/src/adapters/secondary/prompt.rs"],
+          "files": [
+            "hex-agent/src/adapters/secondary/prompt.rs"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -105,7 +121,9 @@
           "name": "Add template caching",
           "layer": "secondary",
           "description": "Implement LRU cache for composed prompts to avoid recomputation",
-          "files": ["hex-agent/src/adapters/secondary/prompt.rs"],
+          "files": [
+            "hex-agent/src/adapters/secondary/prompt.rs"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -114,7 +132,9 @@
           "name": "Add template variable substitution",
           "layer": "secondary",
           "description": "Implement variable substitution for {{project_name}}, {{task_description}}, {{agent_role}}, etc.",
-          "files": ["hex-agent/src/adapters/secondary/prompt.rs"],
+          "files": [
+            "hex-agent/src/adapters/secondary/prompt.rs"
+          ],
           "status": "done",
           "agent": "hex-coder"
         }
@@ -136,7 +156,9 @@
           "name": "Create system prompt templates",
           "layer": "secondary",
           "description": "Create system prompt templates: SIMPLE_INTRO, SIMPLE_SYSTEM, DOING_TASKS, EXECUTING_ACTIONS, USING_YOUR_TOOLS, TONE_AND_STYLE, OUTPUT_EFFICIENCY",
-          "files": ["hex-cli/assets/context-templates/system/"],
+          "files": [
+            "hex-cli/assets/context-templates/system/"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -145,9 +167,13 @@
           "name": "Create tool prompt templates",
           "layer": "secondary",
           "description": "Create tool-specific prompts for: Bash, Agent, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, TodoWrite, Skill",
-          "files": ["hex-cli/assets/context-templates/tools/"],
+          "files": [
+            "hex-cli/assets/context-templates/tools/"
+          ],
           "status": "done",
-          "deps": ["P4.1"],
+          "deps": [
+            "P4.1"
+          ],
           "agent": "hex-coder"
         },
         {
@@ -155,9 +181,13 @@
           "name": "Create service prompt templates",
           "layer": "secondary",
           "description": "Create service prompts for: Session Memory, Memory Extraction, HexFlo memory (global/swarm/agent)",
-          "files": ["hex-cli/assets/context-templates/services/"],
+          "files": [
+            "hex-cli/assets/context-templates/services/"
+          ],
           "status": "done",
-          "deps": ["P4.1"],
+          "deps": [
+            "P4.1"
+          ],
           "agent": "hex-coder"
         }
       ]
@@ -178,9 +208,13 @@
           "name": "Create hex-coder templates",
           "layer": "secondary",
           "description": "Create role-specific system and tool prompts for hex-coder (TDD workflow, boundary rules, test focus)",
-          "files": ["hex-cli/assets/context-templates/roles/hex-coder/"],
+          "files": [
+            "hex-cli/assets/context-templates/roles/hex-coder/"
+          ],
           "status": "done",
-          "deps": ["P4.2"],
+          "deps": [
+            "P4.2"
+          ],
           "agent": "hex-coder"
         },
         {
@@ -188,9 +222,13 @@
           "name": "Create hex-planner templates",
           "layer": "secondary",
           "description": "Create role-specific prompts for hex-planner (workplan decomposition, task assignment)",
-          "files": ["hex-cli/assets/context-templates/roles/hex-planner/"],
+          "files": [
+            "hex-cli/assets/context-templates/roles/hex-planner/"
+          ],
           "status": "done",
-          "deps": ["P5.1"],
+          "deps": [
+            "P5.1"
+          ],
           "agent": "hex-coder"
         },
         {
@@ -198,9 +236,13 @@
           "name": "Create hex-reviewer templates",
           "layer": "secondary",
           "description": "Create role-specific prompts for hex-reviewer (code quality gates, boundary enforcement)",
-          "files": ["hex-cli/assets/context-templates/roles/hex-reviewer/"],
+          "files": [
+            "hex-cli/assets/context-templates/roles/hex-reviewer/"
+          ],
           "status": "done",
-          "deps": ["P5.2"],
+          "deps": [
+            "P5.2"
+          ],
           "agent": "hex-coder"
         }
       ]
@@ -221,7 +263,9 @@
           "name": "Add prompt injection to task execution",
           "layer": "primary",
           "description": "Modify hex-nexus orchestration to inject role-specific prompts into agent prompts",
-          "files": ["hex-nexus/src/orchestration/mod.rs"],
+          "files": [
+            "hex-nexus/src/orchestration/mod.rs"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -230,9 +274,13 @@
           "name": "Add role assignment to agent registration",
           "layer": "primary",
           "description": "Update agent registration to include role (coder/planner/reviewer) and load appropriate templates",
-          "files": ["hex-nexus/src/orchestration/agent.rs"],
+          "files": [
+            "hex-nexus/src/orchestration/agent.rs"
+          ],
           "status": "done",
-          "deps": ["P6.1"],
+          "deps": [
+            "P6.1"
+          ],
           "agent": "hex-coder"
         },
         {
@@ -240,9 +288,13 @@
           "name": "Add tool prompt injection",
           "layer": "primary",
           "description": "Inject tool-specific prompts before tool execution in ToolExecutorAdapter",
-          "files": ["hex-agent/src/adapters/secondary/tools.rs"],
+          "files": [
+            "hex-agent/src/adapters/secondary/tools.rs"
+          ],
           "status": "done",
-          "deps": ["P6.1"],
+          "deps": [
+            "P6.1"
+          ],
           "agent": "hex-coder"
         }
       ]
@@ -263,7 +315,9 @@
           "name": "Add template reload endpoint",
           "layer": "primary",
           "description": "Add /api/context/reload endpoint to trigger template cache invalidation",
-          "files": ["hex-nexus/src/routes/context.rs"],
+          "files": [
+            "hex-nexus/src/routes/context.rs"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -272,9 +326,13 @@
           "name": "Add file watcher for templates",
           "layer": "secondary",
           "description": "Watch hex-cli/assets/context-templates/ for changes and auto-reload",
-          "files": ["hex-agent/src/adapters/secondary/prompt.rs"],
+          "files": [
+            "hex-agent/src/adapters/secondary/prompt.rs"
+          ],
           "status": "done",
-          "deps": ["P7.1"],
+          "deps": [
+            "P7.1"
+          ],
           "agent": "hex-coder"
         }
       ]
@@ -295,7 +353,9 @@
           "name": "Test prompt composition",
           "layer": "domain",
           "description": "Write tests for ContextBuilder composing prompts with variables",
-          "files": ["hex-agent/src/domain/context.rs"],
+          "files": [
+            "hex-agent/src/domain/context.rs"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -304,7 +364,9 @@
           "name": "Test template loading",
           "layer": "secondary",
           "description": "Write tests for ContextAdapter loading templates from assets",
-          "files": ["hex-agent/src/adapters/secondary/prompt.rs"],
+          "files": [
+            "hex-agent/src/adapters/secondary/prompt.rs"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -313,9 +375,13 @@
           "name": "Test role-specific prompts",
           "layer": "secondary",
           "description": "Write tests verifying different roles get appropriate prompts",
-          "files": ["hex-agent/src/adapters/secondary/prompt.rs"],
+          "files": [
+            "hex-agent/src/adapters/secondary/prompt.rs"
+          ],
           "status": "done",
-          "deps": ["P8.2"],
+          "deps": [
+            "P8.2"
+          ],
           "agent": "hex-coder"
         }
       ]
@@ -324,7 +390,7 @@
       "id": "P9",
       "name": "Live Context Enrichment",
       "tier": 3,
-      "description": "Inject live hex project state into prompts before agent dispatch — architecture score, ADRs, HexFlo memory, AST summaries, git diff, and specs",
+      "description": "Inject live hex project state into prompts before agent dispatch \u2014 architecture score, ADRs, HexFlo memory, AST summaries, git diff, and specs",
       "gate": {
         "type": "build",
         "command": "cargo build -p hex-nexus",
@@ -336,7 +402,9 @@
           "name": "Extend ContextVariables with live fields",
           "layer": "domain",
           "description": "Add fields to ContextVariables: architecture_score (Option<u8>), arch_violations (Option<Vec<String>>), relevant_adrs (Option<Vec<String>>), ast_summary (Option<String>), recent_changes (Option<String>), hexflo_memory (Option<String>), spec_content (Option<String>). Update get() to expose them.",
-          "files": ["hex-agent/src/domain/context.rs"],
+          "files": [
+            "hex-agent/src/domain/context.rs"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -345,8 +413,12 @@
           "name": "Define ILiveContextPort trait",
           "layer": "ports",
           "description": "Create ILiveContextPort in hex-agent/src/ports/mod.rs with method enrich(vars: &mut ContextVariables, task: &str, files: &[String]) -> Result<()>. This is the boundary the adapter implements.",
-          "files": ["hex-agent/src/ports/mod.rs"],
-          "deps": ["P9.1"],
+          "files": [
+            "hex-agent/src/ports/mod.rs"
+          ],
+          "deps": [
+            "P9.1"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -355,8 +427,12 @@
           "name": "Implement LiveContextAdapter",
           "layer": "secondary",
           "description": "Implement ILiveContextPort in hex-agent/src/adapters/secondary/live_context.rs. Calls hex-nexus REST endpoints in parallel: GET /api/analyze (arch score + violations), GET /api/hexflo/memory/search?q=<task> (prior decisions), GET /api/adrs/search?q=<task> (relevant ADRs), GET /api/summarize (AST summary of target files), GET /api/git/diff (recent changes). Merge results into ContextVariables fields.",
-          "files": ["hex-agent/src/adapters/secondary/live_context.rs"],
-          "deps": ["P9.2"],
+          "files": [
+            "hex-agent/src/adapters/secondary/live_context.rs"
+          ],
+          "deps": [
+            "P9.2"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -370,7 +446,9 @@
             "hex-cli/assets/context-templates/roles/hex-reviewer/system.md",
             "hex-cli/assets/context-templates/roles/hex-planner/system.md"
           ],
-          "deps": ["P9.1"],
+          "deps": [
+            "P9.1"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -383,7 +461,11 @@
             "hex-nexus/src/orchestration/mod.rs",
             "hex-nexus/src/composition_root.rs"
           ],
-          "deps": ["P9.3", "P9.4", "P6.1"],
+          "deps": [
+            "P9.3",
+            "P9.4",
+            "P6.1"
+          ],
           "status": "done",
           "agent": "hex-coder"
         },
@@ -392,12 +474,17 @@
           "name": "Add enrichment tests",
           "layer": "secondary",
           "description": "Write integration tests for LiveContextAdapter using a mock hex-nexus (wiremock or axum test server). Verify each endpoint is called, fields are populated, and missing endpoints degrade gracefully (None, not error).",
-          "files": ["hex-agent/src/adapters/secondary/live_context.rs"],
-          "deps": ["P9.3"],
+          "files": [
+            "hex-agent/src/adapters/secondary/live_context.rs"
+          ],
+          "deps": [
+            "P9.3"
+          ],
           "status": "done",
           "agent": "hex-coder"
         }
       ]
     }
-  ]
+  ],
+  "status": "done"
 }

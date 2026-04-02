@@ -13,5 +13,6 @@ import {
 export default {
   taskId: __t.string(),
   agentId: __t.string(),
+  expectedVersion: __t.u64(),
   timestamp: __t.string(),
 };
