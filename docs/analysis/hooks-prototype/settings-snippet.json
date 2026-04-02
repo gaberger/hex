@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Volumes/ExtendedStorage/para/01-Projects/hex-intf/docs/analysis/hooks-prototype/pre-tool-use.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Volumes/ExtendedStorage/para/01-Projects/hex-intf/docs/analysis/hooks-prototype/post-tool-use.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
