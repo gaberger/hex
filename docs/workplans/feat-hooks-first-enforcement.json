@@ -2,7 +2,7 @@
   "title": "Feature: Hooks-First Architecture Enforcement (ADR-2604012110)",
   "feature": "hooks-first-enforcement",
   "language": "rust",
-  "status": "planned",
+  "status": "done",
   "adr": "ADR-2604012110",
   "description": "Migrate architecture enforcement from hex-agent daemon + hex-nexus REST calls to Claude Code lifecycle hooks. Add hex enforce check-file CLI subcommand. Update settings template with 3 enforcement hooks.",
   "priority": "high",
@@ -13,7 +13,7 @@
       "adapter": "adapters/primary",
       "tier": 0,
       "dependencies": [],
-      "status": "planned"
+      "status": "completed"
     },
     {
       "id": "step-2",
@@ -21,7 +21,7 @@
       "adapter": "domain",
       "tier": 0,
       "dependencies": [],
-      "status": "planned"
+      "status": "completed"
     },
     {
       "id": "step-3",
@@ -29,7 +29,7 @@
       "adapter": "adapters/primary",
       "tier": 0,
       "dependencies": [],
-      "status": "planned"
+      "status": "completed"
     },
     {
       "id": "step-4",
@@ -37,7 +37,7 @@
       "adapter": "adapters/secondary",
       "tier": 1,
       "dependencies": ["step-2"],
-      "status": "planned"
+      "status": "completed"
     },
     {
       "id": "step-5",
@@ -45,7 +45,7 @@
       "adapter": "adapters/primary",
       "tier": 1,
       "dependencies": ["step-2"],
-      "status": "planned"
+      "status": "completed"
     },
     {
       "id": "step-6",
@@ -53,7 +53,7 @@
       "adapter": "adapters/primary",
       "tier": 1,
       "dependencies": ["step-5"],
-      "status": "planned"
+      "status": "completed"
     },
     {
       "id": "step-7",
@@ -61,7 +61,7 @@
       "adapter": "tests",
       "tier": 2,
       "dependencies": ["step-1", "step-2"],
-      "status": "planned"
+      "status": "completed"
     },
     {
       "id": "step-8",
@@ -69,7 +69,7 @@
       "adapter": "docs",
       "tier": 2,
       "dependencies": ["step-3"],
-      "status": "planned"
+      "status": "completed"
     }
   ],
   "phases": [
