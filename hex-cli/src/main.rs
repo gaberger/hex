@@ -139,6 +139,18 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Analyze a single file instead of the whole project
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
+        /// Suppress output when no violations found (for hook use)
+        #[arg(long)]
+        quiet: bool,
+        /// Only print violation lines, skip summary stats
+        #[arg(long)]
+        violations_only: bool,
+        /// Exit with code 1 if any violations found (for Stop hook gate)
+        #[arg(long)]
+        exit_code: bool,
     },
     /// Workplan management (create, list, status)
     Plan {
@@ -271,8 +283,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Adr { action } => commands::adr::run(action).await,
         Commands::Spec { action } => commands::spec::run(action).await,
         Commands::Project { action } => commands::project::run(action).await,
-        Commands::Analyze { path, strict, adr_compliance, json } => {
-            analyze::run(&path, strict, adr_compliance, json).await
+        Commands::Analyze { path, strict, adr_compliance, json, file, quiet, violations_only, exit_code } => {
+            analyze::run(&path, strict, adr_compliance, json, file.as_deref(), quiet, violations_only, exit_code).await
         }
         Commands::Plan { action } => commands::plan::run(action).await,
         Commands::Inference { action } => commands::inference::run(action).await,
