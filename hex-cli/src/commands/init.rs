@@ -91,6 +91,9 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // ── 1b. .hex/project.yaml (ADR-043 manifest) ───────────────
     create_project_yaml(&target, &project_name, interview.as_ref())?;
 
+    // ── 1c. .hex/adr-rules.toml (enforcement rules) ───────────────
+    create_adr_rules_toml(&target)?;
+
     // ── 2. .mcp.json ─────────────────────────────────────────────
     create_mcp_json(&target)?;
 
@@ -130,6 +133,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     println!();
     println!("  {} .hex/project.json", "\u{2713}".green());
     println!("  {} .hex/project.yaml (auto-register manifest)", "\u{2713}".green());
+    println!("  {} .hex/adr-rules.toml (enforcement rules)", "\u{2713}".green());
     println!("  {} .mcp.json", "\u{2713}".green());
     println!("  {} .claude/settings.json", "\u{2713}".green());
     if !args.no_claude_md {
@@ -446,6 +450,47 @@ fn create_scaffold(target: &Path) -> Result<()> {
         )
         .context("Failed to write composition-root.ts")?;
     }
+
+    Ok(())
+}
+
+fn create_adr_rules_toml(target: &Path) -> Result<()> {
+    let hex_dir = target.join(".hex");
+    create_dir_if_missing(&hex_dir)?;
+
+    let rules_path = hex_dir.join("adr-rules.toml");
+    if rules_path.exists() {
+        // Never overwrite existing rules
+        return Ok(());
+    }
+
+    let content = r#"# hex architecture rules — read by `hex enforce check-file`
+[rules]
+forbidden_paths = ["node_modules", ".git", "dist", ".env", "target"]
+
+[[hex_layer_rules]]
+path_pattern = "src/adapters/primary"
+layer = "adapters/primary"
+
+[[hex_layer_rules]]
+path_pattern = "src/adapters/secondary"
+layer = "adapters/secondary"
+
+[[hex_layer_rules]]
+path_pattern = "src/domain"
+layer = "domain"
+
+[[hex_layer_rules]]
+path_pattern = "src/ports"
+layer = "ports"
+
+[[hex_layer_rules]]
+path_pattern = "src/usecases"
+layer = "usecases"
+"#;
+
+    fs::write(&rules_path, content)
+        .context("Failed to write .hex/adr-rules.toml")?;
 
     Ok(())
 }

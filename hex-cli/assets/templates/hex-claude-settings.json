@@ -44,6 +44,15 @@
           "command": "hex hook pre-agent",
           "timeout": 3000
         }]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [{
+          "type": "command",
+          "command": "hex enforce check-file \"$TOOL_INPUT_PATH\"",
+          "blocking": true,
+          "timeout": 5000
+        }]
       }
     ],
     "PostToolUse": [
@@ -53,6 +62,25 @@
           "type": "command",
           "command": "hex hook post-edit",
           "timeout": 5000
+        }]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [{
+          "type": "command",
+          "command": "hex analyze --file \"$TOOL_INPUT_PATH\" --quiet",
+          "blocking": false,
+          "timeout": 10000
+        }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "hex analyze --violations-only --exit-code",
+          "blocking": true,
+          "timeout": 30000
         }]
       }
     ],
