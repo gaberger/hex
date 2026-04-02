@@ -320,44 +320,18 @@ fn check_file(path: &str) -> anyhow::Result<()> {
         }
     };
 
-    // 1. Check forbidden_paths (blocking)
-    for forbidden in &rules.rules.forbidden_paths {
-        if path.contains(forbidden.as_str()) {
-            eprintln!(
-                "hex enforce: BLOCKED — path '{}' matches forbidden pattern '{}'",
-                path, forbidden
-            );
+    match evaluate_path(path, &rules) {
+        PathVerdict::Block { reason } => {
+            eprintln!("hex enforce: BLOCKED — {}", reason);
             std::process::exit(1);
         }
-    }
-
-    // 2. Check hex_layer_rules (non-blocking warning)
-    if !rules.hex_layer_rules.is_empty() {
-        // Is the file under src/?
-        let under_src = path.contains("/src/") || path.starts_with("src/");
-        if under_src {
-            let matched = rules
-                .hex_layer_rules
-                .iter()
-                .any(|r| path.contains(r.path_pattern.as_str()));
-            if !matched {
-                // Warn but do not block
-                let known_layers: Vec<&str> = rules
-                    .hex_layer_rules
-                    .iter()
-                    .map(|r| r.layer.as_str())
-                    .collect();
-                eprintln!(
-                    "hex enforce: WARNING — '{}' is under src/ but matches no hex layer (known: {}). \
-                     Check your .hex/adr-rules.toml.",
-                    path,
-                    known_layers.join(", ")
-                );
-            }
+        PathVerdict::Warn { message } => {
+            eprintln!("hex enforce: WARNING — {}. Check your .hex/adr-rules.toml.", message);
+            // Non-blocking: fall through to exit 0
         }
+        PathVerdict::Allow => {}
     }
 
-    // All checks passed (or only warnings issued)
     std::process::exit(0);
 }
 
@@ -400,4 +374,181 @@ async fn generate_prompt() -> anyhow::Result<()> {
 
     println!("{}", output);
     Ok(())
+}
+
+// ── Testable path evaluation ──────────────────────────────────────────────────
+
+#[derive(Debug, PartialEq)]
+enum PathVerdict {
+    Allow,
+    Block { reason: String },
+    Warn { message: String },
+}
+
+fn evaluate_path(path: &str, rules: &AdrRulesFile) -> PathVerdict {
+    // 1. Forbidden paths are blocking.
+    for forbidden in &rules.rules.forbidden_paths {
+        if path.contains(forbidden.as_str()) {
+            return PathVerdict::Block {
+                reason: format!("path '{}' matches forbidden pattern '{}'", path, forbidden),
+            };
+        }
+    }
+
+    // 2. Hex layer rules — non-blocking warning when under src/ but unmatched.
+    if !rules.hex_layer_rules.is_empty() {
+        let under_src = path.contains("/src/") || path.starts_with("src/");
+        if under_src {
+            let matched = rules
+                .hex_layer_rules
+                .iter()
+                .any(|r| path.contains(r.path_pattern.as_str()));
+            if !matched {
+                let known_layers: Vec<&str> =
+                    rules.hex_layer_rules.iter().map(|r| r.layer.as_str()).collect();
+                return PathVerdict::Warn {
+                    message: format!(
+                        "'{}' is under src/ but matches no hex layer (known: {})",
+                        path,
+                        known_layers.join(", ")
+                    ),
+                };
+            }
+        }
+    }
+
+    PathVerdict::Allow
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn make_rules(forbidden: &[&str], layers: &[(&str, &str)]) -> AdrRulesFile {
+        AdrRulesFile {
+            rules: AdrRulesSection {
+                forbidden_paths: forbidden.iter().map(|s| s.to_string()).collect(),
+            },
+            hex_layer_rules: layers
+                .iter()
+                .map(|(pat, layer)| HexLayerRule {
+                    path_pattern: pat.to_string(),
+                    layer: layer.to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn test_forbidden_path_blocks() {
+        let rules = make_rules(&["node_modules", ".git"], &[]);
+        assert!(matches!(
+            evaluate_path("project/node_modules/lodash/index.js", &rules),
+            PathVerdict::Block { .. }
+        ));
+    }
+
+    #[test]
+    fn test_allowed_path_outside_forbidden() {
+        let rules = make_rules(&["node_modules", ".git"], &[]);
+        assert_eq!(
+            evaluate_path("src/domain/value_objects.rs", &rules),
+            PathVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn test_no_rules_allows_everything() {
+        let rules = make_rules(&[], &[]);
+        assert_eq!(evaluate_path("src/anything.rs", &rules), PathVerdict::Allow);
+        assert_eq!(
+            evaluate_path("node_modules/pkg/index.js", &rules),
+            PathVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn test_hex_layer_match_allows() {
+        let rules = make_rules(
+            &[],
+            &[
+                ("src/adapters/primary", "adapters/primary"),
+                ("src/domain", "domain"),
+            ],
+        );
+        assert_eq!(
+            evaluate_path("src/adapters/primary/cli.rs", &rules),
+            PathVerdict::Allow
+        );
+        assert_eq!(
+            evaluate_path("src/domain/entities.rs", &rules),
+            PathVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn test_src_file_without_layer_match_warns() {
+        let rules = make_rules(
+            &[],
+            &[("src/adapters/primary", "adapters/primary")],
+        );
+        assert!(matches!(
+            evaluate_path("src/something_new/file.rs", &rules),
+            PathVerdict::Warn { .. }
+        ));
+    }
+
+    #[test]
+    fn test_file_outside_src_not_warned() {
+        let rules = make_rules(
+            &[],
+            &[("src/adapters/primary", "adapters/primary")],
+        );
+        // Files outside src/ are not checked against layer rules
+        assert_eq!(
+            evaluate_path("docs/README.md", &rules),
+            PathVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn test_load_adr_rules_file_parses_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("adr-rules.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[rules]
+forbidden_paths = ["node_modules", "dist"]
+
+[[hex_layer_rules]]
+path_pattern = "src/domain"
+layer = "domain"
+"#
+        )
+        .unwrap();
+
+        let rules = load_adr_rules_file(&path).unwrap();
+        assert_eq!(rules.rules.forbidden_paths, vec!["node_modules", "dist"]);
+        assert_eq!(rules.hex_layer_rules.len(), 1);
+        assert_eq!(rules.hex_layer_rules[0].path_pattern, "src/domain");
+    }
+
+    #[test]
+    fn test_load_adr_rules_file_missing_returns_none() {
+        let result = load_adr_rules_file(std::path::Path::new("/nonexistent/path/rules.toml"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_forbidden_path_partial_match() {
+        // ".env" should block ".env.production" too
+        let rules = make_rules(&[".env"], &[]);
+        assert!(matches!(
+            evaluate_path("project/.env.production", &rules),
+            PathVerdict::Block { .. }
+        ));
+    }
 }

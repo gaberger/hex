@@ -104,6 +104,39 @@ Make the scripts executable: `chmod +x pre-tool-use.sh post-tool-use.sh`
    hooks depend on querying the hex-nexus REST API; shell scripts would need
    `curl` calls to replicate this.
 
+## Production Hooks (ADR-2604012110)
+
+The `settings-snippet.json` in this directory has been updated to the production
+format from ADR-2604012110. Three hooks replace the prototype scripts:
+
+| Hook | Command | Blocking | Purpose |
+|------|---------|----------|---------|
+| PreToolUse Write/Edit/MultiEdit | `hex enforce check-file "$TOOL_INPUT_PATH"` | Yes | Forbidden path + hex layer check (no daemon) |
+| PostToolUse Write/Edit/MultiEdit | `hex analyze --file "$TOOL_INPUT_PATH" --quiet` | No | Treesitter boundary check per file |
+| Stop | `hex analyze --violations-only --exit-code` | Yes | Session-exit gate (fails if violations exist) |
+
+Both `hex enforce check-file` and `hex analyze --file` work without a running
+hex-nexus daemon. See `hex-cli/assets/templates/hex-claude-settings.json` for
+the full integrated settings that combine hex coordination hooks with these
+enforcement hooks.
+
+## Observability: agents-observe pattern
+
+For tool-call timeline visibility, hex can adopt the same technique as
+[agents-observe](https://github.com/simple10/agents-observe): hooks POST each
+event to a local HTTP endpoint → SQLite log → WebSocket push to dashboard.
+hex-nexus already does this via SpacetimeDB for multi-host coordination.
+For single-machine use, a lightweight SQLite + WebSocket endpoint in hex-nexus
+(no SpacetimeDB required) would provide the same live tool-call feed at
+`http://localhost:5555`.
+
+## Solo (local) vs Multi-agent mode
+
+| Mode | Enforcement | Coordination | Observability |
+|------|-------------|--------------|---------------|
+| Solo dev | 3 hooks above | Not needed | SQLite event log (planned) |
+| Multi-agent | Hooks + SpacetimeDB rules | SpacetimeDB hexflo-coordination | SpacetimeDB agent-registry |
+
 ## Verdict
 
 Shell hooks cover ~40% of what hex-agent does: dangerous-command blocking and
@@ -111,3 +144,8 @@ simple import-line scanning work well. The remaining 60% (tree-sitter analysis,
 cross-file cycles, context injection, ADR gates) still requires the Rust daemon.
 The practical hybrid is: shell hooks as a fast first-pass guard, `hex analyze .`
 as the authoritative gate before commit.
+
+With ADR-2604012110 implemented, `hex enforce check-file` and `hex analyze --file`
+replace the prototype shell scripts with proper CLI commands that use the same
+treesitter analysis as the daemon — giving full enforcement coverage with zero
+daemon dependency for local solo workflows.

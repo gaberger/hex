@@ -19,10 +19,24 @@ const LAYER_DIRS: &[(&str, &str, Layer)] = &[
     ("adapters/secondary", "Secondary Adapters", Layer::AdapterSecondary),
 ];
 
-pub async fn run(path: &str, strict: bool, adr_compliance_only: bool, json_output: bool) -> anyhow::Result<()> {
+pub async fn run(
+    path: &str,
+    strict: bool,
+    adr_compliance_only: bool,
+    json_output: bool,
+    file: Option<&str>,
+    quiet: bool,
+    violations_only: bool,
+    exit_code: bool,
+) -> anyhow::Result<()> {
     let root = Path::new(path)
         .canonicalize()
         .unwrap_or_else(|_| Path::new(path).to_path_buf());
+
+    // Single-file mode: analyze just one file
+    if let Some(file_path) = file {
+        return run_single_file(file_path, &root, quiet, violations_only, exit_code);
+    }
 
     // JSON mode: collect results and emit structured output
     if json_output {
@@ -35,6 +49,11 @@ pub async fn run(path: &str, strict: bool, adr_compliance_only: bool, json_outpu
         root.display()
     );
     println!();
+
+    // Violations collected during boundary analysis (used by violations_only and exit_code)
+    let mut local_violations: Vec<boundary::Violation> = Vec::new();
+    let mut rust_violations: Vec<RustViolation> = Vec::new();
+    let mut all_violation_count = 0usize;
 
     // If --adr-compliance flag is set, skip boundary analysis entirely
     if !adr_compliance_only {
@@ -114,14 +133,14 @@ pub async fn run(path: &str, strict: bool, adr_compliance_only: bool, json_outpu
         };
 
         // Offline boundary check: scan for obvious violations without nexus
-        let local_violations = if has_src {
+        local_violations = if has_src {
             scan_local_violations(&root)
         } else {
             Vec::new()
         };
 
         // Rust boundary violations
-        let rust_violations = if has_cargo_toml {
+        rust_violations = if has_cargo_toml {
             scan_rust_boundary_violations(&root)
         } else {
             Vec::new()
@@ -181,7 +200,7 @@ pub async fn run(path: &str, strict: bool, adr_compliance_only: bool, json_outpu
         println!("  {}", "Boundary analysis:".bold());
         println!("    {} {} source files scanned", "\u{2023}".dimmed(), total_files);
 
-        let all_violation_count = local_violations.len() + rust_violations.len();
+        all_violation_count = local_violations.len() + rust_violations.len();
         if all_violation_count == 0 {
             println!("    {} 0 boundary violations", "\u{2713}".green());
         } else {
@@ -281,13 +300,35 @@ pub async fn run(path: &str, strict: bool, adr_compliance_only: bool, json_outpu
     }
 
     // ADR compliance check (ADR-045) — runs locally, no nexus needed
-    println!();
-    println!("  {}", "ADR compliance:".bold());
+    if !violations_only {
+        println!();
+        println!("  {}", "ADR compliance:".bold());
+    }
     let adr_violations = check_adr_compliance(&root);
     let error_count = adr_violations.iter().filter(|v| v.severity == "error").count();
     let warning_count = adr_violations.iter().filter(|v| v.severity == "warning").count();
 
-    if adr_violations.is_empty() {
+    if violations_only {
+        // Print only violation lines, no summary
+        for v in &local_violations {
+            println!(
+                "VIOLATION {} \u{2192} {} ({})",
+                v.source_file, v.imported_path, v.rule,
+            );
+        }
+        for v in &rust_violations {
+            println!(
+                "VIOLATION {}:{} — {}",
+                v.file, v.line, v.message,
+            );
+        }
+        for v in &adr_violations {
+            println!(
+                "VIOLATION [{}] {}:{} — {}",
+                v.adr, v.file, v.line, v.message,
+            );
+        }
+    } else if adr_violations.is_empty() {
         println!(
             "    {} All ADR rules satisfied",
             "\u{2713}".green()
@@ -316,18 +357,174 @@ pub async fn run(path: &str, strict: bool, adr_compliance_only: bool, json_outpu
     // Store compliance results in HexFlo memory (best-effort)
     store_compliance_in_hexflo(&adr_violations, error_count, warning_count).await;
 
+    let total_violations = all_violation_count + adr_violations.len();
+
+    // --exit-code: exit 1 if any violations found
+    if exit_code && total_violations > 0 {
+        std::process::exit(1);
+    }
+
     // --strict: exit with code 1 if any violations exist (warnings promoted to errors)
     if strict && !adr_violations.is_empty() {
-        println!();
-        println!(
-            "  {} --strict mode: {} violation(s) found — exiting with code 1",
-            "\u{2717}".red(),
-            adr_violations.len(),
-        );
+        if !violations_only {
+            println!();
+            println!(
+                "  {} --strict mode: {} violation(s) found — exiting with code 1",
+                "\u{2717}".red(),
+                adr_violations.len(),
+            );
+        }
         std::process::exit(1);
     }
 
     Ok(())
+}
+
+// ── Single-file analysis (--file flag) ─────────────────────────────────
+
+/// Analyze a single file for hex boundary violations.
+/// Used by PostToolUse hooks to check one file at a time.
+fn run_single_file(
+    file_path: &str,
+    root: &Path,
+    quiet: bool,
+    violations_only: bool,
+    exit_code: bool,
+) -> anyhow::Result<()> {
+    let path = Path::new(file_path);
+    let abs_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| root.to_path_buf()).join(path)
+    };
+
+    if !abs_path.exists() {
+        eprintln!("hex analyze --file: file not found: {}", file_path);
+        std::process::exit(2);
+    }
+
+    // Determine relative path from root for layer detection
+    let rel = abs_path
+        .strip_prefix(root)
+        .unwrap_or(&abs_path)
+        .to_string_lossy()
+        .to_string();
+
+    let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    let mut violations: Vec<String> = Vec::new();
+
+    match ext {
+        "rs" => {
+            // Rust boundary check on this single file
+            let _src_dir = abs_path.parent().unwrap_or(root);
+            // Walk up to find the crate's src/ dir
+            let crate_src = find_crate_src_for_file(&abs_path);
+            let rel_to_src = if let Some(ref cs) = crate_src {
+                abs_path.strip_prefix(cs).unwrap_or(&abs_path).to_string_lossy().to_string()
+            } else {
+                rel.clone()
+            };
+
+            let layer = classify_rust_src_layer(&rel_to_src);
+            if let Some(layer_name) = layer {
+                let file_rel = abs_path.strip_prefix(root).unwrap_or(&abs_path).to_string_lossy().to_string();
+                if let Ok(content) = std::fs::read_to_string(&abs_path) {
+                    let mut in_test_section = false;
+                    for (idx, line) in content.lines().enumerate() {
+                        let trimmed = line.trim();
+                        if trimmed == "#[cfg(test)]" { in_test_section = true; }
+                        if in_test_section { continue; }
+                        if !trimmed.starts_with("use ") { continue; }
+
+                        if matches!(layer_name, "Domain" | "Ports") {
+                            if trimmed.contains("::adapters")
+                                || trimmed.contains("hex_nexus::")
+                                || trimmed.contains("hex_cli::")
+                                || trimmed.contains("hex_agent::")
+                            {
+                                violations.push(format!(
+                                    "{}:{} — {} layer must not import from adapters/downstream: {}",
+                                    file_rel, idx + 1, layer_name, trimmed.trim_end_matches(';')
+                                ));
+                            }
+                        }
+                        if layer_name == "Secondary Adapters" {
+                            if let Some(rest) = trimmed.strip_prefix("use crate::adapters::") {
+                                let import_mod = rest.split("::").next().unwrap_or("").trim_end_matches(';');
+                                let current_mod = rel_to_src
+                                    .trim_start_matches("adapters/")
+                                    .split('/')
+                                    .next()
+                                    .unwrap_or("")
+                                    .trim_end_matches(".rs");
+                                if !import_mod.is_empty()
+                                    && import_mod != current_mod
+                                    && import_mod != "mod"
+                                    && import_mod != "super"
+                                {
+                                    violations.push(format!(
+                                        "{}:{} — Secondary adapter imports sibling '{}': {}",
+                                        file_rel, idx + 1, import_mod, trimmed.trim_end_matches(';')
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "ts" | "js" => {
+            // TypeScript/JS boundary check using hex_core
+            let source_layer = boundary::detect_layer(&rel);
+            if source_layer != Layer::Unknown && source_layer != Layer::CompositionRoot {
+                if let Ok(contents) = std::fs::read_to_string(&abs_path) {
+                    let imports = extract_import_paths(&contents, &rel);
+                    let viols = boundary::validate_imports(&rel, &imports);
+                    for v in viols {
+                        violations.push(format!(
+                            "{} \u{2192} {} ({})",
+                            v.source_file, v.imported_path, v.rule
+                        ));
+                    }
+                }
+            }
+        }
+        _ => {
+            // Unsupported extension — nothing to check
+        }
+    }
+
+    if violations.is_empty() {
+        if !quiet && !violations_only {
+            println!("\u{2713} {}", file_path);
+        }
+        return Ok(());
+    }
+
+    // Print violations
+    for v in &violations {
+        println!("VIOLATION {}", v);
+    }
+
+    // Single-file mode always exits 1 on violations (designed for hook use)
+    let _ = exit_code; // acknowledged — single-file always exits 1 with violations
+    std::process::exit(1);
+}
+
+/// Walk up from a file to find the enclosing crate's `src/` directory.
+fn find_crate_src_for_file(file: &Path) -> Option<PathBuf> {
+    let mut dir = file.parent()?;
+    loop {
+        if dir.join("Cargo.toml").is_file() {
+            let src = dir.join("src");
+            if src.is_dir() {
+                return Some(src);
+            }
+            return None;
+        }
+        dir = dir.parent()?;
+    }
 }
 
 // ── Rust Workspace Analysis (ADR-2603283000) ────────────────────────────

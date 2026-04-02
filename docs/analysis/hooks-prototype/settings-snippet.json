@@ -1,23 +1,51 @@
 {
+  "_comment": "Production hooks for ADR-2604012110 hooks-first enforcement. Add to ~/.claude/settings.json or project .claude/settings.json",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Edit|Write",
+        "matcher": "Write|Edit|MultiEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "/Volumes/ExtendedStorage/para/01-Projects/hex-intf/docs/analysis/hooks-prototype/pre-tool-use.sh"
+            "command": "hex enforce check-file \"$TOOL_INPUT_PATH\"",
+            "blocking": true,
+            "timeout": 5000
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Volumes/ExtendedStorage/para/01-Projects/hex-intf/docs/analysis/hooks-prototype/pre-tool-use.sh",
+            "blocking": true,
+            "timeout": 5000
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write",
+        "matcher": "Write|Edit|MultiEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "/Volumes/ExtendedStorage/para/01-Projects/hex-intf/docs/analysis/hooks-prototype/post-tool-use.sh"
+            "command": "hex analyze --file \"$TOOL_INPUT_PATH\" --quiet",
+            "blocking": false,
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hex analyze --violations-only --exit-code",
+            "blocking": true,
+            "timeout": 30000
           }
         ]
       }
