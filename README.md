@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.75+-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
   <a href="https://spacetimedb.com/"><img src="https://img.shields.io/badge/SpacetimeDB-WASM-58a6ff?style=flat-square" alt="SpacetimeDB"></a>
   <a href="https://github.com/gaberger/hex/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
-  <a href="https://github.com/gaberger/hex/actions"><img src="https://img.shields.io/badge/CI-passing-3fb950?style=flat-square&logo=github-actions&logoColor=white" alt="CI"></a>
+  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-70+-bc8cff?style=flat-square" alt="ADRs"></a>
 </p>
 
 <p align="center">
@@ -26,141 +26,189 @@ AI coding agents produce working code — until they don't. Without guardrails, 
   <img src=".github/assets/comparison.svg" alt="hex vs BAML, SpecKit, HUD" width="800">
 </p>
 
-**BAML** gives you typed LLM functions — great for structured output, but no agent lifecycle, no orchestration, no architecture rules. It's a calling convention, not a runtime.
+| Tool | What It Does | What It Doesn't |
+|:-----|:-------------|:----------------|
+| **BAML** | Typed LLM functions, schema validation | No agent lifecycle, no orchestration, no architecture rules |
+| **SpecKit** | Spec-driven workflow gates | No runtime enforcement, no code execution, can't stop agents that ignore specs |
+| **HUD** | Agent benchmarks, RL evaluation, A/B testing | No code generation, no architecture enforcement, doesn't ship with your code |
+| **hex** | **Full AIOS** — process lifecycle, enforced boundaries, swarm coordination, RL inference, capability auth | — |
 
-**SpecKit** adds spec-driven workflow gates — but it's a process layer. It doesn't execute code, enforce boundaries at runtime, or manage agent processes. When the agent ignores the spec, SpecKit can't stop it.
-
-**HUD** benchmarks and evaluates agents — essential for training, but it doesn't ship with your code. It tells you how good your agents are, not how to keep them good in production.
-
-**hex is the runtime that sits underneath all of them.** It manages agent processes like an OS manages user processes — with lifecycle tracking, capability-based permissions, enforced boundaries, and coordinated resource access.
+hex is the **runtime that sits underneath all of them**. It manages agent processes like an OS manages user processes — with lifecycle tracking, capability-based permissions, enforced boundaries, and coordinated resource access.
 
 ---
 
 ## What You Get
 
-### Agents That Can't Break Architecture
+### Architecture Enforcement That Agents Can't Bypass
 
 <p align="center">
   <img src=".github/assets/architecture.svg" alt="Hexagonal Architecture Enforcement" width="800">
 </p>
 
-hex enforces **hexagonal architecture at the kernel level**. Domain can't reach adapters. Adapters can't reach each other. Only the composition root wires them. This isn't a linting rule — it's a privilege boundary. Agents physically cannot import across boundaries they don't have access to.
+hex enforces [hexagonal architecture](https://alistair.cockburn.us/hexagonal-architecture/) at the **kernel level**. This isn't a linting suggestion — it's a privilege boundary baked into the runtime. Domain can't reach adapters. Adapters can't reach each other. Only the composition root wires them.
+
+Each ADR maps to **static analysis rules** that run automatically. `adr-001-domain-purity` checks that the domain layer has zero external imports. `adr-039-spacetimedb-first` flags REST handlers that read from local state instead of SpacetimeDB. Violations are caught at commit time — before agents waste tokens on architectural drift.
 
 ```bash
-hex analyze .    # Real-time architecture health check — violations block commits
+hex analyze .    # Boundary violations, dead code, cross-adapter coupling — blocks commits
 ```
 
-> **Why it matters**: Every AI-generated PR maintains the same architectural integrity as hand-crafted code. No more "the agent added a database call inside the domain layer" surprises.
+**What this means in practice**: Workplan boundaries map to adapter boundaries. An agent working on `adapters/secondary/database` physically cannot edit `adapters/primary/cli`. Every AI-generated PR maintains the same architectural integrity as hand-crafted code. Full adapter context fits in **~200 tokens** — agents get surgical precision instead of drowning in irrelevant code.
 
-### Multi-Agent Swarms That Don't Collide
+### Swarm Coordination Without Merge Conflicts
 
 <p align="center">
   <img src=".github/assets/swarm.svg" alt="HexFlo Swarm Coordination" width="800">
 </p>
 
-HexFlo coordinates parallel agents across **isolated git worktrees** — one per adapter boundary. Agents work simultaneously on domain, ports, and adapters without merge conflicts. Quality gates block tier advancement until compile + test + architecture analysis pass.
+HexFlo is the native Rust coordination layer that replaced external Node.js dependencies. Coordination call latency dropped from **~200ms to <1ms**. Agents work in **isolated git worktrees** — one per adapter boundary — so a feature touching 4 boundaries gets 4 parallel agents that never conflict.
+
+Quality gates block tier advancement: domain and ports (Tier 0) must compile before secondary adapters (Tier 1) begin. Tests must pass before integration. Every agent heartbeats every 15 seconds — stale after 45s, dead after 120s, with automatic task reclamation.
 
 ```bash
 hex swarm init feature-auth    # Spawn parallel agents across boundaries
-hex task list                  # Track progress in real-time
+hex task list                  # Real-time progress via WebSocket
+hex task complete <id>         # Mark done — all clients see it instantly
 ```
 
-> **Why it matters**: A feature that touches 4 adapter boundaries gets 4 parallel agents, each in an isolated worktree, each blocked from producing code that breaks the build. What used to take serial agent passes now runs concurrently.
+**What this means in practice**: No more "two agents claimed the same task." No more zombie agents blocking swarms. Compare-And-Swap task claims prevent double-assignment. Heartbeat timeouts auto-recover from agent crashes. What used to take serial agent passes now runs concurrently with transactional guarantees.
+
+### 90% Inference Cost Reduction via RL
+
+The reinforcement learning engine learns which `(model, context_strategy)` pair performs best per task type, then routes automatically:
+
+| Tier | Bits | Typical Tasks | Examples |
+|:-----|:-----|:-------------|:---------|
+| **Q2** | 2-bit | Scaffolding, docstrings, formatting | Local Llama 3.2 |
+| **Q4** | 4-bit | General coding, test generation | Ollama, vLLM |
+| **Q8** | 8-bit | Complex reasoning, security review | MiniMax M2.5 |
+| **Fp16** | 16-bit | Cross-file planning, architecture | Cloud Sonnet |
+| **Cloud** | — | Frontier reasoning | Opus, GPT-4o |
+
+The RL state space encodes: task type, codebase size, agent count, token usage, rate limit status, and retry count. The reward function penalizes cost, rewards speed and quality. It **self-optimizes over time**.
+
+| Scenario | Frontier-Only | With RL Routing | Savings |
+|:---------|:-------------|:---------------|:--------|
+| 10-agent swarm (code analysis) | $22.50 | $2.10 | **91%** |
+| Bulk summarization (50 files) | $15.00 | $1.50 | **90%** |
+| Mixed interactive + analysis | $8.00 | $3.00 | **63%** |
+
+On top of model selection: **prompt caching saves 90% on input tokens** for repeated system prompts (~15k tokens) and tool definitions (~8k tokens). Haiku preflight checks detect quota/key issues in **<500ms** before building full context — costing ~$0.000013 per check.
+
+```bash
+hex inference discover --provider openrouter   # Scan 300+ models
+hex inference list                              # Available providers + tiers
+hex inference test <provider-id>                # Verify connectivity
+```
 
 ### Capability-Based Agent Security
 
-Every agent receives an **HMAC-signed capability token** at spawn, scoped to exactly what it needs:
+Every agent receives an **HMAC-SHA256 signed capability token** at spawn, scoped to exactly what it needs. Secrets never enter persistent storage — the SpacetimeDB grant table stores only metadata (key names, TTLs). If the database is compromised, attackers see zero secret values.
 
 | Capability | What It Grants |
 |:-----------|:---------------|
-| `FileSystem(path)` | Read/write within a specific directory |
+| `FileSystem(path)` | Read/write within a specific directory only |
 | `TaskWrite` | Create and complete swarm tasks |
 | `SwarmRead` / `SwarmWrite` | View or modify swarm state |
 | `Memory(scope)` | Access scoped key-value store |
-| `Inference` | Make LLM API calls |
+| `Inference` | Make LLM API calls through the broker |
 | `Notify` | Send agent-to-agent notifications |
-| `Admin` | Full system access (daemon only) |
+| `Admin` | Full system access (daemon agents only) |
 
-> **Why it matters**: A coder agent scoped to `adapters/secondary/` can't touch `adapters/primary/`. A reviewer agent can read everything but write nothing. Principle of least privilege, enforced at the OS level.
+**What this means in practice**: A coder agent scoped to `adapters/secondary/` can't touch `adapters/primary/`. A reviewer agent can read everything but write nothing. Daemon agents get admin; worker agents get the minimum they need. Principle of least privilege, enforced at the OS level — not by convention.
 
-### RL-Driven Inference That Learns
-
-The reinforcement learning engine tracks which `(model, context_strategy)` pair performs best per task type, then routes requests to the optimal provider:
-
-| Tier | Bits | Typical Tasks |
-|:-----|:-----|:-------------|
-| **Q2** | 2-bit | Scaffolding, docstrings, formatting |
-| **Q4** | 4-bit | General coding, test generation |
-| **Q8** | 8-bit | Complex reasoning, security review |
-| **Fp16** | 16-bit | Cross-file planning, architecture |
-| **Cloud** | — | Frontier APIs (Anthropic, OpenAI, OpenRouter) |
-
-> **Why it matters**: Stop paying cloud API prices for boilerplate generation. The RL engine automatically downgrades simple tasks to local models and upgrades complex reasoning to frontier models — adapting as it learns your codebase.
-
-### Specs-First Development Pipeline
+### Specs-First Pipeline With Independent Oracles
 
 <p align="center">
   <img src=".github/assets/workflow.svg" alt="7-Phase Development Pipeline" width="800">
 </p>
 
-Features follow a **7-phase gated lifecycle**. Behavioral specs are written BEFORE code. Each phase has quality gates that block advancement until compile + test + architecture checks pass.
+Features follow a **7-phase gated lifecycle**. Behavioral specs are written BEFORE code. Each phase has quality gates — `cargo check` / `tsc --noEmit` between every phase, `cargo test` / `bun test` before integration.
 
 ```
 Specs → Plan → Worktrees → Code (TDD) → Validate → Integrate → Finalize
 ```
 
-> **Why it matters**: "It compiles" is not "it works." The validation judge runs behavioral specs as independent oracles — catching bugs that unit tests miss because they were written by the same agent that wrote the code.
-
-### Real-Time Coordination via SpacetimeDB
-
-All state lives in **7 WASM modules** running on SpacetimeDB. Every client — CLI, dashboard, MCP tools, remote agents — connects via WebSocket and sees changes instantly. When one agent completes a task, every other agent knows immediately.
+The validation judge runs behavioral specs as **independent oracles**. This matters because when the same LLM writes code AND tests, the tests can encode the LLM's misunderstanding. Property tests and behavioral specs catch bugs that unit tests miss.
 
 ```bash
-hex nexus start              # Start the daemon
-hex status                   # Project overview
-open http://localhost:5555   # Live dashboard
+hex dev start "add user authentication"   # Drives the full pipeline autonomously
 ```
 
-> **Why it matters**: No polling. No stale state. No "two agents claimed the same task." SpacetimeDB provides transactional guarantees with real-time subscriptions — the same foundation that powers multiplayer games, applied to multi-agent development.
+### Real-Time State via SpacetimeDB Microkernel
+
+All coordination state lives in **7 WASM modules** running on SpacetimeDB — not in REST endpoints, not in SQLite, not in memory. State transitions are **atomic reducers**. Every client (CLI, dashboard, MCP tools, remote agents) connects via WebSocket and sees changes in milliseconds.
+
+| Module | Responsibility |
+|:-------|:---------------|
+| `hexflo-coordination` | Swarms, tasks, agents, memory, fleet, lifecycle, cleanup |
+| `agent-registry` | Agent lifecycle, heartbeats, stale detection |
+| `inference-gateway` | LLM request routing, procedure-based inference |
+| `secret-grant` | TTL-based key distribution, audit log |
+| `rl-engine` | Reinforcement learning model selection |
+| `chat-relay` | Message routing between agents and users |
+| `neural-lab` | Experimental neural patterns |
+
+The nexus daemon is **stateless and horizontally scalable**. Multiple hex-nexus processes can run simultaneously — all coordinating through shared SpacetimeDB. Config syncs from repo files to SpacetimeDB tables on startup; dashboard subscribers get reactive updates.
+
+```bash
+hex nexus start              # Start the daemon (requires SpacetimeDB)
+hex status                   # Project overview
+open http://localhost:5555   # Live dashboard — agents, tasks, health scores
+```
+
+### Remote Agents in One Command
+
+Deploy agents to remote machines without manual setup:
+
+```bash
+hex agent spawn-remote user@build-server.local
+```
+
+This handles SSH provisioning, binary transfer, tunnel setup, agent launch, and verification automatically. WebSocket over SSH for bidirectional streaming. Local agents start automatically with `hex nexus start` — zero config for solo developers.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Build
+# Build from source
 cargo build -p hex-cli --release
 cargo build -p hex-nexus --release
 
-# Start (requires SpacetimeDB)
+# Start (requires SpacetimeDB running)
 hex nexus start
 hex status
 
-# Open the dashboard
+# Open the live dashboard
 open http://localhost:5555
+
+# Install into a target project
+cd your-project && hex init
 ```
 
-### Core Commands
+### Essential Commands
 
 ```bash
-# Architecture
-hex analyze .                   # Health check — boundary violations, dead code
-hex adr list                    # Architecture Decision Records
+# Architecture enforcement
+hex analyze .                   # Boundary check, dead code, coupling violations
+hex adr list                    # 70+ Architecture Decision Records
+hex adr search "inference"      # Find relevant decisions
 
-# Swarm coordination
-hex swarm init <name>           # Initialize a swarm
-hex task create <sid> <title>   # Create a task
-hex task list                   # Track all tasks
-hex task complete <id>          # Mark done
+# Autonomous development
+hex dev start "<description>"   # Full 7-phase pipeline
+hex swarm init <name>           # Manual swarm initialization
+hex task list                   # Track all tasks in real-time
 
-# Memory & IPC
-hex memory store <key> <value>  # Persistent key-value store
-hex inbox list                  # Agent notification inbox
-hex inbox notify                # Send priority notification
+# Inference management
+hex inference discover          # Scan for local/remote models
+hex inference list              # Available providers + tiers
+hex inference add ollama http://localhost:11434 llama3.2:3b-q4_k_m
 
-# Inference
-hex inference list              # Available models
-hex inference discover          # Scan for local models
+# Memory & coordination
+hex memory store <key> <value>  # Persistent scoped key-value
+hex inbox list                  # Priority notification inbox
+hex secrets status              # Vault health check
 ```
 
 ---
@@ -168,46 +216,90 @@ hex inference discover          # Scan for local models
 ## System Architecture
 
 ```
-hex-cli/               Rust CLI — shell + MCP server
+hex-cli/               Rust CLI — shell + MCP server (canonical entry point)
 hex-nexus/             Daemon — REST API, dashboard, filesystem bridge
-hex-core/              Domain types + 9 port traits (zero deps)
-hex-agent/             Agent runtime — skills, hooks, enforcement
-hex-desktop/           Desktop app (Tauri)
+hex-core/              Domain types + 9 port traits (zero external deps)
+hex-agent/             Agent runtime — skills, hooks, architecture enforcement
+hex-desktop/           Desktop app (Tauri wrapper)
+hex-parser/            Code parsing utilities (tree-sitter)
 spacetime-modules/     7 WASM modules (SpacetimeDB microkernel)
 ```
 
-| Crate | OS Analog | What It Does |
-|:------|:----------|:-------------|
-| **hex-cli** | Shell | Every `hex` command + MCP tool server |
-| **hex-nexus** | System services | Filesystem ops, inference routing, fleet management, dashboard |
-| **hex-core** | Syscall interface | Port traits — the contracts agents code against |
-| **hex-agent** | Userland | Skills, hooks, agent YAML definitions, architecture enforcement |
-| **spacetime-modules** | Microkernel | Transactional state: swarms, agents, inference, secrets, RL |
+| Crate | OS Analog | Role |
+|:------|:----------|:-----|
+| **hex-cli** | Shell | Every `hex` command + MCP tool server for IDE integration |
+| **hex-nexus** | System services | Filesystem ops, inference routing, fleet management, dashboard at `:5555` |
+| **hex-core** | Syscall interface | 9 port traits — the contracts agents code against (zero deps) |
+| **hex-agent** | Userland | 14 agent definitions, 21+ skills, hooks, architecture enforcement |
+| **spacetime-modules** | Microkernel | 7 WASM modules with ~130 reducers for transactional state |
+
+### Agent Roles
+
+hex ships with **14 specialized agent definitions** in YAML. Each defines: model selection tiers, context loading strategy (L1 AST summary → L2 signatures → L3 full source), workflow phases, feedback loop gates, and quality thresholds.
+
+| Agent | What It Does |
+|:------|:-------------|
+| `hex-coder` | Codes within one adapter boundary with TDD loop (red → green → refactor) |
+| `planner` | Decomposes requirements into adapter-bounded workplan steps |
+| `integrator` | Merges worktrees in dependency order, runs integration tests |
+| `swarm-coordinator` | Orchestrates full lifecycle via HexFlo |
+| `validation-judge` | Post-build semantic validation — **blocking gate** |
+| `behavioral-spec-writer` | Writes acceptance specs before code generation |
+| `adversarial-reviewer` | Hunts dangling refs, stale config, build breakage |
+| `rust-refactorer` | Rust-specific refactoring with cross-crate awareness |
 
 ---
 
 ## Who Is This For?
 
-**Teams running AI coding agents at scale.** If you're using Claude Code, Copilot, Cursor, or any LLM-powered coding tool and want:
+**Teams running AI coding agents at scale.** If you're using Claude Code, Copilot, Cursor, or any LLM-powered coding tool and you've hit these problems:
 
-- Architectural boundaries that agents can't violate
-- Multi-agent coordination without merge conflicts
-- Per-agent security scoping (not just "the AI has access to everything")
-- Inference cost optimization with automatic model selection
-- A specs-first pipeline that catches semantic bugs, not just syntax errors
+- Agents violate architecture boundaries and you find out in code review
+- Multi-agent runs produce merge conflicts or race conditions
+- Every agent has full access to everything — no scoping, no least privilege
+- You're paying frontier API prices for tasks a local model could handle
+- "It compiles" keeps passing but the app doesn't actually work
 
-hex installs into your project and acts as the operating system layer between your agents and your codebase.
+hex installs into your project as the operating system layer between your agents and your codebase. It's model-agnostic, provider-agnostic, and works with any AI coding tool that supports MCP.
 
 ---
 
 ## Documentation
 
-| Resource | Description |
-|:---------|:------------|
-| [Architecture Decision Records](docs/adrs/) | 70+ design decisions with rationale and status |
-| [Behavioral Specs](docs/specs/) | Feature specifications and acceptance criteria |
-| [Workplans](docs/workplans/) | Structured task decomposition for features |
-| [Examples](examples/) | Reference apps built with hex (Flappy Bird, weather, todo, etc.) |
+| Resource | What You'll Find |
+|:---------|:-----------------|
+| [Architecture Decision Records](docs/adrs/) | 70+ decisions with rationale — the "why" behind every design choice |
+| [Development Guides](docs/guides/) | Workflow walkthrough, OpenRouter setup, feature UX integration |
+| [Behavioral Specs](docs/specs/) | Feature specifications written before code |
+| [Workplans](docs/workplans/) | Structured task decomposition driving HexFlo swarm execution |
+| [Gap Analysis](docs/analysis/) | Honest assessment of what's built vs. what's planned |
+
+---
+
+## Credits & References
+
+### Foundational Work
+
+hex builds on the **Hexagonal Architecture** pattern (Ports & Adapters), originally conceived by [Alistair Cockburn](https://alistair.cockburn.us/hexagonal-architecture/) in 2005:
+
+> *"Allow an application to equally be driven by users, programs, automated test or batch scripts, and to be developed and tested in isolation from its eventual run-time devices and databases."*
+
+- **[Hexagonal Architecture](https://alistair.cockburn.us/hexagonal-architecture/)** — Alistair Cockburn
+- **[Growing Object-Oriented Software, Guided by Tests](http://www.growing-object-oriented-software.com/)** — Steve Freeman & Nat Pryce (London-school TDD)
+- **[Clean Architecture](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)** — Robert C. Martin
+
+### Key Technologies
+
+- **[tree-sitter](https://tree-sitter.github.io/)** — Max Brunsfeld et al. (token-efficient code parsing)
+- **[SpacetimeDB](https://spacetimedb.com/)** — real-time database with WASM module execution
+- **[claude-flow](https://github.com/ruvnet/claude-flow)** — Reuven Cohen (@ruvnet), multi-agent swarm coordination (predecessor to HexFlo)
+
+### Authors
+
+| Contributor | Role |
+|:------------|:-----|
+| **Gary** ([@gaberger](https://github.com/gaberger)) | Creator, architect, primary developer |
+| **Claude** (Anthropic) | AI pair programmer — code generation, testing, documentation |
 
 ---
 
