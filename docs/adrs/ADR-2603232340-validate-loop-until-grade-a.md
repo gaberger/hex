@@ -1,6 +1,6 @@
 # ADR-2603232340: Validate Loop — Test, Analyze, Refactor Until Grade A
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-23
 **Drivers:** `hex dev` generates code but doesn't verify it works. The validate phase currently just checks `hex analyze` (which often isn't available). A real pipeline should compile, test, analyze, and refactor in a loop until the code passes all quality gates.
 **Supersedes:** None (extends ADR-2603232005)

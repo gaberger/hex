@@ -1,6 +1,6 @@
 # ADR-2603241800: Swarm Lifecycle Management (Complete / Fail / Cleanup)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-24
 **Drivers:** 21 swarms stuck in "active" status with no way to archive them via CLI or MCP. SpacetimeDB has `swarm_complete` and `swarm_fail` reducers but they are unreachable from user-facing surfaces.
 

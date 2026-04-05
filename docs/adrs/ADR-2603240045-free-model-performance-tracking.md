@@ -1,6 +1,6 @@
 # ADR-2603240045: Free Model Performance Tracking in SpacetimeDB
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-24
 **Drivers:** hex dev now auto-falls back to free OpenRouter models (`openrouter/free`) when paid credits run out. Free models vary wildly in quality — some produce compilable hex-compliant code, others don't. We need to track per-model success rates in SpacetimeDB so the RL engine can learn which free models work and which don't.
 
