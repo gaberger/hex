@@ -40,6 +40,7 @@ aes-gcm = "0.10"
 base64 = "0.22"
 gethostname = "0.5"
 sha2 = "0.10"
+hmac = "0.12"
 # Tree-sitter native parsers for architecture analysis (ADR-034 Phase 2)
 tree-sitter = "0.24"
 tree-sitter-typescript = "0.23"

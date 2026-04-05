@@ -78,5 +78,6 @@ pub use ports::context_compressor::IContextCompressorPort;
 pub use domain::tools::{ToolCall, ToolDefinition, ToolInputSchema, ToolResult};
 pub use domain::swarm_task::{SwarmTaskCompletion, SwarmTaskStatus};
 pub use domain::workplan::{PhaseGate, TaskStatus, Workplan, WorkplanPhase, WorkplanTask};
+pub use domain::capability::{AgentCapabilityToken, Capability, VerifiedClaims};
 pub use quantization::QuantizationLevel;
 pub use types::TaskCompletionBody;

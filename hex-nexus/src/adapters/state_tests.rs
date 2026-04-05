@@ -103,7 +103,7 @@ mod backend_factory_tests {
 #[cfg(test)]
 mod spacetime_adapter_tests {
     use crate::adapters::spacetime_state::{SpacetimeConfig, SpacetimeStateAdapter};
-    use crate::ports::state::IStatePort;
+    use crate::ports::state::{IStatePort, IRlStatePort};
 
     #[test]
     fn test_adapter_creation_default_config() {

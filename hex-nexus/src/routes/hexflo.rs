@@ -11,7 +11,9 @@ use http::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::middleware::capability_auth::require_capability;
 use crate::state::SharedState;
+use hex_core::domain::capability::VerifiedClaims;
 
 fn no_state_port() -> (StatusCode, Json<serde_json::Value>) {
     (
@@ -32,6 +34,7 @@ pub struct MemoryStoreRequest {
 /// POST /api/hexflo/memory — store a key-value pair
 pub async fn memory_store(
     State(state): State<SharedState>,
+    claims: Option<axum::Extension<VerifiedClaims>>,
     Json(body): Json<MemoryStoreRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let port = match &state.state_port {
@@ -40,6 +43,14 @@ pub async fn memory_store(
     };
 
     let scope = body.scope.as_deref().unwrap_or("global");
+
+    // ADR-2604051800 P1: Check memory scope capability
+    if let Err(status) = require_capability(
+        claims.as_ref().map(|c| &c.0),
+        |c| c.can_access_memory(scope),
+    ) {
+        return (status, Json(serde_json::json!({"error": "insufficient capability: memory scope"})));
+    }
     match port.hexflo_memory_store(&body.key, &body.value, scope).await {
         Ok(()) => (StatusCode::OK, Json(json!({ "ok": true, "key": body.key }))),
         Err(e) => (

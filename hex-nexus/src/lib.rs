@@ -97,7 +97,11 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             let secret_resolver: orchestration::agent_manager::SecretResolver =
                 Arc::new(|key: &str| std::env::var(key).ok());
             let agent_mgr = Arc::new(
-                orchestration::agent_manager::AgentManager::new(Arc::clone(&state_port), secret_resolver),
+                orchestration::agent_manager::AgentManager::new(
+                    Arc::clone(&state_port),
+                    secret_resolver,
+                    Arc::clone(&app_state.capability_token_service),
+                ),
             );
             app_state.agent_manager = Some(agent_mgr);
             app_state.state_port = Some(state_port);

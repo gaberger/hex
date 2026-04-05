@@ -2751,6 +2751,7 @@ dependencies = [
  "gethostname 0.5.0",
  "git2",
  "hex-core",
+ "hmac",
  "http",
  "libc",
  "rand 0.8.5",

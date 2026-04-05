@@ -8,8 +8,10 @@ use hex_core::{TaskCompletionBody, TaskStatus};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::middleware::capability_auth::require_capability;
 use crate::ports::state::{IStatePort, StateError};
 use crate::state::SharedState;
+use hex_core::domain::capability::VerifiedClaims;
 
 // ── Request types (formerly in persistence.rs) ──────────
 
@@ -269,9 +271,17 @@ pub async fn fail_swarm(
 /// POST /api/swarms/:id/tasks — create a new task in a swarm
 pub async fn create_task(
     State(state): State<SharedState>,
+    claims: Option<axum::Extension<VerifiedClaims>>,
     Path(swarm_id): Path<String>,
     Json(body): Json<CreateTaskRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    // ADR-2604051800 P1: Require swarm-write capability
+    require_capability(
+        claims.as_ref().map(|c| &c.0),
+        |c| c.has_capability(&hex_core::Capability::SwarmWrite),
+    )
+    .map_err(|s| (s, Json(json!({"error": "insufficient capability: swarm_write"}))))?;
+
     let port = state_port(&state)?;
     let id = uuid::Uuid::new_v4().to_string();
 
@@ -318,9 +328,17 @@ pub async fn create_task(
 /// PATCH /api/swarms/:id/tasks/:taskId — update task status/result
 pub async fn update_task(
     State(state): State<SharedState>,
+    claims: Option<axum::Extension<VerifiedClaims>>,
     Path((_swarm_id, task_id)): Path<(String, String)>,
     Json(body): Json<UpdateTaskRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // ADR-2604051800 P1: Check task-write capability
+    require_capability(
+        claims.as_ref().map(|c| &c.0),
+        |c| c.can_write_task(&task_id),
+    )
+    .map_err(|s| (s, Json(json!({"error": "insufficient capability: task_write"}))))?;
+
     let port = state_port(&state)?;
 
     // Apply agent assignment if provided (CAS: pass version if supplied)
@@ -395,7 +413,9 @@ pub async fn update_task_by_id(
         agent_id: completion.agent_id,
         version: None,
     };
-    update_task(state, Path(("_".to_string(), task_id)), Json(req)).await
+    // Pass None for claims — update_task_by_id is an internal delegation, not a direct agent call.
+    // The outer route handler should enforce capabilities if needed.
+    update_task(state, None, Path(("_".to_string(), task_id)), Json(req)).await
 }
 
 /// GET /api/hexflo/tasks/:taskId — get task with parent swarm status
