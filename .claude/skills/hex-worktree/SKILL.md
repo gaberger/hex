@@ -212,6 +212,46 @@ Flag worktrees with no commits in 24+ hours. Recommend cleanup or reassignment.
 - Worktrees are created in the parent directory of the project root (../hex-feat-*)
 - Each worktree gets a full copy of the repo — disk space scales linearly
 
+## Agent Worktree Anti-Patterns (ADR-2604050900 Learnings)
+
+### Anti-Pattern: Multiple Agents, Same Target File
+
+When multiple agents in separate worktrees all edit the same file (e.g., appending sections
+to `lib.rs`), each produces a valid diff against the *base* version — but the diffs conflict
+when merged because they all modify the same region (end of file).
+
+**Symptom**: Cherry-picks fail; manual rework required; agent time wasted.
+
+**Fix**: Batch all edits to a shared file into a single agent. Only use worktree isolation
+when agents modify *disjoint file sets*.
+
+### Anti-Pattern: Worktree Branches Diverge from Feature Branch
+
+Worktree agents fork from whatever commit exists when the worktree is created. If you've
+made commits on the feature branch since then, the worktree agent's branch diverges.
+
+**Symptom**: `git cherry-pick` shows unexpected conflicts on unrelated code.
+
+**Fix**: Include explicit `git fetch origin && git checkout <feature-branch>` as the
+first instruction in every worktree agent prompt.
+
+### Pattern: Good Worktree Parallelism
+
+Tasks that touch **separate directories or separate files** parallelize perfectly:
+
+```
+# GOOD: each agent touches different dirs
+Agent A: spacetime-modules/ (delete dirs, update Cargo.toml)
+Agent B: hex-nexus/src/adapters/ (modify adapter files)
+Agent C: hex-cli/src/commands/ (add CLI subcommand)
+```
+
+### Pattern: Sequential for Shared Files
+
+When tasks must touch the same file, run them sequentially in the main context.
+The coordination overhead of worktrees exceeds the time saved by parallelism
+for <3 small tasks on a shared file.
+
 ## Quick Reference
 
 | Command | What it does |
