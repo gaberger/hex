@@ -33,7 +33,6 @@ uuid = { version = "1", features = ["v4"] }
 libc = "0.2.183"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 russh = "0.60"
-russh-keys = "0.46"
 async-trait = "0.1"
 thiserror = "2"
 aes-gcm = "0.10"

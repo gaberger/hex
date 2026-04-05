@@ -1,5 +1,5 @@
 use russh::*;
-use russh_keys::key::PublicKey;
+use russh::keys::key::PrivateKeyWithHashAlg;
 use std::sync::Arc;
 
 /// SSH adapter for connecting to remote compute nodes.
@@ -31,13 +31,12 @@ pub struct RemoteCommandResult {
 /// SSH client handler that accepts host keys.
 struct ClientHandler;
 
-#[async_trait::async_trait]
 impl russh::client::Handler for ClientHandler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &PublicKey,
+        _server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
         // TODO: Verify against known_hosts in production
         Ok(true)
@@ -50,7 +49,7 @@ impl SshAdapter {
         config: &SshConfig,
         command: &str,
     ) -> Result<RemoteCommandResult, SshError> {
-        let key_pair = russh_keys::load_secret_key(&config.key_path, None)
+        let key_pair = russh::keys::load_secret_key(&config.key_path, None)
             .map_err(|e| SshError::KeyError(format!(
                 "Failed to load key {}: {}", config.key_path, e
             )))?;
@@ -67,11 +66,14 @@ impl SshAdapter {
         )))?;
 
         let auth_result = session
-            .authenticate_publickey(&config.username, Arc::new(key_pair))
+            .authenticate_publickey(
+                &config.username,
+                PrivateKeyWithHashAlg::new(Arc::new(key_pair), None),
+            )
             .await
             .map_err(|e| SshError::AuthFailed(e.to_string()))?;
 
-        if !auth_result {
+        if !matches!(auth_result, russh::client::AuthResult::Success) {
             return Err(SshError::AuthFailed("Key rejected by server".into()));
         }
 
@@ -133,7 +135,7 @@ impl SshAdapter {
                 "Cannot read {}: {}", local_path, e
             )))?;
 
-        let key_pair = russh_keys::load_secret_key(&config.key_path, None)
+        let key_pair = russh::keys::load_secret_key(&config.key_path, None)
             .map_err(|e| SshError::KeyError(e.to_string()))?;
 
         let ssh_config = russh::client::Config::default();
@@ -145,10 +147,17 @@ impl SshAdapter {
         .await
         .map_err(|e| SshError::ConnectionFailed(e.to_string()))?;
 
-        session
-            .authenticate_publickey(&config.username, Arc::new(key_pair))
+        let auth_result = session
+            .authenticate_publickey(
+                &config.username,
+                PrivateKeyWithHashAlg::new(Arc::new(key_pair), None),
+            )
             .await
             .map_err(|e| SshError::AuthFailed(e.to_string()))?;
+
+        if !matches!(auth_result, russh::client::AuthResult::Success) {
+            return Err(SshError::AuthFailed("Key rejected by server".into()));
+        }
 
         // Create directory and write file via SSH stdin
         let write_cmd = format!(
