@@ -57,10 +57,13 @@ node .claude/helpers/agent-register.cjs register
 
 | Module | Directory | Tables |
 |--------|-----------|--------|
-| hexflo-coordination | spacetime-modules/hexflo-coordination | swarm, swarm_task, swarm_agent, project, etc |
-| agent-registry | spacetime-modules/agent-registry | agent, agent_heartbeat |
-| inference-gateway | spacetime-modules/inference-gateway | inference_provider, inference_request, etc |
-| fleet-state | spacetime-modules/fleet-state | compute_node |
+| hexflo-coordination | spacetime-modules/hexflo-coordination | swarm, swarm_task, swarm_agent, project, compute_node, etc |
+| agent-registry | spacetime-modules/agent-registry | agent, agent_heartbeat, agent_cleanup_log |
+| inference-gateway | spacetime-modules/inference-gateway | inference_provider, inference_request, inference_response |
+| secret-grant | spacetime-modules/secret-grant | secret_grant, grant_audit |
+| rl-engine | spacetime-modules/rl-engine | model_score, selection_event |
+| chat-relay | spacetime-modules/chat-relay | chat_message, chat_channel |
+| neural-lab | spacetime-modules/neural-lab | neural_pattern, experiment |
 
 ## Critical notes
 

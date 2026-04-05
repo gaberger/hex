@@ -1,5 +1,5 @@
 #![allow(clippy::too_many_arguments)]
-use spacetimedb::{table, reducer, ReducerContext, Table};
+use spacetimedb::{table, reducer, ReducerContext, ScheduleAt, Table, Timestamp};
 
 // ============================================================
 //  Tables
@@ -260,6 +260,23 @@ pub fn agent_mark_inactive(
     Ok(())
 }
 
+// ─── Cleanup Log (absorbed from hexflo-cleanup) ─────────────────────────────
+
+/// Cleanup run log — tracks when cleanup last ran and what it did.
+/// Absorbed from hexflo-cleanup module for consolidated observability.
+#[table(name = cleanup_log, public)]
+#[derive(Clone, Debug)]
+pub struct CleanupLog {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub ran_at: String,
+    pub stale_count: u32,
+    pub dead_count: u32,
+    pub reclaimed_tasks: u32,
+    pub expired_notifications: u32,
+}
+
 /// Key-value memory store scoped to global, swarm, or agent level.
 #[table(name = hexflo_memory, public)]
 #[derive(Clone, Debug)]
@@ -495,7 +512,13 @@ pub fn mcp_tool_sync(
     Ok(())
 }
 
-// ─── Remote Agent Registry (ADR-040) ─────────────────────────────────────
+// ============================================================
+//  Remote Agent Registry (ADR-2604050900 P4.1)
+//
+//  Replaces in-memory RemoteRegistryAdapter with SpacetimeDB-backed state.
+//  Dashboard subscribes to this table for real-time fleet visibility.
+//  Agents on any host see the full fleet via WebSocket subscription.
+// ============================================================
 
 /// A remote agent connected via SSH tunnel + WebSocket.
 #[table(name = remote_agent, public)]
@@ -574,6 +597,72 @@ pub fn remove_remote_agent(
         return Err(format!("Remote agent '{}' not found", agent_id));
     }
     Ok(())
+}
+
+/// Update heartbeat timestamp and set status to "online" (P4.1 convenience reducer).
+#[reducer]
+pub fn update_remote_heartbeat(
+    ctx: &ReducerContext,
+    agent_id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let agent = ctx.db.remote_agent().agent_id().find(&agent_id)
+        .ok_or_else(|| format!("Remote agent '{}' not found", agent_id))?;
+    ctx.db.remote_agent().agent_id().update(RemoteAgent {
+        status: "online".to_string(),
+        last_heartbeat: timestamp,
+        ..agent
+    });
+    Ok(())
+}
+
+/// Update only the status of a remote agent (e.g. "busy", "stale", "dead").
+#[reducer]
+pub fn update_remote_status(
+    ctx: &ReducerContext,
+    agent_id: String,
+    status: String,
+) -> Result<(), String> {
+    let agent = ctx.db.remote_agent().agent_id().find(&agent_id)
+        .ok_or_else(|| format!("Remote agent '{}' not found", agent_id))?;
+    ctx.db.remote_agent().agent_id().update(RemoteAgent {
+        status,
+        ..agent
+    });
+    Ok(())
+}
+
+/// Delete a remote agent row (alias used by P4.1 fleet management).
+#[reducer]
+pub fn deregister_remote_agent(
+    ctx: &ReducerContext,
+    agent_id: String,
+) -> Result<(), String> {
+    if !ctx.db.remote_agent().agent_id().delete(&agent_id) {
+        return Err(format!("Remote agent '{}' not found", agent_id));
+    }
+    log::info!("Remote agent deregistered: {}", agent_id);
+    Ok(())
+}
+
+/// Log remote agents for a given host (enables subscription filtering).
+#[reducer]
+pub fn list_remote_agents_by_host(ctx: &ReducerContext, host: String) {
+    let agents: Vec<RemoteAgent> = ctx
+        .db
+        .remote_agent()
+        .iter()
+        .filter(|a| a.host == host)
+        .collect();
+    log::info!("Host '{}' has {} remote agent(s)", host, agents.len());
+    for agent in &agents {
+        log::info!(
+            "  agent={} name={} status={}",
+            agent.agent_id,
+            agent.name,
+            agent.status
+        );
+    }
 }
 
 // ─── Inference Server Registry ───────────────────────────────────────────
@@ -1776,12 +1865,20 @@ pub fn enforcement_rule_delete(
 /// `cutoff` is an RFC3339 timestamp — agents and notifications older than
 /// this value are marked stale/dead/expired. Inlines agent_mark_stale,
 /// agent_mark_dead, and expire_stale_notifications in a single transaction.
+///
+/// Logs each run to `cleanup_log` when any work is done (absorbed from
+/// hexflo-cleanup module).
 #[reducer]
 pub fn coordination_cleanup(
     ctx: &ReducerContext,
     cutoff: String,
 ) -> Result<(), String> {
-    // 1. Mark active agents as stale if their heartbeat is before the cutoff.
+    let mut stale_count: u32 = 0;
+    let mut dead_count: u32 = 0;
+    let mut reclaimed_tasks: u32 = 0;
+    let mut expired_notifications: u32 = 0;
+
+    // 1. Mark active swarm agents as stale if their heartbeat is before the cutoff.
     let stale: Vec<SwarmAgent> = ctx.db.swarm_agent().iter()
         .filter(|a| a.status == "active" && a.last_heartbeat < cutoff)
         .collect();
@@ -1790,9 +1887,10 @@ pub fn coordination_cleanup(
             status: "stale".to_string(),
             ..agent
         });
+        stale_count += 1;
     }
 
-    // 2. Mark stale agents as dead and reclaim their in-progress tasks.
+    // 2. Mark stale swarm agents as dead and reclaim their in-progress tasks.
     let dead: Vec<SwarmAgent> = ctx.db.swarm_agent().iter()
         .filter(|a| a.status == "stale" && a.last_heartbeat < cutoff)
         .collect();
@@ -1806,14 +1904,33 @@ pub fn coordination_cleanup(
                 agent_id: String::new(),
                 ..task
             });
+            reclaimed_tasks += 1;
         }
         ctx.db.swarm_agent().id().update(SwarmAgent {
             status: "dead".to_string(),
             ..agent
         });
+        dead_count += 1;
     }
 
-    // 3. Expire unacknowledged inbox notifications older than the cutoff.
+    // 3. Also mark hex_agent entries as stale (unified agent registry).
+    //    Normalize Z → +00:00 for consistent RFC3339 string comparison.
+    let cutoff_normalized = cutoff.replace('Z', "+00:00");
+    let hex_agents: Vec<HexAgent> = ctx.db.hex_agent().iter()
+        .filter(|a| a.status == "online" || a.status == "idle" || a.status == "stale")
+        .collect();
+    for agent in hex_agents {
+        let hb = agent.last_heartbeat.replace('Z', "+00:00");
+        if hb < cutoff_normalized && (agent.status == "online" || agent.status == "idle") {
+            ctx.db.hex_agent().id().update(HexAgent {
+                status: "stale".to_string(),
+                ..agent
+            });
+            stale_count += 1;
+        }
+    }
+
+    // 4. Expire unacknowledged inbox notifications older than the cutoff.
     let expired: Vec<AgentInbox> = ctx.db.agent_inbox().iter()
         .filter(|n| {
             n.acknowledged_at.is_empty()
@@ -1826,9 +1943,62 @@ pub fn coordination_cleanup(
             expired_at: cutoff.clone(),
             ..notif
         });
+        expired_notifications += 1;
+    }
+
+    // 5. Log the cleanup run if any work was done (absorbed from hexflo-cleanup).
+    if stale_count > 0 || dead_count > 0 || reclaimed_tasks > 0 || expired_notifications > 0 {
+        ctx.db.cleanup_log().insert(CleanupLog {
+            id: 0, // auto_inc
+            ran_at: cutoff.clone(),
+            stale_count,
+            dead_count,
+            reclaimed_tasks,
+            expired_notifications,
+        });
+        log::info!(
+            "coordination_cleanup: stale={}, dead={}, reclaimed={}, expired_notifs={}",
+            stale_count, dead_count, reclaimed_tasks, expired_notifications
+        );
     }
 
     Ok(())
+}
+
+// ─── Cleanup reducers absorbed from hexflo-cleanup ──────────────────────────
+
+/// Remove a dead swarm agent from tracking entirely.
+/// Only removes agents with status "dead" — active/stale agents are preserved.
+/// Absorbed from hexflo-cleanup's `remove_dead_agent` reducer.
+#[reducer]
+pub fn remove_dead_swarm_agent(
+    ctx: &ReducerContext,
+    agent_id: String,
+) -> Result<(), String> {
+    if let Some(agent) = ctx.db.swarm_agent().id().find(&agent_id) {
+        if agent.status == "dead" {
+            ctx.db.swarm_agent().id().delete(&agent_id);
+            Ok(())
+        } else {
+            Err(format!(
+                "Agent '{}' is not dead (status: '{}') — only dead agents can be removed",
+                agent_id, agent.status
+            ))
+        }
+    } else {
+        Err(format!("Swarm agent '{}' not found", agent_id))
+    }
+}
+
+/// Manual trigger for a cleanup pass — delegates to coordination_cleanup.
+/// Absorbed from hexflo-cleanup's `trigger_cleanup` reducer for use by
+/// the hex-nexus REST API (POST /api/hexflo/cleanup).
+#[reducer]
+pub fn trigger_cleanup(
+    ctx: &ReducerContext,
+    cutoff: String,
+) -> Result<(), String> {
+    coordination_cleanup(ctx, cutoff)
 }
 
 // ─── Architecture Fingerprint ──────────────────────────────────────────────
@@ -1911,5 +2081,353 @@ pub fn delete_fingerprint(
         Ok(())
     } else {
         Err(format!("No fingerprint found for project '{}'", project_id))
+    }
+}
+
+// ============================================================
+//  Fleet State (absorbed from fleet-state module — ADR-2604050900)
+// ============================================================
+
+/// A compute node in the fleet — tracks capacity for multi-host agent dispatch.
+#[table(name = compute_node, public)]
+#[derive(Clone, Debug)]
+pub struct ComputeNode {
+    #[unique]
+    pub id: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub status: String,
+    pub max_agents: u32,
+    pub active_agents: u32,
+    pub last_health_check: String,
+}
+
+#[reducer]
+pub fn register_node(
+    ctx: &ReducerContext,
+    id: String,
+    host: String,
+    port: u16,
+    username: String,
+    max_agents: u32,
+) -> Result<(), String> {
+    ctx.db.compute_node().insert(ComputeNode {
+        id,
+        host,
+        port,
+        username,
+        status: "online".to_string(),
+        max_agents,
+        active_agents: 0,
+        last_health_check: String::new(),
+    });
+    Ok(())
+}
+
+#[reducer]
+pub fn update_node_health(
+    ctx: &ReducerContext,
+    id: String,
+    status: String,
+) -> Result<(), String> {
+    match ctx.db.compute_node().id().find(&id) {
+        Some(old) => {
+            let updated = ComputeNode {
+                status,
+                last_health_check: String::new(),
+                ..old
+            };
+            ctx.db.compute_node().id().update(updated);
+        }
+        None => {
+            return Err(format!("Node '{}' not found", id));
+        }
+    }
+    Ok(())
+}
+
+#[reducer]
+pub fn increment_node_agents(ctx: &ReducerContext, id: String) -> Result<(), String> {
+    match ctx.db.compute_node().id().find(&id) {
+        Some(old) => {
+            if old.active_agents >= old.max_agents {
+                return Err(format!(
+                    "Node '{}' at capacity ({}/{})",
+                    id, old.active_agents, old.max_agents
+                ));
+            }
+            let updated = ComputeNode {
+                active_agents: old.active_agents + 1,
+                ..old
+            };
+            ctx.db.compute_node().id().update(updated);
+        }
+        None => {
+            return Err(format!("Node '{}' not found", id));
+        }
+    }
+    Ok(())
+}
+
+#[reducer]
+pub fn decrement_node_agents(ctx: &ReducerContext, id: String) -> Result<(), String> {
+    match ctx.db.compute_node().id().find(&id) {
+        Some(old) => {
+            let updated = ComputeNode {
+                active_agents: old.active_agents.saturating_sub(1),
+                ..old
+            };
+            ctx.db.compute_node().id().update(updated);
+        }
+        None => {
+            return Err(format!("Node '{}' not found", id));
+        }
+    }
+    Ok(())
+}
+
+#[reducer]
+pub fn remove_node(ctx: &ReducerContext, id: String) -> Result<(), String> {
+    let deleted = ctx.db.compute_node().id().delete(&id);
+    if !deleted {
+        return Err(format!("Node '{}' not found", id));
+    }
+    Ok(())
+}
+
+// ============================================================
+//  Lifecycle Events (absorbed from hexflo-lifecycle module)
+//
+//  ADR-039 Phase 8: Automatic swarm lifecycle management.
+//  When a task completes, these reducers check if the entire tier
+//  is done. If so, the swarm advances to the next phase and
+//  unblocks dependent tasks.
+//
+//  Phase progression: SPECS → PLAN → CODE → VALIDATE → INTEGRATE → COMPLETE
+// ============================================================
+
+// ── Lifecycle Tables ───────────────────────────────────────
+
+/// Tracks the current lifecycle phase of a swarm.
+#[table(name = swarm_lifecycle, public)]
+#[derive(Clone, Debug)]
+pub struct SwarmLifecycle {
+    #[primary_key]
+    pub swarm_id: String,
+    pub name: String,
+    pub phase: String,       // "specs", "plan", "code", "validate", "integrate", "complete"
+    pub phase_index: u32,    // 0-5
+    pub total_tasks: u32,
+    pub completed_tasks: u32,
+    pub status: String,      // "active", "completed", "failed"
+    pub updated_at: String,
+}
+
+/// A task tracked for lifecycle phase progression.
+#[table(name = lifecycle_task, public)]
+#[derive(Clone, Debug)]
+pub struct LifecycleTask {
+    #[primary_key]
+    pub task_id: String,
+    pub swarm_id: String,
+    pub tier: u32,           // 0-5, maps to phase
+    pub status: String,      // "pending", "in_progress", "completed", "failed"
+    pub depends_on: String,  // comma-separated task IDs
+    pub updated_at: String,
+}
+
+/// Event log for phase transitions.
+#[table(name = phase_transition_log, public)]
+#[derive(Clone, Debug)]
+pub struct PhaseTransitionLog {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub swarm_id: String,
+    pub from_phase: String,
+    pub to_phase: String,
+    pub triggered_by_task: String,
+    pub transitioned_at: String,
+}
+
+// ── Lifecycle Constants ────────────────────────────────────
+
+const LIFECYCLE_PHASES: &[&str] = &["specs", "plan", "code", "validate", "integrate", "complete"];
+
+// ── Lifecycle Reducers ─────────────────────────────────────
+
+/// Register a swarm for lifecycle tracking.
+#[reducer]
+pub fn lifecycle_register_swarm(
+    ctx: &ReducerContext,
+    swarm_id: String,
+    name: String,
+    total_tasks: u32,
+    timestamp: String,
+) {
+    ctx.db.swarm_lifecycle().insert(SwarmLifecycle {
+        swarm_id,
+        name,
+        phase: "specs".to_string(),
+        phase_index: 0,
+        total_tasks,
+        completed_tasks: 0,
+        status: "active".to_string(),
+        updated_at: timestamp,
+    });
+}
+
+/// Register a task for lifecycle tracking.
+#[reducer]
+pub fn lifecycle_register_task(
+    ctx: &ReducerContext,
+    task_id: String,
+    swarm_id: String,
+    tier: u32,
+    depends_on: String,
+    timestamp: String,
+) {
+    ctx.db.lifecycle_task().insert(LifecycleTask {
+        task_id,
+        swarm_id,
+        tier,
+        status: "pending".to_string(),
+        depends_on,
+        updated_at: timestamp,
+    });
+}
+
+/// Called when a task completes. Triggers phase transition check.
+///
+/// This is the core trigger: when the last task in a tier completes,
+/// the swarm advances to the next phase, and tasks in the next tier
+/// become unblocked.
+#[reducer]
+pub fn lifecycle_on_task_complete(ctx: &ReducerContext, task_id: String, swarm_id: String, timestamp: String) {
+    // Update the task status
+    if let Some(mut task) = ctx.db.lifecycle_task().task_id().find(&task_id) {
+        task.status = "completed".to_string();
+        task.updated_at = timestamp.clone();
+        ctx.db.lifecycle_task().task_id().update(task);
+    }
+
+    // Get the swarm
+    let Some(mut swarm) = ctx.db.swarm_lifecycle().swarm_id().find(&swarm_id) else {
+        return;
+    };
+
+    // Count completed tasks
+    let all_tasks: Vec<LifecycleTask> = ctx
+        .db
+        .lifecycle_task()
+        .iter()
+        .filter(|t| t.swarm_id == swarm_id)
+        .collect();
+
+    let completed = all_tasks.iter().filter(|t| t.status == "completed").count() as u32;
+    swarm.completed_tasks = completed;
+
+    // Check if current phase tier is fully complete
+    let current_tier = swarm.phase_index;
+    let tier_tasks: Vec<&LifecycleTask> = all_tasks
+        .iter()
+        .filter(|t| t.tier == current_tier)
+        .collect();
+
+    let tier_done = !tier_tasks.is_empty()
+        && tier_tasks.iter().all(|t| t.status == "completed");
+
+    if tier_done && (current_tier as usize) < LIFECYCLE_PHASES.len() - 1 {
+        // Advance to next phase
+        let old_phase = swarm.phase.clone();
+        let new_index = current_tier + 1;
+        let new_phase = LIFECYCLE_PHASES[new_index as usize].to_string();
+
+        swarm.phase = new_phase.clone();
+        swarm.phase_index = new_index;
+        swarm.updated_at = timestamp.clone();
+
+        // Log the transition
+        ctx.db.phase_transition_log().insert(PhaseTransitionLog {
+            id: 0, // auto_inc
+            swarm_id: swarm_id.clone(),
+            from_phase: old_phase,
+            to_phase: new_phase,
+            triggered_by_task: task_id,
+            transitioned_at: timestamp,
+        });
+
+        log::info!(
+            "Phase transition: swarm {} → phase {} (tier {})",
+            swarm_id,
+            swarm.phase,
+            new_index
+        );
+    }
+
+    // Check if swarm is fully complete
+    if completed == swarm.total_tasks && swarm.total_tasks > 0 {
+        swarm.phase = "complete".to_string();
+        swarm.phase_index = 5;
+        swarm.status = "completed".to_string();
+    }
+
+    swarm.updated_at = swarm.updated_at.clone();
+    ctx.db.swarm_lifecycle().swarm_id().update(swarm);
+}
+
+/// Called when a task fails. Marks swarm as failed if critical.
+#[reducer]
+pub fn lifecycle_on_task_fail(ctx: &ReducerContext, task_id: String, swarm_id: String, timestamp: String) {
+    if let Some(mut task) = ctx.db.lifecycle_task().task_id().find(&task_id) {
+        task.status = "failed".to_string();
+        task.updated_at = timestamp.clone();
+        ctx.db.lifecycle_task().task_id().update(task);
+    }
+
+    // Mark swarm as failed
+    if let Some(mut swarm) = ctx.db.swarm_lifecycle().swarm_id().find(&swarm_id) {
+        swarm.status = "failed".to_string();
+        swarm.updated_at = timestamp;
+        ctx.db.swarm_lifecycle().swarm_id().update(swarm);
+    }
+}
+
+/// Check which tasks in the next tier are now unblocked.
+/// Returns task IDs that have all dependencies satisfied.
+#[reducer]
+pub fn lifecycle_check_unblocked(ctx: &ReducerContext, swarm_id: String) {
+    let all_tasks: Vec<LifecycleTask> = ctx
+        .db
+        .lifecycle_task()
+        .iter()
+        .filter(|t| t.swarm_id == swarm_id)
+        .collect();
+
+    let completed_ids: std::collections::HashSet<&str> = all_tasks
+        .iter()
+        .filter(|t| t.status == "completed")
+        .map(|t| t.task_id.as_str())
+        .collect();
+
+    for task in &all_tasks {
+        if task.status != "pending" {
+            continue;
+        }
+
+        // Check if all dependencies are met
+        let deps_met = if task.depends_on.is_empty() {
+            true
+        } else {
+            task.depends_on
+                .split(',')
+                .all(|dep| completed_ids.contains(dep.trim()))
+        };
+
+        if deps_met {
+            log::info!("Task {} unblocked in swarm {}", task.task_id, swarm_id);
+            // Task is ready — agents can pick it up via SpacetimeDB subscription
+        }
     }
 }

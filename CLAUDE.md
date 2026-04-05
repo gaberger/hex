@@ -1,8 +1,8 @@
-# hex — AI-Assisted Integrated Development Environment (AAIDE)
+# hex — AI Operating System (AIOS)
 
 ## What This Project Is
 
-hex is an **AAIDE** (AI-Assisted Integrated Development Environment) — an opinionated development framework built around **hexagonal architecture** (Ports & Adapters). It is not an application you deploy; it is the framework + CLI toolchain that gets **installed into target projects** to enforce architecture and coordinate AI-driven development.
+hex is an **AIOS** (AI Operating System) — a microkernel-based runtime built around **hexagonal architecture** (Ports & Adapters) that manages AI agent processes, coordinates distributed workloads, and enforces architectural constraints. It is not an application you deploy; it is the operating system layer that gets **installed into target projects** to orchestrate AI-driven development. Agents are the users. Developers are the sysadmins.
 
 **Critical**: Everything in this repo (settings, hooks, statuslines, agents, skills) exists to be instantiated INTO a target project. The `examples/` directory contains sample target projects that use hex as an installed dependency. When working on examples, you are testing hex as a consumer would use it — the example IS the project, hex is the tool.
 
@@ -16,7 +16,7 @@ hex is composed of five deployment units. Understanding these is essential for w
 
 **SpacetimeDB must always be running to use hex.** It is the backbone — all clients (web, CLI, desktop) connect via WebSocket for real-time state synchronization.
 
-- **18 WASM modules** in `spacetime-modules/` provide transactional reducers for swarm coordination, agent lifecycle, inference routing, chat relay, and more
+- **7 WASM modules** in `spacetime-modules/` provide transactional reducers for swarm coordination, agent lifecycle, inference routing, secret management, and more (ADR-2604050900: right-sized from 19 to 7)
 - Replaces polling with instant WebSocket subscriptions — when one agent completes a task, all clients see it immediately
 - **Critical limitation**: WASM modules cannot access filesystems, spawn processes, or make network calls — this is why hex-nexus exists
 
@@ -31,7 +31,7 @@ hex-nexus bridges the gap between SpacetimeDB (sandboxed WASM) and the local ope
 - **Serves the dashboard** frontend (assets baked in via `rust-embed`)
 - **Exposes REST API** that CLI and MCP tools delegate to
 - Editing `hex-nexus/assets/` requires rebuilding: `cd hex-nexus && cargo build --release`
-- State fallback: SQLite (`~/.hex/hub.db`) when SpacetimeDB unavailable (ADR-025)
+- Remote agent state synced to SpacetimeDB for cross-host fleet visibility (ADR-2604050900)
 
 ### hex-agent — Architecture Enforcement Runtime (`hex-agent/`)
 
@@ -126,15 +126,14 @@ hex-desktop/             # Desktop app (Tauri wrapper for dashboard)
 hex-parser/              # Code parsing utilities
 
 # ── SpacetimeDB WASM Modules ──────────────────────────────────────────────
-spacetime-modules/       # 18 WASM modules (wasm32-unknown-unknown)
-  hexflo-coordination/   #   Core: swarms, tasks, agents, memory, projects, config
-  agent-registry/        #   Agent lifecycle + heartbeats
-  inference-gateway/     #   LLM request routing (model-agnostic)
-  workplan-state/        #   Task status + phase tracking
+spacetime-modules/       # 7 WASM modules (ADR-2604050900, right-sized from 19)
+  hexflo-coordination/   #   Core: swarms, tasks, agents, memory, fleet, lifecycle, cleanup
+  agent-registry/        #   Agent lifecycle + heartbeats + cleanup
+  inference-gateway/     #   LLM request routing + procedure-based inference
+  secret-grant/          #   TTL-based key distribution to sandboxed agents
+  rl-engine/             #   Reinforcement learning model selection
   chat-relay/            #   Message routing
-  fleet-state/           #   Compute node registry
-  architecture-enforcer/ #   Server-side boundary validation
-  # ... + 11 more modules
+  neural-lab/            #   Experimental neural patterns
 
 # ── TypeScript Library ─────────────────────────────────────────────────────
 src/
@@ -332,6 +331,9 @@ Phase 7: FINALIZE    cleanup worktrees, commit, report
 | `behavioral-spec-writer` | Writes acceptance specs before code generation |
 | `validation-judge` | Post-build semantic validation (BLOCKING gate) |
 | `status-monitor` | Swarm progress monitoring |
+| `adversarial-reviewer` | Post-migration/post-feature adversarial review — hunts dangling refs, stale config, build breakage |
+| `adr-reviewer` | ADR structure validation, cross-reference integrity, compliance checking |
+| `rust-refactorer` | Rust-specific refactoring with cross-crate dependency awareness |
 
 ## Key Lessons (from adversarial review)
 
@@ -339,6 +341,9 @@ Phase 7: FINALIZE    cleanup worktrees, commit, report
 - **Sign conventions matter**: For physics/math domains, document coordinate systems explicitly. `flapStrength` must be NEGATIVE (upward force in screen coords).
 - **"It compiles" ≠ "it works"**: Always include runtime validation — can a user actually start the app?
 - **Browser TypeScript needs a dev server**: Any project with HTML + TypeScript MUST include Vite (or equivalent).
+- **Trace ALL consumers before deleting** (ADR-2604050900): When deleting modules/crates/files, `grep -r` the ENTIRE workspace — not just the immediate directory. hex-agent was broken for a full session because the workplan only checked hex-nexus bindings, missing hex-agent's feature-gated imports.
+- **Workplans need build gates between phases**: Every phase that deletes or restructures artifacts MUST end with `cargo check --workspace`. A workplan marked "done" with a broken build is worse than no workplan at all.
+- **Parallelize by file boundary, serialize by file overlap**: Multiple worktree agents editing the same file produce conflicting diffs. Batch same-file edits into one agent or run sequentially.
 
 ## Swarm Coordination (HexFlo — ADR-027)
 

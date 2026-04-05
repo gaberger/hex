@@ -7,8 +7,10 @@ use serde::Deserialize;
 use serde_json::json;
 use utoipa::ToSchema;
 
+use crate::middleware::capability_auth::require_capability;
 use crate::orchestration::agent_manager::SpawnConfig;
 use crate::state::SharedState;
+use hex_core::domain::capability::VerifiedClaims;
 
 fn no_manager() -> (StatusCode, Json<serde_json::Value>) {
     (
@@ -63,8 +65,17 @@ pub struct SpawnRequest {
 )]
 pub async fn spawn_agent(
     State(state): State<SharedState>,
+    claims: Option<axum::Extension<VerifiedClaims>>,
     Json(body): Json<SpawnRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    // ADR-2604051800 P1: Agent spawning requires admin capability
+    if let Err(status) = require_capability(
+        claims.as_ref().map(|c| &c.0),
+        |c| c.is_admin(),
+    ) {
+        return (status, Json(json!({"error": "insufficient capability: admin required to spawn agents"})));
+    }
+
     let mgr = match &state.agent_manager {
         Some(m) => m,
         None => return no_manager(),

@@ -12,6 +12,7 @@ use hex_nexus::adapters::remote_registry::RemoteRegistryAdapter;
 use hex_nexus::ports::ssh_tunnel::ISshTunnelPort;
 use hex_nexus::ports::remote_registry::IRemoteRegistryPort;
 use hex_nexus::remote::transport::*;
+use uuid::Uuid;
 
 const BAZZITE_HOST: &str = "bazzite.local";
 const BAZZITE_USER: &str = "gary";
@@ -96,7 +97,7 @@ async fn test_ssh_tunnel_reconnect() {
 #[tokio::test]
 #[ignore]
 async fn test_registry_agent_lifecycle() {
-    let registry = RemoteRegistryAdapter::new();
+    let registry = RemoteRegistryAdapter::new(None);
 
     // Register a bazzite agent
     let agent = RemoteAgent {
@@ -160,6 +161,96 @@ async fn test_registry_agent_lifecycle() {
     assert!(servers_after.is_empty());
 
     println!("Registry lifecycle test passed!");
+}
+
+// ── Full Stack Smoke Test ────────────────────────────
+
+// ── SpacetimeDB Sync Tests (ADR-2604050900) ─────────────
+
+/// Verify that registering a remote agent via the adapter also writes
+/// a row to the SpacetimeDB `remote_agent` table (fire-and-forget sync).
+///
+/// Prerequisites:
+/// - SpacetimeDB running locally (http://127.0.0.1:3033)
+/// - `hex` database published with hexflo-coordination module
+#[tokio::test]
+#[ignore] // Requires running SpacetimeDB
+async fn test_remote_agent_state_syncs_to_spacetimedb() {
+    let stdb_url = std::env::var("SPACETIMEDB_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".into());
+    let registry = RemoteRegistryAdapter::new(Some(stdb_url.clone()));
+    let http = reqwest::Client::new();
+
+    let test_id = format!("stdb-sync-test-{}", Uuid::new_v4());
+
+    // Register a remote agent — adapter writes to HashMap + fires SpacetimeDB reducer
+    let agent = RemoteAgent {
+        agent_id: test_id.clone(),
+        name: "stdb-sync-test-agent".into(),
+        host: "test.local".into(),
+        project_dir: "/tmp/stdb-sync-test".into(),
+        status: RemoteAgentStatus::Online,
+        capabilities: AgentCapabilities {
+            models: vec!["test-model:7b".into()],
+            tools: vec!["fs".into()],
+            max_concurrent_tasks: 1,
+            gpu_vram_mb: None,
+        },
+        last_heartbeat: chrono::Utc::now().to_rfc3339(),
+        connected_at: chrono::Utc::now().to_rfc3339(),
+        tunnel_id: None,
+    };
+
+    registry.register_agent(agent).await.expect("register_agent failed");
+
+    // Give the fire-and-forget tokio::spawn a moment to complete
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Query SpacetimeDB's SQL API to verify the row exists
+    let sql_url = format!("{}/v1/database/hex/sql", stdb_url);
+    let query = format!("SELECT * FROM remote_agent WHERE agent_id = '{}'", test_id);
+    let resp = http
+        .post(&sql_url)
+        .body(query)
+        .send()
+        .await
+        .expect("SpacetimeDB SQL query failed");
+
+    assert!(
+        resp.status().is_success(),
+        "SpacetimeDB SQL endpoint returned non-success: {}",
+        resp.status()
+    );
+
+    let body = resp.text().await.expect("failed to read response body");
+    assert!(
+        body.contains(&test_id),
+        "remote_agent row not found in SpacetimeDB for agent_id={test_id}. Response: {body}"
+    );
+
+    // Cleanup: deregister via adapter (removes from HashMap + fires SpacetimeDB reducer)
+    registry.deregister_agent(&test_id).await.expect("deregister_agent failed");
+
+    // Give cleanup reducer time to execute
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Verify removal from SpacetimeDB
+    let verify_url = format!("{}/v1/database/hex/sql", stdb_url);
+    let verify_query = format!("SELECT * FROM remote_agent WHERE agent_id = '{}'", test_id);
+    let verify_resp = http
+        .post(&verify_url)
+        .body(verify_query)
+        .send()
+        .await
+        .expect("SpacetimeDB SQL verify query failed");
+
+    let verify_body = verify_resp.text().await.expect("failed to read verify response");
+    assert!(
+        !verify_body.contains(&test_id),
+        "remote_agent row should be removed after deregister, but still found: {verify_body}"
+    );
+
+    println!("SpacetimeDB remote agent sync test passed!");
 }
 
 // ── Full Stack Smoke Test ────────────────────────────

@@ -36,6 +36,11 @@ pub struct SandboxConfig {
     /// Allowlist of `host:port` pairs the container may reach over the network.
     /// Example: `["host.docker.internal:3033", "openrouter.ai:443"]`
     pub network_allow: Vec<String>,
+    /// Optional Docker daemon endpoint for remote dispatch (ADR-2604050900 P5.1).
+    /// When set, docker CLI commands target this host via `DOCKER_HOST` env var.
+    /// Example: `"ssh://user@remote-host"` or `"tcp://192.168.1.100:2376"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_host: Option<String>,
 }
 
 /// A unit of work dispatched to an agent running inside a sandbox.

@@ -1,6 +1,6 @@
 # ADR-2604050900: SpacetimeDB Right-Sizing — Procedures Migration for Multi-Host Dispatch
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-05
 **Drivers:** 14 of 19 WASM modules are never invoked; hex-nexus acts as a monolithic bridge due to WASM side-effect limitations; SpacetimeDB procedures now allow HTTP calls, enabling direct LLM invocation from reducers; multi-host agent dispatch and Docker sandbox coordination require SpacetimeDB as the real-time coordination plane but not as a registry for static config.
 **Supersedes:** ADR-025 (SQLite fallback, already superseded by ADR-2604020900), partially supersedes ADR-051 (narrows "single source of state" to coordination state only)
@@ -197,14 +197,14 @@ hex-nexus is no longer the coordination router. Agents coordinate directly via S
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| P0 | Absorb fleet-state + hexflo-lifecycle tables into hexflo-coordination | Pending |
-| P1 | Delete 12 dead modules; update STDB_MODULE_DATABASES constant; prune spacetime_bindings | Pending |
-| P2 | Migrate inference-gateway to procedure-based LLM calls; add REST fallback | Pending |
-| P3 | Migrate agent cleanup to scheduled procedure in agent-registry | Pending |
-| P4 | Replace RemoteRegistryAdapter with SpacetimeDB-backed state | Pending |
-| P5 | Regenerate spacetime_bindings for 7 modules only; update spacetime_launcher | Pending |
-| P6 | Simplify spacetime_state.rs — remove dead module calls, reduce boilerplate | Pending |
-| P7 | Integration test: Docker sandbox agent on remote host coordinates via SpacetimeDB | Pending |
+| P0 | Absorb fleet-state + hexflo-lifecycle tables into hexflo-coordination | **Done** — `compute_node`, `remote_agent` tables and lifecycle reducers added to hexflo-coordination; fleet-state and hexflo-lifecycle directories deleted |
+| P1 | Delete 12 dead modules; update STDB_MODULE_DATABASES constant; prune spacetime_bindings | **Done** — 12 modules deleted, STDB_MODULE_DATABASES (hex-core), MODULE_TIERS (hex-cli, hex-nexus) all list exactly 7 modules |
+| P2 | Migrate inference-gateway to procedure-based LLM calls; add REST fallback | **Done** — `execute_inference` is `#[spacetimedb::procedure]` with HTTP calls; `complete_inference` reducer fallback for hex-nexus retained |
+| P3 | Migrate agent cleanup to scheduled procedure in agent-registry | **Deferred** — `run_agent_cleanup` remains a `#[reducer]` called by hex-nexus; SpacetimeDB scheduled-procedure maturity insufficient for cron-style triggers. Acceptance criteria: SpacetimeDB supports `#[table(scheduled(...))]` with cron syntax → convert reducer to procedure, delete hex-nexus cleanup polling loop |
+| P4 | Replace RemoteRegistryAdapter with SpacetimeDB-backed state | **Done** — `list_agents()` and `get_agent()` now query SpacetimeDB SQL endpoint first (`SELECT * FROM remote_agent`), falling back to local HashMap cache when unreachable. Writes remain dual: HashMap + fire-and-forget reducer call. 5s HTTP timeout, shared connection pool. |
+| P5 | Regenerate spacetime_bindings for 7 modules only; update spacetime_launcher | **Partial** — Stale bindings pruned; Rust bindings exist for 5/7 (missing hexflo-coordination, neural-lab); TS bindings exist for 4/7 (missing rl-engine, secret-grant, neural-lab). Remaining: run `scripts/generate-ts-bindings.sh` and `spacetime generate` for missing modules |
+| P6 | Simplify spacetime_state.rs — remove dead module calls, reduce boilerplate | **Done** — IStatePort god-trait split into 16 focused sub-traits (IRlStatePort, IPatternStatePort, IAgentStatePort, IWorkplanStatePort, IChatStatePort, ISkillStatePort, IAgentDefStatePort, ISwarmStatePort, IInferenceTaskStatePort, IHexFloMemoryStatePort, IQualityGateStatePort, IProjectStatePort, ICoordinationStatePort, IHexAgentStatePort, IInboxStatePort, INeuralLabStatePort). IStatePort remains as super-trait for backward compatibility. 11 dead methods (fleet_*, hook_*) deleted. Adapter impls split into per-sub-trait blocks. |
+| P7 | Integration test: Docker sandbox agent on remote host coordinates via SpacetimeDB | **Blocked** — `test_docker_sandbox_agent_registers_in_spacetimedb` exists (`#[ignore]`); requires Docker daemon + SpacetimeDB + hex-nexus running. Acceptance criteria: docker-compose test environment that provisions all dependencies |
 
 ## References
 

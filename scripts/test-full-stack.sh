@@ -84,12 +84,14 @@ echo ""
 echo -e "${CYAN}── Phase 2: SpacetimeDB Module Tests ──${NC}"
 
 (cd spacetime-modules && {
-    check "file-lock-manager tests" cargo test -p file-lock-manager --quiet
-    check "architecture-enforcer tests" cargo test -p architecture-enforcer --quiet
-    check "conflict-resolver tests" cargo test -p conflict-resolver --quiet
-    check "inference-gateway tests" cargo test -p inference-gateway --quiet
+    # ADR-2604050900: right-sized to 7 modules
     check "hexflo-coordination tests" cargo test -p hexflo-coordination --quiet
+    check "agent-registry tests" cargo test -p agent-registry --quiet
+    check "inference-gateway tests" cargo test -p inference-gateway --quiet
     check "secret-grant tests" cargo test -p secret-grant --quiet
+    check "rl-engine tests" cargo test -p rl-engine --quiet
+    check "chat-relay tests" cargo test -p chat-relay --quiet
+    check "neural-lab tests" cargo test -p neural-lab --quiet
 })
 
 echo ""

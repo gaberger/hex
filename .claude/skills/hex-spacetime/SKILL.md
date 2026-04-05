@@ -5,7 +5,7 @@ description: Guide SpacetimeDB WASM module development for hex. Use when the use
 
 # Hex SpacetimeDB — WASM Module Development Guide
 
-SpacetimeDB is hex's coordination backbone — 18+ WASM modules provide transactional state management for swarms, agents, inference, chat, architecture enforcement, and more. All clients (web dashboard, CLI, desktop) connect via WebSocket for real-time synchronization.
+SpacetimeDB is hex's coordination backbone — 7 WASM modules (ADR-2604050900) provide transactional state management for swarms, agents, inference, chat, and more. All clients (web dashboard, CLI, desktop) connect via WebSocket for real-time synchronization.
 
 ## Critical Constraints
 
@@ -115,13 +115,13 @@ pub fn init(ctx: &ReducerContext) {
 
 | Module | Purpose | Key Tables |
 |--------|---------|------------|
-| `hexflo-coordination` | Core swarm/task/agent/memory/project/config state | swarm, swarm_task, swarm_agent, hexflo_memory |
-| `agent-registry` | Agent lifecycle + heartbeats | agent, agent_heartbeat |
-| `inference-gateway` | LLM request routing | inference_request, inference_response |
-| `workplan-state` | Task status + phase tracking | workplan, workplan_step |
+| `hexflo-coordination` | Core swarm/task/agent/memory/project/config/fleet/lifecycle/cleanup state | swarm, swarm_task, swarm_agent, hexflo_memory, compute_node, remote_agent |
+| `agent-registry` | Agent lifecycle + heartbeats + scheduled cleanup | agent, agent_heartbeat, agent_cleanup_log |
+| `inference-gateway` | LLM request routing + procedure-based inference | inference_request, inference_response, inference_provider |
+| `secret-grant` | TTL-based key distribution to sandboxed agents | secret_grant, grant_audit |
+| `rl-engine` | Reinforcement learning model selection | model_score, selection_event |
 | `chat-relay` | Message routing between agents/users | chat_message, chat_channel |
-| `fleet-state` | Compute node registry | fleet_node, node_capability |
-| `architecture-enforcer` | Server-side boundary validation | boundary_rule, violation_record |
+| `neural-lab` | Experimental neural patterns | neural_pattern, experiment |
 
 ## Creating a New Module
 

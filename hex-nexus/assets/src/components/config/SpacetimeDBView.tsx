@@ -12,7 +12,7 @@ const MODULES: ModuleDef[] = [
   {
     name: "hexflo-coordination",
     connected: hexfloConnected,
-    tables: ["swarm", "swarm_task", "swarm_agent", "hexflo_memory", "project"],
+    tables: ["swarm", "swarm_task", "swarm_agent", "hexflo_memory", "project", "compute_node", "remote_agent"],
   },
   {
     name: "agent-registry",
@@ -24,11 +24,7 @@ const MODULES: ModuleDef[] = [
     connected: inferenceConnected,
     tables: ["inference_provider", "inference_request", "inference_response"],
   },
-  {
-    name: "fleet-state",
-    connected: fleetConnected,
-    tables: ["compute_node"],
-  },
+  // ADR-2604050900: fleet-state deleted; compute_node now in hexflo-coordination
 ];
 
 const SpacetimeDBView: Component = () => {

@@ -1,9 +1,26 @@
-//! Inference Gateway SpacetimeDB Module (ADR-035)
+//! Inference Gateway SpacetimeDB Module (ADR-035, ADR-2604050900 P2)
 //!
-//! Routes ALL LLM inference through SpacetimeDB. Agents write requests via
-//! `request_inference`, which immediately schedules the `execute_inference`
-//! procedure. The procedure makes outbound HTTP calls to LLM APIs directly
-//! inside SpacetimeDB — no external bridge required.
+//! Routes ALL LLM inference through SpacetimeDB. Agents — including sandboxed
+//! Docker agents — write requests via `request_inference`, which immediately
+//! schedules the `execute_inference` procedure. The procedure makes outbound
+//! HTTP calls to LLM APIs directly inside SpacetimeDB — no external bridge
+//! required.
+//!
+//! **Sandboxed agent flow** (ADR-2604050900 Phase 2):
+//!   1. Agent subscribes to `inference_response` filtered by its `agent_id`
+//!   2. Agent calls `request_inference` reducer with model/messages/tools
+//!   3. SpacetimeDB schedules `execute_inference` procedure (immediate tick)
+//!   4. Procedure reads provider config + API key, makes HTTP POST to LLM API
+//!   5. Response appears in `inference_response` — agent sees it via subscription
+//!   6. Fallback: hex-nexus can call `complete_inference` reducer if procedure
+//!      HTTP is unavailable (graceful degradation)
+//!
+//! Supported provider types:
+//!   - `anthropic`     — Anthropic Messages API (POST /v1/messages)
+//!   - `openai_compat` — OpenAI-compatible (POST /v1/chat/completions)
+//!   - `openrouter`    — OpenRouter (OpenAI-compatible + cost tracking)
+//!   - `ollama`        — Local Ollama (OpenAI-compatible)
+//!   - `vllm`          — vLLM server (OpenAI-compatible)
 //!
 //! Tables:
 //!   - `inference_request` (public)        — agents write requests here
@@ -561,6 +578,123 @@ pub fn reset_rate_counters(ctx: &ReducerContext) -> Result<(), String> {
     Ok(())
 }
 
+/// Cancel a pending or queued inference request.
+///
+/// Sandboxed agents can cancel requests they no longer need (e.g. timeout,
+/// context switch). Only requests in "queued" or "processing" status can be
+/// cancelled — completed/failed requests are immutable.
+#[reducer]
+pub fn cancel_inference(
+    ctx: &ReducerContext,
+    request_id: u64,
+    agent_id: String,
+    reason: String,
+    created_at: String,
+) -> Result<(), String> {
+    let request = ctx
+        .db
+        .inference_request()
+        .request_id()
+        .find(&request_id)
+        .ok_or_else(|| format!("Request {} not found", request_id))?;
+
+    // Verify the requesting agent owns this request
+    if request.agent_id != agent_id {
+        return Err(format!(
+            "Agent '{}' cannot cancel request {} owned by '{}'",
+            agent_id, request_id, request.agent_id
+        ));
+    }
+
+    // Only cancel if still pending
+    match request.status.as_str() {
+        "queued" | "processing" => {}
+        other => {
+            return Err(format!(
+                "Cannot cancel request {} in status '{}'",
+                request_id, other
+            ));
+        }
+    }
+
+    ctx.db
+        .inference_request()
+        .request_id()
+        .update(InferenceRequest {
+            status: "failed".to_string(),
+            ..request.clone()
+        });
+
+    ctx.db.inference_response().insert(InferenceResponse {
+        response_id: 0,
+        request_id,
+        agent_id: request.agent_id.clone(),
+        status: "failed".to_string(),
+        content_json: format!(
+            r#"{{"error":"cancelled","reason":{}}}"#,
+            serde_json_escape(&reason)
+        ),
+        model_used: request.model.clone(),
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        latency_ms: 0,
+        cost_usd: "0".to_string(),
+        openrouter_cost_usd: String::new(),
+        created_at,
+    });
+
+    log::info!(
+        "Inference cancelled: request={}, agent={}, reason={}",
+        request_id,
+        agent_id,
+        reason
+    );
+
+    Ok(())
+}
+
+/// Update health status of an inference provider.
+///
+/// Called by hex-nexus after performing health checks against provider
+/// endpoints. Sandboxed agents rely on accurate health data for provider
+/// selection when using `provider: "auto"`.
+#[reducer]
+pub fn update_provider_health(
+    ctx: &ReducerContext,
+    provider_id: String,
+    healthy: u8,
+    avg_latency_ms: u64,
+    last_health_check: String,
+) -> Result<(), String> {
+    let prov = ctx
+        .db
+        .inference_provider()
+        .provider_id()
+        .find(&provider_id)
+        .ok_or_else(|| format!("Provider '{}' not found", provider_id))?;
+
+    ctx.db
+        .inference_provider()
+        .provider_id()
+        .update(InferenceProvider {
+            healthy,
+            avg_latency_ms,
+            last_health_check,
+            ..prov
+        });
+
+    log::info!(
+        "Provider health updated: {} healthy={} latency={}ms",
+        provider_id,
+        healthy,
+        avg_latency_ms
+    );
+
+    Ok(())
+}
+
 /// Append a streaming response chunk.
 #[reducer]
 pub fn append_stream_chunk(
@@ -705,16 +839,32 @@ pub fn execute_inference(
         }
     };
 
+    // ── Step 1b: mark request as "processing" ──────────────────────────
+    ctx.with_tx(|tx| {
+        tx.db
+            .inference_request()
+            .request_id()
+            .update(InferenceRequest {
+                status: "processing".to_string(),
+                ..request.clone()
+            });
+    });
+
     // ── Step 2: build HTTP request ────────────────────────────────────────
     let (url, body_json, auth_header_name, auth_header_value) =
         build_llm_request(&request, &provider, &api_key);
 
-    let http_request = match spacetimedb::http::Request::builder()
+    // Anthropic API requires a version header
+    let mut builder = spacetimedb::http::Request::builder()
         .uri(&url)
         .method("POST")
         .header("Content-Type", "application/json")
-        .header(auth_header_name, auth_header_value)
-        .body(body_json)
+        .header(auth_header_name, auth_header_value);
+    if provider.provider_type == "anthropic" {
+        builder = builder.header("anthropic-version", "2023-06-01");
+    }
+
+    let http_request = match builder.body(body_json)
     {
         Ok(r) => r,
         Err(e) => {
@@ -855,15 +1005,35 @@ fn build_llm_request(
     let max_tokens = if request.max_tokens == 0 { 4096 } else { request.max_tokens };
     let temperature: f64 = request.temperature.parse().unwrap_or(0.7);
 
+    // Build optional tools fragment
+    let tools_fragment = if !request.tools_json.is_empty() && request.tools_json != "[]" {
+        format!(r#","tools":{}"#, request.tools_json)
+    } else {
+        String::new()
+    };
+
     match provider.provider_type.as_str() {
         "anthropic" => {
             let url = format!("{}/messages", provider.base_url.trim_end_matches('/'));
+
+            // Anthropic extended thinking support (ADR-2604050900 P2)
+            let thinking_fragment = if request.thinking_budget > 0 {
+                format!(
+                    r#","thinking":{{"type":"enabled","budget_tokens":{}}}"#,
+                    request.thinking_budget
+                )
+            } else {
+                String::new()
+            };
+
             let body = format!(
-                r#"{{"model":{},"max_tokens":{},"temperature":{},"messages":{}}}"#,
+                r#"{{"model":{},"max_tokens":{},"temperature":{},"messages":{}{}{}}}"#,
                 serde_json_escape_string(&model),
                 max_tokens,
                 temperature,
                 request.messages_json,
+                tools_fragment,
+                thinking_fragment,
             );
             (url, body, "x-api-key", api_key.to_string())
         }
@@ -874,11 +1044,12 @@ fn build_llm_request(
                 provider.base_url.trim_end_matches('/')
             );
             let body = format!(
-                r#"{{"model":{},"max_tokens":{},"temperature":{},"messages":{}}}"#,
+                r#"{{"model":{},"max_tokens":{},"temperature":{},"messages":{}{}}}"#,
                 serde_json_escape_string(&model),
                 max_tokens,
                 temperature,
                 request.messages_json,
+                tools_fragment,
             );
             (url, body, "Authorization", format!("Bearer {api_key}"))
         }
@@ -911,30 +1082,40 @@ fn parse_llm_response(
 
     match provider_type {
         "anthropic" => {
-            let text = v["content"]
-                .as_array()
-                .and_then(|arr| arr.first())
-                .and_then(|c| c["text"].as_str())
-                .unwrap_or("");
-            let content_json = format!(
-                r#"[{{"type":"text","text":{}}}]"#,
-                serde_json_escape_string(text)
-            );
+            // Anthropic responses have a `content` array with mixed block types:
+            // text, tool_use, thinking. Pass the entire content array through
+            // so sandboxed agents get tool calls and thinking blocks intact.
+            let content_json = if let Some(content_arr) = v["content"].as_array() {
+                serde_json::to_string(content_arr).unwrap_or_else(|_| "[]".to_string())
+            } else {
+                "[]".to_string()
+            };
             let input = v["usage"]["input_tokens"].as_u64().unwrap_or(0);
             let output = v["usage"]["output_tokens"].as_u64().unwrap_or(0);
             (content_json, model_used, input, output, String::new())
         }
         _ => {
-            // OpenAI-compatible
-            let text = v["choices"]
+            // OpenAI-compatible: pass through tool_calls if present
+            let choice = v["choices"]
                 .as_array()
-                .and_then(|arr| arr.first())
-                .and_then(|c| c["message"]["content"].as_str())
-                .unwrap_or("");
-            let content_json = format!(
-                r#"[{{"type":"text","text":{}}}]"#,
-                serde_json_escape_string(text)
-            );
+                .and_then(|arr| arr.first());
+            let message = choice.map(|c| &c["message"]);
+
+            let content_json = if let Some(msg) = message {
+                if msg["tool_calls"].is_array() {
+                    // Forward the entire message object for tool calls
+                    serde_json::to_string(msg).unwrap_or_else(|_| "{}".to_string())
+                } else {
+                    let text = msg["content"].as_str().unwrap_or("");
+                    format!(
+                        r#"[{{"type":"text","text":{}}}]"#,
+                        serde_json_escape_string(text)
+                    )
+                }
+            } else {
+                "[]".to_string()
+            };
+
             let input = v["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
             let output = v["usage"]["completion_tokens"].as_u64().unwrap_or(0);
             let or_cost = v["usage"]["cost"]
@@ -1005,7 +1186,7 @@ pub fn validate_chunk_type(chunk_type: &str) -> Result<(), String> {
 /// Validate an inference request status string.
 pub fn validate_request_status(status: &str) -> Result<(), String> {
     match status {
-        "queued" | "processing" | "completed" | "failed" => Ok(()),
+        "queued" | "processing" | "completed" | "failed" | "cancelled" => Ok(()),
         _ => Err(format!(
             "Invalid request status '{}'. Expected: queued, processing, completed, failed",
             status
@@ -1126,7 +1307,7 @@ mod tests {
 
     #[test]
     fn valid_request_statuses_accepted() {
-        for s in &["queued", "processing", "completed", "failed"] {
+        for s in &["queued", "processing", "completed", "failed", "cancelled"] {
             assert!(
                 validate_request_status(s).is_ok(),
                 "Status '{}' should be valid",

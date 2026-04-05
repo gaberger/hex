@@ -61,6 +61,7 @@ pub async fn spawn_agent(
         task_id: req.task_id,
         env_vars: req.env_vars,
         network_allow,
+        docker_host: None,
     };
 
     // Create DockerSandboxAdapter per-request (step-9 will wire via AppState)

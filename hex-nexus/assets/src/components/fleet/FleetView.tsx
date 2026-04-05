@@ -2,7 +2,7 @@
  * FleetView.tsx — Remote fleet management pane.
  *
  * Shows compute nodes with hostname, agent count, health status.
- * Data from SpacetimeDB fleet-state subscription + REST API.
+ * Data from SpacetimeDB hexflo-coordination subscription (compute_node table) + REST API.
  */
 import { Component, For, Show, createSignal, createMemo } from "solid-js";
 import { fleetNodes, fleetConnected, getFleetConn } from "../../stores/connection";

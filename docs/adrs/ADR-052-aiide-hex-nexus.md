@@ -1,6 +1,6 @@
 # ADR-052: AIIDE — Hex Nexus as AI Integrated Development Environment
 
-**Status:** Accepted
+**Status:** Superseded by ADR-2604051800 (AIOS Maturity Roadmap)
 **Date:** 2026-03-21
 **Drivers:** Dashboard redesign, OpenCode UX research, agent fleet management needs
 

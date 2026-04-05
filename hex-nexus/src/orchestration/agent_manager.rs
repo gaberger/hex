@@ -172,6 +172,8 @@ pub struct AgentManager {
     /// Resolves secret keys to values for injection into agent child processes (ADR-026).
     /// Injected by the composition root — keeps orchestration free of std::env access.
     secret_resolver: SecretResolver,
+    /// Capability token service for issuing tokens at spawn time (ADR-2604051800 P1).
+    capability_token_service: Arc<crate::adapters::capability_token::CapabilityTokenService>,
 }
 
 /// A locally-spawned agent child process tracked for lifecycle management (ADR-037).
@@ -184,13 +186,18 @@ pub struct LocalAgent {
 }
 
 impl AgentManager {
-    pub fn new(state_port: Arc<dyn IStatePort>, secret_resolver: SecretResolver) -> Self {
+    pub fn new(
+        state_port: Arc<dyn IStatePort>,
+        secret_resolver: SecretResolver,
+        capability_token_service: Arc<crate::adapters::capability_token::CapabilityTokenService>,
+    ) -> Self {
         Self {
             state_port,
             pid_map: Mutex::new(HashMap::new()),
             local_children: Mutex::new(Vec::new()),
             docker_containers: Mutex::new(HashMap::new()),
             secret_resolver,
+            capability_token_service,
         }
     }
 
@@ -399,11 +406,41 @@ impl AgentManager {
             let stdb_cfg = crate::state_config::resolve_config();
             cmd.env("HEX_STDB_HOST", &stdb_cfg.host);
             cmd.env("HEX_STDB_DATABASE", &stdb_cfg.database);
-            // Per-module database names (convention: hex-<module-name>)
-            cmd.env("HEX_STDB_SKILL_DB", "hex-skill-registry");
-            cmd.env("HEX_STDB_AGENT_DEF_DB", "hex-agent-definition-registry");
+            // Per-module database names removed — skill-registry and
+            // agent-definition-registry were absorbed into hexflo-coordination (ADR-2604050900).
             cmd.env("HEX_STATE_BACKEND", "spacetimedb");
             tracing::debug!(agent_id = %id, host = %stdb_cfg.host, db = %stdb_cfg.database, "Injecting SpacetimeDB config");
+        }
+
+        // ADR-2604051800 P1: Issue capability token and inject as env var.
+        // Default capabilities: SwarmWrite + admin for orchestrator agents.
+        // Scoped agents (hex-coder) get TaskWrite + FileSystem for their worktree.
+        {
+            use hex_core::domain::capability::Capability;
+            let capabilities = if config.daemon {
+                vec![Capability::Admin] // Daemon agents orchestrate swarms
+            } else {
+                let mut caps = vec![Capability::SwarmRead, Capability::SwarmWrite];
+                // Scope filesystem to project dir
+                caps.push(Capability::FileSystem {
+                    roots: vec![std::path::PathBuf::from(&config.project_dir)],
+                    read_only: false,
+                });
+                // Allow all memory scopes for now
+                caps.push(Capability::Memory {
+                    scopes: vec!["global".into(), format!("agent:{}", id)],
+                });
+                caps
+            };
+            let token = self.capability_token_service.issue(
+                &id,
+                None, // swarm_id filled later when task is assigned
+                Some(&config.project_dir),
+                capabilities,
+                3600 * 8, // 8 hour TTL
+            );
+            cmd.env("HEX_AGENT_TOKEN", &token);
+            tracing::debug!(agent_id = %id, "Injected capability token");
         }
 
         // Always deliver the task prompt via --prompt flag (ADR-2604010000).

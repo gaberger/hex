@@ -1,48 +1,85 @@
-# hex — AI-Assisted Integrated Development Environment
+# hex — AI Operating System
 
-hex is an **AAIDE** — an opinionated development framework built around **hexagonal architecture** (Ports & Adapters). It is not an application you deploy; it is the framework + CLI toolchain that gets installed into target projects to enforce architecture and coordinate AI-driven development.
+hex is an **AIOS** (AI Operating System) — a microkernel-based runtime that manages AI agent processes, coordinates distributed workloads, and enforces architectural constraints. It is not an application you deploy; it is the operating system layer that gets installed into target projects to orchestrate AI-driven development.
+
+Agents are the users. Developers are the sysadmins.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Userland                                            │
+│  Skills, Agents, Swarm YAMLs, Workplans              │
+│  (hex-agent / hex-cli assets)                        │
+├─────────────────────────────────────────────────────┤
+│  System Services                                     │
+│  Agent Manager, Workplan Executor, Inference Router,  │
+│  Secret Broker, Fleet Manager                        │
+│  (hex-nexus)                                         │
+├─────────────────────────────────────────────────────┤
+│  Kernel (Syscall Surface — 9 port traits)            │
+│  ICoordination, ISandbox, IFileSystem, ISecret,       │
+│  IInference, IEnforcement, IAgentRuntime, IState      │
+│  (hex-core — zero external deps)                     │
+├─────────────────────────────────────────────────────┤
+│  Microkernel                                         │
+│  7 WASM modules: hexflo-coordination, agent-registry, │
+│  inference-gateway, secret-grant, rl-engine,          │
+│  chat-relay, neural-lab                               │
+│  (SpacetimeDB — sandboxed, transactional)            │
+└─────────────────────────────────────────────────────┘
+```
 
 ## System Components
 
-| Component | Role |
-|-----------|------|
-| **hex-cli** | CLI binary — all `hex` commands, MCP server |
-| **hex-nexus** | Filesystem bridge daemon + dashboard (port 5555) |
-| **hex-agent** | Architecture enforcement runtime for AI agents |
-| **hex-core** | Shared domain types and port traits (zero external deps) |
-| **spacetime-modules** | 18 WASM modules for coordination, inference, swarms |
+| Component | OS Analog | Role |
+|-----------|-----------|------|
+| **hex-cli** | Shell | CLI binary — all `hex` commands, MCP server |
+| **hex-nexus** | System services | Daemon — filesystem bridge, inference routing, fleet management, dashboard (port 5555) |
+| **hex-core** | Syscall interface | 9 port traits defining what agents can do (zero external deps) |
+| **hex-agent** | Userland | Architecture enforcement runtime — skills, hooks, agents |
+| **spacetime-modules** | Microkernel | 7 WASM modules for coordination, state, inference, secrets (ADR-2604050900) |
+| **hex-dashboard** | Desktop/GUI | Solid.js control plane with real-time WebSocket subscriptions |
 
 SpacetimeDB must be running. All clients connect via WebSocket for real-time state sync.
 
-## Quick Start
+## OS Primitives
 
-```bash
-# Build
-cargo build -p hex-cli
-cargo build -p hex-nexus --release
+### Process Lifecycle
 
-# Start the nexus daemon
-hex nexus start
+Agents are managed processes with state tracking:
 
-# Check status
-hex status
-hex nexus status
+```
+spawn → heartbeat (15s) → stale (45s) → dead (120s) → evict + task reclaim
 ```
 
-## Inference Routing
+```bash
+hex swarm init <name>        # Initialize a swarm (process group)
+hex task create <sid> <t>    # Create a task
+hex task list                # List all tasks
+hex task complete <id>       # Mark task done
+```
 
-hex includes quantization-aware inference routing (ADR-2603271000). Inference requests are automatically routed to the best available provider based on task complexity and provider quality scores.
+### Resource Locking
 
-### How it works
+Worktree locks and task claims with CAS (Compare-And-Swap) prevent double-assignment in distributed swarms. Locks auto-expire on heartbeat timeout.
 
-1. **Complexity scoring** — every inference request is scored on prompt length, cross-file keywords, security signals, and architectural keywords
-2. **Minimum tier selection** — complexity maps to a minimum quantization tier (Low→Q2, Medium→Q4, High→Q8, Critical→Cloud)
-3. **Quality-ranked selection** — providers meeting the minimum tier are ranked by calibrated `quality_score` (0.0–1.0)
-4. **Escalation on failure** — if a provider fails, the router retries at the next tier (Q4→Q8→Fp16→Cloud)
+### Secret Brokering
 
-### Quantization tiers
+TTL-based secret grants distribute credentials to sandboxed agents. Secret values never enter SpacetimeDB — only grant metadata. Encrypted vault with audit log.
 
-| Tier | Bits | Use cases |
+### Inter-Process Communication
+
+- **WebSocket broadcast** — real-time state change subscriptions
+- **Inbox notifications** — priority-based agent-to-agent signaling (ADR-060)
+- **Chat relay** — conversation routing between agents and users
+- **HexFlo memory** — scoped key-value store (global / per-swarm / per-agent)
+
+### Inference Routing
+
+RL-driven model selection with quantization-aware tier mapping:
+
+| Tier | Bits | Use Cases |
 |------|------|-----------|
 | Q2 | 2-bit | Scaffolding, docstrings, formatting |
 | Q4 | 4-bit | General coding, test generation |
@@ -50,56 +87,59 @@ hex includes quantization-aware inference routing (ADR-2603271000). Inference re
 | Fp16 | 16-bit | Cross-file planning |
 | Cloud | — | Frontier APIs (Anthropic, OpenAI, OpenRouter) |
 
-### Provider registry
+The RL engine learns which (model, context_strategy) pair is best per task type. Complexity scoring maps requests to minimum tiers; quality-ranked selection picks the best provider meeting that tier.
 
 ```bash
-# Discover and register OpenRouter models
 hex inference discover --provider openrouter
-
-# List all registered providers with quality scores
 hex inference list
-
-# Calibrate a provider (runs real inference, writes quality_score)
 hex inference test <provider-id>
-
-# Batch-calibrate all uncalibrated providers
-# POST http://localhost:5555/api/neural-lab/experiments/quant-calibration
-
-# Add a local Ollama provider (quantization auto-detected from model tag)
 hex inference add ollama http://localhost:11434 llama3.2:3b-q4_k_m
 ```
 
-Quality scores are stored in SpacetimeDB and used immediately for routing. Once calibrated, the model router uses `SelectionSource::RegistryRanked` — no hardcoded model strings.
+### Architecture Enforcement
 
-### Agent quantization policy
+Hexagonal architecture rules enforced at the kernel level:
 
-Agent YAMLs declare quantization requirements:
+- `domain/` — pure business logic, no external imports
+- `ports/` — typed interfaces, imports from domain only
+- `adapters/secondary/` — driven adapters, import from ports only
+- `adapters/primary/` — driving adapters, import from ports only
+- **Adapters must never import other adapters**
+- `composition-root` is the only file that imports from adapters
 
-```yaml
-# hex-coder.yml — routine coding
-inference:
-  quantization:
-    default: q4
-    minimum: q2
-    on_complexity_high: q8
-    on_failure: cloud
+The hexagonal architecture isn't just code organization — it IS the privilege boundary. Domain can't reach adapters. Adapters can't reach each other. Only the composition root wires them.
 
-# planner.yml — architectural planning
-inference:
-  quantization:
-    default: q8
-    minimum: q4
-    on_complexity_high: cloud
-    on_failure: cloud
+```bash
+hex analyze .                # Architecture health check
+```
+
+## Quick Start
+
+```bash
+# Build
+cargo build -p hex-cli --release
+cargo build -p hex-nexus --release
+
+# Start the nexus daemon (requires SpacetimeDB)
+hex nexus start
+
+# Check status
+hex status
+hex nexus status
+
+# Start the dashboard
+open http://localhost:5555
 ```
 
 ## Development Pipeline
 
-Features follow a specs-first lifecycle:
+Features follow a specs-first lifecycle through 7 phases:
 
 ```
-ADR → Specs → Workplan → Code (TDD, parallel worktrees) → Validate → Merge
+Specs → Plan → Worktrees → Code (TDD, parallel) → Validate → Integrate → Finalize
 ```
+
+Swarms decompose features inside-out across hexagonal layers, with each adapter boundary getting its own git worktree for isolation. Quality gates block tier advancement until compile + test + architecture analysis pass.
 
 ```bash
 hex adr list              # List all ADRs
@@ -110,33 +150,22 @@ hex memory store <k> <v>  # Persist key-value
 hex inbox list            # Agent notification inbox
 ```
 
-## Architecture Rules
-
-Enforced by `hex analyze .`:
-
-- `domain/` — pure business logic, no external imports
-- `ports/` — typed interfaces, imports from domain only
-- `adapters/secondary/` — driven adapters, import from ports only
-- `adapters/primary/` — driving adapters, import from ports only
-- **Adapters must never import other adapters**
-- `composition-root` is the only file that imports from adapters
-
-```bash
-hex analyze .             # Architecture health check
-cargo test -p hex-nexus --test quant_routing   # Routing tests (19/19)
-cargo check -p hex-cli -p hex-nexus -p hex-core
-```
-
 ## Key ADRs
 
-| ADR | Description | Status |
-|-----|-------------|--------|
-| ADR-2603271000 | Quantization-Aware Inference Routing | Implemented |
-| ADR-2603261000 | Secure Inference Provider Registry | Implemented |
-| ADR-2603301200 | Architecture Context Injection (ACI) | Active |
-| ADR-2603300100 | hex-agent SpacetimeDB WebSocket Client | Active |
-| ADR-2603301600 | Batch Command Execution Context Indexing | Active |
-| ADR-027 | HexFlo Native Coordination | Implemented |
+| ADR | Decision | Domain |
+|-----|----------|--------|
+| 001 | Hexagonal Architecture as Foundational Pattern | Architecture |
+| 024 | Hex-Nexus as Autonomous Orchestration Nexus | System design |
+| 025 | SpacetimeDB as Distributed State Backend | State |
+| 026 | Secure Secret Distribution via SpacetimeDB | Security |
+| 027 | HexFlo — Native Swarm Coordination | Coordination |
+| 042 | Multi-Instance Coordination — Locks, Claims, Cleanup | Resources |
+| 046 | Quality Gates per Tier with Automated Fixing | Enforcement |
+| 058 | Unified Agent Registry | Identity |
+| 060 | Agent Notification Inbox | IPC |
+| 2603271000 | Quantization-Aware Inference Routing | Inference |
+| 2604050900 | SpacetimeDB Right-Sizing — IStatePort Sub-Trait Split | Kernel |
+| 2604051800 | AIOS Maturity Roadmap — Missing Primitives | Roadmap |
 
 ## Architecture Decisions
 
@@ -194,7 +223,7 @@ cargo check -p hex-cli -p hex-nexus -p hex-core
 | 049 | Embedded Settings Template — Single Source of Truth | Accepted |
 | 050 | Hook-Enforced Agent Lifecycle Pipeline | Accepted |
 | 051 | SpacetimeDB as Single Source of State | Accepted |
-| 052 | AIIDE — Hex Nexus as AI Integrated Development Environment | Accepted |
+| 052 | AIOS — Hex as AI Operating System | Accepted |
 | 053 | Framework Configuration Sync to SpacetimeDB | Accepted |
 | 054 | ADR Compliance Enforcement — Preventing Architectural Drift | Accepted |
 | 055 | README-Driven Project Specification | Accepted |
@@ -256,14 +285,15 @@ cargo check -p hex-cli -p hex-nexus -p hex-core
 | 2603301200 | Architecture Context Injection for Inference | Proposed |
 | 2603301600 | Batch Command Execution with Context Indexing | Proposed |
 | 2603311000 | Workflow Reliability Hardening | Accepted |
-| 2603311711 | Static Site Generator for hex Documentation | proposed |
+| 2603311711 | Static Site Generator for hex Documentation | Proposed |
 | 2603311730 | Integrate claude-code Capabilities into hex-agent | Accepted |
 | 2603311900 | Pipeline Phase Pre-condition Gates | Accepted |
 | 2603312000 | hex docs — Static Site Generator for the hex Manual | Proposed |
 | 2603312100 | Context Engineering for hex-agent | Proposed |
 | 2603312210 | Claude Code Bypass Mode for hex-agent | Proposed |
 | 2603312300 | Workplan Live Execution Overlay in `hex plan list` | Proposed |
-| 2603312305 | Inference Provider Health Checks and Pruning | proposed |
-| 2603312332 | Inference Provider Quality Gates and Pruning | proposed |
-| 2603312337 | Real-time Development Session Tracking via Push API | proposed |
+| 2603312305 | Inference Provider Health Checks and Pruning | Proposed |
+| 2603312332 | Inference Provider Quality Gates and Pruning | Proposed |
+| 2603312337 | Real-time Development Session Tracking via Push API | Proposed |
+| 2604051800 | AIOS Maturity Roadmap — Missing Primitives | Accepted |
 <!-- /hex:adr-summary -->

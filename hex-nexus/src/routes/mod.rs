@@ -45,6 +45,7 @@ use utoipa::OpenApi;
 use crate::state::SharedState;
 use crate::middleware::agent_guard::agent_guard;
 use crate::middleware::auth::auth_layer;
+use crate::middleware::capability_auth::capability_auth;
 use crate::middleware::deprecation::deprecation_layer;
 use crate::middleware::enforcement::enforcement_layer;
 use crate::embed::{serve_index, serve_chat, serve_legacy_dashboard, serve_static};
@@ -413,6 +414,7 @@ pub fn build_router(state: SharedState) -> Router {
         .allow_headers([
             http::header::CONTENT_TYPE,
             http::header::AUTHORIZATION,
+            http::header::HeaderName::from_static("x-hex-agent-token"),
         ]);
 
     let router = Router::new()
@@ -780,10 +782,11 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/ws", get(ws::ws_handler))
         .route("/ws/chat", get(chat::chat_ws_handler))
         .route("/ws/inference", get(inference_ws::ws_inference_handler))
-        // Middleware (order: outermost runs first → auth → agent_guard → enforcement → deprecation → handler)
+        // Middleware (order: outermost runs first → auth → capability_auth → agent_guard → enforcement → deprecation → handler)
         .layer(axum::middleware::from_fn(deprecation_layer))
         .layer(axum::middleware::from_fn_with_state(state.clone(), enforcement_layer))
         .layer(axum::middleware::from_fn_with_state(state.clone(), agent_guard))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), capability_auth))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth_layer))
         .layer(cors)
         .with_state(state)

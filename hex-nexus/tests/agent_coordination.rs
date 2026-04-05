@@ -24,6 +24,7 @@ fn sandbox_config_roundtrips_json() {
         task_id: "task-abc".into(),
         env_vars: HashMap::from([("FOO".into(), "bar".into())]),
         network_allow: vec!["host.docker.internal:5555".into()],
+        docker_host: None,
     };
     let json = serde_json::to_string(&cfg).unwrap();
     let back: SandboxConfig = serde_json::from_str(&json).unwrap();

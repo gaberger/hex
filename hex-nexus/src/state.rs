@@ -11,6 +11,7 @@ use crate::ports::live_context::ILiveContextPort;
 use crate::ports::session::ISessionPort;
 use crate::ports::state::IStatePort;
 use crate::remote::fleet::FleetManager;
+use crate::adapters::capability_token::CapabilityTokenService;
 use crate::adapters::spacetime_chat::SpacetimeChatClient;
 use crate::adapters::spacetime_inference::SpacetimeInferenceClient;
 use crate::adapters::spacetime_secrets::SpacetimeSecretClient;
@@ -58,6 +59,8 @@ pub struct AppState {
     pub fingerprints: RwLock<HashMap<String, crate::analysis::fingerprint_extractor::ArchitectureFingerprint>>,
     // Tool-call event log (ADR-2604012137, ADR-2604020900) — in-memory ring buffer, WebSocket broadcast on insert
     pub event_adapter: std::sync::Arc<crate::adapters::events::InMemoryEventAdapter>,
+    // Capability token service (ADR-2604051800 P1) — signs and verifies agent tokens
+    pub capability_token_service: Arc<CapabilityTokenService>,
 }
 
 impl AppState {
@@ -91,6 +94,7 @@ impl AppState {
             context_pressure: Arc::new(Mutex::new(HashMap::new())),
             fingerprints: RwLock::new(HashMap::new()),
             event_adapter: std::sync::Arc::new(crate::adapters::events::InMemoryEventAdapter::new()),
+            capability_token_service: Arc::new(CapabilityTokenService::from_env()),
         }
     }
 

@@ -4,7 +4,7 @@
       "command": "hex",
       "args": ["mcp"],
       "env": {},
-      "description": "hex AAIDE — architecture enforcement, swarm coordination, ADR management, workplan execution",
+      "description": "hex AIOS — AI Operating System for architecture enforcement, swarm coordination, ADR management, workplan execution",
       "toolSearch": {
         "type": "tool_search_tool_bm25_20251119",
         "enabled": true

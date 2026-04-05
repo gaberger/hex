@@ -58,7 +58,7 @@ pub struct StdbTaskPoller {
 impl StdbTaskPoller {
     /// Create from environment variables. Reads:
     /// - `SPACETIMEDB_URL` (e.g. `ws://localhost:3033`) — for StDB connection
-    /// - `SPACETIMEDB_DATABASE` — SpacetimeDB module name (default: `remote-agent-registry`)
+    /// - `SPACETIMEDB_DATABASE` — SpacetimeDB module name (default: `hex`, the hexflo-coordination database)
     /// - `SPACETIMEDB_TOKEN` — auth token (optional)
     /// - All vars consumed by `TaskExecutor::from_env()` for REST fallback
     pub fn from_env() -> Self {
@@ -74,8 +74,9 @@ impl StdbTaskPoller {
     pub async fn initialize(&self) {
         let ws_url = std::env::var("SPACETIMEDB_URL")
             .unwrap_or_else(|_| "ws://localhost:3033".into());
+        // ADR-2604050900: remote-agent-registry deleted; tasks now in hexflo-coordination ("hex")
         let database = std::env::var("SPACETIMEDB_DATABASE")
-            .unwrap_or_else(|_| "remote-agent-registry".into());
+            .unwrap_or_else(|_| "hex".into());
         let token = std::env::var("SPACETIMEDB_TOKEN").ok();
 
         if let Err(e) = self

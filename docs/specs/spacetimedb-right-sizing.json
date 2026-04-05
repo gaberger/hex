@@ -1,0 +1,115 @@
+{
+  "feature": "spacetimedb-right-sizing",
+  "description": "Reduce 19 WASM modules to 7 focused on multi-host dispatch. Migrate inference to procedures. Wire remote agent state to SpacetimeDB.",
+  "adr": "ADR-2604050900",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "Only 7 WASM modules exist in spacetime-modules/",
+      "given": "The spacetime-modules/ directory after right-sizing",
+      "when": "Listing subdirectories of spacetime-modules/",
+      "then": "Exactly 7 directories exist: hexflo-coordination, agent-registry, inference-gateway, secret-grant, rl-engine, chat-relay, neural-lab",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "All 7 WASM modules compile to wasm32-unknown-unknown",
+      "given": "The 7 surviving modules with all dependencies",
+      "when": "Running cargo check in spacetime-modules/ workspace",
+      "then": "All 7 modules compile with zero errors",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "STDB_MODULE_DATABASES constant lists exactly 7 entries",
+      "given": "hex-core/src/lib.rs containing the STDB_MODULE_DATABASES constant",
+      "when": "Counting entries in the constant array",
+      "then": "Exactly 7 (module, database) tuples are listed, matching the surviving modules",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "Inference procedure makes direct HTTP calls to LLM providers",
+      "given": "An inference_request row in inference-gateway with provider='anthropic' and a valid API key in secret-grant",
+      "when": "The execute_inference procedure fires via scheduled table",
+      "then": "The procedure makes an HTTP POST to the provider's API endpoint and writes the response to inference_response table with status='completed'",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "Inference fallback works when procedure is unavailable",
+      "given": "An inference_request with status='queued' and the procedure failing or unavailable",
+      "when": "hex-nexus calls the complete_inference reducer with the LLM response",
+      "then": "The inference_response row is created with the provided result and the request status changes to 'completed'",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "HappyPath",
+      "description": "Remote agent state is visible in SpacetimeDB",
+      "given": "A hex-agent running on Host B registering via hex-nexus REST API on Host A",
+      "when": "hex-nexus calls register_remote_agent reducer on hexflo-coordination",
+      "then": "A remote_agent row appears in SpacetimeDB with the agent's id, host, role, and status",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "HappyPath",
+      "description": "Dashboard shows remote agents via WebSocket subscription",
+      "given": "A remote_agent row in hexflo-coordination and a dashboard connected via WebSocket",
+      "when": "The dashboard subscribes to 'SELECT * FROM remote_agent'",
+      "then": "The agent appears in the AgentFleet view without HTTP polling",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "HappyPath",
+      "description": "compute_node table absorbed from fleet-state into hexflo-coordination",
+      "given": "hexflo-coordination module with compute_node table and register_node reducer",
+      "when": "Calling register_node with host, port, and max_agents",
+      "then": "A compute_node row is created; dashboard can subscribe and display fleet nodes",
+      "negative_spec": false
+    },
+    {
+      "id": "S09",
+      "category": "HappyPath",
+      "description": "Workspace builds cleanly with no references to deleted modules",
+      "given": "The entire Rust workspace after right-sizing",
+      "when": "Running cargo check --workspace --exclude hex-desktop",
+      "then": "Zero compilation errors; no unresolved imports referencing deleted modules",
+      "negative_spec": false
+    },
+    {
+      "id": "S10",
+      "category": "NegativeSpec",
+      "description": "No code imports from deleted spacetime_bindings modules",
+      "given": "The workspace after deleting 12 WASM modules",
+      "when": "Searching for imports of deleted module bindings (hook_registry, agent_definition_registry, remote_agent_registry, fleet_state, etc.)",
+      "then": "Zero matches in production code (documentation comments referencing ADR-2604050900 are acceptable)",
+      "negative_spec": true
+    },
+    {
+      "id": "S11",
+      "category": "NegativeSpec",
+      "description": "IStatePort does not contain methods for deleted modules without callers",
+      "given": "The IStatePort trait after right-sizing",
+      "when": "Checking for fleet_* and hook_* methods",
+      "then": "No fleet_register, fleet_list, fleet_remove, fleet_update_status, hook_register, hook_update, hook_remove, hook_toggle, hook_list, hook_list_by_event, or hook_log_execution methods exist in the trait",
+      "negative_spec": true
+    },
+    {
+      "id": "S12",
+      "category": "EdgeCase",
+      "description": "Docker sandbox agent registers in SpacetimeDB on spawn",
+      "given": "A Docker sandbox with hex-agent:latest image and SpacetimeDB reachable",
+      "when": "hex-nexus spawns a sandbox agent via DockerSandboxAdapter::spawn()",
+      "then": "The agent appears in both the local HashMap (fast path) and the SpacetimeDB remote_agent table (cross-host visibility)",
+      "negative_spec": false
+    }
+  ]
+}

@@ -104,7 +104,7 @@ const RightPanel: Component = () => {
           <ConnStatus label="hexflo" connected={hexfloConnected()} module="hexflo-coordination" />
           <ConnStatus label="agents" connected={agentRegistryConnected()} module="agent-registry" />
           <ConnStatus label="inference" connected={inferenceConnected()} module="inference-gateway" />
-          <ConnStatus label="fleet" connected={fleetConnected()} module="fleet-state" />
+          <ConnStatus label="fleet" connected={fleetConnected()} module="hexflo-coordination" />
         </div>
         <Show when={!hexfloConnected() && !agentRegistryConnected()}>
           <p class="mt-2 text-[10px] text-gray-300 leading-relaxed">

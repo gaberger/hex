@@ -1,7 +1,7 @@
 //! REST endpoints for test session recording and querying.
 //!
-//! Since SpacetimeDB client bindings for the test-results module may not exist,
-//! this uses a file-based fallback at ~/.hex/test-sessions/ storing JSON files.
+//! Uses a file-based store at ~/.hex/test-sessions/ with JSON files.
+//! (ADR-2604050900: the test-results WASM module was deleted as an empty stub.)
 
 use axum::{
     extract::{Path, Query, State},

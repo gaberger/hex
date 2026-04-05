@@ -350,6 +350,81 @@ fn mcp_in_container_rejects_path_traversal() {
     let _ = child.wait();
 }
 
+/// Verify that when a Docker sandbox agent is spawned, it registers itself
+/// in the SpacetimeDB `hex_agent` table via the agent_connect reducer.
+///
+/// Prerequisites:
+/// - Docker daemon running with hex-agent:latest image
+/// - SpacetimeDB running locally (http://127.0.0.1:3033)
+/// - `hex` database published with hexflo-coordination module
+/// - hex-nexus running (http://localhost:5555) — the container calls /api/hex-agents/connect
+#[tokio::test]
+#[ignore = "requires Docker daemon + SpacetimeDB + hex-nexus"]
+async fn test_docker_sandbox_agent_registers_in_spacetimedb() {
+    assert!(probe_docker(), "Docker daemon not available");
+
+    let stdb_url = std::env::var("SPACETIMEDB_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".into());
+    let http = reqwest::Client::new();
+
+    let test_agent_id = format!("docker-stdb-test-{}", uuid::Uuid::new_v4());
+    let dir = tempfile::tempdir().unwrap();
+
+    // Spawn a container with HEX_AGENT_ID set — the agent's entrypoint
+    // calls `hex hook session-start` which registers in SpacetimeDB via hex-nexus.
+    let output = std::process::Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "-d",
+            "-e",
+            "WORKSPACE=/workspace",
+            "-e",
+            "HEX_NEXUS_URL=http://host.docker.internal:5555",
+            "-e",
+            &format!("HEX_AGENT_ID={}", test_agent_id),
+            "--mount",
+            &format!("type=bind,src={},dst=/workspace", dir.path().display()),
+            "hex-agent:latest",
+        ])
+        .output()
+        .expect("docker run failed");
+
+    assert!(
+        output.status.success(),
+        "docker run exited non-zero: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert!(!container_id.is_empty(), "expected container ID from docker run -d");
+
+    // Give the container time to start and register with SpacetimeDB
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    // Query SpacetimeDB's SQL API to verify the agent appears in hex_agent table
+    let sql_url = format!("{}/v1/database/hex/sql", stdb_url);
+    let query = format!("SELECT * FROM hex_agent WHERE id = '{}'", test_agent_id);
+    let resp = http
+        .post(&sql_url)
+        .body(query)
+        .send()
+        .await
+        .expect("SpacetimeDB SQL query failed");
+
+    let body = resp.text().await.expect("failed to read response body");
+    assert!(
+        body.contains(&test_agent_id),
+        "hex_agent row not found in SpacetimeDB for id={test_agent_id}. Response: {body}"
+    );
+
+    // Cleanup: stop the container
+    let _ = std::process::Command::new("docker")
+        .args(["stop", &container_id])
+        .output();
+
+    println!("Docker sandbox SpacetimeDB registration test passed!");
+}
+
 /// MCP write in container lands in the bind-mounted worktree on the host.
 #[test]
 #[ignore = "requires Docker daemon and hex-agent:latest image"]

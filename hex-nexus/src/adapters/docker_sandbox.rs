@@ -19,15 +19,39 @@ use std::process::Command;
 use uuid::Uuid;
 
 /// Secondary adapter: manages Docker AI Sandbox microVMs as hex agent sandboxes.
+///
+/// Supports both local and remote Docker daemons (ADR-2604050900 P5.1).
+/// When `docker_host` is set, all `docker` CLI commands include
+/// `DOCKER_HOST=<value>` to target a remote daemon (e.g., `ssh://user@host`).
 pub struct DockerSandboxAdapter {
     /// Path to the Linux hex-agent binary to exec inside the sandbox.
     agent_binary_path: PathBuf,
+    /// Optional remote Docker daemon endpoint (e.g., `ssh://user@remote-host`).
+    docker_host: Option<String>,
 }
 
 impl DockerSandboxAdapter {
     pub fn new() -> Result<Self, SandboxError> {
-        // Verify docker sandbox CLI is available
-        let check = Command::new("docker")
+        let adapter = Self {
+            agent_binary_path: PathBuf::from(".hex/bin/hex-agent"),
+            docker_host: None,
+        };
+        adapter.verify_docker()?;
+        Ok(adapter)
+    }
+
+    /// Create an adapter targeting a remote Docker daemon.
+    pub fn remote(docker_host: String) -> Result<Self, SandboxError> {
+        let adapter = Self {
+            agent_binary_path: PathBuf::from(".hex/bin/hex-agent"),
+            docker_host: Some(docker_host),
+        };
+        adapter.verify_docker()?;
+        Ok(adapter)
+    }
+
+    fn verify_docker(&self) -> Result<(), SandboxError> {
+        let check = self.docker_cmd()
             .args(["sandbox", "version"])
             .output()
             .map_err(|e| SandboxError::Runtime(format!("docker sandbox not found: {e}")))?;
@@ -36,15 +60,21 @@ impl DockerSandboxAdapter {
                 "docker sandbox CLI not available".into(),
             ));
         }
-        // Use a placeholder; actual path is resolved per-spawn relative to worktree
-        Ok(Self {
-            agent_binary_path: PathBuf::from(".hex/bin/hex-agent"),
-        })
+        Ok(())
     }
 
     pub fn with_agent_binary(mut self, path: impl Into<PathBuf>) -> Self {
         self.agent_binary_path = path.into();
         self
+    }
+
+    /// Build a `Command` for `docker` with `DOCKER_HOST` set if configured.
+    fn docker_cmd(&self) -> Command {
+        let mut cmd = Command::new("docker");
+        if let Some(host) = &self.docker_host {
+            cmd.env("DOCKER_HOST", host);
+        }
+        cmd
     }
 
     /// Ensure the Linux hex-agent binary is extracted from `hex-agent:latest` into
@@ -129,6 +159,7 @@ impl Default for DockerSandboxAdapter {
     fn default() -> Self {
         Self {
             agent_binary_path: PathBuf::from(".hex/bin/hex-agent"),
+            docker_host: None,
         }
     }
 }
@@ -158,7 +189,7 @@ impl ISandboxPort for DockerSandboxAdapter {
 
         // Step 1: create the shell sandbox (mounts worktree, starts microVM)
         // docker sandbox create shell <worktree> --name hex-agent-<id>
-        let create_out = Command::new("docker")
+        let create_out = self.docker_cmd()
             .args([
                 "sandbox",
                 "create",
@@ -180,7 +211,7 @@ impl ISandboxPort for DockerSandboxAdapter {
 
         // Step 2: exec hex-agent daemon in detached mode inside the running sandbox
         // docker sandbox exec -d hex-agent-<id> <binary> daemon --agent-id <id> --task-id <task_id>
-        let exec_out = Command::new("docker")
+        let exec_out = self.docker_cmd()
             .args([
                 "sandbox",
                 "exec",
@@ -210,7 +241,7 @@ impl ISandboxPort for DockerSandboxAdapter {
 
         if !exec_out.status.success() {
             // Clean up the sandbox on exec failure
-            let _ = Command::new("docker")
+            let _ = self.docker_cmd()
                 .args(["sandbox", "rm", &sandbox_name])
                 .output();
             let stderr = String::from_utf8_lossy(&exec_out.stderr);
@@ -227,7 +258,7 @@ impl ISandboxPort for DockerSandboxAdapter {
     }
 
     async fn stop(&self, container_id: &str) -> Result<(), SandboxError> {
-        let output = Command::new("docker")
+        let output = self.docker_cmd()
             .args(["sandbox", "rm", container_id])
             .output()
             .map_err(|e| SandboxError::StopFailed {
@@ -246,7 +277,7 @@ impl ISandboxPort for DockerSandboxAdapter {
     }
 
     async fn status(&self, container_id: &str) -> Result<String, SandboxError> {
-        let output = Command::new("docker")
+        let output = self.docker_cmd()
             .args(["sandbox", "ls"])
             .output()
             .map_err(|e| SandboxError::Runtime(e.to_string()))?;
@@ -260,7 +291,7 @@ impl ISandboxPort for DockerSandboxAdapter {
     }
 
     async fn list(&self) -> Result<Vec<SpawnResult>, SandboxError> {
-        let output = Command::new("docker")
+        let output = self.docker_cmd()
             .args(["sandbox", "ls"])
             .output()
             .map_err(|e| SandboxError::Runtime(e.to_string()))?;
