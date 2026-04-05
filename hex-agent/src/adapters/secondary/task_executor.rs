@@ -15,8 +15,6 @@ pub struct TaskExecutor {
     nexus_url: String,
     agent_id: String,
     swarm_id: Option<String>,
-    /// Absolute path to the hex CLI binary (used to run `hex dev start --auto`).
-    hex_binary: String,
     /// Project directory to operate in.
     project_path: String,
     /// Agent role label reported to nexus (e.g. "controller", "hex-coder").
@@ -43,22 +41,12 @@ impl TaskExecutor {
         let agent_id = std::env::var("HEX_AGENT_ID").unwrap_or_else(|_| "unknown".into());
         let swarm_id = std::env::var("HEX_SWARM_ID").ok();
         let project_path = std::env::var("HEX_PROJECT_DIR").unwrap_or_else(|_| ".".into());
-        // Hex CLI binary: prefer env override, otherwise check workspace-relative path
-        let hex_binary = std::env::var("HEX_CLI_PATH").unwrap_or_else(|_| {
-            let candidate = format!("{}/.hex/bin/hex", project_path);
-            if std::path::Path::new(&candidate).exists() {
-                candidate
-            } else {
-                "hex".into() // fall back to PATH
-            }
-        });
         let role = std::env::var("HEX_AGENT_ROLE").unwrap_or_else(|_| "hex-coder".into());
         Self {
             client: reqwest::Client::new(),
             nexus_url,
             agent_id,
             swarm_id,
-            hex_binary,
             project_path,
             role,
         }

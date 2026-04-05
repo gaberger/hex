@@ -103,17 +103,6 @@ pub struct ChatMessage {
     pub timestamp: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FleetNode {
-    pub id: String,
-    pub host: String,
-    pub port: u16,
-    pub status: String,
-    pub active_agents: u32,
-    pub max_agents: u32,
-    pub last_health_check: Option<String>,
-}
-
 // ── Skill Registry Types ────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,37 +124,6 @@ pub struct SkillEntry {
 pub struct SkillTriggerEntry {
     pub trigger_type: String,
     pub trigger_value: String,
-}
-
-// ── Hook Registry Types ─────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HookEntry {
-    pub id: String,
-    pub event_type: String,
-    pub handler_type: String,
-    pub handler_config_json: String,
-    pub timeout_secs: u32,
-    pub blocking: bool,
-    pub tool_pattern: String,
-    pub enabled: bool,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HookExecutionEntry {
-    pub hook_id: String,
-    pub agent_id: String,
-    pub event_type: String,
-    pub exit_code: i32,
-    pub stdout: String,
-    pub stderr: String,
-    pub duration_ms: u64,
-    pub timed_out: bool,
-    pub timestamp: String,
 }
 
 // ── Agent Definition Registry Types ─────────────────────
@@ -470,12 +428,8 @@ pub enum StateEvent {
     TaskChanged { update: WorkplanTaskUpdate },
     #[serde(rename = "chat_message")]
     ChatMessage { message: ChatMessage },
-    #[serde(rename = "fleet_changed")]
-    FleetChanged { node: FleetNode },
     #[serde(rename = "skill_changed")]
     SkillChanged { skill: SkillEntry },
-    #[serde(rename = "hook_changed")]
-    HookChanged { hook: HookEntry },
     #[serde(rename = "agent_definition_changed")]
     AgentDefinitionChanged { definition: AgentDefinitionEntry },
     #[serde(rename = "swarm_changed")]
@@ -551,12 +505,6 @@ pub trait IStatePort: Send + Sync {
         limit: u32,
     ) -> Result<Vec<ChatMessage>, StateError>;
 
-    // ── Fleet ───────────────────────────────────────
-    async fn fleet_register(&self, node: FleetNode) -> Result<(), StateError>;
-    async fn fleet_update_status(&self, id: &str, status: &str) -> Result<(), StateError>;
-    async fn fleet_list(&self) -> Result<Vec<FleetNode>, StateError>;
-    async fn fleet_remove(&self, id: &str) -> Result<(), StateError>;
-
     // ── Skill Registry ────────────────────────────────
     async fn skill_register(&self, skill: SkillEntry) -> Result<String, StateError>;
     async fn skill_update(
@@ -574,22 +522,6 @@ pub trait IStatePort: Send + Sync {
         trigger_type: &str,
         query: &str,
     ) -> Result<Vec<SkillEntry>, StateError>;
-
-    // ── Hook Registry ──────────────────────────────────
-    async fn hook_register(&self, hook: HookEntry) -> Result<String, StateError>;
-    async fn hook_update(
-        &self,
-        id: &str,
-        handler_config_json: &str,
-        timeout_secs: u32,
-        blocking: bool,
-        tool_pattern: &str,
-    ) -> Result<(), StateError>;
-    async fn hook_remove(&self, id: &str) -> Result<(), StateError>;
-    async fn hook_toggle(&self, id: &str, enabled: bool) -> Result<(), StateError>;
-    async fn hook_list(&self) -> Result<Vec<HookEntry>, StateError>;
-    async fn hook_list_by_event(&self, event_type: &str) -> Result<Vec<HookEntry>, StateError>;
-    async fn hook_log_execution(&self, entry: HookExecutionEntry) -> Result<(), StateError>;
 
     // ── Agent Definition Registry ──────────────────────
     async fn agent_def_register(&self, def: AgentDefinitionEntry) -> Result<String, StateError>;

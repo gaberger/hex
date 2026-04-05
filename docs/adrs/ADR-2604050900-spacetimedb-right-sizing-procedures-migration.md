@@ -197,14 +197,14 @@ hex-nexus is no longer the coordination router. Agents coordinate directly via S
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| P0 | Absorb fleet-state + hexflo-lifecycle tables into hexflo-coordination | Pending |
-| P1 | Delete 12 dead modules; update STDB_MODULE_DATABASES constant; prune spacetime_bindings | Pending |
-| P2 | Migrate inference-gateway to procedure-based LLM calls; add REST fallback | Pending |
-| P3 | Migrate agent cleanup to scheduled procedure in agent-registry | Pending |
-| P4 | Replace RemoteRegistryAdapter with SpacetimeDB-backed state | Pending |
-| P5 | Regenerate spacetime_bindings for 7 modules only; update spacetime_launcher | Pending |
-| P6 | Simplify spacetime_state.rs — remove dead module calls, reduce boilerplate | Pending |
-| P7 | Integration test: Docker sandbox agent on remote host coordinates via SpacetimeDB | Pending |
+| P0 | Absorb fleet-state + hexflo-lifecycle tables into hexflo-coordination | **Done** — `compute_node`, `remote_agent` tables and lifecycle reducers added to hexflo-coordination; fleet-state and hexflo-lifecycle directories deleted |
+| P1 | Delete 12 dead modules; update STDB_MODULE_DATABASES constant; prune spacetime_bindings | **Done** — 12 modules deleted, STDB_MODULE_DATABASES (hex-core), MODULE_TIERS (hex-cli, hex-nexus) all list exactly 7 modules |
+| P2 | Migrate inference-gateway to procedure-based LLM calls; add REST fallback | **Done** — `execute_inference` is `#[spacetimedb::procedure]` with HTTP calls; `complete_inference` reducer fallback for hex-nexus retained |
+| P3 | Migrate agent cleanup to scheduled procedure in agent-registry | **Deferred** — `run_agent_cleanup` remains a `#[reducer]` called by hex-nexus; SpacetimeDB scheduled-procedure maturity insufficient for cron-style triggers. Acceptance criteria: SpacetimeDB supports `#[table(scheduled(...))]` with cron syntax → convert reducer to procedure, delete hex-nexus cleanup polling loop |
+| P4 | Replace RemoteRegistryAdapter with SpacetimeDB-backed state | **Partial** — HashMap remains fast-path source of truth for local hex-nexus; fire-and-forget sync writes to SpacetimeDB `remote_agent` table; dashboard subscribes for cross-host visibility. Remaining: make SpacetimeDB authoritative (read-through cache instead of fire-and-forget) |
+| P5 | Regenerate spacetime_bindings for 7 modules only; update spacetime_launcher | **Partial** — Stale bindings pruned; Rust bindings exist for 5/7 (missing hexflo-coordination, neural-lab); TS bindings exist for 4/7 (missing rl-engine, secret-grant, neural-lab). Remaining: run `scripts/generate-ts-bindings.sh` and `spacetime generate` for missing modules |
+| P6 | Simplify spacetime_state.rs — remove dead module calls, reduce boilerplate | **Partial** — Dead module calls isolated as stubs with ADR comments. File remains 1,781 lines (target: ~600). Root cause: IStatePort god-trait (823 lines, 24+ dead methods) forces stub implementations. Remaining: split IStatePort into focused sub-traits, delete dead trait methods and their stubs |
+| P7 | Integration test: Docker sandbox agent on remote host coordinates via SpacetimeDB | **Blocked** — `test_docker_sandbox_agent_registers_in_spacetimedb` exists (`#[ignore]`); requires Docker daemon + SpacetimeDB + hex-nexus running. Acceptance criteria: docker-compose test environment that provisions all dependencies |
 
 ## References
 

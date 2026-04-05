@@ -631,30 +631,6 @@ mod real {
             Ok(messages)
         }
 
-        // ── Fleet ───────────────────────────────────────
-        // NOTE: fleet-state module was removed (ADR-2604050900), absorbed into hexflo-coordination.
-        // These stubs satisfy the trait.
-
-        async fn fleet_register(&self, _node: FleetNode) -> Result<(), StateError> {
-            // conn.reducers().register_node(id, host, port, max_agents, timestamp)
-            Err(Self::not_connected())
-        }
-
-        async fn fleet_update_status(&self, _id: &str, _status: &str) -> Result<(), StateError> {
-            // conn.reducers().update_health(id, status, timestamp)
-            Err(Self::not_connected())
-        }
-
-        async fn fleet_list(&self) -> Result<Vec<FleetNode>, StateError> {
-            // conn.db().compute_node().iter().map(...)
-            Err(Self::not_connected())
-        }
-
-        async fn fleet_remove(&self, _id: &str) -> Result<(), StateError> {
-            // conn.reducers().remove_node(id)
-            Err(Self::not_connected())
-        }
-
         // ── Skill Registry ────────────────────────────────
         // NOTE: skill-registry module was removed (ADR-2604050900).
         // Queries below hit the default database (hexflo-coordination) which
@@ -717,43 +693,6 @@ mod real {
                     || s.description.to_lowercase().contains(&q)
                     || s.triggers_json.to_lowercase().contains(&q)
             }).collect())
-        }
-
-        // ── Hook Registry ──────────────────────────────────
-        // NOTE: hook-registry module was removed (ADR-2604050900).
-        // These stubs satisfy the trait.
-
-        async fn hook_register(&self, _hook: HookEntry) -> Result<String, StateError> {
-            // conn.reducers().register_hook(...)
-            Err(Self::not_connected())
-        }
-
-        async fn hook_update(&self, _id: &str, _handler_config_json: &str, _timeout_secs: u32, _blocking: bool, _tool_pattern: &str) -> Result<(), StateError> {
-            // conn.reducers().update_hook(...)
-            Err(Self::not_connected())
-        }
-
-        async fn hook_remove(&self, _id: &str) -> Result<(), StateError> {
-            Err(Self::not_connected())
-        }
-
-        async fn hook_toggle(&self, _id: &str, _enabled: bool) -> Result<(), StateError> {
-            // conn.reducers().toggle_hook(id, enabled, timestamp)
-            Err(Self::not_connected())
-        }
-
-        async fn hook_list(&self) -> Result<Vec<HookEntry>, StateError> {
-            Err(Self::not_connected())
-        }
-
-        async fn hook_list_by_event(&self, _event_type: &str) -> Result<Vec<HookEntry>, StateError> {
-            // conn.db().hook().iter().filter(|h| h.event_type == event_type && h.enabled)
-            Err(Self::not_connected())
-        }
-
-        async fn hook_log_execution(&self, _entry: HookExecutionEntry) -> Result<(), StateError> {
-            // conn.reducers().log_execution(...)
-            Err(Self::not_connected())
         }
 
         // ── Agent Definition Registry ──────────────────────
@@ -1655,23 +1594,12 @@ mod stub {
         async fn workplan_get_tasks(&self, _: &str) -> Result<Vec<WorkplanTaskUpdate>, StateError> { Err(Self::err()) }
         async fn chat_send(&self, _: ChatMessage) -> Result<(), StateError> { Err(Self::err()) }
         async fn chat_history(&self, _: &str, _: u32) -> Result<Vec<ChatMessage>, StateError> { Err(Self::err()) }
-        async fn fleet_register(&self, _: FleetNode) -> Result<(), StateError> { Err(Self::err()) }
-        async fn fleet_update_status(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
-        async fn fleet_list(&self) -> Result<Vec<FleetNode>, StateError> { Err(Self::err()) }
-        async fn fleet_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn skill_register(&self, _: SkillEntry) -> Result<String, StateError> { Err(Self::err()) }
         async fn skill_update(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn skill_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn skill_list(&self) -> Result<Vec<SkillEntry>, StateError> { Err(Self::err()) }
         async fn skill_get(&self, _: &str) -> Result<Option<SkillEntry>, StateError> { Err(Self::err()) }
         async fn skill_search(&self, _: &str, _: &str) -> Result<Vec<SkillEntry>, StateError> { Err(Self::err()) }
-        async fn hook_register(&self, _: HookEntry) -> Result<String, StateError> { Err(Self::err()) }
-        async fn hook_update(&self, _: &str, _: &str, _: u32, _: bool, _: &str) -> Result<(), StateError> { Err(Self::err()) }
-        async fn hook_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
-        async fn hook_toggle(&self, _: &str, _: bool) -> Result<(), StateError> { Err(Self::err()) }
-        async fn hook_list(&self) -> Result<Vec<HookEntry>, StateError> { Err(Self::err()) }
-        async fn hook_list_by_event(&self, _: &str) -> Result<Vec<HookEntry>, StateError> { Err(Self::err()) }
-        async fn hook_log_execution(&self, _: HookExecutionEntry) -> Result<(), StateError> { Err(Self::err()) }
         async fn agent_def_register(&self, _: AgentDefinitionEntry) -> Result<String, StateError> { Err(Self::err()) }
         async fn agent_def_update(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: u32, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn agent_def_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
