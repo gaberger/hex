@@ -46,6 +46,12 @@ pub enum AgentAction {
         /// Remote source directory to sync project files to before spawning
         #[arg(long)]
         source_dir: Option<String>,
+        /// Run the remote agent inside a Docker AI Sandbox (ADR-2604050900 P5.3)
+        #[arg(long, default_value_t = false)]
+        sandbox: bool,
+        /// Override the default model for the remote agent (e.g. sonnet, opus)
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Disconnect a remote agent
     Disconnect {
@@ -132,7 +138,9 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
             target,
             project_dir,
             source_dir,
-        } => spawn_remote(&target, project_dir, source_dir).await,
+            sandbox,
+            model,
+        } => spawn_remote(&target, project_dir, source_dir, sandbox, model).await,
         AgentAction::Disconnect { agent_id } => disconnect(&agent_id).await,
         AgentAction::Fleet => fleet().await,
         AgentAction::Evict => evict().await,
@@ -748,6 +756,8 @@ async fn spawn_remote(
     target: &str,
     project_dir: Option<String>,
     source_dir: Option<String>,
+    sandbox: bool,
+    model: Option<String>,
 ) -> anyhow::Result<()> {
     // Parse user@host format
     let (user, host) = match target.split_once('@') {
@@ -776,21 +786,31 @@ async fn spawn_remote(
     if let Some(ref sd) = source_dir {
         println!("  Source sync:  {}", sd);
     }
+    if sandbox {
+        println!("  Sandbox:     {}", "enabled".green());
+    }
+    if let Some(ref m) = model {
+        println!("  Model:       {}", m);
+    }
     println!();
 
     let mut body = json!({
         "host": host,
         "user": user,
         "projectDir": effective_project_dir,
+        "sandbox": sandbox,
     });
 
     if let Some(sd) = source_dir {
         body["remoteSourceDir"] = serde_json::Value::String(sd);
     }
+    if let Some(m) = model {
+        body["model"] = serde_json::Value::String(m);
+    }
 
     println!("{} Provisioning and launching agent...", "\u{2b21}".cyan());
 
-    let resp = nexus.post("/api/agents/spawn-remote", &body).await?;
+    let resp = nexus.post("/api/remote-agents/spawn-remote", &body).await?;
 
     if let Some(err) = resp.get("error") {
         let msg = err.as_str().unwrap_or("unknown error");

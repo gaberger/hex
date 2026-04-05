@@ -13,20 +13,27 @@ image: hex-agent:latest
 
 network:
   # Allow-list — minimal set needed for agent operation
+  #
+  # For remote dispatch (P5.2), SPACETIMEDB_HOST / SPACETIMEDB_PORT and
+  # HEX_NEXUS_HOST / HEX_NEXUS_PORT point to the central SpacetimeDB and
+  # nexus instances running on the coordinator machine.  When running
+  # locally the defaults resolve to host.docker.internal (Docker Desktop)
+  # or the bridge IP injected by hex-nexus on Linux.
   allow:
     # SpacetimeDB WebSocket (coordination + inference relay)
-    - host: host.docker.internal
-      port: 3033
+    - host: ${SPACETIMEDB_HOST:-host.docker.internal}
+      port: ${SPACETIMEDB_PORT:-3033}
       protocol: tcp
       comment: SpacetimeDB WebSocket
 
     # hex-nexus REST API (task polling, file writes, compile-check)
-    - host: host.docker.internal
-      port: 5555
+    - host: ${HEX_NEXUS_HOST:-host.docker.internal}
+      port: ${HEX_NEXUS_PORT:-5555}
       protocol: tcp
       comment: hex-nexus REST API
 
     # Local Ollama inference (optional — only if HEX_MODEL_TIER=local)
+    # Always local to the Docker host, not configurable for remote dispatch.
     - host: host.docker.internal
       port: 11434
       protocol: tcp
