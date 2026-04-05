@@ -1,0 +1,33 @@
+# SambaNova — Free-tier cloud inference (ADR-2604052125)
+# Fast inference with generous free credits. Good overflow target.
+# Free tier: $5 signup credit + rate-limited free access.
+name: sambanova
+display_name: SambaNova
+base_url: https://api.sambanova.ai/v1
+api_key_env: SAMBANOVA_API_KEY
+provider_type: openai_compat
+openai_compatible: true
+is_free_tier: true
+rate_limits:
+  rpm: 30
+  daily_requests: null
+  daily_tokens: 500000
+  tpm: 50000
+cost:
+  input_per_mtok: 0.0
+  output_per_mtok: 0.0
+models:
+  - id: Meta-Llama-3.3-70B-Instruct
+    tier: cloud
+    context_window: 8192
+    coding_optimized: false
+    task_types: [general, reasoning]
+  - id: DeepSeek-V3-0324
+    tier: cloud
+    context_window: 32768
+    coding_optimized: true
+    task_types: [code_generation, reasoning]
+routing:
+  preferred_for: batch
+  workload_class: batch
+  priority: 2

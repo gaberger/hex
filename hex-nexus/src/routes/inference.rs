@@ -294,12 +294,20 @@ pub async fn inference_complete(
                 tracing::warn!("spacetime_secrets not available for vault resolution");
             }
         }
+        // Record request dispatch in rate limiter (ADR-2604052125)
+        state.rate_limiter.record_request(&ep.id, body.max_tokens as u64).await;
         match super::chat::call_inference_endpoint(&ep, &messages).await {
-            Ok(resp) => Ok(resp),
+            Ok(resp) => {
+                // Record success in rate limiter
+                state.rate_limiter.record_completion(&ep.id, resp.2, resp.3, true).await;
+                Ok(resp)
+            }
             // Hard-fail on authentication errors — bad credentials must never trigger the
             // fallback chain. Doing so wastes the entire retry budget and produces an error
             // trail that ends at Anthropic with no indication of the root cause.
             Err(ref e) if e.contains("401") || e.contains("Unauthorized") => {
+                // Record auth failure in rate limiter (ADR-2604052125)
+                state.rate_limiter.record_completion(&ep.id, 0, 0, false).await;
                 tracing::error!(provider = %ep.provider, error = %e,
                     "authentication failed — bad credentials, not retrying");
                 return (StatusCode::UNAUTHORIZED, Json(json!({
@@ -313,6 +321,8 @@ pub async fn inference_complete(
                 || e.contains("parse:") || e.contains("500") || e.contains("503")
                 || e.contains("404") || e.contains("No endpoints") || e.contains("data policy")
                 || e.contains("connection:") || e.contains("null content") => {
+                // Record transient failure in rate limiter (ADR-2604052125)
+                state.rate_limiter.record_completion(&ep.id, 0, 0, false).await;
                 // OpenRouter transient failure (credits, rate limit, parse/server error),
                 // or permanent failure (404 model-not-found / data policy).
                 //
@@ -1349,4 +1359,22 @@ pub async fn openai_chat_completions(
     });
 
     (StatusCode::OK, Json(openai_resp)).into_response()
+}
+
+// ── Rate State + Cost Attribution (ADR-2604052125) ─────────────────────────
+
+/// GET /api/inference/rate-state — per-provider rate limit and circuit breaker state.
+pub async fn rate_state(
+    State(state): State<SharedState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let providers = state.rate_limiter.get_all_states().await;
+    (StatusCode::OK, Json(json!({ "providers": providers })))
+}
+
+/// GET /api/inference/stats — cost attribution dashboard data.
+pub async fn inference_stats_endpoint(
+    State(state): State<SharedState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let stats = state.rate_limiter.get_cost_stats().await;
+    (StatusCode::OK, Json(stats))
 }

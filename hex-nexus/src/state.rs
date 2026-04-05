@@ -15,6 +15,7 @@ use crate::adapters::capability_token::CapabilityTokenService;
 use crate::adapters::spacetime_chat::SpacetimeChatClient;
 use crate::adapters::spacetime_inference::SpacetimeInferenceClient;
 use crate::adapters::spacetime_secrets::SpacetimeSecretClient;
+use crate::rate_limiter::RateLimitManager;
 // ── App State ───────────────────────────────────────────
 
 pub type SharedState = Arc<AppState>;
@@ -61,6 +62,8 @@ pub struct AppState {
     pub event_adapter: std::sync::Arc<crate::adapters::events::InMemoryEventAdapter>,
     // Capability token service (ADR-2604051800 P1) — signs and verifies agent tokens
     pub capability_token_service: Arc<CapabilityTokenService>,
+    // Rate limit manager (ADR-2604052125) — sliding-window rate tracking + circuit breakers
+    pub rate_limiter: RateLimitManager,
 }
 
 impl AppState {
@@ -95,6 +98,7 @@ impl AppState {
             fingerprints: RwLock::new(HashMap::new()),
             event_adapter: std::sync::Arc::new(crate::adapters::events::InMemoryEventAdapter::new()),
             capability_token_service: Arc::new(CapabilityTokenService::from_env()),
+            rate_limiter: RateLimitManager::new(),
         }
     }
 

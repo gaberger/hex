@@ -1,27 +1,94 @@
 //! `hex inference` — Manage inference providers (Ollama, vLLM, etc.)
 //!
 //! Register, list, and test self-hosted LLM endpoints.
+//! Supports template-based registration for known free-tier providers (ADR-2604052125).
 //!
 //! Usage:
-//!   hex inference add ollama http://bazzite.local:11434 --model qwen3:32b
-//!   hex inference add vllm http://gpu-server:8000 --model Qwen/Qwen3-32B
+//!   hex inference add groq --key $GROQ_API_KEY          # Template-based (auto-registers all models)
+//!   hex inference add cerebras --key $CEREBRAS_API_KEY   # Template-based
+//!   hex inference add ollama http://bazzite.local:11434 --model qwen3:32b  # Manual
+//!   hex inference add vllm http://gpu-server:8000 --model Qwen/Qwen3-32B  # Manual
 //!   hex inference list
 //!   hex inference test <provider-id>
-//!   hex inference discover              # Auto-discover Ollama on local network
+//!   hex inference discover --free                       # Auto-discover all free-tier providers
+//!   hex inference stats                                 # Cost attribution dashboard
 
 use clap::Subcommand;
 use colored::Colorize;
 
+use crate::assets::Assets;
 use crate::nexus_client::NexusClient;
+
+/// Known free-tier provider template names (ADR-2604052125).
+const PROVIDER_TEMPLATES: &[&str] = &["groq", "cerebras", "sambanova", "together", "openrouter", "ollama"];
+
+/// Parsed provider template from YAML (ADR-2604052125).
+#[derive(Debug, serde::Deserialize)]
+struct ProviderTemplate {
+    name: String,
+    display_name: String,
+    base_url: String,
+    api_key_env: Option<String>,
+    provider_type: String,
+    #[serde(default)]
+    is_free_tier: bool,
+    #[serde(default)]
+    rate_limits: ProviderRateLimits,
+    #[serde(default)]
+    cost: ProviderCost,
+    #[serde(default)]
+    models: Vec<ProviderModelEntry>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[allow(dead_code)]
+struct ProviderRateLimits {
+    #[serde(default)]
+    rpm: u32,
+    #[serde(default)]
+    daily_requests: Option<u32>,
+    #[serde(default)]
+    daily_tokens: Option<u64>,
+    #[serde(default)]
+    tpm: u64,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct ProviderCost {
+    #[serde(default)]
+    input_per_mtok: f64,
+    #[serde(default)]
+    output_per_mtok: f64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ProviderModelEntry {
+    id: String,
+    #[serde(default = "default_tier")]
+    tier: String,
+    #[serde(default)]
+    context_window: u32,
+    #[serde(default)]
+    coding_optimized: bool,
+}
+
+fn default_tier() -> String { "cloud".to_string() }
+
+/// Load a provider template from embedded assets.
+fn load_provider_template(name: &str) -> Option<ProviderTemplate> {
+    let path = format!("inference-providers/{}.yml", name);
+    let content = Assets::get_str(&path)?;
+    serde_yaml::from_str(&content).ok()
+}
 
 #[derive(Subcommand)]
 pub enum InferenceAction {
-    /// Register a new inference provider
+    /// Register a new inference provider (template name or manual type+URL)
     Add {
-        /// Provider type: ollama, vllm, openai-compat, openrouter
+        /// Provider type or template name: groq, cerebras, sambanova, together, openrouter, ollama, vllm, openai-compat
         provider_type: String,
-        /// Base URL (e.g., http://bazzite.local:11434)
-        url: String,
+        /// Base URL (e.g., http://bazzite.local:11434). Optional for template providers.
+        url: Option<String>,
         /// Model name (e.g., qwen3:32b)
         #[arg(long)]
         model: Option<String>,
@@ -49,7 +116,7 @@ pub enum InferenceAction {
     },
     /// Auto-discover inference providers
     Discover {
-        /// Provider to discover: ollama (default, LAN scan), openrouter (fetch model catalog)
+        /// Provider to discover: ollama (default, LAN scan), openrouter (fetch model catalog), free (all free-tier)
         #[arg(long, default_value = "ollama")]
         provider: String,
         /// Filter models by name substring
@@ -80,17 +147,29 @@ pub enum InferenceAction {
     },
     /// List pending inference queue tasks
     Queue,
+    /// Show inference cost attribution and provider statistics (ADR-2604052125)
+    Stats,
 }
 
 pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
     match action {
         InferenceAction::Add { provider_type, url, model, key, id, quantization } => {
-            add_provider(&provider_type, &url, model.as_deref(), key.as_deref(), id.as_deref(), quantization.as_deref()).await
+            // Check if provider_type is a known template name (ADR-2604052125)
+            if PROVIDER_TEMPLATES.contains(&provider_type.as_str()) && url.is_none() {
+                add_from_template(&provider_type, key.as_deref(), id.as_deref()).await
+            } else {
+                let url = url.unwrap_or_else(|| {
+                    eprintln!("{} URL required for non-template provider type '{}'", "✗".red(), provider_type);
+                    std::process::exit(1);
+                });
+                add_provider(&provider_type, &url, model.as_deref(), key.as_deref(), id.as_deref(), quantization.as_deref()).await
+            }
         }
         InferenceAction::List => list_providers().await,
         InferenceAction::Test { target, calibrate_all } => test_provider(target.as_deref(), calibrate_all).await,
         InferenceAction::Discover { provider, filter, min_context, prune } => {
             match provider.as_str() {
+                "free" => discover_free_tier().await,
                 "openrouter" => discover_openrouter(filter.as_deref(), min_context).await,
                 _ => discover_ollama(prune).await,
             }
@@ -99,6 +178,7 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         InferenceAction::Setup => setup_defaults().await,
         InferenceAction::Watch { agent_id, daemon } => watch(agent_id, daemon).await,
         InferenceAction::Queue => queue_list().await,
+        InferenceAction::Stats => inference_stats().await,
     }
 }
 
@@ -240,6 +320,281 @@ async fn add_provider(
     println!();
     println!("Use with hex-agent:");
     println!("  HEX_OLLAMA_HOST={} HEX_OLLAMA_MODEL={} hex-agent --project-dir .", url, model_name);
+
+    Ok(())
+}
+
+/// Register a provider from a built-in template (ADR-2604052125).
+///
+/// Reads the YAML template from embedded assets, resolves the API key from
+/// --key flag or environment variable, and registers all models with correct
+/// base URL, rate limits, and quantization tier.
+async fn add_from_template(
+    template_name: &str,
+    key: Option<&str>,
+    custom_id: Option<&str>,
+) -> anyhow::Result<()> {
+    let template = match load_provider_template(template_name) {
+        Some(t) => t,
+        None => {
+            println!("{} Unknown provider template '{}'. Available: {}", "✗".red(), template_name,
+                PROVIDER_TEMPLATES.join(", "));
+            return Ok(());
+        }
+    };
+
+    println!("{}", format!("── Registering {} ({}) ──", template.display_name, template.name).cyan());
+    println!("  Base URL: {}", template.base_url);
+    println!("  Free tier: {}", if template.is_free_tier { "yes".green() } else { "no".yellow() });
+    if template.rate_limits.rpm > 0 {
+        println!("  Rate limits: {} RPM, {} TPM", template.rate_limits.rpm, template.rate_limits.tpm);
+    }
+    if let Some(daily) = template.rate_limits.daily_tokens {
+        println!("  Daily quota: {} tokens", daily);
+    }
+
+    // Resolve API key: --key flag > env var > abort
+    let api_key = if let Some(k) = key {
+        k.to_string()
+    } else if let Some(ref env_var) = template.api_key_env {
+        match std::env::var(env_var) {
+            Ok(k) if !k.is_empty() => {
+                println!("  {} API key loaded from {}", "✓".green(), env_var);
+                k
+            }
+            _ => {
+                if template.name == "ollama" {
+                    String::new() // Ollama doesn't need a key
+                } else {
+                    println!("  {} No API key provided. Set {} or use --key", "✗".red(),
+                        env_var);
+                    return Ok(());
+                }
+            }
+        }
+    } else {
+        String::new()
+    };
+
+    let provider_id = custom_id.unwrap_or(template_name);
+    let model_ids: Vec<String> = template.models.iter().map(|m| m.id.clone()).collect();
+    let models_json = serde_json::to_string(&model_ids).unwrap_or_else(|_| "[]".to_string());
+    let quantization = template.models.first()
+        .map(|m| m.tier.clone())
+        .unwrap_or_else(|| "cloud".to_string());
+
+    println!("  {} model(s):", template.models.len());
+    for m in &template.models {
+        println!("    - {} [ctx: {}] {}", m.id, m.context_window,
+            if m.coding_optimized { "(code-optimized)".green() } else { "".normal() });
+    }
+
+    // Register with nexus
+    let client = NexusClient::from_env();
+    if client.ensure_running().await.is_ok() {
+        let body = serde_json::json!({
+            "id": provider_id,
+            "provider": template.provider_type,
+            "url": template.base_url.trim_end_matches('/'),
+            "model": model_ids.first().unwrap_or(&"default".to_string()),
+            "models_json": models_json,
+            "requires_auth": !api_key.is_empty(),
+            "secret_key": api_key,
+            "quantization": quantization,
+            "rate_limit_rpm": template.rate_limits.rpm,
+            "rate_limit_tpm": template.rate_limits.tpm,
+            "is_free_tier": template.is_free_tier,
+            "cost_per_input_mtok": template.cost.input_per_mtok,
+            "cost_per_output_mtok": template.cost.output_per_mtok,
+        });
+        match client.post("/api/inference/register", &body).await {
+            Ok(_) => println!("  {} Registered with hex-nexus", "✓".green()),
+            Err(e) => println!("  {} Nexus registration failed: {}", "!".yellow(), e),
+        }
+    } else {
+        println!("  {} hex-nexus not running — provider saved locally only", "!".yellow());
+    }
+
+    println!();
+    println!("{} {} registered with {} model(s)", "✓".green(), template.display_name, template.models.len());
+    println!();
+    if template.is_free_tier {
+        println!("  Cost: {} (free tier)", "$0.00".green());
+    }
+
+    Ok(())
+}
+
+/// Discover all free-tier providers by checking env vars (ADR-2604052125).
+///
+/// Probes known free-tier providers (Groq, Cerebras, SambaNova, Together, OpenRouter)
+/// for API keys in environment variables and registers all discovered providers.
+async fn discover_free_tier() -> anyhow::Result<()> {
+    println!("{}", "── Discovering Free-Tier Inference Providers (ADR-2604052125) ──".cyan());
+    println!();
+
+    let mut discovered = 0u32;
+    let mut total_daily_tokens: u64 = 0;
+
+    for template_name in PROVIDER_TEMPLATES {
+        let template = match load_provider_template(template_name) {
+            Some(t) => t,
+            None => continue,
+        };
+        if !template.is_free_tier {
+            continue;
+        }
+
+        // Check for API key (Ollama doesn't need one)
+        let has_key = if template.name == "ollama" {
+            // Check if Ollama is reachable
+            let http = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(3))
+                .build()?;
+            let url = format!("{}/api/tags", template.base_url.trim_end_matches("/v1").trim_end_matches('/'));
+            http.get(&url).send().await.is_ok()
+        } else if let Some(ref env_var) = template.api_key_env {
+            std::env::var(env_var).map(|v| !v.is_empty()).unwrap_or(false)
+        } else {
+            false
+        };
+
+        let status_icon = if has_key { "✓".green() } else { "○".yellow() };
+        let key_source = if template.name == "ollama" {
+            if has_key { "reachable" } else { "not running" }
+        } else if has_key {
+            "API key found"
+        } else {
+            "no API key"
+        };
+
+        println!("  {} {} — {} ({} models)", status_icon, template.display_name,
+            key_source, template.models.len());
+
+        if has_key {
+            if let Some(daily) = template.rate_limits.daily_tokens {
+                total_daily_tokens += daily;
+                println!("    Daily quota: {} tokens", daily);
+            }
+            if template.rate_limits.rpm > 0 {
+                println!("    Rate limit: {} RPM", template.rate_limits.rpm);
+            }
+            // Auto-register
+            if let Err(e) = add_from_template(template_name, None, None).await {
+                println!("    {} Registration failed: {}", "!".yellow(), e);
+            }
+            discovered += 1;
+        } else if let Some(ref env_var) = template.api_key_env {
+            println!("    Set: export {}=<your-key>", env_var);
+        }
+    }
+
+    println!();
+    if discovered > 0 {
+        println!("{} Discovered {} free-tier provider(s)", "✓".green(), discovered);
+        if total_daily_tokens > 0 {
+            println!("  Combined daily quota: ~{}M tokens", total_daily_tokens / 1_000_000);
+        }
+        println!("  Run 'hex inference test --all' to calibrate quality scores.");
+    } else {
+        println!("{} No free-tier providers discovered.", "!".yellow());
+        println!("  Set API keys for: GROQ_API_KEY, CEREBRAS_API_KEY, SAMBANOVA_API_KEY,");
+        println!("  TOGETHER_API_KEY, OPENROUTER_API_KEY");
+        println!("  Or start Ollama locally: ollama serve");
+    }
+
+    Ok(())
+}
+
+/// Show inference cost attribution and provider statistics (ADR-2604052125).
+async fn inference_stats() -> anyhow::Result<()> {
+    let client = NexusClient::from_env();
+    println!("{}", "── Inference Cost Attribution (ADR-2604052125) ──".cyan());
+    println!();
+
+    if client.ensure_running().await.is_err() {
+        println!("{} hex-nexus not running — cannot fetch stats", "✗".red());
+        return Ok(());
+    }
+
+    // Fetch provider stats from nexus
+    match client.get("/api/inference/stats").await {
+        Ok(data) => {
+            // Provider distribution
+            if let Some(providers) = data.get("providers").and_then(|v| v.as_array()) {
+                println!("{}", "  Provider Distribution:".cyan());
+                for p in providers {
+                    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                    let requests = p.get("requests").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let tokens = p.get("tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let cost = p.get("cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let is_free = p.get("is_free_tier").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let cost_str = if is_free {
+                        format!("$0.00 (free)").green().to_string()
+                    } else {
+                        format!("${:.4}", cost).to_string()
+                    };
+                    println!("    {} — {} requests, {}K tokens, {}", name, requests,
+                        tokens / 1000, cost_str);
+                }
+            }
+            // Cost summary
+            if let Some(summary) = data.get("summary") {
+                println!();
+                let actual = summary.get("actual_cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let counterfactual = summary.get("counterfactual_cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let savings_pct = if counterfactual > 0.0 {
+                    (1.0 - actual / counterfactual) * 100.0
+                } else {
+                    0.0
+                };
+                println!("{}", "  Cost Summary:".cyan());
+                println!("    Actual cost:        ${:.4}", actual);
+                println!("    Frontier equivalent: ${:.4}", counterfactual);
+                println!("    Savings:            {:.1}%", savings_pct);
+            }
+        }
+        Err(_) => {
+            println!("  Stats endpoint not available. Ensure hex-nexus is updated.");
+            println!("  Stats are collected per-session and reset on nexus restart.");
+        }
+    }
+
+    // Show free tier utilization
+    println!();
+    println!("{}", "  Free Tier Utilization:".cyan());
+    match client.get("/api/inference/rate-state").await {
+        Ok(data) => {
+            if let Some(providers) = data.get("providers").and_then(|v| v.as_array()) {
+                for p in providers {
+                    let name = p.get("provider_id").and_then(|v| v.as_str()).unwrap_or("?");
+                    let rpm_used = p.get("requests_this_minute").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let rpm_limit = p.get("rpm_limit").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let daily_used = p.get("tokens_today").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let daily_limit = p.get("daily_token_limit").and_then(|v| v.as_u64());
+                    let circuit = p.get("circuit_state").and_then(|v| v.as_str()).unwrap_or("closed");
+
+                    let circuit_icon = match circuit {
+                        "open" => "⊘".red(),
+                        "half_open" => "◐".yellow(),
+                        _ => "●".green(),
+                    };
+
+                    print!("    {} {} — {}/{} RPM", circuit_icon, name, rpm_used, rpm_limit);
+                    if let Some(limit) = daily_limit {
+                        let pct = if limit > 0 { daily_used as f64 / limit as f64 * 100.0 } else { 0.0 };
+                        print!(", {}K/{}K daily ({:.0}%)", daily_used / 1000, limit / 1000, pct);
+                    }
+                    println!();
+                }
+            } else {
+                println!("    No rate state data available.");
+            }
+        }
+        Err(_) => {
+            println!("    Rate state not available (nexus may need update).");
+        }
+    }
 
     Ok(())
 }

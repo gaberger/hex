@@ -20,6 +20,7 @@ pub mod composition_root;
 pub mod complexity;
 pub mod neural_lab_quant;
 pub mod quant_router;
+pub mod rate_limiter;
 pub mod cleanup;
 pub mod coordination;
 pub mod daemon;

@@ -1,0 +1,38 @@
+# Together.ai — Free-tier cloud inference (ADR-2604052125)
+# $25 signup credit, 2x serverless speed. Good for code generation.
+# Credit-based free tier (not unlimited).
+name: together
+display_name: Together.ai
+base_url: https://api.together.xyz/v1
+api_key_env: TOGETHER_API_KEY
+provider_type: openai_compat
+openai_compatible: true
+is_free_tier: true
+rate_limits:
+  rpm: 60
+  daily_requests: null
+  daily_tokens: null
+  tpm: 100000
+cost:
+  input_per_mtok: 0.0
+  output_per_mtok: 0.0
+models:
+  - id: meta-llama/Llama-4-Scout-17B-16E-Instruct
+    tier: cloud
+    context_window: 131072
+    coding_optimized: false
+    task_types: [general, reasoning]
+  - id: meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8
+    tier: cloud
+    context_window: 131072
+    coding_optimized: false
+    task_types: [general, reasoning, code_generation]
+  - id: deepseek-ai/DeepSeek-V3
+    tier: cloud
+    context_window: 65536
+    coding_optimized: true
+    task_types: [code_generation, reasoning]
+routing:
+  preferred_for: batch
+  workload_class: batch
+  priority: 3

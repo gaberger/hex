@@ -1,0 +1,34 @@
+# Cerebras — Free-tier cloud inference (ADR-2604052125)
+# Highest throughput (3000+ tok/s). Best for batch/non-interactive work.
+# Free tier: 1M tokens/day, 30 RPM.
+name: cerebras
+display_name: Cerebras
+base_url: https://api.cerebras.ai/v1
+api_key_env: CEREBRAS_API_KEY
+provider_type: openai_compat
+openai_compatible: true
+is_free_tier: true
+rate_limits:
+  rpm: 30
+  daily_requests: null
+  daily_tokens: 1000000
+  tpm: 60000
+cost:
+  input_per_mtok: 0.0
+  output_per_mtok: 0.0
+models:
+  - id: llama-3.3-70b
+    tier: cloud
+    context_window: 8192
+    coding_optimized: false
+    task_types: [general, reasoning, code_generation]
+  - id: qwen-3-32b
+    tier: cloud
+    context_window: 32768
+    coding_optimized: true
+    task_types: [code_generation, reasoning]
+routing:
+  # Best for batch work — highest throughput among free providers
+  preferred_for: batch
+  workload_class: batch
+  priority: 1

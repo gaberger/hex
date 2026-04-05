@@ -1,11 +1,13 @@
-//! Quantization-aware inference provider selection (ADR-2603271000).
+//! Quantization-aware inference provider selection (ADR-2603271000, ADR-2604052125).
 //!
 //! Selects the best available provider that meets a minimum quantization tier,
-//! preferring higher quality scores and escalating on failure.
+//! preferring free-tier providers with remaining quota and higher quality scores.
+//! Integrates with the RateLimitManager for circuit breaker and rate limit checks.
 
 use hex_core::QuantizationLevel;
 
 use crate::adapters::spacetime_inference::InferenceProviderRow;
+use crate::rate_limiter::RateLimitManager;
 
 /// Policy for quantization selection, read from agent YAML `model.quantization`.
 #[derive(Debug, Clone)]
@@ -79,6 +81,68 @@ pub fn select_provider(
     });
 
     candidates.into_iter().next()
+}
+
+/// Free-tier-aware provider selection (ADR-2604052125).
+///
+/// Like `select_provider` but also checks rate limits and circuit breakers
+/// via the RateLimitManager. Prefers free-tier providers with remaining quota.
+///
+/// Priority order:
+///   1. Free provider with remaining daily quota (circuit closed)
+///   2. Free provider in half-open circuit (testing recovery)
+///   3. Local provider (Ollama, vLLM) — zero cost, higher latency
+///   4. Paid provider with lowest cost
+///   5. Frontier provider (Anthropic, OpenAI) — only when lower tiers exhausted
+pub async fn select_provider_with_rate_limits(
+    providers: &[InferenceProviderRow],
+    min_level: QuantizationLevel,
+    rate_limiter: &RateLimitManager,
+) -> Option<InferenceProviderRow> {
+    if providers.is_empty() {
+        return None;
+    }
+
+    let mut candidates: Vec<&InferenceProviderRow> = providers
+        .iter()
+        .filter(|p| {
+            let level = p.quantization_level
+                .parse::<QuantizationLevel>()
+                .unwrap_or(QuantizationLevel::Q4);
+            level >= min_level
+        })
+        .collect();
+
+    if candidates.is_empty() {
+        candidates = providers.iter().collect();
+    }
+
+    // Check rate limits for each candidate
+    let mut available: Vec<(&InferenceProviderRow, bool)> = Vec::new();
+    for c in &candidates {
+        let can_route = rate_limiter.should_route(&c.provider_id).await;
+        if can_route {
+            available.push((c, c.healthy == 1));
+        }
+    }
+
+    // If all are rate-limited, fall back to any healthy candidate
+    if available.is_empty() {
+        tracing::warn!("all providers rate-limited — falling back to best available");
+        available = candidates.iter().map(|c| (*c, c.healthy == 1)).collect();
+    }
+
+    // Sort: healthy first, then by quality score
+    available.sort_by(|(a, a_healthy), (b, b_healthy)| {
+        if a_healthy != b_healthy {
+            return b_healthy.cmp(a_healthy);
+        }
+        let score_a = effective_quality(a);
+        let score_b = effective_quality(b);
+        score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    available.into_iter().next().map(|(p, _)| p.clone())
 }
 
 /// Get the effective quality score for a provider.

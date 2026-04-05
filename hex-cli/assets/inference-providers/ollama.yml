@@ -1,0 +1,39 @@
+# Ollama — Local inference (ADR-2604052125)
+# Unlimited tokens, zero cost, hardware-bound speed.
+# Auto-discovered via LAN scan; this template provides metadata.
+name: ollama
+display_name: Ollama (Local)
+base_url: http://localhost:11434/v1
+api_key_env: null
+provider_type: ollama
+openai_compatible: true
+is_free_tier: true
+rate_limits:
+  rpm: 0  # unlimited
+  daily_requests: null
+  daily_tokens: null
+  tpm: 0  # unlimited
+cost:
+  input_per_mtok: 0.0
+  output_per_mtok: 0.0
+models:
+  - id: qwen3:32b
+    tier: q4
+    context_window: 32768
+    coding_optimized: true
+    task_types: [code_generation, reasoning]
+  - id: deepseek-coder-v2:16b
+    tier: q4
+    context_window: 65536
+    coding_optimized: true
+    task_types: [code_generation]
+  - id: llama3:8b
+    tier: q4
+    context_window: 8192
+    coding_optimized: false
+    task_types: [general]
+routing:
+  # Local fallback — always available, higher latency
+  preferred_for: fallback
+  workload_class: batch
+  priority: 5
