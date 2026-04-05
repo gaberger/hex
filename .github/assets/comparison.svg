@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="220" viewBox="0 0 800 220">
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="380" viewBox="0 0 800 380">
   <defs>
     <linearGradient id="cmp-bg" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#0d1117"/>
@@ -6,45 +6,120 @@
     </linearGradient>
   </defs>
 
-  <rect width="800" height="220" fill="url(#cmp-bg)" rx="12"/>
+  <rect width="800" height="380" fill="url(#cmp-bg)" rx="12"/>
 
   <!-- Title -->
-  <text x="400" y="28" font-family="'Segoe UI', system-ui, sans-serif" font-size="12" fill="#8b949e" text-anchor="middle" letter-spacing="2">WHAT AI AGENTS ACTUALLY RECEIVE</text>
+  <text x="400" y="28" font-family="'Segoe UI', system-ui, sans-serif" font-size="12" fill="#8b949e" text-anchor="middle" letter-spacing="2">HOW THEY COMPARE</text>
 
-  <!-- SPECKit Column -->
-  <g transform="translate(50, 50)">
-    <rect width="220" height="150" rx="10" fill="#f778681a" stroke="#f77868" stroke-width="1" stroke-opacity="0.4"/>
-    <text x="110" y="25" font-family="'Segoe UI', sans-serif" font-size="13" fill="#f77868" text-anchor="middle" font-weight="600">SPECKit</text>
-    <line x1="20" y1="35" x2="200" y2="35" stroke="#f77868" stroke-width="0.5" opacity="0.3"/>
-    <text x="110" y="60" font-family="'SF Mono', monospace" font-size="10" fill="#8b949e" text-anchor="middle">"Please implement</text>
-    <text x="110" y="76" font-family="'SF Mono', monospace" font-size="10" fill="#8b949e" text-anchor="middle">a cache layer"</text>
-    <line x1="60" y1="95" x2="160" y2="95" stroke="#30363d" stroke-width="0.5"/>
-    <text x="110" y="115" font-family="'Segoe UI', sans-serif" font-size="9" fill="#484f58" text-anchor="middle">AI decides structure</text>
-    <text x="110" y="130" font-family="'Segoe UI', sans-serif" font-size="9" fill="#f77868" text-anchor="middle" opacity="0.7">No boundaries enforced</text>
+  <!-- BAML Column -->
+  <g transform="translate(25, 50)">
+    <rect width="175" height="140" rx="10" fill="#d299221a" stroke="#d29922" stroke-width="1" stroke-opacity="0.4"/>
+    <text x="87" y="25" font-family="'Segoe UI', sans-serif" font-size="13" fill="#d29922" text-anchor="middle" font-weight="600">BAML</text>
+    <line x1="15" y1="35" x2="160" y2="35" stroke="#d29922" stroke-width="0.5" opacity="0.3"/>
+    <text x="87" y="58" font-family="'Segoe UI', sans-serif" font-size="9.5" fill="#c9d1d9" text-anchor="middle">Typed LLM functions</text>
+    <text x="87" y="74" font-family="'Segoe UI', sans-serif" font-size="9.5" fill="#c9d1d9" text-anchor="middle">Schema validation</text>
+    <text x="87" y="90" font-family="'Segoe UI', sans-serif" font-size="9.5" fill="#c9d1d9" text-anchor="middle">Single-call focus</text>
+    <line x1="30" y1="103" x2="145" y2="103" stroke="#30363d" stroke-width="0.5"/>
+    <text x="87" y="122" font-family="'Segoe UI', sans-serif" font-size="8.5" fill="#d29922" text-anchor="middle" opacity="0.8">No orchestration</text>
+    <text x="87" y="135" font-family="'Segoe UI', sans-serif" font-size="8.5" fill="#d29922" text-anchor="middle" opacity="0.8">No agent lifecycle</text>
   </g>
 
-  <!-- BMAD Column -->
-  <g transform="translate(290, 50)">
-    <rect width="220" height="150" rx="10" fill="#d299221a" stroke="#d29922" stroke-width="1" stroke-opacity="0.4"/>
-    <text x="110" y="25" font-family="'Segoe UI', sans-serif" font-size="13" fill="#d29922" text-anchor="middle" font-weight="600">BMAD</text>
-    <line x1="20" y1="35" x2="200" y2="35" stroke="#d29922" stroke-width="0.5" opacity="0.3"/>
-    <text x="110" y="60" font-family="'SF Mono', monospace" font-size="10" fill="#8b949e" text-anchor="middle">"As Architect,</text>
-    <text x="110" y="76" font-family="'SF Mono', monospace" font-size="10" fill="#8b949e" text-anchor="middle">design a cache layer"</text>
-    <line x1="60" y1="95" x2="160" y2="95" stroke="#30363d" stroke-width="0.5"/>
-    <text x="110" y="115" font-family="'Segoe UI', sans-serif" font-size="9" fill="#484f58" text-anchor="middle">Document describes structure</text>
-    <text x="110" y="130" font-family="'Segoe UI', sans-serif" font-size="9" fill="#d29922" text-anchor="middle" opacity="0.7">Not enforced in code</text>
+  <!-- SpecKit Column -->
+  <g transform="translate(212, 50)">
+    <rect width="175" height="140" rx="10" fill="#f778681a" stroke="#f77868" stroke-width="1" stroke-opacity="0.4"/>
+    <text x="87" y="25" font-family="'Segoe UI', sans-serif" font-size="13" fill="#f77868" text-anchor="middle" font-weight="600">SpecKit</text>
+    <line x1="15" y1="35" x2="160" y2="35" stroke="#f77868" stroke-width="0.5" opacity="0.3"/>
+    <text x="87" y="58" font-family="'Segoe UI', sans-serif" font-size="9.5" fill="#c9d1d9" text-anchor="middle">Spec-driven workflow</text>
+    <text x="87" y="74" font-family="'Segoe UI', sans-serif" font-size="9.5" fill="#c9d1d9" text-anchor="middle">Phase gates</text>
+    <text x="87" y="90" font-family="'Segoe UI', sans-serif" font-size="9.5" fill="#c9d1d9" text-anchor="middle">Agent-agnostic</text>
+    <line x1="30" y1="103" x2="145" y2="103" stroke="#30363d" stroke-width="0.5"/>
+    <text x="87" y="122" font-family="'Segoe UI', sans-serif" font-size="8.5" fill="#f77868" text-anchor="middle" opacity="0.8">No runtime enforcement</text>
+    <text x="87" y="135" font-family="'Segoe UI', sans-serif" font-size="8.5" fill="#f77868" text-anchor="middle" opacity="0.8">No code execution</text>
   </g>
 
-  <!-- hex Column -->
-  <g transform="translate(530, 50)">
-    <rect width="220" height="150" rx="10" fill="#3fb9501a" stroke="#3fb950" stroke-width="1.5" stroke-opacity="0.6"/>
-    <text x="110" y="25" font-family="'Segoe UI', sans-serif" font-size="13" fill="#3fb950" text-anchor="middle" font-weight="600">hex</text>
-    <line x1="20" y1="35" x2="200" y2="35" stroke="#3fb950" stroke-width="0.5" opacity="0.3"/>
-    <text x="20" y="58" font-family="'SF Mono', monospace" font-size="9" fill="#7ee787">IFileSystemPort {</text>
-    <text x="30" y="72" font-family="'SF Mono', monospace" font-size="9" fill="#c9d1d9">read(path): string</text>
-    <text x="30" y="86" font-family="'SF Mono', monospace" font-size="9" fill="#c9d1d9">write(path, data): void</text>
-    <text x="30" y="100" font-family="'SF Mono', monospace" font-size="9" fill="#c9d1d9">glob(pattern): string[]</text>
-    <text x="20" y="114" font-family="'SF Mono', monospace" font-size="9" fill="#7ee787">}</text>
-    <text x="110" y="140" font-family="'Segoe UI', sans-serif" font-size="9" fill="#3fb950" text-anchor="middle" font-weight="600">Typed contract enforced</text>
+  <!-- HUD Column -->
+  <g transform="translate(400, 50)">
+    <rect width="175" height="140" rx="10" fill="#bc8cff1a" stroke="#bc8cff" stroke-width="1" stroke-opacity="0.4"/>
+    <text x="87" y="25" font-family="'Segoe UI', sans-serif" font-size="13" fill="#bc8cff" text-anchor="middle" font-weight="600">HUD</text>
+    <line x1="15" y1="35" x2="160" y2="35" stroke="#bc8cff" stroke-width="0.5" opacity="0.3"/>
+    <text x="87" y="58" font-family="'Segoe UI', sans-serif" font-size="9.5" fill="#c9d1d9" text-anchor="middle">Agent benchmarks</text>
+    <text x="87" y="74" font-family="'Segoe UI', sans-serif" font-size="9.5" fill="#c9d1d9" text-anchor="middle">RL environments</text>
+    <text x="87" y="90" font-family="'Segoe UI', sans-serif" font-size="9.5" fill="#c9d1d9" text-anchor="middle">A/B evaluation</text>
+    <line x1="30" y1="103" x2="145" y2="103" stroke="#30363d" stroke-width="0.5"/>
+    <text x="87" y="122" font-family="'Segoe UI', sans-serif" font-size="8.5" fill="#bc8cff" text-anchor="middle" opacity="0.8">No code generation</text>
+    <text x="87" y="135" font-family="'Segoe UI', sans-serif" font-size="8.5" fill="#bc8cff" text-anchor="middle" opacity="0.8">No architecture rules</text>
   </g>
+
+  <!-- hex Column (highlighted) -->
+  <g transform="translate(588, 50)">
+    <rect width="185" height="140" rx="10" fill="#3fb9501a" stroke="#3fb950" stroke-width="1.5" stroke-opacity="0.6"/>
+    <text x="92" y="25" font-family="'Segoe UI', sans-serif" font-size="13" fill="#3fb950" text-anchor="middle" font-weight="600">hex (AIOS)</text>
+    <line x1="15" y1="35" x2="170" y2="35" stroke="#3fb950" stroke-width="0.5" opacity="0.3"/>
+    <text x="92" y="58" font-family="'Segoe UI', sans-serif" font-size="9.5" fill="#7ee787" text-anchor="middle">Full agent lifecycle</text>
+    <text x="92" y="74" font-family="'Segoe UI', sans-serif" font-size="9.5" fill="#7ee787" text-anchor="middle">Enforced architecture</text>
+    <text x="92" y="90" font-family="'Segoe UI', sans-serif" font-size="9.5" fill="#7ee787" text-anchor="middle">Swarm coordination</text>
+    <line x1="30" y1="103" x2="155" y2="103" stroke="#30363d" stroke-width="0.5"/>
+    <text x="92" y="122" font-family="'Segoe UI', sans-serif" font-size="8.5" fill="#3fb950" text-anchor="middle" font-weight="600">RL inference routing</text>
+    <text x="92" y="135" font-family="'Segoe UI', sans-serif" font-size="8.5" fill="#3fb950" text-anchor="middle" font-weight="600">Capability auth</text>
+  </g>
+
+  <!-- Feature matrix -->
+  <g transform="translate(25, 210)">
+    <rect width="750" height="155" rx="8" fill="#161b2280" stroke="#30363d" stroke-width="0.5"/>
+
+    <!-- Headers -->
+    <text x="120" y="22" font-family="'Segoe UI', sans-serif" font-size="9" fill="#484f58" text-anchor="middle">Capability</text>
+    <text x="295" y="22" font-family="'Segoe UI', sans-serif" font-size="9" fill="#d29922" text-anchor="middle">BAML</text>
+    <text x="405" y="22" font-family="'Segoe UI', sans-serif" font-size="9" fill="#f77868" text-anchor="middle">SpecKit</text>
+    <text x="515" y="22" font-family="'Segoe UI', sans-serif" font-size="9" fill="#bc8cff" text-anchor="middle">HUD</text>
+    <text x="645" y="22" font-family="'Segoe UI', sans-serif" font-size="9" fill="#3fb950" text-anchor="middle">hex</text>
+    <line x1="15" y1="30" x2="735" y2="30" stroke="#30363d" stroke-width="0.5"/>
+
+    <!-- Row 1 -->
+    <text x="25" y="48" font-family="'Segoe UI', sans-serif" font-size="9" fill="#c9d1d9">Agent process management</text>
+    <text x="295" y="48" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="405" y="48" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="515" y="48" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">~</text>
+    <text x="645" y="48" font-family="'Segoe UI', sans-serif" font-size="10" fill="#3fb950" text-anchor="middle">●</text>
+
+    <!-- Row 2 -->
+    <text x="25" y="68" font-family="'Segoe UI', sans-serif" font-size="9" fill="#c9d1d9">Architecture enforcement</text>
+    <text x="295" y="68" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="405" y="68" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="515" y="68" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="645" y="68" font-family="'Segoe UI', sans-serif" font-size="10" fill="#3fb950" text-anchor="middle">●</text>
+
+    <!-- Row 3 -->
+    <text x="25" y="88" font-family="'Segoe UI', sans-serif" font-size="9" fill="#c9d1d9">Multi-agent swarm coordination</text>
+    <text x="295" y="88" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="405" y="88" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="515" y="88" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="645" y="88" font-family="'Segoe UI', sans-serif" font-size="10" fill="#3fb950" text-anchor="middle">●</text>
+
+    <!-- Row 4 -->
+    <text x="25" y="108" font-family="'Segoe UI', sans-serif" font-size="9" fill="#c9d1d9">RL-driven inference routing</text>
+    <text x="295" y="108" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="405" y="108" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="515" y="108" font-family="'Segoe UI', sans-serif" font-size="10" fill="#bc8cff" text-anchor="middle">~</text>
+    <text x="645" y="108" font-family="'Segoe UI', sans-serif" font-size="10" fill="#3fb950" text-anchor="middle">●</text>
+
+    <!-- Row 5 -->
+    <text x="25" y="128" font-family="'Segoe UI', sans-serif" font-size="9" fill="#c9d1d9">Specs-first development pipeline</text>
+    <text x="295" y="128" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">~</text>
+    <text x="405" y="128" font-family="'Segoe UI', sans-serif" font-size="10" fill="#f77868" text-anchor="middle">●</text>
+    <text x="515" y="128" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="645" y="128" font-family="'Segoe UI', sans-serif" font-size="10" fill="#3fb950" text-anchor="middle">●</text>
+
+    <!-- Row 6 -->
+    <text x="25" y="148" font-family="'Segoe UI', sans-serif" font-size="9" fill="#c9d1d9">Capability-based security</text>
+    <text x="295" y="148" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="405" y="148" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="515" y="148" font-family="'Segoe UI', sans-serif" font-size="10" fill="#484f58" text-anchor="middle">—</text>
+    <text x="645" y="148" font-family="'Segoe UI', sans-serif" font-size="10" fill="#3fb950" text-anchor="middle">●</text>
+
+    <!-- Legend -->
+  </g>
+
+  <!-- Legend at bottom -->
+  <text x="400" y="374" font-family="'Segoe UI', sans-serif" font-size="8" fill="#484f58" text-anchor="middle">● full support    ~ partial    — not available</text>
 </svg>
