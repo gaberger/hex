@@ -1,4 +1,4 @@
-# ADR-032: Deprecate SQLite, Migrate HexFlo to SpacetimeDB
+# ADR-063: Deprecate SQLite, Migrate HexFlo to SpacetimeDB
 
 **Status:** Accepted
 **Date:** 2026-03-18

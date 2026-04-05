@@ -1,4 +1,4 @@
-# ADR-2603241230: Persistent Agent Coordination via SpacetimeDB
+# ADR-2603241231: Persistent Agent Coordination via SpacetimeDB
 
 **Status:** Accepted
 **Date:** 2026-03-24

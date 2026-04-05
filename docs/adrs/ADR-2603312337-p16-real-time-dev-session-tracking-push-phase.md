@@ -1,6 +1,6 @@
-# ADR-2404241436: Real-time Development Session Tracking via Push API
+# ADR-2603312337: Real-time Development Session Tracking via Push API
 
-**Status:** proposed
+**Status:** Abandoned — Superseded by ADR-2604010000 (Unified Execution Path)
 
 ## Date
 2024-04-24

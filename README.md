@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.75+-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
   <a href="https://spacetimedb.com/"><img src="https://img.shields.io/badge/SpacetimeDB-WASM-58a6ff?style=flat-square" alt="SpacetimeDB"></a>
   <a href="https://github.com/gaberger/hex/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
-  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-70+-bc8cff?style=flat-square" alt="ADRs"></a>
+  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-107_Accepted-bc8cff?style=flat-square" alt="ADRs"></a>
 </p>
 
 <p align="center">
@@ -192,7 +192,7 @@ cd your-project && hex init
 ```bash
 # Architecture enforcement
 hex analyze .                   # Boundary check, dead code, coupling violations
-hex adr list                    # 70+ Architecture Decision Records
+hex adr list                    # 107 Architecture Decision Records
 hex adr search "inference"      # Find relevant decisions
 
 # Autonomous development
@@ -268,7 +268,7 @@ hex installs into your project as the operating system layer between your agents
 
 | Resource | What You'll Find |
 |:---------|:-----------------|
-| [Architecture Decision Records](docs/adrs/) | 70+ decisions with rationale — the "why" behind every design choice |
+| [Architecture Decision Records](docs/adrs/) | 107 decisions with rationale — the "why" behind every design choice |
 | [Development Guides](docs/guides/) | Workflow walkthrough, OpenRouter setup, feature UX integration |
 | [Behavioral Specs](docs/specs/) | Feature specifications written before code |
 | [Workplans](docs/workplans/) | Structured task decomposition driving HexFlo swarm execution |
