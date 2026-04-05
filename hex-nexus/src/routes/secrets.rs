@@ -75,6 +75,27 @@ pub struct InferenceRegisterRequest {
     /// Context window size in tokens.
     #[serde(alias = "context_window")]
     pub context_window: Option<u32>,
+    /// Requests per minute limit (ADR-2604052125).
+    #[serde(alias = "rate_limit_rpm")]
+    pub rate_limit_rpm: Option<u32>,
+    /// Tokens per minute limit (ADR-2604052125).
+    #[serde(alias = "rate_limit_tpm")]
+    pub rate_limit_tpm: Option<u64>,
+    /// Whether this is a free-tier provider (ADR-2604052125).
+    #[serde(alias = "is_free_tier")]
+    pub is_free_tier: Option<bool>,
+    /// Cost per million input tokens (ADR-2604052125).
+    #[serde(alias = "cost_per_input_mtok")]
+    pub cost_per_input_mtok: Option<f64>,
+    /// Cost per million output tokens (ADR-2604052125).
+    #[serde(alias = "cost_per_output_mtok")]
+    pub cost_per_output_mtok: Option<f64>,
+    /// Daily token limit (0 = unlimited) (ADR-2604052125).
+    #[serde(alias = "daily_token_limit")]
+    pub daily_token_limit: Option<u64>,
+    /// Daily request limit (0 = unlimited) (ADR-2604052125).
+    #[serde(alias = "daily_request_limit")]
+    pub daily_request_limit: Option<u32>,
 }
 
 /// In-memory inference endpoint entry.
@@ -280,7 +301,7 @@ pub async fn register_inference(
     Json(body): Json<InferenceRegisterRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     match body.provider.as_str() {
-        "ollama" | "openai-compatible" | "vllm" | "llama-cpp" | "openrouter" => {}
+        "ollama" | "openai-compatible" | "openai_compat" | "vllm" | "llama-cpp" | "openrouter" => {}
         _ => return (StatusCode::BAD_REQUEST, Json(json!({ "error": format!("Unknown provider '{}'", body.provider) }))),
     }
 
@@ -336,10 +357,15 @@ pub async fn register_inference(
         body.context_window.unwrap_or(0) as u64
     };
 
+    // Extract rate limit and cost metadata from request body (ADR-2604052125)
+    let rpm_limit = body.rate_limit_rpm.unwrap_or(60);
+    let tpm_limit = body.rate_limit_tpm.unwrap_or(0);
+    let is_free_tier = body.is_free_tier.unwrap_or(false);
+
     match stdb_client.register_provider(
         &body.id, provider_type, &body.url,
         &api_key_ref,
-        &models_json, 60, context_window,
+        &models_json, rpm_limit, context_window,
         &quantization_level, 0, -1.0,
     ).await {
         Ok(()) => {
@@ -350,9 +376,26 @@ pub async fn register_inference(
                     tracing::warn!(provider = %body.id, error = %e, "set_api_key failed (non-fatal)");
                 }
             }
+            // Register rate limits in the rate limiter (ADR-2604052125)
+            let daily_token_limit = body.daily_token_limit.unwrap_or(0);
+            let daily_request_limit = body.daily_request_limit.unwrap_or(0);
+            let cost_input = body.cost_per_input_mtok.unwrap_or(0.0);
+            let cost_output = body.cost_per_output_mtok.unwrap_or(0.0);
+            state.rate_limiter.register_provider(
+                &body.id, rpm_limit, tpm_limit,
+                daily_token_limit, daily_request_limit,
+                is_free_tier, cost_input, cost_output,
+            ).await;
+            tracing::info!(
+                provider = %body.id,
+                rpm = rpm_limit,
+                free_tier = is_free_tier,
+                "provider registered with rate limiter"
+            );
             (StatusCode::CREATED, Json(json!({
                 "id": body.id,
                 "quantization_level": quantization_level,
+                "is_free_tier": is_free_tier,
             })))
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),

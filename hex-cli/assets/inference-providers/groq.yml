@@ -1,0 +1,44 @@
+# Groq — Free-tier cloud inference (ADR-2604052125)
+# Fastest time-to-first-token for interactive agent conversations.
+# Free tier: 30 RPM, ~1000 requests/day for 70B models.
+name: groq
+display_name: Groq
+base_url: https://api.groq.com/openai/v1
+api_key_env: GROQ_API_KEY
+provider_type: openai_compat
+openai_compatible: true
+is_free_tier: true
+rate_limits:
+  rpm: 30
+  daily_requests: 1000
+  daily_tokens: null
+  tpm: 100000
+cost:
+  input_per_mtok: 0.0
+  output_per_mtok: 0.0
+models:
+  - id: llama-4-scout-17b-16e-instruct
+    tier: cloud
+    context_window: 131072
+    coding_optimized: false
+    task_types: [general, reasoning]
+  - id: qwen-qwq-32b
+    tier: cloud
+    context_window: 131072
+    coding_optimized: true
+    task_types: [code_generation, reasoning]
+  - id: meta-llama/llama-4-scout-17b-16e-instruct
+    tier: cloud
+    context_window: 131072
+    coding_optimized: false
+    task_types: [general]
+  - id: llama-3.3-70b-versatile
+    tier: cloud
+    context_window: 131072
+    coding_optimized: false
+    task_types: [general, reasoning, code_generation]
+routing:
+  # Best for interactive work — lowest latency among free providers
+  preferred_for: interactive
+  workload_class: interactive
+  priority: 1
