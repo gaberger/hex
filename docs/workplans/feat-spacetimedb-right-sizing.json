@@ -1,0 +1,493 @@
+{
+  "id": "feat-spacetimedb-right-sizing",
+  "feature": "SpacetimeDB Right-Sizing and Procedures Migration",
+  "description": "Reduce 19 WASM modules to 7 focused on multi-host dispatch. Migrate inference to procedures for direct LLM calls from SpacetimeDB. Wire remote agent state to SpacetimeDB for real-time fleet visibility across hosts and Docker sandboxes.",
+  "adr": "ADR-2604050900",
+  "status": "planned",
+  "priority": "high",
+  "created_at": "2026-04-05T09:00:00Z",
+  "created_by": "planner",
+  "topology": "pipeline",
+  "budget": "~120000 tokens",
+  "language": "rust",
+  "specs": "docs/specs/spacetimedb-right-sizing.json",
+  "relates_to": "feat-docker-sandbox-agent-coordination",
+  "blocks": [
+    "Remote Docker sandbox dispatch (agents can't coordinate without SpacetimeDB-backed fleet state)",
+    "Multi-host swarm execution (dashboard can't see remote agents without subscription-based registry)"
+  ],
+  "successCriteria": [
+    "Only 7 WASM modules in spacetime-modules/ (5 kept + 2 absorbed into hexflo-coordination)",
+    "STDB_MODULE_DATABASES in hex-core/src/lib.rs lists exactly 7 entries",
+    "Docker sandbox agent on remote host claims task via SpacetimeDB subscription (no hex-nexus polling)",
+    "Dashboard shows remote agent fleet in real-time via WebSocket subscription",
+    "Inference request from sandboxed agent completes via procedure (no hex-nexus proxy)",
+    "cargo build -p hex-nexus compiles clean with zero dead-module references",
+    "hex nexus start + hex swarm init + hex task create works end-to-end"
+  ],
+  "riskRegister": [
+    {
+      "risk": "SpacetimeDB procedures are newer; may have undiscovered edge cases in HTTP calls",
+      "impact": "high",
+      "mitigation": "P2 keeps hex-nexus direct inference path as fallback; procedure path opt-in via feature flag"
+    },
+    {
+      "risk": "Deleting 12 modules may break spacetime_bindings imports that are referenced but dead",
+      "impact": "medium",
+      "mitigation": "P1 includes cargo build gate after each module deletion batch"
+    },
+    {
+      "risk": "Active swarms may reference deleted module databases during migration",
+      "impact": "medium",
+      "mitigation": "P0 absorbs fleet-state and hexflo-lifecycle tables before any deletion; P1 checks for active swarms"
+    },
+    {
+      "risk": "RemoteRegistryAdapter replacement (P4) may break SSH tunnel agent flow",
+      "impact": "high",
+      "mitigation": "P4 maintains in-memory cache backed by SpacetimeDB subscription; fallback to cache on STDB timeout"
+    }
+  ],
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Absorb fleet-state and hexflo-lifecycle into hexflo-coordination",
+      "tier": 0,
+      "description": "Move compute_node table from fleet-state and lifecycle event tables from hexflo-lifecycle into hexflo-coordination module. This preserves data while reducing module count.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hexflo-coordination --target wasm32-unknown-unknown",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Add compute_node table + reducers to hexflo-coordination/src/lib.rs",
+          "layer": "domain",
+          "description": "Copy ComputeNode struct, register_node, update_health, increment_agents, decrement_agents reducers from fleet-state/src/lib.rs into hexflo-coordination. Preserve exact field names and types for backward compatibility.",
+          "deps": [],
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs",
+            "spacetime-modules/fleet-state/src/lib.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.2",
+          "name": "Merge hexflo-lifecycle phase transition reducers into hexflo-coordination",
+          "layer": "domain",
+          "description": "Move swarm phase transition tables and reducers from hexflo-lifecycle into hexflo-coordination. These are tightly coupled to swarm state and should not be a separate module.",
+          "deps": [],
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs",
+            "spacetime-modules/hexflo-lifecycle/src/lib.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.3",
+          "name": "Merge hexflo-cleanup reducers into hexflo-coordination",
+          "layer": "domain",
+          "description": "Move stale agent detection and task reclamation logic from hexflo-cleanup into hexflo-coordination. Deduplicate with existing agent_mark_stale/agent_mark_dead reducers.",
+          "deps": [],
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs",
+            "spacetime-modules/hexflo-cleanup/src/lib.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P0.4",
+          "name": "Verify hexflo-coordination compiles and publishes with merged tables",
+          "layer": "integration",
+          "description": "Build the WASM module, publish to local SpacetimeDB, verify all tables exist via spacetime sql.",
+          "deps": ["P0.1", "P0.2", "P0.3"],
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs"
+          ],
+          "status": "todo",
+          "agent": "integrator"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Delete 12 dead WASM modules and prune bindings",
+      "tier": 0,
+      "description": "Remove modules that are deployed but never invoked. Update STDB_MODULE_DATABASES, spacetime_bindings, spacetime_launcher, and spacetime_state.rs references.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Delete 12 module directories from spacetime-modules/",
+          "layer": "domain",
+          "description": "Remove: file-lock-manager, inference-bridge, architecture-enforcer, skill-registry, hook-registry, agent-definition-registry, workplan-state, chat-relay, hexflo-lifecycle (absorbed in P0), hexflo-cleanup (absorbed in P0), conflict-resolver, test-results. Keep fleet-state directory until P0 verified, then delete.",
+          "deps": ["P0.4"],
+          "files": [
+            "spacetime-modules/"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Update STDB_MODULE_DATABASES in hex-core/src/lib.rs",
+          "layer": "domain",
+          "description": "Reduce constant to 7 entries: hexflo-coordination (hex), agent-registry, inference-gateway, secret-grant, rl-engine, fleet-state (now in hex db via hexflo-coordination — remove entry or map to hex). Update tier structure accordingly. Remove neural-lab entry.",
+          "deps": ["P0.4"],
+          "files": [
+            "hex-core/src/lib.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "Prune spacetime_bindings/ — remove bindings for deleted modules",
+          "layer": "secondary",
+          "description": "Delete auto-generated binding directories for removed modules in hex-nexus/src/spacetime_bindings/. Should reduce from 118 files (~20,353 LOC) to ~40 files. Update spacetime_bindings/mod.rs to only export remaining modules.",
+          "deps": ["P1.1"],
+          "files": [
+            "hex-nexus/src/spacetime_bindings/"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.4",
+          "name": "Update spacetime_launcher/ publication pipeline",
+          "layer": "secondary",
+          "description": "Reduce tiered publication from 5 tiers to 2. Tier 0: hexflo-coordination, agent-registry. Tier 1: inference-gateway, secret-grant, rl-engine. Remove references to deleted modules.",
+          "deps": ["P1.1"],
+          "files": [
+            "hex-nexus/src/spacetime_launcher/"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.5",
+          "name": "Remove dead module calls from spacetime_state.rs",
+          "layer": "secondary",
+          "description": "Remove methods in spacetime_state.rs that call reducers on deleted modules. Expect to reduce from 1,775 lines to ~800 lines. Remove cross-database calls (call_reducer_on, query_table_on) for deleted modules.",
+          "deps": ["P1.3"],
+          "files": [
+            "hex-nexus/src/adapters/spacetime_state.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.6",
+          "name": "Update Cargo workspace — remove deleted module members",
+          "layer": "integration",
+          "description": "Remove deleted modules from root Cargo.toml workspace members list. Verify cargo build -p hex-nexus -p hex-cli -p hex-agent all compile clean.",
+          "deps": ["P1.1", "P1.2", "P1.3", "P1.4", "P1.5"],
+          "files": [
+            "Cargo.toml",
+            "spacetime-modules/Cargo.toml"
+          ],
+          "status": "todo",
+          "agent": "integrator"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Migrate inference-gateway to procedure-based LLM calls",
+      "tier": 1,
+      "description": "Leverage SpacetimeDB procedures to make direct HTTP calls to LLM providers from inside the WASM module. Sandboxed agents write to inference_request table; procedure calls API; result appears in inference_response table via subscription.",
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-nexus -- inference",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Implement execute_inference procedure with HTTP client",
+          "layer": "domain",
+          "description": "Expand existing execute_inference procedure in inference-gateway to make real HTTP POST to LLM provider URLs. Read provider config from inference_provider table. Read API keys from inference_api_key table. Support Anthropic Messages API and OpenAI-compatible format. Write response to inference_response table via complete_inference reducer.",
+          "deps": ["P1.6"],
+          "files": [
+            "spacetime-modules/inference-gateway/src/lib.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Add request_inference reducer for agent-initiated inference",
+          "layer": "domain",
+          "description": "Reducer that writes to inference_request table with: request_id, agent_id, model, messages_json, max_tokens, temperature. Triggers execute_inference procedure via scheduled callback or table subscription.",
+          "deps": ["P2.1"],
+          "files": [
+            "spacetime-modules/inference-gateway/src/lib.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.3",
+          "name": "Add SpacetimeDB subscription path in hex-agent daemon mode",
+          "layer": "secondary",
+          "description": "In hex-agent daemon mode, subscribe to inference_response table filtered by agent_id. When a response appears, parse it and feed into the conversation loop. This is the path sandboxed agents use — they write inference_request, subscribe to inference_response.",
+          "deps": ["P2.2"],
+          "files": [
+            "hex-agent/src/main.rs",
+            "hex-agent/src/adapters/secondary/stdb_inference.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.4",
+          "name": "Keep hex-nexus direct inference path as fallback",
+          "layer": "secondary",
+          "description": "hex-nexus retains the ability to proxy inference directly for local agents (lower latency). Add feature flag stdb-inference-procedure (default on) to toggle between procedure path and direct proxy path. Local agents use direct; sandboxed/remote agents use procedure.",
+          "deps": ["P2.1"],
+          "files": [
+            "hex-nexus/src/routes/inference.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.5",
+          "name": "Integration test: sandboxed agent inference via procedure",
+          "layer": "integration",
+          "description": "Test: spawn Docker sandbox -> hex-agent daemon writes inference_request -> procedure calls mock LLM endpoint -> response appears in inference_response -> agent receives via subscription. Verify end-to-end latency and error handling.",
+          "deps": ["P2.3", "P2.4"],
+          "files": [
+            "hex-nexus/tests/procedure_inference_test.rs"
+          ],
+          "status": "todo",
+          "agent": "integrator"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Migrate agent cleanup to scheduled procedure",
+      "tier": 1,
+      "description": "Move stale/dead agent detection from hex-nexus background task to a scheduled SpacetimeDB procedure in agent-registry. Runs every 30s, marks agents stale (45s no heartbeat) or dead (120s), reclaims tasks from dead agents.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p agent-registry --target wasm32-unknown-unknown",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Add scheduled cleanup procedure to agent-registry module",
+          "layer": "domain",
+          "description": "Add #[spacetimedb::procedure] that queries AgentHeartbeat table, compares last_seen with current time, marks agents stale (>45s) or dead (>120s). For dead agents, query hexflo-coordination for assigned tasks and set them back to pending. Schedule to run every 30 seconds.",
+          "deps": ["P1.6"],
+          "files": [
+            "spacetime-modules/agent-registry/src/lib.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Remove cleanup background task from hex-nexus",
+          "layer": "secondary",
+          "description": "Remove the background tokio::spawn cleanup task in hex-nexus that polls agent heartbeats and marks stale/dead. This is now handled server-side by the procedure.",
+          "deps": ["P3.1"],
+          "files": [
+            "hex-nexus/src/cleanup.rs",
+            "hex-nexus/src/lib.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Wire remote agent state to SpacetimeDB",
+      "tier": 2,
+      "description": "Replace in-memory RemoteRegistryAdapter (HashMap) with SpacetimeDB-backed state using hexflo-coordination tables. Dashboard subscribes for real-time fleet visibility. Agents on any host see the full fleet.",
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-nexus -- remote",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Add remote_agent table to hexflo-coordination module",
+          "layer": "domain",
+          "description": "Add RemoteAgent table with fields: agent_id (primary key), name, host, project_dir, status (connecting/online/busy/stale/dead), last_heartbeat, connected_at, tunnel_id, capabilities_json. Add reducers: register_remote_agent, update_remote_heartbeat, deregister_remote_agent.",
+          "deps": ["P0.4"],
+          "files": [
+            "spacetime-modules/hexflo-coordination/src/lib.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.2",
+          "name": "Create SpacetimeDB-backed RemoteRegistryAdapter",
+          "layer": "secondary",
+          "description": "New adapter implementing IRemoteRegistryPort that calls SpacetimeDB reducers instead of HashMap. Maintains local Arc<RwLock<HashMap>> cache backed by SpacetimeDB subscription for fast reads. On STDB timeout, falls back to cache. On register/deregister, writes to STDB first, then updates cache on confirmation.",
+          "deps": ["P4.1"],
+          "files": [
+            "hex-nexus/src/adapters/remote_registry.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.3",
+          "name": "Wire agent heartbeats to SpacetimeDB",
+          "layer": "secondary",
+          "description": "Modify AgentLifecycleAdapter to write heartbeats to SpacetimeDB (update_remote_heartbeat reducer) instead of only updating in-memory registry. Agents on remote hosts are now visible to all subscribers.",
+          "deps": ["P4.2"],
+          "files": [
+            "hex-nexus/src/adapters/agent_lifecycle.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.4",
+          "name": "Update dashboard to subscribe to remote_agent table",
+          "layer": "primary",
+          "description": "Replace HTTP polling of /api/remote-agents with SpacetimeDB WebSocket subscription to remote_agent table in hexflo-coordination. Agent cards update in real-time when agents connect, go stale, or die. Fleet overview aggregates from subscription, not REST.",
+          "deps": ["P4.1"],
+          "files": [
+            "hex-nexus/assets/src/spacetimedb/"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.5",
+          "name": "Integration test: multi-host agent visibility",
+          "layer": "integration",
+          "description": "Test: register agent on simulated Host B via SSH spawn -> verify SpacetimeDB remote_agent table updated -> verify dashboard subscription receives agent -> simulate heartbeat timeout -> verify stale detection propagates to all subscribers.",
+          "deps": ["P4.2", "P4.3", "P4.4"],
+          "files": [
+            "hex-nexus/tests/remote_agent_stdb_test.rs"
+          ],
+          "status": "todo",
+          "agent": "integrator"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Remote Docker sandbox dispatch via fleet + SpacetimeDB",
+      "tier": 3,
+      "description": "Extend DockerSandboxAdapter to dispatch agents to remote Docker hosts selected via fleet-state (now in hexflo-coordination). Agents inside remote sandboxes coordinate entirely via SpacetimeDB subscriptions.",
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-nexus -- docker_remote",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Extend DockerSandboxAdapter for remote Docker daemons",
+          "layer": "secondary",
+          "description": "Add remote spawn path to DockerSandboxAdapter: SSH to selected fleet node -> docker sandbox create on remote host -> docker sandbox exec hex-agent daemon. Use FleetManager.select_node() for host selection. Pass SPACETIMEDB_HOST pointing to central SpacetimeDB instance (not host.docker.internal).",
+          "deps": ["P4.5"],
+          "files": [
+            "hex-nexus/src/adapters/docker_sandbox.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.2",
+          "name": "Update sandbox.yml for remote connectivity",
+          "layer": "domain",
+          "description": "Add configurable network allow-list entries for remote SpacetimeDB host (not just host.docker.internal). Support environment variable substitution in sandbox.yml for SPACETIMEDB_HOST, HEX_NEXUS_HOST.",
+          "deps": [],
+          "files": [
+            "hex-agent/sandbox.yml"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.3",
+          "name": "Add hex agent spawn-remote --sandbox CLI command",
+          "layer": "primary",
+          "description": "Wire CLI subcommand: hex agent spawn-remote --host user@host --sandbox --project-dir /path. Calls POST /api/remote-agents/spawn-remote with sandbox=true flag, which triggers DockerSandboxAdapter remote path.",
+          "deps": ["P5.1"],
+          "files": [
+            "hex-cli/src/commands/agent.rs",
+            "hex-nexus/src/routes/agents.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.4",
+          "name": "End-to-end test: remote Docker sandbox swarm task",
+          "layer": "integration",
+          "description": "Full flow: hex swarm init -> hex task create -> fleet selects remote host -> Docker sandbox created on remote -> hex-agent daemon starts inside sandbox -> claims task via SpacetimeDB subscription -> executes via MCP server tools -> writes result -> supervisor sees completion. Verify all coordination happens via SpacetimeDB, not hex-nexus HTTP.",
+          "deps": ["P5.1", "P5.2", "P5.3", "P2.5"],
+          "files": [
+            "hex-nexus/tests/remote_docker_sandbox_e2e.rs"
+          ],
+          "status": "todo",
+          "agent": "integrator"
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "name": "Finalize and verify",
+      "tier": 4,
+      "description": "Final verification, documentation update, and cleanup.",
+      "gate": {
+        "type": "build",
+        "command": "cargo build -p hex-nexus -p hex-cli -p hex-agent --release",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P6.1",
+          "name": "Update CLAUDE.md system components section",
+          "layer": "domain",
+          "description": "Update the SpacetimeDB section to reflect 7 modules (not 18). Update hex-nexus description to reflect focused role (filesystem bridge + dashboard + agent spawner, not coordination router). Update module list and tier structure.",
+          "deps": ["P5.4"],
+          "files": [
+            "CLAUDE.md"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P6.2",
+          "name": "Release build and smoke test full pipeline",
+          "layer": "integration",
+          "description": "cargo build --release for all workspace members. Run hex nexus start, hex swarm init, hex task create, hex agent spawn-remote --sandbox. Verify dashboard shows fleet, tasks complete, inference works through procedures.",
+          "deps": ["P6.1"],
+          "files": [],
+          "status": "todo",
+          "agent": "integrator"
+        }
+      ]
+    }
+  ],
+  "mergeOrder": [
+    "P0 (absorb modules into hexflo-coordination — foundational)",
+    "P1 (delete dead modules — depends on P0 completing absorption)",
+    "P2 + P3 parallel (inference procedures + cleanup procedures — independent of each other, both depend on P1)",
+    "P4 (remote agent state — depends on P0 for table structure)",
+    "P5 (remote Docker dispatch — depends on P2 inference + P4 fleet state)",
+    "P6 last (finalize — depends on everything)"
+  ],
+  "done_condition": "7 WASM modules total. Docker sandbox agent on remote host completes swarm task end-to-end via SpacetimeDB coordination (no hex-nexus proxy for inference or task claiming). Dashboard shows real-time fleet via subscription."
+}
