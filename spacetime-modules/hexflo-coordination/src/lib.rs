@@ -512,7 +512,13 @@ pub fn mcp_tool_sync(
     Ok(())
 }
 
-// ─── Remote Agent Registry (ADR-040) ─────────────────────────────────────
+// ============================================================
+//  Remote Agent Registry (ADR-2604050900 P4.1)
+//
+//  Replaces in-memory RemoteRegistryAdapter with SpacetimeDB-backed state.
+//  Dashboard subscribes to this table for real-time fleet visibility.
+//  Agents on any host see the full fleet via WebSocket subscription.
+// ============================================================
 
 /// A remote agent connected via SSH tunnel + WebSocket.
 #[table(name = remote_agent, public)]
@@ -591,6 +597,72 @@ pub fn remove_remote_agent(
         return Err(format!("Remote agent '{}' not found", agent_id));
     }
     Ok(())
+}
+
+/// Update heartbeat timestamp and set status to "online" (P4.1 convenience reducer).
+#[reducer]
+pub fn update_remote_heartbeat(
+    ctx: &ReducerContext,
+    agent_id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let agent = ctx.db.remote_agent().agent_id().find(&agent_id)
+        .ok_or_else(|| format!("Remote agent '{}' not found", agent_id))?;
+    ctx.db.remote_agent().agent_id().update(RemoteAgent {
+        status: "online".to_string(),
+        last_heartbeat: timestamp,
+        ..agent
+    });
+    Ok(())
+}
+
+/// Update only the status of a remote agent (e.g. "busy", "stale", "dead").
+#[reducer]
+pub fn update_remote_status(
+    ctx: &ReducerContext,
+    agent_id: String,
+    status: String,
+) -> Result<(), String> {
+    let agent = ctx.db.remote_agent().agent_id().find(&agent_id)
+        .ok_or_else(|| format!("Remote agent '{}' not found", agent_id))?;
+    ctx.db.remote_agent().agent_id().update(RemoteAgent {
+        status,
+        ..agent
+    });
+    Ok(())
+}
+
+/// Delete a remote agent row (alias used by P4.1 fleet management).
+#[reducer]
+pub fn deregister_remote_agent(
+    ctx: &ReducerContext,
+    agent_id: String,
+) -> Result<(), String> {
+    if !ctx.db.remote_agent().agent_id().delete(&agent_id) {
+        return Err(format!("Remote agent '{}' not found", agent_id));
+    }
+    log::info!("Remote agent deregistered: {}", agent_id);
+    Ok(())
+}
+
+/// Log remote agents for a given host (enables subscription filtering).
+#[reducer]
+pub fn list_remote_agents_by_host(ctx: &ReducerContext, host: String) {
+    let agents: Vec<RemoteAgent> = ctx
+        .db
+        .remote_agent()
+        .iter()
+        .filter(|a| a.host == host)
+        .collect();
+    log::info!("Host '{}' has {} remote agent(s)", host, agents.len());
+    for agent in &agents {
+        log::info!(
+            "  agent={} name={} status={}",
+            agent.agent_id,
+            agent.name,
+            agent.status
+        );
+    }
 }
 
 // ─── Inference Server Registry ───────────────────────────────────────────
@@ -2357,128 +2429,5 @@ pub fn lifecycle_check_unblocked(ctx: &ReducerContext, swarm_id: String) {
             log::info!("Task {} unblocked in swarm {}", task.task_id, swarm_id);
             // Task is ready — agents can pick it up via SpacetimeDB subscription
         }
-    }
-}
-
-// ============================================================
-//  Remote Agent Registry (ADR-2604050900 P4.1)
-//
-//  Replaces in-memory RemoteRegistryAdapter with SpacetimeDB-backed state.
-//  Dashboard subscribes to this table for real-time fleet visibility.
-//  Agents on any host see the full fleet via WebSocket subscription.
-// ============================================================
-
-#[table(name = remote_agent, public)]
-#[derive(Clone, Debug)]
-pub struct RemoteAgent {
-    #[primary_key]
-    pub agent_id: String,
-    pub name: String,
-    pub host: String,
-    pub project_dir: String,
-    /// Status: "connecting", "online", "busy", "stale", "dead"
-    pub status: String,
-    pub last_heartbeat: String,
-    pub connected_at: String,
-    pub tunnel_id: String,
-    /// JSON-encoded AgentCapabilities (models, tools, max_concurrent_tasks, gpu_vram)
-    pub capabilities_json: String,
-}
-
-/// Register a remote agent in the fleet registry.
-#[reducer]
-pub fn register_remote_agent(
-    ctx: &ReducerContext,
-    agent_id: String,
-    name: String,
-    host: String,
-    project_dir: String,
-    tunnel_id: String,
-    capabilities_json: String,
-) -> Result<(), String> {
-    let now = ctx.timestamp.to_string();
-
-    // Remove existing entry if re-registering
-    ctx.db.remote_agent().agent_id().delete(&agent_id);
-
-    ctx.db.remote_agent().insert(RemoteAgent {
-        agent_id: agent_id.clone(),
-        name,
-        host,
-        project_dir,
-        status: "online".to_string(),
-        last_heartbeat: now.clone(),
-        connected_at: now,
-        tunnel_id,
-        capabilities_json,
-    });
-
-    log::info!("Remote agent registered: {}", agent_id);
-    Ok(())
-}
-
-/// Update heartbeat timestamp and set status to "online".
-#[reducer]
-pub fn update_remote_heartbeat(ctx: &ReducerContext, agent_id: String) -> Result<(), String> {
-    let mut agent = ctx
-        .db
-        .remote_agent()
-        .agent_id()
-        .find(&agent_id)
-        .ok_or_else(|| format!("Remote agent '{}' not found", agent_id))?;
-
-    agent.last_heartbeat = ctx.timestamp.to_string();
-    agent.status = "online".to_string();
-    ctx.db.remote_agent().agent_id().update(agent);
-    Ok(())
-}
-
-/// Update the status of a remote agent.
-#[reducer]
-pub fn update_remote_status(
-    ctx: &ReducerContext,
-    agent_id: String,
-    status: String,
-) -> Result<(), String> {
-    let mut agent = ctx
-        .db
-        .remote_agent()
-        .agent_id()
-        .find(&agent_id)
-        .ok_or_else(|| format!("Remote agent '{}' not found", agent_id))?;
-
-    agent.status = status;
-    ctx.db.remote_agent().agent_id().update(agent);
-    Ok(())
-}
-
-/// Remove a remote agent from the registry.
-#[reducer]
-pub fn deregister_remote_agent(ctx: &ReducerContext, agent_id: String) -> Result<(), String> {
-    if !ctx.db.remote_agent().agent_id().delete(&agent_id) {
-        return Err(format!("Remote agent '{}' not found", agent_id));
-    }
-    log::info!("Remote agent deregistered: {}", agent_id);
-    Ok(())
-}
-
-/// Log remote agents for a given host (enables subscription filtering).
-#[reducer]
-pub fn list_remote_agents_by_host(ctx: &ReducerContext, host: String) {
-    let agents: Vec<RemoteAgent> = ctx
-        .db
-        .remote_agent()
-        .iter()
-        .filter(|a| a.host == host)
-        .collect();
-
-    log::info!("Host '{}' has {} remote agent(s)", host, agents.len());
-    for agent in &agents {
-        log::info!(
-            "  agent={} name={} status={}",
-            agent.agent_id,
-            agent.name,
-            agent.status
-        );
     }
 }
