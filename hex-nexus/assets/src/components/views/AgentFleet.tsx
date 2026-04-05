@@ -5,7 +5,7 @@
  * Data sources: SpacetimeDB subscriptions via connection stores.
  */
 import { Component, For, Show, createMemo, createSignal } from "solid-js";
-import { registryAgents, swarmAgents, swarmTasks } from "../../stores/connection";
+import { registryAgents, remoteAgents as stdbRemoteAgents, swarmAgents, swarmTasks } from "../../stores/connection";
 import { projects } from "../../stores/projects";
 import { setSpawnDialogOpen } from "../../stores/ui";
 import { openPane } from "../../stores/panes";
@@ -72,9 +72,23 @@ const AgentFleet: Component = () => {
   });
 
   const remoteAgents = createMemo(() => {
-    return filteredAgents().filter(
+    // Merge two sources: SpacetimeDB remote_agent table (ADR-2604050900) + heuristic
+    // filter from hex_agent table (agents with host/remote/transport fields).
+    const heuristic = filteredAgents().filter(
       (a: any) => a.host || a.remote || a.transport
     );
+    const stdb = stdbRemoteAgents();
+    // Deduplicate by agent_id / agentId
+    const seen = new Set(heuristic.map((a: any) => a.id ?? a.agent_id ?? a.agentId));
+    const merged = [...heuristic];
+    for (const ra of stdb) {
+      const id = ra.agentId ?? ra.agent_id ?? ra.id;
+      if (id && !seen.has(id)) {
+        merged.push(ra);
+        seen.add(id);
+      }
+    }
+    return merged;
   });
 
   const totalCount = createMemo(() => filteredAgents().length);

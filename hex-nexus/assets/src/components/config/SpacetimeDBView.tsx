@@ -12,7 +12,7 @@ const MODULES: ModuleDef[] = [
   {
     name: "hexflo-coordination",
     connected: hexfloConnected,
-    tables: ["swarm", "swarm_task", "swarm_agent", "hexflo_memory", "project"],
+    tables: ["swarm", "swarm_task", "swarm_agent", "hexflo_memory", "project", "compute_node", "remote_agent"],
   },
   {
     name: "agent-registry",

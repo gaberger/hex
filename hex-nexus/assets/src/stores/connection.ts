@@ -80,6 +80,7 @@ let agentDefinitions: Accessor<any[]> = () => [];
 let registryAgents: Accessor<any[]> = () => [];
 let agentHeartbeats: Accessor<any[]> = () => [];
 let agentInbox: Accessor<any[]> = () => [];
+let remoteAgents: Accessor<any[]> = () => [];
 
 // inference-gateway tables
 let inferenceProviders: Accessor<any[]> = () => [];
@@ -97,7 +98,7 @@ export {
   anyConnected,
   swarms, swarmTasks, swarmAgents, hexfloMemory,
   registeredProjects, projectConfigs, skillRegistry, agentDefinitions,
-  registryAgents, agentHeartbeats, agentInbox,
+  registryAgents, agentHeartbeats, agentInbox, remoteAgents,
   inferenceProviders, inferenceRequests,
   fleetNodes,
 };
@@ -211,8 +212,7 @@ export function initConnectionStore() {
     const [_hexfloConnected, _setHexfloConnected] = createSignal(false);
     const [_inferenceConn, _setInferenceConn] = createSignal<any | null>(null);
     const [_inferenceConnected, _setInferenceConnected] = createSignal(false);
-    const [_fleetConn, _setFleetConn] = createSignal<any | null>(null);
-    const [_fleetConnected, _setFleetConnected] = createSignal(false);
+    // ADR-2604050900: fleet-state retired; fleetConnected mirrors hexfloConnected
 
     // Assign to module-level variables
     hexfloConn = _hexfloConn;
@@ -224,10 +224,7 @@ export function initConnectionStore() {
     setInferenceConn = _setInferenceConn;
     inferenceConnected = _inferenceConnected;
     setInferenceConnected = _setInferenceConnected;
-    fleetConn = _fleetConn;
-    setFleetConn = _setFleetConn;
-    fleetConnected = _fleetConnected;
-    setFleetConnected = _setFleetConnected;
+    fleetConnected = _hexfloConnected; // fleet data now from hexflo-coordination
 
     // Table accessors (useTable creates createEffect inside — needs reactive owner)
     swarms = useTable(() => _hexfloConn()?.db.swarm as SpacetimeDBTableHandle<any> | undefined);
@@ -241,6 +238,7 @@ export function initConnectionStore() {
     registryAgents = useTable(() => _hexfloConn()?.db.hex_agent as SpacetimeDBTableHandle<any> | undefined);
     agentHeartbeats = () => []; // Heartbeat data inline on hex_agent.lastHeartbeat (ADR-058)
     agentInbox = useTable(() => _hexfloConn()?.db.agent_inbox as SpacetimeDBTableHandle<any> | undefined);
+    remoteAgents = useTable(() => _hexfloConn()?.db.remote_agent as SpacetimeDBTableHandle<any> | undefined);
 
     // inference-gateway tables
     inferenceProviders = useTable(() => _inferenceConn()?.db.inference_provider as SpacetimeDBTableHandle<any> | undefined);
@@ -296,6 +294,7 @@ export function initConnections() {
       "SELECT * FROM hex_agent",
       "SELECT * FROM agent_inbox",
       "SELECT * FROM compute_node",
+      "SELECT * FROM remote_agent",
     ],
   });
 
