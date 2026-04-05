@@ -440,16 +440,16 @@ pub enum StateEvent {
     SwarmAgentChanged { agent: SwarmAgentInfo },
 }
 
-// ── The Port ────────────────────────────────────────────
+// ── Focused Sub-Traits (ADR-2604050900 P6) ─────────────
+//
+// IStatePort was a 100+ method god-trait. These sub-traits let consumers
+// depend only on the method groups they actually use. IStatePort remains
+// as a super-trait for code that genuinely needs the full surface (e.g.
+// composition root, adapter implementations).
 
-/// Unified state port — abstracts the storage + sync backend.
-///
-/// Two implementations:
-/// 1. SqliteStateAdapter (default) — wraps existing RL, orchestration, fleet SQLite code
-/// 2. SpacetimeStateAdapter (opt-in) — connects to SpacetimeDB with real-time subscriptions
+/// RL engine: action selection, reward recording, stats.
 #[async_trait]
-pub trait IStatePort: Send + Sync {
-    // ── RL Engine ───────────────────────────────────
+pub trait IRlStatePort: Send + Sync {
     async fn rl_select_action(&self, state: &RlState) -> Result<String, StateError>;
     async fn rl_record_reward(
         &self,
@@ -461,8 +461,11 @@ pub trait IStatePort: Send + Sync {
         openrouter_cost_usd: f64,
     ) -> Result<(), StateError>;
     async fn rl_get_stats(&self) -> Result<RlStats, StateError>;
+}
 
-    // ── Patterns ────────────────────────────────────
+/// Pattern store: store, search, reinforce, decay.
+#[async_trait]
+pub trait IPatternStatePort: Send + Sync {
     async fn pattern_store(
         &self,
         category: &str,
@@ -477,8 +480,11 @@ pub trait IStatePort: Send + Sync {
     ) -> Result<Vec<PatternEntry>, StateError>;
     async fn pattern_reinforce(&self, id: &str, delta: f64) -> Result<(), StateError>;
     async fn pattern_decay_all(&self) -> Result<u32, StateError>;
+}
 
-    // ── Agent Registry ──────────────────────────────
+/// Local agent lifecycle: register, status, list, get, remove.
+#[async_trait]
+pub trait IAgentStatePort: Send + Sync {
     async fn agent_register(&self, info: AgentInfo) -> Result<String, StateError>;
     async fn agent_update_status(
         &self,
@@ -489,23 +495,32 @@ pub trait IStatePort: Send + Sync {
     async fn agent_list(&self) -> Result<Vec<AgentInfo>, StateError>;
     async fn agent_get(&self, id: &str) -> Result<Option<AgentInfo>, StateError>;
     async fn agent_remove(&self, id: &str) -> Result<(), StateError>;
+}
 
-    // ── Workplan ────────────────────────────────────
+/// Workplan task tracking.
+#[async_trait]
+pub trait IWorkplanStatePort: Send + Sync {
     async fn workplan_update_task(&self, update: WorkplanTaskUpdate) -> Result<(), StateError>;
     async fn workplan_get_tasks(
         &self,
         workplan_id: &str,
     ) -> Result<Vec<WorkplanTaskUpdate>, StateError>;
+}
 
-    // ── Chat ────────────────────────────────────────
+/// Chat message send/history.
+#[async_trait]
+pub trait IChatStatePort: Send + Sync {
     async fn chat_send(&self, message: ChatMessage) -> Result<(), StateError>;
     async fn chat_history(
         &self,
         conversation_id: &str,
         limit: u32,
     ) -> Result<Vec<ChatMessage>, StateError>;
+}
 
-    // ── Skill Registry ────────────────────────────────
+/// Skill registry: CRUD + trigger search.
+#[async_trait]
+pub trait ISkillStatePort: Send + Sync {
     async fn skill_register(&self, skill: SkillEntry) -> Result<String, StateError>;
     async fn skill_update(
         &self,
@@ -522,8 +537,11 @@ pub trait IStatePort: Send + Sync {
         trigger_type: &str,
         query: &str,
     ) -> Result<Vec<SkillEntry>, StateError>;
+}
 
-    // ── Agent Definition Registry ──────────────────────
+/// Agent definition registry: CRUD + versioning.
+#[async_trait]
+pub trait IAgentDefStatePort: Send + Sync {
     async fn agent_def_register(&self, def: AgentDefinitionEntry) -> Result<String, StateError>;
     async fn agent_def_update(
         &self,
@@ -543,8 +561,11 @@ pub trait IStatePort: Send + Sync {
         &self,
         definition_id: &str,
     ) -> Result<Vec<AgentDefinitionVersionEntry>, StateError>;
+}
 
-    // ── HexFlo Coordination ───────────────────────────
+/// HexFlo swarm lifecycle + task + agent coordination.
+#[async_trait]
+pub trait ISwarmStatePort: Send + Sync {
     async fn swarm_init(
         &self,
         id: &str,
@@ -557,15 +578,10 @@ pub trait IStatePort: Send + Sync {
     async fn swarm_fail(&self, id: &str, reason: &str) -> Result<(), StateError>;
     async fn swarm_list_active(&self) -> Result<Vec<SwarmInfo>, StateError>;
     async fn swarm_list_failed(&self) -> Result<Vec<SwarmInfo>, StateError>;
-    /// Returns all swarms regardless of status, most recent first (capped at `limit`).
     async fn swarm_list_all(&self, limit: usize) -> Result<Vec<SwarmInfo>, StateError>;
-    /// Returns all swarms for a project (all statuses — active, completed, failed).
     async fn swarm_list_by_project(&self, project_id: &str) -> Result<Vec<SwarmInfo>, StateError>;
-    /// Returns a single swarm by ID regardless of status.
     async fn swarm_get(&self, id: &str) -> Result<Option<SwarmInfo>, StateError>;
-    /// Returns the swarm owned by `agent_id` (status=active), if any.
     async fn swarm_owned_by_agent(&self, agent_id: &str) -> Result<Option<SwarmInfo>, StateError>;
-    /// Transfer swarm ownership from current owner to `new_owner_agent_id`.
     async fn swarm_transfer(&self, swarm_id: &str, new_owner_agent_id: &str) -> Result<(), StateError>;
 
     async fn swarm_task_create(
@@ -575,9 +591,6 @@ pub trait IStatePort: Send + Sync {
         title: &str,
         depends_on: &str,
     ) -> Result<(), StateError>;
-    /// Assign a task using CAS. `expected_version` must match current task version.
-    /// Pass `None` to skip version check (legacy behaviour).
-    /// Returns `Err(StateError::Conflict(_))` on CAS failure.
     async fn swarm_task_assign(
         &self,
         task_id: &str,
@@ -587,13 +600,6 @@ pub trait IStatePort: Send + Sync {
     async fn swarm_task_complete(&self, task_id: &str, result: &str) -> Result<(), StateError>;
     async fn swarm_task_fail(&self, task_id: &str, reason: &str) -> Result<(), StateError>;
     async fn swarm_task_list(&self, swarm_id: Option<&str>) -> Result<Vec<SwarmTaskInfo>, StateError>;
-
-    async fn inference_task_create(&self, id: &str, workplan_id: &str, task_id: &str, phase: &str, prompt: &str, role: &str, created_at: &str) -> Result<(), StateError>;
-    async fn inference_task_claim(&self, id: &str, agent_id: &str, updated_at: &str) -> Result<(), StateError>;
-    async fn inference_task_complete(&self, id: &str, result: &str, updated_at: &str) -> Result<(), StateError>;
-    async fn inference_task_fail(&self, id: &str, error: &str, updated_at: &str) -> Result<(), StateError>;
-    async fn inference_task_get(&self, id: &str) -> Result<Option<InferenceTaskInfo>, StateError>;
-    async fn inference_task_list_pending(&self) -> Result<Vec<InferenceTaskInfo>, StateError>;
 
     async fn swarm_agent_register(
         &self,
@@ -610,7 +616,22 @@ pub trait IStatePort: Send + Sync {
         stale_secs: u64,
         dead_secs: u64,
     ) -> Result<CleanupReport, StateError>;
+}
 
+/// Inference task lifecycle (workplan-driven inference).
+#[async_trait]
+pub trait IInferenceTaskStatePort: Send + Sync {
+    async fn inference_task_create(&self, id: &str, workplan_id: &str, task_id: &str, phase: &str, prompt: &str, role: &str, created_at: &str) -> Result<(), StateError>;
+    async fn inference_task_claim(&self, id: &str, agent_id: &str, updated_at: &str) -> Result<(), StateError>;
+    async fn inference_task_complete(&self, id: &str, result: &str, updated_at: &str) -> Result<(), StateError>;
+    async fn inference_task_fail(&self, id: &str, error: &str, updated_at: &str) -> Result<(), StateError>;
+    async fn inference_task_get(&self, id: &str) -> Result<Option<InferenceTaskInfo>, StateError>;
+    async fn inference_task_list_pending(&self) -> Result<Vec<InferenceTaskInfo>, StateError>;
+}
+
+/// HexFlo key-value memory (scoped: global, per-swarm, per-agent).
+#[async_trait]
+pub trait IHexFloMemoryStatePort: Send + Sync {
     async fn hexflo_memory_store(
         &self,
         key: &str,
@@ -620,8 +641,11 @@ pub trait IStatePort: Send + Sync {
     async fn hexflo_memory_retrieve(&self, key: &str) -> Result<Option<String>, StateError>;
     async fn hexflo_memory_search(&self, query: &str) -> Result<Vec<(String, String)>, StateError>;
     async fn hexflo_memory_delete(&self, key: &str) -> Result<(), StateError>;
+}
 
-    // ── Quality Gate & Fix Tasks (Swarm Gate Enforcement) ──
+/// Quality gate enforcement + fix tasks.
+#[async_trait]
+pub trait IQualityGateStatePort: Send + Sync {
     async fn quality_gate_create(
         &self,
         id: &str,
@@ -662,8 +686,11 @@ pub trait IStatePort: Send + Sync {
         cost_usd: &str,
     ) -> Result<(), StateError>;
     async fn fix_task_list_by_gate(&self, gate_task_id: &str) -> Result<Vec<FixTaskInfo>, StateError>;
+}
 
-    // ── Project Registry (ADR-042) ─────────────────
+/// Project registry (ADR-042).
+#[async_trait]
+pub trait IProjectStatePort: Send + Sync {
     async fn project_register(&self, project: ProjectRegistration) -> Result<(), StateError>;
     async fn project_unregister(&self, id: &str) -> Result<bool, StateError>;
     async fn project_get(&self, id: &str) -> Result<Option<ProjectRecord>, StateError>;
@@ -675,37 +702,38 @@ pub trait IStatePort: Send + Sync {
         data: serde_json::Value,
         file_path: Option<&str>,
     ) -> Result<(), StateError>;
-    /// Find project by ID, name, or root_path basename.
     async fn project_find(&self, query: &str) -> Result<Option<ProjectRecord>, StateError>;
+}
 
-    // ── Instance Coordination (ADR-042) ──────────────
+/// Multi-instance coordination: instances, worktree locks, task claims, unstaged files (ADR-042).
+#[async_trait]
+pub trait ICoordinationStatePort: Send + Sync {
     async fn instance_register(&self, info: InstanceRecord) -> Result<String, StateError>;
     async fn instance_heartbeat(&self, id: &str, update: InstanceHeartbeat) -> Result<(), StateError>;
     async fn instance_list(&self, project_id: Option<&str>) -> Result<Vec<InstanceRecord>, StateError>;
     async fn instance_remove(&self, id: &str) -> Result<(), StateError>;
 
-    // ── Worktree Locks (ADR-042) ─────────────────────
     async fn worktree_lock_acquire(&self, lock: WorktreeLockRecord) -> Result<bool, StateError>;
     async fn worktree_lock_release(&self, key: &str) -> Result<bool, StateError>;
     async fn worktree_lock_list(&self, project_id: Option<&str>) -> Result<Vec<WorktreeLockRecord>, StateError>;
     async fn worktree_lock_refresh(&self, instance_id: &str, heartbeat_at: &str) -> Result<(), StateError>;
     async fn worktree_lock_evict_expired(&self) -> Result<u32, StateError>;
 
-    // ── Task Claims (ADR-042) ────────────────────────
     async fn task_claim_acquire(&self, claim: TaskClaimRecord) -> Result<bool, StateError>;
     async fn task_claim_release(&self, task_id: &str) -> Result<bool, StateError>;
     async fn task_claim_list(&self, project_id: Option<&str>) -> Result<Vec<TaskClaimRecord>, StateError>;
     async fn task_claim_refresh(&self, instance_id: &str, heartbeat_at: &str) -> Result<(), StateError>;
 
-    // ── Unstaged Files (ADR-042) ─────────────────────
     async fn unstaged_update(&self, instance_id: &str, state: UnstagedRecord) -> Result<(), StateError>;
     async fn unstaged_list(&self, project_id: Option<&str>) -> Result<Vec<UnstagedRecord>, StateError>;
     async fn unstaged_remove(&self, instance_id: &str) -> Result<(), StateError>;
 
-    // ── Coordination Cleanup (ADR-042) ───────────────
     async fn coordination_cleanup_stale(&self, stale_threshold_secs: u64) -> Result<CoordinationCleanupReport, StateError>;
+}
 
-    // ── Unified Agent Registry (ADR-058) ─────────────
+/// Unified agent registry (ADR-058).
+#[async_trait]
+pub trait IHexAgentStatePort: Send + Sync {
     async fn hex_agent_connect(&self, id: &str, name: &str, host: &str, project_id: &str, project_dir: &str, model: &str, session_id: &str, capabilities_json: &str) -> Result<(), StateError>;
     async fn hex_agent_disconnect(&self, id: &str) -> Result<(), StateError>;
     async fn hex_agent_heartbeat(&self, id: &str) -> Result<(), StateError>;
@@ -713,15 +741,21 @@ pub trait IStatePort: Send + Sync {
     async fn hex_agent_get(&self, id: &str) -> Result<Option<serde_json::Value>, StateError>;
     async fn hex_agent_evict_dead(&self) -> Result<(), StateError>;
     async fn hex_agent_mark_inactive(&self) -> Result<(), StateError>;
+}
 
-    // ── Agent Notification Inbox (ADR-060) ─────────
+/// Agent notification inbox (ADR-060).
+#[async_trait]
+pub trait IInboxStatePort: Send + Sync {
     async fn inbox_notify(&self, agent_id: &str, priority: u8, kind: &str, payload: &str) -> Result<(), StateError>;
     async fn inbox_notify_all(&self, project_id: &str, priority: u8, kind: &str, payload: &str) -> Result<(), StateError>;
     async fn inbox_query(&self, agent_id: &str, min_priority: Option<u8>, unacked_only: bool) -> Result<Vec<InboxNotification>, StateError>;
     async fn inbox_acknowledge(&self, notification_id: u64, agent_id: &str) -> Result<(), StateError>;
     async fn inbox_expire(&self, max_age_secs: u64) -> Result<u32, StateError>;
+}
 
-    // ── Neural Lab (architecture search) ──────────────
+/// Neural Lab architecture search.
+#[async_trait]
+pub trait INeuralLabStatePort: Send + Sync {
     async fn neural_lab_config_list(&self, status: Option<&str>) -> Result<Vec<serde_json::Value>, StateError>;
     async fn neural_lab_config_get(&self, id: &str) -> Result<Option<serde_json::Value>, StateError>;
     async fn neural_lab_config_create(&self, args: serde_json::Value) -> Result<serde_json::Value, StateError>;
@@ -734,7 +768,37 @@ pub trait IStatePort: Send + Sync {
     async fn neural_lab_experiment_fail(&self, id: &str, error_message: &str) -> Result<(), StateError>;
     async fn neural_lab_frontier_get(&self, lineage: &str) -> Result<Option<serde_json::Value>, StateError>;
     async fn neural_lab_strategies_list(&self) -> Result<Vec<serde_json::Value>, StateError>;
+}
 
+// ── The Unified Super-Trait ─────────────────────────────
+//
+// Existing code that takes `Arc<dyn IStatePort>` continues to work.
+// New code should prefer narrow sub-traits where possible.
+
+/// Unified state port — extends all focused sub-traits.
+///
+/// Two implementations:
+/// 1. SqliteStateAdapter (default) — wraps existing RL, orchestration, fleet SQLite code
+/// 2. SpacetimeStateAdapter (opt-in) — connects to SpacetimeDB with real-time subscriptions
+#[async_trait]
+pub trait IStatePort:
+    IRlStatePort
+    + IPatternStatePort
+    + IAgentStatePort
+    + IWorkplanStatePort
+    + IChatStatePort
+    + ISkillStatePort
+    + IAgentDefStatePort
+    + ISwarmStatePort
+    + IInferenceTaskStatePort
+    + IHexFloMemoryStatePort
+    + IQualityGateStatePort
+    + IProjectStatePort
+    + ICoordinationStatePort
+    + IHexAgentStatePort
+    + IInboxStatePort
+    + INeuralLabStatePort
+{
     // ── Subscriptions (real-time sync) ──────────────
     fn subscribe(&self) -> broadcast::Receiver<StateEvent>;
 }

@@ -14,6 +14,14 @@ pub mod adr_review;
 pub use secret_grant::ISecretGrantPort;
 pub use session::ISessionPort;
 pub use state::IStatePort;
+// Focused sub-traits (ADR-2604050900 P6) — prefer these over IStatePort for narrow dependencies.
+pub use state::{
+    IRlStatePort, IPatternStatePort, IAgentStatePort, IWorkplanStatePort,
+    IChatStatePort, ISkillStatePort, IAgentDefStatePort, ISwarmStatePort,
+    IInferenceTaskStatePort, IHexFloMemoryStatePort, IQualityGateStatePort,
+    IProjectStatePort, ICoordinationStatePort, IHexAgentStatePort,
+    IInboxStatePort, INeuralLabStatePort,
+};
 pub use ssh_tunnel::ISshTunnelPort;
 pub use agent_transport::IAgentTransportPort;
 pub use remote_registry::IRemoteRegistryPort;

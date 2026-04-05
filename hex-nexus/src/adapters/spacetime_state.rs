@@ -337,10 +337,7 @@ mod real {
     }
 
     #[async_trait]
-    impl IStatePort for SpacetimeStateAdapter {
-        // ── RL ───────────────────────────────────────────
-        // Maps to: rl-engine module reducers
-
+    impl IRlStatePort for SpacetimeStateAdapter {
         async fn rl_select_action(&self, state: &RlState) -> Result<String, StateError> {
             let state_key = discretize_state(state);
             let resp = self.call_reducer_on("rl-engine", "select_action", serde_json::json!([state_key])).await?;
@@ -393,9 +390,13 @@ mod real {
                 total_experiences,
             })
         }
+    }
 
-        // ── Patterns ────────────────────────────────────
-        // Maps to: rl-engine module (rl_pattern table + store_pattern/decay_patterns reducers)
+    // ── Patterns ────────────────────────────────────
+    // Maps to: rl-engine module (rl_pattern table + store_pattern/decay_patterns reducers)
+
+    #[async_trait]
+    impl IPatternStatePort for SpacetimeStateAdapter {
 
         async fn pattern_store(
             &self,
@@ -470,10 +471,13 @@ mod real {
                 .unwrap_or(0) as u32;
             Ok(count)
         }
+    }
 
-        // ── Agent Registry ──────────────────────────────
-        // Maps to: agent-registry module
+    // ── Agent Registry ──────────────────────────────
+    // Maps to: agent-registry module
 
+    #[async_trait]
+    impl IAgentStatePort for SpacetimeStateAdapter {
         async fn agent_register(&self, info: AgentInfo) -> Result<String, StateError> {
             const AGENT_DB: &str = "agent-registry";
             self.call_reducer_on(AGENT_DB, "register_agent", serde_json::json!({
@@ -566,11 +570,14 @@ mod real {
             })).await?;
             Ok(())
         }
+    }
 
-        // ── Workplan ────────────────────────────────────
-        // NOTE: workplan-state module was removed (ADR-2604050900).
-        // These stubs satisfy the trait; state is managed by hexflo-coordination.
+    // ── Workplan ────────────────────────────────────
+    // NOTE: workplan-state module was removed (ADR-2604050900).
+    // These stubs satisfy the trait; state is managed by hexflo-coordination.
 
+    #[async_trait]
+    impl IWorkplanStatePort for SpacetimeStateAdapter {
         async fn workplan_update_task(&self, _update: WorkplanTaskUpdate) -> Result<(), StateError> {
             // conn.reducers().update_task(execution_id, task_id, status, agent_id, result, timestamp)
             Err(Self::not_connected())
@@ -583,10 +590,13 @@ mod real {
             // conn.db().workplan_task().iter().filter(|t| t.execution_id == workplan_id)
             Err(Self::not_connected())
         }
+    }
 
-        // ── Chat ────────────────────────────────────────
-        // Maps to: chat-relay module
+    // ── Chat ────────────────────────────────────────
+    // Maps to: chat-relay module
 
+    #[async_trait]
+    impl IChatStatePort for SpacetimeStateAdapter {
         async fn chat_send(&self, message: ChatMessage) -> Result<(), StateError> {
             const CHAT_DB: &str = "hex-chat-relay";
             // Ensure conversation exists (ignore error if already exists)
@@ -630,12 +640,15 @@ mod real {
             messages.reverse(); // chronological order
             Ok(messages)
         }
+    }
 
-        // ── Skill Registry ────────────────────────────────
-        // NOTE: skill-registry module was removed (ADR-2604050900).
-        // Queries below hit the default database (hexflo-coordination) which
-        // absorbed config-sync tables.
+    // ── Skill Registry ────────────────────────────────
+    // NOTE: skill-registry module was removed (ADR-2604050900).
+    // Queries below hit the default database (hexflo-coordination) which
+    // absorbed config-sync tables.
 
+    #[async_trait]
+    impl ISkillStatePort for SpacetimeStateAdapter {
         async fn skill_register(&self, _skill: SkillEntry) -> Result<String, StateError> {
             // conn.reducers().register_skill(id, name, description, triggers_json, body, source, timestamp)
             Err(Self::not_connected())
@@ -694,11 +707,14 @@ mod real {
                     || s.triggers_json.to_lowercase().contains(&q)
             }).collect())
         }
+    }
 
-        // ── Agent Definition Registry ──────────────────────
-        // NOTE: agent-definition-registry module was removed (ADR-2604050900).
-        // These stubs satisfy the trait.
+    // ── Agent Definition Registry ──────────────────────
+    // NOTE: agent-definition-registry module was removed (ADR-2604050900).
+    // These stubs satisfy the trait.
 
+    #[async_trait]
+    impl IAgentDefStatePort for SpacetimeStateAdapter {
         async fn agent_def_register(&self, _def: AgentDefinitionEntry) -> Result<String, StateError> {
             // conn.reducers().register_definition(...)
             Err(Self::not_connected())
@@ -732,10 +748,13 @@ mod real {
             // conn.db().agent_definition_version().iter().filter(|v| v.definition_id == definition_id)
             Err(Self::not_connected())
         }
+    }
 
-        // ── HexFlo Coordination (via SpacetimeDB HTTP API) ──
-        // Calls hexflo-coordination module reducers directly.
+    // ── HexFlo Coordination (via SpacetimeDB HTTP API) ──
+    // Calls hexflo-coordination module reducers directly.
 
+    #[async_trait]
+    impl ISwarmStatePort for SpacetimeStateAdapter {
         async fn swarm_init(&self, id: &str, name: &str, topology: &str, project_id: &str, created_by: &str) -> Result<(), StateError> {
             let now = chrono::Utc::now().to_rfc3339();
             self.call_reducer("swarm_init", serde_json::json!([id, name, topology, project_id, created_by, now])).await?;
@@ -927,6 +946,34 @@ mod real {
             }).collect())
         }
 
+        async fn swarm_agent_register(&self, id: &str, swarm_id: &str, name: &str, role: &str, worktree_path: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("agent_register", serde_json::json!([id, swarm_id, name, role, worktree_path, now])).await?;
+            Ok(())
+        }
+
+        async fn swarm_agent_heartbeat(&self, id: &str) -> Result<(), StateError> {
+            let now = chrono::Utc::now().to_rfc3339();
+            self.call_reducer("agent_heartbeat", serde_json::json!([id, now])).await?;
+            Ok(())
+        }
+
+        async fn swarm_agent_remove(&self, id: &str) -> Result<(), StateError> {
+            self.call_reducer("agent_remove", serde_json::json!([id])).await?;
+            Ok(())
+        }
+
+        async fn swarm_cleanup_stale(&self, _stale_secs: u64, _dead_secs: u64) -> Result<CleanupReport, StateError> {
+            let stale_cutoff = (chrono::Utc::now() - chrono::Duration::seconds(_stale_secs as i64)).to_rfc3339();
+            let dead_cutoff = (chrono::Utc::now() - chrono::Duration::seconds(_dead_secs as i64)).to_rfc3339();
+            self.call_reducer("agent_mark_stale", serde_json::json!([stale_cutoff])).await?;
+            self.call_reducer("agent_mark_dead", serde_json::json!([dead_cutoff])).await?;
+            Ok(CleanupReport { stale_count: 0, dead_count: 0, reclaimed_tasks: 0 })
+        }
+    }
+
+    #[async_trait]
+    impl IInferenceTaskStatePort for SpacetimeStateAdapter {
         async fn inference_task_create(&self, id: &str, workplan_id: &str, task_id: &str, phase: &str, prompt: &str, role: &str, created_at: &str) -> Result<(), StateError> {
             self.call_reducer("inference_task_create",
                 serde_json::json!([id, workplan_id, task_id, phase, prompt, role, created_at])
@@ -1016,33 +1063,10 @@ mod real {
             }).collect())
         }
 
-        async fn swarm_agent_register(&self, id: &str, swarm_id: &str, name: &str, role: &str, worktree_path: &str) -> Result<(), StateError> {
-            let now = chrono::Utc::now().to_rfc3339();
-            self.call_reducer("agent_register", serde_json::json!([id, swarm_id, name, role, worktree_path, now])).await?;
-            Ok(())
-        }
+    }
 
-        async fn swarm_agent_heartbeat(&self, id: &str) -> Result<(), StateError> {
-            let now = chrono::Utc::now().to_rfc3339();
-            self.call_reducer("agent_heartbeat", serde_json::json!([id, now])).await?;
-            Ok(())
-        }
-
-        async fn swarm_agent_remove(&self, id: &str) -> Result<(), StateError> {
-            self.call_reducer("agent_remove", serde_json::json!([id])).await?;
-            Ok(())
-        }
-
-        async fn swarm_cleanup_stale(&self, _stale_secs: u64, _dead_secs: u64) -> Result<CleanupReport, StateError> {
-            let stale_cutoff = (chrono::Utc::now() - chrono::Duration::seconds(_stale_secs as i64)).to_rfc3339();
-            let dead_cutoff = (chrono::Utc::now() - chrono::Duration::seconds(_dead_secs as i64)).to_rfc3339();
-            self.call_reducer("agent_mark_stale", serde_json::json!([stale_cutoff])).await?;
-            self.call_reducer("agent_mark_dead", serde_json::json!([dead_cutoff])).await?;
-            // SpacetimeDB doesn't return affected row counts from reducers,
-            // so we report zeros and let the caller query if needed.
-            Ok(CleanupReport { stale_count: 0, dead_count: 0, reclaimed_tasks: 0 })
-        }
-
+    #[async_trait]
+    impl IHexFloMemoryStatePort for SpacetimeStateAdapter {
         async fn hexflo_memory_store(&self, key: &str, value: &str, scope: &str) -> Result<(), StateError> {
             let now = chrono::Utc::now().to_rfc3339();
             self.call_reducer("memory_store", serde_json::json!([key, value, scope, now])).await?;
@@ -1074,7 +1098,10 @@ mod real {
             Ok(())
         }
 
-        // ── Quality Gate & Fix Tasks (Swarm Gate Enforcement) ──
+    }
+
+    #[async_trait]
+    impl IQualityGateStatePort for SpacetimeStateAdapter {
 
         async fn quality_gate_create(
             &self,
@@ -1209,7 +1236,10 @@ mod real {
             }).collect())
         }
 
-        // ── Project Registry (ADR-042) ──────────────────
+    }
+
+    #[async_trait]
+    impl IProjectStatePort for SpacetimeStateAdapter {
         async fn project_register(&self, project: ProjectRegistration) -> Result<(), StateError> {
             let registered_at = chrono::Utc::now().to_rfc3339();
             self.call_reducer("register_project", serde_json::json!([
@@ -1254,7 +1284,10 @@ mod real {
             let all = self.project_list().await?;
             Ok(all.into_iter().find(|p| p.name == query || p.root_path.rsplit('/').next().unwrap_or("") == query))
         }
-        // ── Instance Coordination (ADR-042) ─────────────
+    }
+
+    #[async_trait]
+    impl ICoordinationStatePort for SpacetimeStateAdapter {
         async fn instance_register(&self, info: InstanceRecord) -> Result<String, StateError> {
             let id = info.instance_id.clone();
             self.call_reducer("instance_register", serde_json::json!([
@@ -1362,7 +1395,10 @@ mod real {
             Ok(CoordinationCleanupReport { instances_removed: 0, locks_released: 0, claims_released: 0, unstaged_removed: 0 })
         }
 
-        // ── Unified Agent Registry (ADR-058) ─────────────
+    }
+
+    #[async_trait]
+    impl IHexAgentStatePort for SpacetimeStateAdapter {
 
         async fn hex_agent_connect(&self, id: &str, name: &str, host: &str, project_id: &str, project_dir: &str, model: &str, session_id: &str, capabilities_json: &str) -> Result<(), StateError> {
             let now = chrono::Utc::now().to_rfc3339();
@@ -1396,7 +1432,16 @@ mod real {
             Ok(())
         }
 
-        // ── Agent Notification Inbox (ADR-060) ─────────────
+        async fn hex_agent_mark_inactive(&self) -> Result<(), StateError> {
+            let stale = (chrono::Utc::now() - chrono::Duration::minutes(2)).to_rfc3339();
+            let dead = (chrono::Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
+            self.call_reducer("agent_mark_inactive", serde_json::json!([stale, dead])).await?;
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl IInboxStatePort for SpacetimeStateAdapter {
 
         async fn inbox_notify(&self, agent_id: &str, priority: u8, kind: &str, payload: &str) -> Result<(), StateError> {
             let now = chrono::Utc::now().to_rfc3339();
@@ -1444,15 +1489,10 @@ mod real {
             self.call_reducer("expire_stale_notifications", serde_json::json!([threshold])).await?;
             Ok(0) // SpacetimeDB reducers don't return counts
         }
+    }
 
-        async fn hex_agent_mark_inactive(&self) -> Result<(), StateError> {
-            let stale = (chrono::Utc::now() - chrono::Duration::minutes(2)).to_rfc3339();
-            let dead = (chrono::Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
-            self.call_reducer("agent_mark_inactive", serde_json::json!([stale, dead])).await?;
-            Ok(())
-        }
-
-        // ── Neural Lab (architecture search) ──────────────
+    #[async_trait]
+    impl INeuralLabStatePort for SpacetimeStateAdapter {
 
         async fn neural_lab_config_list(&self, status: Option<&str>) -> Result<Vec<serde_json::Value>, StateError> {
             const DB: &str = "neural-lab";
@@ -1540,9 +1580,10 @@ mod real {
             self.query_table_on(DB, "SELECT * FROM mutation_strategy").await
         }
 
-        // ── Subscriptions ───────────────────────────────
-        // SpacetimeDB forwards table change callbacks through this channel
+    }
 
+    #[async_trait]
+    impl IStatePort for SpacetimeStateAdapter {
         fn subscribe(&self) -> broadcast::Receiver<StateEvent> {
             self.event_tx.subscribe()
         }
@@ -1577,35 +1618,63 @@ mod stub {
     }
 
     #[async_trait]
-    impl IStatePort for SpacetimeStateAdapter {
+    impl IRlStatePort for SpacetimeStateAdapter {
         async fn rl_select_action(&self, _: &RlState) -> Result<String, StateError> { Err(Self::err()) }
         async fn rl_record_reward(&self, _: &str, _: &str, _: f64, _: &str, _: bool, _: f64) -> Result<(), StateError> { Err(Self::err()) }
         async fn rl_get_stats(&self) -> Result<RlStats, StateError> { Err(Self::err()) }
+    }
+
+    #[async_trait]
+    impl IPatternStatePort for SpacetimeStateAdapter {
         async fn pattern_store(&self, _: &str, _: &str, _: f64) -> Result<String, StateError> { Err(Self::err()) }
         async fn pattern_search(&self, _: &str, _: &str, _: u32) -> Result<Vec<PatternEntry>, StateError> { Err(Self::err()) }
         async fn pattern_reinforce(&self, _: &str, _: f64) -> Result<(), StateError> { Err(Self::err()) }
         async fn pattern_decay_all(&self) -> Result<u32, StateError> { Err(Self::err()) }
+    }
+
+    #[async_trait]
+    impl IAgentStatePort for SpacetimeStateAdapter {
         async fn agent_register(&self, _: AgentInfo) -> Result<String, StateError> { Err(Self::err()) }
         async fn agent_update_status(&self, _: &str, _: AgentStatus, _: Option<AgentMetricsData>) -> Result<(), StateError> { Err(Self::err()) }
         async fn agent_list(&self) -> Result<Vec<AgentInfo>, StateError> { Err(Self::err()) }
         async fn agent_get(&self, _: &str) -> Result<Option<AgentInfo>, StateError> { Err(Self::err()) }
         async fn agent_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+    }
+
+    #[async_trait]
+    impl IWorkplanStatePort for SpacetimeStateAdapter {
         async fn workplan_update_task(&self, _: WorkplanTaskUpdate) -> Result<(), StateError> { Err(Self::err()) }
         async fn workplan_get_tasks(&self, _: &str) -> Result<Vec<WorkplanTaskUpdate>, StateError> { Err(Self::err()) }
+    }
+
+    #[async_trait]
+    impl IChatStatePort for SpacetimeStateAdapter {
         async fn chat_send(&self, _: ChatMessage) -> Result<(), StateError> { Err(Self::err()) }
         async fn chat_history(&self, _: &str, _: u32) -> Result<Vec<ChatMessage>, StateError> { Err(Self::err()) }
+    }
+
+    #[async_trait]
+    impl ISkillStatePort for SpacetimeStateAdapter {
         async fn skill_register(&self, _: SkillEntry) -> Result<String, StateError> { Err(Self::err()) }
         async fn skill_update(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn skill_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn skill_list(&self) -> Result<Vec<SkillEntry>, StateError> { Err(Self::err()) }
         async fn skill_get(&self, _: &str) -> Result<Option<SkillEntry>, StateError> { Err(Self::err()) }
         async fn skill_search(&self, _: &str, _: &str) -> Result<Vec<SkillEntry>, StateError> { Err(Self::err()) }
+    }
+
+    #[async_trait]
+    impl IAgentDefStatePort for SpacetimeStateAdapter {
         async fn agent_def_register(&self, _: AgentDefinitionEntry) -> Result<String, StateError> { Err(Self::err()) }
         async fn agent_def_update(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: u32, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn agent_def_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn agent_def_list(&self) -> Result<Vec<AgentDefinitionEntry>, StateError> { Err(Self::err()) }
         async fn agent_def_get_by_name(&self, _: &str) -> Result<Option<AgentDefinitionEntry>, StateError> { Err(Self::err()) }
         async fn agent_def_versions(&self, _: &str) -> Result<Vec<AgentDefinitionVersionEntry>, StateError> { Err(Self::err()) }
+    }
+
+    #[async_trait]
+    impl ISwarmStatePort for SpacetimeStateAdapter {
         async fn swarm_init(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_complete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
@@ -1621,21 +1690,32 @@ mod stub {
         async fn swarm_task_complete(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_task_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn swarm_task_list(&self, _: Option<&str>) -> Result<Vec<SwarmTaskInfo>, StateError> { Err(Self::err()) }
+        async fn swarm_agent_register(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_agent_heartbeat(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_agent_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
+        async fn swarm_cleanup_stale(&self, _: u64, _: u64) -> Result<CleanupReport, StateError> { Err(Self::err()) }
+    }
+
+    #[async_trait]
+    impl IInferenceTaskStatePort for SpacetimeStateAdapter {
         async fn inference_task_create(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn inference_task_claim(&self, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn inference_task_complete(&self, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn inference_task_fail(&self, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn inference_task_get(&self, _: &str) -> Result<Option<InferenceTaskInfo>, StateError> { Err(Self::err()) }
         async fn inference_task_list_pending(&self) -> Result<Vec<InferenceTaskInfo>, StateError> { Err(Self::err()) }
-        async fn swarm_agent_register(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
-        async fn swarm_agent_heartbeat(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
-        async fn swarm_agent_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
-        async fn swarm_cleanup_stale(&self, _: u64, _: u64) -> Result<CleanupReport, StateError> { Err(Self::err()) }
+    }
+
+    #[async_trait]
+    impl IHexFloMemoryStatePort for SpacetimeStateAdapter {
         async fn hexflo_memory_store(&self, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn hexflo_memory_retrieve(&self, _: &str) -> Result<Option<String>, StateError> { Err(Self::err()) }
         async fn hexflo_memory_search(&self, _: &str) -> Result<Vec<(String, String)>, StateError> { Err(Self::err()) }
         async fn hexflo_memory_delete(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
-        // ── Quality Gate & Fix Tasks (Swarm Gate Enforcement) ──
+    }
+
+    #[async_trait]
+    impl IQualityGateStatePort for SpacetimeStateAdapter {
         async fn quality_gate_create(&self, _: &str, _: &str, _: u32, _: &str, _: &str, _: &str, _: u32) -> Result<(), StateError> { Err(Self::err()) }
         async fn quality_gate_complete(&self, _: &str, _: &str, _: u32, _: &str, _: u32, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn quality_gate_list(&self, _: &str) -> Result<Vec<QualityGateInfo>, StateError> { Err(Self::err()) }
@@ -1643,36 +1723,41 @@ mod stub {
         async fn fix_task_create(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn fix_task_complete(&self, _: &str, _: &str, _: &str, _: &str, _: u64, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn fix_task_list_by_gate(&self, _: &str) -> Result<Vec<FixTaskInfo>, StateError> { Err(Self::err()) }
-        // ── Project Registry (ADR-042) ──────────────────
+    }
+
+    #[async_trait]
+    impl IProjectStatePort for SpacetimeStateAdapter {
         async fn project_register(&self, _: ProjectRegistration) -> Result<(), StateError> { Err(Self::err()) }
         async fn project_unregister(&self, _: &str) -> Result<bool, StateError> { Err(Self::err()) }
         async fn project_get(&self, _: &str) -> Result<Option<ProjectRecord>, StateError> { Err(Self::err()) }
         async fn project_list(&self) -> Result<Vec<ProjectRecord>, StateError> { Err(Self::err()) }
         async fn project_update_state(&self, _: &str, _: &str, _: serde_json::Value, _: Option<&str>) -> Result<(), StateError> { Err(Self::err()) }
         async fn project_find(&self, _: &str) -> Result<Option<ProjectRecord>, StateError> { Err(Self::err()) }
-        // ── Instance Coordination (ADR-042) ─────────────
+    }
+
+    #[async_trait]
+    impl ICoordinationStatePort for SpacetimeStateAdapter {
         async fn instance_register(&self, _: InstanceRecord) -> Result<String, StateError> { Err(Self::err()) }
         async fn instance_heartbeat(&self, _: &str, _: InstanceHeartbeat) -> Result<(), StateError> { Err(Self::err()) }
         async fn instance_list(&self, _: Option<&str>) -> Result<Vec<InstanceRecord>, StateError> { Err(Self::err()) }
         async fn instance_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
-        // ── Worktree Locks (ADR-042) ────────────────────
         async fn worktree_lock_acquire(&self, _: WorktreeLockRecord) -> Result<bool, StateError> { Err(Self::err()) }
         async fn worktree_lock_release(&self, _: &str) -> Result<bool, StateError> { Err(Self::err()) }
         async fn worktree_lock_list(&self, _: Option<&str>) -> Result<Vec<WorktreeLockRecord>, StateError> { Err(Self::err()) }
         async fn worktree_lock_refresh(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn worktree_lock_evict_expired(&self) -> Result<u32, StateError> { Err(Self::err()) }
-        // ── Task Claims (ADR-042) ───────────────────────
         async fn task_claim_acquire(&self, _: TaskClaimRecord) -> Result<bool, StateError> { Err(Self::err()) }
         async fn task_claim_release(&self, _: &str) -> Result<bool, StateError> { Err(Self::err()) }
         async fn task_claim_list(&self, _: Option<&str>) -> Result<Vec<TaskClaimRecord>, StateError> { Err(Self::err()) }
         async fn task_claim_refresh(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
-        // ── Unstaged Files (ADR-042) ────────────────────
         async fn unstaged_update(&self, _: &str, _: UnstagedRecord) -> Result<(), StateError> { Err(Self::err()) }
         async fn unstaged_list(&self, _: Option<&str>) -> Result<Vec<UnstagedRecord>, StateError> { Err(Self::err()) }
         async fn unstaged_remove(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
-        // ── Coordination Cleanup (ADR-042) ──────────────
         async fn coordination_cleanup_stale(&self, _: u64) -> Result<CoordinationCleanupReport, StateError> { Err(Self::err()) }
-        // ── Unified Agent Registry (ADR-058) ─────────────
+    }
+
+    #[async_trait]
+    impl IHexAgentStatePort for SpacetimeStateAdapter {
         async fn hex_agent_connect(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn hex_agent_disconnect(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn hex_agent_heartbeat(&self, _: &str) -> Result<(), StateError> { Err(Self::err()) }
@@ -1680,13 +1765,19 @@ mod stub {
         async fn hex_agent_get(&self, _: &str) -> Result<Option<serde_json::Value>, StateError> { Err(Self::err()) }
         async fn hex_agent_evict_dead(&self) -> Result<(), StateError> { Err(Self::err()) }
         async fn hex_agent_mark_inactive(&self) -> Result<(), StateError> { Err(Self::err()) }
-        // ── Agent Notification Inbox (ADR-060) ──────────────
+    }
+
+    #[async_trait]
+    impl IInboxStatePort for SpacetimeStateAdapter {
         async fn inbox_notify(&self, _: &str, _: u8, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn inbox_notify_all(&self, _: &str, _: u8, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn inbox_query(&self, _: &str, _: Option<u8>, _: bool) -> Result<Vec<InboxNotification>, StateError> { Err(Self::err()) }
         async fn inbox_acknowledge(&self, _: u64, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn inbox_expire(&self, _: u64) -> Result<u32, StateError> { Err(Self::err()) }
-        // ── Neural Lab (architecture search) ──────────────
+    }
+
+    #[async_trait]
+    impl INeuralLabStatePort for SpacetimeStateAdapter {
         async fn neural_lab_config_list(&self, _: Option<&str>) -> Result<Vec<serde_json::Value>, StateError> { Err(Self::err()) }
         async fn neural_lab_config_get(&self, _: &str) -> Result<Option<serde_json::Value>, StateError> { Err(Self::err()) }
         async fn neural_lab_config_create(&self, _: serde_json::Value) -> Result<serde_json::Value, StateError> { Err(Self::err()) }
@@ -1699,6 +1790,10 @@ mod stub {
         async fn neural_lab_experiment_fail(&self, _: &str, _: &str) -> Result<(), StateError> { Err(Self::err()) }
         async fn neural_lab_frontier_get(&self, _: &str) -> Result<Option<serde_json::Value>, StateError> { Err(Self::err()) }
         async fn neural_lab_strategies_list(&self) -> Result<Vec<serde_json::Value>, StateError> { Err(Self::err()) }
+    }
+
+    #[async_trait]
+    impl IStatePort for SpacetimeStateAdapter {
         fn subscribe(&self) -> broadcast::Receiver<StateEvent> { self.event_tx.subscribe() }
     }
 }
