@@ -1,23 +1,11 @@
 [workspace]
 members = [
-    "rl-engine",
-    "workplan-state",
-    "agent-registry",
-    "chat-relay",
-    "fleet-state",
-    "skill-registry",
-    "hook-registry",
-    "agent-definition-registry",
-    "secret-grant",
     "hexflo-coordination",
-    "file-lock-manager",
-    "architecture-enforcer",
-    "conflict-resolver",
+    "agent-registry",
     "inference-gateway",
-    "inference-bridge",
-    "hexflo-lifecycle",
-    "hexflo-cleanup",
-    "test-results",
+    "secret-grant",
+    "rl-engine",
+    "chat-relay",
     "neural-lab",
 ]
 resolver = "2"

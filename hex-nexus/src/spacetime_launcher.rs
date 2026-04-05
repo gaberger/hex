@@ -540,31 +540,16 @@ pub const MODULE_TIERS: &[&[&str]] = &[
     &[
         "hexflo-coordination",
         "agent-registry",
-        "fleet-state",
-        "file-lock-manager",
     ],
     // Tier 1: Services — reference agent/project IDs from tier 0
     &[
         "inference-gateway",
-        "inference-bridge",
         "secret-grant",
-        "architecture-enforcer",
     ],
-    // Tier 2: Workflows — reference agents, inference, secrets
-    &[
-        "workplan-state",
-        "skill-registry",
-        "hook-registry",
-        "agent-definition-registry",
-    ],
-    // Tier 3: Coordination — reference everything above
+    // Tier 2: Coordination — reference everything above
     &[
         "chat-relay",
         "rl-engine",
-        "hexflo-lifecycle",
-        "hexflo-cleanup",
-        "conflict-resolver",
-        "test-results",
         "neural-lab",
     ],
 ];

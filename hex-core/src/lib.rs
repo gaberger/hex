@@ -42,29 +42,16 @@ pub const STDB_DATABASE_CORE: &str = "hex";
 /// Module-to-database mapping. Index matches MODULE_TIERS order in spacetime_launcher.
 /// Format: (module_directory_name, database_name)
 pub const STDB_MODULE_DATABASES: &[(&str, &str)] = &[
-    // Tier 0: Foundation
+    // Tier 0: Foundation (hexflo-coordination absorbs fleet-state, lifecycle, cleanup)
     ("hexflo-coordination", "hex"),
     ("agent-registry", "agent-registry"),
-    ("fleet-state", "fleet-state"),
-    ("file-lock-manager", "file-lock-manager"),
     // Tier 1: Services
     ("inference-gateway", "inference-gateway"),
-    ("inference-bridge", "inference-bridge"),
     ("secret-grant", "secret-grant"),
-    ("architecture-enforcer", "architecture-enforcer"),
-    // Tier 2: Workflows
-    ("workplan-state", "workplan-state"),
-    ("skill-registry", "skill-registry"),
-    ("hook-registry", "hook-registry"),
-    ("agent-definition-registry", "agent-definition-registry"),
-    // Tier 3: Coordination
+    // Tier 2: Coordination
     ("chat-relay", "chat-relay"),
     ("rl-engine", "rl-engine"),
-    ("hexflo-lifecycle", "hexflo-lifecycle"),
-    ("hexflo-cleanup", "hexflo-cleanup"),
-    ("conflict-resolver", "conflict-resolver"),
-    ("test-results", "test-results"),
-    // Tier 4: Research
+    // Tier 3: Research
     ("neural-lab", "neural-lab"),
 ];
 
