@@ -9,7 +9,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use russh_keys::key::PublicKey;
+use russh::keys::key::PrivateKeyWithHashAlg;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::ports::ssh_tunnel::ISshTunnelPort;
@@ -31,13 +31,12 @@ struct ActiveTunnel {
 /// Minimal russh client handler — accepts all host keys.
 struct SshTunnelHandler;
 
-#[async_trait]
 impl russh::client::Handler for SshTunnelHandler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &PublicKey,
+        _server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
         // TODO: Verify against known_hosts in production
         Ok(true)
@@ -86,21 +85,24 @@ impl SshTunnelAdapter {
         match &config.auth {
             SshAuth::Key { path, passphrase } => {
                 let key_pair =
-                    russh_keys::load_secret_key(path, passphrase.as_deref()).map_err(|e| {
+                    russh::keys::load_secret_key(path, passphrase.as_deref()).map_err(|e| {
                         TransportError::Auth(format!("Failed to load key {}: {}", path, e))
                     })?;
 
-                let authed = session
-                    .authenticate_publickey(&config.user, Arc::new(key_pair))
+                let auth_result = session
+                    .authenticate_publickey(
+                        &config.user,
+                        PrivateKeyWithHashAlg::new(Arc::new(key_pair), None),
+                    )
                     .await
                     .map_err(|e| TransportError::Auth(format!("Public key auth failed: {}", e)))?;
 
-                if !authed {
+                if !matches!(auth_result, russh::client::AuthResult::Success) {
                     return Err(TransportError::Auth("Key rejected by server".into()));
                 }
             }
             SshAuth::Agent => {
-                let mut agent = russh_keys::agent::client::AgentClient::connect_env()
+                let mut agent = russh::keys::agent::client::AgentClient::connect_env()
                     .await
                     .map_err(|e| {
                         TransportError::Auth(format!("SSH agent connection failed: {}", e))
@@ -118,18 +120,28 @@ impl SshTunnelAdapter {
 
                 let mut authenticated = false;
                 for identity in &identities {
-                    let (returned_agent, auth_result) = session
-                        .authenticate_future(&config.user, identity.clone(), agent)
+                    let public_key = match identity {
+                        russh::keys::agent::AgentIdentity::PublicKey { key, .. } => key.clone(),
+                        russh::keys::agent::AgentIdentity::Certificate { certificate, .. } => {
+                            russh::keys::PublicKey::new(certificate.public_key().clone(), "")
+                        }
+                    };
+
+                    let auth_result = session
+                        .authenticate_publickey_with(
+                            &config.user,
+                            public_key,
+                            None,
+                            &mut agent,
+                        )
                         .await;
-                    agent = returned_agent;
 
                     match auth_result {
-                        Ok(true) => {
+                        Ok(russh::client::AuthResult::Success) => {
                             authenticated = true;
                             break;
                         }
-                        Ok(false) => continue,
-                        Err(_) => continue,
+                        _ => continue,
                     }
                 }
 
