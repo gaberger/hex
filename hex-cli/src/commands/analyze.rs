@@ -19,6 +19,7 @@ const LAYER_DIRS: &[(&str, &str, Layer)] = &[
     ("adapters/secondary", "Secondary Adapters", Layer::AdapterSecondary),
 ];
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     path: &str,
     strict: bool,
@@ -233,40 +234,37 @@ pub async fn run(
         let nexus = NexusClient::from_env();
         let mut nexus_score: Option<u64> = None;
         if nexus.ensure_running().await.is_ok() {
-            match nexus.get("/api/projects").await {
-                Ok(resp) => {
-                    if let Some(projects) = resp.get("projects").and_then(|p| p.as_array()) {
-                        let matching = projects.iter().find(|p| {
-                            p["rootPath"]
-                                .as_str()
-                                .map(|rp| root.to_string_lossy().contains(rp) || rp.contains(&*root.to_string_lossy()))
-                                .unwrap_or(false)
-                        });
+            if let Ok(resp) = nexus.get("/api/projects").await {
+                if let Some(projects) = resp.get("projects").and_then(|p| p.as_array()) {
+                    let matching = projects.iter().find(|p| {
+                        p["rootPath"]
+                            .as_str()
+                            .map(|rp| root.to_string_lossy().contains(rp) || rp.contains(&*root.to_string_lossy()))
+                            .unwrap_or(false)
+                    });
 
-                        if let Some(project) = matching {
-                            let pid = project["id"].as_str().unwrap_or("-");
-                            println!(
-                                "    {} Nexus: project registered ({})",
-                                "\u{2713}".green(),
-                                pid
-                            );
-                            let health_path = format!("/api/{}/health", pid);
-                            if let Ok(health) = nexus.get(&health_path).await {
-                                nexus_score = health["score"].as_u64();
-                                if let Some(boundary_count) = health["violations"].as_u64() {
-                                    if boundary_count > 0 {
-                                        println!(
-                                            "    {} Nexus boundary violations: {}",
-                                            "\u{26a0}".yellow(),
-                                            boundary_count.to_string().red()
-                                        );
-                                    }
+                    if let Some(project) = matching {
+                        let pid = project["id"].as_str().unwrap_or("-");
+                        println!(
+                            "    {} Nexus: project registered ({})",
+                            "\u{2713}".green(),
+                            pid
+                        );
+                        let health_path = format!("/api/{}/health", pid);
+                        if let Ok(health) = nexus.get(&health_path).await {
+                            nexus_score = health["score"].as_u64();
+                            if let Some(boundary_count) = health["violations"].as_u64() {
+                                if boundary_count > 0 {
+                                    println!(
+                                        "    {} Nexus boundary violations: {}",
+                                        "\u{26a0}".yellow(),
+                                        boundary_count.to_string().red()
+                                    );
                                 }
                             }
                         }
                     }
                 }
-                Err(_) => {}
             }
         } else {
             println!(
@@ -437,18 +435,17 @@ fn run_single_file(
                         if in_test_section { continue; }
                         if !trimmed.starts_with("use ") { continue; }
 
-                        if matches!(layer_name, "Domain" | "Ports") {
-                            if trimmed.contains("::adapters")
+                        if matches!(layer_name, "Domain" | "Ports")
+                            && (trimmed.contains("::adapters")
                                 || trimmed.contains("hex_nexus::")
                                 || trimmed.contains("hex_cli::")
-                                || trimmed.contains("hex_agent::")
+                                || trimmed.contains("hex_agent::"))
                             {
                                 violations.push(format!(
                                     "{}:{} — {} layer must not import from adapters/downstream: {}",
                                     file_rel, idx + 1, layer_name, trimmed.trim_end_matches(';')
                                 ));
                             }
-                        }
                         if layer_name == "Secondary Adapters" {
                             if let Some(rest) = trimmed.strip_prefix("use crate::adapters::") {
                                 let import_mod = rest.split("::").next().unwrap_or("").trim_end_matches(';');
@@ -693,11 +690,11 @@ fn scan_rust_boundary_violations(root: &Path) -> Vec<RustViolation> {
                 }
 
                 // Rule 1: Domain and Ports must not import from adapters or downstream crates
-                if matches!(layer, "Domain" | "Ports") {
-                    if trimmed.contains("::adapters")
+                if matches!(layer, "Domain" | "Ports")
+                    && (trimmed.contains("::adapters")
                         || trimmed.contains("hex_nexus::")
                         || trimmed.contains("hex_cli::")
-                        || trimmed.contains("hex_agent::")
+                        || trimmed.contains("hex_agent::"))
                     {
                         violations.push(RustViolation {
                             file: file_rel.clone(),
@@ -709,7 +706,6 @@ fn scan_rust_boundary_violations(root: &Path) -> Vec<RustViolation> {
                             ),
                         });
                     }
-                }
 
                 // Rule 2: Secondary adapters must not import sibling secondary adapters
                 if layer == "Secondary Adapters" {

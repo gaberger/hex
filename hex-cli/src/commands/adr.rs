@@ -594,10 +594,10 @@ async fn specs_for_adr(adr_id: &str) -> anyhow::Result<()> {
 
         // Also try find_specs_dir() + filename
         let spec_abs = spec_abs.or_else(|| {
-            find_specs_dir().map(|d| {
+            find_specs_dir().and_then(|d| {
                 let fname = Path::new(&spec_rel).file_name()?;
                 Some(d.join(fname))
-            }).flatten()
+            })
         });
 
         match spec_abs {

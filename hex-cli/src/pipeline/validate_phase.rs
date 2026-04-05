@@ -1360,7 +1360,7 @@ fn parse_compile_errors(output: &str, language: &str) -> Vec<CompileError> {
                 let file = parts[0].trim_start_matches("./").to_string();
                 let line_num = parts[1].parse::<u32>().ok();
                 let message = if parts.len() == 4 {
-                    format!("{}", parts[3].trim())
+                    parts[3].trim().to_string()
                 } else {
                     line.to_string()
                 };

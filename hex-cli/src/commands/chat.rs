@@ -75,7 +75,7 @@ pub async fn run(args: ChatArgs) -> Result<()> {
     {
         use std::os::unix::process::CommandExt;
         let err = std::process::Command::new(&opencode).args(&argv).exec();
-        return Err(anyhow::anyhow!("Failed to exec opencode: {}", err));
+        Err(anyhow::anyhow!("Failed to exec opencode: {}", err))
     }
 
     #[cfg(not(unix))]

@@ -69,7 +69,7 @@ impl InMemoryEventAdapter {
         let buf = self.events.lock().await;
         buf.iter()
             .rev()
-            .filter(|e| session_id.map_or(true, |sid| e.session_id == sid))
+            .filter(|e| session_id.is_none_or(|sid| e.session_id == sid))
             .take(limit)
             .cloned()
             .collect()

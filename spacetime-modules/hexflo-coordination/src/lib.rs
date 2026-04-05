@@ -1,5 +1,5 @@
 #![allow(clippy::too_many_arguments)]
-use spacetimedb::{table, reducer, ReducerContext, ScheduleAt, Table, Timestamp};
+use spacetimedb::{table, reducer, ReducerContext, Table};
 
 // ============================================================
 //  Tables

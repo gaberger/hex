@@ -544,12 +544,12 @@ fn unix_to_parts(mut ts: u64) -> (u64, u64, u64, u64, u64, u64) {
     // Days since epoch → approximate date (good enough for audit purposes)
     let mut year = 1970u64;
     loop {
-        let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) { 366 } else { 365 };
+        let days_in_year = if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) { 366 } else { 365 };
         if ts < days_in_year { break; }
         ts -= days_in_year;
         year += 1;
     }
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
     let month_days = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut month = 1u64;
     for &days in &month_days {

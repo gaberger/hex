@@ -1070,11 +1070,10 @@ fn extract_identifiers(condition: &str) -> Vec<String> {
                 "then", "from", "with", "into", "that", "this", "have", "does", "when"];
     for word in condition.split(|c: char| !c.is_alphanumeric() && c != '_') {
         let w = word.trim();
-        if w.len() >= 5 && (w.contains('_') || w.chars().any(|c| c.is_uppercase())) {
-            if !skip.iter().any(|s| w.to_lowercase() == *s) {
+        if w.len() >= 5 && (w.contains('_') || w.chars().any(|c| c.is_uppercase()))
+            && !skip.iter().any(|s| w.to_lowercase() == *s) {
                 ids.push(w.to_string());
             }
-        }
     }
 
     ids.sort();

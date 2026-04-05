@@ -1565,7 +1565,7 @@ async fn refresh_fingerprint_if_stale(project_dir: &Path) -> Result<()> {
         if full.is_file() {
             if let Ok(meta) = std::fs::metadata(&full) {
                 if let Ok(mtime) = meta.modified() {
-                    if latest_mtime.map_or(true, |prev| mtime > prev) {
+                    if latest_mtime.is_none_or(|prev| mtime > prev) {
                         latest_mtime = Some(mtime);
                     }
                 }
@@ -1576,7 +1576,7 @@ async fn refresh_fingerprint_if_stale(project_dir: &Path) -> Result<()> {
                 for entry in entries.flatten() {
                     if let Ok(meta) = entry.metadata() {
                         if let Ok(mtime) = meta.modified() {
-                            if latest_mtime.map_or(true, |prev| mtime > prev) {
+                            if latest_mtime.is_none_or(|prev| mtime > prev) {
                                 latest_mtime = Some(mtime);
                             }
                         }
@@ -1613,7 +1613,7 @@ async fn refresh_fingerprint_if_stale(project_dir: &Path) -> Result<()> {
         "workplan_path": workplan_path,
     });
 
-    if let Ok(_) = nexus.post_long(&format!("/api/projects/{}/fingerprint", project_id), &fp_body).await {
+    if nexus.post_long(&format!("/api/projects/{}/fingerprint", project_id), &fp_body).await.is_ok() {
         // Update session state timestamp
         if let Some(mut state) = SessionState::load() {
             state.fingerprint_generated_at = Some(chrono::Utc::now().to_rfc3339());

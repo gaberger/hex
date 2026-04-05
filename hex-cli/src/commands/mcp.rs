@@ -1021,7 +1021,7 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             let queries = args.get("queries").and_then(|v| v.as_array()).cloned().unwrap_or_default();
             let max_results = args.get("max_results").and_then(|v| v.as_u64()).unwrap_or(50);
             let queries_param: Vec<String> = queries.iter()
-                .filter_map(|q| q.as_str().map(|s| urlencoding_simple(s)))
+                .filter_map(|q| q.as_str().map(urlencoding_simple))
                 .collect();
             let path = format!(
                 "/api/command-sessions/{}/search?queries={}&max_results={}",
