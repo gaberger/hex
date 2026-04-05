@@ -82,24 +82,24 @@
   <text x="340" y="120" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="52" font-weight="700" fill="#e6edf3" letter-spacing="-1">hex</text>
 
   <!-- Subtitle -->
-  <text x="340" y="160" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="18" fill="#8b949e" letter-spacing="0.5">Hexagonal Architecture Harness</text>
-  <text x="340" y="185" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="18" fill="#8b949e" letter-spacing="0.5">for AI-Driven Development</text>
+  <text x="340" y="160" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="18" fill="#8b949e" letter-spacing="0.5">AI Operating System</text>
+  <text x="340" y="185" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="18" fill="#8b949e" letter-spacing="0.5">for Agent-Driven Development</text>
 
   <!-- Tagline bar -->
   <rect x="340" y="205" width="420" height="1" fill="url(#glow)" rx="1"/>
 
   <!-- Feature pills -->
   <g font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11">
-    <rect x="340" y="220" width="120" height="24" rx="12" fill="#58a6ff" opacity="0.15" stroke="#58a6ff" stroke-width="0.5" stroke-opacity="0.3"/>
-    <text x="400" y="236" fill="#58a6ff" text-anchor="middle">Ports &amp; Adapters</text>
+    <rect x="340" y="220" width="100" height="24" rx="12" fill="#58a6ff" opacity="0.15" stroke="#58a6ff" stroke-width="0.5" stroke-opacity="0.3"/>
+    <text x="390" y="236" fill="#58a6ff" text-anchor="middle">Microkernel</text>
 
-    <rect x="470" y="220" width="105" height="24" rx="12" fill="#bc8cff" opacity="0.15" stroke="#bc8cff" stroke-width="0.5" stroke-opacity="0.3"/>
-    <text x="522" y="236" fill="#bc8cff" text-anchor="middle">Swarm Agents</text>
+    <rect x="450" y="220" width="115" height="24" rx="12" fill="#bc8cff" opacity="0.15" stroke="#bc8cff" stroke-width="0.5" stroke-opacity="0.3"/>
+    <text x="507" y="236" fill="#bc8cff" text-anchor="middle">Swarm Agents</text>
 
-    <rect x="585" y="220" width="100" height="24" rx="12" fill="#3fb950" opacity="0.15" stroke="#3fb950" stroke-width="0.5" stroke-opacity="0.3"/>
-    <text x="635" y="236" fill="#3fb950" text-anchor="middle">Tree-Sitter</text>
+    <rect x="575" y="220" width="105" height="24" rx="12" fill="#3fb950" opacity="0.15" stroke="#3fb950" stroke-width="0.5" stroke-opacity="0.3"/>
+    <text x="627" y="236" fill="#3fb950" text-anchor="middle">RL Inference</text>
 
-    <rect x="695" y="220" width="80" height="24" rx="12" fill="#f0883e" opacity="0.15" stroke="#f0883e" stroke-width="0.5" stroke-opacity="0.3"/>
-    <text x="735" y="236" fill="#f0883e" text-anchor="middle">Specs-First</text>
+    <rect x="690" y="220" width="85" height="24" rx="12" fill="#f0883e" opacity="0.15" stroke="#f0883e" stroke-width="0.5" stroke-opacity="0.3"/>
+    <text x="732" y="236" fill="#f0883e" text-anchor="middle">Capability</text>
   </g>
 </svg>

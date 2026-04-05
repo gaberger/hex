@@ -1,117 +1,116 @@
-# hex — AI Operating System
+<p align="center">
+  <img src=".github/assets/banner.svg" alt="hex — AI Operating System" width="900">
+</p>
 
-hex is an **AIOS** (AI Operating System) — a microkernel-based runtime that manages AI agent processes, coordinates distributed workloads, and enforces architectural constraints. It is not an application you deploy; it is the operating system layer that gets installed into target projects to orchestrate AI-driven development.
+<p align="center">
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.75+-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
+  <a href="https://spacetimedb.com/"><img src="https://img.shields.io/badge/SpacetimeDB-WASM-58a6ff?style=flat-square" alt="SpacetimeDB"></a>
+  <a href="https://github.com/gaberger/hex/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
+  <a href="https://github.com/gaberger/hex/actions"><img src="https://img.shields.io/badge/CI-passing-3fb950?style=flat-square&logo=github-actions&logoColor=white" alt="CI"></a>
+  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-70+-bc8cff?style=flat-square" alt="ADRs"></a>
+</p>
 
-Agents are the users. Developers are the sysadmins.
+<p align="center">
+  <strong>Microkernel-based runtime for managing AI agent processes, coordinating distributed workloads, and enforcing architectural constraints.</strong>
+</p>
+
+<p align="center">
+  <em>Agents are the users. Developers are the sysadmins.</em>
+</p>
+
+---
+
+## What is hex?
+
+hex is an **AIOS** (AI Operating System) — not an application you deploy, but the operating system layer that gets **installed into target projects** to orchestrate AI-driven development. It provides:
+
+- **Process lifecycle management** for AI agents (spawn, heartbeat, stale detection, eviction)
+- **Capability-based authorization** via HMAC-signed tokens scoped to agent permissions
+- **Swarm coordination** for parallel multi-agent development across git worktrees
+- **Architecture enforcement** — hexagonal boundaries as privilege boundaries
+- **Inference routing** with RL-driven model selection across local and cloud providers
+- **Real-time state sync** via SpacetimeDB WebSocket subscriptions
+
+---
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│  Userland                                            │
-│  Skills, Agents, Swarm YAMLs, Workplans              │
-│  (hex-agent / hex-cli assets)                        │
-├─────────────────────────────────────────────────────┤
-│  System Services                                     │
-│  Agent Manager, Workplan Executor, Inference Router,  │
-│  Secret Broker, Fleet Manager                        │
-│  (hex-nexus)                                         │
-├─────────────────────────────────────────────────────┤
-│  Kernel (Syscall Surface — 9 port traits)            │
-│  ICoordination, ISandbox, IFileSystem, ISecret,       │
-│  IInference, IEnforcement, IAgentRuntime, IState      │
-│  (hex-core — zero external deps)                     │
-├─────────────────────────────────────────────────────┤
-│  Microkernel                                         │
-│  7 WASM modules: hexflo-coordination, agent-registry, │
-│  inference-gateway, secret-grant, rl-engine,          │
-│  chat-relay, neural-lab                               │
-│  (SpacetimeDB — sandboxed, transactional)            │
-└─────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src=".github/assets/architecture.svg" alt="hex Architecture" width="800">
+</p>
 
-## System Components
+> **The hexagonal architecture isn't just code organization — it IS the privilege boundary.**
+> Domain can't reach adapters. Adapters can't reach each other. Only the composition root wires them.
+
+### System Components
 
 | Component | OS Analog | Role |
-|-----------|-----------|------|
-| **hex-cli** | Shell | CLI binary — all `hex` commands, MCP server |
-| **hex-nexus** | System services | Daemon — filesystem bridge, inference routing, fleet management, dashboard (port 5555) |
-| **hex-core** | Syscall interface | 9 port traits defining what agents can do (zero external deps) |
-| **hex-agent** | Userland | Architecture enforcement runtime — skills, hooks, agents |
-| **spacetime-modules** | Microkernel | 7 WASM modules for coordination, state, inference, secrets (ADR-2604050900) |
+|:----------|:----------|:-----|
+| **hex-cli** | Shell | CLI binary — all `hex` commands + MCP server |
+| **hex-nexus** | System services | Daemon — filesystem bridge, REST API, dashboard (`:5555`) |
+| **hex-core** | Syscall interface | 9 port traits defining agent capabilities (zero deps) |
+| **hex-agent** | Userland runtime | Architecture enforcement — skills, hooks, agent definitions |
+| **spacetime-modules** | Microkernel | 7 WASM modules — coordination, state, inference, secrets |
 | **hex-dashboard** | Desktop/GUI | Solid.js control plane with real-time WebSocket subscriptions |
 
-SpacetimeDB must be running. All clients connect via WebSocket for real-time state sync.
+---
 
 ## OS Primitives
 
 ### Process Lifecycle
 
-Agents are managed processes with state tracking:
-
 ```
 spawn → heartbeat (15s) → stale (45s) → dead (120s) → evict + task reclaim
 ```
 
-```bash
-hex swarm init <name>        # Initialize a swarm (process group)
-hex task create <sid> <t>    # Create a task
-hex task list                # List all tasks
-hex task complete <id>       # Mark task done
+Agents are managed processes with state tracking, heartbeat monitoring, and automatic task reclamation on death. Capability tokens (HMAC-SHA256) scope what each agent can do.
+
+### Swarm Coordination
+
+<p align="center">
+  <img src=".github/assets/swarm.svg" alt="Swarm Coordination" width="800">
+</p>
+
+HexFlo is the native Rust coordination layer. Swarms decompose features inside-out across hexagonal layers, with each adapter boundary getting its own git worktree for isolation.
+
+### Development Pipeline
+
+<p align="center">
+  <img src=".github/assets/workflow.svg" alt="Development Pipeline" width="800">
+</p>
+
+Features follow a **specs-first lifecycle** through 7 gated phases:
+
+```
+Specs → Plan → Worktrees → Code (TDD, parallel) → Validate → Integrate → Finalize
 ```
 
-### Resource Locking
-
-Worktree locks and task claims with CAS (Compare-And-Swap) prevent double-assignment in distributed swarms. Locks auto-expire on heartbeat timeout.
-
-### Secret Brokering
-
-TTL-based secret grants distribute credentials to sandboxed agents. Secret values never enter SpacetimeDB — only grant metadata. Encrypted vault with audit log.
-
-### Inter-Process Communication
-
-- **WebSocket broadcast** — real-time state change subscriptions
-- **Inbox notifications** — priority-based agent-to-agent signaling (ADR-060)
-- **Chat relay** — conversation routing between agents and users
-- **HexFlo memory** — scoped key-value store (global / per-swarm / per-agent)
+Quality gates block tier advancement until compile + test + architecture analysis pass.
 
 ### Inference Routing
 
 RL-driven model selection with quantization-aware tier mapping:
 
 | Tier | Bits | Use Cases |
-|------|------|-----------|
-| Q2 | 2-bit | Scaffolding, docstrings, formatting |
-| Q4 | 4-bit | General coding, test generation |
-| Q8 | 8-bit | Complex reasoning, security review |
-| Fp16 | 16-bit | Cross-file planning |
-| Cloud | — | Frontier APIs (Anthropic, OpenAI, OpenRouter) |
+|:-----|:-----|:----------|
+| **Q2** | 2-bit | Scaffolding, docstrings, formatting |
+| **Q4** | 4-bit | General coding, test generation |
+| **Q8** | 8-bit | Complex reasoning, security review |
+| **Fp16** | 16-bit | Cross-file planning |
+| **Cloud** | — | Frontier APIs (Anthropic, OpenAI, OpenRouter) |
 
-The RL engine learns which (model, context_strategy) pair is best per task type. Complexity scoring maps requests to minimum tiers; quality-ranked selection picks the best provider meeting that tier.
+The RL engine learns which `(model, context_strategy)` pair performs best per task type.
 
-```bash
-hex inference discover --provider openrouter
-hex inference list
-hex inference test <provider-id>
-hex inference add ollama http://localhost:11434 llama3.2:3b-q4_k_m
-```
+### Inter-Process Communication
 
-### Architecture Enforcement
+| Mechanism | Purpose |
+|:----------|:--------|
+| **WebSocket broadcast** | Real-time state change subscriptions |
+| **Inbox notifications** | Priority-based agent-to-agent signaling (ADR-060) |
+| **Chat relay** | Conversation routing between agents and users |
+| **HexFlo memory** | Scoped key-value store (global / per-swarm / per-agent) |
 
-Hexagonal architecture rules enforced at the kernel level:
-
-- `domain/` — pure business logic, no external imports
-- `ports/` — typed interfaces, imports from domain only
-- `adapters/secondary/` — driven adapters, import from ports only
-- `adapters/primary/` — driving adapters, import from ports only
-- **Adapters must never import other adapters**
-- `composition-root` is the only file that imports from adapters
-
-The hexagonal architecture isn't just code organization — it IS the privilege boundary. Domain can't reach adapters. Adapters can't reach each other. Only the composition root wires them.
-
-```bash
-hex analyze .                # Architecture health check
-```
+---
 
 ## Quick Start
 
@@ -127,33 +126,69 @@ hex nexus start
 hex status
 hex nexus status
 
-# Start the dashboard
+# Open the dashboard
 open http://localhost:5555
 ```
 
-## Development Pipeline
-
-Features follow a specs-first lifecycle through 7 phases:
-
-```
-Specs → Plan → Worktrees → Code (TDD, parallel) → Validate → Integrate → Finalize
-```
-
-Swarms decompose features inside-out across hexagonal layers, with each adapter boundary getting its own git worktree for isolation. Quality gates block tier advancement until compile + test + architecture analysis pass.
+### Core Commands
 
 ```bash
-hex adr list              # List all ADRs
-hex adr status <id>       # Show ADR detail
-hex swarm init <name>     # Start a swarm
-hex task list             # List swarm tasks
-hex memory store <k> <v>  # Persist key-value
-hex inbox list            # Agent notification inbox
+# Swarm coordination
+hex swarm init <name>           # Initialize a swarm (process group)
+hex task create <sid> <title>   # Create a task
+hex task list                   # List all tasks
+hex task complete <id>          # Mark task done
+
+# Memory & IPC
+hex memory store <key> <value>  # Persist key-value
+hex memory get <key>            # Retrieve value
+hex inbox list                  # Agent notification inbox
+hex inbox notify                # Send notification
+
+# Architecture
+hex analyze .                   # Architecture health check
+hex adr list                    # List all ADRs
+hex adr search <query>          # Search ADRs
 ```
 
-## Key ADRs
+---
+
+## Comparison
+
+<p align="center">
+  <img src=".github/assets/comparison.svg" alt="hex vs Traditional Approaches" width="800">
+</p>
+
+---
+
+## Project Structure
+
+```
+hex-cli/               # CLI binary (Rust) — canonical entry point
+hex-nexus/             # Filesystem bridge daemon + dashboard (axum)
+hex-core/              # Shared domain types & port traits (zero deps)
+hex-agent/             # Architecture enforcement runtime
+hex-parser/            # Code parsing utilities
+hex-desktop/           # Desktop app (Tauri)
+spacetime-modules/     # 7 WASM modules for SpacetimeDB
+  hexflo-coordination/ #   Core: swarms, tasks, agents, memory, fleet
+  agent-registry/      #   Agent lifecycle + heartbeats
+  inference-gateway/   #   LLM request routing
+  secret-grant/        #   TTL-based key distribution
+  rl-engine/           #   Reinforcement learning model selection
+  chat-relay/          #   Message routing
+  neural-lab/          #   Experimental neural patterns
+```
+
+---
+
+<details>
+<summary><h2>Architecture Decision Records (70+)</h2></summary>
+
+### Key ADRs
 
 | ADR | Decision | Domain |
-|-----|----------|--------|
+|:----|:---------|:-------|
 | 001 | Hexagonal Architecture as Foundational Pattern | Architecture |
 | 024 | Hex-Nexus as Autonomous Orchestration Nexus | System design |
 | 025 | SpacetimeDB as Distributed State Backend | State |
@@ -167,7 +202,7 @@ hex inbox list            # Agent notification inbox
 | 2604050900 | SpacetimeDB Right-Sizing — IStatePort Sub-Trait Split | Kernel |
 | 2604051800 | AIOS Maturity Roadmap — Missing Primitives | Roadmap |
 
-## Architecture Decisions
+### Full ADR Index
 
 <!-- hex:adr-summary — auto-updated by hex -->
 | ADR | Title | Status |
@@ -202,12 +237,12 @@ hex inbox list            # Agent notification inbox
 | 028 | API Optimization Layer | Accepted |
 | 029 | Haiku Preflight Checks & Automatic Context Compaction | Accepted |
 | 030 | Multi-Provider Inference Broker | Accepted |
-| 031 | RL-Driven Model Selection & Token Budget Management | Accepted (documenting existing implementation) |
+| 031 | RL-Driven Model Selection & Token Budget Management | Accepted |
 | 032 | Deprecate hex-hub — Consolidate into hex-nexus and hex-agent | Accepted |
 | 033 | MCP Client Support for hex-agent | Accepted |
 | 034 | Migrate Hex Analyzer from TypeScript to Rust | Accepted |
 | 035 | Hex Architecture V2 — Rust-First, SpacetimeDB-Native, Pluggable Inference | Accepted |
-| 036 | hex-chat Session Architecture | Deprecated — hex-chat removed (2026-03-22) |
+| 036 | hex-chat Session Architecture | Deprecated |
 | 037 | Agent Lifecycle — Local Default + Remote Connect | Accepted |
 | 038 | Vite for Development, Axum for Production | Accepted |
 | 039 | Nexus Agent Control Plane — OpenCode-Inspired Multi-Project Interface | Accepted |
@@ -268,7 +303,7 @@ hex inbox list            # Agent notification inbox
 | 2603241226 | Structured CLI Table Output via `tabled` | Accepted |
 | 2603241230 | Neural Network Encoding in SpacetimeDB WASM | Accepted |
 | 2603241230 | Persistent Agent Coordination via SpacetimeDB | Accepted |
-| 2603241430 | TUI Non-Blocking Phase Execution | Superseded by ADR-2603241500 |
+| 2603241430 | TUI Non-Blocking Phase Execution | Superseded |
 | 2603241500 | TUI Async Channel Architecture | Accepted |
 | 2603241800 | Swarm Lifecycle Management (Complete / Fail / Cleanup) | Proposed |
 | 2603241900 | Agent-Swarm Ownership Hierarchy with Conflict Detection | Accepted |
@@ -297,3 +332,11 @@ hex inbox list            # Agent notification inbox
 | 2603312337 | Real-time Development Session Tracking via Push API | Proposed |
 | 2604051800 | AIOS Maturity Roadmap — Missing Primitives | Accepted |
 <!-- /hex:adr-summary -->
+
+</details>
+
+---
+
+## License
+
+[MIT](LICENSE)
