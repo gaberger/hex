@@ -13,7 +13,8 @@ mod config_tests {
     fn test_default_config_is_spacetimedb() {
         let config = StateBackendConfig::default();
         assert_eq!(config.host, "http://localhost:3033");
-        assert_eq!(config.database, "hexflo-coordination");
+        // "hexflo-coordination" maps to database "hex" via STDB_MODULE_DATABASES
+        assert_eq!(config.database, "hex");
         assert!(config.auth_token.is_none());
     }
 
@@ -58,7 +59,8 @@ mod config_tests {
         let json = r#"{}"#;
         let config: StateBackendConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.host, "http://localhost:3033");
-        assert_eq!(config.database, "hexflo-coordination");
+        // "hexflo-coordination" maps to database "hex" via STDB_MODULE_DATABASES
+        assert_eq!(config.database, "hex");
         assert!(config.auth_token.is_none());
     }
 
@@ -158,7 +160,8 @@ mod spacetime_adapter_tests {
     fn test_spacetime_config_default() {
         let config = SpacetimeConfig::default();
         assert_eq!(config.host, "http://localhost:3033");
-        assert_eq!(config.database, "hexflo-coordination");
+        // "hexflo-coordination" maps to database "hex" via STDB_MODULE_DATABASES
+        assert_eq!(config.database, "hex");
         assert!(config.auth_token.is_none());
     }
 

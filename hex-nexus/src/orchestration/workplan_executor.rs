@@ -611,7 +611,7 @@ impl WorkplanExecutor {
             let prompt = Self::enrich_prompt(
                 state_port,
                 shared_state,
-                &task,
+                task,
                 workplan,
                 base_prompt,
             ).await;

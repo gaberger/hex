@@ -343,7 +343,7 @@ fn evaluate_code_generated(tier: u32, output_dir: &str, language: &str) -> Objec
             .unwrap_or(0);
         return ObjectiveState::met(
             Objective::CodeGenerated,
-            &format!("{} Go source files found", go_file_count),
+            format!("{} Go source files found", go_file_count),
         );
     }
 
@@ -476,7 +476,7 @@ fn evaluate_tests_exist(output_dir: &str, language: &str) -> ObjectiveState {
         if test_count > 0 {
             return ObjectiveState::met(
                 Objective::TestsExist,
-                &format!("{} Go test files found", test_count),
+                format!("{} Go test files found", test_count),
             );
         }
         return ObjectiveState::unmet(

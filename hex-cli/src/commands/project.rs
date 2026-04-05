@@ -356,7 +356,7 @@ async fn resolve_project_id_from_cwd(client: &NexusClient) -> Option<String> {
         let root_path = std::path::Path::new(root);
         if cwd == root_path || cwd.starts_with(root_path) {
             let len = root.len();
-            if best.map_or(true, |(prev_len, _)| len > prev_len) {
+            if best.is_none_or(|(prev_len, _)| len > prev_len) {
                 best = Some((len, p["id"].as_str()?));
             }
         }

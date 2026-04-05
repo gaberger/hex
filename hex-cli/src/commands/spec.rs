@@ -250,7 +250,7 @@ async fn show(feature: &str, check: bool) -> anyhow::Result<()> {
             println!("  {}", cat.bold().underline());
             for s in spec.specs.iter().filter(|s| &s.category == cat) {
                 let sign = if s.negative_spec {
-                    format!(" [−]").red().to_string()
+                    " [−]".to_string().red().to_string()
                 } else {
                     String::new()
                 };

@@ -1,14 +1,14 @@
-/// MCP server for hex-agent: JSON-RPC over stdin/stdout.
-///
-/// Exposes hex-aware tools to docker sandbox agents:
-///   hex_read_file, hex_write_file, hex_edit_file, hex_bash,
-///   hex_git_commit, hex_git_status, hex_analyze
-///
-/// Safety guarantees:
-///   - All file paths are validated with safe_path() (no traversal outside WORKSPACE)
-///   - hex_write_file / hex_edit_file reject cross-adapter imports
-///   - hex_bash only runs an allowlisted set of commands
-///   - hex_git_commit runs cargo check before committing
+//! MCP server for hex-agent: JSON-RPC over stdin/stdout.
+//!
+//! Exposes hex-aware tools to docker sandbox agents:
+//!   hex_read_file, hex_write_file, hex_edit_file, hex_bash,
+//!   hex_git_commit, hex_git_status, hex_analyze
+//!
+//! Safety guarantees:
+//!   - All file paths are validated with safe_path() (no traversal outside WORKSPACE)
+//!   - hex_write_file / hex_edit_file reject cross-adapter imports
+//!   - hex_bash only runs an allowlisted set of commands
+//!   - hex_git_commit runs cargo check before committing
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -241,7 +241,7 @@ const SECRET_DENY_PATTERNS: &[&str] = &[
 
 fn looks_like_secret(path: &str) -> bool {
     let lower = path.to_lowercase();
-    let basename = lower.split('/').last().unwrap_or(&lower);
+    let basename = lower.split('/').next_back().unwrap_or(&lower);
     SECRET_DENY_PATTERNS
         .iter()
         .any(|pat| basename.contains(pat))

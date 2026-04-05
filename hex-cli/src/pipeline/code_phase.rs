@@ -125,7 +125,7 @@ pub fn cleanup_stale_output_dir(output_dir: &str, feature_name: &str) {
         dist.exists()
             && std::fs::read_dir(&dist)
                 .map(|mut rd| rd.any(|e| {
-                    e.map(|e| e.path().extension().map_or(false, |x| x == "js"))
+                    e.map(|e| e.path().extension().is_some_and(|x| x == "js"))
                         .unwrap_or(false)
                 }))
                 .unwrap_or(false)
@@ -156,6 +156,7 @@ pub fn cleanup_stale_output_dir(output_dir: &str, feature_name: &str) {
 /// * `output_dir` — directory to scaffold into (created if it doesn't exist)
 /// * `language` — `"typescript"`, `"ts"`, `"rust"`, or `"rs"`
 /// * `feature_name` — human-readable feature name (slugified for package name)
+///
 /// Ensure `dir` is an isolated git repository.
 /// Runs `git init` only if there is no `.git` directory already present.
 /// Errors are non-fatal — logged as warnings so a missing git binary

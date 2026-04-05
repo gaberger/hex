@@ -33,9 +33,27 @@ jobs:
         with:
           bun-version: latest
       - run: bun install
-      - run: bun run check          # TypeScript type check
-      - run: bun run build           # Build CLI + library
-      - run: bun test tests/unit/ tests/smoke/   # Unit + smoke (integration needs runtime deps)
+      - name: TypeScript type check (skip if src/ removed)
+        run: |
+          if [ -d src ] && ls src/**/*.ts 1>/dev/null 2>&1; then
+            bun run check
+          else
+            echo "No TypeScript sources in src/ — skipping type check"
+          fi
+      - name: Build CLI + library (skip if src/ removed)
+        run: |
+          if [ -d src ] && ls src/**/*.ts 1>/dev/null 2>&1; then
+            bun run build
+          else
+            echo "No TypeScript sources in src/ — skipping build"
+          fi
+      - name: Unit + smoke tests (skip if no test files)
+        run: |
+          if ls tests/unit/*.test.ts 1>/dev/null 2>&1 || ls tests/smoke/*.test.ts 1>/dev/null 2>&1; then
+            bun test tests/unit/ tests/smoke/
+          else
+            echo "No test files found — skipping"
+          fi
 
   boundary-check:
     runs-on: ubuntu-latest

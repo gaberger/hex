@@ -407,7 +407,7 @@ impl WorkflowEngine {
             // Avoids hammering rate-limited OpenRouter endpoints and gives the fixer
             // time to flush before the next gate run.
             if iteration < max {
-                let backoff_secs = std::cmp::min(2u64.pow(iteration as u32 - 1) * 2, 30);
+                let backoff_secs = std::cmp::min(2u64.pow(iteration - 1) * 2, 30);
                 info!(iteration, backoff_secs, "backing off before next iteration");
                 tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
             }

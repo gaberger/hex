@@ -83,11 +83,10 @@ pub async fn auto_complete_done_swarms(nexus: &NexusClient, swarms: &[serde_json
         let completed = tasks
             .map(|t| t.iter().filter(|tk| tk["status"].as_str() == Some("completed")).count())
             .unwrap_or(0);
-        if completed == total {
-            if nexus.patch(&format!("/api/swarms/{}", id), &json!({})).await.is_ok() {
+        if completed == total
+            && nexus.patch(&format!("/api/swarms/{}", id), &json!({})).await.is_ok() {
                 count += 1;
             }
-        }
     }
     count
 }

@@ -41,8 +41,13 @@ jobs:
       - name: Install bun
         uses: oven-sh/setup-bun@v2
 
-      - name: TypeScript type check
-        run: bun run check
+      - name: TypeScript type check (skip if src/ removed)
+        run: |
+          if [ -d src ] && ls src/**/*.ts 1>/dev/null 2>&1; then
+            bun run check
+          else
+            echo "No TypeScript sources in src/ — skipping"
+          fi
 
   unit:
     name: Unit Tests
@@ -76,8 +81,13 @@ jobs:
       - name: Install bun
         uses: oven-sh/setup-bun@v2
 
-      - name: TypeScript tests
-        run: bun test tests/unit/ tests/smoke/
+      - name: TypeScript tests (skip if no test files)
+        run: |
+          if ls tests/unit/*.test.ts 1>/dev/null 2>&1 || ls tests/smoke/*.test.ts 1>/dev/null 2>&1; then
+            bun test tests/unit/ tests/smoke/
+          else
+            echo "No TypeScript test files found — skipping"
+          fi
 
       - name: Install dashboard deps
         run: cd hex-nexus/assets && npm ci --ignore-scripts
@@ -95,7 +105,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnoy/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -106,6 +116,9 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-integ-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-integ-
+
+      - name: Ensure dashboard assets directory exists
+        run: mkdir -p hex-nexus/assets/dist
 
       - name: Build hex-nexus
         run: cargo build -p hex-nexus --release
@@ -158,6 +171,7 @@ jobs:
 
       - name: Build and run E2E
         run: |
+          mkdir -p hex-nexus/assets/dist
           cargo build -p hex-nexus --release
           cargo build -p hex-cli --release
           chmod +x scripts/e2e-test.sh

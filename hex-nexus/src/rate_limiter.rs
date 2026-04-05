@@ -266,7 +266,7 @@ fn today_utc() -> String {
 
 /// Manages rate state for all providers (ADR-2604052125).
 /// Thread-safe, shared across all inference routes.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct RateLimitManager {
     states: Arc<RwLock<HashMap<String, ProviderRateState>>>,
     /// Inference cost tracking — actual vs. counterfactual.

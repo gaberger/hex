@@ -530,7 +530,7 @@ async fn inference_stats() -> anyhow::Result<()> {
                     let cost = p.get("cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     let is_free = p.get("is_free_tier").and_then(|v| v.as_bool()).unwrap_or(false);
                     let cost_str = if is_free {
-                        format!("$0.00 (free)").green().to_string()
+                        "$0.00 (free)".to_string().green().to_string()
                     } else {
                         format!("${:.4}", cost).to_string()
                     };
@@ -695,7 +695,7 @@ async fn test_provider(target: Option<&str>, all: bool) -> anyhow::Result<()> {
         };
 
         let uncalibrated: Vec<_> = endpoints.iter()
-            .filter(|p| p.get("qualityScore").is_none() || p.get("qualityScore").and_then(|v| Some(v.is_number())).unwrap_or(false))
+            .filter(|p| p.get("qualityScore").is_none() || p.get("qualityScore").map(|v| v.is_number()).unwrap_or(false))
             .collect();
 
         if uncalibrated.is_empty() {
@@ -1553,7 +1553,7 @@ async fn connect_and_watch(
                     .json(&serde_json::json!({ "status": "claimed" }))
                     .send()
                     .await;
-                if claim_resp.and_then(|r| Ok(r.status().is_success())).unwrap_or(false) {
+                if claim_resp.map(|r| r.status().is_success()).unwrap_or(false) {
                     if !daemon {
                         println!("{} inference-watch: claimed (startup) {}", "⬡".green(), push_id);
                     }
@@ -1588,8 +1588,7 @@ async fn connect_and_watch(
                         .send()
                         .await;
 
-                    let claimed = claim_resp
-                        .and_then(|r| Ok(r.status().is_success()))
+                    let claimed = claim_resp.map(|r| r.status().is_success())
                         .unwrap_or(false);
 
                     if claimed {

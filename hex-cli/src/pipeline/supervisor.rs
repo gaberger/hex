@@ -888,7 +888,7 @@ impl Supervisor {
                     .replace("127.0.0.1", "host.docker.internal");
                 let nexus_port = self.nexus_url
                     .split(':')
-                    .last()
+                    .next_back()
                     .unwrap_or("5555")
                     .trim_end_matches('/')
                     .to_string();
@@ -1623,9 +1623,9 @@ impl Supervisor {
                     }
 
                     // Check if worker is still alive
-                    {
+                    let worker_dead = {
                         let mut workers = self.workers.lock().unwrap();
-                        let worker_dead = workers
+                        let dead = workers
                             .iter_mut()
                             .find(|(r, _)| r == role)
                             .map(|(_, child)| {
@@ -1633,40 +1633,42 @@ impl Supervisor {
                             })
                             .unwrap_or(true);
 
-                        if worker_dead {
-                            warn!(
-                                role,
-                                task_id = ?tid,
-                                "worker process died — respawning"
-                            );
-
-                            // Remove dead worker
+                        if dead {
+                            // Remove dead worker while we hold the lock
                             workers.retain(|(r, _)| r != role);
-                            drop(workers); // release lock before spawning
-
-                            // Respawn
-                            self.spawn_workers(&[role.to_string()])?;
-
-                            // Reset task to pending so the new worker can self-claim it.
-                            let nexus_reset = crate::nexus_client::NexusClient::new(self.nexus_url.clone());
-                            let _ = nexus_reset.patch(
-                                &format!("/api/hexflo/tasks/{}", tid),
-                                &serde_json::json!({"status": "pending", "agentId": ""}),
-                            ).await;
-
-                            retries += 1;
-                            if retries > 3 {
-                                break Err(anyhow::anyhow!(
-                                    "Worker for role {} died {} times — giving up",
-                                    role,
-                                    retries
-                                ));
-                            }
-
-                            // Wait for new worker to register
-                            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                            continue;
                         }
+                        dead
+                    }; // MutexGuard dropped here, before any .await
+
+                    if worker_dead {
+                        warn!(
+                            role,
+                            task_id = ?tid,
+                            "worker process died — respawning"
+                        );
+
+                        // Respawn
+                        self.spawn_workers(&[role.to_string()])?;
+
+                        // Reset task to pending so the new worker can self-claim it.
+                        let nexus_reset = crate::nexus_client::NexusClient::new(self.nexus_url.clone());
+                        let _ = nexus_reset.patch(
+                            &format!("/api/hexflo/tasks/{}", tid),
+                            &serde_json::json!({"status": "pending", "agentId": ""}),
+                        ).await;
+
+                        retries += 1;
+                        if retries > 3 {
+                            break Err(anyhow::anyhow!(
+                                "Worker for role {} died {} times — giving up",
+                                role,
+                                retries
+                            ));
+                        }
+
+                        // Wait for new worker to register
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        continue;
                     }
 
                     // Poll task status directly via HTTP (no CLI subprocess needed).
@@ -3286,9 +3288,9 @@ fn strip_chat_tokens(s: &str) -> String {
 fn sanitize_go_source(s: &str) -> String {
     // Fix "package mainimport" → "package main\n\nimport"
     let s = s.replace("package mainimport (", "package main\n\nimport (");
-    let s = s.replace("package mainimport(", "package main\n\nimport(");
+    
     // Fix "package main\nimport" → "package main\n\nimport" (missing blank line — valid but noisy)
-    s
+    s.replace("package mainimport(", "package main\n\nimport(")
 }
 
 #[cfg(test)]
