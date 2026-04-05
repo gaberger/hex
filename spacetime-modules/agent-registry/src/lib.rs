@@ -116,6 +116,123 @@ pub fn remove_agent(ctx: &ReducerContext, id: String) -> Result<(), String> {
     Ok(())
 }
 
+// ─── Agent Cleanup ──────────────────────────────────────────────────────────
+
+/// Stale threshold in seconds — agents without heartbeat for this long become "stale".
+pub const STALE_THRESHOLD_SECS: u64 = 45;
+
+/// Dead threshold in seconds — agents without heartbeat for this long become "dead".
+pub const DEAD_THRESHOLD_SECS: u64 = 120;
+
+/// Cleanup run log — tracks when agent cleanup last ran and what it did.
+#[table(name = agent_cleanup_log, public)]
+#[derive(Clone, Debug)]
+pub struct AgentCleanupLog {
+    #[auto_inc]
+    #[primary_key]
+    pub id: u64,
+    pub ran_at: String,
+    pub stale_count: u32,
+    pub dead_count: u32,
+    pub reclaimed_count: u32,
+}
+
+/// Run agent health cleanup.
+///
+/// `now` is an RFC3339 timestamp representing the current time.
+/// `stale_cutoff` is an RFC3339 timestamp = now - STALE_THRESHOLD_SECS (45s).
+/// `dead_cutoff` is an RFC3339 timestamp = now - DEAD_THRESHOLD_SECS (120s).
+///
+/// Agents whose `last_seen` is non-empty and older than `stale_cutoff` are
+/// marked "stale". Agents already "stale" whose `last_seen` is older than
+/// `dead_cutoff` are marked "dead".
+///
+/// This is a regular reducer — called periodically by hex-nexus or manually.
+/// When SpacetimeDB scheduled-procedure support matures, this can be wired
+/// to a cron-style schedule directly.
+#[reducer]
+pub fn run_agent_cleanup(
+    ctx: &ReducerContext,
+    now: String,
+    stale_cutoff: String,
+    dead_cutoff: String,
+) -> Result<(), String> {
+    let mut stale_count: u32 = 0;
+    let mut dead_count: u32 = 0;
+    let mut reclaimed_count: u32 = 0;
+
+    // Normalize Z → +00:00 for consistent RFC3339 string comparison.
+    let stale_c = stale_cutoff.replace('Z', "+00:00");
+    let dead_c = dead_cutoff.replace('Z', "+00:00");
+
+    // Collect all heartbeats for agents that are in active-ish states.
+    let agents: Vec<(Agent, AgentHeartbeat)> = ctx.db.agent().iter()
+        .filter(|a| a.status == "registered" || a.status == "active" || a.status == "stale")
+        .filter_map(|a| {
+            ctx.db.agent_heartbeat().agent_id().find(&a.id).map(|hb| (a, hb))
+        })
+        .collect();
+
+    for (agent, hb) in agents {
+        // Skip agents with no heartbeat yet (empty last_seen).
+        if hb.last_seen.is_empty() {
+            continue;
+        }
+
+        let last = hb.last_seen.replace('Z', "+00:00");
+
+        if last < dead_c && (agent.status == "stale") {
+            // Stale → Dead
+            ctx.db.agent().id().update(Agent {
+                status: "dead".to_string(),
+                ..agent
+            });
+            dead_count += 1;
+            reclaimed_count += 1; // agent slot reclaimed
+        } else if last < stale_c && (agent.status == "registered" || agent.status == "active") {
+            // Active/Registered → Stale
+            ctx.db.agent().id().update(Agent {
+                status: "stale".to_string(),
+                ..agent
+            });
+            stale_count += 1;
+        }
+    }
+
+    // Log cleanup run if any work was done.
+    if stale_count > 0 || dead_count > 0 || reclaimed_count > 0 {
+        ctx.db.agent_cleanup_log().insert(AgentCleanupLog {
+            id: 0, // auto_inc
+            ran_at: now.clone(),
+            stale_count,
+            dead_count,
+            reclaimed_count,
+        });
+        log::info!(
+            "run_agent_cleanup: stale={}, dead={}, reclaimed={}",
+            stale_count, dead_count, reclaimed_count
+        );
+    }
+
+    Ok(())
+}
+
+/// Manual trigger for agent cleanup — convenience wrapper around run_agent_cleanup.
+///
+/// Takes the same parameters and simply delegates. Useful for dashboard buttons
+/// or ad-hoc maintenance.
+#[reducer]
+pub fn trigger_agent_cleanup(
+    ctx: &ReducerContext,
+    now: String,
+    stale_cutoff: String,
+    dead_cutoff: String,
+) -> Result<(), String> {
+    run_agent_cleanup(ctx, now, stale_cutoff, dead_cutoff)
+}
+
+// ─── Validation Helpers ─────────────────────────────────────────────────────
+
 /// Valid agent statuses used by the heartbeat protocol.
 pub const VALID_AGENT_STATUSES: &[&str] = &["registered", "active", "stale", "dead", "disconnected"];
 
