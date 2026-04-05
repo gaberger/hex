@@ -1,6 +1,6 @@
 # ADR-2603312000: hex docs — Static Site Generator for the hex Manual
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-31
 **Deciders:** hex core team
 

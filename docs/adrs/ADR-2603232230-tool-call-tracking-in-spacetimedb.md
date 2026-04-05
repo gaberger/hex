@@ -1,6 +1,6 @@
 # ADR-2603232230: Tool Call Tracking in SpacetimeDB
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-23
 **Drivers:** `hex dev` pipeline calls are logged locally in session JSON files (`~/.hex/sessions/dev/<id>.json`) but not persisted in SpacetimeDB. This means the dashboard can't show tool call history, reports don't survive machine changes, and multi-agent sessions can't correlate calls across agents.
 **Supersedes:** None (extends ADR-2603232220, ADR-027)

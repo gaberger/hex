@@ -1,8 +1,8 @@
 //! SpacetimeDB-backed session persistence adapter (ADR-036 / ADR-042 P2.5).
 //!
 //! Implements `ISessionPort` by calling the `chat-relay` SpacetimeDB module's
-//! session reducers and SQL queries over HTTP. Falls back gracefully — callers
-//! should catch errors and optionally delegate to `SqliteSessionAdapter`.
+//! session reducers and SQL queries over HTTP. SpacetimeDB is the single state
+//! authority (ADR-051, ADR-2604020900) — no SQLite fallback.
 
 use async_trait::async_trait;
 use serde_json::Value;

@@ -1,6 +1,6 @@
 # ADR-024: Hex-Hub Autonomous Nexus Architecture
 
-**Status:** Accepted
+**Status:** Superseded by ADR-032 (Deprecate hex-hub — Consolidate into hex-nexus and hex-agent)
 
 ## Context
 

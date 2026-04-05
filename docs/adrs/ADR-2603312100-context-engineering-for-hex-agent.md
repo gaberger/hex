@@ -1,6 +1,6 @@
 # ADR-2603312100: Context Engineering for hex-agent
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-31
 **Drivers:** hex-agent needs improved prompt engineering to match Context Engineering effectiveness in tool usage, task execution, and context management.
 

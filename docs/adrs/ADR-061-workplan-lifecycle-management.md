@@ -1,4 +1,4 @@
-# ADR-046: Workplan Lifecycle Management — Creation, Tracking, and Reporting
+# ADR-061: Workplan Lifecycle Management — Creation, Tracking, and Reporting
 
 **Status:** Accepted
 **Accepted Date:** 2026-03-22

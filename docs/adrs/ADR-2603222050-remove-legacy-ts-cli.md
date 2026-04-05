@@ -1,6 +1,6 @@
 # ADR-2603222050: Remove Legacy TypeScript CLI and Adapters
 
-**Status:** Proposed
+**Status:** Abandoned — Legacy TS CLI already removed; Rust CLI is canonical
 **Date:** 2026-03-22
 **Drivers:** CI fails on `bun run check` due to 29 TypeScript errors in legacy adapters that the Rust CLI (`hex-cli`) replaced. The files are `@ts-nocheck` suppressed but still ship in the npm package, adding ~15K LOC of dead code. Attempted removal revealed deep coupling via `composition-root.ts`.
 

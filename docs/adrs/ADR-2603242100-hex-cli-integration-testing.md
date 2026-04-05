@@ -1,6 +1,6 @@
 # ADR-2603242100: Comprehensive hex-cli Integration Testing
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-24
 **Drivers:** hex-cli has 30 command modules and zero integration tests. CLI output contracts, exit codes, and command routing can regress silently — no CI gate catches broken commands before they ship.
 
