@@ -1,5 +1,11 @@
 //! Agent lifecycle adapter — composes SSH tunnel, WS transport, and remote registry
 //! ports to manage the full lifecycle of remote agents (ADR-040).
+//!
+//! SpacetimeDB writes (P4.2-P4.3): All state mutations (register, heartbeat,
+//! status update, deregister) are delegated to the `IRemoteRegistryPort`
+//! implementation, which fire-and-forget replicates to SpacetimeDB.  The
+//! lifecycle adapter itself does not call SpacetimeDB directly — this keeps
+//! the STDB concern in a single adapter (`RemoteRegistryAdapter`).
 
 use std::collections::HashMap;
 use std::sync::Arc;

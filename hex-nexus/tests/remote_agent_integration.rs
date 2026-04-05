@@ -96,7 +96,7 @@ async fn test_ssh_tunnel_reconnect() {
 #[tokio::test]
 #[ignore]
 async fn test_registry_agent_lifecycle() {
-    let registry = RemoteRegistryAdapter::new();
+    let registry = RemoteRegistryAdapter::new(None);
 
     // Register a bazzite agent
     let agent = RemoteAgent {
