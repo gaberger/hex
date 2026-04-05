@@ -143,6 +143,10 @@ pub struct Workplan {
     /// Schema: `adr` reference. Informational only.
     #[serde(default)]
     pub adr: String,
+    /// Schema: `specs` — path to behavioral spec file.
+    /// ADR-2604051700: If non-empty, file MUST exist before execution starts.
+    #[serde(default)]
+    pub specs: String,
     pub phases: Vec<WorkplanPhase>,
 }
 
@@ -277,6 +281,20 @@ impl WorkplanExecutor {
             return Err("Workplan has no phases".to_string());
         }
 
+        // ADR-2604051700 Gate 1: Spec-file-exists pre-flight check.
+        // If the workplan references a behavioral spec, it MUST exist before execution.
+        if !workplan.specs.is_empty() {
+            let spec_path = std::path::Path::new(&workplan.specs);
+            if !spec_path.exists() {
+                return Err(format!(
+                    "Workplan references spec '{}' but file does not exist. \
+                     Write the behavioral spec before executing the workplan (specs-first pipeline).",
+                    workplan.specs
+                ));
+            }
+            tracing::info!(spec = %workplan.specs, "Pre-flight: behavioral spec exists");
+        }
+
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let first_phase = workplan.phases[0].name.clone();
@@ -389,6 +407,27 @@ impl WorkplanExecutor {
                     agent_id: None,
                     result: None,
                 }).await;
+            }
+
+            // ADR-2604051700 Gate 2: Pre-deletion consumer scan before phase execution.
+            let consumer_warnings = Self::run_consumer_scan(phase).await;
+            if !consumer_warnings.is_empty() {
+                if let Ok(Some(mut exec)) = Self::load_execution(state_port.as_ref(), &execution_id).await {
+                    exec.gate_results.push(GateResult {
+                        phase: phase.name.clone(),
+                        gate_command: "consumer-scan".to_string(),
+                        passed: true, // warning-only by default
+                        output: consumer_warnings.join("\n---\n"),
+                        checked_at: chrono::Utc::now().to_rfc3339(),
+                    });
+                    Self::store_execution(state_port.as_ref(), &exec).await.ok();
+                }
+                tracing::warn!(
+                    execution_id = %execution_id,
+                    phase = %phase.name,
+                    "Consumer scan found {} warnings — review before proceeding",
+                    consumer_warnings.len()
+                );
             }
 
             match Self::execute_phase(&state_port, &shared_state, &workplan, phase).await {
@@ -979,6 +1018,74 @@ impl WorkplanExecutor {
                 checked_at: now,
             },
         }
+    }
+
+    /// ADR-2604051700 Gate 2: Pre-deletion consumer scan.
+    /// Before a phase that deletes files/modules, grep the workspace for references.
+    /// Returns a list of files that reference the deleted artifacts.
+    async fn run_consumer_scan(phase: &WorkplanPhase) -> Vec<String> {
+        // Detect deletion phases by scanning task descriptions for deletion keywords
+        let deletion_targets: Vec<String> = phase
+            .tasks
+            .iter()
+            .filter(|t| {
+                let desc = t.description.to_lowercase();
+                desc.contains("delete") || desc.contains("remove module") || desc.contains("prune")
+            })
+            .flat_map(|t| {
+                // Extract basenames from the files array as search terms
+                t.files.iter().filter_map(|f| {
+                    std::path::Path::new(f)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_string())
+                })
+            })
+            .collect();
+
+        if deletion_targets.is_empty() {
+            return Vec::new();
+        }
+
+        let mut warnings = Vec::new();
+        for target in &deletion_targets {
+            // grep -r across workspace, excluding build artifacts
+            let result = tokio::process::Command::new("grep")
+                .args([
+                    "-rl", target,
+                    "--include=*.rs", "--include=*.ts", "--include=*.tsx",
+                    "--include=*.toml", "--include=*.json",
+                    "--exclude-dir=target", "--exclude-dir=node_modules",
+                    "--exclude-dir=.git", "--exclude-dir=dist",
+                    ".",
+                ])
+                .output()
+                .await;
+
+            if let Ok(out) = result {
+                let matches = String::from_utf8_lossy(&out.stdout);
+                let count = matches.lines().count();
+                if count > 0 {
+                    warnings.push(format!(
+                        "Consumer scan: '{}' referenced in {} files. Review before deleting:\n{}",
+                        target,
+                        count,
+                        matches.lines().take(10).collect::<Vec<_>>().join("\n")
+                    ));
+                }
+            }
+        }
+
+        if !warnings.is_empty() {
+            tracing::warn!(
+                phase = %phase.name,
+                targets = ?deletion_targets,
+                "Pre-deletion consumer scan found {} warnings",
+                warnings.len()
+            );
+        }
+
+        warnings
     }
 
     /// ADR-046: List all workplan executions (active + historical).

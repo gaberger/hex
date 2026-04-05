@@ -481,6 +481,29 @@ const handlers = {
         }
       }
     } catch (e) { /* non-fatal */ }
+    // ADR-2604051700 Gate 3: Auto-cleanup worktree on agent completion.
+    // If this agent was running in a worktree, remove it to prevent orphans.
+    try {
+      const sessionId = process.env.CLAUDE_SESSION_ID;
+      if (sessionId) {
+        const sessionFile = require('path').join(require('os').homedir(), '.hex', 'sessions', `agent-${sessionId}.json`);
+        if (fs.existsSync(sessionFile)) {
+          const agentData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+          const worktreePath = agentData.worktree_path;
+          if (worktreePath && fs.existsSync(worktreePath)) {
+            try {
+              require('child_process').execFileSync(
+                'git', ['worktree', 'remove', worktreePath, '--force'],
+                { timeout: 10000 }
+              );
+              console.log(`[OK] Cleaned up worktree: ${worktreePath}`);
+            } catch (wtErr) {
+              console.log(`[WARN] Failed to remove worktree ${worktreePath}: ${wtErr.message}`);
+            }
+          }
+        }
+      }
+    } catch (e) { /* non-fatal */ }
     // Implicit success feedback for intelligence
     if (intelligence && intelligence.feedback) {
       try {
