@@ -2,14 +2,12 @@
   "host": "http://127.0.0.1:3033",
   "database": "hexflo-coordination",
   "databases": {
-    "agent_registry": "hex-agent-registry",
-    "agent_definition_registry": "hex-agent-definition-registry",
-    "chat_relay": "hex-chat-relay",
-    "fleet_state": "hex-fleet-state",
-    "hook_registry": "hex-hook-registry",
-    "rl_engine": "hex-rl-engine",
-    "secret_grant": "hex-secret-grant",
-    "skill_registry": "hex-skill-registry",
-    "workplan_state": "hex-workplan-state"
+    "hexflo_coordination": "hex",
+    "agent_registry": "agent-registry",
+    "inference_gateway": "inference-gateway",
+    "secret_grant": "secret-grant",
+    "chat_relay": "chat-relay",
+    "rl_engine": "rl-engine",
+    "neural_lab": "neural-lab"
   }
 }

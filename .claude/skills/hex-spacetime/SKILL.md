@@ -5,7 +5,7 @@ description: Guide SpacetimeDB WASM module development for hex. Use when the use
 
 # Hex SpacetimeDB — WASM Module Development Guide
 
-SpacetimeDB is hex's coordination backbone — 18+ WASM modules provide transactional state management for swarms, agents, inference, chat, architecture enforcement, and more. All clients (web dashboard, CLI, desktop) connect via WebSocket for real-time synchronization.
+SpacetimeDB is hex's coordination backbone — 7 WASM modules (ADR-2604050900) provide transactional state management for swarms, agents, inference, chat, and more. All clients (web dashboard, CLI, desktop) connect via WebSocket for real-time synchronization.
 
 ## Critical Constraints
 

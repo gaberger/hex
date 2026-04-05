@@ -20,19 +20,16 @@ COPY hex-nexus/Cargo.toml hex-nexus/
 COPY hex-cli/Cargo.toml hex-cli/
 COPY hex-parser/Cargo.toml hex-parser/
 COPY hex-desktop/Cargo.toml hex-desktop/
-COPY spacetime-modules/test-results/Cargo.toml spacetime-modules/test-results/
-
 # Create stub src files for dependency caching
 RUN mkdir -p hex-core/src hex-agent/src hex-nexus/src hex-cli/src hex-parser/src \
-              hex-desktop/src spacetime-modules/test-results/src \
+              hex-desktop/src \
     && echo 'fn main() {}' > hex-agent/src/main.rs \
     && echo 'fn main() {}' > hex-cli/src/main.rs \
     && echo 'fn main() {}' > hex-desktop/src/main.rs \
     && echo '' > hex-core/src/lib.rs \
     && echo '' > hex-nexus/src/lib.rs \
     && echo '' > hex-cli/src/lib.rs \
-    && echo '' > hex-parser/src/lib.rs \
-    && echo '' > spacetime-modules/test-results/src/lib.rs
+    && echo '' > hex-parser/src/lib.rs
 
 # Pre-build deps
 RUN cargo build --release -p hex-agent 2>/dev/null || true
@@ -44,10 +41,8 @@ COPY hex-nexus/ hex-nexus/
 COPY hex-cli/ hex-cli/
 COPY hex-parser/ hex-parser/
 COPY hex-desktop/ hex-desktop/
-COPY spacetime-modules/test-results/ spacetime-modules/test-results/
-
 # Touch all workspace source files so cargo invalidates the stub-built artifacts
-RUN find hex-core hex-agent hex-nexus hex-cli hex-parser hex-desktop spacetime-modules \
+RUN find hex-core hex-agent hex-nexus hex-cli hex-parser hex-desktop \
         -name "*.rs" -exec touch {} \;
 
 # Build hex-agent and hex-cli (agent uses hex CLI for project init + analysis)
