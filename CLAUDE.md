@@ -16,7 +16,7 @@ hex is composed of five deployment units. Understanding these is essential for w
 
 **SpacetimeDB must always be running to use hex.** It is the backbone — all clients (web, CLI, desktop) connect via WebSocket for real-time state synchronization.
 
-- **18 WASM modules** in `spacetime-modules/` provide transactional reducers for swarm coordination, agent lifecycle, inference routing, chat relay, and more
+- **7 WASM modules** in `spacetime-modules/` provide transactional reducers for swarm coordination, agent lifecycle, inference routing, secret management, and more (ADR-2604050900: right-sized from 19 to 7)
 - Replaces polling with instant WebSocket subscriptions — when one agent completes a task, all clients see it immediately
 - **Critical limitation**: WASM modules cannot access filesystems, spawn processes, or make network calls — this is why hex-nexus exists
 
@@ -31,7 +31,7 @@ hex-nexus bridges the gap between SpacetimeDB (sandboxed WASM) and the local ope
 - **Serves the dashboard** frontend (assets baked in via `rust-embed`)
 - **Exposes REST API** that CLI and MCP tools delegate to
 - Editing `hex-nexus/assets/` requires rebuilding: `cd hex-nexus && cargo build --release`
-- State fallback: SQLite (`~/.hex/hub.db`) when SpacetimeDB unavailable (ADR-025)
+- Remote agent state synced to SpacetimeDB for cross-host fleet visibility (ADR-2604050900)
 
 ### hex-agent — Architecture Enforcement Runtime (`hex-agent/`)
 
@@ -126,15 +126,14 @@ hex-desktop/             # Desktop app (Tauri wrapper for dashboard)
 hex-parser/              # Code parsing utilities
 
 # ── SpacetimeDB WASM Modules ──────────────────────────────────────────────
-spacetime-modules/       # 18 WASM modules (wasm32-unknown-unknown)
-  hexflo-coordination/   #   Core: swarms, tasks, agents, memory, projects, config
-  agent-registry/        #   Agent lifecycle + heartbeats
-  inference-gateway/     #   LLM request routing (model-agnostic)
-  workplan-state/        #   Task status + phase tracking
+spacetime-modules/       # 7 WASM modules (ADR-2604050900, right-sized from 19)
+  hexflo-coordination/   #   Core: swarms, tasks, agents, memory, fleet, lifecycle, cleanup
+  agent-registry/        #   Agent lifecycle + heartbeats + cleanup
+  inference-gateway/     #   LLM request routing + procedure-based inference
+  secret-grant/          #   TTL-based key distribution to sandboxed agents
+  rl-engine/             #   Reinforcement learning model selection
   chat-relay/            #   Message routing
-  fleet-state/           #   Compute node registry
-  architecture-enforcer/ #   Server-side boundary validation
-  # ... + 11 more modules
+  neural-lab/            #   Experimental neural patterns
 
 # ── TypeScript Library ─────────────────────────────────────────────────────
 src/
