@@ -1130,15 +1130,17 @@ fn load_hex_state_config() -> Option<(String, String, String)> {
 
     // Per-module database names, falling back to the single "database" field
     let default_db = json.get("database").and_then(|v| v.as_str()).unwrap_or("hex-nexus");
+    // ADR-2604050900: skill-registry and agent-definition-registry modules deleted;
+    // config now synced via hexflo-coordination ("hex" database)
     let skill_db = json
         .get("skill_db")
         .and_then(|v| v.as_str())
-        .unwrap_or("hex-skill-registry")
+        .unwrap_or("hex")
         .to_string();
     let agent_def_db = json
         .get("agent_def_db")
         .and_then(|v| v.as_str())
-        .unwrap_or("hex-agent-definition-registry")
+        .unwrap_or("hex")
         .to_string();
 
     let _ = default_db; // used for backwards compat when single-DB model returns

@@ -506,13 +506,15 @@ fn run_unit_tests(r: &mut TestResults) {
     println!("{}", "── SpacetimeDB Module Tests ──".cyan());
     r.set_category("spacetimedb");
 
+    // ADR-2604050900: right-sized to 7 modules
     for module in &[
-        "file-lock-manager",
-        "architecture-enforcer",
-        "conflict-resolver",
-        "inference-gateway",
         "hexflo-coordination",
+        "agent-registry",
+        "inference-gateway",
         "secret-grant",
+        "rl-engine",
+        "chat-relay",
+        "neural-lab",
     ] {
         let ok = cargo_test_spacetime(module);
         r.check(&format!("{} tests pass", module), ok);

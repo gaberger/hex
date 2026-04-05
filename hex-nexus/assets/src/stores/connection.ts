@@ -25,9 +25,7 @@ import {
 import {
   DbConnection as InferenceGatewayDbConnection,
 } from "../spacetimedb/inference-gateway/index";
-import {
-  DbConnection as FleetStateDbConnection,
-} from "../spacetimedb/fleet-state/index";
+// ADR-2604050900: fleet-state module deleted; compute_node absorbed into hexflo-coordination
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -63,11 +61,8 @@ let setInferenceConn: (v: any | null) => void = () => {};
 let inferenceConnected: Accessor<boolean> = () => false;
 let setInferenceConnected: (v: boolean) => void = () => {};
 
-// fleet-state
-let fleetConn: Accessor<any | null> = () => null;
-let setFleetConn: (v: any | null) => void = () => {};
+// fleet-state — retired (ADR-2604050900), compute_node now in hexflo-coordination
 let fleetConnected: Accessor<boolean> = () => false;
-let setFleetConnected: (v: boolean) => void = () => {};
 
 // ---------------------------------------------------------------------------
 // Table accessors — assigned inside createRoot by initConnectionStore
@@ -90,7 +85,7 @@ let agentInbox: Accessor<any[]> = () => [];
 let inferenceProviders: Accessor<any[]> = () => [];
 let inferenceRequests: Accessor<any[]> = () => [];
 
-// fleet-state tables
+// fleet/compute_node — now served from hexflo-coordination (ADR-2604050900)
 let fleetNodes: Accessor<any[]> = () => [];
 
 // Aggregated connection status
@@ -251,11 +246,11 @@ export function initConnectionStore() {
     inferenceProviders = useTable(() => _inferenceConn()?.db.inference_provider as SpacetimeDBTableHandle<any> | undefined);
     inferenceRequests = useTable(() => _inferenceConn()?.db.inference_request as SpacetimeDBTableHandle<any> | undefined);
 
-    // fleet-state tables
-    fleetNodes = useTable(() => _fleetConn()?.db.compute_node as SpacetimeDBTableHandle<any> | undefined);
+    // fleet/compute_node — now served from hexflo-coordination (ADR-2604050900)
+    fleetNodes = useTable(() => _hexfloConn()?.db.compute_node as SpacetimeDBTableHandle<any> | undefined);
 
     // Aggregated connection status
-    anyConnected = () => _hexfloConnected() || _inferenceConnected() || _fleetConnected();
+    anyConnected = () => _hexfloConnected() || _inferenceConnected();
   });
 }
 
@@ -300,6 +295,7 @@ export function initConnections() {
       "SELECT * FROM agent_definition",
       "SELECT * FROM hex_agent",
       "SELECT * FROM agent_inbox",
+      "SELECT * FROM compute_node",
     ],
   });
 
@@ -315,16 +311,9 @@ export function initConnections() {
     ],
   });
 
-  // fleet-state: compute nodes
-  connectModule({
-    module: "fleet-state",
-    builder: FleetStateDbConnection,
-    setConn: setFleetConn,
-    setConnected: setFleetConnected,
-    subscribeQueries: [
-      "SELECT * FROM compute_node",
-    ],
-  });
+  // ADR-2604050900: fleet-state module deleted; compute_node now in hexflo-coordination
+  // fleetConnected mirrors hexfloConnected since the data comes from the same connection
+  fleetConnected = hexfloConnected;
 }
 
 // ---------------------------------------------------------------------------
@@ -337,5 +326,5 @@ export function getHexfloConn() { return hexfloConn(); }
 export function getAgentRegistryConn() { return hexfloConn(); }
 /** Get the inference-gateway connection for calling reducers. */
 export function getInferenceConn() { return inferenceConn(); }
-/** Get the fleet-state connection for calling reducers. */
-export function getFleetConn() { return fleetConn(); }
+/** Get the fleet/compute_node connection (now served from hexflo-coordination — ADR-2604050900). */
+export function getFleetConn() { return hexfloConn(); }

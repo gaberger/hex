@@ -10,7 +10,7 @@ hex is an **AAIDE** — an opinionated development framework built around **hexa
 | **hex-nexus** | Filesystem bridge daemon + dashboard (port 5555) |
 | **hex-agent** | Architecture enforcement runtime for AI agents |
 | **hex-core** | Shared domain types and port traits (zero external deps) |
-| **spacetime-modules** | 18 WASM modules for coordination, inference, swarms |
+| **spacetime-modules** | 7 WASM modules for coordination, inference, swarms (ADR-2604050900) |
 
 SpacetimeDB must be running. All clients connect via WebSocket for real-time state sync.
 
