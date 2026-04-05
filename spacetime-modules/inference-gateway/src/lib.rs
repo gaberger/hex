@@ -1005,7 +1005,7 @@ fn build_llm_request(
     let max_tokens = if request.max_tokens == 0 { 4096 } else { request.max_tokens };
     let temperature: f64 = request.temperature.parse().unwrap_or(0.7);
 
-    // Build optional tools fragment (shared across providers)
+    // Build optional tools fragment
     let tools_fragment = if !request.tools_json.is_empty() && request.tools_json != "[]" {
         format!(r#","tools":{}"#, request.tools_json)
     } else {
@@ -1103,7 +1103,7 @@ fn parse_llm_response(
 
             let content_json = if let Some(msg) = message {
                 if msg["tool_calls"].is_array() {
-                    // Forward the entire message object for tool call responses
+                    // Forward the entire message object for tool calls
                     serde_json::to_string(msg).unwrap_or_else(|_| "{}".to_string())
                 } else {
                     let text = msg["content"].as_str().unwrap_or("");
@@ -1188,7 +1188,7 @@ pub fn validate_request_status(status: &str) -> Result<(), String> {
     match status {
         "queued" | "processing" | "completed" | "failed" | "cancelled" => Ok(()),
         _ => Err(format!(
-            "Invalid request status '{}'. Expected: queued, processing, completed, failed, cancelled",
+            "Invalid request status '{}'. Expected: queued, processing, completed, failed",
             status
         )),
     }
