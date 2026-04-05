@@ -10,7 +10,7 @@ on:
         description: 'Release version (e.g., 26.4.0) — used only for workflow_dispatch'
         required: false
         type: string
-        default: '26.6.0'
+        default: '26.7.0'
       prerelease:
         description: 'Pre-release'
         required: false
@@ -68,7 +68,7 @@ jobs:
           if [[ "$GIT_REF" == refs/tags/* ]]; then
             VERSION="${GIT_REF#refs/tags/v}"
           else
-            VERSION="${DISPATCH_VERSION:-26.6.0}"
+            VERSION="${DISPATCH_VERSION:-26.7.0}"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tarball=hex-${VERSION}-${TARGET}.tar.gz" >> "$GITHUB_OUTPUT"
@@ -139,7 +139,7 @@ jobs:
           if [[ "$GIT_REF" == refs/tags/* ]]; then
             VERSION="${GIT_REF#refs/tags/v}"
           else
-            VERSION="${DISPATCH_VERSION:-26.6.0}"
+            VERSION="${DISPATCH_VERSION:-26.7.0}"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tarball=hex-${VERSION}-${TARGET}.tar.gz" >> "$GITHUB_OUTPUT"
@@ -197,7 +197,7 @@ jobs:
           if [[ "$GIT_REF" == refs/tags/* ]]; then
             TAG="${GIT_REF#refs/tags/}"
           else
-            TAG="v${DISPATCH_VERSION:-26.6.0}"
+            TAG="v${DISPATCH_VERSION:-26.7.0}"
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
