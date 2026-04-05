@@ -289,6 +289,9 @@ Before execution, validate:
 4. **No cycles**: Dependency graph is a DAG
 5. **Layer correctness**: Each step's `layer` matches the adapter it targets
 6. **Done conditions**: Every step has a testable done_condition
+7. **Build gates** (REQUIRED for delete/restructure steps): Every phase that deletes or modifies artifacts MUST include `cargo check --workspace` as a blocking gate before the next phase can start
+8. **Consumer dependency map**: For any step that deletes files/modules, verify all consumers across ALL workspace crates are identified with corresponding fix steps
+9. **Adversarial review gate**: For migrations with >5 deletion steps, include an explicit adversarial-reviewer step after the final phase
 
 ```bash
 # Validate workplan structure
