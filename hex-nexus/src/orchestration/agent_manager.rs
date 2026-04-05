@@ -399,9 +399,8 @@ impl AgentManager {
             let stdb_cfg = crate::state_config::resolve_config();
             cmd.env("HEX_STDB_HOST", &stdb_cfg.host);
             cmd.env("HEX_STDB_DATABASE", &stdb_cfg.database);
-            // Per-module database names (convention: hex-<module-name>)
-            cmd.env("HEX_STDB_SKILL_DB", "hex-skill-registry");
-            cmd.env("HEX_STDB_AGENT_DEF_DB", "hex-agent-definition-registry");
+            // Per-module database names removed — skill-registry and
+            // agent-definition-registry were absorbed into hexflo-coordination (ADR-2604050900).
             cmd.env("HEX_STATE_BACKEND", "spacetimedb");
             tracing::debug!(agent_id = %id, host = %stdb_cfg.host, db = %stdb_cfg.database, "Injecting SpacetimeDB config");
         }

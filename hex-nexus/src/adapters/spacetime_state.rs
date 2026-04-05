@@ -568,7 +568,8 @@ mod real {
         }
 
         // ── Workplan ────────────────────────────────────
-        // Maps to: workplan-state module
+        // NOTE: workplan-state module was removed (ADR-2604050900).
+        // These stubs satisfy the trait; state is managed by hexflo-coordination.
 
         async fn workplan_update_task(&self, _update: WorkplanTaskUpdate) -> Result<(), StateError> {
             // conn.reducers().update_task(execution_id, task_id, status, agent_id, result, timestamp)
@@ -631,7 +632,8 @@ mod real {
         }
 
         // ── Fleet ───────────────────────────────────────
-        // Maps to: fleet-state module
+        // NOTE: fleet-state module was removed (ADR-2604050900), absorbed into hexflo-coordination.
+        // These stubs satisfy the trait.
 
         async fn fleet_register(&self, _node: FleetNode) -> Result<(), StateError> {
             // conn.reducers().register_node(id, host, port, max_agents, timestamp)
@@ -654,7 +656,9 @@ mod real {
         }
 
         // ── Skill Registry ────────────────────────────────
-        // Maps to: skill-registry module
+        // NOTE: skill-registry module was removed (ADR-2604050900).
+        // Queries below hit the default database (hexflo-coordination) which
+        // absorbed config-sync tables.
 
         async fn skill_register(&self, _skill: SkillEntry) -> Result<String, StateError> {
             // conn.reducers().register_skill(id, name, description, triggers_json, body, source, timestamp)
@@ -716,7 +720,8 @@ mod real {
         }
 
         // ── Hook Registry ──────────────────────────────────
-        // Maps to: hook-registry module
+        // NOTE: hook-registry module was removed (ADR-2604050900).
+        // These stubs satisfy the trait.
 
         async fn hook_register(&self, _hook: HookEntry) -> Result<String, StateError> {
             // conn.reducers().register_hook(...)
@@ -752,7 +757,8 @@ mod real {
         }
 
         // ── Agent Definition Registry ──────────────────────
-        // Maps to: agent-definition-registry module
+        // NOTE: agent-definition-registry module was removed (ADR-2604050900).
+        // These stubs satisfy the trait.
 
         async fn agent_def_register(&self, _def: AgentDefinitionEntry) -> Result<String, StateError> {
             // conn.reducers().register_definition(...)
