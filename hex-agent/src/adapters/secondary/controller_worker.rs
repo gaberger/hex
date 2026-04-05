@@ -15,7 +15,7 @@ use crate::ports::{ContentBlock, Message, Role};
 
 use super::stdb_task_poller::TaskPayload;
 
-const PLANNER_SYSTEM_PROMPT: &str = r#"You are a software engineering controller agent inside the hex AAIDE framework.
+const PLANNER_SYSTEM_PROMPT: &str = r#"You are a software engineering controller agent inside the hex AIOS framework.
 
 Your job: given a high-level task description, decompose it into concrete sub-tasks for hex-coder agents.
 

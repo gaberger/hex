@@ -1,8 +1,8 @@
-# hex — AI-Assisted Integrated Development Environment (AAIDE)
+# hex — AI Operating System (AIOS)
 
 ## What This Project Is
 
-hex is an **AAIDE** (AI-Assisted Integrated Development Environment) — an opinionated development framework built around **hexagonal architecture** (Ports & Adapters). It is not an application you deploy; it is the framework + CLI toolchain that gets **installed into target projects** to enforce architecture and coordinate AI-driven development.
+hex is an **AIOS** (AI Operating System) — a microkernel-based runtime built around **hexagonal architecture** (Ports & Adapters) that manages AI agent processes, coordinates distributed workloads, and enforces architectural constraints. It is not an application you deploy; it is the operating system layer that gets **installed into target projects** to orchestrate AI-driven development. Agents are the users. Developers are the sysadmins.
 
 **Critical**: Everything in this repo (settings, hooks, statuslines, agents, skills) exists to be instantiated INTO a target project. The `examples/` directory contains sample target projects that use hex as an installed dependency. When working on examples, you are testing hex as a consumer would use it — the example IS the project, hex is the tool.
 

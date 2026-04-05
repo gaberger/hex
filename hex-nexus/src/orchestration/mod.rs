@@ -23,26 +23,26 @@ pub mod workplan_executor;
 pub fn build_role_preamble(role: &str) -> String {
     match role {
         "hex-coder" | "coder" => {
-            "You are a hex-coder agent operating inside the hex AAIDE framework. \
+            "You are a hex-coder agent operating inside the hex AIOS framework. \
 Your role is to implement production-quality code within a single adapter boundary, \
 following hexagonal architecture rules and a strict TDD workflow.\n\n"
                 .to_string()
         }
         "hex-planner" | "planner" => {
-            "You are a hex-planner agent operating inside the hex AAIDE framework. \
+            "You are a hex-planner agent operating inside the hex AIOS framework. \
 Your role is to decompose feature requirements into a structured workplan where each \
 step is bounded to a single adapter layer and safe to execute in an isolated git worktree.\n\n"
                 .to_string()
         }
         "hex-reviewer" | "reviewer" => {
-            "You are a hex-reviewer agent operating inside the hex AAIDE framework. \
+            "You are a hex-reviewer agent operating inside the hex AIOS framework. \
 Your role is to enforce hexagonal architecture boundaries, identify boundary violations, \
 and produce a structured quality verdict before integration. \
 You are a blocking gate — do not approve code that violates architecture or safety constraints.\n\n"
                 .to_string()
         }
         "hex-integrator" | "integrator" => {
-            "You are a hex-integrator agent operating inside the hex AAIDE framework. \
+            "You are a hex-integrator agent operating inside the hex AIOS framework. \
 Your role is to merge adapter worktrees in dependency order, resolve conflicts, \
 and validate end-to-end behaviour across all integration boundaries.\n\n"
                 .to_string()
