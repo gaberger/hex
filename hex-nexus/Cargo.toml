@@ -53,7 +53,7 @@ utoipa = { version = "5", features = ["axum_extras"] }
 # WebSocket transport for remote agent communication (ADR-040)
 tokio-tungstenite = "0.24"
 # Git repository introspection (ADR-044)
-git2 = { version = "0.19", features = ["vendored-libgit2"] }
+git2 = { version = "0.20", features = ["vendored-libgit2"] }
 # ADR compliance rule loading (ADR-045)
 toml = "0.8"
 # Shared domain types and port traits (hex-core is the gravity center)
