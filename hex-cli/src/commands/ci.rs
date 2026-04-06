@@ -85,16 +85,12 @@ async fn gate_analyze() -> bool {
 async fn gate_enforce() -> bool {
     print!("  {} ADR rule compliance ....... ", "\u{25cb}".dimmed());
 
-    // Enforce rules are local (read from .hex/adr-rules.toml).
-    // Run `hex enforce sync` which checks rules against the current codebase
-    // and exits non-zero if any mandatory rule is violated.
     let rules_file = std::path::Path::new(".hex/adr-rules.toml");
     if !rules_file.exists() {
         println!("{} (no .hex/adr-rules.toml)", "skip".yellow());
         return true;
     }
 
-    // Count rules and violations by parsing the rules file directly
     let content = match std::fs::read_to_string(rules_file) {
         Ok(c) => c,
         Err(e) => {
@@ -103,39 +99,114 @@ async fn gate_enforce() -> bool {
         }
     };
 
-    let total_rules = content.lines().filter(|l| l.trim_start().starts_with("[[rules]]")).count();
+    // Parse [[adr_rules]] directly — same schema as analyze.rs
+    #[derive(serde::Deserialize)]
+    struct RulesFile {
+        #[serde(default)]
+        adr_rules: Vec<AdrRule>,
+    }
+    #[derive(serde::Deserialize)]
+    struct AdrRule {
+        adr: String,
+        message: String,
+        #[serde(default)]
+        file_patterns: Vec<String>,
+        #[serde(default)]
+        violation_patterns: Vec<String>,
+    }
 
-    // Run hex enforce sync to check current codebase against rules
-    let out = tokio::process::Command::new("sh")
-        .args(["-c", "hex enforce sync 2>&1; echo EXIT:$?"])
-        .output()
-        .await;
+    let parsed: RulesFile = match toml::from_str(&content) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("{} (parse error: {})", "fail".red(), e);
+            return false;
+        }
+    };
 
-    match out {
-        Ok(o) => {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            // enforce sync exits 0 even with violations (it's a sync, not a gate)
-            // Count lines containing "VIOLATION" or "✗" in the output
-            let violations: Vec<&str> = stdout.lines()
-                .filter(|l| l.contains("VIOLATION") || (l.contains('✗') && !l.contains("skip")))
-                .collect();
-            if violations.is_empty() {
-                println!("{} ({} rules)", "pass".green(), total_rules);
-                true
-            } else {
-                println!("{} ({} violation{})", "fail".red(), violations.len(), if violations.len() == 1 { "" } else { "s" });
-                for v in violations.iter().take(5) {
-                    println!("      {}", v.dimmed());
+    let rules: Vec<&AdrRule> = parsed.adr_rules.iter()
+        .filter(|r| !r.violation_patterns.is_empty())
+        .collect();
+
+    if rules.is_empty() {
+        println!("{} (0 rules)", "pass".green());
+        return true;
+    }
+
+    // Scan source files for violations
+    let src = std::path::Path::new("src");
+    if !src.is_dir() {
+        println!("{} ({} rules, no src/)", "pass".green(), rules.len());
+        return true;
+    }
+
+    let files = collect_source_files(src);
+    let mut violations: Vec<String> = Vec::new();
+
+    for path in &files {
+        let rel = path.to_string_lossy().to_string();
+        let file_content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        for rule in &rules {
+            // Match file_patterns: "src/core/domain/**" → check if path starts with prefix
+            if !rule.file_patterns.is_empty() {
+                let matches = rule.file_patterns.iter().any(|p| {
+                    let prefix = p.trim_end_matches("/**").trim_end_matches("**");
+                    rel.starts_with(prefix)
+                });
+                if !matches { continue; }
+            }
+
+            for (line_num, line) in file_content.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
+                    continue;
                 }
-                false
+                for pattern in &rule.violation_patterns {
+                    if line.contains(pattern.as_str()) {
+                        violations.push(format!(
+                            "{} [{}] {}:{}",
+                            rule.adr, rule.message, rel, line_num + 1
+                        ));
+                        break;
+                    }
+                }
             }
         }
-        Err(_) => {
-            // hex CLI not on PATH — fall back to pass (analyze gate already covers ADR rules)
-            println!("{} (hex not on PATH, covered by analyze gate)", "skip".yellow());
-            true
+    }
+
+    if violations.is_empty() {
+        println!("{} ({} rule{})", "pass".green(), rules.len(), if rules.len() == 1 { "" } else { "s" });
+        true
+    } else {
+        println!("{} ({} violation{})", "fail".red(), violations.len(), if violations.len() == 1 { "" } else { "s" });
+        for v in violations.iter().take(5) {
+            println!("      {}", v.dimmed());
+        }
+        if violations.len() > 5 {
+            println!("      ... and {} more", violations.len() - 5);
+        }
+        false
+    }
+}
+
+fn collect_source_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(collect_source_files(&path));
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if matches!(ext, "ts" | "tsx" | "js" | "jsx" | "rs" | "go" | "py") {
+                    files.push(path);
+                }
+            }
         }
     }
+    files
 }
 
 async fn gate_workplan_done_commands() -> bool {
