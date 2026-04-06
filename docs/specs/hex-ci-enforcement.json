@@ -1,0 +1,96 @@
+{
+  "feature": "hex-ci-enforcement",
+  "description": "Machine-enforced done-condition verification in the workplan executor, plus a hex ci command and deployed GitHub Actions workflow that close the workplan drift gap",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "WorkplanTask with done_command deserializes from JSON",
+      "given": "A workplan JSON step with done_command: 'hex stdb --help | grep -q query'",
+      "when": "The workplan is loaded by the executor",
+      "then": "done_command is available as Some(String) on the WorkplanTask struct",
+      "negative_spec": false
+    },
+    {
+      "id": "S02",
+      "category": "EdgeCase",
+      "description": "WorkplanTask without done_command deserializes without error",
+      "given": "A workplan JSON step with no done_command field",
+      "when": "The workplan is loaded by the executor",
+      "then": "done_command is None; step executes normally with no verification attempt",
+      "negative_spec": false
+    },
+    {
+      "id": "S03",
+      "category": "HappyPath",
+      "description": "Passing done_command marks step completed",
+      "given": "A workplan step with done_command that exits 0 after the agent finishes",
+      "when": "The workplan executor finishes running the agent for that step",
+      "then": "Step status is set to completed; gate_results records the done_command exit 0",
+      "negative_spec": false
+    },
+    {
+      "id": "S04",
+      "category": "ErrorHandling",
+      "description": "Failing done_command marks step failed with clear message",
+      "given": "A workplan step with done_command that exits 1 after the agent finishes",
+      "when": "The workplan executor runs verify_done_condition()",
+      "then": "Step status is set to failed; error message includes the done_condition text and the exit code; executor halts the phase",
+      "negative_spec": false
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "hex ci exits 0 on a clean workspace",
+      "given": "All 4 gates pass: no architecture violations, no ADR rule violations, all done_commands exit 0, all steps reference spec IDs",
+      "when": "hex ci is run",
+      "then": "Prints a gate-by-gate summary with check marks and exits 0",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "ErrorHandling",
+      "description": "hex ci exits 1 and names the failing done_command",
+      "given": "A workplan step has done_command that exits non-zero",
+      "when": "hex ci runs the workplan gate sweep",
+      "then": "Prints the workplan name, step ID, done_condition text, and exit code; exits 1",
+      "negative_spec": false
+    },
+    {
+      "id": "S07",
+      "category": "ErrorHandling",
+      "description": "hex ci exits 1 on architecture violations",
+      "given": "hex analyze returns violations (e.g. an adapter importing another adapter)",
+      "when": "hex ci runs the architecture gate",
+      "then": "Prints the violation list and exits 1; remaining gates still run and report",
+      "negative_spec": false
+    },
+    {
+      "id": "S08",
+      "category": "ErrorHandling",
+      "description": "hex ci exits 1 when a step has no spec references",
+      "given": "A workplan step with an empty specs array",
+      "when": "hex ci runs the spec coverage gate",
+      "then": "Prints the step ID and workplan name; exits 1",
+      "negative_spec": true
+    },
+    {
+      "id": "S09",
+      "category": "HappyPath",
+      "description": "hex-ci.yml is embedded in the hex-cli binary",
+      "given": "hex-cli is built with the CI template in assets/ci/hex-ci.yml",
+      "when": "The binary is inspected for embedded assets",
+      "then": "The CI workflow template is accessible via the Assets struct",
+      "negative_spec": false
+    },
+    {
+      "id": "S10",
+      "category": "HappyPath",
+      "description": "CI workflow calls hex ci as its single enforcement gate",
+      "given": "A project initialized with hex that has .github/workflows/hex-ci.yml deployed",
+      "when": "A push triggers the CI workflow",
+      "then": "The workflow runs hex ci and fails the build if hex ci exits non-zero",
+      "negative_spec": false
+    }
+  ]
+}

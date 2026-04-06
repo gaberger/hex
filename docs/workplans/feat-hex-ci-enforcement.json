@@ -1,0 +1,100 @@
+{
+  "id": "feat-hex-ci-enforcement",
+  "title": "Feature: hex ci — done-condition verification, ci command, CI workflow template",
+  "specs": "docs/specs/hex-ci-enforcement.json",
+  "adr": "ADR-2604061100",
+  "created": "2026-04-06",
+  "status": "planned",
+  "topology": "pipeline",
+  "budget": "~6000 tokens",
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "Add `done_command: Option<String>` field to `WorkplanTask` in hex-core/src/domain/workplan.rs. This is the machine-runnable companion to `done_condition`. Deserializes from JSON; absent means documentation-only (backward compatible).",
+      "layer": "domain",
+      "adapter": "domain",
+      "dependencies": [],
+      "tier": 0,
+      "specs": ["S01", "S02"],
+      "done_condition": "cargo check -p hex-core passes; WorkplanTask has done_command field; existing workplan JSON without done_command deserializes without error",
+      "done_command": "cargo check -p hex-core 2>&1 | grep -v warning | grep -c error | grep -q ^0"
+    },
+    {
+      "id": "step-2",
+      "description": "Add `verify_done_condition(task: &WorkplanTask) -> Result<(), String>` to hex-nexus/src/orchestration/workplan_executor.rs. If task.done_command is Some, run it as a shell command. Non-zero exit returns Err with the condition text. Call this from run_step() after agent returns success. Persist result in gate_results.",
+      "layer": "usecases",
+      "adapter": "workplan_executor",
+      "dependencies": ["step-1"],
+      "tier": 1,
+      "specs": ["S01", "S03", "S04"],
+      "done_condition": "workplan_executor compiles; a step with done_command that exits 1 is marked failed; a step with no done_command is marked completed regardless",
+      "done_command": "cargo check -p hex-nexus 2>&1 | grep -v warning | grep -c error | grep -q ^0"
+    },
+    {
+      "id": "step-3",
+      "description": "Create hex-cli/src/commands/ci.rs with `pub async fn run() -> anyhow::Result<()>`. Runs 4 gates in sequence: (1) hex analyze via NexusClient /api/analyze, (2) hex enforce list via /api/enforce, (3) workplan done_command sweep — glob docs/workplans/*.json, find steps with done_command, run each, (4) spec coverage check — every step must reference >=1 spec ID. Print structured pass/fail summary. Exit non-zero if any gate fails.",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "dependencies": ["step-1"],
+      "tier": 1,
+      "specs": ["S05", "S06", "S07", "S08"],
+      "done_condition": "hex ci exits 0 on clean workspace; exits 1 when a done_command fails; prints gate-by-gate summary",
+      "done_command": "hex ci --help 2>&1 | grep -q 'Run all hex enforcement gates'"
+    },
+    {
+      "id": "step-4",
+      "description": "Wire `hex ci` into hex-cli/src/main.rs: add Ci variant to Commands enum, add `Commands::Ci => ci::run().await` match arm. Import ci module.",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "dependencies": ["step-3"],
+      "tier": 2,
+      "specs": ["S05"],
+      "done_condition": "cargo build -p hex-cli succeeds; hex ci --help prints usage",
+      "done_command": "cargo check -p hex-cli 2>&1 | grep -v warning | grep -c error | grep -q ^0"
+    },
+    {
+      "id": "step-5",
+      "description": "Create hex-cli/assets/ci/hex-ci.yml — GitHub Actions workflow template that runs `hex ci` on push and pull_request. Add CI template to hex-cli/src/assets.rs rust-embed Assets struct. Verify it is included in the binary with `hex init --list-assets | grep ci`.",
+      "layer": "adapters/primary",
+      "adapter": "cli",
+      "dependencies": ["step-4"],
+      "tier": 3,
+      "specs": ["S09", "S10"],
+      "done_condition": "hex-ci.yml exists in assets/ci/; cargo build -p hex-cli succeeds; asset is embedded",
+      "done_command": "cargo check -p hex-cli 2>&1 | grep -v warning | grep -c error | grep -q ^0"
+    }
+  ],
+  "dependencies": {
+    "cargo": []
+  },
+  "mergeOrder": [
+    "step-1 first (domain change required by all)",
+    "step-2 and step-3 parallel (both depend only on step-1)",
+    "step-4 after step-3",
+    "step-5 last (depends on step-4 for binary)"
+  ],
+  "riskRegister": [
+    {
+      "risk": "done_command runs arbitrary shell — injection if workplan JSON is attacker-controlled",
+      "impact": "medium",
+      "mitigation": "Workplans are repo files committed by developers; same trust level as Makefile. Document that done_command must not include user-supplied data."
+    },
+    {
+      "risk": "False positive: done_command fails due to env difference (PATH, binary not on PATH)",
+      "impact": "medium",
+      "mitigation": "done_command should use relative paths or hex CLI commands. Document convention. Failures show the exact command + exit code so debugging is fast."
+    },
+    {
+      "risk": "hex ci adds latency to every CI push",
+      "impact": "low",
+      "mitigation": "Gates are fast (analyze ~2s, enforce ~1s, done_command sweep ~1s per step). Total overhead ~10-30s acceptable for enforcement guarantee."
+    }
+  ],
+  "successCriteria": [
+    "A workplan step with done_command that exits 1 is marked failed, not completed",
+    "hex ci exits 0 on a clean workspace with all done_commands passing",
+    "hex ci exits 1 and names the failing step when a done_command fails",
+    "hex-ci.yml is embedded in the hex-cli binary and deployable via hex init",
+    "Existing workplans without done_command field deserialize and execute without error"
+  ]
+}

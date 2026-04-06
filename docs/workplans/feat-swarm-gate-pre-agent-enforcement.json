@@ -25,7 +25,7 @@
     },
     {
       "id": "step-2",
-      "description": "Add swarm_id existence check to pre_agent() in hook.rs \u2014 block background agents when SessionState.swarm_id is None (mandatory mode) or warn (advisory mode)",
+      "description": "Add swarm_id existence check to pre_agent() in hook.rs — block background agents when SessionState.swarm_id is None (mandatory mode) or warn (advisory mode)",
       "layer": "adapters/primary",
       "adapter": "hex-cli-hooks",
       "port": null,
@@ -42,7 +42,7 @@
     },
     {
       "id": "step-3",
-      "description": "Extend pre_agent() task validation to check swarm_status from nexus response \u2014 block if parent swarm is not 'active'",
+      "description": "Extend pre_agent() task validation to check swarm_status from nexus response — block if parent swarm is not 'active'",
       "layer": "adapters/primary",
       "adapter": "hex-cli-hooks",
       "port": null,
@@ -61,7 +61,7 @@
     },
     {
       "id": "step-4",
-      "description": "Add nexus REST validation to hook-handler.cjs pre-task \u2014 fetch /api/hexflo/tasks/{id} and validate swarm_status, respecting fail-open on network error",
+      "description": "Add nexus REST validation to hook-handler.cjs pre-task — fetch /api/hexflo/tasks/{id} and validate swarm_status, respecting fail-open on network error",
       "layer": "adapters/primary",
       "adapter": "hook-handler-opencode",
       "port": null,
@@ -78,7 +78,7 @@
     },
     {
       "id": "step-5",
-      "description": "Integration test: spawn background agent without swarm \u2192 expect exit(2); spawn with stale swarm \u2192 expect exit(2); spawn with active swarm \u2192 expect exit(0)",
+      "description": "Integration test: spawn background agent without swarm → expect exit(2); spawn with stale swarm → expect exit(2); spawn with active swarm → expect exit(0)",
       "layer": "integration",
       "adapter": null,
       "port": null,
@@ -110,7 +110,9 @@
         "step-5"
       ],
       "tier": 5,
-      "specs": [],
+      "specs": [
+        "S01"
+      ],
       "worktree_branch": null,
       "done_condition": "ADR-2603221939 references section includes link to ADR-2603232000",
       "status": "done"
@@ -121,15 +123,15 @@
     "npm": []
   },
   "mergeOrder": [
-    "step-1 (nexus endpoint) \u2014 no deps, can start immediately",
-    "step-2 (SessionState swarm check) \u2014 parallel with step-1",
-    "step-3, step-4 \u2014 depend on step-1 (need the GET endpoint), parallel with each other",
-    "step-5 \u2014 after step-2,3,4 (integration tests)",
-    "step-6 \u2014 last (doc update)"
+    "step-1 (nexus endpoint) — no deps, can start immediately",
+    "step-2 (SessionState swarm check) — parallel with step-1",
+    "step-3, step-4 — depend on step-1 (need the GET endpoint), parallel with each other",
+    "step-5 — after step-2,3,4 (integration tests)",
+    "step-6 — last (doc update)"
   ],
   "riskRegister": [
     {
-      "risk": "Nexus unreachable makes swarm validation impossible \u2014 could silently bypass enforcement",
+      "risk": "Nexus unreachable makes swarm validation impossible — could silently bypass enforcement",
       "impact": "medium",
       "mitigation": "SessionState.swarm_id check (step-2) works offline since it reads local session file; REST validation (step-3) degrades to advisory with logged warning"
     },
@@ -139,7 +141,7 @@
       "mitigation": "OpenCode hook handler already supports async (uses top-level await pattern); verify in integration test"
     },
     {
-      "risk": "Adding GET endpoint exposes task details \u2014 information disclosure",
+      "risk": "Adding GET endpoint exposes task details — information disclosure",
       "impact": "low",
       "mitigation": "Endpoint is localhost-only (same as all nexus routes), no auth needed for local daemon"
     }

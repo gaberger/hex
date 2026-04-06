@@ -71,6 +71,14 @@ pub struct WorkplanTask {
     /// e.g. "ADR-039 T1-8" or "Already present in .gitignore"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_by: Option<String>,
+    /// Human-readable description of what "done" means for this task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_condition: Option<String>,
+    /// Machine-runnable shell command that verifies done_condition.
+    /// Exits 0 = condition met; non-zero = step fails.
+    /// Absent = documentation-only (backward compatible).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_command: Option<String>,
 }
 
 /// Current status of a workplan task.

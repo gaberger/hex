@@ -253,6 +253,8 @@ enum Commands {
         #[arg(long)]
         parallel: bool,
     },
+    /// Run all hex enforcement gates (ADR-2604061100)
+    Ci,
 }
 
 #[tokio::main]
@@ -309,5 +311,6 @@ async fn main() -> anyhow::Result<()> {
         Commands::Validate { skip_test, strict, parallel } => {
             doctor::run_validate_pipeline(skip_test, strict, parallel).await
         }
+        Commands::Ci => commands::ci::run().await,
     }
 }

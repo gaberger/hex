@@ -1,5 +1,6 @@
 pub mod adr;
 pub mod assets_cmd;
+pub mod ci;
 pub mod chat;
 pub mod context;
 pub mod doctor;

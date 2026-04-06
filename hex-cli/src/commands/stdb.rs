@@ -60,6 +60,26 @@ pub enum StdbAction {
         #[arg(long, default_value = "hex")]
         database: String,
     },
+    /// Run a SQL SELECT query against SpacetimeDB (no nexus required)
+    Query {
+        /// SQL query to execute
+        sql: String,
+        /// Database to query
+        #[arg(long, default_value = "hex")]
+        db: String,
+        /// Output raw JSON instead of a formatted table
+        #[arg(long)]
+        json: bool,
+        /// Print only the row count
+        #[arg(long)]
+        count: bool,
+    },
+    /// List tables in a SpacetimeDB database (no nexus required)
+    Tables {
+        /// Database to inspect
+        #[arg(long, default_value = "hex")]
+        db: String,
+    },
 }
 
 pub async fn run(action: StdbAction) -> anyhow::Result<()> {
@@ -83,6 +103,8 @@ pub async fn run(action: StdbAction) -> anyhow::Result<()> {
             host,
             database,
         } => generate(&out, &host, &database).await,
+        StdbAction::Query { sql, db, json, count } => query_stdb(&sql, &db, json, count).await,
+        StdbAction::Tables { db } => tables_stdb(&db).await,
     }
 }
 
@@ -658,6 +680,148 @@ async fn hydrate(host: &str, database: &str, force: bool, dry_run: bool) -> anyh
     );
 
     Ok(())
+}
+
+async fn query_stdb(sql: &str, db: &str, json_mode: bool, count_only: bool) -> anyhow::Result<()> {
+    let host = std::env::var("HEX_SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+    let url = format!("{}/v1/database/{}/sql", host, db);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "text/plain")
+        .body(sql.to_string())
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Cannot reach SpacetimeDB at {} — is it running?\n  {}", host, e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("SpacetimeDB returned {}: {}", status, body.trim());
+    }
+
+    let results: serde_json::Value = resp.json().await
+        .map_err(|e| anyhow::anyhow!("Failed to parse SpacetimeDB response: {}", e))?;
+
+    if json_mode {
+        println!("{}", serde_json::to_string_pretty(&results)?);
+        return Ok(());
+    }
+
+    let result = results.as_array()
+        .and_then(|a| a.first())
+        .ok_or_else(|| anyhow::anyhow!("Unexpected response format"))?;
+
+    // Extract column names from schema
+    let cols: Vec<String> = result["schema"]["elements"]
+        .as_array()
+        .map(|els| {
+            els.iter()
+                .map(|el| {
+                    el["name"]["some"].as_str().unwrap_or("?").to_string()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let rows = result["rows"].as_array().map(|r| r.as_slice()).unwrap_or_default();
+
+    if count_only {
+        println!("{}", rows.len());
+        return Ok(());
+    }
+
+    if cols.is_empty() {
+        println!("(no columns)");
+        return Ok(());
+    }
+
+    // Calculate column widths
+    let mut widths: Vec<usize> = cols.iter().map(|c| c.len()).collect();
+    for row in rows {
+        if let Some(vals) = row.as_array() {
+            for (i, val) in vals.iter().enumerate() {
+                if i < widths.len() {
+                    let s = val_to_str(val);
+                    widths[i] = widths[i].max(s.len());
+                }
+            }
+        }
+    }
+
+    // Print header
+    let header: Vec<String> = cols.iter().enumerate()
+        .map(|(i, c)| format!("{:<width$}", c, width = widths[i]))
+        .collect();
+    println!("{}", header.join("  "));
+    println!("{}", widths.iter().map(|w| "-".repeat(*w)).collect::<Vec<_>>().join("  "));
+
+    // Print rows
+    for row in rows {
+        if let Some(vals) = row.as_array() {
+            let cells: Vec<String> = vals.iter().enumerate()
+                .map(|(i, v)| {
+                    let w = widths.get(i).copied().unwrap_or(0);
+                    format!("{:<width$}", val_to_str(v), width = w)
+                })
+                .collect();
+            println!("{}", cells.join("  "));
+        }
+    }
+
+    println!();
+    println!("({} row{})", rows.len(), if rows.len() == 1 { "" } else { "s" });
+    Ok(())
+}
+
+fn val_to_str(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => "NULL".to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        other => other.to_string(),
+    }
+}
+
+async fn tables_stdb(db: &str) -> anyhow::Result<()> {
+    let host = std::env::var("HEX_SPACETIMEDB_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
+    let url = format!("{}/v1/database/{}/schema", host, db);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+
+    // Try schema endpoint first (lists tables + their types)
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Cannot reach SpacetimeDB at {} — is it running?\n  {}", host, e))?;
+
+    if resp.status().is_success() {
+        let schema: serde_json::Value = resp.json().await
+            .map_err(|e| anyhow::anyhow!("Failed to parse schema: {}", e))?;
+
+        // SpacetimeDB schema response has "tables" array
+        if let Some(tables) = schema["tables"].as_array() {
+            println!("{} Tables in '{}' ({} total):", "\u{2b21}".cyan(), db, tables.len());
+            for t in tables {
+                let name = t["name"].as_str().unwrap_or("?");
+                println!("  {}", name);
+            }
+            return Ok(());
+        }
+    }
+
+    // Fallback: SQL query
+    println!("{} Querying tables via SQL...", "\u{2192}".dimmed());
+    query_stdb("SELECT * FROM st_table", db, false, false).await
 }
 
 async fn generate(out_dir: &str, host: &str, database: &str) -> anyhow::Result<()> {

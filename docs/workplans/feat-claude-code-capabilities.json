@@ -19,7 +19,12 @@
       "port": "PermissionPort",
       "dependencies": [],
       "tier": 0,
-      "specs": ["S01", "S02", "S07", "S08"],
+      "specs": [
+        "S01",
+        "S02",
+        "S07",
+        "S08"
+      ],
       "worktree_branch": "feat/claude-code-cap/ports",
       "done_condition": "cargo check --package hex-agent compiles",
       "status": "completed",
@@ -31,9 +36,16 @@
       "layer": "adapters/secondary",
       "adapter": "permission",
       "port": "PermissionPort",
-      "dependencies": ["step-1"],
+      "dependencies": [
+        "step-1"
+      ],
       "tier": 1,
-      "specs": ["S01", "S02", "S07", "S08"],
+      "specs": [
+        "S01",
+        "S02",
+        "S07",
+        "S08"
+      ],
       "worktree_branch": "feat/claude-code-cap/permission-adapter",
       "done_condition": "cargo test permission tests pass",
       "status": "completed",
@@ -45,9 +57,13 @@
       "layer": "adapters/secondary",
       "adapter": "permission-persistence",
       "port": null,
-      "dependencies": ["step-2"],
+      "dependencies": [
+        "step-2"
+      ],
       "tier": 1,
-      "specs": ["S03"],
+      "specs": [
+        "S03"
+      ],
       "worktree_branch": "feat/claude-code-cap/permission-persistence",
       "done_condition": "cargo test permission_persistence tests pass",
       "status": "completed",
@@ -61,7 +77,10 @@
       "port": null,
       "dependencies": [],
       "tier": 0,
-      "specs": ["S04", "S05"],
+      "specs": [
+        "S04",
+        "S05"
+      ],
       "worktree_branch": "feat/claude-code-cap/domain",
       "done_condition": "cargo check --package hex-agent compiles",
       "status": "completed",
@@ -73,9 +92,15 @@
       "layer": "adapters/secondary",
       "adapter": "token-metrics",
       "port": null,
-      "dependencies": ["step-4"],
+      "dependencies": [
+        "step-4"
+      ],
       "tier": 1,
-      "specs": ["S04", "S05", "S08"],
+      "specs": [
+        "S04",
+        "S05",
+        "S08"
+      ],
       "worktree_branch": "feat/claude-code-cap/token-metrics",
       "done_condition": "cargo test token_metrics tests pass",
       "status": "completed",
@@ -87,9 +112,13 @@
       "layer": "adapters/secondary",
       "adapter": "cost-aggregation",
       "port": null,
-      "dependencies": ["step-5"],
+      "dependencies": [
+        "step-5"
+      ],
       "tier": 1,
-      "specs": ["S06"],
+      "specs": [
+        "S06"
+      ],
       "worktree_branch": "feat/claude-code-cap/cost-aggregation",
       "done_condition": "cargo test cost_aggregation tests pass",
       "status": "completed",
@@ -101,9 +130,16 @@
       "layer": "adapters/secondary",
       "adapter": "tool-executor",
       "port": null,
-      "dependencies": ["step-2"],
+      "dependencies": [
+        "step-2"
+      ],
       "tier": 2,
-      "specs": ["S01", "S02", "S07", "S08"],
+      "specs": [
+        "S01",
+        "S02",
+        "S07",
+        "S08"
+      ],
       "worktree_branch": "feat/claude-code-cap/tool-executor",
       "done_condition": "cargo test tool_executor_with_permission tests pass",
       "status": "completed",
@@ -115,9 +151,15 @@
       "layer": "usecases",
       "adapter": null,
       "port": null,
-      "dependencies": ["step-5", "step-6"],
+      "dependencies": [
+        "step-5",
+        "step-6"
+      ],
       "tier": 3,
-      "specs": ["S05", "S06"],
+      "specs": [
+        "S05",
+        "S06"
+      ],
       "worktree_branch": "feat/claude-code-cap/conversation-usecase",
       "done_condition": "cargo test conversation_cost tests pass",
       "status": "completed",
@@ -129,9 +171,18 @@
       "layer": "integration",
       "adapter": null,
       "port": null,
-      "dependencies": ["step-7", "step-8"],
+      "dependencies": [
+        "step-7",
+        "step-8"
+      ],
       "tier": 5,
-      "specs": ["S01", "S02", "S03", "S05", "S06"],
+      "specs": [
+        "S01",
+        "S02",
+        "S03",
+        "S05",
+        "S06"
+      ],
       "worktree_branch": "feat/claude-code-cap/integration",
       "done_condition": "cargo test --package hex-agent integration passes",
       "status": "completed",
@@ -143,9 +194,13 @@
       "layer": "domain",
       "adapter": null,
       "port": null,
-      "dependencies": ["step-5"],
+      "dependencies": [
+        "step-5"
+      ],
       "tier": 0,
-      "specs": ["S04"],
+      "specs": [
+        "S04"
+      ],
       "worktree_branch": "feat/claude-code-cap/pricing-config",
       "done_condition": "Pricing loaded from .hex/pricing.json",
       "status": "completed",
@@ -156,21 +211,33 @@
       "description": "Wire hex-agent → hex-nexus cost reporting (future)",
       "status": "completed",
       "worktree_branch": "feat/cost-reporter",
-      "done_condition": "TODO"
+      "done_condition": "TODO",
+      "specs": [
+        "S05",
+        "S06"
+      ]
     },
     {
       "id": "step-11",
       "description": "Add permission override CLI commands (future)",
-      "status": "completed", 
+      "status": "completed",
       "worktree_branch": "feat/permission-cli",
-      "done_condition": "TODO"
+      "done_condition": "TODO",
+      "specs": [
+        "S01",
+        "S02"
+      ]
     },
     {
       "id": "step-13",
       "description": "Add cost widget to dashboard (future)",
       "status": "completed",
       "worktree_branch": "feat/dashboard-widget",
-      "done_condition": "TODO"
+      "done_condition": "TODO",
+      "specs": [
+        "S05",
+        "S06"
+      ]
     }
   ],
   "dependencies": {

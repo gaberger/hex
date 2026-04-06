@@ -210,6 +210,13 @@ pub struct WorkplanTask {
     /// Secret key names to inject into the agent process (ADR-026).
     #[serde(alias = "secretKeys", alias = "secret_keys", default)]
     pub secret_keys: Vec<String>,
+    /// Human-readable description of what "done" means (ADR-2604061100).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_condition: Option<String>,
+    /// Machine-runnable shell command that verifies done_condition (ADR-2604061100).
+    /// Exits 0 = condition met; non-zero = step fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_command: Option<String>,
 }
 
 // ── Workplan Executor ──────────────────────────────────
@@ -652,6 +659,9 @@ impl WorkplanExecutor {
             let path_b_model = config.model.clone().unwrap_or_default();
             let path_b_prompt = config.prompt.clone().unwrap_or_default();
             let path_b_phase_name = phase.name.clone();
+            // ADR-2604061100: capture done_command for post-completion verification
+            let task_done_command = task.done_command.clone();
+            let task_done_condition = task.done_condition.clone();
 
             handles.push(tokio::spawn(async move {
                 let spawn_result = if use_path_b {
@@ -733,6 +743,28 @@ impl WorkplanExecutor {
                 };
                 match spawn_result {
                     Ok(agent) => {
+                        // ADR-2604061100: verify done_command before marking completed
+                        if let Some(ref cmd) = task_done_command {
+                            let gate = Self::run_gate(cmd, &task_id).await;
+                            if !gate.passed {
+                                let condition_text = task_done_condition
+                                    .as_deref()
+                                    .unwrap_or("(no done_condition text)");
+                                let _ = sp.workplan_update_task(WorkplanTaskUpdate {
+                                    task_id: task_id.clone(),
+                                    status: "failed".to_string(),
+                                    agent_id: Some(agent.id.clone()),
+                                    result: Some(format!(
+                                        "done_condition not met: {}\n  command: {}\n  output: {}",
+                                        condition_text, cmd, gate.output
+                                    )),
+                                }).await;
+                                return Err(format!(
+                                    "Task '{}': done_condition not met\n  condition: {}\n  command: {}\n  exit: non-zero",
+                                    task_label, condition_text, cmd
+                                ));
+                            }
+                        }
                         let _ = sp.workplan_update_task(WorkplanTaskUpdate {
                             task_id: task_id.clone(),
                             status: "completed".to_string(),
