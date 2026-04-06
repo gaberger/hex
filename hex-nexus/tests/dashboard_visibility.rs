@@ -50,6 +50,7 @@ async fn path_traversal_dot_dot_returns_400() {
 }
 
 #[tokio::test]
+#[ignore = "requires SpacetimeDB — run with cargo test -- --ignored"]
 async fn path_traversal_null_byte_returns_400() {
     let addr = start_test_server().await;
     // %00 is a null byte — should be rejected before hitting filesystem
@@ -86,6 +87,7 @@ async fn health_endpoint_has_spacetimedb_field() {
 // ── Inbox endpoints ─────────────────────────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "requires SpacetimeDB — run with cargo test -- --ignored"]
 async fn inbox_list_returns_json_array() {
     let addr = start_test_server().await;
     let url = format!("http://{}/api/inbox", addr);
