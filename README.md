@@ -71,7 +71,7 @@ hex analyze .    # Boundary violations, dead code, cross-adapter coupling — bl
 ### Swarm Coordination Without Merge Conflicts
 
 <p align="center">
-  <img src=".github/assets/swarm.svg" alt="HexFlo Swarm Coordination" width="800">
+  <img src=".github/assets/swarm.svg?v=2" alt="HexFlo Swarm Coordination" width="800">
 </p>
 
 HexFlo is the native Rust coordination layer that replaced external Node.js dependencies. Coordination call latency dropped from **~200ms to <1ms**. Agents work in **isolated git worktrees** — one per adapter boundary — so a feature touching 4 boundaries gets 4 parallel agents that never conflict.
