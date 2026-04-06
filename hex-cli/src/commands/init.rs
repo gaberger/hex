@@ -464,7 +464,11 @@ fn create_adr_rules_toml(target: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let content = r#"# hex architecture rules — read by `hex enforce check-file`
+    let content = r#"# hex architecture rules
+# - [rules]           read by `hex enforce check-file` (forbidden path patterns)
+# - [[hex_layer_rules]] read by `hex enforce check-file` (layer boundary rules)
+# - [[adr_rules]]     read by `hex analyze` (ADR compliance violation patterns)
+
 [rules]
 forbidden_paths = ["node_modules", ".git", "dist", ".env", "target"]
 
@@ -487,6 +491,15 @@ layer = "ports"
 [[hex_layer_rules]]
 path_pattern = "src/usecases"
 layer = "usecases"
+
+# Example ADR compliance rule (uncomment and customize):
+# [[adr_rules]]
+# adr = "ADR-001"
+# id = "no-direct-db-in-domain"
+# message = "Domain must not import database adapters directly"
+# severity = "error"
+# file_patterns = ["src/domain/**"]
+# violation_patterns = ["import.*adapters/secondary"]
 "#;
 
     fs::write(&rules_path, content)

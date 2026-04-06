@@ -1016,8 +1016,10 @@ struct AdrViolationLocal {
 
 #[derive(serde::Deserialize)]
 struct AdrRulesFile {
-    #[serde(default)]
-    rules: Vec<AdrRuleConfig>,
+    /// ADR compliance rules — TOML key `[[adr_rules]]`
+    /// (distinct from `[rules]` which is the enforce.rs forbidden-paths section)
+    #[serde(default, alias = "rules")]
+    adr_rules: Vec<AdrRuleConfig>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1048,10 +1050,10 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
                     eprintln!(
                         "    {} Loaded {} rule(s) from {}",
                         "\u{2713}".green(),
-                        parsed.rules.len(),
+                        parsed.adr_rules.len(),
                         rules_path.strip_prefix(root).unwrap_or(&rules_path).display(),
                     );
-                    parsed.rules
+                    parsed.adr_rules
                 }
                 Err(e) => {
                     eprintln!(
