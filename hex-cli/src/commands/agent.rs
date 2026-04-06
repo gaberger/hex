@@ -1160,7 +1160,11 @@ async fn worker(
                             let assign_result = nexus
                                 .patch(
                                     &format!("/api/hexflo/tasks/{}", task_id),
-                                    &json!({ "agentId": agent_id }),
+                                    &json!({
+                                        "task_id": task_id,
+                                        "status": "in_progress",
+                                        "agent_id": agent_id
+                                    }),
                                 )
                                 .await;
                             match &assign_result {
