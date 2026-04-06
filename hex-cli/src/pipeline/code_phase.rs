@@ -77,6 +77,24 @@ fn to_feature_slug(name: &str) -> String {
     truncated.to_string()
 }
 
+/// Convert a kebab-case slug to PascalCase (e.g., "my-feature" → "MyFeature").
+fn slug_to_pascal(slug: &str) -> String {
+    slug.split('-')
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let mut chars = s.chars();
+            match chars.next() {
+                Some(c) => {
+                    let mut word = c.to_uppercase().to_string();
+                    word.extend(chars);
+                    word
+                }
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
 /// Remove a stale output directory before starting a fresh pipeline run.
 ///
 /// Deletes `output_dir` when ALL of the following are true:
@@ -209,8 +227,17 @@ pub fn generate_scaffold(
                 return Ok(vec![]);
             }
 
-            std::fs::create_dir_all(dir.join("src"))
-                .context("creating scaffold src/ directory")?;
+            // Create hexagonal directory structure
+            for sub in &[
+                "src/core/domain",
+                "src/core/ports",
+                "src/core/usecases",
+                "src/adapters/primary",
+                "src/adapters/secondary",
+            ] {
+                std::fs::create_dir_all(dir.join(sub))
+                    .context(format!("creating scaffold {} directory", sub))?;
+            }
 
             let package_json = format!(
                 r#"{{
@@ -219,8 +246,9 @@ pub fn generate_scaffold(
   "type": "module",
   "scripts": {{
     "build": "tsc",
+    "check": "tsc --noEmit",
     "test": "npx vitest run",
-    "start": "node dist/main.js"
+    "start": "node dist/composition-root.js"
   }},
   "devDependencies": {{
     "typescript": "^5.0.0",
@@ -250,15 +278,102 @@ pub fn generate_scaffold(
   "exclude": ["node_modules", "dist"]
 }"#;
 
+            // Domain: pure business types with zero imports
+            let domain_ts = r#"// Domain layer — pure business logic, zero external dependencies.
+// Only imports from other domain/ files are allowed.
+
+export interface Entity {
+  id: string;
+  createdAt: Date;
+}
+"#;
+
+            // Ports: typed interfaces defining contracts
+            let ports_ts = format!(
+                r#"// Ports layer — typed interfaces defining adapter contracts.
+// May import from domain/ only.
+
+import type {{ Entity }} from "../domain/entities.js";
+
+export interface I{}Repository {{
+  findById(id: string): Promise<Entity | null>;
+  save(entity: Entity): Promise<void>;
+}}
+
+export interface I{}Service {{
+  getById(id: string): Promise<Entity | null>;
+  create(data: Omit<Entity, "id" | "createdAt">): Promise<Entity>;
+}}
+"#,
+                slug_to_pascal(&slug),
+                slug_to_pascal(&slug),
+            );
+
+            // Usecases: application logic composing ports
+            let usecases_ts = format!(
+                r#"// Usecases layer — application logic composing ports.
+// May import from domain/ and ports/ only.
+
+import type {{ Entity }} from "../domain/entities.js";
+import type {{ I{}Repository }} from "../ports/repository.js";
+
+export class {}UseCase {{
+  constructor(private readonly repo: I{}Repository) {{}}
+
+  async getById(id: string): Promise<Entity | null> {{
+    return this.repo.findById(id);
+  }}
+}}
+"#,
+                slug_to_pascal(&slug),
+                slug_to_pascal(&slug),
+                slug_to_pascal(&slug),
+            );
+
+            // Composition root: the only file that imports adapters
+            let composition_root_ts = format!(
+                r#"// Composition root — the ONLY file that imports from adapters.
+// Wires adapters to ports for dependency injection.
+
+import {{ {}UseCase }} from "./core/usecases/service.js";
+
+// TODO: Import and wire your adapters here
+// import {{ InMemoryRepository }} from "./adapters/secondary/in-memory-repo.js";
+// const repo = new InMemoryRepository();
+// const useCase = new {}UseCase(repo);
+
+console.log("{} is running");
+"#,
+                slug_to_pascal(&slug),
+                slug_to_pascal(&slug),
+                feature_name,
+            );
+
             std::fs::write(&pkg_path, package_json)
                 .context("writing package.json")?;
             let tsconfig_path = dir.join("tsconfig.json");
             std::fs::write(&tsconfig_path, tsconfig)
                 .context("writing tsconfig.json")?;
+            let domain_path = dir.join("src/core/domain/entities.ts");
+            std::fs::write(&domain_path, domain_ts)
+                .context("writing domain/entities.ts")?;
+            let ports_path = dir.join("src/core/ports/repository.ts");
+            std::fs::write(&ports_path, ports_ts)
+                .context("writing ports/repository.ts")?;
+            let usecases_path = dir.join("src/core/usecases/service.ts");
+            std::fs::write(&usecases_path, usecases_ts)
+                .context("writing usecases/service.ts")?;
+            let comp_root_path = dir.join("src/composition-root.ts");
+            std::fs::write(&comp_root_path, composition_root_ts)
+                .context("writing composition-root.ts")?;
 
             let mut files = vec![
                 pkg_path.to_string_lossy().to_string(),
                 tsconfig_path.to_string_lossy().to_string(),
+                domain_path.to_string_lossy().to_string(),
+                ports_path.to_string_lossy().to_string(),
+                usecases_path.to_string_lossy().to_string(),
+                comp_root_path.to_string_lossy().to_string(),
             ];
             generate_readme(dir, feature_name, language, &mut files)?;
             generate_start_script(dir, feature_name, language, &mut files)?;
@@ -332,13 +447,24 @@ tokio = {{ version = "1", features = ["full"] }}
         }
         "go" => {
             let gomod_path = dir.join("go.mod");
-            let main_path = dir.join("main.go");
+            let main_path = dir.join("cmd").join("main.go");
             if gomod_path.exists() && main_path.exists() {
-                debug!(path = %gomod_path.display(), "go.mod + main.go already exist — skipping scaffold");
+                debug!(path = %gomod_path.display(), "go.mod + cmd/main.go already exist — skipping scaffold");
                 return Ok(vec![]);
             }
 
-            std::fs::create_dir_all(dir).context("creating scaffold directory")?;
+            // Create hexagonal directory structure following Go conventions
+            for sub in &[
+                "cmd",
+                "internal/domain",
+                "internal/ports",
+                "internal/usecases",
+                "internal/adapters/primary",
+                "internal/adapters/secondary",
+            ] {
+                std::fs::create_dir_all(dir.join(sub))
+                    .context(format!("creating scaffold {} directory", sub))?;
+            }
 
             let go_mod = format!(
                 r#"module {}
@@ -352,8 +478,79 @@ require (
                 slug
             );
 
-            let main_go = format!(
-                r#"package main
+            // Domain: pure entities with zero imports outside domain
+            let domain_go = r#"// Package domain contains pure business logic with zero external dependencies.
+// Only imports from other domain files are allowed.
+package domain
+
+import "time"
+
+// Entity is the base type for all domain objects.
+type Entity struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+"#;
+
+            // Ports: interfaces defining adapter contracts
+            let ports_go = format!(
+                r#"// Package ports defines typed interfaces (contracts) for adapters.
+// May import from domain only.
+package ports
+
+import "{slug}/internal/domain"
+
+// I{pascal}Repository defines persistence operations.
+type I{pascal}Repository interface {{
+	FindByID(id string) (*domain.Entity, error)
+	Save(entity *domain.Entity) error
+}}
+
+// I{pascal}Service defines application-level operations.
+type I{pascal}Service interface {{
+	GetByID(id string) (*domain.Entity, error)
+	Create() (*domain.Entity, error)
+}}
+"#,
+                slug = slug,
+                pascal = slug_to_pascal(&slug),
+            );
+
+            // Usecases: application logic composing ports
+            let usecases_go = format!(
+                r#"// Package usecases contains application logic composing ports.
+// May import from domain and ports only.
+package usecases
+
+import (
+	"{slug}/internal/domain"
+	"{slug}/internal/ports"
+)
+
+// Service implements ports.I{pascal}Service.
+type Service struct {{
+	repo ports.I{pascal}Repository
+}}
+
+// NewService creates a Service with the given repository.
+func NewService(repo ports.I{pascal}Repository) *Service {{
+	return &Service{{repo: repo}}
+}}
+
+// GetByID retrieves an entity by ID.
+func (s *Service) GetByID(id string) (*domain.Entity, error) {{
+	return s.repo.FindByID(id)
+}}
+"#,
+                slug = slug,
+                pascal = slug_to_pascal(&slug),
+            );
+
+            // cmd/main.go: entry point that wires adapters
+            let main_go_content = format!(
+                r#"// Command {slug} — entry point that wires adapters to ports.
+// This is the composition root for the application.
+package main
 
 import (
 	"net/http"
@@ -364,17 +561,23 @@ import (
 func main() {{
 	r := gin.Default()
 
+	// TODO: Wire adapters to ports here
+	// repo := secondary.NewInMemoryRepository()
+	// svc := usecases.NewService(repo)
+	// handler := primary.NewHTTPHandler(svc)
+
 	r.GET("/health", func(c *gin.Context) {{
-		c.JSON(http.StatusOK, gin.H{{"status": "ok", "service": "{}"}})
+		c.JSON(http.StatusOK, gin.H{{"status": "ok", "service": "{slug}"}})
 	}})
 
 	r.Run(":8080")
 }}
 "#,
-                feature_name
+                slug = slug,
             );
 
-            let main_test_go = r#"package main
+            let main_test_go = format!(
+                r#"package main
 
 import (
 	"net/http"
@@ -384,15 +587,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func setupRouter() *gin.Engine {
+func setupRouter() *gin.Engine {{
 	r := gin.Default()
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
+	r.GET("/health", func(c *gin.Context) {{
+		c.JSON(http.StatusOK, gin.H{{"status": "ok"}})
+	}})
 	return r
-}
+}}
 
-func TestHealthEndpoint(t *testing.T) {
+func TestHealthEndpoint(t *testing.T) {{
 	gin.SetMode(gin.TestMode)
 	router := setupRouter()
 
@@ -400,16 +603,23 @@ func TestHealthEndpoint(t *testing.T) {
 	req, _ := http.NewRequest("GET", "/health", nil)
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
+	if w.Code != http.StatusOK {{
 		t.Errorf("expected status 200, got %d", w.Code)
-	}
-}
-"#;
+	}}
+}}
+"#
+            );
 
             std::fs::write(&gomod_path, go_mod).context("writing go.mod")?;
-            std::fs::write(&main_path, main_go).context("writing main.go")?;
-            let test_path = dir.join("main_test.go");
-            std::fs::write(&test_path, main_test_go).context("writing main_test.go")?;
+            let domain_path = dir.join("internal/domain/entity.go");
+            std::fs::write(&domain_path, domain_go).context("writing internal/domain/entity.go")?;
+            let ports_path = dir.join("internal/ports/repository.go");
+            std::fs::write(&ports_path, ports_go).context("writing internal/ports/repository.go")?;
+            let usecases_path = dir.join("internal/usecases/service.go");
+            std::fs::write(&usecases_path, usecases_go).context("writing internal/usecases/service.go")?;
+            std::fs::write(&main_path, main_go_content).context("writing cmd/main.go")?;
+            let test_path = dir.join("cmd/main_test.go");
+            std::fs::write(&test_path, main_test_go).context("writing cmd/main_test.go")?;
 
             // Run go mod tidy to fetch dependencies
             info!(dir = %dir.display(), "running go mod tidy for Go project");
@@ -425,6 +635,9 @@ func TestHealthEndpoint(t *testing.T) {
 
             let mut files = vec![
                 gomod_path.to_string_lossy().to_string(),
+                domain_path.to_string_lossy().to_string(),
+                ports_path.to_string_lossy().to_string(),
+                usecases_path.to_string_lossy().to_string(),
                 main_path.to_string_lossy().to_string(),
                 test_path.to_string_lossy().to_string(),
             ];
@@ -1698,15 +1911,32 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         let files = generate_scaffold(dir, "typescript", "My Feature").unwrap();
-        assert_eq!(files.len(), 4);
+        // 6 source files + README + start.sh = 8
+        assert_eq!(files.len(), 8);
         assert!(Path::new(dir).join("package.json").exists());
         assert!(Path::new(dir).join("tsconfig.json").exists());
-        assert!(Path::new(dir).join("src").is_dir());
+
+        // Hexagonal structure directories
+        assert!(Path::new(dir).join("src/core/domain").is_dir());
+        assert!(Path::new(dir).join("src/core/ports").is_dir());
+        assert!(Path::new(dir).join("src/core/usecases").is_dir());
+        assert!(Path::new(dir).join("src/adapters/primary").is_dir());
+        assert!(Path::new(dir).join("src/adapters/secondary").is_dir());
+
+        // Hexagonal source files
+        assert!(Path::new(dir).join("src/core/domain/entities.ts").exists());
+        assert!(Path::new(dir).join("src/core/ports/repository.ts").exists());
+        assert!(Path::new(dir).join("src/core/usecases/service.ts").exists());
+        assert!(Path::new(dir).join("src/composition-root.ts").exists());
 
         // Verify package.json content
         let pkg = std::fs::read_to_string(Path::new(dir).join("package.json")).unwrap();
         assert!(pkg.contains("\"name\": \"my-feature\""));
         assert!(pkg.contains("\"type\": \"module\""));
+
+        // Verify domain layer has zero import statements
+        let domain = std::fs::read_to_string(Path::new(dir).join("src/core/domain/entities.ts")).unwrap();
+        assert!(!domain.contains("import "), "domain must have zero import statements");
     }
 
     #[test]
@@ -1715,7 +1945,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         let files = generate_scaffold(dir, "ts", "test").unwrap();
-        assert_eq!(files.len(), 4);
+        assert_eq!(files.len(), 8);
     }
 
     #[test]
@@ -1742,6 +1972,54 @@ mod tests {
 
         let files = generate_scaffold(dir, "rs", "test").unwrap();
         assert_eq!(files.len(), 4);
+    }
+
+    #[test]
+    fn scaffold_go_creates_hexagonal_structure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let files = generate_scaffold(dir, "go", "My Go App").unwrap();
+        // 6 source files + README + start.sh = 8
+        assert_eq!(files.len(), 8);
+
+        // Hexagonal directory structure
+        assert!(Path::new(dir).join("cmd").is_dir());
+        assert!(Path::new(dir).join("internal/domain").is_dir());
+        assert!(Path::new(dir).join("internal/ports").is_dir());
+        assert!(Path::new(dir).join("internal/usecases").is_dir());
+        assert!(Path::new(dir).join("internal/adapters/primary").is_dir());
+        assert!(Path::new(dir).join("internal/adapters/secondary").is_dir());
+
+        // Source files
+        assert!(Path::new(dir).join("go.mod").exists());
+        assert!(Path::new(dir).join("cmd/main.go").exists());
+        assert!(Path::new(dir).join("internal/domain/entity.go").exists());
+        assert!(Path::new(dir).join("internal/ports/repository.go").exists());
+        assert!(Path::new(dir).join("internal/usecases/service.go").exists());
+
+        // Verify go.mod content
+        let go_mod = std::fs::read_to_string(Path::new(dir).join("go.mod")).unwrap();
+        assert!(go_mod.contains("module my-go-app"));
+
+        // Verify domain has zero non-stdlib imports
+        let domain = std::fs::read_to_string(Path::new(dir).join("internal/domain/entity.go")).unwrap();
+        assert!(domain.contains("package domain"));
+        assert!(!domain.contains("my-go-app"), "domain must not import project packages");
+
+        // Verify ports imports domain only
+        let ports = std::fs::read_to_string(Path::new(dir).join("internal/ports/repository.go")).unwrap();
+        assert!(ports.contains("my-go-app/internal/domain"));
+        // Ports must not import from adapters packages
+        assert!(!ports.contains("internal/adapters"), "ports must not import adapters");
+    }
+
+    #[test]
+    fn slug_to_pascal_basic() {
+        assert_eq!(slug_to_pascal("my-feature"), "MyFeature");
+        assert_eq!(slug_to_pascal("hello"), "Hello");
+        assert_eq!(slug_to_pascal("a-b-c"), "ABC");
+        assert_eq!(slug_to_pascal("my-go-app"), "MyGoApp");
     }
 
     #[test]
@@ -1782,7 +2060,7 @@ mod tests {
         let dir_str = dir.to_str().unwrap();
 
         let files = generate_scaffold(dir_str, "typescript", "nested test").unwrap();
-        assert_eq!(files.len(), 4);
+        assert_eq!(files.len(), 8);
         assert!(dir.join("package.json").exists());
     }
 
