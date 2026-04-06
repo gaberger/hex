@@ -554,13 +554,27 @@ async fn hydrate(host: &str, database: &str, force: bool, dry_run: bool) -> anyh
         );
     }
 
-    // 2. Fallback: local ordered publish using spacetime CLI
+    // 2. Fallback: publish using embedded WASM modules or local source
     let binary = find_binary()?;
     let modules_path = PathBuf::from("spacetime-modules");
-    if !modules_path.is_dir() {
-        anyhow::bail!(
-            "spacetime-modules/ not found.\n  Run from the project root or use hex-nexus for embedded modules"
-        );
+    let use_embedded = !modules_path.is_dir();
+
+    // If no source, extract embedded WASM modules from the binary
+    if use_embedded {
+        use rust_embed::Embed;
+        #[derive(Embed)]
+        #[folder = "assets/wasm/"]
+        struct WasmAssets;
+
+        let has_wasm = WasmAssets::iter().any(|f| f.ends_with(".wasm"));
+        if !has_wasm {
+            anyhow::bail!(
+                "spacetime-modules/ not found and no embedded WASM modules.\n  \
+                 Run from the project root or rebuild hex-cli with WASM assets"
+            );
+        }
+
+        println!("  {} Using embedded WASM modules", "\u{2192}".dimmed());
     }
 
     // Verify SpacetimeDB is running
@@ -609,25 +623,61 @@ async fn hydrate(host: &str, database: &str, force: bool, dry_run: bool) -> anyh
         let mut tier_ok = 0u32;
 
         for module_name in *tier_modules {
-            let module_path = modules_path.join(module_name);
-            if !module_path.is_dir() {
-                println!("    {} {} {}", "\u{25cb}".dimmed(), module_name, "SKIP (not found)".dimmed());
-                continue;
-            }
-
             print!("    {} {} ... ", "\u{25cb}".dimmed(), module_name);
 
-            let output = tokio::process::Command::new(&binary)
-                .arg("publish")
-                .arg("--server")
-                .arg(host)
-                .arg(*module_name)
-                .arg("--module-path")
-                .arg(&module_path)
-                .arg("--delete-data=on-conflict")
-                .arg("--yes")
-                .output()
-                .await;
+            let output = if use_embedded {
+                // Publish from embedded WASM binary
+                use rust_embed::Embed;
+                #[derive(Embed)]
+                #[folder = "assets/wasm/"]
+                struct WasmAssets;
+
+                let wasm_filename = format!("{}.wasm", module_name.replace('-', "_"));
+                let wasm_data = WasmAssets::get(&wasm_filename);
+                if wasm_data.is_none() {
+                    println!("{}", "SKIP (not embedded)".dimmed());
+                    continue;
+                }
+                let wasm_data = wasm_data.unwrap();
+
+                // Write to temp file for spacetime CLI
+                let tmp_path = std::env::temp_dir().join(&wasm_filename);
+                std::fs::write(&tmp_path, wasm_data.data.as_ref())?;
+
+                let result = tokio::process::Command::new(&binary)
+                    .arg("publish")
+                    .arg("--server")
+                    .arg(host)
+                    .arg(*module_name)
+                    .arg("--bin-path")
+                    .arg(&tmp_path)
+                    .arg("--delete-data=on-conflict")
+                    .arg("--yes")
+                    .output()
+                    .await;
+
+                let _ = std::fs::remove_file(&tmp_path);
+                result
+            } else {
+                // Publish from source
+                let module_path = modules_path.join(module_name);
+                if !module_path.is_dir() {
+                    println!("{}", "SKIP (not found)".dimmed());
+                    continue;
+                }
+
+                tokio::process::Command::new(&binary)
+                    .arg("publish")
+                    .arg("--server")
+                    .arg(host)
+                    .arg(*module_name)
+                    .arg("--module-path")
+                    .arg(&module_path)
+                    .arg("--delete-data=on-conflict")
+                    .arg("--yes")
+                    .output()
+                    .await
+            };
 
             match output {
                 Ok(o) if o.status.success() => {
@@ -657,6 +707,46 @@ async fn hydrate(host: &str, database: &str, force: bool, dry_run: bool) -> anyh
                 tier_ok,
                 tier_modules.len()
             );
+        }
+    }
+
+    // Also publish hexflo-coordination as the "hex" database (nexus default)
+    if database != "hexflo-coordination" {
+        print!("\n    {} {} (alias for hexflo-coordination) ... ", "\u{25cb}".dimmed(), database);
+        let alias_output = if use_embedded {
+            use rust_embed::Embed;
+            #[derive(Embed)]
+            #[folder = "assets/wasm/"]
+            struct WasmAssets;
+
+            if let Some(wasm_data) = WasmAssets::get("hexflo_coordination.wasm") {
+                let tmp_path = std::env::temp_dir().join("hexflo_coordination_alias.wasm");
+                std::fs::write(&tmp_path, wasm_data.data.as_ref())?;
+                let result = tokio::process::Command::new(&binary)
+                    .arg("publish").arg("--server").arg(host)
+                    .arg(database)
+                    .arg("--bin-path").arg(&tmp_path)
+                    .arg("--delete-data=on-conflict").arg("--yes")
+                    .output().await;
+                let _ = std::fs::remove_file(&tmp_path);
+                result
+            } else {
+                println!("{}", "SKIP".dimmed());
+                Ok(std::process::Output { status: std::process::ExitStatus::default(), stdout: vec![], stderr: vec![] }).into()
+            }
+        } else {
+            let module_path = modules_path.join("hexflo-coordination");
+            tokio::process::Command::new(&binary)
+                .arg("publish").arg("--server").arg(host)
+                .arg(database)
+                .arg("--module-path").arg(&module_path)
+                .arg("--delete-data=on-conflict").arg("--yes")
+                .output().await
+        };
+        match alias_output {
+            Ok(o) if o.status.success() => { println!("{}", "OK".green()); total_ok += 1; }
+            Ok(_) => { println!("{}", "FAILED".red()); total_fail += 1; }
+            Err(_) => { println!("{}", "ERROR".red()); total_fail += 1; }
         }
     }
 
