@@ -855,7 +855,15 @@ impl Supervisor {
             let swarm_arg = self.swarm_id.as_deref().unwrap_or("");
 
             // Pipe worker stdout+stderr to a log file for diagnostics
-            let log_path = format!("/tmp/hex-worker-{}.log", role);
+            let log_dir = dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+                .join(".hex/logs");
+            let _ = std::fs::create_dir_all(&log_dir);
+            let log_path = log_dir.join(format!(
+                "worker-{}-{}.log",
+                role,
+                chrono::Utc::now().format("%Y%m%d-%H%M%S")
+            ));
             let log_file = std::fs::File::create(&log_path)
                 .unwrap_or_else(|_| std::fs::File::open("/dev/null").unwrap());
             let log_file2 = log_file.try_clone()
@@ -921,6 +929,13 @@ impl Supervisor {
                 // container gets its own unique identity for step 2 task execution.
                 // Run `hex agent worker --role <role>` — same command as the non-docker path.
                 // Override ENTRYPOINT so we invoke the `hex` CLI binary, not hex-agent.
+                // Propagate inference config so workers use the same model/provider
+                if let Some(ref m) = self.model_override {
+                    cmd.args(["-e", &format!("HEX_MODEL={}", m)]);
+                }
+                if let Some(ref p) = self.provider_pref {
+                    cmd.args(["-e", &format!("HEX_PROVIDER={}", p)]);
+                }
                 cmd.args(["--entrypoint", "hex", "hex-agent:latest",
                     "agent", "worker", "--role", role]);
                 if !swarm_arg.is_empty() {
@@ -947,6 +962,14 @@ impl Supervisor {
                 // Scope the worker to the example project directory so it reads/writes
                 // the right source files rather than the entire hex-intf workspace.
                 cmd.env("HEX_OUTPUT_DIR", &abs_output_str);
+                // Propagate inference config so workers use the same model/provider
+                if let Some(ref m) = self.model_override {
+                    cmd.env("HEX_MODEL", m);
+                }
+                if let Some(ref p) = self.provider_pref {
+                    cmd.env("HEX_PROVIDER", p);
+                }
+                cmd.env("HEX_NEXUS_URL", &self.nexus_url);
                 cmd.current_dir(&abs_output_str);
                 cmd.stdout(log_file).stderr(log_file2);
 
@@ -1479,6 +1502,8 @@ impl Supervisor {
         let metadata = serde_json::json!({
             "steps": steps_json,
             "output_dir": self.output_dir,
+            "model": self.model_override.as_deref().unwrap_or(""),
+            "provider": self.provider_pref.as_deref().unwrap_or(""),
         });
         let key = format!("{}:step_metadata", task_id);
         let scope = self.swarm_id.clone().unwrap_or_default();
@@ -1609,15 +1634,20 @@ impl Supervisor {
             // in_progress with the supervisor's agent_id, which workers
             // never match when polling for their own tasks.
             if let Some(ref tid) = tracking_task_id {
-                // Poll until the worker completes the task (max 300s — Docker workers need ~5min)
+                // Poll until the worker completes the task (configurable via HEX_WORKER_TIMEOUT)
                 let poll_start = Instant::now();
-                let timeout = std::time::Duration::from_secs(300);
+                let timeout_secs: u64 = std::env::var("HEX_WORKER_TIMEOUT")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(600); // default 10 minutes (was 5)
+                let timeout = std::time::Duration::from_secs(timeout_secs);
                 let mut retries = 0u32;
                 let poll_result: Result<()> = loop {
                     if poll_start.elapsed() > timeout {
                         break Err(anyhow::anyhow!(
-                            "Task {} timed out after 300s waiting for worker {}",
+                            "Task {} timed out after {}s waiting for worker {}",
                             tid,
+                            timeout_secs,
                             role
                         ));
                     }

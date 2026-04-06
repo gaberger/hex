@@ -1384,10 +1384,17 @@ async fn execute_worker_task(
                 Err(_)   => worker_stub_step(task_id, title),
             };
 
-            // 2. Run code generation
+            // 2. Run code generation — read model/provider from env (propagated by supervisor)
+            let model_override = std::env::var("HEX_MODEL").ok();
+            let provider_pref = std::env::var("HEX_PROVIDER").ok();
             let phase = crate::pipeline::code_phase::CodePhase::from_env();
             let step_result = phase
-                .execute_step(&workplan_step, &workplan_data, None, None)
+                .execute_step(
+                    &workplan_step,
+                    &workplan_data,
+                    model_override.as_deref(),
+                    provider_pref.as_deref(),
+                )
                 .await?;
 
             // 3. Write generated file to output_dir
