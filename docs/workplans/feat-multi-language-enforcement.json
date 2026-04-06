@@ -1,0 +1,48 @@
+{
+  "id": "feat-multi-language-enforcement",
+  "title": "Multi-Language Architecture Enforcement (TypeScript + Go parity)",
+  "description": "Bring TypeScript and Go to parity with Rust in hex's architecture enforcement pipeline. Implements IBuildPort, Go module path resolution, and hexagonal scaffold templates for both languages.",
+  "adr_refs": ["ADR-001", "ADR-002", "ADR-003", "ADR-018", "ADR-2604061000"],
+  "phases": [
+    {
+      "id": "P1",
+      "title": "IBuildPort trait + multi-language build adapter",
+      "tier": 0,
+      "tasks": [
+        "Add IBuildPort trait to hex-core/src/ports/build.rs",
+        "Implement BuildAdapter in hex-nexus with language dispatch (tsc/go build/cargo check)",
+        "Wire into AppState and expose via REST endpoint"
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Go module path resolution",
+      "tier": 1,
+      "tasks": [
+        "Parse go.mod to extract module path",
+        "Map Go import paths to local filesystem paths in treesitter_adapter",
+        "Update boundary_checker to use resolved paths for Go files"
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "Hexagonal scaffold templates",
+      "tier": 1,
+      "tasks": [
+        "Go: generate cmd/, internal/domain/, internal/ports/, internal/adapters/ structure",
+        "TypeScript: generate domain/, ports/, adapters/primary/, adapters/secondary/, composition-root.ts",
+        "Update generate_readme and generate_start_script for both"
+      ]
+    },
+    {
+      "id": "P4",
+      "title": "Frontend checker integration + analyze command",
+      "tier": 2,
+      "tasks": [
+        "Wire frontend_checker.rs into hex analyze",
+        "Add Go single-file analysis to analyze command",
+        "Verify all three languages produce correct violations"
+      ]
+    }
+  ]
+}

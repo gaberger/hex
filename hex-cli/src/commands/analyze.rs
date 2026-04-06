@@ -487,6 +487,90 @@ fn run_single_file(
                 }
             }
         }
+        "go" => {
+            // Go boundary check using hex layer conventions
+            if let Ok(content) = std::fs::read_to_string(&abs_path) {
+                let file_rel = abs_path
+                    .strip_prefix(root)
+                    .unwrap_or(&abs_path)
+                    .to_string_lossy()
+                    .to_string();
+
+                // Detect Go module prefix from go.mod for import resolution
+                let go_mod_prefix = find_go_module_prefix(root);
+
+                // Classify this file's layer
+                let layer_name = classify_go_layer(&file_rel);
+
+                if let Some(layer) = layer_name {
+                    for (idx, line) in content.lines().enumerate() {
+                        let trimmed = line.trim();
+                        // Match Go import lines: "path" or named imports
+                        if !trimmed.starts_with('"') && !trimmed.starts_with("//") {
+                            continue;
+                        }
+                        if !trimmed.starts_with('"') {
+                            continue;
+                        }
+
+                        let import_path = trimmed.trim_matches('"');
+
+                        // Resolve to project-relative path
+                        let resolved = if let Some(ref prefix) = go_mod_prefix {
+                            if let Some(rest) = import_path.strip_prefix(prefix.as_str()) {
+                                rest.strip_prefix('/').unwrap_or(rest).to_string()
+                            } else {
+                                continue; // stdlib or external — skip
+                            }
+                        } else {
+                            continue; // Can't resolve without go.mod
+                        };
+
+                        let target_layer = classify_go_layer(&resolved);
+
+                        // Enforce hex rules
+                        if let Some(target) = &target_layer {
+                            let violation = match layer.as_str() {
+                                "domain" => {
+                                    if target != "domain" {
+                                        Some(format!("domain must not import {}", target))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                "ports" => {
+                                    if target != "domain" && target != "ports" {
+                                        Some(format!("ports must not import {}", target))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                "adapters" => {
+                                    // Check cross-adapter imports
+                                    if target == "adapters" && resolved != file_rel {
+                                        Some("adapters must not import other adapters".to_string())
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            };
+
+                            if let Some(rule) = violation {
+                                violations.push(format!(
+                                    "{}:{} — {} layer violation: {} (imports {})",
+                                    file_rel,
+                                    idx + 1,
+                                    layer,
+                                    rule,
+                                    import_path,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
         _ => {
             // Unsupported extension — nothing to check
         }
@@ -522,6 +606,38 @@ fn find_crate_src_for_file(file: &Path) -> Option<PathBuf> {
         }
         dir = dir.parent()?;
     }
+}
+
+// ── Go Layer Classification ─────────────────────────────────────────────
+
+/// Classify a Go file path into its hexagonal layer.
+fn classify_go_layer(path: &str) -> Option<String> {
+    if path.contains("internal/domain") {
+        Some("domain".to_string())
+    } else if path.contains("internal/ports") {
+        Some("ports".to_string())
+    } else if path.contains("internal/usecases") {
+        Some("usecases".to_string())
+    } else if path.contains("internal/adapters") || path.contains("cmd/") || path.contains("pkg/") {
+        Some("adapters".to_string())
+    } else if path.contains("internal/") {
+        Some("usecases".to_string())
+    } else {
+        None
+    }
+}
+
+/// Read go.mod to extract the module path.
+fn find_go_module_prefix(root: &Path) -> Option<String> {
+    let go_mod = root.join("go.mod");
+    if let Ok(content) = std::fs::read_to_string(go_mod) {
+        for line in content.lines() {
+            if let Some(rest) = line.strip_prefix("module ") {
+                return Some(rest.trim().to_string());
+            }
+        }
+    }
+    None
 }
 
 // ── Rust Workspace Analysis (ADR-2603283000) ────────────────────────────

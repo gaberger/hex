@@ -1,4 +1,5 @@
 pub mod agent_runtime;
+pub mod build;
 pub mod context_compressor;
 pub mod coordination;
 pub mod enforcement;
