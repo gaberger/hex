@@ -47,13 +47,26 @@ hex is the **runtime that sits underneath all of them**. It manages agent proces
 
 hex enforces [hexagonal architecture](https://alistair.cockburn.us/hexagonal-architecture/) at the **kernel level**. This isn't a linting suggestion — it's a privilege boundary baked into the runtime. Domain can't reach adapters. Adapters can't reach each other. Only the composition root wires them.
 
+The enforcement engine uses **[tree-sitter](https://tree-sitter.github.io/) grammars** to parse source code into ASTs without compiling — extracting every import, export, type definition, and function signature across **TypeScript, Go, and Rust** in milliseconds. Tree-sitter classifies each file into its hexagonal layer (`domain/`, `ports/`, `adapters/primary/`, `adapters/secondary/`, `usecases/`) and then validates that imports respect the dependency direction:
+
+| Rule | Enforced Via |
+|:-----|:-------------|
+| Domain imports only domain | Import path extraction → layer boundary check |
+| Ports import only domain | Cross-layer import validation |
+| Adapters never import other adapters | Cross-adapter coupling detection |
+| No circular dependencies | Directed graph cycle detection |
+| No dead exports | Export scan → consumer trace across all files |
+| Composition root is the only wiring point | Adapter import source verification |
+
+Each language maps to its own conventions — Go uses `internal/domain/`, `cmd/`, `pkg/`; TypeScript uses `domain/`, `ports/`, `adapters/`; Rust uses module paths. Tree-sitter extracts **L0 file lists, L1 exports, L2 signatures, and L3 full source** at increasing detail levels, so agents receive exactly the context they need — full adapter context fits in **~200 tokens** instead of pasting entire files.
+
 Each ADR maps to **static analysis rules** that run automatically. `adr-001-domain-purity` checks that the domain layer has zero external imports. `adr-039-spacetimedb-first` flags REST handlers that read from local state instead of SpacetimeDB. Violations are caught at commit time — before agents waste tokens on architectural drift.
 
 ```bash
 hex analyze .    # Boundary violations, dead code, cross-adapter coupling — blocks commits
 ```
 
-**What this means in practice**: Workplan boundaries map to adapter boundaries. An agent working on `adapters/secondary/database` physically cannot edit `adapters/primary/cli`. Every AI-generated PR maintains the same architectural integrity as hand-crafted code. Full adapter context fits in **~200 tokens** — agents get surgical precision instead of drowning in irrelevant code.
+**What this means in practice**: Workplan boundaries map to adapter boundaries. An agent working on `adapters/secondary/database` physically cannot edit `adapters/primary/cli`. Every AI-generated PR maintains the same architectural integrity as hand-crafted code.
 
 ### Swarm Coordination Without Merge Conflicts
 
@@ -230,6 +243,7 @@ spacetime-modules/     7 WASM modules (SpacetimeDB microkernel)
 | **hex-cli** | Shell | Every `hex` command + MCP tool server for IDE integration |
 | **hex-nexus** | System services | Filesystem ops, inference routing, fleet management, dashboard at `:5555` |
 | **hex-core** | Syscall interface | 9 port traits — the contracts agents code against (zero deps) |
+| **hex-parser** | Compiler | Tree-sitter grammars for TypeScript, Go, and Rust — AST extraction without compilation |
 | **hex-agent** | Userland | 14 agent definitions, 21+ skills, hooks, architecture enforcement |
 | **spacetime-modules** | Microkernel | 7 WASM modules with ~130 reducers for transactional state |
 
@@ -290,7 +304,7 @@ hex builds on the **Hexagonal Architecture** pattern (Ports & Adapters), origina
 
 ### Key Technologies
 
-- **[tree-sitter](https://tree-sitter.github.io/)** — Max Brunsfeld et al. (token-efficient code parsing)
+- **[tree-sitter](https://tree-sitter.github.io/)** — Max Brunsfeld et al. (AST-based architecture enforcement — parses TypeScript, Go, and Rust without compiling to extract imports, exports, and layer boundaries)
 - **[SpacetimeDB](https://spacetimedb.com/)** — real-time database with WASM module execution
 - **[claude-flow](https://github.com/ruvnet/claude-flow)** — Reuven Cohen (@ruvnet), multi-agent swarm coordination (predecessor to HexFlo)
 
