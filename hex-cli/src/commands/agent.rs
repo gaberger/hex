@@ -1253,13 +1253,14 @@ async fn worker(
                         let result =
                             execute_worker_task(role, task, &project_dir).await;
 
-                        // Write result back
+                        // Write result back (must match TaskCompletionBody schema)
                         match result {
                             Ok(summary) => {
                                 let _ = nexus
                                     .patch(
                                         &format!("/api/hexflo/tasks/{}", task_id),
                                         &json!({
+                                            "task_id": task_id,
                                             "status": "completed",
                                             "result": summary,
                                             "agent_id": agent_id,
@@ -1277,8 +1278,9 @@ async fn worker(
                                     .patch(
                                         &format!("/api/hexflo/tasks/{}", task_id),
                                         &json!({
+                                            "task_id": task_id,
                                             "status": "failed",
-                                            "result": format!("Error: {}", e),
+                                            "error": format!("Error: {}", e),
                                             "agent_id": agent_id,
                                         }),
                                     )
