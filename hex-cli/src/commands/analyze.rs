@@ -1017,8 +1017,8 @@ struct AdrViolationLocal {
 #[derive(serde::Deserialize)]
 struct AdrRulesFile {
     /// ADR compliance rules — TOML key `[[adr_rules]]`
-    /// (distinct from `[rules]` which is the enforce.rs forbidden-paths section)
-    #[serde(default, alias = "rules")]
+    /// (distinct from `[rules]` which is the enforce.rs forbidden-paths table)
+    #[serde(default)]
     adr_rules: Vec<AdrRuleConfig>,
 }
 
