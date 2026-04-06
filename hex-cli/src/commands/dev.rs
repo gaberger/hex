@@ -451,8 +451,11 @@ async fn start_session(
     // Create session AFTER agent registration so agent_id is resolved
     let mut session = DevSession::new(&description);
     if !model.is_empty() {
-        session.model_selections.insert("default".into(), model);
+        session.model_selections.insert("default".into(), model.clone());
+        // Propagate to env so Supervisor and workers inherit the model/provider
+        std::env::set_var("HEX_MODEL", &model);
     }
+    std::env::set_var("HEX_PROVIDER", &config.provider);
     session.output_dir = Some(output_dir.clone());
     session.provider = Some(config.provider.clone());
     session.project_id = Some(project_id.clone());
