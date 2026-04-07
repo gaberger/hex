@@ -1256,7 +1256,7 @@ async fn worker(
                         // Write result back (must match TaskCompletionBody schema)
                         match result {
                             Ok(summary) => {
-                                let _ = nexus
+                                let patch_result = nexus
                                     .patch(
                                         &format!("/api/hexflo/tasks/{}", task_id),
                                         &json!({
@@ -1267,11 +1267,19 @@ async fn worker(
                                         }),
                                     )
                                     .await;
-                                println!(
-                                    "  {} Task completed: {}",
-                                    "\u{2713}".green(),
-                                    tid_short
-                                );
+                                match &patch_result {
+                                    Ok(_) => println!(
+                                        "  {} Task completed: {} (status synced)",
+                                        "\u{2713}".green(),
+                                        tid_short
+                                    ),
+                                    Err(e) => println!(
+                                        "  {} Task completed: {} (PATCH FAILED: {})",
+                                        "\u{26a0}".yellow(),
+                                        tid_short,
+                                        e
+                                    ),
+                                }
                             }
                             Err(e) => {
                                 let _ = nexus
