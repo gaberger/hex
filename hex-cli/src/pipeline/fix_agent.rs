@@ -100,7 +100,7 @@ impl FixAgent {
     pub async fn execute(
         &self,
         input: FixTaskInput,
-        model_override: Option<&str>,
+        _model_override: Option<&str>,
         provider_pref: Option<&str>,
     ) -> Result<FixTaskOutput> {
         info!(

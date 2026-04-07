@@ -576,6 +576,7 @@ func main() {{
                 slug = slug,
             );
 
+            #[allow(clippy::useless_format)]
             let main_test_go = format!(
                 r#"package main
 
@@ -1035,6 +1036,7 @@ impl CodePhase {
     /// * `model_override` - if `Some`, use this model
     /// * `provider_pref` - if `Some`, prefer this provider
     /// * `accumulated_context` - output from previous phases (e.g. red→green passes tests)
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute_step_for_phase(
         &self,
         step: &WorkplanStep,
@@ -1800,7 +1802,7 @@ impl CodePhase {
                     };
                     for entry in read_dir.filter_map(|e| e.ok()) {
                         let path = entry.path();
-                        if !path.extension().map_or(false, |ext| ext == "ts") {
+                        if path.extension().is_none_or(|ext| ext != "ts") {
                             continue;
                         }
                         let Ok(content) = std::fs::read_to_string(&path) else {
@@ -1975,7 +1977,7 @@ impl CodePhase {
             }
             if path.is_dir() {
                 Self::walk_files_with_ext(&path, ext, f);
-            } else if path.extension().map_or(false, |e| e == ext) {
+            } else if path.extension().is_some_and(|e| e == ext) {
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     f(&path, &content);
                 }
@@ -2051,9 +2053,7 @@ impl CodePhase {
     /// paths with traversal, absolute roots, or null bytes.
     pub fn sanitize_file_path(raw: &str) -> Result<String> {
         let sanitized = raw
-            .replace('\n', "")
-            .replace('\r', "")
-            .replace('\0', "")
+            .replace(['\n', '\r', '\0'], "")
             .trim()
             .to_string();
 

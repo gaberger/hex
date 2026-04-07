@@ -1364,7 +1364,7 @@ impl Supervisor {
                 let hash = format!("{:x}", hasher.finish());
 
                 let hashes = fixer_hashes.entry(obj).or_default();
-                let is_repeat = hashes.last().map_or(false, |prev| prev == &hash);
+                let is_repeat = hashes.last().is_some_and(|prev| prev == &hash);
                 hashes.push(hash);
 
                 if is_repeat {

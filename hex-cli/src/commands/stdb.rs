@@ -732,7 +732,7 @@ async fn hydrate(host: &str, database: &str, force: bool, dry_run: bool) -> anyh
                 result
             } else {
                 println!("{}", "SKIP".dimmed());
-                Ok(std::process::Output { status: std::process::ExitStatus::default(), stdout: vec![], stderr: vec![] }).into()
+                Ok(std::process::Output { status: std::process::ExitStatus::default(), stdout: vec![], stderr: vec![] })
             }
         } else {
             let module_path = modules_path.join("hexflo-coordination");
