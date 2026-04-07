@@ -76,6 +76,12 @@ pub enum DevAction {
         #[arg(long)]
         force: bool,
     },
+
+    /// Show live status of the active dev session
+    Status {
+        /// Session ID (default: most recent active session)
+        id: Option<String>,
+    },
 }
 
 pub async fn run(action: DevAction) -> Result<()> {
@@ -84,6 +90,7 @@ pub async fn run(action: DevAction) -> Result<()> {
         DevAction::Clean { force } => clean_sessions(force),
         DevAction::Resume => resume_latest().await,
         DevAction::Load { id } => resume_by_id(&id).await,
+        DevAction::Status { id } => show_status(id),
         DevAction::Start {
             description,
             quick,
@@ -651,4 +658,78 @@ fn print_session_summary(session: &DevSession) {
         "ℹ".blue(),
         session.status,
     );
+}
+
+/// Show live status of the active (or specified) dev session.
+fn show_status(id: Option<String>) -> Result<()> {
+    let session = match id {
+        Some(ref id_str) => DevSession::load(id_str)?,
+        None => DevSession::load_latest()?
+            .ok_or_else(|| anyhow::anyhow!("No active dev session found. Start one with: hex dev start \"<feature>\""))?,
+    };
+
+    let duration = {
+        let start = chrono::DateTime::parse_from_rfc3339(&session.created_at).ok();
+        let end = chrono::DateTime::parse_from_rfc3339(&session.updated_at).ok();
+        match (start, end) {
+            (Some(s), Some(e)) => {
+                let d = e.signed_duration_since(s);
+                format!("{}m {}s", d.num_minutes(), d.num_seconds() % 60)
+            }
+            _ => "—".into(),
+        }
+    };
+
+    println!("\n⬡ hex dev — Status");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    println!("  Session:  {}", &session.id[..8.min(session.id.len())]);
+    println!("  Feature:  {}", session.feature_description);
+    println!("  Status:   {}", status_badge(&format!("{}", session.status)));
+    println!("  Phase:    {}", session.current_phase);
+    println!("  Duration: {}", duration);
+    println!("  Tokens:   {} | Cost: ${:.4}", session.total_tokens, session.total_cost_usd);
+
+    if let Some(ref model) = session.model_selections.get("default") {
+        println!("  Model:    {}", model);
+    }
+    if let Some(ref provider) = session.provider {
+        println!("  Provider: {}", provider);
+    }
+
+    // Completed steps
+    if !session.completed_steps.is_empty() {
+        println!("\n  ── Steps ──────────────────────────────────");
+        for step in &session.completed_steps {
+            println!("  {} {}", "✓".green(), step);
+        }
+    }
+
+    // Quality result
+    if let Some(ref qr) = session.quality_result {
+        println!("\n  ── Quality ────────────────────────────────");
+        println!("  Grade:    {} ({}/100)", qr.grade, qr.score);
+        println!("  Compile:  {}", if qr.compile_pass { "✓ PASS".green().to_string() } else { "✗ FAIL".red().to_string() });
+        println!("  Tests:    {}/{} passing", qr.tests_passed, qr.tests_passed + qr.tests_failed);
+        if qr.violations_found > 0 {
+            println!("  Violations: {} found, {} fixed", qr.violations_found, qr.violations_fixed);
+        }
+    }
+
+    // Recent tool calls (last 5)
+    if !session.tool_calls.is_empty() {
+        println!("\n  ── Recent Activity ────────────────────────");
+        let recent: Vec<_> = session.tool_calls.iter().rev().take(5).collect();
+        for tc in recent.iter().rev() {
+            let model_str = tc.model.as_deref().unwrap_or("—");
+            let tokens_str = tc.tokens.map(|t| format!("{}tok", t)).unwrap_or_else(|| "—".into());
+            let phase = truncate(&tc.phase, 16);
+            let status_icon = if tc.status == "ok" { "✓".green() } else { "✗".red() };
+            println!("  {} {:<16} {:<16} {:<8} {}ms",
+                status_icon, phase, model_str, tokens_str, tc.duration_ms / 1000);
+        }
+    }
+
+    println!();
+    Ok(())
 }
