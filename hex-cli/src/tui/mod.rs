@@ -2948,7 +2948,7 @@ impl TuiApp {
             });
 
             match phase
-                .execute_step(step, &workplan_data, model_override, provider_pref)
+                .execute_step(step, &workplan_data, model_override, provider_pref, Some(self.config.output_dir.as_str()))
                 .await
             {
                 Ok(result) => {

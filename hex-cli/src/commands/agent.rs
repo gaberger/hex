@@ -1408,12 +1408,15 @@ async fn execute_worker_task(
                     &workplan_data,
                     model_override.as_deref(),
                     provider_pref.as_deref(),
+                    Some(output_dir.as_str()),
                 )
                 .await?;
 
-            // 3. Write generated file to output_dir
+            // 3. Write generated file to output_dir (P3: sanitize path — ADR-2604070400)
             let raw_path = step_result.file_path.as_deref().unwrap_or("main.go");
-            let rel_path = worker_strip_prefix(raw_path, &output_dir);
+            let sanitized_path = crate::pipeline::code_phase::CodePhase::sanitize_file_path(raw_path)
+                .map_err(|e| anyhow::anyhow!("invalid file path from LLM '{}': {}", raw_path, e))?;
+            let rel_path = worker_strip_prefix(&sanitized_path, &output_dir);
             let full_path = PathBuf::from(&output_dir).join(rel_path);
             if let Some(parent) = full_path.parent() {
                 std::fs::create_dir_all(parent)?;

@@ -1224,6 +1224,10 @@ impl Supervisor {
         let mut prior_results: HashMap<Objective, bool> = HashMap::new();
         // Accumulate error outputs per objective across fix iterations (last 2 kept).
         let mut prior_errors_map: HashMap<Objective, Vec<String>> = HashMap::new();
+        // P2 (ADR-2604070400): Track fixer output hashes to detect loops.
+        // Maps objective → list of SHA-256 hashes of blocking_issues after each fixer run.
+        let mut fixer_hashes: HashMap<Objective, Vec<String>> = HashMap::new();
+        let mut fixer_stuck_count: HashMap<Objective, u32> = HashMap::new();
 
         for iteration in 1..=max_iterations {
             // Evaluate ALL objectives from scratch each iteration
@@ -1329,10 +1333,50 @@ impl Supervisor {
                 let errors = prior_errors_map.entry(obj).or_default();
                 let current_error = unmet_state.blocking_issues.join("\n");
                 if !current_error.is_empty() {
-                    errors.push(current_error);
+                    errors.push(current_error.clone());
                     if errors.len() > 2 {
                         errors.remove(0);
                     }
+                }
+
+                // P2 (ADR-2604070400): Detect fixer loop via content hash.
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                let mut hasher = DefaultHasher::new();
+                current_error.hash(&mut hasher);
+                let hash = format!("{:x}", hasher.finish());
+
+                let hashes = fixer_hashes.entry(obj).or_default();
+                let is_repeat = hashes.last().map_or(false, |prev| prev == &hash);
+                hashes.push(hash);
+
+                if is_repeat {
+                    let stuck = fixer_stuck_count.entry(obj).or_insert(0);
+                    *stuck += 1;
+                    if *stuck >= 4 {
+                        // After 4 repeated failures: regenerate from scratch
+                        warn!(
+                            objective = %obj,
+                            stuck_count = *stuck,
+                            "fixer loop detected (4x) — resetting to coder for full regeneration"
+                        );
+                        // Reset so next iteration dispatches coder, not fixer
+                        prior_results.insert(obj, false);
+                        fixer_stuck_count.insert(obj, 0);
+                        fixer_hashes.remove(&obj);
+                    } else if *stuck >= 2 {
+                        // After 2 repeated failures: signal model upgrade via env
+                        // (ModelSelector checks HEX_MODEL_UPGRADE on next select_model call)
+                        warn!(
+                            objective = %obj,
+                            stuck_count = *stuck,
+                            "fixer loop detected (2x) — signalling model upgrade"
+                        );
+                        std::env::set_var("HEX_MODEL_UPGRADE", "1");
+                    }
+                } else {
+                    // Different output — reset stuck counter
+                    fixer_stuck_count.insert(obj, 0);
                 }
             }
 
@@ -1974,6 +2018,7 @@ impl Supervisor {
                                         effective_model,
                                         provider_pref,
                                         accumulated.as_deref(),
+                                        Some(self.output_dir.as_str()),
                                     )
                                     .await
                                 {
@@ -1991,7 +2036,7 @@ impl Supervisor {
                         } else {
                             // Default: single inference call (current behaviour, no 3x cost)
                             phase
-                                .execute_step(step, &step_workplan, effective_model, provider_pref)
+                                .execute_step(step, &step_workplan, effective_model, provider_pref, Some(self.output_dir.as_str()))
                                 .await
                                 .with_context(|| format!("code phase step {} failed", step.id))?
                         };
@@ -2281,7 +2326,7 @@ impl Supervisor {
                             dependencies: None,
                         };
                         let result = phase
-                            .execute_step(step, &step_workplan, effective_model, provider_pref)
+                            .execute_step(step, &step_workplan, effective_model, provider_pref, Some(self.output_dir.as_str()))
                             .await
                             .with_context(|| format!("code phase step {} failed", step.id))?;
 

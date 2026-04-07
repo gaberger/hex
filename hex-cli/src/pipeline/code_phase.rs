@@ -863,16 +863,31 @@ impl CodePhase {
         workplan: &WorkplanData,
         model_override: Option<&str>,
         provider_pref: Option<&str>,
+        project_dir: Option<&str>,
     ) -> Result<CodeStepResult> {
         info!(step_id = %step.id, description = %step.description, "code phase: generating code for step");
 
         // ── 1. Assemble context ──────────────────────────────────────────
-        let target_file = self.infer_target_file(step);
+        let target_file_raw = self.infer_target_file(step);
+        let target_file = match &target_file_raw {
+            Some(raw) => match Self::sanitize_file_path(raw) {
+                Ok(clean) => Some(clean),
+                Err(e) => {
+                    warn!(raw_path = %raw, error = %e, "sanitized away invalid target file path");
+                    None
+                }
+            },
+            None => None,
+        };
         let target_file_content = self.read_target_file(&target_file).await;
         let ast_summary = self.fetch_ast_summary(&target_file).await;
         let port_interfaces = self.fetch_port_interfaces(step).await;
         let language = self.infer_language(step, workplan);
         let boundary_rules = Self::get_boundary_rules(&language);
+        let pdir = project_dir.unwrap_or(".");
+        let project_structure = Self::fetch_project_structure_for(pdir, &target_file);
+        let available_imports = Self::fetch_available_imports_for(pdir, &language);
+        let strict_rules = Self::strict_mode_rules(&language);
 
         let mut context = HashMap::new();
         // Enrich step description with done_condition and workplan success criteria
@@ -895,6 +910,9 @@ impl CodePhase {
         context.insert("port_interfaces".to_string(), port_interfaces);
         context.insert("boundary_rules".to_string(), boundary_rules);
         context.insert("language".to_string(), language.clone());
+        context.insert("project_structure".to_string(), project_structure.clone());
+        context.insert("available_imports".to_string(), available_imports.clone());
+        context.insert("strict_rules".to_string(), strict_rules.clone());
 
         // ── 2. Load and render prompt template ───────────────────────────
         let template = PromptTemplate::load("code-generate")
@@ -916,13 +934,23 @@ impl CodePhase {
         info!(model = %selected.model_id, source = %selected.source, "selected model for code generation");
 
         // ── 4. Call inference ────────────────────────────────────────────
-        let user_message = format!(
-            "Generate the complete source file for step '{}': {}\n\nTarget file: {}\nLanguage: {}",
-            step.id,
-            step_desc,
-            target_file.as_deref().unwrap_or("(not specified)"),
+        // Build enriched user message (ADR-2604070400 P0: explicit paths, structure, imports)
+        let target_path_display = target_file.as_deref().unwrap_or("(not specified)");
+        let mut user_message = format!(
+            "Write the file: {}\nLanguage: {}\n\n## Task\n{}\n",
+            target_path_display,
             language,
+            step_desc,
         );
+        if !project_structure.is_empty() {
+            user_message.push_str(&format!("\n## Project Structure\n{}\n", project_structure));
+        }
+        if !available_imports.is_empty() {
+            user_message.push_str(&format!("\n## {}\n", available_imports));
+        }
+        if !strict_rules.is_empty() {
+            user_message.push_str(&format!("\n## {}\n", strict_rules));
+        }
 
         let start = Instant::now();
         let body = json!({
@@ -1011,6 +1039,7 @@ impl CodePhase {
         model_override: Option<&str>,
         provider_pref: Option<&str>,
         accumulated_context: Option<&str>,
+        project_dir: Option<&str>,
     ) -> Result<CodeStepResult> {
         info!(
             step_id = %step.id,
@@ -1028,12 +1057,26 @@ impl CodePhase {
         );
 
         // ── 2. Assemble context (same as execute_step) ───────────────────
-        let target_file = self.infer_target_file(step);
+        let target_file_raw = self.infer_target_file(step);
+        let target_file = match &target_file_raw {
+            Some(raw) => match Self::sanitize_file_path(raw) {
+                Ok(clean) => Some(clean),
+                Err(e) => {
+                    warn!(raw_path = %raw, error = %e, "sanitized away invalid target file path");
+                    None
+                }
+            },
+            None => None,
+        };
         let target_file_content = self.read_target_file(&target_file).await;
         let ast_summary = self.fetch_ast_summary(&target_file).await;
         let port_interfaces = self.fetch_port_interfaces(step).await;
         let language = self.infer_language(step, workplan);
         let boundary_rules = Self::get_boundary_rules(&language);
+        let pdir = project_dir.unwrap_or(".");
+        let project_structure = Self::fetch_project_structure_for(pdir, &target_file);
+        let available_imports = Self::fetch_available_imports_for(pdir, &language);
+        let strict_rules = Self::strict_mode_rules(&language);
 
         let mut context = HashMap::new();
         // Enrich step description with done_condition and workplan success criteria
@@ -1056,6 +1099,9 @@ impl CodePhase {
         context.insert("port_interfaces".to_string(), port_interfaces);
         context.insert("boundary_rules".to_string(), boundary_rules);
         context.insert("language".to_string(), language.clone());
+        context.insert("project_structure".to_string(), project_structure.clone());
+        context.insert("available_imports".to_string(), available_imports.clone());
+        context.insert("strict_rules".to_string(), strict_rules.clone());
 
         // ── 3. Load and render prompt template ───────────────────────────
         let template = PromptTemplate::load("code-generate")
@@ -1080,14 +1126,23 @@ impl CodePhase {
             .context("model selection failed")?;
         info!(model = %selected.model_id, source = %selected.source, phase = %phase.id, "selected model for phase code generation");
 
-        // ── 5. Build user message ────────────────────────────────────────
+        // ── 5. Build user message (ADR-2604070400 P0: enriched) ─────────
+        let target_path_display = target_file.as_deref().unwrap_or("(not specified)");
         let mut user_message = format!(
-            "Generate the complete source file for step '{}': {}\n\nTarget file: {}\nLanguage: {}",
-            step.id,
-            step_desc,
-            target_file.as_deref().unwrap_or("(not specified)"),
+            "Write the file: {}\nLanguage: {}\n\n## Task\n{}\n",
+            target_path_display,
             language,
+            step_desc,
         );
+        if !project_structure.is_empty() {
+            user_message.push_str(&format!("\n## Project Structure\n{}\n", project_structure));
+        }
+        if !available_imports.is_empty() {
+            user_message.push_str(&format!("\n## {}\n", available_imports));
+        }
+        if !strict_rules.is_empty() {
+            user_message.push_str(&format!("\n## {}\n", strict_rules));
+        }
 
         // Thread accumulated context from previous phases (red→green→refactor)
         if let Some(prev) = accumulated_context {
@@ -1255,7 +1310,7 @@ impl CodePhase {
             }
 
             match self
-                .execute_step(step, workplan, model_override, provider_pref)
+                .execute_step(step, workplan, model_override, provider_pref, output_dir)
                 .await
             {
                 Ok(result) => {
@@ -1326,7 +1381,7 @@ impl CodePhase {
             }
 
             match self
-                .execute_step(step, workplan, model_override, provider_pref)
+                .execute_step(step, workplan, model_override, provider_pref, output_dir)
                 .await
             {
                 Ok(result) => {
@@ -1603,6 +1658,346 @@ impl CodePhase {
 8. All relative imports MUST use .js extensions (NodeNext module resolution)"#
                 .to_string(),
         }
+    }
+
+    /// Build a directory tree of a project directory, marking the target file.
+    /// Caps at `max_entries` to stay within token budget.
+    /// `project_dir` is the root of the generated project (output_dir from Supervisor).
+    fn fetch_project_structure_for(project_dir: &str, target_file: &Option<String>) -> String {
+        let dir = project_dir;
+        let mut entries: Vec<String> = Vec::new();
+        const MAX_ENTRIES: usize = 80;
+
+        fn walk(
+            dir: &std::path::Path,
+            base: &std::path::Path,
+            entries: &mut Vec<String>,
+            max: usize,
+        ) {
+            let Ok(read_dir) = std::fs::read_dir(dir) else {
+                return;
+            };
+            let mut children: Vec<_> = read_dir.filter_map(|e| e.ok()).collect();
+            children.sort_by_key(|e| e.file_name());
+            for entry in children {
+                if entries.len() >= max {
+                    return;
+                }
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                // Skip hidden dirs, node_modules, dist, target
+                if name.starts_with('.')
+                    || name == "node_modules"
+                    || name == "dist"
+                    || name == "target"
+                {
+                    continue;
+                }
+                if let Ok(rel) = path.strip_prefix(base) {
+                    entries.push(rel.to_string_lossy().to_string());
+                }
+                if path.is_dir() {
+                    walk(&path, base, entries, max);
+                }
+            }
+        }
+
+        let base = std::path::Path::new(dir);
+        walk(base, base, &mut entries, MAX_ENTRIES);
+
+        if entries.is_empty() {
+            return "(empty project directory)".to_string();
+        }
+
+        let target_rel = target_file.as_deref().unwrap_or("");
+        let mut out = String::from("Current project structure:\n");
+        for entry in &entries {
+            if !target_rel.is_empty() && entry == target_rel {
+                out.push_str(&format!("{} ← WRITE THIS FILE\n", entry));
+            } else {
+                out.push_str(&format!("{} (exists)\n", entry));
+            }
+        }
+        if !target_rel.is_empty() && !entries.iter().any(|e| e == target_rel) {
+            out.push_str(&format!("{} ← WRITE THIS FILE (new)\n", target_rel));
+        }
+        out
+    }
+
+    /// Extract available imports/symbols from existing source files.
+    /// `project_dir` is the root of the generated project.
+    /// Supports TypeScript (export statements), Rust (pub items), and Go (exported identifiers).
+    /// For polyglot projects, `language` determines the primary scan but all recognized
+    /// languages found in the project are included.
+    fn fetch_available_imports_for(project_dir: &str, language: &str) -> String {
+        let mut imports = Vec::new();
+
+        // Detect all languages present in the project for polyglot support
+        let has_ts = std::path::Path::new(project_dir).join("src/core").exists()
+            || std::path::Path::new(project_dir).join("tsconfig.json").exists()
+            || std::path::Path::new(project_dir).join("package.json").exists();
+        let has_rust = std::path::Path::new(project_dir).join("Cargo.toml").exists();
+        let has_go = std::path::Path::new(project_dir).join("go.mod").exists();
+
+        // Scan primary language first, then others for polyglot context
+        let mut languages_to_scan = vec![language];
+        if has_ts && language != "typescript" {
+            languages_to_scan.push("typescript");
+        }
+        if has_rust && language != "rust" {
+            languages_to_scan.push("rust");
+        }
+        if has_go && language != "go" {
+            languages_to_scan.push("go");
+        }
+
+        for lang in &languages_to_scan {
+            match *lang {
+            "typescript" => {
+                let scan_dirs = ["src/core/domain", "src/core/ports"];
+                for scan_dir in &scan_dirs {
+                    let full = std::path::Path::new(project_dir).join(scan_dir);
+                    let Ok(read_dir) = std::fs::read_dir(&full) else {
+                        continue;
+                    };
+                    for entry in read_dir.filter_map(|e| e.ok()) {
+                        let path = entry.path();
+                        if !path.extension().map_or(false, |ext| ext == "ts") {
+                            continue;
+                        }
+                        let Ok(content) = std::fs::read_to_string(&path) else {
+                            continue;
+                        };
+                        let symbols: Vec<String> = content
+                            .lines()
+                            .filter_map(|line| {
+                                let trimmed = line.trim();
+                                if !trimmed.starts_with("export ") {
+                                    return None;
+                                }
+                                let rest = trimmed.strip_prefix("export ")?;
+                                let rest = rest.strip_prefix("declare ").unwrap_or(rest);
+                                let keywords = [
+                                    "interface ", "type ", "class ", "function ",
+                                    "const ", "enum ", "abstract class ",
+                                ];
+                                for kw in &keywords {
+                                    if let Some(after_kw) = rest.strip_prefix(kw) {
+                                        let name: String = after_kw
+                                            .chars()
+                                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                                            .collect();
+                                        if !name.is_empty() {
+                                            return Some(name);
+                                        }
+                                    }
+                                }
+                                None
+                            })
+                            .collect();
+                        if symbols.is_empty() {
+                            continue;
+                        }
+                        let file_stem = path.file_stem().unwrap().to_string_lossy();
+                        let import_path = format!("{}/{}.js", scan_dir, file_stem);
+                        imports.push(format!(
+                            "- from '{}': {}",
+                            import_path,
+                            symbols.join(", ")
+                        ));
+                    }
+                }
+            }
+            "rust" => {
+                // Scan src/ for .rs files, extract pub items
+                let scan_dirs = ["src"];
+                for scan_dir in &scan_dirs {
+                    let full = std::path::Path::new(project_dir).join(scan_dir);
+                    Self::walk_files_with_ext(&full, "rs", &mut |path, content| {
+                        let symbols: Vec<String> = content
+                            .lines()
+                            .filter_map(|line| {
+                                let trimmed = line.trim();
+                                if !trimmed.starts_with("pub ") {
+                                    return None;
+                                }
+                                let rest = trimmed.strip_prefix("pub ")?;
+                                // Skip pub(crate), pub(super) etc.
+                                if rest.starts_with('(') {
+                                    return None;
+                                }
+                                let keywords = [
+                                    "struct ", "enum ", "trait ", "fn ",
+                                    "type ", "const ", "static ", "mod ",
+                                ];
+                                for kw in &keywords {
+                                    if let Some(after_kw) = rest.strip_prefix(kw) {
+                                        let name: String = after_kw
+                                            .chars()
+                                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                                            .collect();
+                                        if !name.is_empty() {
+                                            return Some(format!("{}{}", kw.trim(), name));
+                                        }
+                                    }
+                                }
+                                None
+                            })
+                            .collect();
+                        if !symbols.is_empty() {
+                            let rel = path.strip_prefix(project_dir).unwrap_or(path);
+                            imports.push(format!(
+                                "- in '{}': {}",
+                                rel.display(),
+                                symbols.join(", ")
+                            ));
+                        }
+                    });
+                }
+            }
+            "go" => {
+                // Scan for .go files, extract exported identifiers (capitalized)
+                let root = std::path::Path::new(project_dir);
+                Self::walk_files_with_ext(root, "go", &mut |path, content| {
+                    let symbols: Vec<String> = content
+                        .lines()
+                        .filter_map(|line| {
+                            let trimmed = line.trim();
+                            let keywords = ["func ", "type ", "var ", "const "];
+                            for kw in &keywords {
+                                if let Some(after_kw) = trimmed.strip_prefix(kw) {
+                                    // Skip receiver methods: func (r *Receiver)
+                                    if kw == &"func " && after_kw.starts_with('(') {
+                                        // Extract method name after receiver
+                                        if let Some(paren_end) = after_kw.find(") ") {
+                                            let after_recv = &after_kw[paren_end + 2..];
+                                            let name: String = after_recv
+                                                .chars()
+                                                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                                                .collect();
+                                            if !name.is_empty() && name.starts_with(|c: char| c.is_uppercase()) {
+                                                return Some(name);
+                                            }
+                                        }
+                                        return None;
+                                    }
+                                    let name: String = after_kw
+                                        .chars()
+                                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                                        .collect();
+                                    // Go exports are capitalized
+                                    if !name.is_empty() && name.starts_with(|c: char| c.is_uppercase()) {
+                                        return Some(name);
+                                    }
+                                }
+                            }
+                            None
+                        })
+                        .collect();
+                    if !symbols.is_empty() {
+                        let rel = path.strip_prefix(project_dir).unwrap_or(path);
+                        imports.push(format!(
+                            "- in '{}': {}",
+                            rel.display(),
+                            symbols.join(", ")
+                        ));
+                    }
+                });
+            }
+            _ => {}
+        }
+        } // end for lang
+
+        if imports.is_empty() {
+            return String::new();
+        }
+
+        let mut out = String::from("Available imports/symbols:\n");
+        for line in &imports {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Walk directory recursively, calling `f` for each file with the given extension.
+    fn walk_files_with_ext(
+        dir: &std::path::Path,
+        ext: &str,
+        f: &mut dyn FnMut(&std::path::Path, &str),
+    ) {
+        let Ok(read_dir) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in read_dir.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "target" || name == "vendor" {
+                continue;
+            }
+            if path.is_dir() {
+                Self::walk_files_with_ext(&path, ext, f);
+            } else if path.extension().map_or(false, |e| e == ext) {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    f(&path, &content);
+                }
+            }
+        }
+    }
+
+    /// Return language-specific strictness instructions for the coder prompt.
+    fn strict_mode_rules(language: &str) -> String {
+        match language {
+            "typescript" => "STRICT MODE RULES:\n\
+                - Use strict TypeScript — no `any` types\n\
+                - Use `import type { ... }` for type-only imports\n\
+                - All relative imports MUST use .js extension (NodeNext resolution)\n\
+                - Do NOT use `require()` — use ES module imports only\n\
+                - Export all public types and functions explicitly"
+                .to_string(),
+            "rust" => "STRICT MODE RULES:\n\
+                - No `unsafe` blocks unless absolutely required and documented\n\
+                - No `.unwrap()` in library code — use `?` or proper error handling\n\
+                - Use `thiserror` for custom error types\n\
+                - Derive Debug, Clone where appropriate"
+                .to_string(),
+            "go" => "STRICT MODE RULES:\n\
+                - Handle ALL errors — no blank identifier `_` for error returns\n\
+                - Use `fmt.Errorf` with `%w` for error wrapping\n\
+                - No `panic()` in library code\n\
+                - Use context.Context for cancellation propagation"
+                .to_string(),
+            _ => String::new(),
+        }
+    }
+
+    /// Sanitize an LLM-generated file path. Strips control characters and rejects
+    /// paths with traversal, absolute roots, or null bytes.
+    pub fn sanitize_file_path(raw: &str) -> Result<String> {
+        let sanitized = raw
+            .replace('\n', "")
+            .replace('\r', "")
+            .replace('\0', "")
+            .trim()
+            .to_string();
+
+        if sanitized.is_empty() {
+            anyhow::bail!("empty file path after sanitization");
+        }
+        if sanitized.contains("..") {
+            anyhow::bail!(
+                "path traversal detected in file path: '{}'",
+                sanitized
+            );
+        }
+        if sanitized.starts_with('/') {
+            anyhow::bail!(
+                "absolute path not allowed: '{}'",
+                sanitized
+            );
+        }
+
+        Ok(sanitized)
     }
 
     /// Infer the programming language from the step and workplan.

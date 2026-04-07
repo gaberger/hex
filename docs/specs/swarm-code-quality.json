@@ -1,0 +1,67 @@
+{
+  "title": "Swarm Code Generation Quality Improvements",
+  "adr": "ADR-2604070400",
+  "created_at": "2026-04-07T04:00:00.000000+00:00",
+  "acceptance_criteria": [
+    {
+      "id": "AC-P0-1",
+      "priority": "P0",
+      "description": "Coder prompt includes explicit target file path (e.g. 'Write the file: src/adapters/secondary/InMemoryTaskRepo.ts')",
+      "verify": "Inspect rendered prompt in hex-nexus logs — must contain 'Write the file:' with a concrete path"
+    },
+    {
+      "id": "AC-P0-2",
+      "priority": "P0",
+      "description": "Coder prompt includes project directory tree showing existing files and the target file marked with ← WRITE THIS FILE",
+      "verify": "Inspect rendered prompt — must contain 'Current project structure:' section with file listing"
+    },
+    {
+      "id": "AC-P0-3",
+      "priority": "P0",
+      "description": "Coder prompt includes available imports extracted from existing files' exports",
+      "verify": "Inspect rendered prompt — must contain 'Available imports:' section with concrete import paths and symbols"
+    },
+    {
+      "id": "AC-P0-4",
+      "priority": "P0",
+      "description": "Coder prompt includes hex boundary rules matching the target layer",
+      "verify": "Existing — already in get_boundary_rules(). Verify rules appear in rendered prompt."
+    },
+    {
+      "id": "AC-P0-5",
+      "priority": "P0",
+      "description": "Coder prompt includes TypeScript strict mode instruction when language is typescript",
+      "verify": "Inspect rendered prompt for TS steps — must contain 'strict TypeScript' and 'import type' guidance"
+    },
+    {
+      "id": "AC-P2-1",
+      "priority": "P2",
+      "description": "Supervisor detects identical fixer output after 2 iterations via content hash comparison",
+      "verify": "Unit test: feed supervisor two identical fixer outputs → assert escalation triggered"
+    },
+    {
+      "id": "AC-P2-2",
+      "priority": "P2",
+      "description": "On fixer loop detection, supervisor escalates to higher-quality model",
+      "verify": "Integration test: mock model selector → assert upgrade_model() called after 2 identical hashes"
+    },
+    {
+      "id": "AC-P2-3",
+      "priority": "P2",
+      "description": "After model escalation still loops (2 more identical), supervisor regenerates from scratch with compile errors injected into coder prompt",
+      "verify": "Log output shows 'regenerating from scratch' message with compile errors included"
+    },
+    {
+      "id": "AC-P3-1",
+      "priority": "P3",
+      "description": "Worker rejects file paths containing newlines, carriage returns, or path traversal (..)",
+      "verify": "Unit test: paths with \\n, \\r, .., leading / → all rejected with error"
+    },
+    {
+      "id": "AC-P3-2",
+      "priority": "P3",
+      "description": "Worker rejects absolute file paths (starting with /)",
+      "verify": "Unit test: absolute path → rejected"
+    }
+  ]
+}
