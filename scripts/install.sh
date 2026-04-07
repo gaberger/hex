@@ -37,6 +37,19 @@ URL="https://github.com/gaberger/hex/releases/download/v${VERSION}/hex-${VERSION
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
+# ── Stop running hex processes before replacing binaries ─────────────
+# Prevents stale workers, orphaned nexus, and binary-in-use errors.
+if pgrep -x "hex-nexus" >/dev/null 2>&1 || pgrep -x "hex" >/dev/null 2>&1; then
+  echo "Stopping running hex processes..."
+  # Graceful first, then force
+  killall hex-nexus hex 2>/dev/null || true
+  sleep 2
+  # Kill any stragglers (workers, stuck polls)
+  pkill -9 -f "hex dev\|hex agent worker\|hex-nexus" 2>/dev/null || true
+  sleep 1
+  echo "  Stopped."
+fi
+
 echo "Downloading hex ${VERSION} for ${TARGET}..."
 curl -fSL "$URL" | tar xz -C "$TMPDIR"
 
