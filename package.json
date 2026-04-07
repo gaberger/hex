@@ -1,6 +1,6 @@
 {
   "name": "@anthropic-hex/hex",
-  "version": "26.9.0",
+  "version": "26.4.26",
   "description": "Hexagonal Architecture framework for LLM-driven development with token-efficient tree-sitter summaries",
   "type": "module",
   "main": "dist/index.js",
