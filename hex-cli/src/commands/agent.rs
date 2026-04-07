@@ -1467,10 +1467,16 @@ async fn execute_worker_task(
                 )
                 .await;
 
-            format!(
+            let summary = format!(
                 "hex-coder: generated {} (compile={}, tests={})",
                 rel_path, compile_pass, tests_pass
-            )
+            );
+            if !compile_pass {
+                // Return Err so the task is marked "failed", not "completed".
+                // The supervisor will re-dispatch with the fixer role.
+                return Err(anyhow::anyhow!("{}", summary));
+            }
+            summary
         }
         "hex-reviewer" => {
             use crate::pipeline::agents::ReviewerAgent;

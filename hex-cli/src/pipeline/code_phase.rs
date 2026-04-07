@@ -888,6 +888,7 @@ impl CodePhase {
         let project_structure = Self::fetch_project_structure_for(pdir, &target_file);
         let available_imports = Self::fetch_available_imports_for(pdir, &language);
         let strict_rules = Self::strict_mode_rules(&language);
+        let dep_context = Self::fetch_dependency_context(pdir, &language);
 
         let mut context = HashMap::new();
         // Enrich step description with done_condition and workplan success criteria
@@ -950,6 +951,9 @@ impl CodePhase {
         }
         if !strict_rules.is_empty() {
             user_message.push_str(&format!("\n## {}\n", strict_rules));
+        }
+        if !dep_context.is_empty() {
+            user_message.push_str(&format!("\n## {}\n", dep_context));
         }
 
         let start = Instant::now();
@@ -1077,6 +1081,7 @@ impl CodePhase {
         let project_structure = Self::fetch_project_structure_for(pdir, &target_file);
         let available_imports = Self::fetch_available_imports_for(pdir, &language);
         let strict_rules = Self::strict_mode_rules(&language);
+        let dep_context = Self::fetch_dependency_context(pdir, &language);
 
         let mut context = HashMap::new();
         // Enrich step description with done_condition and workplan success criteria
@@ -1142,6 +1147,9 @@ impl CodePhase {
         }
         if !strict_rules.is_empty() {
             user_message.push_str(&format!("\n## {}\n", strict_rules));
+        }
+        if !dep_context.is_empty() {
+            user_message.push_str(&format!("\n## {}\n", dep_context));
         }
 
         // Thread accumulated context from previous phases (red→green→refactor)
@@ -1972,6 +1980,44 @@ impl CodePhase {
                     f(&path, &content);
                 }
             }
+        }
+    }
+
+    /// Read project dependency manifest (Cargo.toml, go.mod, package.json) and return
+    /// it as prompt context so the model knows exact dependency versions.
+    fn fetch_dependency_context(project_dir: &str, language: &str) -> String {
+        let manifest = match language {
+            "rust" => {
+                let path = std::path::Path::new(project_dir).join("Cargo.toml");
+                std::fs::read_to_string(&path).ok()
+            }
+            "go" => {
+                let path = std::path::Path::new(project_dir).join("go.mod");
+                std::fs::read_to_string(&path).ok()
+            }
+            "typescript" => {
+                let path = std::path::Path::new(project_dir).join("package.json");
+                std::fs::read_to_string(&path).ok()
+            }
+            _ => None,
+        };
+
+        match manifest {
+            Some(content) if !content.is_empty() => {
+                let filename = match language {
+                    "rust" => "Cargo.toml",
+                    "go" => "go.mod",
+                    "typescript" => "package.json",
+                    _ => "manifest",
+                };
+                format!(
+                    "Dependencies ({}):\n```\n{}\n```\nIMPORTANT: Use APIs compatible with these exact dependency versions. Do NOT use deprecated or renamed APIs.\n",
+                    filename,
+                    // Truncate to 2KB to stay within token budget
+                    &content[..content.len().min(2048)]
+                )
+            }
+            _ => String::new(),
         }
     }
 
