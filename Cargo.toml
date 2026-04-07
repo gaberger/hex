@@ -3,7 +3,7 @@ members = ["hex-nexus", "hex-desktop", "hex-core", "hex-parser", "hex-agent", "h
 resolver = "2"
 
 [workspace.package]
-version = "26.4.12"
+version = "26.4.13"
 edition = "2021"
 license = "MIT"
 
