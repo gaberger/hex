@@ -316,31 +316,35 @@ fn evaluate_code_generated(tier: u32, output_dir: &str, language: &str) -> Objec
         .unwrap_or(false);
     let effective_language = if has_root_go_files { "go" } else { language };
 
-    // Go single-binary projects: code lives in the project root (main.go), not src/
+    // Go projects: code may live in root (main.go), cmd/, or internal/ (hex layout)
     if effective_language == "go" {
-        let main_go = Path::new(output_dir).join("main.go");
-        let has_go_files = main_go.exists() || {
-            // Also accept any .go file in the root
-            fs::read_dir(output_dir)
-                .ok()
-                .map(|entries| entries.flatten().any(|e| {
-                    e.path().extension().and_then(|x| x.to_str()) == Some("go")
-                }))
-                .unwrap_or(false)
-        };
-        if !has_go_files {
+        fn count_go_recursive(dir: &Path) -> usize {
+            let mut count = 0usize;
+            if let Ok(entries) = fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if !name.starts_with('.') && name != "vendor" {
+                            count += count_go_recursive(&path);
+                        }
+                    } else if path.extension().and_then(|x| x.to_str()) == Some("go") {
+                        count += 1;
+                    }
+                }
+            }
+            count
+        }
+        // Check root, cmd/, internal/, pkg/ — standard Go project layouts
+        let root = Path::new(output_dir);
+        let go_file_count = count_go_recursive(root);
+        if go_file_count == 0 {
             return ObjectiveState::unmet(
                 Objective::CodeGenerated,
-                "no .go files in project root",
-                vec!["main.go does not exist".into()],
+                "no .go files found in project",
+                vec!["no .go files in root, cmd/, or internal/".into()],
             );
         }
-        let go_file_count = fs::read_dir(output_dir)
-            .ok()
-            .map(|entries| entries.flatten().filter(|e| {
-                e.path().extension().and_then(|x| x.to_str()) == Some("go")
-            }).count())
-            .unwrap_or(0);
         return ObjectiveState::met(
             Objective::CodeGenerated,
             format!("{} Go source files found", go_file_count),

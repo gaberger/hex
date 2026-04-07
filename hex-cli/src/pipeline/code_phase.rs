@@ -1482,25 +1482,34 @@ impl CodePhase {
         if let Some(layer) = step.layer.as_deref() {
             let adapter = step.adapter.as_deref();
             let slug = slug_from_description(&step.description);
+            // Detect extension from step description
+            let desc_l = step.description.to_lowercase();
+            let ext = if desc_l.contains(".go") || desc_l.contains("golang") || desc_l.contains("gin") {
+                "go"
+            } else if desc_l.contains(".rs") || desc_l.contains("rust") || desc_l.contains("cargo") {
+                "rs"
+            } else {
+                "ts"
+            };
             let result = match layer {
-                "domain" => Some(format!("src/core/domain/{}.ts", slug)),
+                "domain" => Some(format!("src/core/domain/{}.{}", slug, ext)),
                 "ports" => {
                     let port_name = step.port.as_deref().unwrap_or_else(|| &slug);
-                    Some(format!("src/core/ports/{}.ts", port_name))
+                    Some(format!("src/core/ports/{}.{}", port_name, ext))
                 }
-                "usecases" => Some(format!("src/core/usecases/{}.ts", slug)),
+                "usecases" => Some(format!("src/core/usecases/{}.{}", slug, ext)),
                 "adapters/primary" | "primary" => {
                     let name = adapter.unwrap_or(&slug);
-                    Some(format!("src/adapters/primary/{}.ts", name))
+                    Some(format!("src/adapters/primary/{}.{}", name, ext))
                 }
                 "adapters/secondary" | "secondary" => {
                     let name = adapter.unwrap_or(&slug);
-                    Some(format!("src/adapters/secondary/{}.ts", name))
+                    Some(format!("src/adapters/secondary/{}.{}", name, ext))
                 }
                 // "integration" layer on tier 4 means composition root, not tests.
                 // Only treat it as an integration test file for tier 5+.
                 "integration" if step.tier >= 5 => {
-                    Some(format!("tests/integration/{}.test.ts", step.id))
+                    Some(format!("tests/integration/{}.test.{}", step.id, ext))
                 }
                 "integration" => None, // fall through to tier-based logic (tier 4 → composition-root)
                 _ => None,
@@ -1512,9 +1521,30 @@ impl CodePhase {
 
         // Fallback: infer from tier + description keywords
         let slug = slug_from_description(&step.description);
-        let ext = "ts"; // default; language-aware callers can override
         let desc_lower = step.description.to_lowercase();
 
+        // Detect language from step description to pick correct extension and layout
+        let lang = if desc_lower.contains("golang") || desc_lower.contains(".go")
+            || desc_lower.contains("go.mod") || desc_lower.contains("gin")
+            || desc_lower.contains("go test") || desc_lower.contains("go build")
+        {
+            "go"
+        } else if desc_lower.contains("rust") || desc_lower.contains(".rs")
+            || desc_lower.contains("cargo")
+        {
+            "rust"
+        } else {
+            "typescript"
+        };
+
+        // Go/Rust single-binary projects: all code in one file
+        match lang {
+            "go" => return Some("main.go".to_string()),
+            "rust" => return Some("src/main.rs".to_string()),
+            _ => {}
+        }
+
+        let ext = "ts";
         match step.tier {
             0 => {
                 // Tier 0: domain or ports
