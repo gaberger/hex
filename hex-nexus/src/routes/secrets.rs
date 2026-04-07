@@ -413,11 +413,16 @@ pub async fn list_inference(
     match client.list_providers().await {
         Ok(providers) => {
             let list: Vec<serde_json::Value> = providers.iter().map(|p| {
+                let primary_model = serde_json::from_str::<Vec<String>>(&p.models_json)
+                    .ok()
+                    .and_then(|v| v.into_iter().next())
+                    .unwrap_or_else(|| p.models_json.clone());
                 json!({
                     "id": p.provider_id,
                     "url": p.base_url,
                     "provider": p.provider_type,
-                    "model": p.models_json,
+                    "model": primary_model,
+                    "models": p.models_json,
                     "status": if p.healthy == 1 { "healthy" } else { "unknown" },
                     "requiresAuth": !p.api_key_ref.is_empty(),
                     "healthCheckedAt": p.last_health_check,

@@ -215,17 +215,24 @@ async fn add_provider(
         Ok(resp) if resp.status().is_success() => {
             println!("  {} Connectivity OK ({})", "✓".green(), resp.status());
 
-            // If Ollama, list available models and capture them
+            // If Ollama, list available models. Only repopulate discovered_models
+            // when no specific --model was given (model_name is the placeholder "llama3").
+            let explicit_model = model_name != "llama3" && !model_name.is_empty();
             if provider_type == "ollama" {
                 if let Ok(body) = resp.json::<serde_json::Value>().await {
                     if let Some(models) = body.get("models").and_then(|m| m.as_array()) {
-                        discovered_models.clear();
                         println!("  {} Available models:", "ℹ".cyan());
+                        if !explicit_model {
+                            discovered_models.clear();
+                        }
                         for m in models.iter().take(20) {
                             let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("?");
                             let size = m.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+                            let is_local = size > 0;
                             println!("    - {} ({:.1}GB)", name, size as f64 / 1_073_741_824.0);
-                            discovered_models.push(name.to_string());
+                            if !explicit_model && is_local {
+                                discovered_models.push(name.to_string());
+                            }
                         }
                     }
                 }
@@ -710,12 +717,7 @@ async fn test_provider(target: Option<&str>, all: bool) -> anyhow::Result<()> {
             let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
             let ptype = p.get("provider").and_then(|v| v.as_str()).unwrap_or("");
             let url_val = p.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            let mdl = {
-                let raw = p.get("model").and_then(|v| v.as_str()).unwrap_or("[]");
-                serde_json::from_str::<Vec<String>>(raw).ok()
-                    .and_then(|v| v.into_iter().next())
-                    .unwrap_or_default()
-            };
+            let mdl = extract_primary_model(p.get("model"));
             println!("{}", format!("── Calibrating {} ({}) ──", id, ptype).cyan());
             test_single_provider(id, url_val, ptype, &mdl).await?;
             println!();
@@ -777,12 +779,7 @@ async fn test_provider(target: Option<&str>, all: bool) -> anyhow::Result<()> {
                 let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
                 let ptype = p.get("provider").and_then(|v| v.as_str()).unwrap_or("");
                 let url_val = p.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                let mdl = {
-                    let raw = p.get("model").and_then(|v| v.as_str()).unwrap_or("[]");
-                    serde_json::from_str::<Vec<String>>(raw).ok()
-                        .and_then(|v| v.into_iter().next())
-                        .unwrap_or_default()
-                };
+                let mdl = extract_primary_model(p.get("model"));
                 println!("  • {} ({})", id, ptype);
                 test_single_provider(id, url_val, ptype, &mdl).await?;
             }
@@ -790,11 +787,7 @@ async fn test_provider(target: Option<&str>, all: bool) -> anyhow::Result<()> {
         }
 
         matches.into_iter().next().map(|p| {
-            let raw = p.get("model").and_then(|v| v.as_str()).unwrap_or("[]");
-            let model = serde_json::from_str::<Vec<String>>(raw)
-                .ok()
-                .and_then(|v| v.into_iter().next())
-                .unwrap_or_default();
+            let model = extract_primary_model(p.get("model"));
             ProviderRecord {
                 id: p.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 url: p.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -814,6 +807,26 @@ async fn test_provider(target: Option<&str>, all: bool) -> anyhow::Result<()> {
     };
 
     test_single_provider(&record.id, &record.url, &record.provider_type, &record.model).await
+}
+
+/// Extract the primary model name from an endpoint's `model` field.
+/// The field may be a JSON array value, a JSON array string, or a plain string.
+fn extract_primary_model(val: Option<&serde_json::Value>) -> String {
+    match val {
+        Some(v) if v.is_array() => {
+            v.as_array().unwrap().first()
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string()
+        }
+        Some(v) if v.is_string() => {
+            let raw = v.as_str().unwrap_or("");
+            serde_json::from_str::<Vec<String>>(raw).ok()
+                .and_then(|v| v.into_iter().next())
+                .unwrap_or_else(|| raw.to_string())
+        }
+        _ => String::new(),
+    }
 }
 
 async fn test_single_provider(id: &str, url: &str, provider_type: &str, model_name: &str) -> anyhow::Result<()> {
@@ -940,9 +953,14 @@ async fn test_single_provider(id: &str, url: &str, provider_type: &str, model_na
                 }
             }
             local_models.sort_by_key(|(size, _)| *size);
-            let test_model_opt = local_models.into_iter().next().map(|(_, n)| n);
+            // Prefer the registered model for this endpoint; fall back to smallest local model
+            let test_model_opt = if !model_name.is_empty() {
+                Some(model_name.to_string())
+            } else {
+                local_models.into_iter().next().map(|(_, n)| n)
+            };
 
-            // Quick inference test using smallest available local model
+            // Quick inference test using the endpoint's registered model (or smallest if unset)
             if let Some(ref test_model) = test_model_opt {
                 println!();
                 println!("  {} Running inference test with {}...", "→".cyan(), test_model);
