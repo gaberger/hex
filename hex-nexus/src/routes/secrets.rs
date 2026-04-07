@@ -301,7 +301,7 @@ pub async fn register_inference(
     Json(body): Json<InferenceRegisterRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     match body.provider.as_str() {
-        "ollama" | "openai-compatible" | "openai_compat" | "vllm" | "llama-cpp" | "openrouter" => {}
+        "ollama" | "openai-compatible" | "openai-compat" | "openai_compat" | "vllm" | "llama-cpp" | "openrouter" => {}
         _ => return (StatusCode::BAD_REQUEST, Json(json!({ "error": format!("Unknown provider '{}'", body.provider) }))),
     }
 
