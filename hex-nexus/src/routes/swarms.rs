@@ -341,18 +341,25 @@ pub async fn update_task(
 
     let port = state_port(&state)?;
 
-    // Apply agent assignment if provided (CAS: pass version if supplied)
+    // Apply agent assignment if provided (CAS: pass version if supplied).
+    // Skip assignment when completing/failing — the task is already assigned
+    // and calling task_assign again triggers "already_claimed" 409 from STDB.
+    let is_terminal = matches!(
+        body.status,
+        Some(SwarmTaskStatus::Completed) | Some(SwarmTaskStatus::Failed)
+    );
     if let Some(ref agent_id) = body.agent_id {
-        port.swarm_task_assign(&task_id, agent_id, body.version)
-            .await
-            .map_err(|e| {
-                // Surface CAS conflicts as 409 rather than 500
-                if matches!(e, StateError::Conflict(_)) {
-                    (StatusCode::CONFLICT, Json(json!({ "error": format!("{}", e) })))
-                } else {
-                    state_err(e)
-                }
-            })?;
+        if !is_terminal {
+            port.swarm_task_assign(&task_id, agent_id, body.version)
+                .await
+                .map_err(|e| {
+                    if matches!(e, StateError::Conflict(_)) {
+                        (StatusCode::CONFLICT, Json(json!({ "error": format!("{}", e) })))
+                    } else {
+                        state_err(e)
+                    }
+                })?;
+        }
     }
 
     // Apply status change
