@@ -324,7 +324,12 @@ impl ValidatePhase {
     pub fn compile_check(&self, output_dir: &str, language: &str) -> Result<CompileResult> {
         let dir = Path::new(output_dir);
 
+        // Detect package manager: bun (bun.lock/bun.lockb) > npx (default)
+        let use_bun = dir.join("bun.lock").exists()
+            || dir.join("bun.lockb").exists();
+
         let (cmd_name, args, config_file): (&str, Vec<&str>, &str) = match language {
+            "typescript" if use_bun => ("bun", vec!["x", "tsc", "--noEmit"], "tsconfig.json"),
             "typescript" => ("npx", vec!["tsc", "--noEmit"], "tsconfig.json"),
             "rust" => ("cargo", vec!["check"], "Cargo.toml"),
             "go" => ("go", vec!["build", "./..."], "go.mod"),
