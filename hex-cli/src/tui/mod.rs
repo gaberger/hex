@@ -1105,7 +1105,8 @@ impl TuiApp {
                         }
                     }
                     // Fallback: populate completed_steps from workplan (ADR-2604071300)
-                    if self.session.completed_steps.is_empty() {
+                    // Only when supervisor succeeded — never mark steps done on error/halt.
+                    if self.session.completed_steps.is_empty() && result.is_ok() {
                         self.session.completed_steps = workplan_data.steps.iter()
                             .map(|s| s.id.clone())
                             .collect();

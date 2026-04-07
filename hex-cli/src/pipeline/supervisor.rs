@@ -1185,6 +1185,23 @@ impl Supervisor {
 
             let passed = matches!(&result, TierResult::AllPassed { .. });
             let halted = matches!(&result, TierResult::Halted { .. });
+
+            // When a tier passes all objectives, record its step IDs as completed.
+            // This lets the TUI sync-back at tui/mod.rs correctly reflect actual progress
+            // rather than falling through to the permissive workplan-all fallback.
+            if passed {
+                if let Some(ref session_mutex) = self.session {
+                    if let Ok(mut session) = session_mutex.lock() {
+                        for step in &steps {
+                            if !session.completed_steps.contains(&step.id) {
+                                session.completed_steps.push(step.id.clone());
+                            }
+                        }
+                        let _ = session.save();
+                    }
+                }
+            }
+
             tier_results.push((tier, result));
 
             if halted {
