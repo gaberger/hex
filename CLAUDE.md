@@ -315,6 +315,7 @@ Phase 7: FINALIZE    cleanup worktrees, commit, report
 | `/hex-analyze-deps` | Dependency analysis + tech stack recommendation |
 | `/hex-analyze-arch` | Architecture health check |
 | `/hex-validate` | Post-build semantic validation |
+| `/cargo-fast` | Apply ADR-064 Rust compilation optimizations (lld, sccache, nextest, dev profile) |
 
 ## Available Agents
 

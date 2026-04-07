@@ -1106,16 +1106,36 @@ impl TuiApp {
                     }
                     // Fallback: if supervisor ran but shared session didn't record completed_steps,
                     // populate from workplan so finalize_session doesn't false-positive as Paused.
-                    if self.session.completed_steps.is_empty() && result.is_ok() {
+                    if self.session.completed_steps.is_empty() {
                         self.session.completed_steps = workplan_data.steps.iter()
                             .map(|s| s.id.clone())
                             .collect();
                     }
 
-                    // Build quality_result from supervisor evaluation
-                    if let Ok(ref sr) = result {
-                        self.session.quality_result =
-                            Some(sr.to_quality_report(language));
+                    // Build quality_result from supervisor evaluation.
+                    // On Ok: full report from tier results. On Err: partial report marking failure.
+                    match &result {
+                        Ok(sr) => {
+                            self.session.quality_result = Some(sr.to_quality_report(language));
+                        }
+                        Err(e) => {
+                            // Build partial quality report so finalize_session knows supervisor ran
+                            self.session.quality_result = Some(crate::session::QualityReport {
+                                grade: "F".into(),
+                                score: 0,
+                                iterations: 0,
+                                compile_pass: false,
+                                compile_language: language.to_string(),
+                                test_pass: false,
+                                tests_passed: 0,
+                                tests_failed: 0,
+                                violations_found: 0,
+                                violations_fixed: 0,
+                                fix_cost_usd: 0.0,
+                                fix_tokens: 0,
+                                quality_thresholds_checked: vec![format!("pipeline error: {}", e)],
+                            });
+                        }
                     }
 
                     match result {

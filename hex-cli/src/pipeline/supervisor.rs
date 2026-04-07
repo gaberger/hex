@@ -2041,6 +2041,15 @@ impl Supervisor {
                                 .with_context(|| format!("code phase step {} failed", step.id))?
                         };
 
+                        // Store metrics for session audit trail (ADR-2604071300)
+                        self.store_dispatch_metrics(AgentMetrics {
+                            model: Some(result.model_used.clone()),
+                            tokens: Some(result.tokens),
+                            input_tokens: None,
+                            output_tokens: None,
+                            cost_usd: Some(result.cost_usd),
+                        });
+
                         // Store selection metadata for RL reward reporting after evaluate_all.
                         // Success/failure is not known until CodeCompiles is evaluated, so we
                         // store here and report in run_tier once the objective state is available.
@@ -2329,6 +2338,15 @@ impl Supervisor {
                             .execute_step(step, &step_workplan, effective_model, provider_pref, Some(self.output_dir.as_str()))
                             .await
                             .with_context(|| format!("code phase step {} failed", step.id))?;
+
+                        // Store metrics for session audit trail (ADR-2604071300)
+                        self.store_dispatch_metrics(AgentMetrics {
+                            model: Some(result.model_used.clone()),
+                            tokens: Some(result.tokens),
+                            input_tokens: None,
+                            output_tokens: None,
+                            cost_usd: Some(result.cost_usd),
+                        });
 
                         // Store selection metadata for RL reward reporting after evaluate_all.
                         if let Ok(mut guard) = self.last_code_selection.lock() {
