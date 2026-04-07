@@ -325,11 +325,25 @@ impl ValidatePhase {
         let dir = Path::new(output_dir);
 
         // Detect package manager: bun (bun.lock/bun.lockb) > npx (default)
-        let use_bun = dir.join("bun.lock").exists()
-            || dir.join("bun.lockb").exists();
+        // Resolve full path since ~/.bun/bin may not be in PATH for subprocesses.
+        let bun_path = if dir.join("bun.lock").exists() || dir.join("bun.lockb").exists() {
+            // Check common bun install locations
+            let candidates = [
+                dirs::home_dir().map(|h| h.join(".bun/bin/bun")),
+                Some(std::path::PathBuf::from("/usr/local/bin/bun")),
+            ];
+            candidates.iter().filter_map(|c| c.as_ref()).find(|p| p.exists()).cloned()
+        } else {
+            None
+        };
 
+        let bun_str = bun_path.as_ref().map(|p| p.to_string_lossy().to_string());
         let (cmd_name, args, config_file): (&str, Vec<&str>, &str) = match language {
-            "typescript" if use_bun => ("bun", vec!["x", "tsc", "--noEmit"], "tsconfig.json"),
+            "typescript" if bun_str.is_some() => (
+                bun_str.as_deref().unwrap(),
+                vec!["x", "tsc", "--noEmit"],
+                "tsconfig.json",
+            ),
             "typescript" => ("npx", vec!["tsc", "--noEmit"], "tsconfig.json"),
             "rust" => ("cargo", vec!["check"], "Cargo.toml"),
             "go" => ("go", vec!["build", "./..."], "go.mod"),
