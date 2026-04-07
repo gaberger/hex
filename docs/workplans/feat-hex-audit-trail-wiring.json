@@ -1,0 +1,80 @@
+{
+  "title": "Feature: Hex Dev Audit Trail Wiring Fixes (P0-P1)",
+  "feature": "audit-trail-wiring",
+  "language": "rust",
+  "status": "active",
+  "adr": "ADR-2604071300",
+  "description": "Wire supervisor quality_result to session, populate completed_steps, forward CodeStepResult metrics to tool_calls, fix session status transition. These are wiring bugs — data exists in supervisor but never flows to session JSON.",
+  "priority": "high",
+  "superseded_by": "",
+  "created_at": "2026-04-07T14:30:00.000000+00:00",
+  "phases": [
+    {
+      "name": "Wire quality_result + fix status",
+      "description": "Transfer supervisor QualityReport to session and fix finalize_session status transition",
+      "steps": ["step-1", "step-2"]
+    },
+    {
+      "name": "Populate completed_steps + forward metrics",
+      "description": "Populate completed_steps from tier results, forward CodeStepResult to tool_calls",
+      "steps": ["step-3", "step-4"]
+    },
+    {
+      "name": "Verification",
+      "description": "Build, test, deploy to Bazzite, verify audit data",
+      "steps": ["step-5"]
+    }
+  ],
+  "steps": [
+    {
+      "id": "step-1",
+      "description": "In tui/mod.rs, after supervisor.run() returns tier_results, call supervisor.to_quality_report(&language) and assign to self.session.quality_result. Save session before finalize_session() is called.",
+      "adapter": "primary/tui",
+      "tier": 0,
+      "dependencies": [],
+      "status": "pending",
+      "files": ["hex-cli/src/tui/mod.rs"],
+      "done_condition": "session.quality_result is Some(QualityReport) with grade, score, compile_pass after pipeline completes"
+    },
+    {
+      "id": "step-2",
+      "description": "In tui/mod.rs finalize_session(), add fallback: if current_phase reached Code and output_dir has source files, allow Completed even without quality_result. This makes status transition resilient to partial pipeline runs.",
+      "adapter": "primary/tui",
+      "tier": 0,
+      "dependencies": ["step-1"],
+      "status": "pending",
+      "files": ["hex-cli/src/tui/mod.rs"],
+      "done_condition": "Session status is 'completed' after successful pipeline run, not 'paused'"
+    },
+    {
+      "id": "step-3",
+      "description": "In tui/mod.rs, after supervisor returns, iterate workplan steps and populate session.completed_steps with step IDs from tiers that had all objectives met (from tier_results). No Supervisor API change needed — extract from returned TierResult data.",
+      "adapter": "primary/tui",
+      "tier": 1,
+      "dependencies": ["step-1"],
+      "status": "pending",
+      "files": ["hex-cli/src/tui/mod.rs"],
+      "done_condition": "session.completed_steps contains step IDs matching completed workplan steps"
+    },
+    {
+      "id": "step-4",
+      "description": "In supervisor.rs execute_agent_tracked(), ensure the ToolCall built for session logging includes model, tokens, input_tokens, output_tokens, cost_usd from the CodeStepResult. Check existing log_tool_call path and populate null fields from last_code_selection or dispatch metrics.",
+      "adapter": "pipeline/supervisor",
+      "tier": 1,
+      "dependencies": [],
+      "status": "pending",
+      "files": ["hex-cli/src/pipeline/supervisor.rs"],
+      "done_condition": "tool_calls entries for agent-hex-coder have non-null model, tokens, cost_usd"
+    },
+    {
+      "id": "step-5",
+      "description": "Run cargo check --workspace, cargo test -p hex-cli. Deploy to Bazzite, run hex dev start with Go project, verify: quality_result populated, completed_steps populated, status is completed, hex report show displays full audit.",
+      "adapter": "integration",
+      "tier": 5,
+      "dependencies": ["step-2", "step-3", "step-4"],
+      "status": "pending",
+      "files": [],
+      "done_condition": "All 5 acceptance criteria pass on Bazzite"
+    }
+  ]
+}
