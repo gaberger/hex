@@ -1787,16 +1787,14 @@ impl Supervisor {
                             if worker_result.tests_pass { "✓" } else { "✗" },
                             worker_result.file_path,
                         );
-                        // Store audit metrics so execute_agent_tracked logs them once.
-                        if worker_result.model.is_some() || worker_result.tokens.is_some() {
-                            self.store_dispatch_metrics(AgentMetrics {
-                                model: worker_result.model.clone(),
-                                tokens: worker_result.tokens,
-                                input_tokens: worker_result.input_tokens,
-                                output_tokens: worker_result.output_tokens,
-                                cost_usd: worker_result.cost_usd,
-                            });
-                        }
+                        // Store audit metrics so execute_agent_tracked logs them once (ADR-2604071300).
+                        self.store_dispatch_metrics(AgentMetrics {
+                            model: worker_result.model.clone(),
+                            tokens: worker_result.tokens,
+                            input_tokens: worker_result.input_tokens,
+                            output_tokens: worker_result.output_tokens,
+                            cost_usd: worker_result.cost_usd,
+                        });
                     }
                 }
                 poll_result
