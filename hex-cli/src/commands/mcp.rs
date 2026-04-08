@@ -138,6 +138,8 @@ const READ_ONLY_TOOLS: &[&str] = &[
     // Project list + fingerprint (read-only)
     "hex_project_list",
     "hex_fingerprint_generate", "hex_fingerprint_get",
+    // Self-update check (read-only — check_only path)
+    "hex_self_update",
     // Lifecycle tools — exempt because they establish the session
     "hex_session_start", "hex_session_heartbeat", "hex_workplan_activate",
     // Git queries (read-only)
@@ -784,6 +786,52 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             let project_id = args.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
             nexus.get(&format!("/api/projects/{}/fingerprint", project_id))
                 .await.map_err(|e| e.to_string())
+        }
+
+        // ── Self-update (ADR-2604080929) ──
+        "hex_self_update" => {
+            let check_only = args.get("check_only").and_then(|v| v.as_bool()).unwrap_or(true);
+            let _target_version = args.get("version").and_then(|v| v.as_str());
+            if check_only {
+                // Version check: call GitHub API and return structured result
+                let http = reqwest::Client::builder()
+                    .user_agent(format!("hex/{}", env!("CARGO_PKG_VERSION")))
+                    .build()
+                    .unwrap_or_default();
+                match http.get(crate::commands::update::GITHUB_RELEASES_API).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        match resp.json::<serde_json::Value>().await {
+                            Ok(json) => {
+                                let latest = json["tag_name"].as_str()
+                                    .unwrap_or("unknown")
+                                    .trim_start_matches('v')
+                                    .to_string();
+                                let current = env!("CARGO_PKG_VERSION");
+                                Ok(serde_json::json!({
+                                    "current": current,
+                                    "latest": latest,
+                                    "up_to_date": current == latest,
+                                    "update_command": if current != latest { "hex self-update" } else { "" }
+                                }))
+                            }
+                            Err(_) => Ok(serde_json::json!({
+                                "current": env!("CARGO_PKG_VERSION"),
+                                "latest": "unknown",
+                                "message": "Could not parse GitHub releases API response"
+                            }))
+                        }
+                    }
+                    _ => Ok(serde_json::json!({
+                        "current": env!("CARGO_PKG_VERSION"),
+                        "latest": "unknown",
+                        "message": "Could not reach GitHub releases API"
+                    }))
+                }
+            } else {
+                Ok(serde_json::json!({
+                    "message": "Run 'hex self-update --yes' from the terminal to install updates non-interactively"
+                }))
+            }
         }
 
         // ── Git queries ──

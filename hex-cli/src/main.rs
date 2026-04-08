@@ -255,6 +255,19 @@ enum Commands {
     },
     /// Run all hex enforcement gates (ADR-2604061100)
     Ci,
+    /// Update hex to the latest release (ADR-2604080929)
+    #[command(name = "self-update")]
+    SelfUpdate {
+        /// Only check for updates, do not install
+        #[arg(long)]
+        check: bool,
+        /// Install a specific version tag (e.g. v26.4.30)
+        #[arg(long)]
+        version: Option<String>,
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 #[tokio::main]
@@ -312,5 +325,8 @@ async fn main() -> anyhow::Result<()> {
             doctor::run_validate_pipeline(skip_test, strict, parallel).await
         }
         Commands::Ci => commands::ci::run().await,
+        Commands::SelfUpdate { check, version, yes } => {
+            commands::update::run(check, version, yes).await
+        }
     }
 }

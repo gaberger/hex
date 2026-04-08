@@ -35,3 +35,4 @@ pub mod sandbox;
 pub mod swarm;
 pub mod task;
 pub mod test;
+pub mod update;
