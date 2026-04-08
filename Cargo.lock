@@ -2833,7 +2833,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hex-agent"
-version = "26.4.26"
+version = "26.4.27"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2866,7 +2866,7 @@ dependencies = [
 
 [[package]]
 name = "hex-cli"
-version = "26.4.26"
+version = "26.4.27"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2898,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "hex-core"
-version = "26.4.26"
+version = "26.4.27"
 dependencies = [
  "async-trait",
  "serde",
@@ -2934,7 +2934,7 @@ checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
 
 [[package]]
 name = "hex-nexus"
-version = "26.4.26"
+version = "26.4.27"
 dependencies = [
  "aes-gcm 0.10.3",
  "async-trait",
@@ -2942,6 +2942,7 @@ dependencies = [
  "base64 0.22.1",
  "bollard",
  "chrono",
+ "dirs 5.0.1",
  "futures",
  "gethostname 0.5.0",
  "git2",
@@ -2978,7 +2979,7 @@ dependencies = [
 
 [[package]]
 name = "hex-parser"
-version = "26.4.26"
+version = "26.4.27"
 dependencies = [
  "napi",
  "napi-build",

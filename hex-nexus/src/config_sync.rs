@@ -148,6 +148,136 @@ pub async fn auto_register_project(project_root: &Path, stdb_host: &str, stdb_db
     }
 }
 
+/// Preload inference endpoints from `~/.hex/inference-servers.json` into SpacetimeDB.
+///
+/// Called during startup after SpacetimeDB connection is established (ADR-2604080813).
+/// Re-registers any cached endpoints that are missing from the inference-gateway module.
+/// Stale/unreachable endpoints are logged as warnings but never fail startup.
+pub async fn preload_inference_cache(stdb_host: &str) {
+    let hex_dir = match dirs::home_dir() {
+        Some(h) => h.join(".hex"),
+        None => return,
+    };
+    let cache_path = hex_dir.join("inference-servers.json");
+    if !cache_path.exists() {
+        tracing::debug!("No inference cache found at {:?} — skipping preload", cache_path);
+        return;
+    }
+
+    let content = match std::fs::read_to_string(&cache_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Failed to read inference cache {:?}: {}", cache_path, e);
+            return;
+        }
+    };
+
+    let cache: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("Failed to parse inference cache: {}", e);
+            return;
+        }
+    };
+
+    let endpoints = match cache.get("endpoints").and_then(|e| e.as_array()) {
+        Some(v) => v.clone(),
+        None => {
+            tracing::warn!("Inference cache has no 'endpoints' array — skipping preload");
+            return;
+        }
+    };
+
+    let inference_db = std::env::var("HEX_INFERENCE_STDB_DATABASE")
+        .unwrap_or_else(|_| hex_core::stdb_database_for_module("inference-gateway").to_string());
+
+    let client = reqwest::Client::new();
+    let mut preloaded = 0usize;
+
+    for ep in &endpoints {
+        let id = ep.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+        if id.is_empty() {
+            continue;
+        }
+        let provider_type = ep.get("provider").and_then(|v| v.as_str()).unwrap_or("ollama");
+        let base_url = ep.get("url").and_then(|v| v.as_str()).unwrap_or_default();
+        // `model` is the primary model scalar; `models` is the full JSON array string
+        let model = ep.get("model").and_then(|v| v.as_str()).unwrap_or_default();
+        let models_json = ep
+            .get("models")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| ep.get("models_json").and_then(|v| v.as_str()).unwrap_or("[]"))
+            .to_string();
+        // Fall back to a single-element JSON array from the primary model if no models_json
+        let models_json = if models_json == "[]" && !model.is_empty() {
+            format!("[\"{}\"]", model)
+        } else {
+            models_json
+        };
+        let api_key_ref = ep
+            .get("apiKeyRef")
+            .or_else(|| ep.get("api_key_ref"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let quantization = ep
+            .get("quantization_level")
+            .or_else(|| ep.get("quantization"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let context_window = ep
+            .get("context_window")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let rate_limit_rpm = ep
+            .get("rate_limit_rpm")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(60) as u32;
+        let rate_limit_tpm = ep
+            .get("rate_limit_tpm")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let quality_score = ep
+            .get("quality_score")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+
+        match call_reducer(
+            &client,
+            stdb_host,
+            &inference_db,
+            "register_provider",
+            serde_json::json!([
+                id,
+                provider_type,
+                base_url,
+                api_key_ref,
+                models_json,
+                rate_limit_rpm,
+                rate_limit_tpm,
+                quantization,
+                context_window,
+                quality_score,
+            ]),
+        )
+        .await
+        {
+            Ok(()) => {
+                tracing::info!(id = %id, provider = %provider_type, "Preloaded inference endpoint from cache");
+                preloaded += 1;
+            }
+            Err(e) => {
+                tracing::warn!(id = %id, "Failed to preload inference endpoint: {} (stale or SpacetimeDB unavailable)", e);
+            }
+        }
+    }
+
+    if preloaded > 0 {
+        tracing::info!("Preloaded {}/{} inference endpoints from cache (ADR-2604080813)", preloaded, endpoints.len());
+    }
+}
+
 /// Sync project config files to SpacetimeDB with detailed reporting.
 ///
 /// Returns a [`SyncReport`] with per-category success/failure status.
@@ -316,6 +446,9 @@ pub async fn sync_project_config_with_report(
             }
         }
     }
+
+    // 5. Preload inference endpoints from ~/.hex/inference-servers.json (ADR-2604080813)
+    preload_inference_cache(stdb_host).await;
 
     report
 }
