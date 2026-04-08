@@ -135,8 +135,9 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_enforce_list", "hex_enforce_mode", "hex_enforce_prompt",
     // Test history (read-only)
     "hex_test_history", "hex_test_trends",
-    // Project list (read-only)
+    // Project list + fingerprint (read-only)
     "hex_project_list",
+    "hex_fingerprint_generate", "hex_fingerprint_get",
     // Lifecycle tools — exempt because they establish the session
     "hex_session_start", "hex_session_heartbeat", "hex_workplan_activate",
     // Git queries (read-only)
@@ -151,6 +152,14 @@ const READ_ONLY_TOOLS: &[&str] = &[
     // Batch execution + search (search is read-only; execute is a thin proxy with no local side-effects)
     "hex_batch_execute", "hex_batch_search",
 ];
+
+/// Returns true when running inside Claude Code as an MCP tool call (ADR-2604081320).
+/// Claude Code sets CLAUDE_SESSION_ID on every tool invocation.
+/// hex-nexus also sets CLAUDECODE=1 for bypass mode — treated as equivalent.
+pub fn is_claude_code_context() -> bool {
+    std::env::var("CLAUDE_SESSION_ID").is_ok()
+        || std::env::var("CLAUDECODE").as_deref() == Ok("1")
+}
 
 /// Build enforcement context from tool name and args.
 fn build_enforcement_ctx(name: &str, args: &Value) -> EnforcementContext {
@@ -716,7 +725,36 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
 
         // ── Project management ──
         "hex_project_list" => {
-            nexus.get("/api/projects").await.map_err(|e| e.to_string())
+            let resp = nexus.get("/api/projects").await.map_err(|e| e.to_string());
+            // When inside Claude Code, enrich with structured actions so Claude
+            // can call MCP tools directly instead of narrating CLI commands (ADR-2604081320).
+            if is_claude_code_context() {
+                resp.map(|r| {
+                    let mut enriched = r.clone();
+                    let projects = r.get("projects").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+                    let actions: Vec<serde_json::Value> = projects.iter().filter_map(|p| {
+                        let id = p.get("id").and_then(|v| v.as_str())?;
+                        let name = p.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+                        let status = p.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                        if status == "untracked" || status == "orphaned" {
+                            Some(serde_json::json!({
+                                "label": format!("Generate architecture fingerprint for {}", name),
+                                "mcp_tool": "hex_fingerprint_generate",
+                                "mcp_args": { "project_id": id },
+                                "cli_command": format!("hex fingerprint generate {}", id)
+                            }))
+                        } else {
+                            None
+                        }
+                    }).collect();
+                    if !actions.is_empty() {
+                        enriched["actions"] = serde_json::json!(actions);
+                    }
+                    enriched
+                })
+            } else {
+                resp
+            }
         }
 
         "hex_project_register" => {
@@ -729,6 +767,23 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 body["name"] = serde_json::json!(name);
             }
             nexus.post("/api/projects/register", &body).await.map_err(|e| e.to_string())
+        }
+
+        // ── Fingerprint (ADR-2603301200 / ADR-2604081320) ──
+        "hex_fingerprint_generate" => {
+            let project_id = args.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
+            let mut body = serde_json::json!({});
+            if let Some(root) = args.get("project_root").and_then(|v| v.as_str()) {
+                body["project_root"] = serde_json::json!(root);
+            }
+            nexus.post(&format!("/api/projects/{}/fingerprint", project_id), &body)
+                .await.map_err(|e| e.to_string())
+        }
+
+        "hex_fingerprint_get" => {
+            let project_id = args.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.get(&format!("/api/projects/{}/fingerprint", project_id))
+                .await.map_err(|e| e.to_string())
         }
 
         // ── Git queries ──
