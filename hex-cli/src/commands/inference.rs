@@ -151,6 +151,37 @@ pub enum InferenceAction {
     Stats,
 }
 
+/// Write the full inference endpoint list to ~/.hex/inference-servers.json.
+/// Called after any mutation (add/remove/calibrate) so the cache stays current.
+/// Silently skips if nexus is unavailable — never fails the caller.
+async fn write_inference_cache() {
+    let nexus = NexusClient::from_env();
+    if nexus.ensure_running().await.is_err() {
+        return;
+    }
+    let endpoints = match nexus.get("/api/inference/endpoints").await {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let hex_dir = dirs::home_dir()
+        .map(|h| h.join(".hex"))
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp/.hex"));
+    let _ = std::fs::create_dir_all(&hex_dir);
+    let cache_path = hex_dir.join("inference-servers.json");
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let cache = serde_json::json!({
+        "version": 1,
+        "updated_at": now,
+        "endpoints": endpoints.get("endpoints").cloned().unwrap_or_default(),
+    });
+
+    if let Ok(text) = serde_json::to_string_pretty(&cache) {
+        let _ = std::fs::write(&cache_path, text);
+    }
+}
+
 pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
     match action {
         InferenceAction::Add { provider_type, url, model, key, id, quantization } => {
@@ -328,6 +359,7 @@ async fn add_provider(
     println!("Use with hex-agent:");
     println!("  HEX_OLLAMA_HOST={} HEX_OLLAMA_MODEL={} hex-agent --project-dir .", url, model_name);
 
+    write_inference_cache().await;
     Ok(())
 }
 
@@ -429,6 +461,7 @@ async fn add_from_template(
         println!("  Cost: {} (free tier)", "$0.00".green());
     }
 
+    write_inference_cache().await;
     Ok(())
 }
 
@@ -906,7 +939,10 @@ async fn test_single_provider(id: &str, url: &str, provider_type: &str, model_na
                 if nexus.ensure_running().await.is_ok() {
                     let patch_body = serde_json::json!({ "quality_score": quality_score });
                     match nexus.patch(&format!("/api/inference/endpoints/{}", id), &patch_body).await {
-                        Ok(_) => println!("  {} Calibration saved — active in model router", "✓".green()),
+                        Ok(_) => {
+                            println!("  {} Calibration saved — active in model router", "✓".green());
+                            write_inference_cache().await;
+                        }
                         Err(e) => println!("  {} Could not save calibration: {}", "!".yellow(), e),
                     }
                 }
@@ -1327,6 +1363,7 @@ async fn remove_provider(provider_id: &str) -> anyhow::Result<()> {
         Err(e) => println!("{} Failed to remove: {}", "✗".red(), e),
     }
 
+    write_inference_cache().await;
     Ok(())
 }
 

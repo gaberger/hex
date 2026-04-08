@@ -172,6 +172,8 @@ pub struct WorkplanPhase {
     pub id: String,
     pub name: String,
     pub tier: Option<u32>,
+    /// Alias `steps` accepted — LLMs commonly generate `steps` instead of `tasks`.
+    #[serde(alias = "steps")]
     pub tasks: Vec<WorkplanTask>,
     /// Schema: gate object `{type, command, blocking}`.
     pub gate: Option<WorkplanGate>,

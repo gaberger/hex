@@ -57,6 +57,7 @@ git2 = { version = "0.20", features = ["vendored-libgit2"] }
 toml = "0.8"
 # Shared domain types and port traits (hex-core is the gravity center)
 hex-core = { path = "../hex-core" }
+dirs = "5"
 # Docker container lifecycle for sandbox agent coordination (feat-docker-sandbox)
 bollard = "0.17"
 # SpacetimeDB client SDK — optional, enabled via --features spacetimedb
