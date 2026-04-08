@@ -35,6 +35,7 @@ pub mod ws;
 pub mod context;
 pub mod inference_ws;
 pub mod events;
+pub mod fingerprint;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
@@ -614,6 +615,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/projects/{id}/workplans", get(project_workplan_files))
         .route("/api/projects/{id}/report", get(projects::project_report))
         .route("/api/projects/{id}/swarms", get(projects::project_swarms))
+        // Architecture fingerprint (ADR-2603301200)
+        .route("/api/projects/{id}/fingerprint", post(fingerprint::generate_fingerprint)
+            .get(fingerprint::get_fingerprint))
+        .route("/api/projects/{id}/fingerprint/text", get(fingerprint::get_fingerprint_text))
         // Project-scoped file browsing (ADR-045)
         .route("/api/{project_id}/browse", get(browse::browse_dir))
         .route("/api/{project_id}/read/{*path}", get(browse::read_file))
