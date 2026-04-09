@@ -1160,6 +1160,100 @@
         },
         "required": []
       }
+    },
+    {
+      "name": "hex_sandbox_spawn",
+      "category": "sandbox",
+      "description": "Spawn a Docker sandbox agent for isolated code execution",
+      "route": { "method": "POST", "path": "/api/agents/sandbox/spawn" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "image": { "type": "string", "description": "Docker image to use (default: hex-sandbox:latest)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_sandbox_stop",
+      "category": "sandbox",
+      "description": "Stop a running sandbox agent",
+      "route": { "method": "DELETE", "path": "/api/agents/sandbox/{agent_id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "description": "ID of the sandbox agent to stop" }
+        },
+        "required": ["agent_id"]
+      }
+    },
+    {
+      "name": "hex_sandbox_list",
+      "category": "sandbox",
+      "description": "List running sandbox agents",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_init",
+      "category": "init",
+      "description": "Initialize hex in a target project (creates config files, hooks, and agent definitions)",
+      "route": { "method": "POST", "path": "/api/projects/init" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Project path to initialize (default: current directory)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_ci_status",
+      "category": "ci",
+      "description": "Check CI pipeline status for the current project",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_ci_run",
+      "category": "ci",
+      "description": "Trigger a CI pipeline run for the current project",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_hook_list",
+      "category": "hooks",
+      "description": "List all configured hooks for the current project",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_hook_status",
+      "category": "hooks",
+      "description": "Show hook execution status and recent invocations",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
     }
   ]
 }

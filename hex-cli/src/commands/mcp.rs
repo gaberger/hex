@@ -167,6 +167,12 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_spec_list", "hex_spec_get", "hex_spec_validate",
     // Readme (read-only check)
     "hex_readme_check",
+    // Sandbox (read-only list)
+    "hex_sandbox_list",
+    // CI (read-only status)
+    "hex_ci_status",
+    // Hooks (read-only queries)
+    "hex_hook_list", "hex_hook_status",
 ];
 
 /// Returns true when running inside Claude Code as an MCP tool call (ADR-2604081320).
@@ -1280,6 +1286,58 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
         "hex_readme_check" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
             nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("readme check {}", path)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Sandbox ──
+        "hex_sandbox_spawn" => {
+            let image = args.get("image").and_then(|v| v.as_str()).unwrap_or("hex-sandbox:latest");
+            nexus.post("/api/agents/sandbox/spawn", &serde_json::json!({"image": image})).await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_sandbox_stop" => {
+            let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.delete(&format!("/api/agents/sandbox/{}", agent_id)).await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_sandbox_list" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "sandbox list"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Init ──
+        "hex_init" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            nexus.post("/api/projects/init", &serde_json::json!({"path": path})).await
+                .map_err(|e| e.to_string())
+        }
+
+        // ── CI ──
+        "hex_ci_status" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "ci"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_ci_run" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "ci"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Hooks ──
+        "hex_hook_list" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "hook list"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_hook_status" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "hook status"})).await
                 .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
                 .map_err(|e| e.to_string())
         }
