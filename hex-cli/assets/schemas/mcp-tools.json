@@ -1254,6 +1254,108 @@
         "properties": {},
         "required": []
       }
+    },
+    {
+      "name": "hex_chat_send",
+      "category": "chat",
+      "description": "Send a chat message to an agent or channel",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "The message to send"
+          },
+          "channel": {
+            "type": "string",
+            "description": "Target channel (default: general)",
+            "default": "general"
+          }
+        },
+        "required": ["message"]
+      }
+    },
+    {
+      "name": "hex_chat_history",
+      "category": "chat",
+      "description": "Get chat history for a channel",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Channel to get history for (default: general)",
+            "default": "general"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of messages to return (default: 20)",
+            "default": 20
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_skill_list",
+      "category": "skills",
+      "description": "List available hex skills",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_validate",
+      "category": "validate",
+      "description": "Run post-build semantic validation on a path",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to validate (default: current directory)",
+            "default": "."
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_opencode_status",
+      "category": "opencode",
+      "description": "Check OpenCode integration status",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_opencode_config",
+      "category": "opencode",
+      "description": "Get or set OpenCode configuration. With no params lists all config; with key returns that value; with key+value sets it.",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Configuration key to get or set"
+          },
+          "value": {
+            "type": "string",
+            "description": "Value to set (requires key). If omitted, returns current value."
+          }
+        },
+        "required": []
+      }
     }
   ]
 }

@@ -173,6 +173,14 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_ci_status",
     // Hooks (read-only queries)
     "hex_hook_list", "hex_hook_status",
+    // Chat (read-only history query)
+    "hex_chat_history",
+    // Skills (read-only list)
+    "hex_skill_list",
+    // Validate (read-only check)
+    "hex_validate",
+    // OpenCode (read-only queries)
+    "hex_opencode_status", "hex_opencode_config",
 ];
 
 /// Returns true when running inside Claude Code as an MCP tool call (ADR-2604081320).
@@ -1338,6 +1346,58 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
 
         "hex_hook_status" => {
             nexus.post("/api/exec", &serde_json::json!({"subcommand": "hook status"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Chat ──
+        "hex_chat_send" => {
+            let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            let channel = args.get("channel").and_then(|v| v.as_str()).unwrap_or("general");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("chat send {} --channel {}", message, channel)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_chat_history" => {
+            let channel = args.get("channel").and_then(|v| v.as_str()).unwrap_or("general");
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20);
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("chat history --channel {} --limit {}", channel, limit)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Skills ──
+        "hex_skill_list" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "skill list"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Validate ──
+        "hex_validate" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("validate {}", path)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── OpenCode ──
+        "hex_opencode_status" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "opencode status"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_opencode_config" => {
+            let key = args.get("key").and_then(|v| v.as_str());
+            let value = args.get("value").and_then(|v| v.as_str());
+            let subcmd = match (key, value) {
+                (Some(k), Some(v)) => format!("opencode config set {} {}", k, v),
+                (Some(k), None) => format!("opencode config get {}", k),
+                _ => "opencode config list".to_string(),
+            };
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": subcmd})).await
                 .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
                 .map_err(|e| e.to_string())
         }
