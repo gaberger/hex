@@ -153,6 +153,14 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_neural_lab_frontier", "hex_neural_lab_strategies",
     // Batch execution + search (search is read-only; execute is a thin proxy with no local side-effects)
     "hex_batch_execute", "hex_batch_search",
+    // Dev pipeline (read-only queries / local process control)
+    "hex_dev_start", "hex_dev_status", "hex_dev_stop",
+    // Reports (read-only)
+    "hex_report_workplan", "hex_report_test", "hex_report_swarm",
+    // SpacetimeDB (read-only queries)
+    "hex_stdb_query", "hex_stdb_tables", "hex_stdb_health",
+    // Doctor (read-only health aggregation)
+    "hex_doctor",
 ];
 
 /// Returns true when running inside Claude Code as an MCP tool call (ADR-2604081320).
@@ -1157,6 +1165,69 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                     "isError": true
                 }),
             }
+        }
+
+        // ── Dev Pipeline ──
+        "hex_dev_start" => {
+            let project_path = args.get("project_path").and_then(|v| v.as_str()).unwrap_or(".");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("dev start {}", project_path)})).await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_dev_status" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "dev status"})).await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_dev_stop" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "dev stop"})).await
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Reports ──
+        "hex_report_workplan" => {
+            let workplan_id = args.get("workplan_id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.get(&format!("/api/workplan/{}/report", urlencoding_simple(workplan_id))).await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_report_test" => {
+            nexus.get("/api/test-sessions/trends").await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_report_swarm" => {
+            nexus.get("/api/swarms/active").await
+                .map_err(|e| e.to_string())
+        }
+
+        // ── SpacetimeDB ──
+        "hex_stdb_health" => {
+            nexus.get("/api/stdb/health").await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_stdb_query" => {
+            let sql = args.get("sql").and_then(|v| v.as_str()).unwrap_or("");
+            let db = args.get("db").and_then(|v| v.as_str()).unwrap_or("hex");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("stdb query --db {} {}", db, sql)})).await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_stdb_tables" => {
+            let db = args.get("db").and_then(|v| v.as_str()).unwrap_or("hex");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("stdb tables --db {}", db)})).await
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Doctor (aggregate health) ──
+        "hex_doctor" => {
+            let mut health = serde_json::json!({});
+            health["nexus"] = nexus.get("/api/version").await.unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}));
+            health["stdb"] = nexus.get("/api/stdb/health").await.unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}));
+            health["secrets"] = nexus.get("/api/secrets/health").await.unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}));
+            health["inference"] = nexus.get("/api/inference/endpoints").await.unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}));
+            Ok(health)
         }
 
         _ => Err(format!("Unknown tool: {}", name)),

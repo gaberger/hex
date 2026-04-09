@@ -956,6 +956,125 @@
         },
         "required": ["subcommand"]
       }
+    },
+    {
+      "name": "hex_dev_start",
+      "category": "dev",
+      "description": "Start the dev pipeline for a project (watch mode, build, serve)",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_path": { "type": "string", "description": "Project root path (default: current directory)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_dev_status",
+      "category": "dev",
+      "description": "Check dev pipeline status (running processes, ports, health)",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_dev_stop",
+      "category": "dev",
+      "description": "Stop the dev pipeline and all associated processes",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_report_workplan",
+      "category": "report",
+      "description": "Get aggregate report for a workplan execution — phases, tasks, agents, gates, duration",
+      "route": { "method": "GET", "path": "/api/workplan/{workplan_id}/report" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workplan_id": { "type": "string", "description": "Workplan execution ID (UUID)" }
+        },
+        "required": ["workplan_id"]
+      }
+    },
+    {
+      "name": "hex_report_test",
+      "category": "report",
+      "description": "Show test pass rate trends across recent runs",
+      "route": { "method": "GET", "path": "/api/test-sessions/trends" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_report_swarm",
+      "category": "report",
+      "description": "Get status of all active swarms with tasks and agents",
+      "route": { "method": "GET", "path": "/api/swarms/active" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_stdb_health",
+      "category": "stdb",
+      "description": "Check SpacetimeDB connection health and module status",
+      "route": { "method": "GET", "path": "/api/stdb/health" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_stdb_query",
+      "category": "stdb",
+      "description": "Execute a SQL query against SpacetimeDB (SELECT only for safety)",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sql": { "type": "string", "description": "SQL query to execute (SELECT statements only)" },
+          "db": { "type": "string", "description": "Database name (default: hex)" }
+        },
+        "required": ["sql"]
+      }
+    },
+    {
+      "name": "hex_stdb_tables",
+      "category": "stdb",
+      "description": "List tables in a SpacetimeDB database",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "db": { "type": "string", "description": "Database name (default: hex)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_doctor",
+      "category": "diagnostics",
+      "description": "Aggregate health check across all hex subsystems: nexus, SpacetimeDB, secrets, inference",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
     }
   ]
 }
