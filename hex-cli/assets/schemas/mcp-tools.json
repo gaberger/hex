@@ -1075,6 +1075,91 @@
         "properties": {},
         "required": []
       }
+    },
+    {
+      "name": "hex_context_get",
+      "category": "context",
+      "description": "Get architecture context for the current project",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_context_inject",
+      "category": "context",
+      "description": "Reload architecture context into nexus (mutates cached state)",
+      "route": { "method": "POST", "path": "/api/context/reload" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_spec_list",
+      "category": "specs",
+      "description": "List all behavioral specs in the project",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_spec_get",
+      "category": "specs",
+      "description": "Get the contents of a specific behavioral spec",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Name of the spec to retrieve" }
+        },
+        "required": ["name"]
+      }
+    },
+    {
+      "name": "hex_spec_validate",
+      "category": "specs",
+      "description": "Validate behavioral specs against implementation",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "spec_name": { "type": "string", "description": "Name of a specific spec to validate (optional — validates all if omitted)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_readme_generate",
+      "category": "readme",
+      "description": "Generate a README.md for the project (writes file to disk)",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Project path (default: current directory)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_readme_check",
+      "category": "readme",
+      "description": "Check if the project README is up to date with the current codebase",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Project path (default: current directory)" }
+        },
+        "required": []
+      }
     }
   ]
 }

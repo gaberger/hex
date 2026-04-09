@@ -161,6 +161,12 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_stdb_query", "hex_stdb_tables", "hex_stdb_health",
     // Doctor (read-only health aggregation)
     "hex_doctor",
+    // Context (read-only query)
+    "hex_context_get",
+    // Specs (read-only queries)
+    "hex_spec_list", "hex_spec_get", "hex_spec_validate",
+    // Readme (read-only check)
+    "hex_readme_check",
 ];
 
 /// Returns true when running inside Claude Code as an MCP tool call (ADR-2604081320).
@@ -1228,6 +1234,54 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             health["secrets"] = nexus.get("/api/secrets/health").await.unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}));
             health["inference"] = nexus.get("/api/inference/endpoints").await.unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}));
             Ok(health)
+        }
+
+        // ── Context ──
+        "hex_context_get" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "context"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_context_inject" => {
+            nexus.post("/api/context/reload", &serde_json::json!({})).await
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Specs ──
+        "hex_spec_list" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "spec list"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_spec_get" => {
+            let name_arg = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("spec get {}", name_arg)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_spec_validate" => {
+            let spec_name = args.get("spec_name").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("spec validate {}", spec_name)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Readme ──
+        "hex_readme_generate" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("readme generate {}", path)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_readme_check" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("readme check {}", path)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
         }
 
         _ => Err(format!("Unknown tool: {}", name)),
