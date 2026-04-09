@@ -261,6 +261,124 @@ fn urlencoding_simple(s: &str) -> String {
     out
 }
 
+// ─── ADR filesystem helpers (CLI CWD is source of truth) ─
+
+/// Walk upward from CWD to find docs/adrs/.
+fn find_adr_dir() -> Option<std::path::PathBuf> {
+    if let Ok(root) = std::env::var("HEX_PROJECT_ROOT") {
+        let p = std::path::PathBuf::from(root).join("docs/adrs");
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    let cwd = std::env::current_dir().ok()?;
+    let mut dir = cwd.as_path();
+    loop {
+        let candidate = dir.join("docs").join("adrs");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        dir = dir.parent()?;
+    }
+}
+
+/// Extract ADR ID from filename: "ADR-001-foo.md" → "ADR-001",
+/// "ADR-2603222035-foo.md" → "ADR-2603222035".
+fn extract_adr_id(filename: &str) -> String {
+    let stem = filename.trim_end_matches(".md");
+    if let Some(rest) = stem.strip_prefix("ADR-").or_else(|| stem.strip_prefix("adr-")) {
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            return format!("ADR-{}", digits);
+        }
+    }
+    stem.to_string()
+}
+
+/// Parse ADR markdown for title, status, date.
+fn parse_adr_frontmatter(content: &str, filename: &str) -> (String, String, String) {
+    let mut status = "unknown".to_string();
+    let mut date = String::new();
+    let mut title = String::new();
+
+    for line in content.lines() {
+        if line.starts_with("# ") && title.is_empty() {
+            title = line.trim_start_matches("# ").to_string();
+            if let Some(pos) = title.find(": ") {
+                title = title[pos + 2..].to_string();
+            }
+        }
+        let lower = line.to_lowercase();
+        if lower.starts_with("**status:**") || lower.starts_with("status:") {
+            status = line.split(':').nth(1).unwrap_or("unknown")
+                .trim().trim_matches('*').trim().to_string();
+        }
+        if lower.starts_with("**date:**") || lower.starts_with("date:") {
+            date = line.split(':').skip(1).collect::<Vec<_>>().join(":")
+                .trim().trim_matches('*').trim().to_string();
+        }
+    }
+
+    if title.is_empty() {
+        title = filename.trim_start_matches("ADR-").trim_start_matches("adr-")
+            .split('-').skip_while(|s| s.chars().all(|c| c.is_ascii_digit()))
+            .collect::<Vec<_>>().join(" ").trim_end_matches(".md").to_string();
+    }
+
+    (title, status, date)
+}
+
+/// Collect all ADRs from a directory as JSON-compatible maps.
+fn collect_adrs(dir: &std::path::Path) -> Vec<serde_json::Value> {
+    let mut adrs = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            if !filename.ends_with(".md") || !filename.starts_with("ADR-") {
+                continue;
+            }
+            let id = extract_adr_id(&filename);
+            let content = std::fs::read_to_string(entry.path()).unwrap_or_default();
+            let (title, status, date) = parse_adr_frontmatter(&content, &filename);
+            adrs.push(serde_json::json!({
+                "id": id,
+                "title": title,
+                "status": status,
+                "date": date,
+                "filename": filename,
+            }));
+        }
+    }
+    adrs.sort_by(|a, b| {
+        let fa = a.get("filename").and_then(|v| v.as_str()).unwrap_or("");
+        let fb = b.get("filename").and_then(|v| v.as_str()).unwrap_or("");
+        fa.cmp(fb)
+    });
+    adrs
+}
+
+/// Read a single ADR's full content by ID prefix match.
+fn read_adr_detail(dir: &std::path::Path, id: &str) -> Option<serde_json::Value> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let filename = entry.file_name().to_string_lossy().to_string();
+        if !filename.ends_with(".md") { continue; }
+        let file_id = extract_adr_id(&filename);
+        if file_id == id {
+            let content = std::fs::read_to_string(entry.path()).unwrap_or_default();
+            let (title, status, date) = parse_adr_frontmatter(&content, &filename);
+            return Some(serde_json::json!({
+                "id": id,
+                "title": title,
+                "status": status,
+                "date": date,
+                "content": content,
+            }));
+        }
+    }
+    None
+}
+
 // ─── Tool Dispatch ───────────────────────────────────────
 
 /// Execute a tool call by delegating to the nexus REST API.
@@ -438,36 +556,67 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 .await.map_err(|e| e.to_string())
         }
 
-        // ── ADR ──
+        // ── ADR (filesystem-first: CLI CWD is source of truth) ──
         "hex_adr_list" => {
-            // ADR commands work on local filesystem, not nexus
-            // For now delegate to nexus project endpoint if available
             let status_filter = args.get("status").and_then(|v| v.as_str()).unwrap_or("");
-            let path = if status_filter.is_empty() {
-                "/api/adrs".to_string()
-            } else {
-                format!("/api/adrs?status={}", status_filter)
-            };
-            nexus.get(&path).await.map_err(|e| e.to_string())
+            let adr_dir = find_adr_dir();
+            match adr_dir {
+                Some(dir) => {
+                    let mut adrs = collect_adrs(&dir);
+                    if !status_filter.is_empty() {
+                        let f = status_filter.to_lowercase();
+                        adrs.retain(|a| a.get("status").and_then(|v| v.as_str()).unwrap_or("").to_lowercase() == f);
+                    }
+                    Ok(serde_json::to_value(&adrs).unwrap_or_default())
+                }
+                None => Err("ADR directory not found (docs/adrs/ not found in any parent directory)".to_string()),
+            }
         }
 
         "hex_adr_search" => {
-            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10);
-            nexus.get(&format!("/api/adrs/search?q={}&limit={}", query, limit))
-                .await.map_err(|e| e.to_string())
+            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+            match find_adr_dir() {
+                Some(dir) => {
+                    let adrs = collect_adrs(&dir);
+                    let matched: Vec<_> = adrs.into_iter().filter(|a| {
+                        let title = a.get("title").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        let filename = a.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        title.contains(&query) || id.contains(&query) || filename.contains(&query)
+                    }).take(limit).collect();
+                    Ok(serde_json::to_value(&matched).unwrap_or_default())
+                }
+                None => Err("ADR directory not found".to_string()),
+            }
         }
 
         "hex_adr_status" => {
             let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            nexus.get(&format!("/api/adrs/{}", id))
-                .await.map_err(|e| e.to_string())
+            match find_adr_dir() {
+                Some(dir) => {
+                    match read_adr_detail(&dir, id) {
+                        Some(detail) => Ok(serde_json::to_value(&detail).unwrap_or_default()),
+                        None => Err(format!("ADR '{}' not found", id)),
+                    }
+                }
+                None => Err("ADR directory not found".to_string()),
+            }
         }
 
         "hex_adr_abandoned" => {
-            let days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(14);
-            nexus.get(&format!("/api/adrs/abandoned?days={}", days))
-                .await.map_err(|e| e.to_string())
+            let _days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(14);
+            match find_adr_dir() {
+                Some(dir) => {
+                    let adrs = collect_adrs(&dir);
+                    let abandoned: Vec<_> = adrs.into_iter().filter(|a| {
+                        let status = a.get("status").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        status == "unknown" || status == "proposed" || status == "draft"
+                    }).collect();
+                    Ok(serde_json::to_value(&abandoned).unwrap_or_default())
+                }
+                None => Err("ADR directory not found".to_string()),
+            }
         }
 
         // ── Workplan management ──
