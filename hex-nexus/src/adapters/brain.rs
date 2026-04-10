@@ -1,4 +1,3 @@
-use crate::adapters::spacetime_inference::SpacetimeInferenceAdapter;
 use crate::domain::brain::{
     BrainCapabilities, InferenceInfo, Intent, IntentType, MethodScore, Outcome, RoutingDecision,
     RoutingMethod, SteeringStatus, WorkerInfo,

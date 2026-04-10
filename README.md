@@ -37,6 +37,27 @@ hex is the **runtime that sits underneath all of them**. It manages agent proces
 
 ---
 
+### Agent Framework Comparison (2026)
+
+All major frameworks are Python-first, polling-based, with ad-hoc architecture. hex is different:
+
+| Framework | Language | Architecture | State | hex Advantage |
+|:----------|:---------|:--------------|:------|:-------------|
+| **LangChain/LangGraph** | Python | Graph-based | Polling + RAG | Rust + WASM, <1ms coordination |
+| **CrewAI** | Python | Role-based | Polling + memory | SpacetimeDB WebSocket push |
+| **AutoGen/AG2** | Python/.NET | Conversation | Message passing | Hexagonal compile-time enforcement |
+| **Claude Agent SDK** | TypeScript | Tool-first | Polling | Self-improving model selection (Brain) |
+| **hex** | **Rust + TypeScript** | **AIOS** | **SpacetimeDB** | All of the above + native |
+
+**Why hex wins:**
+- **Native Rust** — Not Python-dependent, sub-100ms response times, embedded binary
+- **SpacetimeDB** — Real-time WebSocket push vs polling
+- **Hexagonal** — Compile-time boundary enforcement (not linting suggestions)
+- **Brain** — RL-based self-improving model selection
+- **HexFlo** — Zero external dependencies for swarm coordination
+
+---
+
 ## What You Get
 
 ### Architecture Enforcement That Agents Can't Bypass

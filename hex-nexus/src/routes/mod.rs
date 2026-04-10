@@ -448,6 +448,9 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(EVENT_BODY_LIMIT)))
         // Tool-call event log (ADR-2604012137) — SQLite + WebSocket broadcast
         .route("/api/events", post(events::post_event).get(events::list_events))
+        // AGENTIC BRAIN (ADR-2604102200) — must register BEFORE {project_id} routes
+        .route("/api/brain/status", get(brain::status))
+        .route("/api/brain/test", post(brain::test))
         // Per-project queries (browser reads)
         .route("/api/{project_id}/health", get(query::get_health))
         .route("/api/{project_id}/tokens/overview", get(query::get_tokens_overview))
@@ -678,9 +681,6 @@ pub fn build_router(state: SharedState) -> Router {
         // OpenAI-compatible proxy (opencode first-class — feat-hex-opencode-first-class)
         .route("/v1/models", get(inference::openai_models))
         .route("/v1/chat/completions", post(inference::openai_chat_completions))
-        // AGENTIC BRAIN (ADR-2604102200)
-        .route("/api/brain/status", get(brain::status))
-        .route("/api/brain/test", post(brain::test))
         // ═══════════════════════════════════════════════════════════
         // HEXFLO COORDINATION — write routes stay, reads via SpacetimeDB
         // ═══════════════════════════════════════════════════════════
