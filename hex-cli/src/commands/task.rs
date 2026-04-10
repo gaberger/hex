@@ -9,6 +9,47 @@ use serde_json::json;
 use crate::fmt::{extract_task_title, pretty_table, status_badge, truncate};
 use crate::nexus_client::NexusClient;
 
+async fn ensure_agent_registered(nexus: &NexusClient) -> anyhow::Result<Option<String>> {
+    // Check env first
+    if let Ok(id) = std::env::var("HEX_AGENT_ID") {
+        if !id.is_empty() {
+            return Ok(Some(id));
+        }
+    }
+
+    // Try to get existing agents
+    if let Ok(resp) = nexus.get("/api/hex-agents").await {
+        if let Some(agents) = resp.get("agents").and_then(|a| a.as_array()) {
+            if let Some(first) = agents.first() {
+                if let Some(id) = first.get("id").or(first.get("agentId")).and_then(|v| v.as_str()) {
+                    if !id.is_empty() {
+                        return Ok(Some(id.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Register new agent
+    let hostname = std::env::var("HOSTNAME").unwrap_or_else(|_| "cli".to_string());
+    
+    let reg_body = serde_json::json!({
+        "name": format!("cli-{}", hostname),
+        "host": hostname,
+        "capabilities": ["code", "review", "test"],
+    });
+
+    if let Ok(resp) = nexus.post("/api/hex-agents/connect", &reg_body).await {
+        if let Some(id) = resp.get("agentId").or(resp.get("id")).and_then(|v| v.as_str()) {
+            if !id.is_empty() {
+                return Ok(Some(id.to_string()));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 #[derive(Subcommand)]
 pub enum TaskAction {
     /// Create a new task in a swarm
@@ -60,6 +101,10 @@ pub async fn run(action: TaskAction) -> anyhow::Result<()> {
 async fn create(swarm_id: &str, title: &str, depends_on: &str, agent: Option<String>, json_output: bool) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     nexus.ensure_running().await?;
+
+    // ADR-2604102200: Auto-register agent if not already registered
+    // This ensures task creation works without requiring manual hex agent connect first
+    let _ = ensure_agent_registered(&nexus).await;
 
     // Only assign if --agent is explicitly provided. Auto-resolving from session
     // state would pre-assign tasks to the supervisor, preventing Docker workers
