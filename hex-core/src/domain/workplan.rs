@@ -121,8 +121,7 @@ impl Workplan {
             for task in &mut phase.tasks {
                 if task.status == TaskStatus::Pending || task.status == TaskStatus::Blocked {
                     task.status = TaskStatus::Completed;
-                    task.completed_by =
-                        Some(format!("Superseded by {}", by));
+                    task.completed_by = Some(format!("Superseded by {}", by));
                 }
             }
         }

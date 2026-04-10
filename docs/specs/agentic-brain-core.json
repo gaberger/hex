@@ -1,0 +1,89 @@
+{
+  "name": "agentic-brain-core",
+  "version": "1.0.0",
+  "description": "Agentic Brain that orchestrates agent requests with RL-driven self-improvement",
+  "owner": "hex",
+  "status": "draft",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Intent Parser",
+      "description": "Parse user request into handler type",
+      "acceptance": [
+        "User request 'write code' maps to intent 'code'",
+        "User request 'documentation' maps to intent 'doc'",  
+        "User request 'review' maps to intent 'review'",
+        "Unknown request returns intent 'unknown'"
+      ],
+      "validation": {
+        "method": "Parse 5 test requests, verify mapping",
+        "command": "echo 'code: write function' | jq '.intent == \"code\"'"
+      }
+    },
+    {
+      "id": "P2", 
+      "name": "Capability Probe",
+      "description": "Check what's available: workers, inference, steering",
+      "acceptance": [
+        "Returns list of available workers",
+        "Returns list of healthy inference providers", 
+        "Returns steering status (paused/running)",
+        "Timeout returns unavailable"
+      ],
+      "validation": {
+        "method": "Call probe, verify non-empty responses",
+        "command": "curl /api/brain/capabilities | jq '.workers | length > 0'"
+      }
+    },
+    {
+      "id": "P3",
+      "name": "Method Router",
+      "description": "Route request to best available method",
+      "acceptance": [
+        "With workers + inference: route to worker",
+        "With inference only: route to direct inference", 
+        "With n workers: route to worker[n]",
+        "With no workers + no inference: fail fast"
+      ],
+      "validation": {
+        "method": "Call router with different capability states",
+        "command": "curl /api/brain/route -d '{intent:\"code\"}' | jq '.method'"
+      }
+    },
+    {
+      "id": "P4",
+      "name": "Outcome Tracker",
+      "description": "Track success/failure for each method",
+      "acceptance": [
+        "Success: increment success count",
+        "Failure: increment failure count", 
+        "Timeout: increment timeout count",
+        "Latency recorded in milliseconds"
+      ],
+      "validation": {
+        "method": "Execute 3 operations, verify counts",
+        "command": "curl /api/brain/outcomes | jq '.total_attempts == 3'"
+      }
+    },
+    {
+      "id": "P5",
+      "name": "RL Learner",
+      "description": "Adapt method selection based on outcomes",
+      "acceptance": [
+        "Success on local model: +bonus for local",
+        "Failure on tier N: escalate to tier N+1",
+        "Success rate affects routing priority",
+        "Scores persist for session"
+      ],
+      "validation": {
+        "method": "Execute, verify score changes",
+        "command": "curl /api/brain/scores | jq '.local.success_rate > .cloud.success_rate'"
+      }
+    }
+  ],
+  "validation": {
+    "e2e": "User request 'write test' → worker executes → success returned",
+    "fallback": "Worker fails → escalates → success returned",
+    "learning": "Second request uses faster model (learned from first)"
+  }
+}

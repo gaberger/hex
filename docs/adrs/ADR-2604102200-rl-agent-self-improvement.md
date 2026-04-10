@@ -1,6 +1,6 @@
 # ADR-2604102200: RL-Driven Agent Infrastructure Self-Improvement
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-10
 **Drivers:** Session revealed agent infrastructure gaps during README rewrite attempt
 

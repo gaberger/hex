@@ -13,9 +13,7 @@ impl WorkloadClass {
     pub fn classify(task_type: &str) -> Self {
         match task_type {
             "code_analysis" | "summarization" | "test_generation" | "dead_code"
-            | "doc_generation" | "batch_summarize" | "bulk_validate" | "ast_summary" => {
-                Self::Batch
-            }
+            | "doc_generation" | "batch_summarize" | "bulk_validate" | "ast_summary" => Self::Batch,
             _ => Self::Interactive,
         }
     }
@@ -163,21 +161,27 @@ impl RateLimitState {
         }
         let rpm_headroom = (self.rpm_limit as f64 * 0.9) as u32;
         if self.rpm_used >= rpm_headroom {
-            let remaining = self.window_duration.saturating_sub(self.window_start.elapsed());
+            let remaining = self
+                .window_duration
+                .saturating_sub(self.window_start.elapsed());
             if !remaining.is_zero() {
                 return Some(remaining);
             }
         }
         let input_headroom = (self.input_tpm_limit as f64 * 0.85) as u64;
         if self.input_tpm_used + estimated_input as u64 > input_headroom {
-            let remaining = self.window_duration.saturating_sub(self.window_start.elapsed());
+            let remaining = self
+                .window_duration
+                .saturating_sub(self.window_start.elapsed());
             if !remaining.is_zero() {
                 return Some(remaining);
             }
         }
         let output_headroom = (self.output_tpm_limit as f64 * 0.85) as u64;
         if self.output_tpm_used + estimated_output as u64 > output_headroom {
-            let remaining = self.window_duration.saturating_sub(self.window_start.elapsed());
+            let remaining = self
+                .window_duration
+                .saturating_sub(self.window_start.elapsed());
             if !remaining.is_zero() {
                 return Some(remaining);
             }
@@ -254,7 +258,10 @@ mod tests {
 
     #[test]
     fn workload_classification() {
-        assert_eq!(WorkloadClass::classify("code_analysis"), WorkloadClass::Batch);
+        assert_eq!(
+            WorkloadClass::classify("code_analysis"),
+            WorkloadClass::Batch
+        );
         assert_eq!(
             WorkloadClass::classify("conversation"),
             WorkloadClass::Interactive
