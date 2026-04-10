@@ -1,0 +1,30 @@
+name: brain-self-improvement
+topology: hierarchical
+description: |
+  System swarm for Agentic Brain self-improvement loop.
+  Continuously tests local models, records outcomes, and adapts
+  to use the best performing model for each task type.
+agents:
+  - role: hex-coder
+    cardinality: 1
+    model_preference:
+      - nemotron-mini
+      - qwen3:8b
+      - qwen3.5:9b
+      - qwen2.5-coder:32b
+    inference:
+      task_type: code_generation
+      escalation_on_failure: true
+      max_retries: 3
+objectives:
+  - id: LocalModelWorks
+    evaluate: "inference completes with valid code"
+    required: true
+  - id: SelfImprovement
+    evaluate: "method score increases over iterations"
+    required: false
+iteration:
+  max_per_tier: 5
+  on_max_iterations: escalate
+  loop_continuously: true
+  loop_interval_seconds: 60

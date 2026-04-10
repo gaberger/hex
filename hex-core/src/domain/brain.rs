@@ -55,7 +55,7 @@ pub struct BrainCapabilities {
 }
 
 impl BrainCapabilities {
-    pub fn route(&self, intent: &Intent) -> RoutingDecision {
+    pub fn route(&self, _intent: &Intent) -> RoutingDecision {
         if !self.workers.is_empty() && !self.inference.is_empty() {
             RoutingDecision {
                 method: RoutingMethod::Worker,
