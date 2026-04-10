@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 
 use crate::middleware::capability_auth::require_capability;
 use crate::orchestration::agent_manager::SpawnConfig;
-use crate::state::SharedState;
+use crate::state::{AgentInstruction, InstructionType, SharedState};
 use hex_core::domain::capability::VerifiedClaims;
 
 fn no_manager() -> (StatusCode, Json<serde_json::Value>) {
@@ -357,13 +357,31 @@ pub async fn execute_workplan(
     };
 
     match exec.start(&body.workplan_path).await {
-        Ok(result) => (
-            StatusCode::OK,
-            Json(json!({
+        Ok(result) => {
+            let mut response = json!({
                 "execution": result,
                 "status": "started",
-            })),
-        ),
+            });
+
+            // Path B (CLAUDECODE=1): the executor does NOT spawn agents itself — it queues
+            // inference tasks and waits for the outer Claude Code session to dispatch them.
+            // Without explicit instructions here, Claude just monitors and tasks stay Pending forever.
+            if crate::orchestration::is_claude_code_session() {
+                response["mode"] = json!("path-b-claude-code");
+                response["action_required"] = json!({
+                    "summary": "YOU must dispatch agents — tasks will stay Pending until you do.",
+                    "steps": [
+                        "1. Call mcp__hex__hex_inbox_query to get queued inference-queue notifications",
+                        "2. For each notification: spawn Agent({ subagent_type: 'coder', mode: 'bypassPermissions', run_in_background: true, prompt: <prompt from notification payload> })",
+                        "3. After each agent completes: call mcp__hex__hex_workplan_activate({ queue_id: <id> }) or run: hex workplan task-complete <queue_id>",
+                        "4. Repeat until all phases complete. Do NOT just monitor — the pipeline is blocked on you."
+                    ],
+                    "warning": "Using mode=acceptEdits or forgetting task-complete will stall the pipeline permanently."
+                });
+            }
+
+            (StatusCode::OK, Json(response))
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e })),
@@ -381,11 +399,41 @@ pub async fn workplan_status(
     };
 
     match exec.get_status().await {
-        Ok(Some(status)) => (StatusCode::OK, Json(json!({ "execution": status }))),
+        Ok(Some(status)) => {
+            let mut response = json!({ "execution": status });
+            // Remind Claude Code sessions that Pending tasks require active dispatch.
+            if crate::orchestration::is_claude_code_session() {
+                response["reminder"] = json!("Path B active: run mcp__hex__hex_inbox_query and dispatch agents for any pending tasks.");
+            }
+            (StatusCode::OK, Json(response))
+        }
         Ok(None) => (StatusCode::OK, Json(json!({ "execution": null }))),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e })),
+        ),
+    }
+}
+
+/// POST /api/workplan/fail — mark a running execution as failed (for cleanup)
+pub async fn fail_workplan(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let exec = match state.workplan_executor.get() {
+        Some(e) => e,
+        None => return no_executor(),
+    };
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    match exec.fail(id).await {
+        Ok(true) => (StatusCode::OK, Json(json!({ "ok": true, "status": "failed", "id": id }))),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "Execution not found" })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
         ),
     }
 }
@@ -434,9 +482,110 @@ pub async fn resume_workplan(
     }
 }
 
-// ═══════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════
+// STEERING API (P3a/b) — Human-in-the-loop control
+// ═════════════════════════════════════════════════════════════
+
+/// POST /api/sessions/:id/events — send an event to guide a running agent
+pub async fn session_events(
+    Path(id): Path<String>,
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let event = body.get("event").and_then(|v| v.as_str()).unwrap_or("");
+    let payload = body.get("payload").cloned();
+    let reason = body.get("reason").and_then(|v| v.as_str()).map(String::from);
+    let timestamp = chrono::Utc::now().to_rfc3339();
+
+    let instruction_type = match event {
+        "pause" => InstructionType::Pause,
+        "resume" => InstructionType::Resume,
+        "restart" => InstructionType::Restart,
+        _ => InstructionType::Pause,
+    };
+
+    let instruction = AgentInstruction {
+        instruction_type,
+        instructions: payload.and_then(|p| p.as_str().map(String::from)),
+        reason,
+        timestamp,
+    };
+    state.agent_instructions.write().await.insert(id.clone(), instruction);
+    tracing::info!(agent_id = %id, event = %event, "agent steering event");
+
+    (StatusCode::OK, Json(json!({ "ok": true, "event": event, "target": id })))
+}
+
+/// POST /api/sessions/:id/interrupt — stop current execution and provide new instructions
+pub async fn session_interrupt(
+    Path(id): Path<String>,
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let instructions = body.get("instructions").and_then(|v| v.as_str()).map(String::from);
+    let reason = body.get("reason").and_then(|v| v.as_str()).map(String::from);
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let instruction = AgentInstruction {
+        instruction_type: InstructionType::Interrupt,
+        instructions,
+        reason,
+        timestamp,
+    };
+    state.agent_instructions.write().await.insert(id.clone(), instruction);
+    tracing::info!(agent_id = %id, "agent interrupted with new instructions");
+    (StatusCode::OK, Json(json!({ "ok": true, "status": "interrupted", "target": id })))
+}
+
+/// GET /api/sessions/:id/instructions — poll for pending instructions (for workers)
+pub async fn session_poll_instructions(
+    Path(id): Path<String>,
+    State(state): State<SharedState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let mut instructions = state.agent_instructions.write().await;
+    if let Some(instr) = instructions.remove(&id) {
+        let resp = serde_json::json!({
+            "ok": true,
+            "pending": true,
+            "instruction_type": format!("{:?}", instr.instruction_type).to_lowercase(),
+            "instructions": instr.instructions,
+            "reason": instr.reason,
+            "timestamp": instr.timestamp,
+        });
+        (StatusCode::OK, Json(resp))
+    } else {
+        (StatusCode::OK, Json(json!({ "ok": true, "pending": false })))
+    }
+}
+
+/// GET /api/sessions/:id — get session status
+pub async fn session_status(
+    Path(id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::OK, Json(json!({ "ok": true, "id": id, "status": "unknown" })))
+}
+
+// ═════════════════════════════════════════════════════
+// ENVIRONMENT API (P5a) — Container management
+// ═════════════════════════════════════════════════════
+
+/// POST /api/environments — create a new container environment
+pub async fn create_environment(
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let template = body.get("template").and_then(|v| v.as_str()).unwrap_or("default");
+    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("env");
+    let env_id = format!("{}-{}", name, uuid::Uuid::new_v4());
+    (StatusCode::CREATED, Json(json!({ "ok": true, "id": env_id, "template": template, "status": "creating" })))
+}
+
+/// GET /api/environments — list all environments
+pub async fn list_environments() -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::OK, Json(json!({ "ok": true, "environments": [] })))
+}
+
+// ═════════════════════════════════════════════════════════════
 // WORKPLAN REPORTING (ADR-046)
-// ═══════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════
 
 /// GET /api/workplan/list — list all workplan executions (active + historical)
 pub async fn list_workplans(

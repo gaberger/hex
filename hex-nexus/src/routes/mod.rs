@@ -598,6 +598,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/workplan/execute", post(orchestration::execute_workplan)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/workplan/status", get(orchestration::workplan_status))
+        .route("/api/workplan/fail", post(orchestration::fail_workplan))
         .route("/api/workplan/pause", post(orchestration::pause_workplan))
         .route("/api/workplan/resume", post(orchestration::resume_workplan))
         // Workplan reporting (ADR-046)
@@ -605,6 +606,13 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/workplan/by-path", get(orchestration::workplan_by_path))
         .route("/api/workplan/{id}", get(orchestration::get_workplan))
         .route("/api/workplan/{id}/report", get(orchestration::workplan_report))
+        // Steering API (P3a/b) — must come AFTER /api/agents/{id} to avoid route conflict
+        .route("/api/steering/{agent_id}/event", post(orchestration::session_events))
+        .route("/api/steering/{agent_id}/interrupt", post(orchestration::session_interrupt))
+        .route("/api/steering/{agent_id}/instructions", get(orchestration::session_poll_instructions))
+        // Environment API (P5a)
+        .route("/api/environments", post(orchestration::create_environment))
+        .route("/api/environments", get(orchestration::list_environments))
         // Context engineering (ADR-2603312100) — hot-reload context caches
         .route("/api/context/reload", post(context::reload_context))
         // MCP tool registry — serves config/mcp-tools.json for dashboard discovery

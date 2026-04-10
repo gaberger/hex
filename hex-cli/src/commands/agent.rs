@@ -66,6 +66,53 @@ pub enum AgentAction {
     WorktreeAudit,
     /// Evict dead/stale agents from the registry
     Evict,
+    /// Send an event to a running agent session (steering)
+    Event {
+        /// Session ID
+        session_id: String,
+        /// Event type (restart, pause, etc.)
+        #[arg(short, long)]
+        event: String,
+    },
+    /// Interrupt a running agent session with new instructions
+    Interrupt {
+        /// Session ID
+        session_id: String,
+        /// New instructions
+        #[arg(short, long)]
+        instructions: String,
+    },
+    /// Pause a running workplan execution
+    Pause {
+        /// Execution ID (from hex workplan status)
+        id: String,
+    },
+    /// Resume a paused workplan execution
+    Resume {
+        /// Execution ID (from hex workplan status)
+        id: String,
+    },
+    /// Stop a running workplan execution
+    Stop {
+        /// Execution ID (from hex workplan status)
+        id: String,
+    },
+    /// List container environments
+    Environments,
+    /// Create a new container environment
+    EnvCreate {
+        /// Environment template
+        #[arg(short, long)]
+        template: Option<String>,
+        /// Environment name
+        #[arg(short, long)]
+        name: Option<String>,
+    },
+    /// Cancel a stuck workplan execution
+    CancelWorkplan {
+        /// Workplan execution ID
+        id: String,
+    },
     /// Run as a persistent agent worker for a specific role
     Worker {
         /// Agent role (hex-coder, hex-tester, hex-reviewer, hex-documenter, hex-ux, hex-fixer)
@@ -146,6 +193,14 @@ pub async fn run(action: AgentAction) -> anyhow::Result<()> {
         AgentAction::Evict => evict().await,
         AgentAction::Audit => audit().await,
         AgentAction::WorktreeAudit => super::agent_audit::run().await,
+        AgentAction::Event { session_id, event } => send_event(&session_id, &event).await,
+        AgentAction::Interrupt { session_id, instructions } => send_interrupt(&session_id, &instructions).await,
+        AgentAction::Pause { id } => pause_execution(&id).await,
+        AgentAction::Resume { id } => resume_execution(&id).await,
+        AgentAction::Stop { id } => stop_execution(&id).await,
+        AgentAction::Environments => list_environments().await,
+        AgentAction::EnvCreate { template, name } => create_environment(template.as_deref(), name.as_deref()).await,
+        AgentAction::CancelWorkplan { id } => cancel_workplan(&id).await,
         AgentAction::Worker {
             role,
             swarm_id,
@@ -1074,7 +1129,7 @@ async fn worker(
     // If the supervisor passed its own agent ID, use that for polling so we
     // find tasks the supervisor assigned to itself.  We still register under
     // our own identity for heartbeats.
-    let agent_id = override_agent_id.unwrap_or(registered_id);
+    let agent_id = override_agent_id.unwrap_or(registered_id.clone());
 
     // Rebuild nexus client with the resolved agent_id so all subsequent calls
     // (including PATCH task completion) include the x-hex-agent-id header.
@@ -1114,6 +1169,46 @@ async fn worker(
     // Main task poll loop
     let poll_duration = std::time::Duration::from_secs(poll_interval);
     loop {
+// ADR-2604102100: Poll for steering instructions BEFORE task polling
+        // Try both registered_id and agent_id (they may differ when --agent-id override is used)
+        for steer_id in &[registered_id.clone(), agent_id.clone()] {
+            if let Ok(instr_resp) = nexus.get(&format!("/api/steering/{}/instructions", steer_id)).await {
+                if instr_resp.get("pending").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    let instr_type = instr_resp.get("instruction_type").and_then(|v| v.as_str()).unwrap_or("");
+                    let reason = instr_resp.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+                    println!("  {} Steering instruction: {} — {}", "\u{26a1}".yellow(), instr_type, reason);
+                    match instr_type {
+                        "pause" => {
+                            println!("  {} Paused by steering — waiting for resume...", "\u{23f8}".yellow());
+                            loop {
+                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                // Check for resume (use same steer_id)
+                                for resume_id in &[registered_id.clone(), agent_id.clone()] {
+                                    if let Ok(r) = nexus.get(&format!("/api/steering/{}/instructions", resume_id)).await {
+                                        if r.get("pending").and_then(|v| v.as_bool()).unwrap_or(false) {
+                                            let t = r.get("instruction_type").and_then(|v| v.as_str()).unwrap_or("");
+                                            if t == "resume" || t == "continue" {
+                                                println!("  {} Resumed!", "\u{25b6}".green());
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "stop" | "interrupt" => {
+                            println!("  {} Stopped by steering", "\u{23f9}".red());
+                            return Ok(());
+                        }
+                        "restart" => {
+                            println!("  {} Restarted by steering — clearing state", "\u{21bb}".yellow());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         // Step 1: claim a pending task via /api/swarms/active (SpacetimeDB-backed).
         // /api/work-items/incomplete uses the SQLite port and misses SpacetimeDB tasks.
         if let Ok(resp) = nexus.get("/api/swarms/active").await {
@@ -1952,4 +2047,75 @@ fn worker_test_check(output_dir: &str, language: &str) -> (bool, String) {
         }
         Err(e) => (false, e.to_string()),
     }
+}
+
+async fn send_event(session_id: &str, event: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    let body = serde_json::json!({ "event": event });
+    let url = format!("/api/steering/{}/event", session_id);
+    let resp = nexus.post(&url, &body).await?;
+    println!("{}", resp);
+    Ok(())
+}
+
+async fn send_interrupt(session_id: &str, instructions: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    let body = serde_json::json!({ "instructions": instructions });
+    let url = format!("/api/steering/{}/interrupt", session_id);
+    let resp = nexus.post(&url, &body).await?;
+    println!("{}", resp);
+    Ok(())
+}
+
+async fn pause_execution(id: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    let body = serde_json::json!({ "event": "pause", "reason": "user requested" });
+    let url = format!("/api/steering/{}/event", id);
+    let resp = nexus.post(&url, &body).await?;
+    println!("{}", resp);
+    Ok(())
+}
+
+async fn resume_execution(id: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    let body = serde_json::json!({ "event": "resume", "reason": "user requested" });
+    let url = format!("/api/steering/{}/event", id);
+    let resp = nexus.post(&url, &body).await?;
+    println!("{}", resp);
+    Ok(())
+}
+
+async fn stop_execution(id: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    let body = serde_json::json!({ "event": "stop", "reason": "user requested" });
+    let url = format!("/api/steering/{}/event", id);
+    let resp = nexus.post(&url, &body).await?;
+    println!("{}", resp);
+    Ok(())
+}
+
+async fn list_environments() -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    let resp = nexus.get("/api/environments").await?;
+    println!("{}", resp);
+    Ok(())
+}
+
+async fn create_environment(template: Option<&str>, name: Option<&str>) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    let body = serde_json::json!({
+        "template": template.unwrap_or("default"),
+        "name": name.unwrap_or("env"),
+    });
+    let resp = nexus.post("/api/environments", &body).await?;
+    println!("{}", resp);
+    Ok(())
+}
+
+async fn cancel_workplan(id: &str) -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    let body = serde_json::json!({ "id": id });
+    let resp = nexus.post("/api/workplan/fail", &body).await?;
+    println!("{}", resp);
+    Ok(())
 }
