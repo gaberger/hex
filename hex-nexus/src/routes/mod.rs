@@ -36,6 +36,7 @@ pub mod context;
 pub mod inference_ws;
 pub mod events;
 pub mod fingerprint;
+pub mod brain;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
@@ -677,6 +678,9 @@ pub fn build_router(state: SharedState) -> Router {
         // OpenAI-compatible proxy (opencode first-class — feat-hex-opencode-first-class)
         .route("/v1/models", get(inference::openai_models))
         .route("/v1/chat/completions", post(inference::openai_chat_completions))
+        // AGENTIC BRAIN (ADR-2604102200)
+        .route("/api/brain/status", get(brain::status))
+        .route("/api/brain/test", post(brain::test))
         // ═══════════════════════════════════════════════════════════
         // HEXFLO COORDINATION — write routes stay, reads via SpacetimeDB
         // ═══════════════════════════════════════════════════════════

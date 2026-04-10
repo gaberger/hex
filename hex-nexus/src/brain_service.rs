@@ -68,7 +68,7 @@ pub struct ImprovementOutcome {
 }
 
 /// Runs one improvement cycle: test model, record outcome.
-async fn run_improvement_cycle(_state: &SharedState) -> Result<ImprovementOutcome, String> {
+pub async fn run_improvement_cycle(_state: &SharedState) -> Result<ImprovementOutcome, String> {
     let model = test_model();
     let state_key = state_key();
 

@@ -20,6 +20,7 @@ pub mod tui;
 use commands::{
     adr::AdrAction,
     agent::AgentAction,
+    brain::BrainAction,
     chat::ChatArgs,
     context::ContextAction,
     spec::SpecAction,
@@ -78,6 +79,11 @@ enum Commands {
     Secrets {
         #[command(subcommand)]
         action: SecretsAction,
+    },
+    /// Agentic Brain (self-improving model selection)
+    Brain {
+        #[command(subcommand)]
+        action: BrainAction,
     },
     /// Manage local SpacetimeDB instance
     Stdb {
@@ -289,6 +295,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Nexus { action } => commands::nexus::run(action).await,
         Commands::Agent { action } => commands::agent::run(action).await,
         Commands::Secrets { action } => commands::secrets::run(action).await,
+        Commands::Brain { action } => commands::brain::run(action).await,
         Commands::Stdb { action } => commands::stdb::run(action).await,
         Commands::Swarm { action } => commands::swarm::run(action).await,
         Commands::Task { action } => commands::task::run(action).await,
