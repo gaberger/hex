@@ -1,6 +1,6 @@
 # ADR-2603312305: Inference Provider Health Checks and Pruning
 
-**Status:** proposed
+**Status:** Accepted
 
 ## Date
 2025-05-25

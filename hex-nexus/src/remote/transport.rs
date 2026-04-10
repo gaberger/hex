@@ -55,7 +55,10 @@ impl Default for SshTunnelConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SshAuth {
-    Key { path: String, passphrase: Option<String> },
+    Key {
+        path: String,
+        passphrase: Option<String>,
+    },
     Agent,
 }
 
@@ -93,6 +96,7 @@ pub enum RemoteAgentStatus {
     Connecting,
     Online,
     Busy,
+    InterruptPending, // P4c: agent has pending interrupt
     Stale,
     Dead,
 }
@@ -135,8 +139,12 @@ pub enum AgentMessage {
     },
 
     // Heartbeat
-    Ping { timestamp: u64 },
-    Pong { timestamp: u64 },
+    Ping {
+        timestamp: u64,
+    },
+    Pong {
+        timestamp: u64,
+    },
 
     // Task assignment (nexus → agent)
     TaskAssign {
@@ -223,7 +231,6 @@ pub struct InferenceParams {
     pub max_tokens: Option<u32>,
     pub stop_sequences: Vec<String>,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

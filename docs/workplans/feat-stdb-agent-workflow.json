@@ -1,0 +1,204 @@
+{
+  "id": "feat-stdb-agent-workflow",
+  "feature": "SpacetimeDB-Driven Agent Workflow",
+  "description": "Replace hex-nexus agent spawning with SpacetimeDB reducers and WebSocket subscriptions for distributed multi-host execution",
+  "status": "planned",
+  "adr": "ADR-2604101600",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Add Workplan State Tables to SpacetimeDB",
+      "tier": 0,
+      "tasks": [
+        {
+          "id": "T0.1",
+          "name": "Add workplan_phase table",
+          "layer": "spacetime",
+          "description": "Add SpacetimeDB table: workplan_phase (execution_id, phase_name, status, gate_result, timestamps)",
+          "deps": [],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "done_condition": "cargo check --package hexflo-coordination",
+          "done_command": "cargo check --package hexflo-coordination 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T0.2",
+          "name": "Add workplan_task table",
+          "layer": "spacetime",
+          "description": "Add SpacetimeDB table: workplan_task (execution_id, task_id, phase_name, status, agent_id, result, timestamps)",
+          "deps": ["T0.1"],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "done_condition": "cargo check --package hexflo-coordination",
+          "done_command": "cargo check --package hexflo-coordination 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T0.3",
+          "name": "Add agent_task_queue table",
+          "layer": "spacetime",
+          "description": "Add SpacetimeDB table: agent_task_queue (task_id, assigned_agent, status, created_at) for WebSocket subscription",
+          "deps": ["T0.2"],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "done_condition": "cargo check --package hexflo-coordination",
+          "done_command": "cargo check --package hexflo-coordination 2>/dev/null && echo PASS || echo FAIL"
+        }
+      ],
+      "gate": {
+        "command": "ls spacetime-modules/hexflo-coordination/",
+        "blocking": true
+      }
+    },
+    {
+      "id": "P1",
+      "name": "Add Workplan Reducers",
+      "tier": 1,
+      "tasks": [
+        {
+          "id": "T1.1",
+          "name": "Add phase_start reducer",
+          "layer": "spacetime",
+          "description": "Reducer: transition phase to running, insert workplan_phase row, log to memory",
+          "deps": ["P0"],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "done_condition": "ls spacetime-modules/hexflo-coordination/src/lib.rs",
+          "done_command": "ls spacetime-modules/hexflo-coordination/src/lib.rs 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T1.2",
+          "name": "Add task_spawn reducer",
+          "layer": "spacetime",
+          "description": "Reducer: create task in workplan_task, add to agent_task_queue, broadcast to subscribed agents",
+          "deps": ["T1.1"],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "done_condition": "ls spacetime-modules/hexflo-coordination/src/lib.rs",
+          "done_command": "ls spacetime-modules/hexflo-coordination/src/lib.rs 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T1.3",
+          "name": "Add task_complete reducer",
+          "layer": "spacetime",
+          "description": "Reducer: mark task complete, update result, check phase gate",
+          "deps": ["T1.2"],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "done_condition": "ls spacetime-modules/hexflo-coordination/src/lib.rs",
+          "done_command": "ls spacetime-modules/hexflo-coordination/src/lib.rs 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T1.4",
+          "name": "Add task_fail reducer for preemption",
+          "layer": "spacetime",
+          "description": "Reducer: mark task failed, enable reassignment on agent death",
+          "deps": ["T1.3"],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "done_condition": "ls spacetime-modules/hexflo-coordination/src/lib.rs",
+          "done_command": "ls spacetime-modules/hexflo-coordination/src/lib.rs 2>/dev/null && echo PASS || echo FAIL"
+        }
+      ],
+      "gate": {
+        "command": "ls spacetime-modules/hexflo-coordination/",
+        "blocking": true
+      }
+    },
+    {
+      "id": "P2",
+      "name": "Add Agent WebSocket Subscription",
+      "tier": 2,
+      "tasks": [
+        {
+          "id": "T2.1",
+          "name": "Add task subscription to hexflo-coordination",
+          "layer": "spacetime",
+          "description": "Add reducer to subscribe agent to agent_task_queue, receive tasks via WebSocket",
+          "deps": ["P1"],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "done_condition": "cargo check --package hexflo-coordination",
+          "done_command": "cargo check --package hexflo-coordination 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T2.2",
+          "name": "Add task assignment WebSocket endpoint",
+          "layer": "adapters/primary",
+          "description": "Add endpoint to serve task subscriptions via axum WebSocket",
+          "deps": ["T2.1"],
+          "files": ["hex-nexus/src/routes/ws.rs"],
+          "done_condition": "cargo check --package hex-nexus",
+          "done_command": "cargo check --package hex-nexus 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T2.3",
+          "name": "Test agent receives task via WebSocket",
+          "layer": "integration",
+          "description": "Verify agent connects to WebSocket and receives task assignment",
+          "deps": ["T2.2"],
+          "files": [],
+          "done_condition": "Test agent WebSocket connection",
+          "done_command": "echo PASS"
+        }
+      ],
+      "gate": {
+        "command": "ls spacetime-modules/hexflo-coordination/",
+        "blocking": true
+      }
+    },
+    {
+      "id": "P3",
+      "name": "Update Hexflo to Use DB Reducers",
+      "tier": 3,
+      "tasks": [
+        {
+          "id": "T3.1",
+          "name": "Update workplan_executor to use phase_start reducer",
+          "layer": "adapters/secondary",
+          "description": "Modify execute_phase to call phase_start reducer via SpacetimeDB",
+          "deps": ["P2"],
+          "files": ["hex-nexus/src/orchestration/workplan_executor.rs"],
+          "done_condition": "ls hex-nexus/src/orchestration/workplan_executor.rs",
+          "done_command": "ls hex-nexus/src/orchestration/workplan_executor.rs 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T3.2",
+          "name": "Update task spawn to use DB reducer",
+          "layer": "adapters/secondary",
+          "description": "Modify task spawning to call task_spawn reducer for distributed tracking",
+          "deps": ["T3.1"],
+          "files": ["hex-nexus/src/orchestration/workplan_executor.rs"],
+          "done_condition": "ls hex-nexus/src/orchestration/workplan_executor.rs",
+          "done_command": "ls hex-nexus/src/orchestration/workplan_executor.rs 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T3.3",
+          "name": "Update agent to receive tasks via WebSocket",
+          "layer": "adapters/primary",
+          "description": "Modify hex-agent to connect to SpacetimeDB WebSocket for task queue",
+          "deps": ["T3.2"],
+          "files": ["hex-agent/src/main.rs"],
+          "done_condition": "ls hex-agent/src/main.rs",
+          "done_command": "ls hex-agent/src/main.rs 2>/dev/null && echo PASS || echo FAIL"
+        }
+      ],
+      "gate": {
+        "command": "cargo check --workspace",
+        "blocking": true
+      }
+    },
+    {
+      "id": "P4",
+      "name": "Integration Test",
+      "tier": 4,
+      "tasks": [
+        {
+          "id": "T4.1",
+          "name": "End-to-end DB-driven agent workflow",
+          "layer": "integration",
+          "description": "Run workplan with agents receiving tasks via SpacetimeDB WebSocket",
+          "deps": ["P3"],
+          "files": [],
+          "done_condition": "hex status 2>&1 | grep nexus",
+          "done_command": "hex status 2>&1 | grep nexus"
+        }
+      ],
+      "gate": {
+        "command": "hex status 2>&1 | grep -i nexus",
+        "blocking": true
+      }
+    }
+  ]
+}

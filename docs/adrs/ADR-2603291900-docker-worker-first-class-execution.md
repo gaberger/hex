@@ -1,6 +1,6 @@
 # ADR-2603291900: Docker Worker First-Class Execution
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-29
 **Drivers:** Docker sandbox workers are spawned per pipeline run but never delegated real tasks — all inference and file generation runs inline in the supervisor process. Workers idle until the pipeline completes.
 **Supersedes:** —

@@ -1,6 +1,7 @@
 # ADR-2603312350: Internal Architecture Research Initiative
 
-**Status:** Abandoned — Too broad; specific ADRs cover each concern
+**Status:** Deprecated
+**Reason:** Too broad; specific ADRs cover each concern individually
 **Date:** 2026-03-31
 **Drivers:** hex has 80+ ADRs but:
 - Workflows are fragile (unexplained failures, incomplete error handling)

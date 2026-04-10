@@ -1,6 +1,6 @@
 # ADR-2604081320: Claude Code Context Detection
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-08
 **Drivers:** Gary Berger
 

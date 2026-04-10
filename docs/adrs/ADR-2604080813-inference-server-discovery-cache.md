@@ -1,6 +1,6 @@
 # ADR-2604080813: Inference Server Discovery Cache
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-08
 **Drivers:** Gary Berger
 

@@ -1,6 +1,6 @@
 # ADR-2604080929: hex Self-Update
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-08
 **Drivers:** Gary Berger
 

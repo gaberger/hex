@@ -709,6 +709,34 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             nexus.get("/api/agents").await.map_err(|e| e.to_string())
         }
 
+        // ── Steering API (P3a/b) ──
+        "hex_session_event" => {
+            let session_id = args.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+            let event = args.get("event").and_then(|v| v.as_str()).unwrap_or("");
+            let payload = args.get("payload").cloned();
+            let body = serde_json::json!({ "event": event, "payload": payload });
+            nexus.post(&format!("/api/steering/{}/event", session_id), &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_session_interrupt" => {
+            let session_id = args.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+            let instructions = args.get("instructions").and_then(|v| v.as_str()).unwrap_or("");
+            let body = serde_json::json!({ "instructions": instructions });
+            nexus.post(&format!("/api/steering/{}/interrupt", session_id), &body).await.map_err(|e| e.to_string())
+        }
+
+        // ── Environment API (P5a) ──
+        "hex_environment_create" => {
+            let template = args.get("template").and_then(|v| v.as_str()).unwrap_or("default");
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("env");
+            let body = serde_json::json!({ "template": template, "name": name });
+            nexus.post("/api/environments", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_environment_list" => {
+            nexus.get("/api/environments").await.map_err(|e| e.to_string())
+        }
+
         // ── Nexus daemon ──
         "hex_nexus_status" => {
             nexus.get("/api/version").await.map_err(|e| e.to_string())

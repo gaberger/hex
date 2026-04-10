@@ -2,33 +2,52 @@ use crate::ports::anthropic::{AnthropicError, AnthropicPort};
 use crate::ports::preflight::{PreflightError, PreflightPort};
 use crate::ports::{Message, Role, ContentBlock};
 use async_trait::async_trait;
+use reqwest::Client;
+use serde_json::json;
 use std::sync::Arc;
 
-/// Preflight adapter that uses Haiku for cheap classification tasks.
+/// Preflight adapter that uses local Ollama (bazzite) first, then Anthropic.
 ///
-/// Sends minimal requests (~50-200 tokens) to verify quota and detect
-/// topic changes. The Haiku model is hardcoded — this adapter always
-/// overrides to Haiku regardless of the main conversation model.
-pub struct HaikuPreflightAdapter {
+/// ADR-2604101500: Local inference first to avoid Anthrobic API quota issues.
+/// Tries bazzite:11434 first, only falls back to Anthrobic if unavailable.
+pub struct LocalFirstPreflightAdapter {
     anthropic: Arc<dyn AnthropicPort>,
+    ollama_url: String,
+    client: Client,
 }
 
-impl HaikuPreflightAdapter {
+impl LocalFirstPreflightAdapter {
     pub fn new(anthropic: Arc<dyn AnthropicPort>) -> Self {
-        Self { anthropic }
+        Self {
+            anthropic,
+            ollama_url: "http://bazzite:11434".to_string(),
+            client: Client::new(),
+        }
     }
 
-    /// The model used for all preflight checks — always Haiku for cost.
-    fn model() -> &'static str {
-        "claude-haiku-4-5-20251001"
+    /// Check if local Ollama is available at bazzite:11434
+    async fn check_local(&self) -> bool {
+        let url = format!("{}/api/tags", self.ollama_url);
+        self.client
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(2))
+            .send()
+            .await
+            .is_ok()
     }
 }
 
 #[async_trait]
-impl PreflightPort for HaikuPreflightAdapter {
+impl PreflightPort for LocalFirstPreflightAdapter {
     async fn check_quota(&self) -> Result<(), PreflightError> {
-        // Minimal request: single-word prompt, 1 max token.
-        // If this succeeds, the API key is valid and quota is available.
+        // ADR-2604101500: Try local Ollama first
+        if self.check_local().await {
+            tracing::info!("local_inference_first: using bazzite for preflight");
+            return Ok(());
+        }
+
+        // Local unavailable — fall back to Anthropic
+        tracing::warn!("local_inference_first: bazzite unavailable, falling back to Anthropic");
         let messages = vec![Message {
             role: Role::User,
             content: vec![ContentBlock::Text {
@@ -41,10 +60,10 @@ impl PreflightPort for HaikuPreflightAdapter {
             .send_message(
                 "Reply with a single word.",
                 &messages,
-                &[],    // no tools
-                1,      // 1 max token
-                Some(Self::model()),
-                None,   // no special options
+                &[],
+                1,
+                Some("claude-haiku-4-5-20251001"),
+                None,
             )
             .await
         {
@@ -66,7 +85,38 @@ impl PreflightPort for HaikuPreflightAdapter {
         recent_context: &str,
         new_input: &str,
     ) -> Result<bool, PreflightError> {
-        // Truncate context to ~500 chars to keep this cheap
+        // Try local Ollama first
+        if self.check_local().await {
+            let context_snippet = if recent_context.len() > 500 {
+                &recent_context[recent_context.len() - 500..]
+            } else {
+                recent_context
+            };
+
+            let prompt = format!(
+                "Recent: {}\nNew: {}\nCONTINUE or NEW?",
+                context_snippet, new_input
+            );
+
+            let payload = json!({
+                "model": "nemotron-mini",
+                "prompt": prompt,
+                "stream": false,
+                "options": { "num_predict": 5 }
+            });
+
+            let url = format!("{}/api/generate", self.ollama_url);
+            match self.client.post(&url).json(&payload).send().await {
+                Ok(resp) => {
+                    if resp.text().await.map(|t| t.contains("NEW")).unwrap_or(false) {
+                        return Ok(true);
+                    }
+                }
+                Err(e) => tracing::warn!("local preflight failed: {}", e),
+            }
+        }
+
+        // Fall back to Anthropic
         let context_snippet = if recent_context.len() > 500 {
             &recent_context[recent_context.len() - 500..]
         } else {
@@ -74,11 +124,7 @@ impl PreflightPort for HaikuPreflightAdapter {
         };
 
         let prompt = format!(
-            "Recent conversation context:\n{}\n\n\
-             New user message:\n{}\n\n\
-             Is the new message a CONTINUATION of the recent context, \
-             or a completely NEW topic? Reply with exactly one word: \
-             CONTINUE or NEW",
+            "Recent context:\n{}\n\nNew: {}\n\nCONTINUE or NEW?",
             context_snippet, new_input
         );
 
@@ -90,17 +136,16 @@ impl PreflightPort for HaikuPreflightAdapter {
         let response = self
             .anthropic
             .send_message(
-                "You classify whether a message continues a conversation or starts a new topic. Reply with exactly one word: CONTINUE or NEW.",
+                "CONTINUE or NEW?",
                 &messages,
                 &[],
-                5, // small response
-                Some(Self::model()),
+                5,
+                Some("claude-haiku-4-5-20251001"),
                 None,
             )
             .await
             .map_err(|e| PreflightError::ClassificationFailed(e.to_string()))?;
 
-        // Parse the response — look for "NEW" in the output
         let text = response
             .content
             .iter()
@@ -110,8 +155,7 @@ impl PreflightPort for HaikuPreflightAdapter {
             })
             .collect::<String>();
 
-        let trimmed = text.trim().to_uppercase();
-        Ok(trimmed.contains("NEW"))
+        Ok(text.trim().to_uppercase().contains("NEW"))
     }
 }
 

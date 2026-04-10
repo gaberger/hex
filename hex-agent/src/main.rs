@@ -20,7 +20,7 @@ use adapters::secondary::hub_client::HubClientAdapter;
 use adapters::secondary::rl_client::{RlClientAdapter, NoopRlAdapter};
 use adapters::secondary::rate_limiter::RateLimiterAdapter;
 use adapters::secondary::token_metrics::TokenMetricsAdapter;
-use adapters::secondary::haiku_preflight::{HaikuPreflightAdapter, NoopPreflight};
+use adapters::secondary::haiku_preflight::{LocalFirstPreflightAdapter, NoopPreflight};
 use adapters::secondary::claude_code_inference::{is_claude_code_session, which_claude, ClaudeCodeInferenceAdapter};
 use adapters::secondary::openai_compat::OpenAiCompatAdapter;
 use adapters::secondary::nexus_inference::NexusInferenceAdapter;
@@ -579,20 +579,19 @@ async fn main() -> anyhow::Result<()> {
     let rate_limiter: Arc<dyn ports::rate_limiter::RateLimiterPort> = Arc::new(RateLimiterAdapter::new());
     let metrics: Arc<dyn ports::token_metrics::TokenMetricsPort> = Arc::new(TokenMetricsAdapter::new());
 
-    // Preflight: cheap model for quota check + topic detection (or noop if disabled)
+    // Preflight: ADR-2604101500 local-first (bazzite:11434 before Anthropic)
     let preflight: Arc<dyn ports::PreflightPort> = if args.no_preflight {
         Arc::new(NoopPreflight)
     } else if let Some(ref key) = anthropic_key {
-        // Haiku for preflight — cheapest Anthropic model
+        // Local-first — tries bazzite:11434, falls back to Haiku
         let preflight_llm: Arc<dyn ports::AnthropicPort> = Arc::new(
             AnthropicAdapter::new(key.clone(), "claude-haiku-4-5-20251001".to_string()),
         );
-        Arc::new(HaikuPreflightAdapter::new(preflight_llm))
+        Arc::new(LocalFirstPreflightAdapter::new(preflight_llm))
     } else if let Some(ref key) = minimax_key {
-        // MiniMax-Lightning for preflight when no Anthropic key
         let preflight_llm: Arc<dyn ports::AnthropicPort> =
             Arc::new(OpenAiCompatAdapter::minimax_fast(key.clone()));
-        Arc::new(HaikuPreflightAdapter::new(preflight_llm))
+        Arc::new(LocalFirstPreflightAdapter::new(preflight_llm))
     } else {
         Arc::new(NoopPreflight)
     };
