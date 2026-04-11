@@ -1695,6 +1695,15 @@ async fn route(project_dir: &Path) -> Result<()> {
             //   T3Workplan  → auto-invoke `hex plan draft --background`
             //                 to create a draft stub + surface it in context
             if let Some(mut state) = SessionState::load() {
+                // ADR-2604110227 P6 self-heal: if pending_workplan_draft points
+                // to a file that no longer exists (user approved, cleared, or
+                // gc'd the draft from another session), clear the flag so we
+                // don't stay stuck in "already-drafted" mode forever.
+                if pending_draft_should_clear(state.pending_workplan_draft.as_deref()) {
+                    state.pending_workplan_draft = None;
+                    let _ = state.save();
+                }
+
                 if state.workplan_id.is_none() && state.pending_workplan_draft.is_none() {
                     let mode = enforcement_mode(project_dir);
                     let auto_plan_enabled = auto_plan_enabled(project_dir);
@@ -2591,6 +2600,23 @@ pub fn classify_work_intent(prompt: &str) -> Tier {
     }
 }
 
+/// ADR-2604110227 P6: Decide whether `SessionState.pending_workplan_draft`
+/// should be cleared by the route hook.
+///
+/// A session stays in "draft pending" mode until its referenced draft file
+/// is removed from disk — which happens when the user runs
+/// `hex plan drafts approve/clear/gc` from another shell, or when
+/// `/hex-feature-dev` promotes the draft into a full workplan.
+///
+/// Returns `true` if `pending` is `Some(path)` and `path` no longer exists.
+/// Returns `false` on `None` (nothing to clear) or when the file still exists.
+fn pending_draft_should_clear(pending: Option<&str>) -> bool {
+    match pending {
+        None => false,
+        Some(path) => !Path::new(path).exists(),
+    }
+}
+
 /// Walk the PPID chain from this process to find the ancestor `claude` process PID.
 /// Returns None if no `claude` process is found (e.g., running outside Claude Code).
 fn find_ancestor_claude_pid() -> Option<u32> {
@@ -2858,5 +2884,38 @@ mod tests {
         assert!(is_confirmatory_response("lgtm"));
         assert!(!is_confirmatory_response("yes but make it async"));
         assert!(!is_confirmatory_response("this is a much longer response that is not a confirmation"));
+    }
+
+    // ─ ADR-2604110227 P6: pending draft self-heal ─
+
+    #[test]
+    fn pending_draft_should_clear_none_is_noop() {
+        // No pending draft at all — nothing to clear.
+        assert!(!pending_draft_should_clear(None));
+    }
+
+    #[test]
+    fn pending_draft_should_clear_existing_file_stays() {
+        // Pending draft file still exists — don't clear.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        assert!(!pending_draft_should_clear(Some(&path)));
+    }
+
+    #[test]
+    fn pending_draft_should_clear_missing_file_clears() {
+        // Pending draft file was removed by another session — clear the flag.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        drop(tmp); // file is deleted
+        assert!(pending_draft_should_clear(Some(&path)));
+    }
+
+    #[test]
+    fn pending_draft_should_clear_never_existed() {
+        // Pending draft points at a path that never existed — also clear.
+        assert!(pending_draft_should_clear(Some(
+            "/tmp/never-created-draft-12345.json"
+        )));
     }
 }
