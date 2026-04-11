@@ -118,9 +118,11 @@ is a follow-up ADR, not this one.
 
 ### Specifying the layers (phased)
 
-The formalization is rolled out in four phases, each deliverable is a
-single markdown file + optional TLA+ spec. Each phase is independently
-useful — the project stays shippable between them.
+The formalization is rolled out in **four core phases (P1–P4)** plus two
+optional follow-up phases (P5–P6) that the Implementation table lists
+separately. Each deliverable is a single markdown file + optional TLA+
+spec; phases are independently useful so the project stays shippable
+between them.
 
 **Phase 1 — Ports Σ-algebra** (immediate, in this ADR's first commit):
 
