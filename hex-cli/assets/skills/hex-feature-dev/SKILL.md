@@ -7,6 +7,23 @@ description: Start feature development with hex decomposition and worktree isola
 
 CRITICAL: Do NOT enter plan mode (EnterPlanMode). Proceed directly with execution.
 
+## Invocation
+
+This skill can be invoked three ways:
+
+1. **Manually**: user runs `/hex-feature-dev` (explicit)
+2. **Draft pickup**: user has a pending draft from `hex plan drafts list` —
+   read the draft's `prompt` field and start from Phase 1 using that prompt
+3. **Auto-invocation (ADR-2604110227)**: when `hex hook route` classifies a
+   user prompt as **T3 Workplan** and there is no active workplan, it
+   auto-creates a draft stub at `docs/workplans/drafts/draft-*.json` and
+   surfaces it in hook output via a one-line `[HEX]` banner. When you see
+   that banner, pick up the draft (`hex plan drafts list`), read the prompt
+   field, and start this skill's flow from Phase 1. This is the normal
+   "it just happened" path — users don't have to remember to type the skill
+   name. Opt-outs: `HEX_AUTO_PLAN=0`, `.hex/project.json` →
+   `workplan.auto_invoke.enabled: false`, or `hex skip plan` in the prompt.
+
 ## How Hex Treats Features
 
 In hexagonal architecture, a "feature" is NOT a single vertical slice. It decomposes inside-out across layers:

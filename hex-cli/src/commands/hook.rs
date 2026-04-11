@@ -56,6 +56,11 @@ struct SessionState {
     /// Used to detect staleness when key project files change.
     #[serde(default)]
     fingerprint_generated_at: Option<String>,
+    /// ADR-2604110227: path to an in-flight workplan draft spawned by
+    /// `hex plan draft` (auto-invoked when a T3 prompt is detected).
+    /// Cleared on SessionEnd or when the user approves/clears the draft.
+    #[serde(default)]
+    pending_workplan_draft: Option<String>,
 }
 
 impl SessionState {
@@ -148,6 +153,37 @@ fn enforcement_mode(project_dir: &Path) -> &'static str {
         }
     }
     "mandatory"
+}
+
+/// ADR-2604110227: Check whether auto-invoking the planner on T3
+/// work-intent prompts is enabled for this project.
+///
+/// Precedence (highest to lowest):
+/// 1. `HEX_AUTO_PLAN` env var — `0` disables, anything else enables
+/// 2. `workplan.auto_invoke.enabled` in `.hex/project.json` — bool
+/// 3. Default: `true` (opt-out, not opt-in)
+///
+/// The env var is checked first so individual shells can disable without
+/// touching the project config file (useful for one-off debugging or for
+/// CI environments that want deterministic behavior).
+fn auto_plan_enabled(project_dir: &Path) -> bool {
+    // Env var takes precedence
+    if let Ok(val) = std::env::var("HEX_AUTO_PLAN") {
+        return val != "0" && val.to_lowercase() != "false";
+    }
+
+    // Then project config
+    let project_json = project_dir.join(".hex/project.json");
+    if let Ok(content) = std::fs::read_to_string(&project_json) {
+        if let Ok(project) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(enabled) = project["workplan"]["auto_invoke"]["enabled"].as_bool() {
+                return enabled;
+            }
+        }
+    }
+
+    // Default: enabled
+    true
 }
 
 #[derive(Subcommand)]
@@ -505,6 +541,7 @@ pub async fn register_session_agent(project_dir: &Path, project_name: &str) -> R
             allowed_paths: Vec::new(),
             worktree_branch: None,
             fingerprint_generated_at: None,
+            pending_workplan_draft: None,
         };
         state.save()?;
 
@@ -1650,41 +1687,77 @@ async fn route(project_dir: &Path) -> Result<()> {
                 println!("[HEX] {}", hints.join(", "));
             }
 
-            // ADR-050: Warn if no active workplan (advisory mode)
-            if let Some(state) = SessionState::load() {
-                if state.workplan_id.is_none() {
+            // ADR-2604110227: Three-tier work-intent classifier.
+            //
+            // Replaces the old passive-warning path with active tier dispatch:
+            //   T1Todo      → silent, let Claude's TodoWrite handle it
+            //   T2MiniPlan  → one-line suggestion, no auto-invocation
+            //   T3Workplan  → auto-invoke `hex plan draft --background`
+            //                 to create a draft stub + surface it in context
+            if let Some(mut state) = SessionState::load() {
+                if state.workplan_id.is_none() && state.pending_workplan_draft.is_none() {
                     let mode = enforcement_mode(project_dir);
-                    // Only warn on work-like prompts, not queries
-                    let is_work = lower.contains("implement")
-                        || lower.contains("create")
-                        || lower.contains("add")
-                        || lower.contains("fix")
-                        || lower.contains("refactor")
-                        || lower.contains("build")
-                        || lower.contains("update")
-                        || lower.contains("change")
-                        || lower.contains("modify")
-                        || lower.contains("write")
-                        || lower.contains("generate")
-                        || lower.contains("scaffold")
-                        || lower.contains("wire")
-                        || lower.contains("connect")
-                        || lower.contains("remove")
-                        || lower.contains("delete")
-                        || lower.contains("migrate")
-                        || lower.contains("upgrade")
-                        // Short confirmations after a work proposal
-                        || is_confirmatory_response(&lower);
-                    if is_work && mode == "mandatory" {
-                        println!(
-                            "BLOCKED: Cannot proceed without an active workplan. Run: hex plan create <name>"
-                        );
-                        std::process::exit(2);
-                    } else if is_work {
-                        // stdout so Claude sees the warning in its context
-                        println!(
-                            "WARNING: No active workplan for this work. Consider: hex plan create <name>"
-                        );
+                    let auto_plan_enabled = auto_plan_enabled(project_dir);
+                    let tier = classify_work_intent(&lower);
+
+                    match tier {
+                        Tier::T1Todo => {
+                            // No action — let the host agent handle it.
+                            // Confirmatory replies fall through silently.
+                        }
+                        Tier::T2MiniPlan => {
+                            // One-line suggestion, no auto-invocation.
+                            println!(
+                                "[HEX] mini-plan scope detected — consider `hex plan create <name>` if this grows"
+                            );
+                        }
+                        Tier::T3Workplan => {
+                            // Feature-sized intent. In advisory+enabled mode, auto-invoke
+                            // `hex plan draft` in the background. In mandatory mode,
+                            // also auto-invoke but still require user approval before
+                            // running coders (existing enforcement chain does this).
+                            if auto_plan_enabled {
+                                match spawn_plan_draft(content) {
+                                    Ok(draft_path) => {
+                                        println!(
+                                            "[HEX] feature-sized task detected \u{2192} drafting workplan in background"
+                                        );
+                                        println!(
+                                            "[HEX] draft: {} (run `hex plan drafts list` to see it, `/hex-feature-dev` to expand)",
+                                            draft_path
+                                        );
+                                        state.pending_workplan_draft = Some(draft_path);
+                                        let _ = state.save();
+                                    }
+                                    Err(e) => {
+                                        // Fall back to the old warning/block behavior if spawn fails
+                                        if mode == "mandatory" {
+                                            println!(
+                                                "BLOCKED: Cannot proceed without an active workplan. Run: hex plan create <name> (draft spawn failed: {})",
+                                                e
+                                            );
+                                            std::process::exit(2);
+                                        } else {
+                                            println!(
+                                                "WARNING: No active workplan. Consider: hex plan create <name> (draft spawn failed: {})",
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                            } else if mode == "mandatory" {
+                                // Auto-plan disabled but enforcement is mandatory — keep old behavior
+                                println!(
+                                    "BLOCKED: Cannot proceed without an active workplan. Run: hex plan create <name>"
+                                );
+                                std::process::exit(2);
+                            } else {
+                                // Auto-plan disabled, advisory mode — keep old warning
+                                println!(
+                                    "WARNING: No active workplan for this work. Consider: hex plan create <name>"
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -1692,6 +1765,51 @@ async fn route(project_dir: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// ADR-2604110227: Spawn `hex plan draft` in the background with the user prompt.
+///
+/// Returns the path of the created draft file on success. The draft is
+/// a minimal stub quarantined to `docs/workplans/drafts/` — no worktrees,
+/// no specs, no coder dispatch. The user (or Claude Code) picks it up
+/// via `/hex-feature-dev` or `hex plan drafts approve`.
+fn spawn_plan_draft(prompt: &str) -> Result<String> {
+    // We run `hex plan draft --background <prompt>` synchronously here
+    // (not via detached spawn) because we need the resulting draft path
+    // to surface in the hook output. The draft command itself is fast:
+    // it just writes a JSON stub. There's no LLM call on this path.
+    let hex_bin = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("hex"));
+
+    let output = std::process::Command::new(&hex_bin)
+        .args(["plan", "draft", "--background", prompt])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!(
+            "hex plan draft failed: {}",
+            stderr.trim()
+        ));
+    }
+
+    // The draft filename is deterministic (ts + slug) but we re-derive
+    // it here by reading the newest file in docs/workplans/drafts/.
+    let drafts_dir = Path::new("docs/workplans/drafts");
+    let newest = std::fs::read_dir(drafts_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path().extension().and_then(|s| s.to_str()) == Some("json")
+        })
+        .max_by_key(|e| {
+            e.metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+        })
+        .map(|e| e.path().to_string_lossy().to_string())
+        .unwrap_or_else(|| "docs/workplans/drafts/".to_string());
+
+    Ok(newest)
 }
 
 // ── Boundary validation ──────────────────────────────────────────────
@@ -2317,6 +2435,162 @@ fn classify_prompt(prompt: &str) -> Vec<&'static str> {
     hints
 }
 
+// ── ADR-2604110227: Three-tier work-intent classifier ─────────────────
+//
+// The existing `classify_prompt()` emits context hints; this classifier
+// decides whether a prompt is a:
+//   T1Todo       — small/conversational, let the host agent handle it
+//   T2MiniPlan   — work-sized but scoped within one adapter boundary
+//   T3Workplan   — feature-sized, cross-adapter, warrants a full workplan
+//
+// The route() hook dispatches on Tier to decide whether to auto-invoke
+// the planner (T3), suggest a mini-plan (T2), or stay silent (T1).
+
+/// Task sizing tiers for intent classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    /// Small change or conversational — no hex planning artifact needed.
+    T1Todo,
+    /// Work-sized but contained within one adapter boundary.
+    T2MiniPlan,
+    /// Feature-sized, cross-adapter — warrants a full workplan.
+    T3Workplan,
+}
+
+impl Tier {
+    #[allow(dead_code)]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tier::T1Todo => "T1",
+            Tier::T2MiniPlan => "T2",
+            Tier::T3Workplan => "T3",
+        }
+    }
+}
+
+/// Classify a user prompt into a work-sizing Tier.
+///
+/// Uses a weighted keyword scoring heuristic:
+///   - Feature-sized verbs + noun subsystems score high (T3)
+///   - Generic work verbs without scope signals score medium (T2)
+///   - Trivial edits, questions, and conversational replies score T1
+///
+/// This is a deliberately conservative classifier: when in doubt, it
+/// returns a lower tier. False negatives (missed T3 → T2) are cheap
+/// (user manually invokes planner); false positives (T1 → T3) would
+/// spawn unwanted background agents, so the threshold errs high.
+pub fn classify_work_intent(prompt: &str) -> Tier {
+    let lower = prompt.to_lowercase();
+    let trimmed = lower.trim();
+
+    // Escape hatches → always T1
+    if trimmed.is_empty() {
+        return Tier::T1Todo;
+    }
+    if trimmed.contains("hex skip plan") || trimmed.contains("hex: skip plan") {
+        return Tier::T1Todo;
+    }
+
+    // Questions are T1 (conversational). A trailing '?' or leading
+    // interrogative is a strong signal.
+    let is_question = trimmed.ends_with('?')
+        || trimmed.starts_with("what ")
+        || trimmed.starts_with("why ")
+        || trimmed.starts_with("how ")
+        || trimmed.starts_with("when ")
+        || trimmed.starts_with("where ")
+        || trimmed.starts_with("who ")
+        || trimmed.starts_with("can you explain")
+        || trimmed.starts_with("explain ")
+        || trimmed.starts_with("show me ");
+    if is_question {
+        return Tier::T1Todo;
+    }
+
+    // Trivial-edit phrases → T1 regardless of other signals
+    const TRIVIAL: &[&str] = &[
+        "fix typo", "fix a typo", "typo in",
+        "rename ", "renaming ",
+        "add a comment", "add comment",
+        "update comment", "update the comment",
+        "docstring", "doc comment",
+        "one-line", "one line fix",
+        "minor tweak", "small tweak", "tiny change",
+        "format ", "reformat ", "run fmt", "run rustfmt",
+    ];
+    if TRIVIAL.iter().any(|p| trimmed.contains(p)) {
+        return Tier::T1Todo;
+    }
+
+    // Score-based classification for the non-trivial, non-question case.
+    let mut score: i32 = 0;
+
+    // Feature-sized verbs: each contributes +2
+    const FEATURE_VERBS: &[&str] = &[
+        "implement", "build a", "build an", "build the", "build support",
+        "add support for", "add a new ", "add an ", "design a", "design an",
+        "ship ", "deliver ", "roll out",
+    ];
+    for v in FEATURE_VERBS {
+        if trimmed.contains(v) {
+            score += 2;
+        }
+    }
+
+    // Generic work verbs: each contributes +1
+    const WORK_VERBS: &[&str] = &[
+        "create", "add ", "fix", "refactor", "update", "change",
+        "modify", "write", "generate", "scaffold", "wire ", "connect ",
+        "remove", "delete", "migrate", "upgrade", "port ",
+    ];
+    for v in WORK_VERBS {
+        if trimmed.contains(v) {
+            score += 1;
+        }
+    }
+
+    // Architectural/subsystem nouns: +2 each (cross-adapter signal)
+    const SUBSYSTEM_NOUNS: &[&str] = &[
+        "feature", "pipeline", "system", "module", "subsystem",
+        "adapter", "port", "endpoint", "api", "service", "dashboard",
+        "auth", "oauth", "jwt", "database", "schema", "reducer",
+        "migration", "cli command", "mcp tool",
+    ];
+    for n in SUBSYSTEM_NOUNS {
+        if trimmed.contains(n) {
+            score += 2;
+        }
+    }
+
+    // Cross-cutting / integration verbs: +2 (multi-adapter hint)
+    const CROSS_CUTTING: &[&str] = &[
+        "end to end", "end-to-end", "integrate ", "integration ",
+        "across ", "cross-cutting", "refactor across",
+    ];
+    for c in CROSS_CUTTING {
+        if trimmed.contains(c) {
+            score += 2;
+        }
+    }
+
+    // Length signal: very short work prompts are probably T1-T2, not T3
+    if trimmed.len() < 30 {
+        score -= 1;
+    }
+
+    // Confirmatory replies inherit the previous prompt's classification —
+    // we return T1 here and let the caller re-check session state.
+    if is_confirmatory_response(trimmed) {
+        return Tier::T1Todo;
+    }
+
+    match score {
+        s if s >= 4 => Tier::T3Workplan,
+        s if s >= 1 => Tier::T2MiniPlan,
+        _ => Tier::T1Todo,
+    }
+}
+
 /// Walk the PPID chain from this process to find the ancestor `claude` process PID.
 /// Returns None if no `claude` process is found (e.g., running outside Claude Code).
 fn find_ancestor_claude_pid() -> Option<u32> {
@@ -2433,4 +2707,156 @@ async fn observe(event_type: &str) -> Result<()> {
     .await;
 
     Ok(())
+}
+
+// ── Tests ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─ ADR-2604110227: classify_work_intent tier classifier ─
+
+    #[test]
+    fn t1_question_prompts() {
+        // Questions are T1 regardless of other signals
+        assert_eq!(classify_work_intent("how does the planner work?"), Tier::T1Todo);
+        assert_eq!(classify_work_intent("what is HexFlo?"), Tier::T1Todo);
+        assert_eq!(classify_work_intent("can you explain the ADR process"), Tier::T1Todo);
+        assert_eq!(classify_work_intent("why do workplans need specs first?"), Tier::T1Todo);
+        assert_eq!(classify_work_intent("show me the hook router"), Tier::T1Todo);
+    }
+
+    #[test]
+    fn t1_trivial_edits() {
+        // Trivial-edit phrases → T1 regardless of verb weight
+        assert_eq!(classify_work_intent("fix typo in README"), Tier::T1Todo);
+        assert_eq!(classify_work_intent("rename getCwd to getCurrentWorkingDirectory"), Tier::T1Todo);
+        assert_eq!(classify_work_intent("add a comment explaining the regex"), Tier::T1Todo);
+        assert_eq!(classify_work_intent("update the docstring on fn foo"), Tier::T1Todo);
+        assert_eq!(classify_work_intent("run rustfmt"), Tier::T1Todo);
+    }
+
+    #[test]
+    fn t1_empty_and_confirmatory() {
+        assert_eq!(classify_work_intent(""), Tier::T1Todo);
+        assert_eq!(classify_work_intent("   "), Tier::T1Todo);
+        assert_eq!(classify_work_intent("yes"), Tier::T1Todo);
+        assert_eq!(classify_work_intent("go ahead"), Tier::T1Todo);
+        assert_eq!(classify_work_intent("lgtm"), Tier::T1Todo);
+    }
+
+    #[test]
+    fn t1_opt_out_phrase() {
+        // "hex skip plan" escape hatch always downgrades to T1
+        assert_eq!(
+            classify_work_intent("implement oauth login hex skip plan"),
+            Tier::T1Todo
+        );
+        assert_eq!(
+            classify_work_intent("hex skip plan: build the whole pipeline"),
+            Tier::T1Todo
+        );
+    }
+
+    #[test]
+    fn t2_small_adapter_work() {
+        // Work-sized but scoped to one adapter — should be T2, not T3.
+        assert_eq!(
+            classify_work_intent("add a helper function to trim whitespace"),
+            Tier::T2MiniPlan
+        );
+        assert_eq!(
+            classify_work_intent("refactor the retry loop in fs_adapter"),
+            Tier::T2MiniPlan
+        );
+        assert_eq!(
+            classify_work_intent("update the timeout in the llm adapter"),
+            Tier::T2MiniPlan
+        );
+    }
+
+    #[test]
+    fn t3_feature_sized_cross_adapter() {
+        // Feature-sized verbs + subsystem nouns → T3
+        assert_eq!(
+            classify_work_intent("implement OAuth login with refresh tokens"),
+            Tier::T3Workplan
+        );
+        assert_eq!(
+            classify_work_intent("add support for a new mcp tool that dispatches swarms"),
+            Tier::T3Workplan
+        );
+        assert_eq!(
+            classify_work_intent("build an end-to-end audit pipeline across all adapters"),
+            Tier::T3Workplan
+        );
+        assert_eq!(
+            classify_work_intent("design a new authentication subsystem with JWT"),
+            Tier::T3Workplan
+        );
+        assert_eq!(
+            classify_work_intent(
+                "implement a new feature for spacetimedb module deployment via the CLI"
+            ),
+            Tier::T3Workplan
+        );
+    }
+
+    #[test]
+    fn t1_regression_false_positives() {
+        // P10: regression suite — these should NEVER return T3.
+        // These are the kinds of prompts that LOOK like work but are actually
+        // small changes, read-only questions, or conversational.
+        let t1_prompts = [
+            "what files does the route hook read?",
+            "how does classify_prompt differ from classify_work_intent?",
+            "show me the SessionState struct",
+            "explain the three-tier sizing",
+            "fix typo in the ADR header",
+            "rename the Tier variants to Todo/MiniPlan/Workplan",
+            "add a comment to the match arm",
+            "reformat the tests module with rustfmt",
+            "why is the threshold at score >= 4?",
+            "can you explain how the scoring works?",
+            "update the docstring on classify_work_intent",
+            "yes",
+            "lgtm",
+            "go ahead",
+            "hex skip plan: implement oauth",
+            "?",
+            "",
+            "",
+            "run rustfmt",
+            "one-line fix to the regex",
+        ];
+        for prompt in t1_prompts {
+            let tier = classify_work_intent(prompt);
+            assert_ne!(
+                tier,
+                Tier::T3Workplan,
+                "prompt '{}' should NOT be T3 (got {:?})",
+                prompt,
+                tier
+            );
+        }
+    }
+
+    // ─ Existing helpers (sanity checks) ─
+
+    #[test]
+    fn classify_prompt_hints() {
+        // Smoke test for the existing hint function.
+        assert!(!classify_prompt("please scaffold a new hex project").is_empty());
+        assert!(classify_prompt("just a random question").is_empty());
+    }
+
+    #[test]
+    fn confirmatory_response_matching() {
+        assert!(is_confirmatory_response("yes"));
+        assert!(is_confirmatory_response("go ahead"));
+        assert!(is_confirmatory_response("lgtm"));
+        assert!(!is_confirmatory_response("yes but make it async"));
+        assert!(!is_confirmatory_response("this is a much longer response that is not a confirmation"));
+    }
 }

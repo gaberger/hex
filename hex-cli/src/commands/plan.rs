@@ -61,6 +61,49 @@ pub enum PlanAction {
     },
     /// Output the canonical workplan JSON schema
     Schema,
+    /// Create a draft workplan from a user prompt (ADR-2604110227).
+    ///
+    /// Writes a stub JSON to `docs/workplans/drafts/draft-<timestamp>.json`
+    /// containing the original prompt. The hex hook router auto-invokes
+    /// this on T3-sized work-intent prompts; users can also invoke it
+    /// directly. Drafts are not executed until approved.
+    Draft {
+        /// User prompt that triggered the draft (space-separated)
+        #[arg(required = true, num_args = 1..)]
+        prompt: Vec<String>,
+        /// Suppress interactive output (used by auto-invocation from hook)
+        #[arg(long, default_value_t = false)]
+        background: bool,
+    },
+    /// Manage draft workplans (ADR-2604110227)
+    Drafts {
+        #[command(subcommand)]
+        action: DraftsAction,
+    },
+}
+
+/// Subcommands for `hex plan drafts` — manage auto-generated draft workplans.
+#[derive(Subcommand)]
+pub enum DraftsAction {
+    /// List all in-flight draft workplans
+    List,
+    /// Delete all draft workplans (or one by name if --name is set)
+    Clear {
+        /// Name of the specific draft to remove (without .json extension)
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Promote a draft to a real workplan (moves to docs/workplans/)
+    Approve {
+        /// Draft filename (with or without .json extension)
+        name: String,
+    },
+    /// Garbage-collect drafts older than N days (default 7)
+    Gc {
+        /// Age threshold in days
+        #[arg(long, default_value_t = 7)]
+        days: u64,
+    },
 }
 
 /// Deserialize a JSON null or missing string as empty string.
@@ -255,6 +298,8 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Report { id } => show_execution_report(&id).await,
         PlanAction::Schema => show_schema().await,
         PlanAction::Reconcile { file, update } => reconcile_plan(&file, update).await,
+        PlanAction::Draft { prompt, background } => draft_plan(&prompt, background).await,
+        PlanAction::Drafts { action } => drafts_dispatch(action).await,
     }
 }
 
@@ -1143,4 +1188,300 @@ fn infer_tier(adapter: &str) -> u8 {
     } else {
         0 // domain + ports
     }
+}
+
+// ── ADR-2604110227: Draft workplans ──────────────────────────────────
+
+/// Directory where auto-invoked draft workplans are quarantined until
+/// the user approves, edits, or clears them.
+fn drafts_dir() -> std::path::PathBuf {
+    Path::new("docs/workplans/drafts").to_path_buf()
+}
+
+/// Derive a short slug from a user prompt for filename purposes.
+/// E.g. "implement OAuth login with refresh tokens" → "implement-oauth-login".
+fn slug_from_prompt(prompt: &str) -> String {
+    let lower = prompt.to_lowercase();
+    let mut slug: String = lower
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .take(5)
+        .collect::<Vec<_>>()
+        .join("-");
+    if slug.is_empty() {
+        slug = "unnamed".to_string();
+    }
+    if slug.len() > 48 {
+        slug.truncate(48);
+    }
+    slug
+}
+
+/// Create a draft workplan stub from a user prompt.
+///
+/// The stub is a minimal JSON document capturing the original prompt,
+/// the tier classification, and a "pending-planner" status. The hook
+/// router auto-invokes this on T3-sized prompts; the draft surfaces in
+/// Claude Code context so the agent can pick it up via /hex-feature-dev
+/// (or the user can approve/edit it manually).
+///
+/// This function deliberately does NOT spawn Claude subagents directly —
+/// that happens upstream in Claude Code when it reads the banner and
+/// notices the draft file. Keeping the spawn visible preserves the ADR
+/// guarantee that auto-invocation never creates worktrees or dispatches
+/// coders without user review.
+async fn draft_plan(prompt_parts: &[String], background: bool) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    // Respect HEX_AUTO_PLAN=0 opt-out even on direct invocation
+    if std::env::var("HEX_AUTO_PLAN").ok().as_deref() == Some("0") {
+        if !background {
+            eprintln!("hex plan draft: disabled via HEX_AUTO_PLAN=0");
+        }
+        return Ok(());
+    }
+
+    let prompt = prompt_parts.join(" ");
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("hex plan draft: prompt is empty");
+    }
+
+    // Ensure drafts dir exists
+    let dir = drafts_dir();
+    std::fs::create_dir_all(&dir)?;
+
+    // Build a timestamped filename: draft-YYMMDDHHMM-<slug>.json
+    let ts = chrono::Local::now().format("%y%m%d%H%M").to_string();
+    let slug = slug_from_prompt(trimmed);
+    let filename = format!("draft-{}-{}.json", ts, slug);
+    let path = dir.join(&filename);
+
+    // Draft stub: captures prompt, tier, origin, and pending status.
+    // Deliberately minimal — the planner agent will expand this into a
+    // full workplan when the user (or Claude Code) picks it up.
+    let draft_id = format!("draft-{}-{}", ts, slug);
+    let draft = serde_json::json!({
+        "id": draft_id,
+        "kind": "workplan-draft",
+        "status": "pending-planner",
+        "adr": "ADR-2604110227",
+        "created_at": chrono::Local::now().to_rfc3339(),
+        "origin": "auto-invoke",
+        "prompt": trimmed,
+        "next_steps": [
+            "Run /hex-feature-dev to expand this draft into a full workplan",
+            format!("Or run `hex plan drafts approve {}`", filename),
+            format!("Or run `hex plan drafts clear --name {}`", filename.trim_end_matches(".json")),
+        ],
+        "notes": "This is a draft created by ADR-2604110227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up."
+    });
+
+    let mut file = std::fs::File::create(&path)?;
+    file.write_all(serde_json::to_string_pretty(&draft)?.as_bytes())?;
+
+    if !background {
+        println!(
+            "{} draft created: {}",
+            "\u{2713}".green(),
+            path.display().to_string().cyan()
+        );
+        println!("  {} run `/hex-feature-dev` to expand into a full workplan", "\u{2192}".dimmed());
+        println!("  {} run `hex plan drafts list` to see all drafts", "\u{2192}".dimmed());
+    }
+
+    Ok(())
+}
+
+async fn drafts_dispatch(action: DraftsAction) -> anyhow::Result<()> {
+    match action {
+        DraftsAction::List => list_drafts().await,
+        DraftsAction::Clear { name } => clear_drafts(name.as_deref()).await,
+        DraftsAction::Approve { name } => approve_draft(&name).await,
+        DraftsAction::Gc { days } => gc_drafts(days).await,
+    }
+}
+
+async fn list_drafts() -> anyhow::Result<()> {
+    let dir = drafts_dir();
+    if !dir.is_dir() {
+        println!("No drafts directory (nothing to list).");
+        return Ok(());
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path().extension().and_then(|s| s.to_str()) == Some("json")
+        })
+        .collect();
+
+    if entries.is_empty() {
+        println!("No draft workplans.");
+        return Ok(());
+    }
+
+    // Sort newest first
+    entries.sort_by(|a, b| {
+        b.metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+            .cmp(
+                &a.metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+            )
+    });
+
+    println!("{}", "Draft workplans:".bold());
+    for e in &entries {
+        let path = e.path();
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let age = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .map(|d| format!("{}h ago", d.as_secs() / 3600))
+            .unwrap_or_else(|| "?".to_string());
+        // Try to read the prompt
+        let prompt_snippet = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+            .and_then(|v| v["prompt"].as_str().map(|s| truncate(s, 60)))
+            .unwrap_or_else(|| "?".to_string());
+        println!(
+            "  {} {} {}",
+            age.dimmed(),
+            name.cyan(),
+            prompt_snippet
+        );
+    }
+
+    println!();
+    println!(
+        "  {} {} to promote a draft to a real workplan",
+        "\u{2192}".dimmed(),
+        "hex plan drafts approve <name>".white()
+    );
+    println!(
+        "  {} {} to delete all drafts",
+        "\u{2192}".dimmed(),
+        "hex plan drafts clear".white()
+    );
+
+    Ok(())
+}
+
+async fn clear_drafts(name: Option<&str>) -> anyhow::Result<()> {
+    let dir = drafts_dir();
+    if !dir.is_dir() {
+        println!("No drafts directory (nothing to clear).");
+        return Ok(());
+    }
+
+    if let Some(n) = name {
+        let filename = if n.ends_with(".json") {
+            n.to_string()
+        } else {
+            format!("{}.json", n)
+        };
+        let path = dir.join(&filename);
+        if !path.exists() {
+            anyhow::bail!("draft not found: {}", path.display());
+        }
+        std::fs::remove_file(&path)?;
+        println!("{} removed {}", "\u{2713}".green(), filename.cyan());
+        return Ok(());
+    }
+
+    // Clear all
+    let mut count = 0;
+    for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        if entry.path().extension().and_then(|s| s.to_str()) == Some("json") {
+            std::fs::remove_file(entry.path())?;
+            count += 1;
+        }
+    }
+    println!("{} removed {} draft(s)", "\u{2713}".green(), count);
+    Ok(())
+}
+
+async fn approve_draft(name: &str) -> anyhow::Result<()> {
+    let filename = if name.ends_with(".json") {
+        name.to_string()
+    } else {
+        format!("{}.json", name)
+    };
+    let src = drafts_dir().join(&filename);
+    if !src.exists() {
+        anyhow::bail!("draft not found: {}", src.display());
+    }
+
+    // Promote to docs/workplans/ with an unambiguous "approved-" prefix
+    // so the user can see it was auto-generated and rename it if they want.
+    let dst_name = if filename.starts_with("draft-") {
+        filename.replacen("draft-", "approved-", 1)
+    } else {
+        format!("approved-{}", filename)
+    };
+    let dst = Path::new("docs/workplans").join(&dst_name);
+
+    std::fs::create_dir_all("docs/workplans")?;
+    std::fs::rename(&src, &dst)?;
+
+    println!(
+        "{} approved: {} {} {}",
+        "\u{2713}".green(),
+        filename.dimmed(),
+        "\u{2192}".dimmed(),
+        dst.display().to_string().cyan()
+    );
+    println!(
+        "  {} the draft still needs expansion into real specs + steps — run `/hex-feature-dev` or edit the file directly",
+        "\u{2192}".dimmed()
+    );
+
+    Ok(())
+}
+
+async fn gc_drafts(days: u64) -> anyhow::Result<()> {
+    let dir = drafts_dir();
+    if !dir.is_dir() {
+        println!("No drafts directory (nothing to gc).");
+        return Ok(());
+    }
+
+    let threshold = std::time::Duration::from_secs(days * 24 * 60 * 60);
+    let mut removed = 0;
+
+    for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let age = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok());
+        if let Some(age) = age {
+            if age > threshold {
+                std::fs::remove_file(&path)?;
+                removed += 1;
+            }
+        }
+    }
+
+    println!(
+        "{} gc removed {} draft(s) older than {} day(s)",
+        "\u{2713}".green(),
+        removed,
+        days
+    );
+    Ok(())
 }

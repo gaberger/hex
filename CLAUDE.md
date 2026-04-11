@@ -92,6 +92,56 @@ hex interfaces with external inference through SpacetimeDB procedures and reduce
 - ALWAYS run `bun run build` before committing
 - NEVER use `mock.module()` in tests — use dependency injection via the Deps pattern instead (ADR-014)
 
+## Task Tier Routing (ADR-2604110227)
+
+hex classifies every user prompt into one of three **tiers** and routes the work
+to the right artifact — matching the ergonomics of Claude's `TodoWrite` while
+preserving hex's specs-first guarantees.
+
+| Tier | Intent signal | Artifact | What happens |
+|------|---------------|----------|--------------|
+| **T1 Todo** | Questions, trivial edits (typos, renames, comments), confirmatory replies, reformats | Claude `TodoWrite` | Silent — host agent handles it |
+| **T2 Mini-plan** | Work-sized within a single adapter boundary | In-session note | One-line suggestion printed to hook output |
+| **T3 Workplan** | Feature-sized / cross-adapter (`implement X`, `add support for Y`, subsystem nouns) | `docs/workplans/drafts/draft-*.json` | **Auto-invokes `hex plan draft`** — writes a stub, surfaces it in context, user picks it up via `/hex-feature-dev` |
+
+The classifier lives in `hex-cli/src/commands/hook.rs::classify_work_intent`
+and runs inside `hex hook route` on every `UserPromptSubmit`. The scoring is
+conservative — false negatives (T3 missed → T2) are cheap, false positives
+(T1 → T3) would spawn unwanted drafts, so the threshold errs high.
+
+### Auto-invocation — what it does NOT do
+
+Auto-invocation on T3 creates a **draft stub only**. It does **not**:
+
+- Create worktrees (still gated on `hex plan drafts approve` + `/hex-feature-dev`)
+- Dispatch coder agents (still gated on `hex plan execute`)
+- Write specs or steps (the draft contains only the original prompt)
+- Commit anything
+
+The existing specs-first hook (`hex-specs-required`) and phase gates stay in
+place. All the draft does is save the user the "which slash command do I
+type?" friction.
+
+### Controls & opt-outs
+
+- `HEX_AUTO_PLAN=0` — disable auto-invocation via env var (highest precedence)
+- `.hex/project.json` → `workplan.auto_invoke.enabled: false` — per-project
+  config toggle
+- `hex skip plan` in the prompt — per-prompt escape hatch (returns T1 regardless)
+- Questions (`?`, `how`, `why`, `what`) — always classified T1
+- Trivial phrases (`fix typo`, `rename`, `add a comment`, `run rustfmt`) —
+  always T1 regardless of other signals
+
+### Draft management
+
+```bash
+hex plan draft <prompt>           # Create a draft (normally auto-invoked)
+hex plan drafts list              # List pending drafts
+hex plan drafts approve <name>    # Promote draft → docs/workplans/approved-*
+hex plan drafts clear [--name N]  # Delete all (or one) drafts
+hex plan drafts gc --days 7       # Garbage-collect drafts older than N days
+```
+
 ## Hexagonal Architecture Rules (ENFORCED)
 
 These rules are checked by `hex analyze .` and the dead-code-analyzer agent:
