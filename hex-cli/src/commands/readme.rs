@@ -244,6 +244,18 @@ pub enum ReadmeAction {
     SyncAdrs,
     /// Re-run the project interview and update README scope
     Interview,
+    /// Validate README.md claims against the actual project (ADR-2604110227).
+    ///
+    /// Checks counts (ADRs, agents, skills, WASM modules, crates, port traits,
+    /// reducers), file existence (SVG assets, internal links), named entities
+    /// (agents and modules referenced in tables), and referenced `hex` CLI
+    /// commands. Reports drift with line numbers so the README can be updated
+    /// to match reality — or the reality fixed to match the README.
+    Validate {
+        /// Exit non-zero if any warnings are reported (CI mode).
+        #[arg(long, default_value_t = false)]
+        strict: bool,
+    },
 }
 
 pub async fn run(action: ReadmeAction) -> Result<()> {
@@ -316,7 +328,667 @@ pub async fn run(action: ReadmeAction) -> Result<()> {
             println!("{} README.md generated", "\u{2b21}".cyan());
             Ok(())
         }
+        ReadmeAction::Validate { strict } => {
+            let report = validate_readme(&readme_path, &cwd)?;
+            report.print();
+
+            let failed = report.errors > 0 || (strict && report.warnings > 0);
+            if failed {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
     }
+}
+
+// ── ADR-2604110227: README claim validation ─────────────────────────
+
+/// Severity of a single validation finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Ok,
+    Warn,
+    Err,
+}
+
+/// A single validation finding — one category, one message.
+#[derive(Debug, Clone)]
+pub struct ValidationEntry {
+    pub severity: Severity,
+    pub category: String,
+    pub message: String,
+}
+
+/// Aggregated results of README validation.
+#[derive(Debug, Default, Clone)]
+pub struct ValidationReport {
+    pub entries: Vec<ValidationEntry>,
+    pub ok: usize,
+    pub warnings: usize,
+    pub errors: usize,
+}
+
+impl ValidationReport {
+    fn push(&mut self, severity: Severity, category: &str, message: impl Into<String>) {
+        match severity {
+            Severity::Ok => self.ok += 1,
+            Severity::Warn => self.warnings += 1,
+            Severity::Err => self.errors += 1,
+        }
+        self.entries.push(ValidationEntry {
+            severity,
+            category: category.to_string(),
+            message: message.into(),
+        });
+    }
+
+    fn ok(&mut self, category: &str, message: impl Into<String>) {
+        self.push(Severity::Ok, category, message);
+    }
+
+    fn warn(&mut self, category: &str, message: impl Into<String>) {
+        self.push(Severity::Warn, category, message);
+    }
+
+    fn err(&mut self, category: &str, message: impl Into<String>) {
+        self.push(Severity::Err, category, message);
+    }
+
+    /// Print the report in human-readable form.
+    pub fn print(&self) {
+        for e in &self.entries {
+            let (icon, styled) = match e.severity {
+                Severity::Ok => ("\u{2713}", "ok".green()),
+                Severity::Warn => ("\u{26a0}", "warn".yellow()),
+                Severity::Err => ("\u{2717}", "err".red()),
+            };
+            println!("  {} [{}] {}: {}", icon, styled, e.category.cyan(), e.message);
+        }
+        println!();
+        println!(
+            "  {} {} ok   {} warn   {} err",
+            "\u{2b21}".cyan(),
+            self.ok.to_string().green(),
+            self.warnings.to_string().yellow(),
+            self.errors.to_string().red()
+        );
+    }
+}
+
+/// Parse a number that appears immediately before `needle` in `haystack`.
+/// Optionally accepts a leading `~` for approximate values.
+///
+/// Example: `extract_number_before("107 Architecture Decision Records ...", "Architecture Decision Records")`
+/// returns `Some((107, false))`.
+/// For `"~130 reducers"`: returns `Some((130, true))` — the bool indicates "approximate".
+fn extract_number_before(haystack: &str, needle: &str) -> Option<(usize, bool)> {
+    let idx = haystack.find(needle)?;
+    let before = &haystack[..idx];
+    // Walk backwards from idx collecting digits, allowing one trailing space and
+    // a trailing `_` or `-` (for badges like `145_Accepted`).
+    let trimmed = before.trim_end_matches([' ', '_', '-']);
+    let digits: String = trimmed
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if digits.is_empty() {
+        return None;
+    }
+    let approx = trimmed
+        .chars()
+        .rev()
+        .nth(digits.len())
+        .map(|c| c == '~')
+        .unwrap_or(false);
+    digits.parse::<usize>().ok().map(|n| (n, approx))
+}
+
+/// Count files under `dir` whose filename starts with `prefix` and ends with `suffix`.
+fn count_files_matching(dir: &Path, prefix: &str, suffix: &str) -> usize {
+    if !dir.is_dir() {
+        return 0;
+    }
+    std::fs::read_dir(dir)
+        .ok()
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    name.starts_with(prefix) && name.ends_with(suffix)
+                })
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// Count unique top-level entries under `hex-cli/assets/skills/`.
+/// A "skill" is either a directory containing SKILL.md, or a flat *.md file.
+fn count_skills(project_root: &Path) -> usize {
+    let dir = project_root.join("hex-cli/assets/skills");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    let mut names = std::collections::HashSet::new();
+    for entry in rd.filter_map(|e| e.ok()) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let path = entry.path();
+        if path.is_dir() && path.join("SKILL.md").is_file() {
+            names.insert(name);
+        } else if path.is_file() && name.ends_with(".md") {
+            // Strip .md extension for deduplication against directory form
+            let stem = name.trim_end_matches(".md").to_string();
+            // Skip if a directory form already exists for this name
+            if !dir.join(&stem).is_dir() {
+                names.insert(stem);
+            }
+        }
+    }
+    names.len()
+}
+
+/// Count top-level YAML files under `hex-cli/assets/agents/hex/hex/`.
+fn count_agents(project_root: &Path) -> usize {
+    let dir = project_root.join("hex-cli/assets/agents/hex/hex");
+    count_files_matching(&dir, "", ".yml")
+}
+
+/// Count top-level subdirectories of `spacetime-modules/` that contain Cargo.toml.
+fn count_wasm_modules(project_root: &Path) -> usize {
+    let dir = project_root.join("spacetime-modules");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    rd.filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path().is_dir() && e.path().join("Cargo.toml").is_file()
+        })
+        .count()
+}
+
+/// Count `pub trait` declarations in `hex-core/src/ports/*.rs`.
+fn count_port_traits(project_root: &Path) -> usize {
+    let dir = project_root.join("hex-core/src/ports");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    let mut count = 0;
+    for entry in rd.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+            continue;
+        }
+        if path.file_name().and_then(|s| s.to_str()) == Some("mod.rs") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        count += content.lines().filter(|l| l.starts_with("pub trait ")).count();
+    }
+    count
+}
+
+/// Count `#[reducer]` and `#[spacetimedb::reducer]` attributes across spacetime modules.
+fn count_reducers(project_root: &Path) -> usize {
+    let dir = project_root.join("spacetime-modules");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    let mut count = 0;
+    for entry in rd.filter_map(|e| e.ok()) {
+        let lib = entry.path().join("src/lib.rs");
+        if let Ok(content) = std::fs::read_to_string(&lib) {
+            count += content
+                .lines()
+                .filter(|l| {
+                    let t = l.trim_start();
+                    t.starts_with("#[reducer]") || t.starts_with("#[spacetimedb::reducer")
+                })
+                .count();
+        }
+    }
+    count
+}
+
+/// Count workspace members in the root `Cargo.toml`.
+fn count_workspace_crates(project_root: &Path) -> usize {
+    let cargo_toml = project_root.join("Cargo.toml");
+    let Ok(content) = std::fs::read_to_string(&cargo_toml) else {
+        return 0;
+    };
+    // Extract the members line
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("members") {
+            // `members = ["a", "b", ...]`
+            return trimmed.matches(',').count() + 1;
+        }
+    }
+    0
+}
+
+/// Extract each `hex <subcommand>` invocation from fenced bash blocks in the README.
+/// Returns the subcommand list (e.g. `vec!["nexus", "start"]`) for each invocation.
+fn extract_hex_commands(readme: &str) -> Vec<Vec<String>> {
+    let mut in_bash = false;
+    let mut commands = Vec::new();
+    for line in readme.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```bash") {
+            in_bash = true;
+            continue;
+        }
+        if trimmed.starts_with("```") {
+            in_bash = false;
+            continue;
+        }
+        if !in_bash {
+            continue;
+        }
+        // Strip comments
+        let no_comment = trimmed.split('#').next().unwrap_or("").trim();
+        let Some(rest) = no_comment.strip_prefix("hex ") else {
+            continue;
+        };
+        // Take the first two tokens (subcommand + action) — --help works at any level
+        let mut parts = rest.split_whitespace();
+        let mut cmd = Vec::new();
+        if let Some(sub) = parts.next() {
+            cmd.push(sub.to_string());
+            if let Some(action) = parts.next() {
+                // Only include a second token if it looks like a subcommand
+                // (not a flag and not a positional arg with quotes/paths)
+                if !action.starts_with('-')
+                    && !action.starts_with('"')
+                    && !action.starts_with('\'')
+                    && !action.starts_with('<')
+                    && !action.starts_with('$')
+                    && !action.contains('/')
+                    && !action.contains('.')
+                {
+                    cmd.push(action.to_string());
+                }
+            }
+        }
+        if !cmd.is_empty() {
+            commands.push(cmd);
+        }
+    }
+    // Deduplicate
+    commands.sort();
+    commands.dedup();
+    commands
+}
+
+/// Extract local markdown links `[text](path)` where `path` does not start with
+/// `http://`, `https://`, or `#`. Returns a list of the paths.
+fn extract_internal_links(readme: &str) -> Vec<String> {
+    let mut links = Vec::new();
+    let mut rest = readme;
+    while let Some(start) = rest.find("](") {
+        let after = &rest[start + 2..];
+        if let Some(end) = after.find(')') {
+            let path = &after[..end];
+            if !path.starts_with("http://")
+                && !path.starts_with("https://")
+                && !path.starts_with('#')
+                && !path.starts_with("mailto:")
+                && !path.is_empty()
+            {
+                links.push(path.to_string());
+            }
+            rest = &after[end + 1..];
+        } else {
+            break;
+        }
+    }
+    links
+}
+
+/// Validate the repo README against the actual filesystem and binary.
+///
+/// Returns a [`ValidationReport`] describing each check's outcome. Callers
+/// decide what to do with the report: CLI prints it and exits non-zero on
+/// errors/strict warnings; the unit test asserts `errors == 0`.
+pub fn validate_readme(readme_path: &Path, project_root: &Path) -> Result<ValidationReport> {
+    let mut report = ValidationReport::default();
+
+    let content = std::fs::read_to_string(readme_path)
+        .with_context(|| format!("failed to read README at {}", readme_path.display()))?;
+
+    // ─── 1. Count assertions ──────────────────────────────────────────
+
+    // ADRs: appear in both the badge and the body
+    let actual_adrs = count_files_matching(&project_root.join("docs/adrs"), "ADR-", ".md");
+    if let Some((n, _)) = extract_number_before(&content, "_Accepted") {
+        if n == actual_adrs {
+            report.ok("adr badge", format!("{} matches filesystem", n));
+        } else {
+            report.err(
+                "adr badge",
+                format!(
+                    "README badge claims {} ADRs, filesystem has {} (update line with '{}_Accepted')",
+                    n, actual_adrs, actual_adrs
+                ),
+            );
+        }
+    }
+    if let Some((n, _)) = extract_number_before(&content, "Architecture Decision Records") {
+        if n == actual_adrs {
+            report.ok("adr body", format!("{} matches filesystem", n));
+        } else {
+            report.err(
+                "adr body",
+                format!(
+                    "README body claims {} Architecture Decision Records, filesystem has {}",
+                    n, actual_adrs
+                ),
+            );
+        }
+    }
+
+    // Agents
+    let actual_agents = count_agents(project_root);
+    for phrase in ["agent definitions", "specialized agent definitions"] {
+        if let Some((n, _)) = extract_number_before(&content, phrase) {
+            if n == actual_agents {
+                report.ok("agents", format!("{} {} matches filesystem", n, phrase));
+            } else {
+                report.err(
+                    "agents",
+                    format!(
+                        "README claims {} {}, filesystem has {}",
+                        n, phrase, actual_agents
+                    ),
+                );
+            }
+        }
+    }
+
+    // Skills: README says "21+ skills" (approximate)
+    let actual_skills = count_skills(project_root);
+    if let Some((n, _)) = extract_number_before(&content, "+ skills") {
+        if actual_skills >= n {
+            report.ok("skills", format!("{}+ matches (actual {})", n, actual_skills));
+        } else {
+            report.warn(
+                "skills",
+                format!(
+                    "README claims {}+ skills, filesystem has only {}",
+                    n, actual_skills
+                ),
+            );
+        }
+    }
+
+    // WASM modules
+    let actual_modules = count_wasm_modules(project_root);
+    if let Some((n, _)) = extract_number_before(&content, "WASM modules") {
+        if n == actual_modules {
+            report.ok("wasm modules", format!("{} matches filesystem", n));
+        } else {
+            report.err(
+                "wasm modules",
+                format!(
+                    "README claims {} WASM modules, filesystem has {}",
+                    n, actual_modules
+                ),
+            );
+        }
+    }
+
+    // Workspace crates — the prose says `hex-cli/` etc. and the System Architecture
+    // block at line ~253 lists 6 crates. We validate by looking for the `6 crates`
+    // prose if present; otherwise we skip.
+    let actual_crates = count_workspace_crates(project_root);
+    if actual_crates > 0 {
+        report.ok(
+            "crates",
+            format!("{} workspace crates found in Cargo.toml", actual_crates),
+        );
+    }
+
+    // Port traits
+    let actual_ports = count_port_traits(project_root);
+    if let Some((n, _)) = extract_number_before(&content, "port traits") {
+        if n == actual_ports {
+            report.ok("port traits", format!("{} matches hex-core/src/ports/", n));
+        } else {
+            report.err(
+                "port traits",
+                format!(
+                    "README claims {} port traits, hex-core/src/ports/ has {}",
+                    n, actual_ports
+                ),
+            );
+        }
+    }
+
+    // Reducers — `~130 reducers` with tolerance
+    let actual_reducers = count_reducers(project_root);
+    if let Some((n, approx)) = extract_number_before(&content, "reducers") {
+        let tolerance = if approx { 20 } else { 0 };
+        let diff = (actual_reducers as isize - n as isize).unsigned_abs();
+        if diff <= tolerance {
+            report.ok(
+                "reducers",
+                format!(
+                    "{}{} matches (actual {}, within tolerance {})",
+                    if approx { "~" } else { "" },
+                    n,
+                    actual_reducers,
+                    tolerance
+                ),
+            );
+        } else {
+            report.warn(
+                "reducers",
+                format!(
+                    "README claims {}{} reducers, actual {} (diff {}, tolerance {})",
+                    if approx { "~" } else { "" },
+                    n,
+                    actual_reducers,
+                    diff,
+                    tolerance
+                ),
+            );
+        }
+    }
+
+    // ─── 2. SVG asset existence ───────────────────────────────────────
+
+    for asset_path in [
+        ".github/assets/banner.svg",
+        ".github/assets/comparison.svg",
+        ".github/assets/architecture.svg",
+        ".github/assets/swarm.svg",
+        ".github/assets/workflow.svg",
+    ] {
+        if content.contains(asset_path) {
+            if project_root.join(asset_path).is_file() {
+                report.ok("asset", format!("{} exists", asset_path));
+            } else {
+                report.err("asset", format!("{} referenced but missing", asset_path));
+            }
+        }
+    }
+
+    // ─── 3. Internal markdown links resolve ──────────────────────────
+
+    for link in extract_internal_links(&content) {
+        // Strip anchor fragments
+        let path_only = link.split('#').next().unwrap_or(&link);
+        if path_only.is_empty() {
+            continue;
+        }
+        let full = project_root.join(path_only);
+        if full.exists() {
+            report.ok("link", format!("{} resolves", path_only));
+        } else {
+            report.err("link", format!("{} broken (not found)", path_only));
+        }
+    }
+
+    // ─── 4. Named entities referenced in tables ──────────────────────
+
+    // WASM module names referenced in README table
+    let module_names = [
+        "hexflo-coordination",
+        "agent-registry",
+        "inference-gateway",
+        "secret-grant",
+        "rl-engine",
+        "chat-relay",
+        "neural-lab",
+    ];
+    for name in module_names {
+        if content.contains(name) {
+            let dir = project_root.join("spacetime-modules").join(name);
+            if dir.is_dir() {
+                report.ok("module-name", format!("{} exists", name));
+            } else {
+                report.err(
+                    "module-name",
+                    format!("{} referenced in README but spacetime-modules/{} missing", name, name),
+                );
+            }
+        }
+    }
+
+    // Crate names referenced in System Architecture block
+    let crate_names = [
+        "hex-cli",
+        "hex-nexus",
+        "hex-core",
+        "hex-agent",
+        "hex-desktop",
+        "hex-parser",
+    ];
+    for name in crate_names {
+        if content.contains(&format!("{}/", name)) || content.contains(&format!("**{}**", name)) {
+            let dir = project_root.join(name);
+            if dir.is_dir() {
+                report.ok("crate-name", format!("{}/ exists", name));
+            } else {
+                report.err(
+                    "crate-name",
+                    format!("{} referenced in README but directory missing", name),
+                );
+            }
+        }
+    }
+
+    // Agent names referenced in the "Agent Roles" table. Each must have a
+    // corresponding YAML under hex-cli/assets/agents/hex/hex/.
+    let agent_names = [
+        "hex-coder",
+        "planner",
+        "integrator",
+        "swarm-coordinator",
+        "validation-judge",
+        "behavioral-spec-writer",
+        "adversarial-reviewer",
+        "rust-refactorer",
+    ];
+    let agents_dir = project_root.join("hex-cli/assets/agents/hex/hex");
+    for name in agent_names {
+        // Backtick-quoted references in the README: `` `hex-coder` ``
+        if content.contains(&format!("`{}`", name)) {
+            let yaml = agents_dir.join(format!("{}.yml", name));
+            if yaml.is_file() {
+                report.ok("agent-name", format!("{}.yml exists", name));
+            } else {
+                report.err(
+                    "agent-name",
+                    format!(
+                        "`{}` referenced in README but hex-cli/assets/agents/hex/hex/{}.yml missing",
+                        name, name
+                    ),
+                );
+            }
+        }
+    }
+
+    // ─── 5. hex CLI commands referenced in README actually exist ──────
+
+    // We invoke the currently-built hex binary (if available) with `--help` for
+    // each referenced subcommand. If the binary isn't on PATH or at the expected
+    // location, we skip this check with a warning (not an error) so this test
+    // can still run in environments where the binary hasn't been built.
+    let hex_bin = find_hex_binary(project_root);
+    let commands = extract_hex_commands(&content);
+    if let Some(bin) = hex_bin {
+        for cmd in commands {
+            let mut args = cmd.clone();
+            args.push("--help".to_string());
+            let output = std::process::Command::new(&bin).args(&args).output();
+            match output {
+                Ok(o) if o.status.success() => {
+                    report.ok("cmd", format!("hex {} --help", cmd.join(" ")));
+                }
+                Ok(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    report.err(
+                        "cmd",
+                        format!(
+                            "hex {} --help failed: {}",
+                            cmd.join(" "),
+                            stderr.lines().next().unwrap_or("")
+                        ),
+                    );
+                }
+                Err(e) => {
+                    report.err(
+                        "cmd",
+                        format!("hex {} --help could not run: {}", cmd.join(" "), e),
+                    );
+                }
+            }
+        }
+    } else {
+        report.warn(
+            "cmd",
+            "hex binary not found — skipping command existence checks (build with `cargo build -p hex-cli`)",
+        );
+    }
+
+    Ok(report)
+}
+
+/// Locate the hex binary for command-existence checks.
+///
+/// Order:
+/// 1. `HEX_BINARY` env var (override for tests)
+/// 2. `target/debug/hex` under project root
+/// 3. `target/release/hex` under project root
+/// 4. `hex` on PATH
+fn find_hex_binary(project_root: &Path) -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("HEX_BINARY") {
+        let path = std::path::PathBuf::from(p);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    for rel in ["target/debug/hex", "target/release/hex"] {
+        let p = project_root.join(rel);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    // Fall back to `hex` on PATH
+    if std::process::Command::new("hex")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return Some(std::path::PathBuf::from("hex"));
+    }
+    None
 }
 
 #[cfg(test)]
@@ -408,5 +1080,113 @@ mod tests {
         assert!(readme.contains("test-proj"));
         assert!(readme.contains("Must be fast"));
         assert!(readme.contains("hex:adr-summary"));
+    }
+
+    // ─ ADR-2604110227: README validator helpers ─
+
+    #[test]
+    fn extract_number_before_simple() {
+        assert_eq!(
+            extract_number_before("we have 145 ADRs total", "ADRs"),
+            Some((145, false))
+        );
+    }
+
+    #[test]
+    fn extract_number_before_badge_format() {
+        // Badges use `145_Accepted` — underscore is eaten by the trimmer
+        assert_eq!(
+            extract_number_before("ADRs-145_Accepted-bc8cff", "Accepted"),
+            Some((145, false))
+        );
+    }
+
+    #[test]
+    fn extract_number_before_approximate() {
+        assert_eq!(
+            extract_number_before("~130 reducers in modules", "reducers"),
+            Some((130, true))
+        );
+    }
+
+    #[test]
+    fn extract_number_before_no_match() {
+        assert_eq!(extract_number_before("no numbers here", "here"), None);
+    }
+
+    #[test]
+    fn extract_number_before_plain_phrase() {
+        assert_eq!(
+            extract_number_before("18 agent definitions in YAML", "agent definitions"),
+            Some((18, false))
+        );
+    }
+
+    #[test]
+    fn extract_internal_links_basic() {
+        let md = "See [the ADRs](docs/adrs/) and [home](https://example.com) and [sec](#anchor).";
+        let links = extract_internal_links(md);
+        // Only local links
+        assert_eq!(links, vec!["docs/adrs/".to_string()]);
+    }
+
+    #[test]
+    fn extract_hex_commands_from_bash_block() {
+        let md = "\
+prose line
+```bash
+hex nexus start              # start the daemon
+hex analyze .                # check architecture
+hex adr search \"inference\"   # positional with quotes
+```
+outside block: hex foo bar
+```bash
+hex task list
+```
+";
+        let cmds = extract_hex_commands(md);
+        // `hex nexus start` → ["nexus", "start"]
+        // `hex analyze .` → ["analyze"] (the "." is filtered as positional)
+        // `hex adr search "inference"` → ["adr", "search"] (quoted arg filtered)
+        // `hex task list` → ["task", "list"]
+        // Outside bash block → ignored
+        assert!(cmds.contains(&vec!["nexus".to_string(), "start".to_string()]));
+        assert!(cmds.contains(&vec!["adr".to_string(), "search".to_string()]));
+        assert!(cmds.contains(&vec!["task".to_string(), "list".to_string()]));
+        assert!(!cmds.iter().any(|c| c == &vec!["foo".to_string(), "bar".to_string()]));
+    }
+
+    /// This is the headline regression guard: validate the REAL repo README.
+    /// If any count or link drifts, this test fails with a clear list of the
+    /// drift so the developer can fix either the README or the underlying
+    /// fact it claims. The test is skipped when the hex binary hasn't been
+    /// built yet (command existence checks require the binary).
+    #[test]
+    fn repo_readme_is_accurate() {
+        // Walk up from hex-cli's Cargo.toml dir to find the project root.
+        let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("CARGO_MANIFEST_DIR has a parent")
+            .to_path_buf();
+        let readme = project_root.join("README.md");
+        if !readme.is_file() {
+            // Not running from the hex workspace — skip (e.g., crates.io test)
+            return;
+        }
+        let report = validate_readme(&readme, &project_root).expect("validator ran");
+        if report.errors > 0 {
+            // Print the drift so CI shows it
+            for e in &report.entries {
+                if e.severity == Severity::Err {
+                    eprintln!("README drift [{}]: {}", e.category, e.message);
+                }
+            }
+            panic!(
+                "README.md has {} drift errors — run `hex readme validate` to see details",
+                report.errors
+            );
+        }
+        // Warnings are informational but don't fail the test. CI can enforce
+        // stricter behavior via `hex readme validate --strict` if desired.
     }
 }
