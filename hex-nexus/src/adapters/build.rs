@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn detect_go_project() {
-        let adapter = BuildAdapter::new();
+        let _adapter = BuildAdapter::new();
         // This test would need a temp dir with go.mod — just test the parse logic
         let diag = parse_diagnostic_line("main.go:10:5: undefined: fmt.Printl");
         assert!(diag.is_some());

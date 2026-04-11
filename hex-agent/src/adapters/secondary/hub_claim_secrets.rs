@@ -176,7 +176,13 @@ mod tests {
     fn default_config_uses_nexus_port() {
         let config = HubClaimConfig::default();
         // Default resolves via HEX_NEXUS_URL env → ~/.hex/nexus.port → 5555
-        assert!(config.hub_url.starts_with("http://127.0.0.1:"));
+        // Accept both 127.0.0.1 and localhost — HEX_NEXUS_URL may be set in the
+        // test environment to either form.
+        assert!(
+            config.hub_url.starts_with("http://127.0.0.1:") || config.hub_url.starts_with("http://localhost:"),
+            "hub_url should be a local address, got: {}",
+            config.hub_url
+        );
         assert_eq!(config.timeout_secs, 10);
     }
 

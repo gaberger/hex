@@ -1118,6 +1118,7 @@ impl TuiApp {
                             self.session.quality_result = Some(sr.to_quality_report(language));
                         }
                         Err(e) => {
+                            // Build partial quality report so finalize_session knows supervisor ran
                             self.session.quality_result = Some(crate::session::QualityReport {
                                 grade: "F".into(),
                                 score: 0,

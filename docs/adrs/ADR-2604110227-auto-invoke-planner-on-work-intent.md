@@ -1,8 +1,7 @@
 # ADR-2604110227: Auto-Invoke Planner on Work-Intent Prompts
 
-**Status:** Accepted
+**Status:** Proposed
 **Date:** 2026-04-11
-**Accepted:** 2026-04-11 (same session — implemented end-to-end and verified)
 **Drivers:** User-reported friction — "Why do we have to ask for a workplan to be created when Claude and others create todos automatically?" The intent classifier already exists in `hex hook route` but only emits passive warnings; it never actually invokes the planner.
 **Supersedes:** None (extends ADR-050)
 
@@ -150,65 +149,18 @@ opt_out_phrase = "hex skip plan"
 
 ## Implementation
 
-All phases implemented and verified in commits `744740a` (feat) and the P6/P2
-closeout commit. Two phases were reshaped during implementation — see the
-"Implementation notes" block below for why.
-
 | Phase | Description | Validation Gate | Status |
 |-------|------------|-----------------|--------|
-| P1 | Extract `classify_work_intent()` into a scoring function returning `Tier { T1Todo, T2MiniPlan, T3Workplan }`; unit tests for all three tiers | `cargo test -p hex-cli commands::hook::tests` passes | **Done** |
-| P2 | Config schema for `workplan.auto_invoke.*` — read path via `HEX_AUTO_PLAN` env var and `.hex/project.json::workplan.auto_invoke.enabled` with `auto_plan_enabled()` helper | `hex readme validate` exercises the hook route end-to-end | **Done** (reshaped — see note P2) |
-| P3 | Implement `hex plan draft --background <prompt>` subcommand that writes a draft stub to `docs/workplans/drafts/draft-<ts>-<slug>.json` | `hex plan draft --background "implement oauth"` produces a draft file | **Done** |
-| P4 | Replace the `WARNING: No active workplan…` and `BLOCKED:` branches in `route()` with tier dispatch; auto-invoke `hex plan draft --background` on T3 | Manual smoke test in `/tmp/hextest`: prompt triggers draft file creation | **Done** |
-| P5 | Add `hex plan drafts list/clear/approve/gc` subcommands | `hex plan drafts list` shows in-flight drafts; `approve` promotes to `docs/workplans/approved-*` | **Done** |
-| P6 | Wire `SessionState.pending_workplan_draft` field (ADR-050 extension) with self-heal on route hook | `pending_draft_should_clear()` unit tests cover None/existing/missing/never-existed cases | **Done** (reshaped — see note P6) |
-| P7 | Add `hex skip plan` prompt-level opt-out parsing inside `classify_work_intent()` | `t1_opt_out_phrase` test + inclusion in `t1_regression_false_positives` suite | **Done** |
-| P8 | Document "Task Tier Routing" subsection in `CLAUDE.md` + "Invocation" section in `hex-feature-dev` SKILL.md | Both sections present; `hex readme validate` reports 0 drift on linked docs | **Done** |
-| P9 | Cleanup job for stale drafts (`hex plan drafts gc --days N`, default 7) | `DraftsAction::Gc { days }` variant + `gc_drafts()` handler | **Done** |
-| P10 | Adversarial regression suite: 20-prompt test asserting T1 never mis-classifies as T3 | `t1_regression_false_positives` unit test, 20 prompts covering questions, trivial edits, empty, opt-out, and ambiguous phrasings | **Done** |
-
-### Implementation notes (reshaping during build-out)
-
-**Note P2**: The ADR originally asked for a full `hex config get/set` subcommand
-to read and write `workplan.auto_invoke.*` keys. During implementation this was
-downscoped to the existing `.hex/project.json` + `HEX_AUTO_PLAN` env var path
-because:
-
-1. hex already loads `.hex/project.json` for `lifecycle_enforcement` in the
-   same `route()` hook — adding a parallel `hex_config` table and a
-   `config get/set` CLI would have duplicated infrastructure for a single key.
-2. Users who need to disable auto-invocation can either (a) set
-   `HEX_AUTO_PLAN=0` in their shell, (b) add
-   `"workplan": { "auto_invoke": { "enabled": false } }` to `.hex/project.json`,
-   or (c) add `hex skip plan` to the offending prompt.
-3. The `auto_plan_enabled()` helper in `hex-cli/src/commands/hook.rs` reads
-   all three sources in the documented precedence order
-   (env var → project config → default `true`).
-
-If a future ADR adds many more per-project tunables, that will be the right
-time to introduce a general `hex config get/set` CLI — not for one boolean.
-
-**Note P6**: The ADR originally asked for `SessionState.pending_workplan_draft`
-to be cleared by "emitting a `SubagentStop` event when the planner finishes."
-That phrasing assumed an async model where a background planner process
-emits a completion event. The actual implementation is synchronous —
-`hex plan draft` writes a JSON stub in one shot, there is no background
-process whose stop event we could consume.
-
-The equivalent behavior is achieved by a **self-heal on the route hook**:
-on every `UserPromptSubmit`, if `pending_workplan_draft` points at a file
-that no longer exists on disk, the route hook clears the flag. This handles
-all three real-world termination paths:
-
-- User ran `hex plan drafts approve <name>` → draft moved to
-  `docs/workplans/approved-*`, original path gone → cleared.
-- User ran `hex plan drafts clear [--name N]` → draft removed → cleared.
-- `hex plan drafts gc --days N` ran in another session → draft removed → cleared.
-- User manually `rm`'d the file → cleared.
-
-The self-heal lives in `hex-cli/src/commands/hook.rs::pending_draft_should_clear`
-with four unit tests covering `None`, existing file, missing file, and
-never-existed path.
+| P1 | Extract `classify_work_intent()` into a scoring function returning `Tier { T1, T2, T3 }`; unit tests for 30+ prompt samples across all three tiers | `cargo test -p hex-cli classify_work_intent` passes | Pending |
+| P2 | Add `config.toml` + `hex_config` schema for `workplan.auto_invoke.*` keys; wire `hex config get/set` | `cargo check --workspace`; `hex config get workplan.auto_invoke.enabled` returns a value | Pending |
+| P3 | Implement `hex plan draft --background <prompt>` subcommand that spawns behavioral-spec-writer + planner agents to `docs/workplans/drafts/` | `hex plan draft --background "implement oauth"` produces a draft file | Pending |
+| P4 | Replace the `WARNING: No active workplan…` and `BLOCKED:` branches in `route()` at `hex-cli/src/commands/hook.rs:1678-1688` with tier-based dispatch; auto-invoke `hex plan draft --background` on T3 | Manual test: prompt "implement oauth login" triggers draft | Pending |
+| P5 | Add `hex plan drafts list/clear/approve` subcommands | `hex plan drafts list` shows in-flight drafts | Pending |
+| P6 | Wire `SessionState.pending_workplan_draft` field (ADR-050 extension); emit `SubagentStop` event when planner finishes | Event visible in session log | Pending |
+| P7 | Add `hex skip plan` prompt-level opt-out parsing to `route()` | Prompt containing "hex skip plan" bypasses auto-invocation | Pending |
+| P8 | Document in CLAUDE.md "Task Tier Routing" subsection + update `/hex-feature-dev` SKILL.md | `hex analyze .` passes; docs render correctly | Pending |
+| P9 | 7-day cleanup job for `docs/workplans/drafts/*.json` older than threshold; reuses `hex adr abandoned` pattern | `hex plan drafts gc` purges stale drafts | Pending |
+| P10 | Adversarial review gate: does auto-invocation ever fire on a read-only question? Regression suite of 20 false-positive prompts | All 20 return tier T1 or T2 | Pending |
 
 ## References
 
