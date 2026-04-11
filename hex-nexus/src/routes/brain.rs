@@ -7,7 +7,7 @@
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 
-use crate::brain_service::{self, ImprovementOutcome};
+use crate::brain_service;
 use crate::state::SharedState;
 
 #[derive(Serialize)]

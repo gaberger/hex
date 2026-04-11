@@ -154,7 +154,7 @@ async fn models() -> anyhow::Result<()> {
     ];
     
     println!("{}", "Available Models".green().bold());
-    println!("{:<20}  {:<25}  {}", "Model", "Description", "Base Score");
+    println!("{:<20}  {:<25}  Base Score", "Model", "Description");
     println!("{}", "-".repeat(60));
     
     for (model, desc, score) in models {
