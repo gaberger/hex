@@ -35,6 +35,8 @@ pub mod ws;
 pub mod context;
 pub mod inference_ws;
 pub mod events;
+pub mod fingerprint;
+pub mod brain;
 
 use axum::{Router, Json, routing::{get, post, patch, delete}, extract::DefaultBodyLimit};
 use axum::response::{IntoResponse, Redirect};
@@ -446,6 +448,9 @@ pub fn build_router(state: SharedState) -> Router {
             .layer(DefaultBodyLimit::max(EVENT_BODY_LIMIT)))
         // Tool-call event log (ADR-2604012137) — SQLite + WebSocket broadcast
         .route("/api/events", post(events::post_event).get(events::list_events))
+        // AGENTIC BRAIN (ADR-2604102200) — must register BEFORE {project_id} routes
+        .route("/api/brain/status", get(brain::status))
+        .route("/api/brain/test", post(brain::test))
         // Per-project queries (browser reads)
         .route("/api/{project_id}/health", get(query::get_health))
         .route("/api/{project_id}/tokens/overview", get(query::get_tokens_overview))
@@ -597,6 +602,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/workplan/execute", post(orchestration::execute_workplan)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/workplan/status", get(orchestration::workplan_status))
+        .route("/api/workplan/fail", post(orchestration::fail_workplan))
         .route("/api/workplan/pause", post(orchestration::pause_workplan))
         .route("/api/workplan/resume", post(orchestration::resume_workplan))
         // Workplan reporting (ADR-046)
@@ -604,6 +610,13 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/workplan/by-path", get(orchestration::workplan_by_path))
         .route("/api/workplan/{id}", get(orchestration::get_workplan))
         .route("/api/workplan/{id}/report", get(orchestration::workplan_report))
+        // Steering API (P3a/b) — must come AFTER /api/agents/{id} to avoid route conflict
+        .route("/api/steering/{agent_id}/event", post(orchestration::session_events))
+        .route("/api/steering/{agent_id}/interrupt", post(orchestration::session_interrupt))
+        .route("/api/steering/{agent_id}/instructions", get(orchestration::session_poll_instructions))
+        // Environment API (P5a)
+        .route("/api/environments", post(orchestration::create_environment))
+        .route("/api/environments", get(orchestration::list_environments))
         // Context engineering (ADR-2603312100) — hot-reload context caches
         .route("/api/context/reload", post(context::reload_context))
         // MCP tool registry — serves config/mcp-tools.json for dashboard discovery
@@ -614,6 +627,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/projects/{id}/workplans", get(project_workplan_files))
         .route("/api/projects/{id}/report", get(projects::project_report))
         .route("/api/projects/{id}/swarms", get(projects::project_swarms))
+        // Architecture fingerprint (ADR-2603301200)
+        .route("/api/projects/{id}/fingerprint", post(fingerprint::generate_fingerprint)
+            .get(fingerprint::get_fingerprint))
+        .route("/api/projects/{id}/fingerprint/text", get(fingerprint::get_fingerprint_text))
         // Project-scoped file browsing (ADR-045)
         .route("/api/{project_id}/browse", get(browse::browse_dir))
         .route("/api/{project_id}/read/{*path}", get(browse::read_file))

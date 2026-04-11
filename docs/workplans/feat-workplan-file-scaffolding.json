@@ -1,0 +1,130 @@
+{
+  "id": "feat-workplan-file-scaffolding",
+  "feature": "Workplan File Scaffolding",
+  "description": "Fix workplan execution to scaffold NEW files before agents edit them — the fundamental flaw that broke managed-agents-autonomy workplan",
+  "status": "planned",
+  "adr": "ADR-2604101200",
+  "project_dir": "/Volumes/ExtendedStorage/para/01-Projects/hex-intf",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Add scaffold_file() function to hex-nexus",
+      "tier": 0,
+      "tasks": [
+        {
+          "id": "T1.1",
+          "name": "Add scaffold_file() function",
+          "layer": "adapters/secondary",
+          "description": "Add scaffold_file() function to workplan_executor.rs that creates empty files with proper module structure for Rust, TypeScript, and other file types",
+          "deps": [],
+          "files": ["hex-nexus/src/orchestration/workplan_executor.rs"],
+          "done_condition": "cargo check -p hex-nexus",
+          "done_command": "cargo check -p hex-nexus 2>/dev/null && echo PASS || echo FAIL"
+        }
+      ],
+      "gate": {
+        "gate_type": "build",
+        "command": "cargo check -p hex-nexus",
+        "blocking": true
+      }
+    },
+    {
+      "id": "P2",
+      "name": "Add file existence check in execute_phase()",
+      "tier": 0,
+      "depends_on": ["P1"],
+      "tasks": [
+        {
+          "id": "T2.1",
+          "name": "File existence check before agent spawn",
+          "layer": "adapters/secondary",
+          "description": "Modify execute_phase() to check if task.files exist before spawning agents. If not, scaffold them first.",
+          "deps": ["T1.1"],
+          "files": ["hex-nexus/src/orchestration/workplan_executor.rs"],
+          "done_condition": "cargo check -p hex-nexus && ls hex-nexus/src/orchestration/workplan_executor.rs | head -1",
+          "done_command": "cargo check -p hex-nexus 2>/dev/null && echo PASS || echo FAIL"
+        }
+      ],
+      "gate": {
+        "gate_type": "build",
+        "command": "cargo check -p hex-nexus",
+        "blocking": true
+      }
+    },
+    {
+      "id": "P3",
+      "name": "Task classification (NEW vs MODIFY)",
+      "tier": 1,
+      "depends_on": ["P2"],
+      "tasks": [
+        {
+          "id": "T3.1",
+          "name": "Classify tasks as NEW or MODIFY",
+          "layer": "domain",
+          "description": "Add task classification: if file exists in any crate's Cargo.toml/paths, it's MODIFY; otherwise it's NEW (needs scaffolding)",
+          "deps": ["T2.1"],
+          "files": ["hex-core/src/domain/workplan.rs"],
+          "done_condition": "cargo check -p hex-core",
+          "done_command": "cargo check -p hex-core 2>/dev/null && echo PASS || echo FAIL"
+        }
+      ],
+      "gate": {
+        "gate_type": "build",
+        "command": "cargo check --workspace",
+        "blocking": true
+      }
+    },
+    {
+      "id": "P4",
+      "name": "Prompt enrichment with scaffolded file list",
+      "tier": 1,
+      "depends_on": ["P3"],
+      "tasks": [
+        {
+          "id": "T4.1",
+          "name": "Update agent prompt with scaffolded file info",
+          "layer": "adapters/secondary",
+          "description": "After scaffolding, update the agent prompt to indicate which files were scaffolded so the agent knows to populate them",
+          "deps": ["T3.1"],
+          "files": ["hex-nexus/src/orchestration/workplan_executor.rs"],
+          "done_condition": "cargo check -p hex-nexus",
+          "done_command": "cargo check -p hex-nexus 2>/dev/null && echo PASS || echo FAIL"
+        }
+      ],
+      "gate": {
+        "gate_type": "build",
+        "command": "cargo check -p hex-nexus",
+        "blocking": true
+      }
+    },
+    {
+      "id": "P5",
+      "name": "Integration test",
+      "tier": 5,
+      "depends_on": ["P4"],
+      "tasks": [
+        {
+          "id": "T5.1",
+          "name": "Run managed-agents workplan again",
+          "layer": "integration",
+          "description": "Execute the managed-agents-autonomy workplan again and verify all 18 tasks complete without file-not-found errors",
+          "deps": ["T4.1"],
+          "files": [],
+          "done_condition": "hex plan execute docs/workplans/feat-managed-agents-autonomy.json",
+          "done_command": "echo 'Run workplan and verify P0 tasks complete'"
+        }
+      ],
+      "gate": {
+        "gate_type": "test",
+        "command": "cargo test -p hex-nexus",
+        "blocking": false
+      }
+    }
+  ],
+  "successCriteria": [
+    "Execute phase checks file existence before spawning agents",
+    "NEW files are scaffolded before agents edit them",
+    "Managed-agents-autonomy workplan completes P0 phase",
+    "All 18 tasks in managed-agents workplan pass"
+  ]
+}

@@ -186,11 +186,44 @@ pub async fn inference_complete(
                             health_checked_at: p.last_health_check.clone(),
                         })
                     } else {
-                        tracing::debug!(
-                            model = ?body.model,
-                            "no registered provider serves this model — falling through to key-based path"
-                        );
-                        None
+                        // No registry match — check for local Ollama provider as fallback.
+                        // Local models don't have "/" in the ID (e.g. "nemotron-mini", "qwen3:8b").
+                        let is_local_model = body.model.as_ref()
+                            .map(|m| !m.contains('/'))
+                            .unwrap_or(false);
+                        
+                        if is_local_model {
+                            // Find any ollama provider (local) that might serve this.
+                            let local_provider = providers.iter()
+                                .find(|p| p.provider_type == "ollama" && !p.base_url.is_empty());
+                            
+                            if let Some(p) = local_provider {
+                                tracing::debug!(
+                                    model = ?body.model,
+                                    provider = %p.provider_id,
+                                    "routing to local Ollama provider"
+                                );
+                                Some(crate::routes::secrets::InferenceEndpointEntry {
+                                    id: p.provider_id.clone(),
+                                    url: p.base_url.clone(),
+                                    provider: p.provider_type.clone(),
+                                    model: body.model.clone().unwrap_or_default(),
+                                    status: if p.healthy == 1 { "healthy".into() } else { "unknown".into() },
+                                    requires_auth: false,
+                                    secret_key: String::new(),
+                                    health_checked_at: p.last_health_check.clone(),
+                                })
+                            } else {
+                                tracing::debug!(model = ?body.model, "no local Ollama provider found");
+                                None
+                            }
+                        } else {
+                            tracing::debug!(
+                                model = ?body.model,
+                                "no registered provider serves this model — falling through to key-based path"
+                            );
+                            None
+                        }
                     }
                 }
                 _ => None,

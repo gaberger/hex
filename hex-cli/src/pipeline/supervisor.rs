@@ -1185,6 +1185,23 @@ impl Supervisor {
 
             let passed = matches!(&result, TierResult::AllPassed { .. });
             let halted = matches!(&result, TierResult::Halted { .. });
+
+            // When a tier passes all objectives, record its step IDs as completed.
+            // This lets the TUI sync-back at tui/mod.rs correctly reflect actual progress
+            // rather than falling through to the permissive workplan-all fallback.
+            if passed {
+                if let Some(ref session_mutex) = self.session {
+                    if let Ok(mut session) = session_mutex.lock() {
+                        for step in &steps {
+                            if !session.completed_steps.contains(&step.id) {
+                                session.completed_steps.push(step.id.clone());
+                            }
+                        }
+                        let _ = session.save();
+                    }
+                }
+            }
+
             tier_results.push((tier, result));
 
             if halted {
@@ -1347,7 +1364,7 @@ impl Supervisor {
                 let hash = format!("{:x}", hasher.finish());
 
                 let hashes = fixer_hashes.entry(obj).or_default();
-                let is_repeat = hashes.last().map_or(false, |prev| prev == &hash);
+                let is_repeat = hashes.last().is_some_and(|prev| prev == &hash);
                 hashes.push(hash);
 
                 if is_repeat {
@@ -1787,16 +1804,14 @@ impl Supervisor {
                             if worker_result.tests_pass { "✓" } else { "✗" },
                             worker_result.file_path,
                         );
-                        // Store audit metrics so execute_agent_tracked logs them once.
-                        if worker_result.model.is_some() || worker_result.tokens.is_some() {
-                            self.store_dispatch_metrics(AgentMetrics {
-                                model: worker_result.model.clone(),
-                                tokens: worker_result.tokens,
-                                input_tokens: worker_result.input_tokens,
-                                output_tokens: worker_result.output_tokens,
-                                cost_usd: worker_result.cost_usd,
-                            });
-                        }
+                        // Store audit metrics so execute_agent_tracked logs them once (ADR-2604071300).
+                        self.store_dispatch_metrics(AgentMetrics {
+                            model: worker_result.model.clone(),
+                            tokens: worker_result.tokens,
+                            input_tokens: worker_result.input_tokens,
+                            output_tokens: worker_result.output_tokens,
+                            cost_usd: worker_result.cost_usd,
+                        });
                     }
                 }
                 poll_result
@@ -2051,8 +2066,6 @@ impl Supervisor {
                         });
 
                         // Store selection metadata for RL reward reporting after evaluate_all.
-                        // Success/failure is not known until CodeCompiles is evaluated, so we
-                        // store here and report in run_tier once the objective state is available.
                         if let Ok(mut guard) = self.last_code_selection.lock() {
                             *guard = Some((result.selected_model.clone(), result.duration_ms));
                         }
@@ -2339,7 +2352,7 @@ impl Supervisor {
                             .await
                             .with_context(|| format!("code phase step {} failed", step.id))?;
 
-                        // Store metrics for session audit trail (ADR-2604071300)
+                        // Store metrics for session audit trail (ADR-2604071300, fallback path)
                         self.store_dispatch_metrics(AgentMetrics {
                             model: Some(result.model_used.clone()),
                             tokens: Some(result.tokens),

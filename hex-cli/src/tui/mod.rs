@@ -1104,16 +1104,15 @@ impl TuiApp {
                             self.session.completed_steps = sup_session.completed_steps.clone();
                         }
                     }
-                    // Fallback: if supervisor ran but shared session didn't record completed_steps,
-                    // populate from workplan so finalize_session doesn't false-positive as Paused.
-                    if self.session.completed_steps.is_empty() {
+                    // Fallback: populate completed_steps from workplan (ADR-2604071300)
+                    // Only when supervisor succeeded — never mark steps done on error/halt.
+                    if self.session.completed_steps.is_empty() && result.is_ok() {
                         self.session.completed_steps = workplan_data.steps.iter()
                             .map(|s| s.id.clone())
                             .collect();
                     }
 
-                    // Build quality_result from supervisor evaluation.
-                    // On Ok: full report from tier results. On Err: partial report marking failure.
+                    // Build quality_result — even on Err for partial results (ADR-2604071300)
                     match &result {
                         Ok(sr) => {
                             self.session.quality_result = Some(sr.to_quality_report(language));
@@ -1137,6 +1136,7 @@ impl TuiApp {
                             });
                         }
                     }
+                    self.session.save()?;
 
                     match result {
                         Ok(sr) => {

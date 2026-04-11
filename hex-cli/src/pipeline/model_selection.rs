@@ -140,7 +140,10 @@ pub fn free_fallback_for(task_type: TaskType) -> &'static str {
 /// Explicit user `--model` overrides bypass this check intentionally.
 pub fn is_compatible_with_provider(model: &str, provider: Option<&str>) -> bool {
     match provider {
-        Some("openrouter") => !model.starts_with("claude-"),
+        // Claude models only work with Anthropic-backed providers
+        Some("openrouter") | Some("ollama") | Some("llama_cpp") | Some("openai_compat") => {
+            !model.starts_with("claude-")
+        }
         _ => true,
     }
 }

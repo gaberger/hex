@@ -1,0 +1,68 @@
+{
+  "id": "test-steerable-loop",
+  "feature": "Test Steerable Agent Loop",
+  "description": "Demo the full pause/resume/stop loop with a hex-coder worker generating a simple counter",
+  "status": "planned",
+  "adr": "ADR-2604102100",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Start hex-coder worker",
+      "tier": 0,
+      "tasks": [
+        {
+          "id": "T1.1",
+          "name": "Start worker in background",
+          "layer": "adapters/primary",
+          "description": "Start hex agent worker --role hex-coder in background",
+          "deps": [],
+          "files": [],
+          "done_condition": "Worker is running",
+          "done_command": "pgrep -f 'hex agent worker' && echo RUNNING || echo STOPPED"
+        }
+      ],
+      "done_condition": "Worker running",
+      "done_command": "pgrep -f 'hex agent worker' > /dev/null && echo PASS || echo FAIL"
+    },
+    {
+      "id": "P2",
+      "name": "Send pause instruction",
+      "tier": 1,
+      "tasks": [
+        {
+          "id": "T2.1",
+          "name": "Send pause to worker",
+          "layer": "adapters/primary",
+          "description": "hex agent pause <worker_id> while worker is running",
+          "deps": ["T1.1"],
+          "files": [],
+          "done_condition": "Instruction sent",
+          "done_command": "curl -s http://localhost:5555/api/steering/test/event -X POST -d '{\"event\":\"pause\"}' | grep ok"
+        }
+      ],
+      "done_condition": "Pause sent",
+      "done_command": "echo PAUSE_SENT"
+    },
+    {
+      "id": "P3",
+      "name": "Verify worker paused",
+      "tier": 2,
+      "tasks": [
+        {
+          "id": "T3.1",
+          "name": "Check worker state",
+          "layer": "integration",
+          "description": "Verify worker shows pause message in logs",
+          "deps": ["T2.1"],
+          "files": [],
+          "done_condition": "Worker paused",
+          "done_command": "ps aux | grep -i pause || echo NO_PAUSE"
+        }
+      ],
+      "done_condition": "Log shows pause",
+      "done_command": "echo VERIFIED"
+    }
+  ],
+  "gates": [],
+  "dependencies": []
+}

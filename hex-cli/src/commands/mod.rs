@@ -1,5 +1,6 @@
 pub mod adr;
 pub mod assets_cmd;
+pub mod brain;
 pub mod ci;
 pub mod chat;
 pub mod context;
@@ -35,3 +36,4 @@ pub mod sandbox;
 pub mod swarm;
 pub mod task;
 pub mod test;
+pub mod update;

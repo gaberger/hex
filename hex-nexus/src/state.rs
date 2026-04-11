@@ -3,6 +3,10 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::{broadcast, Mutex, RwLock};
 
+use crate::adapters::capability_token::CapabilityTokenService;
+use crate::adapters::spacetime_chat::SpacetimeChatClient;
+use crate::adapters::spacetime_inference::SpacetimeInferenceClient;
+use crate::adapters::spacetime_secrets::SpacetimeSecretClient;
 use crate::coordination::HexFlo;
 use crate::orchestration::agent_manager::AgentManager;
 use crate::orchestration::context_pressure::ContextPressureTracker;
@@ -10,12 +14,8 @@ use crate::orchestration::workplan_executor::WorkplanExecutor;
 use crate::ports::live_context::ILiveContextPort;
 use crate::ports::session::ISessionPort;
 use crate::ports::state::IStatePort;
-use crate::remote::fleet::FleetManager;
-use crate::adapters::capability_token::CapabilityTokenService;
-use crate::adapters::spacetime_chat::SpacetimeChatClient;
-use crate::adapters::spacetime_inference::SpacetimeInferenceClient;
-use crate::adapters::spacetime_secrets::SpacetimeSecretClient;
 use crate::rate_limiter::RateLimitManager;
+use crate::remote::fleet::FleetManager;
 // ── App State ───────────────────────────────────────────
 
 pub type SharedState = Arc<AppState>;
@@ -24,8 +24,8 @@ pub const MAX_ACTIVITIES: usize = 500;
 
 pub struct AppState {
     // Ephemeral command dispatch (NOT persistent state — keep per ADR-042)
-    pub commands: RwLock<HashMap<String, HubCommand>>,       // commandId → command
-    pub results: RwLock<HashMap<String, HubCommandResult>>,  // commandId → result
+    pub commands: RwLock<HashMap<String, HubCommand>>, // commandId → command
+    pub results: RwLock<HashMap<String, HubCommandResult>>, // commandId → result
     // Ephemeral activity stream (bounded ring buffer, not persistent)
     pub activities: RwLock<VecDeque<ActivityEntry>>,
     // WebSocket broadcast channel (ephemeral)
@@ -57,13 +57,32 @@ pub struct AppState {
     // Context window pressure tracker (ADR-2603281000 P1) — keyed by session_id/agent_id
     pub context_pressure: Arc<Mutex<HashMap<String, ContextPressureTracker>>>,
     // Architecture fingerprints (ADR-2603301200) — in-memory, regenerated per hex dev run
-    pub fingerprints: RwLock<HashMap<String, crate::analysis::fingerprint_extractor::ArchitectureFingerprint>>,
+    pub fingerprints:
+        RwLock<HashMap<String, crate::analysis::fingerprint_extractor::ArchitectureFingerprint>>,
     // Tool-call event log (ADR-2604012137, ADR-2604020900) — in-memory ring buffer, WebSocket broadcast on insert
     pub event_adapter: std::sync::Arc<crate::adapters::events::InMemoryEventAdapter>,
     // Capability token service (ADR-2604051800 P1) — signs and verifies agent tokens
     pub capability_token_service: Arc<CapabilityTokenService>,
     // Rate limit manager (ADR-2604052125) — sliding-window rate tracking + circuit breakers
     pub rate_limiter: RateLimitManager,
+    // Agent steering (ADR-2604101900) — pending interrupt/steer instructions per agent
+    pub agent_instructions: RwLock<HashMap<String, AgentInstruction>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentInstruction {
+    pub instruction_type: InstructionType,
+    pub instructions: Option<String>,
+    pub reason: Option<String>,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InstructionType {
+    Interrupt,
+    Pause,
+    Resume,
+    Restart,
 }
 
 impl AppState {
@@ -99,11 +118,14 @@ impl AppState {
             event_adapter: std::sync::Arc::new(crate::adapters::events::InMemoryEventAdapter::new()),
             capability_token_service: Arc::new(CapabilityTokenService::from_env()),
             rate_limiter: RateLimitManager::new(),
+            agent_instructions: RwLock::new(HashMap::new()),
         }
     }
 
     /// Helper: get a reference to the state port or return an error response.
-    pub fn require_state_port(&self) -> Result<&Arc<dyn IStatePort>, (http::StatusCode, axum::Json<serde_json::Value>)> {
+    pub fn require_state_port(
+        &self,
+    ) -> Result<&Arc<dyn IStatePort>, (http::StatusCode, axum::Json<serde_json::Value>)> {
         self.state_port.as_ref().ok_or_else(|| {
             (
                 http::StatusCode::SERVICE_UNAVAILABLE,
@@ -183,7 +205,7 @@ pub struct HubCommand {
     pub payload: serde_json::Value,
     pub issued_at: String,
     pub source: String,
-    pub status: String,  // pending, dispatched, running, completed, failed
+    pub status: String, // pending, dispatched, running, completed, failed
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,7 +243,6 @@ pub struct EventRequest {
 pub struct DecisionRequest {
     pub selected_option: String,
 }
-
 
 // ── Coordination Types ──────────────────────────────────
 
@@ -345,11 +366,9 @@ pub fn make_project_id(root_path: &str) -> String {
     // produce different IDs for the same directory with different casing.
     let normalized = root_path.to_lowercase();
     let basename = normalized.rsplit('/').next().unwrap_or("unknown");
-    let hash = normalized
-        .chars()
-        .fold(0u32, |h, c| {
-            (h.wrapping_shl(5)).wrapping_add(h).wrapping_add(c as u32)
-        });
+    let hash = normalized.chars().fold(0u32, |h, c| {
+        (h.wrapping_shl(5)).wrapping_add(h).wrapping_add(c as u32)
+    });
     format!("{}-{}", basename, radix_36(hash))
 }
 
@@ -405,9 +424,12 @@ mod tests {
         ];
         for (path, expected) in vectors {
             assert_eq!(
-                make_project_id(path), expected,
+                make_project_id(path),
+                expected,
                 "DJB2 hash mismatch for path '{}': Rust produced '{}', TypeScript expects '{}'",
-                path, make_project_id(path), expected
+                path,
+                make_project_id(path),
+                expected
             );
         }
     }

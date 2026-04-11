@@ -1,0 +1,248 @@
+{
+  "id": "feat-managed-agents-autonomy",
+  "feature": "Managed Agents Autonomy",
+  "description": "hex autonomous agent system with SSE streaming, native tools, Docker workers, steering, and outcomes — feature parity with Anthropic Managed Agents",
+  "status": "planned",
+  "adr": "ADR-2604100000",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Tier 0 — SSE Streaming & Native Tools",
+      "tier": 0,
+      "tasks": [
+        {
+          "id": "T0.1",
+          "name": "SSE streaming handler in hex-nexus",
+          "layer": "adapters/secondary",
+          "description": "Add axum SSE endpoint for /api/sessions/{id}/stream that subscribes to SpacetimeDB",
+          "deps": [],
+          "files": ["hex-nexus/src/routes/sse.rs", "hex-nexus/src/orchestration/event_stream.rs"],
+          "done_condition": "cargo test --package hex-nexus -- sse_stream",
+          "done_command": "cargo test --package hex-nexus -- sse_stream 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T0.2",
+          "name": "SpacetimeDB subscription infrastructure",
+          "layer": "ports",
+          "description": "Add subscribe reducer for real-time event emission",
+          "deps": ["T0.1"],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "done_condition": "cargo test --package hexflo-coordination -- subscription",
+          "done_command": "cargo test --package hexflo-coordination 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T0.3",
+          "name": "hex_bash MCP tool",
+          "layer": "adapters/primary",
+          "description": "Implement allowlisted command execution in hex-agent with blocking of dangerous patterns (rm -rf /, git push --force)",
+          "deps": [],
+          "files": ["hex-agent/src/mcp/tools/bash.rs"],
+          "done_condition": "cargo test --package hex-agent -- hex_bash",
+          "done_command": "cargo test --package hex-agent 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T0.4",
+          "name": "hex_web_search MCP tool",
+          "layer": "adapters/primary",
+          "description": "Implement web search using reqwest with configurable allowlist",
+          "deps": [],
+          "files": ["hex-agent/src/mcp/tools/web_search.rs"],
+          "done_condition": "cargo test --package hex-agent -- web_search",
+          "done_command": "cargo test --package hex-agent 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T0.5",
+          "name": "hex_web_fetch MCP tool",
+          "layer": "adapters/primary",
+          "description": "Implement URL fetch with domain allowlist checking",
+          "deps": ["T0.4"],
+          "files": ["hex-agent/src/mcp/tools/web_fetch.rs"],
+          "done_condition": "cargo test --package hex-agent -- web_fetch",
+          "done_command": "cargo test --package hex-agent 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T0.6",
+          "name": "Outcomes schema in workplan",
+          "layer": "domain",
+          "description": "Add outcomes field to workplan JSON schema and parsing in hex-core",
+          "deps": [],
+          "files": ["hex-core/src/domain/workplan.rs"],
+          "done_condition": "cargo test --package hex-core -- outcome",
+          "done_command": "cargo test --package hex-core 2>/dev/null && echo PASS || echo FAIL"
+        }
+      ],
+      "gate": {
+        "gate_type": "build",
+        "command": "cargo check --workspace",
+        "blocking": true
+      }
+    },
+    {
+      "id": "P1",
+      "name": "Tier 1 — Docker Worker Delegation",
+      "tier": 1,
+      "depends_on": ["P0"],
+      "tasks": [
+        {
+          "id": "T1.1",
+          "name": "Docker worker P0: task metadata enrichment",
+          "layer": "adapters/secondary",
+          "description": "Enrich task metadata with full WorkplanStep JSON and output_dir when creating HexFlo tasks",
+          "deps": [],
+          "files": ["hex-cli/src/commands/hexflo.rs"],
+          "done_condition": "cargo test --package hex-cli -- task_metadata",
+          "done_command": "cargo test --package hex-cli 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T1.2",
+          "name": "Docker worker P1: real hex-coder worker",
+          "layer": "adapters/secondary",
+          "description": "Implement real hex-coder worker that deserializes WorkplanStep, calls CodePhase, writes files, stores result",
+          "deps": ["T1.1"],
+          "files": ["hex-cli/src/commands/agent.rs"],
+          "done_condition": "cargo test --package hex-cli -- coder_worker",
+          "done_command": "cargo test --package hex-cli 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T1.3",
+          "name": "Docker worker P2: supervisor result handling",
+          "layer": "usecases",
+          "description": "Supervisor reads worker result from hexflo memory and updates ObjectiveState",
+          "deps": ["T1.2"],
+          "files": ["hex-cli/src/pipeline/supervisor.rs"],
+          "done_condition": "cargo test --package hex-cli -- supervisor_result",
+          "done_command": "cargo test --package hex-cli 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T1.4",
+          "name": "Docker worker P3: HEX_OUTPUT_DIR env var",
+          "layer": "adapters/secondary",
+          "description": "Set HEX_OUTPUT_DIR environment variable when spawning workers",
+          "deps": ["T1.2"],
+          "files": ["hex-cli/src/pipeline/worker_spawn.rs"],
+          "done_condition": "cargo test --package hex-cli -- worker_env",
+          "done_command": "cargo test --package hex-cli 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T1.5",
+          "name": "Docker worker P4: enable delegation",
+          "layer": "usecases",
+          "description": "Remove if false && guard in supervisor.rs and enable worker delegation (completes ADR-2603291900)",
+          "deps": ["T1.3", "T1.4"],
+          "files": ["hex-cli/src/pipeline/supervisor.rs"],
+          "done_condition": "cargo check --package hex-cli && cargo test --package hex-cli -- worker_delegation",
+          "done_command": "cargo check -p hex-cli 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T1.6",
+          "name": "Steering API: events endpoint",
+          "layer": "adapters/primary",
+          "description": "POST /api/sessions/{id}/events to send events to running agent",
+          "deps": ["T0.1", "T0.2"],
+          "files": ["hex-nexus/src/routes/steering.rs"],
+          "done_condition": "cargo test --package hex-nexus -- steering_events",
+          "done_command": "cargo test --package hex-nexus 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T1.7",
+          "name": "Environment API",
+          "layer": "adapters/primary",
+          "description": "POST/GET /api/environments for container template management",
+          "deps": ["T0.3"],
+          "files": ["hex-nexus/src/routes/environment.rs"],
+          "done_condition": "cargo test --package hex-nexus -- environment_api",
+          "done_command": "cargo test --package hex-nexus 2>/dev/null && echo PASS || echo FAIL"
+        }
+      ],
+      "gate": {
+        "gate_type": "build",
+        "command": "cargo check --workspace",
+        "blocking": true
+      }
+    },
+    {
+      "id": "P2",
+      "name": "Tier 2 — Advanced Features",
+      "tier": 2,
+      "depends_on": ["P1"],
+      "tasks": [
+        {
+          "id": "T2.1",
+          "name": "Steering API: interrupt endpoint",
+          "layer": "adapters/primary",
+          "description": "POST /api/sessions/{id}/interrupt to cancel current tool and restart",
+          "deps": ["T1.6"],
+          "files": ["hex-nexus/src/routes/steering.rs"],
+          "done_condition": "cargo test --package hex-nexus -- steering_interrupt",
+          "done_command": "cargo test --package hex-nexus 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T2.2",
+          "name": "Outcomes evaluator",
+          "layer": "usecases",
+          "description": "Implement outcome evaluator that runs compile/test checks and streams results",
+          "deps": ["T0.6", "T1.5"],
+          "files": ["hex-cli/src/pipeline/outcome_evaluator.rs"],
+          "done_condition": "cargo test --package hex-cli -- outcome_evaluator",
+          "done_command": "cargo test --package hex-cli 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T2.3",
+          "name": "Session API",
+          "layer": "adapters/primary",
+          "description": "POST/GET /api/sessions for agent session lifecycle",
+          "deps": ["T1.7", "T0.2"],
+          "files": ["hex-nexus/src/routes/session.rs"],
+          "done_condition": "cargo test --package hex-nexus -- session_api",
+          "done_command": "cargo test --package hex-nexus 2>/dev/null && echo PASS || echo FAIL"
+        },
+        {
+          "id": "T2.4",
+          "name": "Session SSE wiring",
+          "layer": "adapters/primary",
+          "description": "Wire SSE streaming to session lifecycle events",
+          "deps": ["T2.3"],
+          "files": ["hex-nexus/src/routes/session.rs"],
+          "done_condition": "cargo test --package hex-nexus -- session_sse",
+          "done_command": "cargo test --package hex-nexus 2>/dev/null && echo PASS || echo FAIL"
+        }
+      ],
+      "gate": {
+        "gate_type": "build",
+        "command": "cargo check --workspace",
+        "blocking": true
+      }
+    },
+    {
+      "id": "P3",
+      "name": "Tier 5 — Integration",
+      "tier": 5,
+      "depends_on": ["P2"],
+      "tasks": [
+        {
+          "id": "T3.1",
+          "name": "Full autonomous pipeline integration test",
+          "layer": "integration",
+          "description": "Full pipeline with workplan → Docker worker → SSE → outcome → complete without human intervention",
+          "deps": ["T2.2", "T2.4"],
+          "files": ["hex-cli/tests/integration/managed_agents.rs"],
+          "done_condition": "cargo test --package hex-cli -- managed_agents_integration",
+          "done_command": "cargo test --package hex-cli 2>/dev/null && echo PASS || echo FAIL"
+        }
+      ],
+      "gate": {
+        "gate_type": "test",
+        "command": "cargo test --workspace",
+        "blocking": true
+      }
+    }
+  ],
+  "successCriteria": [
+    "Full pipeline runs autonomously: hex plan execute completes without human intervention",
+    "SSE delivers task events within 1 second",
+    "hex_bash blocks rm -rf /, git push --force",
+    "Workers execute code and generate files to output_dir",
+    "Outcomes evaluate and stream results",
+    "Integration test passes with full autonomy"
+  ]
+}

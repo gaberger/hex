@@ -33,26 +33,18 @@ pub struct AgentCapabilityToken {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Capability {
     /// Can complete/fail only the listed tasks.
-    TaskWrite {
-        task_ids: Vec<String>,
-    },
+    TaskWrite { task_ids: Vec<String> },
     /// Can read/write files only under these roots.
     FileSystem {
         roots: Vec<PathBuf>,
         read_only: bool,
     },
     /// Can call inference with this max quantization tier or below.
-    Inference {
-        max_tier: String,
-    },
+    Inference { max_tier: String },
     /// Can access these HexFlo memory scopes.
-    Memory {
-        scopes: Vec<String>,
-    },
+    Memory { scopes: Vec<String> },
     /// Can send inbox notifications to these agents.
-    Notify {
-        target_agents: Vec<String>,
-    },
+    Notify { target_agents: Vec<String> },
     /// Can read swarm/task status (no mutations).
     SwarmRead,
     /// Can mutate swarm state (create tasks, assign, complete).
@@ -82,7 +74,9 @@ impl VerifiedClaims {
 
     /// Check if this agent has admin access.
     pub fn is_admin(&self) -> bool {
-        self.capabilities.iter().any(|c| matches!(c, Capability::Admin))
+        self.capabilities
+            .iter()
+            .any(|c| matches!(c, Capability::Admin))
     }
 
     /// Check if this agent can write to a specific task.

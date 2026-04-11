@@ -1,0 +1,90 @@
+{
+  "id": "feat-audit-pipeline-correctness",
+  "feature": "Audit Pipeline Correctness — TestsExist Escalation + completed_steps Wiring",
+  "description": "Three bugs caused incorrect audit reports and pipeline stalls: (1) TestsExist never escalated to hex-fixer after repeated tester failures — consumed all max_iterations; (2) Supervisor never wrote completed_steps to the shared session — the TUI sync-back always saw an empty vec and fell through to a permissive fallback; (3) The completed_steps fallback was unconditional — marked all workplan steps done even on pipeline error/halt.",
+  "adr": "ADR-2604071600",
+  "status": "completed",
+  "created_at": "2026-04-07T16:00:00Z",
+  "created_by": "planner",
+  "phases": [
+    {
+      "id": "P0",
+      "name": "Fix TestsExist escalation in agent_for_objective",
+      "tier": 0,
+      "gate": { "type": "build", "command": "cargo check -p hex-cli", "blocking": true },
+      "tasks": [
+        {
+          "id": "P0.1",
+          "name": "Split (TestsExist, _) into (false) => hex-tester / (true) => hex-fixer",
+          "layer": "domain",
+          "agent": "hex-coder",
+          "description": "In hex-cli/src/pipeline/objectives.rs, change line 195 from `(TestsExist, _) => \"hex-tester\"` to two arms: `(TestsExist, false) => \"hex-tester\"` and `(TestsExist, true) => \"hex-fixer\"`. This mirrors the existing escalation pattern for TestsPass and ReviewPasses. When TestsExist fails after the first tester attempt (has_prior=true), the fixer can correct test file placement or test structure rather than calling the tester in a loop until max_iterations.",
+          "deps": [],
+          "files": [
+            "hex-cli/src/pipeline/objectives.rs"
+          ],
+          "status": "done"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Write completed_steps to shared session when a tier passes",
+      "tier": 1,
+      "gate": { "type": "build", "command": "cargo check -p hex-cli", "blocking": true },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Push tier step IDs into session.completed_steps on AllPassed in supervisor::run()",
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "description": "In hex-cli/src/pipeline/supervisor.rs, after `let halted = matches!(&result, TierResult::Halted { .. });`, add a block: if passed, lock self.session, push each step.id in `steps` that is not already in session.completed_steps, then call session.save(). This ensures the TUI sync-back at tui/mod.rs:1103 receives real step data from the shared Mutex instead of an empty vec. Without this, completed_steps was always empty after supervisor.run() and the fallback at line 1108 fired unconditionally.",
+          "deps": ["P0.1"],
+          "files": [
+            "hex-cli/src/pipeline/supervisor.rs"
+          ],
+          "status": "done"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Guard completed_steps fallback with result.is_ok()",
+      "tier": 2,
+      "gate": { "type": "build", "command": "cargo check -p hex-cli", "blocking": true },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add result.is_ok() guard to completed_steps fallback in tui/mod.rs",
+          "layer": "primary",
+          "agent": "hex-coder",
+          "description": "In hex-cli/src/tui/mod.rs line 1108, change `if self.session.completed_steps.is_empty()` to `if self.session.completed_steps.is_empty() && result.is_ok()`. When supervisor.run() returns Err (pipeline halted or errored), completed_steps must remain empty — marking all steps done on failure was producing misleading audit reports where `hex dev status` showed all steps completed even after a pipeline halt.",
+          "deps": ["P1.1"],
+          "files": [
+            "hex-cli/src/tui/mod.rs"
+          ],
+          "status": "done"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Build gate + commit",
+      "tier": 3,
+      "gate": { "type": "build", "command": "cargo build -p hex-cli", "blocking": true },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Full build verification and commit",
+          "layer": "integration",
+          "agent": "integrator",
+          "description": "Run `cargo build -p hex-cli` (full dev build, not check-only) to verify no regressions across all three files. All three changes are in pipeline-internal code paths with no public API changes. Commit with message describing all three root causes and their fixes.",
+          "deps": ["P2.1"],
+          "files": [],
+          "status": "done",
+          "commit": "fd31bad3"
+        }
+      ]
+    }
+  ]
+}

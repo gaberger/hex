@@ -1761,6 +1761,254 @@ pub fn memory_clear_scope(
 }
 
 // ============================================================
+//  Dev Session & Inference Log (ADR-2604071300)
+//  Tracks hex dev pipeline sessions with full audit trail.
+//  Dashboard subscribes for real-time progress visibility.
+// ============================================================
+
+/// A hex dev session — the top-level aggregate for a pipeline run.
+/// Links swarm tasks, quality gates, and inference calls together.
+#[table(name = dev_session, public)]
+#[derive(Clone, Debug)]
+pub struct DevSession {
+    #[primary_key]
+    pub id: String,
+    pub project_id: String,
+    pub feature_description: String,
+    /// "pending", "adr", "workplan", "scaffold", "code", "validate", "completed", "failed", "paused"
+    pub status: String,
+    pub current_phase: String,
+    pub model: String,
+    pub provider: String,
+    pub adr_path: String,
+    pub workplan_path: String,
+    pub swarm_id: String,
+    pub output_dir: String,
+    pub agent_id: String,
+    pub total_tokens: u64,
+    /// Cost stored as string for WASM f64 compatibility
+    pub total_cost_usd: String,
+    pub architecture_grade: String,
+    pub architecture_score: u32,
+    /// Comma-separated completed step IDs
+    pub completed_steps: String,
+    /// Comma-separated objective verdicts: "CodeGenerated:pass,CodeCompiles:pass,..."
+    pub objective_results: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Per-inference-call audit log entry linked to a dev session.
+#[table(name = inference_log, public)]
+#[derive(Clone, Debug)]
+pub struct InferenceLog {
+    #[primary_key]
+    pub id: String,
+    pub session_id: String,
+    pub phase: String,
+    pub model: String,
+    pub provider: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    /// Cost stored as string for WASM f64 compatibility
+    pub cost_usd: String,
+    pub duration_ms: u64,
+    /// Context window size of the model
+    pub context_window: u64,
+    /// What was generated: file path, ADR path, workplan path
+    pub artifact: String,
+    /// "ok", "error"
+    pub status: String,
+    pub created_at: String,
+}
+
+// ── Dev Session Reducers ────────────────────────────────────
+
+#[reducer]
+pub fn session_create(
+    ctx: &ReducerContext,
+    id: String,
+    project_id: String,
+    feature_description: String,
+    model: String,
+    provider: String,
+    agent_id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    if id.is_empty() {
+        return Err("session id required".into());
+    }
+    if ctx.db.dev_session().id().find(&id).is_some() {
+        return Err(format!("session {} already exists", id));
+    }
+    ctx.db.dev_session().insert(DevSession {
+        id,
+        project_id,
+        feature_description,
+        status: "pending".into(),
+        current_phase: "adr".into(),
+        model,
+        provider,
+        adr_path: String::new(),
+        workplan_path: String::new(),
+        swarm_id: String::new(),
+        output_dir: String::new(),
+        agent_id,
+        total_tokens: 0,
+        total_cost_usd: "0.0".into(),
+        architecture_grade: String::new(),
+        architecture_score: 0,
+        completed_steps: String::new(),
+        objective_results: String::new(),
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
+    });
+    Ok(())
+}
+
+#[reducer]
+pub fn session_update_phase(
+    ctx: &ReducerContext,
+    id: String,
+    phase: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let session = ctx.db.dev_session().id().find(&id)
+        .ok_or_else(|| format!("session {} not found", id))?;
+    ctx.db.dev_session().id().update(DevSession {
+        status: phase.clone(),
+        current_phase: phase,
+        updated_at: timestamp,
+        ..session
+    });
+    Ok(())
+}
+
+#[reducer]
+pub fn session_complete_step(
+    ctx: &ReducerContext,
+    id: String,
+    step_id: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let session = ctx.db.dev_session().id().find(&id)
+        .ok_or_else(|| format!("session {} not found", id))?;
+    let mut steps = session.completed_steps.clone();
+    if !steps.is_empty() {
+        steps.push(',');
+    }
+    steps.push_str(&step_id);
+    ctx.db.dev_session().id().update(DevSession {
+        completed_steps: steps,
+        updated_at: timestamp,
+        ..session
+    });
+    Ok(())
+}
+
+#[reducer]
+pub fn session_set_quality(
+    ctx: &ReducerContext,
+    id: String,
+    grade: String,
+    score: u32,
+    objectives: String,
+    total_tokens: u64,
+    total_cost_usd: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let session = ctx.db.dev_session().id().find(&id)
+        .ok_or_else(|| format!("session {} not found", id))?;
+    ctx.db.dev_session().id().update(DevSession {
+        architecture_grade: grade,
+        architecture_score: score,
+        objective_results: objectives,
+        total_tokens,
+        total_cost_usd,
+        updated_at: timestamp,
+        ..session
+    });
+    Ok(())
+}
+
+#[reducer]
+pub fn session_finalize(
+    ctx: &ReducerContext,
+    id: String,
+    status: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let session = ctx.db.dev_session().id().find(&id)
+        .ok_or_else(|| format!("session {} not found", id))?;
+    ctx.db.dev_session().id().update(DevSession {
+        status,
+        updated_at: timestamp,
+        ..session
+    });
+    Ok(())
+}
+
+#[reducer]
+pub fn session_set_paths(
+    ctx: &ReducerContext,
+    id: String,
+    adr_path: String,
+    workplan_path: String,
+    swarm_id: String,
+    output_dir: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let session = ctx.db.dev_session().id().find(&id)
+        .ok_or_else(|| format!("session {} not found", id))?;
+    ctx.db.dev_session().id().update(DevSession {
+        adr_path,
+        workplan_path,
+        swarm_id,
+        output_dir,
+        updated_at: timestamp,
+        ..session
+    });
+    Ok(())
+}
+
+// ── Inference Log Reducers ──────────────────────────────────
+
+#[reducer]
+pub fn inference_log_create(
+    ctx: &ReducerContext,
+    id: String,
+    session_id: String,
+    phase: String,
+    model: String,
+    provider: String,
+    input_tokens: u64,
+    output_tokens: u64,
+    cost_usd: String,
+    duration_ms: u64,
+    context_window: u64,
+    artifact: String,
+    status: String,
+    timestamp: String,
+) -> Result<(), String> {
+    ctx.db.inference_log().insert(InferenceLog {
+        id,
+        session_id,
+        phase,
+        model,
+        provider,
+        input_tokens,
+        output_tokens,
+        cost_usd,
+        duration_ms,
+        context_window,
+        artifact,
+        status,
+        created_at: timestamp,
+    });
+    Ok(())
+}
+
+// ============================================================
 //  Enforcement Rules (ADR-2603221959 P5)
 // ============================================================
 

@@ -1,6 +1,7 @@
 # ADR-2603222229: CLI / MCP / Dashboard Parity Investigation
 
-**Status:** Proposed
+**Status:** Accepted
+**Scope:** CLI/MCP parity only. Dashboard parity is a separate effort (see ADR-066).
 **Date:** 2026-03-22
 **Drivers:** hex has three user-facing surfaces — CLI (`hex-cli`), MCP tools (`hex mcp`), and the dashboard (`hex-nexus/assets`). Feature parity across these surfaces has never been audited. Some operations are available in CLI but not MCP, some dashboard views have no CLI equivalent, and some MCP tools delegate to endpoints the dashboard doesn't use.
 

@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::orchestration::agent_manager::SpawnConfig;
 use crate::ports::state::{IStatePort, WorkplanTaskUpdate};
-use crate::state::SharedState;
+use crate::state::{AgentInstruction, InstructionType, SharedState};
 
 /// Find the most recently active Claude Code agent ID by reading
 /// ~/.hex/sessions/agent-*.json and returning the agentId from the
@@ -117,6 +117,19 @@ impl ExecutionStatus {
     }
 }
 
+/// ADR-2604102100: Actions returned by steering checks.
+#[derive(Debug, Clone)]
+pub enum SteeringAction {
+    /// Continue execution normally.
+    Continue,
+    /// Pause execution and save state for resume.
+    Pause,
+    /// Restart with fresh state (ignore accumulated progress).
+    Restart,
+    /// Inject new instructions and continue (used by interrupt).
+    InjectAndContinue(Option<String>),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PhaseResult {
@@ -147,6 +160,9 @@ pub struct Workplan {
     /// ADR-2604051700: If non-empty, file MUST exist before execution starts.
     #[serde(default)]
     pub specs: String,
+    /// LLMs commonly generate `steps` at the top level instead of `phases`.
+    /// Both are accepted; `phases` is canonical per workplan.schema.json.
+    #[serde(alias = "steps")]
     pub phases: Vec<WorkplanPhase>,
 }
 
@@ -172,6 +188,8 @@ pub struct WorkplanPhase {
     pub id: String,
     pub name: String,
     pub tier: Option<u32>,
+    /// Alias `steps` accepted — LLMs commonly generate `steps` instead of `tasks`.
+    #[serde(alias = "steps")]
     pub tasks: Vec<WorkplanTask>,
     /// Schema: gate object `{type, command, blocking}`.
     pub gate: Option<WorkplanGate>,
@@ -302,6 +320,40 @@ impl WorkplanExecutor {
             tracing::info!(spec = %workplan.specs, "Pre-flight: behavioral spec exists");
         }
 
+        // Pre-flight: warn loudly if specs field is absent.
+        // specs-first pipeline (ADR-2604051700) requires behavioral specs before execution.
+        if workplan.specs.is_empty() {
+            tracing::warn!(
+                workplan_id = %workplan.id,
+                "Workplan has no 'specs' field — specs-first pipeline requires a behavioral \
+                 spec before execution. Add: \"specs\": \"docs/specs/<feature>.json\" \
+                 (ADR-2604051700)."
+            );
+        }
+
+        // Pre-flight: verify the referenced ADR exists as a file in docs/adrs/.
+        // ADR-before-code rule: workplan must reference a real, accepted ADR.
+        if !workplan.adr.is_empty() {
+            let adr_upper = workplan.adr.to_ascii_uppercase();
+            let adr_found = std::path::Path::new("docs/adrs")
+                .read_dir()
+                .ok()
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .any(|e| e.file_name().to_string_lossy().to_ascii_uppercase().contains(&adr_upper))
+                })
+                .unwrap_or(false);
+            if !adr_found {
+                tracing::warn!(
+                    adr = %workplan.adr,
+                    "Workplan references '{}' but no matching file found in docs/adrs/. \
+                     Create the ADR before executing the workplan (ADR-before-code rule).",
+                    workplan.adr
+                );
+            }
+        }
+
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let first_phase = workplan.phases[0].name.clone();
@@ -402,6 +454,16 @@ impl WorkplanExecutor {
                 }
             }
 
+            // ADR-2604100000: Add phase heartbeat for observability
+            let phase_start = chrono::Utc::now().to_rfc3339();
+            tracing::info!(
+                execution_id = %execution_id,
+                phase = %phase.name,
+                tasks = phase.tasks.len(),
+                started_at = %phase_start,
+                "Phase START"
+            );
+
             // Update current phase
             Self::update_phase(state_port.as_ref(), &execution_id, &phase.name).await.ok();
 
@@ -487,6 +549,29 @@ impl WorkplanExecutor {
                             tracing::info!(execution_id = %execution_id, phase = %phase.name, "Phase gate passed");
                         }
                     }
+
+                    // ADR-2604102100: Check for steering instructions after phase completes
+                    let steering = Self::check_steering(&shared_state, &execution_id).await;
+                    match steering {
+                        SteeringAction::Pause => {
+                            tracing::info!(execution_id = %execution_id, "Paused by steering");
+                            Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Paused, None).await.ok();
+                            return;
+                        }
+                        SteeringAction::Restart => {
+                            tracing::info!(execution_id = %execution_id, "Restarted by steering — would clear state and re-run");
+                            // Restart requires re-executing - mark as paused so external can restart fresh
+                            Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Paused, Some(&[String::from("Restarted by steering")])).await.ok();
+                            return;
+                        }
+                        SteeringAction::InjectAndContinue(new_instructions) => {
+                            tracing::info!(execution_id = %execution_id, "Interrupt with new instructions");
+                            if let Some(ref instr) = new_instructions {
+                                tracing::info!(execution_id = %execution_id, new_instructions = %instr, "Injecting instructions");
+                            }
+                        }
+                        SteeringAction::Continue => {}
+                    }
                 }
                 Err(e) => {
                     tracing::error!(execution_id = %execution_id, phase = %phase.name, error = %e, "Phase failed");
@@ -548,6 +633,17 @@ impl WorkplanExecutor {
         let mut handles = Vec::new();
 
         for task in &phase.tasks {
+            // ADR-2604100000: Task heartbeat for observability
+            let task_id = if !task.id.is_empty() { task.id.clone() } else { task.name.clone() };
+            let task_name = task.name.clone();
+            let task_start = chrono::Utc::now().to_rfc3339();
+            tracing::info!(
+                task_id = %task_id,
+                task_name = %task_name,
+                started_at = %task_start,
+                "Task START"
+            );
+
             // Create a HexFlo task for this workplan task so the SubagentStop hook
             // can mark it complete when the spawned agent finishes (ADR-2604010000 P3.2).
             let hexflo_task_id = {
@@ -611,6 +707,23 @@ impl WorkplanExecutor {
                 if !task.deps.is_empty() {
                     p.push_str(&format!("## Depends on: {}\n", task.deps.join(", ")));
                 }
+                // ADR-004 + agent-commit-contract: worktree agents MUST commit explicitly.
+                // Append this to every task prompt so agents don't silently leave changes uncommitted.
+                p.push_str("\n## Required: Commit your work\n");
+                p.push_str("After completing all file changes, commit to your worktree branch:\n");
+                p.push_str("```bash\n");
+                if !task.files.is_empty() {
+                    p.push_str(&format!("git add {}\n", task.files.join(" ")));
+                } else {
+                    p.push_str("git add -p\n");
+                }
+                let layer = task.layer.as_deref().unwrap_or("feat");
+                let task_id_lower = task.id.to_lowercase();
+                p.push_str(&format!(
+                    "git commit -m \"{layer}({task_id_lower}): {}\"\n",
+                    task.name
+                ));
+                p.push_str("```\n");
                 p
             };
 
@@ -632,7 +745,11 @@ impl WorkplanExecutor {
             };
 
             let config = SpawnConfig {
-                project_dir: task.project_dir.clone().unwrap_or_else(|| ".".to_string()),
+                project_dir: task.project_dir.clone().unwrap_or_else(|| {
+                    std::env::current_dir()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| ".".to_string())
+                }),
                 model: task.model.clone(),
                 agent_name: task.agent.clone(),
                 hub_url: None,
@@ -771,6 +888,16 @@ impl WorkplanExecutor {
                             agent_id: Some(agent.id.clone()),
                             result: None,
                         }).await;
+
+                        // ADR-2604100000: Task completion heartbeat
+                        let task_end = chrono::Utc::now().to_rfc3339();
+                        tracing::info!(
+                            task_id = %task_id,
+                            agent_id = %agent.id,
+                            completed_at = %task_end,
+                            "Task COMPLETE"
+                        );
+
                         // P5.1: Store task outcome in memory ledger (ADR-2604010000)
                         let outcome_key = format!("workplan:{}:task:{}:outcome", workplan_id, task_id);
                         let outcome_val = serde_json::json!({
@@ -874,6 +1001,24 @@ impl WorkplanExecutor {
         }
 
         exec.status = ExecutionStatus::Paused;
+        exec.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::store_execution(self.state_port.as_ref(), &exec).await?;
+        Ok(true)
+    }
+
+    /// Mark a workplan execution as failed by ID (for cleanup of stale executions).
+    pub async fn fail(&self, id: &str) -> Result<bool, String> {
+        let exec = self.get_status().await?;
+        let Some(mut exec) = exec else {
+            return Ok(false);
+        };
+
+        // Allow failing stale running executions by comparing ID prefix
+        if !exec.id.starts_with(id) {
+            return Ok(false);
+        }
+
+        exec.status = ExecutionStatus::Failed;
         exec.updated_at = chrono::Utc::now().to_rfc3339();
         Self::store_execution(self.state_port.as_ref(), &exec).await?;
         Ok(true)
@@ -1118,6 +1263,45 @@ impl WorkplanExecutor {
         }
 
         warnings
+    }
+
+    /// ADR-2604102100: Poll for pending steering instructions for a given agent.
+    /// Returns Some(instruction) if pending, None if nothing pending.
+    /// The instruction is CONSUMED (removed) when polled — one-time use.
+    pub async fn poll_steering_instructions(
+        shared_state: &SharedState,
+        agent_id: &str,
+    ) -> Option<AgentInstruction> {
+        let mut instructions = shared_state.agent_instructions.write().await;
+        instructions.remove(agent_id)
+    }
+
+    /// ADR-2604102100: Check for steering instructions and react.
+    /// Returns true if execution should continue, false if it should stop/pause.
+    pub async fn check_steering(
+        shared_state: &SharedState,
+        agent_id: &str,
+    ) -> SteeringAction {
+        let instruction = Self::poll_steering_instructions(shared_state, agent_id).await;
+        match instruction {
+            Some(instr) => {
+                tracing::info!(
+                    agent_id = %agent_id,
+                    instruction_type = ?instr.instruction_type,
+                    "Steering instruction received"
+                );
+                match instr.instruction_type {
+                    InstructionType::Pause => SteeringAction::Pause,
+                    InstructionType::Resume => SteeringAction::Continue,
+                    InstructionType::Restart => SteeringAction::Restart,
+                    InstructionType::Interrupt => {
+                        // Interrupt means: stop, inject new instructions, continue
+                        SteeringAction::InjectAndContinue(instr.instructions)
+                    }
+                }
+            }
+            None => SteeringAction::Continue,
+        }
     }
 
     /// ADR-046: List all workplan executions (active + historical).

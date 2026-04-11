@@ -39,6 +39,12 @@ pub const SPACETIMEDB_DEFAULT_HOST: &str = "http://127.0.0.1:3033";
 /// Database name for the core coordination module (backward-compatible).
 pub const STDB_DATABASE_CORE: &str = "hex";
 
+/// Database name for the inference-gateway module.
+pub const STDB_DATABASE_INFERENCE: &str = "inference-gateway";
+
+/// Database name for the rl-engine module.
+pub const STDB_DATABASE_RL: &str = "rl-engine";
+
 /// Module-to-database mapping. Index matches MODULE_TIERS order in spacetime_launcher.
 /// Format: (module_directory_name, database_name)
 pub const STDB_MODULE_DATABASES: &[(&str, &str)] = &[

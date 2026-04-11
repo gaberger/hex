@@ -192,7 +192,8 @@ pub fn agent_for_objective(obj: Objective, has_prior_result: bool) -> &'static s
     match (obj, has_prior_result) {
         (CodeGenerated, _) => "hex-coder",
         (CodeCompiles, _) => "hex-fixer",
-        (TestsExist, _) => "hex-tester",
+        (TestsExist, false) => "hex-tester",
+        (TestsExist, true) => "hex-fixer",
         (TestsPass, false) => "hex-tester",
         (TestsPass, true) => "hex-fixer",
         // First time ReviewPasses fails: run the reviewer to get structured feedback.

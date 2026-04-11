@@ -67,9 +67,7 @@ impl Message {
             .iter()
             .map(|block| match block {
                 ContentBlock::Text { text } => text.len(),
-                ContentBlock::ToolUse { input, name, .. } => {
-                    name.len() + input.to_string().len()
-                }
+                ContentBlock::ToolUse { input, name, .. } => name.len() + input.to_string().len(),
                 ContentBlock::ToolResult { content, .. } => content.len(),
             })
             .sum();

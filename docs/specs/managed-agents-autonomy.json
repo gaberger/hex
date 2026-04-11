@@ -1,0 +1,159 @@
+{
+  "feature": "managed-agents-autonomy",
+  "description": "hex autonomous agent system with SSE streaming, native tools, Docker workers, steering, and outcomes — feature parity with Anthropic Managed Agents",
+  "specs": [
+    {
+      "id": "S01",
+      "category": "HappyPath",
+      "description": "SSE stream delivers task assignment to running agent within 1 second",
+      "given": "A HexFlo task is created and agent is subscribed to SSE stream",
+      "when": "task_assign event is emitted from SpacetimeDB",
+      "then": "Agent receives event via SSE stream within 1 second, including task_id, swarm_id, metadata",
+      "negative_spec": false,
+      "domain_conventions": { "timeout_seconds": 1, "transport": "server-sent-events" }
+    },
+    {
+      "id": "S02",
+      "category": "HappyPath",
+      "description": "hex_bash executes allowed command and returns stdout/stderr/exit code",
+      "given": "A Docker sandbox agent with hex_bash tool configured with allowlist ['cargo', 'npm', 'go']",
+      "when": "hex_bash({ command: 'cargo check --workspace' }) is called",
+      "then": "Returns { stdout: '<compilation output>', stderr: '', exit_code: 0 }",
+      "negative_spec": false,
+      "domain_conventions": { "timeout_ms": 30000 }
+    },
+    {
+      "id": "S03",
+      "category": "Security",
+      "description": "hex_bash blocks dangerous commands from allowlist",
+      "given": "A Docker sandbox agent with hex_bash tool",
+      "when": "hex_bash({ command: 'rm -rf /' }) is called",
+      "then": "Returns error 'Command not allowed: rm -rf / is blocked for safety'",
+      "negative_spec": true,
+      "domain_conventions": { "blocked_patterns": ["rm -rf /", "git push --force", "mkfs"] }
+    },
+    {
+      "id": "S04",
+      "category": "HappyPath",
+      "description": "hex_web_search returns search results from web",
+      "given": "A Docker sandbox agent with hex_web_search tool",
+      "when": "hex_web_search({ query: 'hexagonal architecture best practices', limit: 5 }) is called",
+      "then": "Returns { results: [{ title, url, snippet }] } with 5 results",
+      "negative_spec": false,
+      "domain_conventions": { "timeout_ms": 10000 }
+    },
+    {
+      "id": "S05",
+      "category": "HappyPath",
+      "description": "hex_web_fetch retrieves content from URL",
+      "given": "A Docker sandbox agent with hex_web_fetch tool",
+      "when": "hex_web_fetch({ url: 'https://example.com/README.md' }) is called",
+      "then": "Returns { content: '<markdown content>', status_code: 200, content_type: 'text/markdown' }",
+      "negative_spec": false
+    },
+    {
+      "id": "S06",
+      "category": "EdgeCase",
+      "description": "hex_web_fetch returns error for disallowed domains",
+      "given": "A Docker sandbox agent with hex_web_fetch tool restricted to allowlist ['example.com', 'github.com']",
+      "when": "hex_web_fetch({ url: 'https://malicious-site.com/data' }) is called",
+      "then": "Returns error 'Domain malicious-site.com not in allowlist'",
+      "negative_spec": true
+    },
+    {
+      "id": "S07",
+      "category": "HappyPath",
+      "description": "Docker worker receives full WorkplanStep in task metadata and executes it",
+      "given": "A HexFlo task created with WorkplanStep JSON embedded in description, worker Docker container running",
+      "when": "Worker receives task assignment via SSE",
+      "then": "Worker deserializes WorkplanStep, executes CodePhase, writes files to output_dir, stores result in hexflo memory",
+      "negative_spec": false,
+      "domain_conventions": { "tier": 2, "role": "hex-coder" }
+    },
+    {
+      "id": "S08",
+      "category": "HappyPath",
+      "description": "Supervisor reads worker result from hexflo memory and updates objective state",
+      "given": "Worker completed and stored result in hexflo memory under {task_id}:result",
+      "when": "Supervisor polls for task completion",
+      "then": "Supervisor reads result, updates ObjectiveState (CodeGenerated → CodeCompiles → TestsPass), continues pipeline",
+      "negative_spec": false
+    },
+    {
+      "id": "S09",
+      "category": "HappyPath",
+      "description": "Steering API allows sending event to running agent session",
+      "given": "An agent session is running with long-running task",
+      "when": "POST /api/sessions/{id}/events with { type: 'user', content: 'change direction' }",
+      "then": "Agent receives event in next loop iteration, can act on new guidance without restarting",
+      "negative_spec": false,
+      "domain_conventions": { "event_types": ["user", "system", "interrupt"] }
+    },
+    {
+      "id": "S10",
+      "category": "HappyPath",
+      "description": "Steering interrupt stops current tool execution and restarts with new event",
+      "given": "An agent session is running with tool in progress",
+      "when": "POST /api/sessions/{id}/interrupt",
+      "then": "Current tool execution is cancelled, agent restarts with interrupt event",
+      "negative_spec": false
+    },
+    {
+      "id": "S11",
+      "category": "HappyPath",
+      "description": "Outcomes define and evaluate success criteria",
+      "given": "A workplan with outcomes: [{ id: 'CodeCompiles', evaluate: 'cargo check / tsc --noEmit', required: true }]",
+      "when": "Code generation phase completes",
+      "then": "Outcome evaluator runs compile check, streams result { id: 'CodeCompiles', status: 'passed' | 'failed', details: '...' }",
+      "negative_spec": false
+    },
+    {
+      "id": "S12",
+      "category": "ErrorHandling",
+      "description": "Outcome evaluation fails gracefully when required tool is missing",
+      "given": "A workplan with outcome evaluate: 'go build' but Go is not installed in container",
+      "when": "Outcome evaluator runs",
+      "then": "Returns { id: 'CodeCompiles', status: 'skipped', reason: 'tool go not found' } (not 'failed')",
+      "negative_spec": false,
+      "domain_conventions": { "missing_tool_status": "skipped" }
+    },
+    {
+      "id": "S13",
+      "category": "HappyPath",
+      "description": "Environment API creates container from template",
+      "given": "hex-nexus is running with Docker available",
+      "when": "POST /api/environments { name: 'test-env', image: 'hex-sandbox:latest', packages: ['cargo', 'node'] }",
+      "then": "Returns { environment_id: '<uuid>', status: 'created', container_id: '<docker-id>' }",
+      "negative_spec": false
+    },
+    {
+      "id": "S14",
+      "category": "HappyPath",
+      "description": "Session API creates session with agent and environment",
+      "given": "An environment exists with container running",
+      "when": "POST /api/sessions { agent_id: '<id>', environment_id: '<env-id>', system_prompt: 'You are a coder' }",
+      "then": "Returns { session_id: '<uuid>', status: 'created' } and agent begins polling for tasks",
+      "negative_spec": false
+    },
+    {
+      "id": "S15",
+      "category": "HappyPath",
+      "description": "Session SSE streaming provides real-time status updates",
+      "given": "A session is created and client subscribes to /api/sessions/{id}/stream",
+      "when": "Agent completes a task",
+      "then": "Client receives SSE event: { event: 'task_complete', session_id, task_id, result: '...' }",
+      "negative_spec": false,
+      "domain_conventions": { "sse_format": "text/event-stream" }
+    },
+    {
+      "id": "S16",
+      "category": "Integration",
+      "description": "Full autonomous pipeline: workplan → Docker worker → SSE → outcome → complete without human intervention",
+      "given": "A workplan with 3 steps, Docker workers available, SSE streaming enabled",
+      "when": "hex plan execute is called",
+      "then": "Steps execute autonomously: workers pull tasks via SSE, execute code, pass outcomes, swarm completes without human intervention",
+      "negative_spec": false,
+      "domain_conventions": { "autonomy_level": "full" }
+    }
+  ]
+}

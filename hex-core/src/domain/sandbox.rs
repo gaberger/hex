@@ -15,7 +15,10 @@ pub enum SandboxError {
     NotFound(String),
 
     #[error("stop failed for container {container_id}: {reason}")]
-    StopFailed { container_id: String, reason: String },
+    StopFailed {
+        container_id: String,
+        reason: String,
+    },
 
     #[error("task execution failed for task {task_id}: {reason}")]
     TaskFailed { task_id: String, reason: String },

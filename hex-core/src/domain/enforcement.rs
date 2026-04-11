@@ -47,13 +47,17 @@ impl IEnforcementPort for DefaultEnforcer {
         }
 
         // Exempt operations are always allowed
-        if EXEMPT_OPERATIONS.iter().any(|op| ctx.operation.contains(op)) {
+        if EXEMPT_OPERATIONS
+            .iter()
+            .any(|op| ctx.operation.contains(op))
+        {
             return EnforcementResult::Allow;
         }
 
         // Rule 1: Background agent spawn requires task tracking
         if ctx.operation == "spawn_agent" && ctx.is_background && ctx.task_id.is_empty() {
-            let msg = "Background agent requires HEXFLO_TASK — create swarm + task first".to_string();
+            let msg =
+                "Background agent requires HEXFLO_TASK — create swarm + task first".to_string();
             return match self.mode {
                 EnforcementMode::Mandatory => EnforcementResult::Block(msg),
                 EnforcementMode::Advisory => EnforcementResult::Warn(msg),

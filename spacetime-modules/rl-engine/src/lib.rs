@@ -1,4 +1,4 @@
-use spacetimedb::{table, reducer, ReducerContext, Table};
+use spacetimedb::{reducer, table, ReducerContext, Table};
 
 #[table(name = rl_experience, public)]
 #[derive(Clone, Debug)]
@@ -43,15 +43,32 @@ const EPSILON: f64 = 0.1;
 const LEARNING_RATE: f64 = 0.1;
 const DISCOUNT_FACTOR: f64 = 0.95;
 
-/// Known model actions with their default seed Q-values.
+/// Known model actions with progressive tiers (ADR-2604102200).
+/// Local models tried first, escalates to cloud on failure.
 const MODEL_ACTIONS: &[(&str, f64)] = &[
+    // Tier 1: Local fast models (try first)
+    ("model:nemotron-mini", 0.3),
+    ("model:qwen3:4b", 0.25),
+    // Tier 2: Local medium models
+    ("model:qwen3:8b", 0.35),
+    ("model:qwen3.5:9b", 0.4),
+    // Tier 3: Local coding models
+    ("model:qwen2.5-coder:32b", 0.5),
+    ("model:devstral-small-2:24b", 0.45),
+    // Tier 4: Cloud fallback
     ("model:sonnet", 0.5),
     ("model:haiku", 0.3),
     ("model:opus", 0.4),
     ("model:minimax", 0.35),
     ("model:minimax_fast", 0.3),
-    ("model:local", 0.2),
 ];
+
+/// Reward increment for successful local model execution.
+/// Encourages self-improvement by using local over cloud.
+const LOCAL_SUCCESS_BONUS: f64 = 0.1;
+
+/// Penalty for rate-limiting (encourages fallback to alternate models).
+const RATE_LIMIT_PENALTY: f64 = -0.5;
 
 /// Maximum number of distinct OpenRouter model entries per state_key.
 const MAX_OPENROUTER_ENTRIES_PER_STATE: usize = 50;
@@ -83,6 +100,18 @@ fn is_openrouter_action(action: &str) -> bool {
     action.starts_with("model:openrouter:")
 }
 
+/// Returns true if `action` is a local model (Ollama) action.
+/// These get bonus reward to encourage self-improvement (ADR-2604102200).
+fn is_local_model_action(action: &str) -> bool {
+    // Local models: no slash, no openrouter prefix
+    if !action.starts_with("model:") {
+        return false;
+    }
+    let model = action.trim_start_matches("model:");
+    // Contains slash = cloud model, or contains openrouter = cloud
+    !model.contains('/') && !model.starts_with("openrouter")
+}
+
 /// Returns true if `action` is a context strategy action.
 fn is_context_action(action: &str) -> bool {
     action.starts_with("context:")
@@ -91,12 +120,15 @@ fn is_context_action(action: &str) -> bool {
 /// Find the best action (highest Q-value) among entries matching a predicate.
 /// Returns the action string or None if no entries match.
 fn best_action_matching(entries: &[RlQEntry], predicate: fn(&str) -> bool) -> Option<String> {
-    entries.iter()
+    entries
+        .iter()
         .filter(|e| predicate(&e.action))
         .max_by(|a, b| {
             let a_effective = effective_q_value(a);
             let b_effective = effective_q_value(b);
-            a_effective.partial_cmp(&b_effective).unwrap_or(std::cmp::Ordering::Equal)
+            a_effective
+                .partial_cmp(&b_effective)
+                .unwrap_or(std::cmp::Ordering::Equal)
         })
         .map(|e| e.action.clone())
 }
@@ -117,7 +149,10 @@ fn effective_q_value(entry: &RlQEntry) -> f64 {
 /// If no Q-values exist for context actions, logs exploration needed.
 #[reducer]
 pub fn select_action(ctx: &ReducerContext, state_key: String) -> Result<(), String> {
-    let entries: Vec<RlQEntry> = ctx.db.rl_q_entry().iter()
+    let entries: Vec<RlQEntry> = ctx
+        .db
+        .rl_q_entry()
+        .iter()
         .filter(|e| e.state_key == state_key)
         .collect();
 
@@ -133,13 +168,17 @@ pub fn select_action(ctx: &ReducerContext, state_key: String) -> Result<(), Stri
             let compound = format!("{}|{}", model_action, ctx_action);
             log::info!(
                 "Selected compound action '{}' for state '{}' (epsilon={:.2})",
-                compound, state_key, EPSILON
+                compound,
+                state_key,
+                EPSILON
             );
         }
         None => {
             log::info!(
                 "Selected model '{}' for state '{}', context exploration needed (epsilon={:.2})",
-                model_action, state_key, EPSILON
+                model_action,
+                state_key,
+                EPSILON
             );
         }
     }
@@ -181,14 +220,24 @@ pub fn record_reward(
             effective_reward += RATE_LIMIT_PENALTY;
         }
 
+        // Reward local models to encourage self-improvement (ADR-2604102200)
+        if is_local_model_action(component) && reward > 0.0 {
+            effective_reward += LOCAL_SUCCESS_BONUS;
+            log::info!(
+                "Local model bonus for '{}': +{:.2} reward",
+                component,
+                LOCAL_SUCCESS_BONUS
+            );
+        }
+
         // For OpenRouter models with actual cost data, adjust reward based on
         // real cost-efficiency instead of estimated token cost.
         // Cost < $0.01 is very cheap → bonus; > $0.10 is expensive → penalty.
         if openrouter_cost_usd > 0.0 && is_openrouter_action(component) {
             let cost_adjustment = if openrouter_cost_usd < 0.01 {
-                0.2  // very cost-efficient
+                0.2 // very cost-efficient
             } else if openrouter_cost_usd < 0.05 {
-                0.0  // neutral
+                0.0 // neutral
             } else if openrouter_cost_usd < 0.10 {
                 -0.1 // moderately expensive
             } else {
@@ -197,11 +246,19 @@ pub fn record_reward(
             effective_reward += cost_adjustment;
             log::info!(
                 "OpenRouter cost adjustment for '{}': ${:.4} -> reward delta {:.2}",
-                component, openrouter_cost_usd, cost_adjustment
+                component,
+                openrouter_cost_usd,
+                cost_adjustment
             );
         }
 
-        update_q_value(ctx, &state_key, component, effective_reward, &next_state_key);
+        update_q_value(
+            ctx,
+            &state_key,
+            component,
+            effective_reward,
+            &next_state_key,
+        );
     }
 
     // Enforce cap on OpenRouter entries per state to prevent unbounded growth
@@ -225,7 +282,10 @@ pub fn record_reward(
 /// Enforce a cap of MAX_OPENROUTER_ENTRIES_PER_STATE OpenRouter model entries per state.
 /// When the cap is exceeded, remove the entry with the lowest visit_count (least observed).
 fn enforce_openrouter_cap(ctx: &ReducerContext, state_key: &str) {
-    let mut or_entries: Vec<RlQEntry> = ctx.db.rl_q_entry().iter()
+    let mut or_entries: Vec<RlQEntry> = ctx
+        .db
+        .rl_q_entry()
+        .iter()
         .filter(|e| e.state_key == state_key && is_openrouter_action(&e.action))
         .collect();
 
@@ -238,10 +298,14 @@ fn enforce_openrouter_cap(ctx: &ReducerContext, state_key: &str) {
 
     let to_remove = or_entries.len() - MAX_OPENROUTER_ENTRIES_PER_STATE;
     for entry in or_entries.iter().take(to_remove) {
-        ctx.db.rl_q_entry().composite_id().delete(&entry.composite_id);
+        ctx.db
+            .rl_q_entry()
+            .composite_id()
+            .delete(&entry.composite_id);
         log::info!(
             "Pruned low-visit OpenRouter Q-entry '{}' (visits: {})",
-            entry.action, entry.visit_count
+            entry.action,
+            entry.visit_count
         );
     }
 }
@@ -257,7 +321,10 @@ fn update_q_value(
     let composite_id = format!("{}::{}", state_key, action);
 
     // Find max Q-value for next state
-    let max_next_q: f64 = ctx.db.rl_q_entry().iter()
+    let max_next_q: f64 = ctx
+        .db
+        .rl_q_entry()
+        .iter()
         .filter(|e| e.state_key == next_state_key)
         .map(|e| e.q_value)
         .fold(0.0_f64, f64::max);
@@ -266,7 +333,8 @@ fn update_q_value(
 
     match existing {
         Some(old) => {
-            let new_q = old.q_value + LEARNING_RATE * (reward + DISCOUNT_FACTOR * max_next_q - old.q_value);
+            let new_q =
+                old.q_value + LEARNING_RATE * (reward + DISCOUNT_FACTOR * max_next_q - old.q_value);
             let updated = RlQEntry {
                 composite_id: composite_id.clone(),
                 state_key: state_key.to_string(),
@@ -295,21 +363,34 @@ fn update_q_value(
 /// Call this periodically (e.g. daily) to prevent unbounded Q-table growth from
 /// dynamic OpenRouter model IDs.
 #[reducer]
-pub fn prune_stale_openrouter(ctx: &ReducerContext, cutoff_timestamp: String) -> Result<(), String> {
+pub fn prune_stale_openrouter(
+    ctx: &ReducerContext,
+    cutoff_timestamp: String,
+) -> Result<(), String> {
     let mut pruned = 0u32;
-    let entries: Vec<RlQEntry> = ctx.db.rl_q_entry().iter()
+    let entries: Vec<RlQEntry> = ctx
+        .db
+        .rl_q_entry()
+        .iter()
         .filter(|e| is_openrouter_action(&e.action))
         .collect();
 
     for entry in entries {
         // If last_updated is empty or older than cutoff, prune it
         if entry.last_updated.is_empty() || entry.last_updated < cutoff_timestamp {
-            ctx.db.rl_q_entry().composite_id().delete(&entry.composite_id);
+            ctx.db
+                .rl_q_entry()
+                .composite_id()
+                .delete(&entry.composite_id);
             pruned += 1;
         }
     }
 
-    log::info!("Pruned {} stale OpenRouter Q-entries (cutoff: {})", pruned, cutoff_timestamp);
+    log::info!(
+        "Pruned {} stale OpenRouter Q-entries (cutoff: {})",
+        pruned,
+        cutoff_timestamp
+    );
     Ok(())
 }
 
@@ -319,7 +400,11 @@ pub fn prune_stale_openrouter(ctx: &ReducerContext, cutoff_timestamp: String) ->
 /// and gives a +0.1 boost to all other model actions to encourage exploration of
 /// alternatives.
 #[reducer]
-pub fn record_rate_limit(ctx: &ReducerContext, state_key: String, model: String) -> Result<(), String> {
+pub fn record_rate_limit(
+    ctx: &ReducerContext,
+    state_key: String,
+    model: String,
+) -> Result<(), String> {
     // Penalize the rate-limited model
     let penalty_id = format!("{}::{}", state_key, model);
     let existing = ctx.db.rl_q_entry().composite_id().find(&penalty_id);
@@ -334,12 +419,16 @@ pub fn record_rate_limit(ctx: &ReducerContext, state_key: String, model: String)
             ctx.db.rl_q_entry().composite_id().update(updated);
             log::info!(
                 "Rate-limit penalty applied to '{}' at state '{}': {:.4} -> {:.4}",
-                model, state_key, old.q_value, old.q_value + RATE_LIMIT_PENALTY
+                model,
+                state_key,
+                old.q_value,
+                old.q_value + RATE_LIMIT_PENALTY
             );
         }
         None => {
             // Seed with penalty so we remember this model was rate-limited
-            let default_q = MODEL_ACTIONS.iter()
+            let default_q = MODEL_ACTIONS
+                .iter()
                 .find(|(name, _)| *name == model)
                 .map(|(_, q)| *q)
                 .unwrap_or(0.3);
@@ -353,7 +442,9 @@ pub fn record_rate_limit(ctx: &ReducerContext, state_key: String, model: String)
             });
             log::info!(
                 "Rate-limit penalty applied to new '{}' at state '{}': {:.4}",
-                model, state_key, default_q + RATE_LIMIT_PENALTY
+                model,
+                state_key,
+                default_q + RATE_LIMIT_PENALTY
             );
         }
     }
@@ -389,8 +480,13 @@ pub fn record_rate_limit(ctx: &ReducerContext, state_key: String, model: String)
 
     // Also boost existing OpenRouter entries for this state (they're dynamic, so
     // we can't seed them, but we can boost ones we've already seen)
-    let or_entries: Vec<RlQEntry> = ctx.db.rl_q_entry().iter()
-        .filter(|e| e.state_key == state_key && is_openrouter_action(&e.action) && e.action != model)
+    let or_entries: Vec<RlQEntry> = ctx
+        .db
+        .rl_q_entry()
+        .iter()
+        .filter(|e| {
+            e.state_key == state_key && is_openrouter_action(&e.action) && e.action != model
+        })
         .collect();
     for entry in or_entries {
         let updated = RlQEntry {
@@ -412,7 +508,13 @@ pub fn seed_model_q_values(ctx: &ReducerContext, state_key: String) -> Result<()
     let mut seeded = 0u32;
     for (model, default_q) in MODEL_ACTIONS {
         let composite_id = format!("{}::{}", state_key, model);
-        if ctx.db.rl_q_entry().composite_id().find(&composite_id).is_none() {
+        if ctx
+            .db
+            .rl_q_entry()
+            .composite_id()
+            .find(&composite_id)
+            .is_none()
+        {
             ctx.db.rl_q_entry().insert(RlQEntry {
                 composite_id,
                 state_key: state_key.clone(),
@@ -478,7 +580,9 @@ mod tests {
         assert!(is_model_action("model:opus"));
         assert!(is_model_action("model:haiku"));
         assert!(is_model_action("model:local"));
-        assert!(is_model_action("model:openrouter:meta-llama/llama-4-maverick"));
+        assert!(is_model_action(
+            "model:openrouter:meta-llama/llama-4-maverick"
+        ));
         assert!(!is_model_action("context:balanced"));
         assert!(!is_model_action("something_else"));
     }
@@ -494,8 +598,12 @@ mod tests {
 
     #[test]
     fn test_is_openrouter_action() {
-        assert!(is_openrouter_action("model:openrouter:meta-llama/llama-4-maverick"));
-        assert!(is_openrouter_action("model:openrouter:deepseek/deepseek-r1"));
+        assert!(is_openrouter_action(
+            "model:openrouter:meta-llama/llama-4-maverick"
+        ));
+        assert!(is_openrouter_action(
+            "model:openrouter:deepseek/deepseek-r1"
+        ));
         assert!(!is_openrouter_action("model:sonnet"));
         assert!(!is_openrouter_action("model:opus"));
         assert!(!is_openrouter_action("context:balanced"));

@@ -20,6 +20,7 @@ pub mod tui;
 use commands::{
     adr::AdrAction,
     agent::AgentAction,
+    brain::BrainAction,
     chat::ChatArgs,
     context::ContextAction,
     spec::SpecAction,
@@ -78,6 +79,11 @@ enum Commands {
     Secrets {
         #[command(subcommand)]
         action: SecretsAction,
+    },
+    /// Agentic Brain (self-improving model selection)
+    Brain {
+        #[command(subcommand)]
+        action: BrainAction,
     },
     /// Manage local SpacetimeDB instance
     Stdb {
@@ -255,6 +261,19 @@ enum Commands {
     },
     /// Run all hex enforcement gates (ADR-2604061100)
     Ci,
+    /// Update hex to the latest release (ADR-2604080929)
+    #[command(name = "self-update")]
+    SelfUpdate {
+        /// Only check for updates, do not install
+        #[arg(long)]
+        check: bool,
+        /// Install a specific version tag (e.g. v26.4.30)
+        #[arg(long)]
+        version: Option<String>,
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 #[tokio::main]
@@ -276,6 +295,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Nexus { action } => commands::nexus::run(action).await,
         Commands::Agent { action } => commands::agent::run(action).await,
         Commands::Secrets { action } => commands::secrets::run(action).await,
+        Commands::Brain { action } => commands::brain::run(action).await,
         Commands::Stdb { action } => commands::stdb::run(action).await,
         Commands::Swarm { action } => commands::swarm::run(action).await,
         Commands::Task { action } => commands::task::run(action).await,
@@ -312,5 +332,8 @@ async fn main() -> anyhow::Result<()> {
             doctor::run_validate_pipeline(skip_test, strict, parallel).await
         }
         Commands::Ci => commands::ci::run().await,
+        Commands::SelfUpdate { check, version, yes } => {
+            commands::update::run(check, version, yes).await
+        }
     }
 }

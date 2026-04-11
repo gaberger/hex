@@ -103,6 +103,13 @@ impl NexusClient {
         resp.json().await.with_context(|| format!("Failed to parse JSON from {}", path))
     }
 
+    /// Resolve the agent ID, falling back to live resolution if the cached value is None.
+    /// This handles the race where the MCP server starts before session-start writes
+    /// the session file (the NexusClient is constructed once at startup with agent_id=None).
+    fn resolve_agent_id(&self) -> Option<String> {
+        self.agent_id.clone().or_else(read_session_agent_id)
+    }
+
     /// POST JSON to nexus with a 300s timeout — for inference/code-generation calls.
     pub async fn post_long(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
         let url = format!("{}{}", self.base_url, path);
@@ -110,7 +117,7 @@ impl NexusClient {
         if let Some(ref token) = self.auth_token {
             req = req.header("Authorization", format!("Bearer {}", token));
         }
-        if let Some(ref id) = self.agent_id {
+        if let Some(ref id) = self.resolve_agent_id() {
             req = req.header("x-hex-agent-id", id.as_str());
         }
         let resp = req
@@ -134,7 +141,7 @@ impl NexusClient {
         if let Some(ref token) = self.auth_token {
             req = req.header("Authorization", format!("Bearer {}", token));
         }
-        if let Some(ref id) = self.agent_id {
+        if let Some(ref id) = self.resolve_agent_id() {
             req = req.header("x-hex-agent-id", id.as_str());
         }
         let resp = req
@@ -158,7 +165,7 @@ impl NexusClient {
         if let Some(ref token) = self.auth_token {
             req = req.header("Authorization", format!("Bearer {}", token));
         }
-        if let Some(ref id) = self.agent_id {
+        if let Some(ref id) = self.resolve_agent_id() {
             req = req.header("x-hex-agent-id", id.as_str());
         }
         let resp = req
@@ -182,7 +189,7 @@ impl NexusClient {
         if let Some(ref token) = self.auth_token {
             req = req.header("Authorization", format!("Bearer {}", token));
         }
-        if let Some(ref id) = self.agent_id {
+        if let Some(ref id) = self.resolve_agent_id() {
             req = req.header("x-hex-agent-id", id.as_str());
         }
         let resp = req

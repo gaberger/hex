@@ -68,8 +68,16 @@ pub fn select_provider(
         candidates = providers.iter().collect();
     }
 
-    // Sort: healthy first, then by effective quality score descending
+    // Sort: local providers (Ollama/vLLM) first, then healthy, then by effective quality score descending
+    let is_local = |p: &&InferenceProviderRow| -> bool {
+        p.provider_type == "ollama" || p.provider_type == "vllm"
+    };
     candidates.sort_by(|a, b| {
+        let local_a = is_local(a);
+        let local_b = is_local(b);
+        if local_a != local_b {
+            return local_b.cmp(&local_a); // local (true) before cloud (false)
+        }
         let health_a = a.healthy;
         let health_b = b.healthy;
         if health_a != health_b {

@@ -135,8 +135,11 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_enforce_list", "hex_enforce_mode", "hex_enforce_prompt",
     // Test history (read-only)
     "hex_test_history", "hex_test_trends",
-    // Project list (read-only)
+    // Project list + fingerprint (read-only)
     "hex_project_list",
+    "hex_fingerprint_generate", "hex_fingerprint_get",
+    // Self-update check (read-only — check_only path)
+    "hex_self_update",
     // Lifecycle tools — exempt because they establish the session
     "hex_session_start", "hex_session_heartbeat", "hex_workplan_activate",
     // Git queries (read-only)
@@ -150,7 +153,43 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "hex_neural_lab_frontier", "hex_neural_lab_strategies",
     // Batch execution + search (search is read-only; execute is a thin proxy with no local side-effects)
     "hex_batch_execute", "hex_batch_search",
+    // Dev pipeline (read-only queries / local process control)
+    "hex_dev_start", "hex_dev_status", "hex_dev_stop",
+    // Reports (read-only)
+    "hex_report_workplan", "hex_report_test", "hex_report_swarm",
+    // SpacetimeDB (read-only queries)
+    "hex_stdb_query", "hex_stdb_tables", "hex_stdb_health",
+    // Doctor (read-only health aggregation)
+    "hex_doctor",
+    // Context (read-only query)
+    "hex_context_get",
+    // Specs (read-only queries)
+    "hex_spec_list", "hex_spec_get", "hex_spec_validate",
+    // Readme (read-only check)
+    "hex_readme_check",
+    // Sandbox (read-only list)
+    "hex_sandbox_list",
+    // CI (read-only status)
+    "hex_ci_status",
+    // Hooks (read-only queries)
+    "hex_hook_list", "hex_hook_status",
+    // Chat (read-only history query)
+    "hex_chat_history",
+    // Skills (read-only list)
+    "hex_skill_list",
+    // Validate (read-only check)
+    "hex_validate",
+    // OpenCode (read-only queries)
+    "hex_opencode_status", "hex_opencode_config",
 ];
+
+/// Returns true when running inside Claude Code as an MCP tool call (ADR-2604081320).
+/// Claude Code sets CLAUDE_SESSION_ID on every tool invocation.
+/// hex-nexus also sets CLAUDECODE=1 for bypass mode — treated as equivalent.
+pub fn is_claude_code_context() -> bool {
+    std::env::var("CLAUDE_SESSION_ID").is_ok()
+        || std::env::var("CLAUDECODE").as_deref() == Ok("1")
+}
 
 /// Build enforcement context from tool name and args.
 fn build_enforcement_ctx(name: &str, args: &Value) -> EnforcementContext {
@@ -220,6 +259,124 @@ fn urlencoding_simple(s: &str) -> String {
         }
     }
     out
+}
+
+// ─── ADR filesystem helpers (CLI CWD is source of truth) ─
+
+/// Walk upward from CWD to find docs/adrs/.
+fn find_adr_dir() -> Option<std::path::PathBuf> {
+    if let Ok(root) = std::env::var("HEX_PROJECT_ROOT") {
+        let p = std::path::PathBuf::from(root).join("docs/adrs");
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    let cwd = std::env::current_dir().ok()?;
+    let mut dir = cwd.as_path();
+    loop {
+        let candidate = dir.join("docs").join("adrs");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        dir = dir.parent()?;
+    }
+}
+
+/// Extract ADR ID from filename: "ADR-001-foo.md" → "ADR-001",
+/// "ADR-2603222035-foo.md" → "ADR-2603222035".
+fn extract_adr_id(filename: &str) -> String {
+    let stem = filename.trim_end_matches(".md");
+    if let Some(rest) = stem.strip_prefix("ADR-").or_else(|| stem.strip_prefix("adr-")) {
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            return format!("ADR-{}", digits);
+        }
+    }
+    stem.to_string()
+}
+
+/// Parse ADR markdown for title, status, date.
+fn parse_adr_frontmatter(content: &str, filename: &str) -> (String, String, String) {
+    let mut status = "unknown".to_string();
+    let mut date = String::new();
+    let mut title = String::new();
+
+    for line in content.lines() {
+        if line.starts_with("# ") && title.is_empty() {
+            title = line.trim_start_matches("# ").to_string();
+            if let Some(pos) = title.find(": ") {
+                title = title[pos + 2..].to_string();
+            }
+        }
+        let lower = line.to_lowercase();
+        if lower.starts_with("**status:**") || lower.starts_with("status:") {
+            status = line.split(':').nth(1).unwrap_or("unknown")
+                .trim().trim_matches('*').trim().to_string();
+        }
+        if lower.starts_with("**date:**") || lower.starts_with("date:") {
+            date = line.split(':').skip(1).collect::<Vec<_>>().join(":")
+                .trim().trim_matches('*').trim().to_string();
+        }
+    }
+
+    if title.is_empty() {
+        title = filename.trim_start_matches("ADR-").trim_start_matches("adr-")
+            .split('-').skip_while(|s| s.chars().all(|c| c.is_ascii_digit()))
+            .collect::<Vec<_>>().join(" ").trim_end_matches(".md").to_string();
+    }
+
+    (title, status, date)
+}
+
+/// Collect all ADRs from a directory as JSON-compatible maps.
+fn collect_adrs(dir: &std::path::Path) -> Vec<serde_json::Value> {
+    let mut adrs = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            if !filename.ends_with(".md") || !filename.starts_with("ADR-") {
+                continue;
+            }
+            let id = extract_adr_id(&filename);
+            let content = std::fs::read_to_string(entry.path()).unwrap_or_default();
+            let (title, status, date) = parse_adr_frontmatter(&content, &filename);
+            adrs.push(serde_json::json!({
+                "id": id,
+                "title": title,
+                "status": status,
+                "date": date,
+                "filename": filename,
+            }));
+        }
+    }
+    adrs.sort_by(|a, b| {
+        let fa = a.get("filename").and_then(|v| v.as_str()).unwrap_or("");
+        let fb = b.get("filename").and_then(|v| v.as_str()).unwrap_or("");
+        fa.cmp(fb)
+    });
+    adrs
+}
+
+/// Read a single ADR's full content by ID prefix match.
+fn read_adr_detail(dir: &std::path::Path, id: &str) -> Option<serde_json::Value> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let filename = entry.file_name().to_string_lossy().to_string();
+        if !filename.ends_with(".md") { continue; }
+        let file_id = extract_adr_id(&filename);
+        if file_id == id {
+            let content = std::fs::read_to_string(entry.path()).unwrap_or_default();
+            let (title, status, date) = parse_adr_frontmatter(&content, &filename);
+            return Some(serde_json::json!({
+                "id": id,
+                "title": title,
+                "status": status,
+                "date": date,
+                "content": content,
+            }));
+        }
+    }
+    None
 }
 
 // ─── Tool Dispatch ───────────────────────────────────────
@@ -399,36 +556,67 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 .await.map_err(|e| e.to_string())
         }
 
-        // ── ADR ──
+        // ── ADR (filesystem-first: CLI CWD is source of truth) ──
         "hex_adr_list" => {
-            // ADR commands work on local filesystem, not nexus
-            // For now delegate to nexus project endpoint if available
             let status_filter = args.get("status").and_then(|v| v.as_str()).unwrap_or("");
-            let path = if status_filter.is_empty() {
-                "/api/adrs".to_string()
-            } else {
-                format!("/api/adrs?status={}", status_filter)
-            };
-            nexus.get(&path).await.map_err(|e| e.to_string())
+            let adr_dir = find_adr_dir();
+            match adr_dir {
+                Some(dir) => {
+                    let mut adrs = collect_adrs(&dir);
+                    if !status_filter.is_empty() {
+                        let f = status_filter.to_lowercase();
+                        adrs.retain(|a| a.get("status").and_then(|v| v.as_str()).unwrap_or("").to_lowercase() == f);
+                    }
+                    Ok(serde_json::to_value(&adrs).unwrap_or_default())
+                }
+                None => Err("ADR directory not found (docs/adrs/ not found in any parent directory)".to_string()),
+            }
         }
 
         "hex_adr_search" => {
-            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10);
-            nexus.get(&format!("/api/adrs/search?q={}&limit={}", query, limit))
-                .await.map_err(|e| e.to_string())
+            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+            match find_adr_dir() {
+                Some(dir) => {
+                    let adrs = collect_adrs(&dir);
+                    let matched: Vec<_> = adrs.into_iter().filter(|a| {
+                        let title = a.get("title").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        let filename = a.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        title.contains(&query) || id.contains(&query) || filename.contains(&query)
+                    }).take(limit).collect();
+                    Ok(serde_json::to_value(&matched).unwrap_or_default())
+                }
+                None => Err("ADR directory not found".to_string()),
+            }
         }
 
         "hex_adr_status" => {
             let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            nexus.get(&format!("/api/adrs/{}", id))
-                .await.map_err(|e| e.to_string())
+            match find_adr_dir() {
+                Some(dir) => {
+                    match read_adr_detail(&dir, id) {
+                        Some(detail) => Ok(serde_json::to_value(&detail).unwrap_or_default()),
+                        None => Err(format!("ADR '{}' not found", id)),
+                    }
+                }
+                None => Err("ADR directory not found".to_string()),
+            }
         }
 
         "hex_adr_abandoned" => {
-            let days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(14);
-            nexus.get(&format!("/api/adrs/abandoned?days={}", days))
-                .await.map_err(|e| e.to_string())
+            let _days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(14);
+            match find_adr_dir() {
+                Some(dir) => {
+                    let adrs = collect_adrs(&dir);
+                    let abandoned: Vec<_> = adrs.into_iter().filter(|a| {
+                        let status = a.get("status").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        status == "unknown" || status == "proposed" || status == "draft"
+                    }).collect();
+                    Ok(serde_json::to_value(&abandoned).unwrap_or_default())
+                }
+                None => Err("ADR directory not found".to_string()),
+            }
         }
 
         // ── Workplan management ──
@@ -519,6 +707,34 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
 
         "hex_agent_list" => {
             nexus.get("/api/agents").await.map_err(|e| e.to_string())
+        }
+
+        // ── Steering API (P3a/b) ──
+        "hex_session_event" => {
+            let session_id = args.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+            let event = args.get("event").and_then(|v| v.as_str()).unwrap_or("");
+            let payload = args.get("payload").cloned();
+            let body = serde_json::json!({ "event": event, "payload": payload });
+            nexus.post(&format!("/api/steering/{}/event", session_id), &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_session_interrupt" => {
+            let session_id = args.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+            let instructions = args.get("instructions").and_then(|v| v.as_str()).unwrap_or("");
+            let body = serde_json::json!({ "instructions": instructions });
+            nexus.post(&format!("/api/steering/{}/interrupt", session_id), &body).await.map_err(|e| e.to_string())
+        }
+
+        // ── Environment API (P5a) ──
+        "hex_environment_create" => {
+            let template = args.get("template").and_then(|v| v.as_str()).unwrap_or("default");
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("env");
+            let body = serde_json::json!({ "template": template, "name": name });
+            nexus.post("/api/environments", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_environment_list" => {
+            nexus.get("/api/environments").await.map_err(|e| e.to_string())
         }
 
         // ── Nexus daemon ──
@@ -716,7 +932,36 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
 
         // ── Project management ──
         "hex_project_list" => {
-            nexus.get("/api/projects").await.map_err(|e| e.to_string())
+            let resp = nexus.get("/api/projects").await.map_err(|e| e.to_string());
+            // When inside Claude Code, enrich with structured actions so Claude
+            // can call MCP tools directly instead of narrating CLI commands (ADR-2604081320).
+            if is_claude_code_context() {
+                resp.map(|r| {
+                    let mut enriched = r.clone();
+                    let projects = r.get("projects").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+                    let actions: Vec<serde_json::Value> = projects.iter().filter_map(|p| {
+                        let id = p.get("id").and_then(|v| v.as_str())?;
+                        let name = p.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+                        let status = p.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                        if status == "untracked" || status == "orphaned" {
+                            Some(serde_json::json!({
+                                "label": format!("Generate architecture fingerprint for {}", name),
+                                "mcp_tool": "hex_fingerprint_generate",
+                                "mcp_args": { "project_id": id },
+                                "cli_command": format!("hex fingerprint generate {}", id)
+                            }))
+                        } else {
+                            None
+                        }
+                    }).collect();
+                    if !actions.is_empty() {
+                        enriched["actions"] = serde_json::json!(actions);
+                    }
+                    enriched
+                })
+            } else {
+                resp
+            }
         }
 
         "hex_project_register" => {
@@ -729,6 +974,69 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                 body["name"] = serde_json::json!(name);
             }
             nexus.post("/api/projects/register", &body).await.map_err(|e| e.to_string())
+        }
+
+        // ── Fingerprint (ADR-2603301200 / ADR-2604081320) ──
+        "hex_fingerprint_generate" => {
+            let project_id = args.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
+            let mut body = serde_json::json!({});
+            if let Some(root) = args.get("project_root").and_then(|v| v.as_str()) {
+                body["project_root"] = serde_json::json!(root);
+            }
+            nexus.post(&format!("/api/projects/{}/fingerprint", project_id), &body)
+                .await.map_err(|e| e.to_string())
+        }
+
+        "hex_fingerprint_get" => {
+            let project_id = args.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.get(&format!("/api/projects/{}/fingerprint", project_id))
+                .await.map_err(|e| e.to_string())
+        }
+
+        // ── Self-update (ADR-2604080929) ──
+        "hex_self_update" => {
+            let check_only = args.get("check_only").and_then(|v| v.as_bool()).unwrap_or(true);
+            let _target_version = args.get("version").and_then(|v| v.as_str());
+            if check_only {
+                // Version check: call GitHub API and return structured result
+                let http = reqwest::Client::builder()
+                    .user_agent(format!("hex/{}", env!("CARGO_PKG_VERSION")))
+                    .build()
+                    .unwrap_or_default();
+                match http.get(crate::commands::update::GITHUB_RELEASES_API).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        match resp.json::<serde_json::Value>().await {
+                            Ok(json) => {
+                                let latest = json["tag_name"].as_str()
+                                    .unwrap_or("unknown")
+                                    .trim_start_matches('v')
+                                    .to_string();
+                                let current = env!("CARGO_PKG_VERSION");
+                                Ok(serde_json::json!({
+                                    "current": current,
+                                    "latest": latest,
+                                    "up_to_date": current == latest,
+                                    "update_command": if current != latest { "hex self-update" } else { "" }
+                                }))
+                            }
+                            Err(_) => Ok(serde_json::json!({
+                                "current": env!("CARGO_PKG_VERSION"),
+                                "latest": "unknown",
+                                "message": "Could not parse GitHub releases API response"
+                            }))
+                        }
+                    }
+                    _ => Ok(serde_json::json!({
+                        "current": env!("CARGO_PKG_VERSION"),
+                        "latest": "unknown",
+                        "message": "Could not reach GitHub releases API"
+                    }))
+                }
+            } else {
+                Ok(serde_json::json!({
+                    "message": "Run 'hex self-update --yes' from the terminal to install updates non-interactively"
+                }))
+            }
         }
 
         // ── Git queries ──
@@ -1054,6 +1362,221 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
                     "isError": true
                 }),
             }
+        }
+
+        // ── Dev Pipeline ──
+        "hex_dev_start" => {
+            let project_path = args.get("project_path").and_then(|v| v.as_str()).unwrap_or(".");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("dev start {}", project_path)})).await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_dev_status" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "dev status"})).await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_dev_stop" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "dev stop"})).await
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Reports ──
+        "hex_report_workplan" => {
+            let workplan_id = args.get("workplan_id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.get(&format!("/api/workplan/{}/report", urlencoding_simple(workplan_id))).await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_report_test" => {
+            nexus.get("/api/test-sessions/trends").await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_report_swarm" => {
+            nexus.get("/api/swarms/active").await
+                .map_err(|e| e.to_string())
+        }
+
+        // ── SpacetimeDB ──
+        "hex_stdb_health" => {
+            nexus.get("/api/stdb/health").await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_stdb_query" => {
+            let sql = args.get("sql").and_then(|v| v.as_str()).unwrap_or("");
+            let db = args.get("db").and_then(|v| v.as_str()).unwrap_or("hex");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("stdb query --db {} {}", db, sql)})).await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_stdb_tables" => {
+            let db = args.get("db").and_then(|v| v.as_str()).unwrap_or("hex");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("stdb tables --db {}", db)})).await
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Doctor (aggregate health) ──
+        "hex_doctor" => {
+            let mut health = serde_json::json!({});
+            health["nexus"] = nexus.get("/api/version").await.unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}));
+            health["stdb"] = nexus.get("/api/stdb/health").await.unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}));
+            health["secrets"] = nexus.get("/api/secrets/health").await.unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}));
+            health["inference"] = nexus.get("/api/inference/endpoints").await.unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}));
+            Ok(health)
+        }
+
+        // ── Context ──
+        "hex_context_get" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "context"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_context_inject" => {
+            nexus.post("/api/context/reload", &serde_json::json!({})).await
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Specs ──
+        "hex_spec_list" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "spec list"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_spec_get" => {
+            let name_arg = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("spec get {}", name_arg)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_spec_validate" => {
+            let spec_name = args.get("spec_name").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("spec validate {}", spec_name)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Readme ──
+        "hex_readme_generate" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("readme generate {}", path)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_readme_check" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("readme check {}", path)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Sandbox ──
+        "hex_sandbox_spawn" => {
+            let image = args.get("image").and_then(|v| v.as_str()).unwrap_or("hex-sandbox:latest");
+            nexus.post("/api/agents/sandbox/spawn", &serde_json::json!({"image": image})).await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_sandbox_stop" => {
+            let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("");
+            nexus.delete(&format!("/api/agents/sandbox/{}", agent_id)).await
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_sandbox_list" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "sandbox list"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Init ──
+        "hex_init" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            nexus.post("/api/projects/init", &serde_json::json!({"path": path})).await
+                .map_err(|e| e.to_string())
+        }
+
+        // ── CI ──
+        "hex_ci_status" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "ci"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_ci_run" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "ci"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Hooks ──
+        "hex_hook_list" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "hook list"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_hook_status" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "hook status"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Chat ──
+        "hex_chat_send" => {
+            let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            let channel = args.get("channel").and_then(|v| v.as_str()).unwrap_or("general");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("chat send {} --channel {}", message, channel)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_chat_history" => {
+            let channel = args.get("channel").and_then(|v| v.as_str()).unwrap_or("general");
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20);
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("chat history --channel {} --limit {}", channel, limit)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Skills ──
+        "hex_skill_list" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "skill list"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── Validate ──
+        "hex_validate" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": format!("validate {}", path)})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        // ── OpenCode ──
+        "hex_opencode_status" => {
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": "opencode status"})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
+        }
+
+        "hex_opencode_config" => {
+            let key = args.get("key").and_then(|v| v.as_str());
+            let value = args.get("value").and_then(|v| v.as_str());
+            let subcmd = match (key, value) {
+                (Some(k), Some(v)) => format!("opencode config set {} {}", k, v),
+                (Some(k), None) => format!("opencode config get {}", k),
+                _ => "opencode config list".to_string(),
+            };
+            nexus.post("/api/exec", &serde_json::json!({"subcommand": subcmd})).await
+                .map(|v| v.get("output").and_then(|o| o.as_str()).map(|s| serde_json::json!({"output": s})).unwrap_or(v))
+                .map_err(|e| e.to_string())
         }
 
         _ => Err(format!("Unknown tool: {}", name)),

@@ -100,7 +100,7 @@ impl FixAgent {
     pub async fn execute(
         &self,
         input: FixTaskInput,
-        model_override: Option<&str>,
+        _model_override: Option<&str>,
         provider_pref: Option<&str>,
     ) -> Result<FixTaskOutput> {
         info!(
@@ -178,13 +178,15 @@ impl FixAgent {
         };
 
         // ── Select model ─────────────────────────────────────────────────
-        // Use CodeGeneration (not CodeEdit) so the RL engine selects the same
-        // capable model used for initial code generation (e.g. claude-sonnet-4-6).
-        // Compile fixers need to rewrite entire files — CodeEdit mini-models are
-        // too weak for axum/tokio Rust errors.
+        // Never forward model_override to the fixer — the user's --model flag
+        // targets the coder (generation speed), not internal remediation agents.
+        // RL + provider defaults always select a capable model for fix tasks
+        // (e.g. qwen3.5:27b on ollama, claude-sonnet-4-6 on anthropic).
+        // Compile fixers need to rewrite entire files — small/fast models like
+        // qwen3:8b time out on complex axum/tokio Rust errors.
         let selected = self
             .selector
-            .select_model(TaskType::CodeGeneration, model_override, provider_pref)
+            .select_model(TaskType::CodeGeneration, None, provider_pref)
             .await
             .context("model selection failed for fix")?;
 

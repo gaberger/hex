@@ -1,6 +1,6 @@
 # ADR-2603301600: Batch Command Execution with Context Indexing
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-03-30
 **Drivers:** Agent context windows flood with raw command output (cargo build, cargo test, hex analyze), consuming tokens irreversibly and degrading reasoning quality
 **Supersedes:** N/A

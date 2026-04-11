@@ -67,6 +67,33 @@
       }
     },
     {
+      "name": "hex_hexflo_swarm_complete",
+      "category": "swarm",
+      "description": "Mark a swarm as completed (archives it while preserving data for reporting)",
+      "route": { "method": "PATCH", "path": "/api/swarms/{id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Swarm ID to mark as completed" }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "name": "hex_hexflo_swarm_fail",
+      "category": "swarm",
+      "description": "Mark a swarm as failed with a reason (archives it while preserving data for reporting)",
+      "route": { "method": "POST", "path": "/api/swarms/{id}/fail" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Swarm ID to mark as failed" },
+          "reason": { "type": "string", "description": "Reason for failure (default: 'manually failed')" }
+        },
+        "required": ["id"]
+      }
+    },
+    {
       "name": "hex_hexflo_task_create",
       "category": "task",
       "description": "Create a task in a swarm",
@@ -96,15 +123,43 @@
     {
       "name": "hex_hexflo_task_assign",
       "category": "task",
-      "description": "Assign a task to an agent. Sets status to 'in_progress' and records the agent_id. Only works on tasks with 'pending' status.",
+      "description": "Assign a task to an agent. Sets status to 'in_progress' and records the agent_id. Only works on tasks with 'pending' status. Pass 'version' for optimistic locking (CAS) — returns 409 on conflict. Omit version to skip check (legacy).",
       "route": { "method": "PATCH", "path": "/api/hexflo/tasks/{task_id}" },
       "inputSchema": {
         "type": "object",
         "properties": {
           "task_id": { "type": "string", "description": "Task ID to assign" },
-          "agent_id": { "type": "string", "description": "Agent ID claiming this task (from hex_agent_connect registration)" }
+          "agent_id": { "type": "string", "description": "Agent ID claiming this task (from hex_agent_connect registration)" },
+          "version": { "type": "integer", "description": "Expected task version for CAS (omit to skip version check)" }
         },
         "required": ["task_id", "agent_id"]
+      }
+    },
+    {
+      "name": "hex_hexflo_swarm_transfer",
+      "category": "swarm",
+      "description": "Transfer swarm ownership to a new agent. The current owner loses the swarm; the new owner gains it. New owner must not already own an active swarm.",
+      "route": { "method": "POST", "path": "/api/swarms/{id}/transfer" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Swarm ID to transfer" },
+          "new_owner_agent_id": { "type": "string", "description": "Agent ID of the new owner" }
+        },
+        "required": ["id", "new_owner_agent_id"]
+      }
+    },
+    {
+      "name": "hex_hexflo_agent_swarm",
+      "category": "swarm",
+      "description": "Get the active swarm owned by a specific agent (if any). Returns 404 if agent has no active swarm.",
+      "route": { "method": "GET", "path": "/api/hex-agents/{id}/swarm" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Agent ID to look up owned swarm for" }
+        },
+        "required": ["id"]
       }
     },
     {
@@ -887,49 +942,473 @@
       }
     },
     {
-      "name": "hex_batch_execute",
-      "category": "batch",
-      "description": "Execute a batch of shell commands in a working directory and index their output for fast search. Returns a session_id for use with hex_batch_search.",
-      "route": { "method": "POST", "path": "/api/command-sessions" },
+      "name": "hex_exec",
+      "category": "exec",
+      "description": "Execute a hex CLI subcommand and return its output. Use for running hex commands like 'plan list', 'adr search <query>', 'analyze .', 'status', etc.",
+      "route": { "method": "POST", "path": "/api/exec" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "commands": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Shell commands to run"
-          },
-          "working_dir": {
+          "subcommand": {
             "type": "string",
-            "description": "Absolute path to working directory"
+            "description": "The hex subcommand and arguments, e.g. \"plan list\" or \"adr search authentication\""
           }
         },
-        "required": ["commands", "working_dir"]
+        "required": ["subcommand"]
       }
     },
     {
-      "name": "hex_batch_search",
-      "category": "batch",
-      "description": "Search indexed output from a prior hex_batch_execute session. Returns matching lines with command context and relevance score.",
-      "route": { "method": "GET", "path": "/api/command-sessions/{session_id}/search" },
+      "name": "hex_dev_start",
+      "category": "dev",
+      "description": "Start the dev pipeline for a project (watch mode, build, serve)",
+      "route": { "method": "POST", "path": "/api/exec" },
       "inputSchema": {
         "type": "object",
         "properties": {
-          "session_id": {
+          "project_path": { "type": "string", "description": "Project root path (default: current directory)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_dev_status",
+      "category": "dev",
+      "description": "Check dev pipeline status (running processes, ports, health)",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_dev_stop",
+      "category": "dev",
+      "description": "Stop the dev pipeline and all associated processes",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_report_workplan",
+      "category": "report",
+      "description": "Get aggregate report for a workplan execution — phases, tasks, agents, gates, duration",
+      "route": { "method": "GET", "path": "/api/workplan/{workplan_id}/report" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workplan_id": { "type": "string", "description": "Workplan execution ID (UUID)" }
+        },
+        "required": ["workplan_id"]
+      }
+    },
+    {
+      "name": "hex_report_test",
+      "category": "report",
+      "description": "Show test pass rate trends across recent runs",
+      "route": { "method": "GET", "path": "/api/test-sessions/trends" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_report_swarm",
+      "category": "report",
+      "description": "Get status of all active swarms with tasks and agents",
+      "route": { "method": "GET", "path": "/api/swarms/active" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_stdb_health",
+      "category": "stdb",
+      "description": "Check SpacetimeDB connection health and module status",
+      "route": { "method": "GET", "path": "/api/stdb/health" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_stdb_query",
+      "category": "stdb",
+      "description": "Execute a SQL query against SpacetimeDB (SELECT only for safety)",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sql": { "type": "string", "description": "SQL query to execute (SELECT statements only)" },
+          "db": { "type": "string", "description": "Database name (default: hex)" }
+        },
+        "required": ["sql"]
+      }
+    },
+    {
+      "name": "hex_stdb_tables",
+      "category": "stdb",
+      "description": "List tables in a SpacetimeDB database",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "db": { "type": "string", "description": "Database name (default: hex)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_doctor",
+      "category": "diagnostics",
+      "description": "Aggregate health check across all hex subsystems: nexus, SpacetimeDB, secrets, inference",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_context_get",
+      "category": "context",
+      "description": "Get architecture context for the current project",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_context_inject",
+      "category": "context",
+      "description": "Reload architecture context into nexus (mutates cached state)",
+      "route": { "method": "POST", "path": "/api/context/reload" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_spec_list",
+      "category": "specs",
+      "description": "List all behavioral specs in the project",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_spec_get",
+      "category": "specs",
+      "description": "Get the contents of a specific behavioral spec",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Name of the spec to retrieve" }
+        },
+        "required": ["name"]
+      }
+    },
+    {
+      "name": "hex_spec_validate",
+      "category": "specs",
+      "description": "Validate behavioral specs against implementation",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "spec_name": { "type": "string", "description": "Name of a specific spec to validate (optional — validates all if omitted)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_readme_generate",
+      "category": "readme",
+      "description": "Generate a README.md for the project (writes file to disk)",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Project path (default: current directory)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_readme_check",
+      "category": "readme",
+      "description": "Check if the project README is up to date with the current codebase",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Project path (default: current directory)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_sandbox_spawn",
+      "category": "sandbox",
+      "description": "Spawn a Docker sandbox agent for isolated code execution",
+      "route": { "method": "POST", "path": "/api/agents/sandbox/spawn" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "image": { "type": "string", "description": "Docker image to use (default: hex-sandbox:latest)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_sandbox_stop",
+      "category": "sandbox",
+      "description": "Stop a running sandbox agent",
+      "route": { "method": "DELETE", "path": "/api/agents/sandbox/{agent_id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "description": "ID of the sandbox agent to stop" }
+        },
+        "required": ["agent_id"]
+      }
+    },
+    {
+      "name": "hex_sandbox_list",
+      "category": "sandbox",
+      "description": "List running sandbox agents",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_init",
+      "category": "init",
+      "description": "Initialize hex in a target project (creates config files, hooks, and agent definitions)",
+      "route": { "method": "POST", "path": "/api/projects/init" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Project path to initialize (default: current directory)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_ci_status",
+      "category": "ci",
+      "description": "Check CI pipeline status for the current project",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_ci_run",
+      "category": "ci",
+      "description": "Trigger a CI pipeline run for the current project",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_hook_list",
+      "category": "hooks",
+      "description": "List all configured hooks for the current project",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_hook_status",
+      "category": "hooks",
+      "description": "Show hook execution status and recent invocations",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_chat_send",
+      "category": "chat",
+      "description": "Send a chat message to an agent or channel",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "message": {
             "type": "string",
-            "description": "Session ID returned by hex_batch_execute"
+            "description": "The message to send"
           },
-          "queries": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Search terms to match against indexed output"
-          },
-          "max_results": {
-            "type": "integer",
-            "description": "Maximum results to return (default 50)"
+          "channel": {
+            "type": "string",
+            "description": "Target channel (default: general)",
+            "default": "general"
           }
         },
-        "required": ["session_id", "queries"]
+        "required": ["message"]
+      }
+    },
+    {
+      "name": "hex_chat_history",
+      "category": "chat",
+      "description": "Get chat history for a channel",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Channel to get history for (default: general)",
+            "default": "general"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of messages to return (default: 20)",
+            "default": 20
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_skill_list",
+      "category": "skills",
+      "description": "List available hex skills",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_validate",
+      "category": "validate",
+      "description": "Run post-build semantic validation on a path",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to validate (default: current directory)",
+            "default": "."
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_opencode_status",
+      "category": "opencode",
+      "description": "Check OpenCode integration status",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_opencode_config",
+      "category": "opencode",
+      "description": "Get or set OpenCode configuration. With no params lists all config; with key returns that value; with key+value sets it.",
+      "route": { "method": "POST", "path": "/api/exec" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Configuration key to get or set"
+          },
+          "value": {
+            "type": "string",
+            "description": "Value to set (requires key). If omitted, returns current value."
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_session_event",
+      "category": "steering",
+      "description": "Send an event to a running agent session",
+      "route": { "method": "POST", "path": "/api/sessions/{session_id}/events" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string", "description": "Session ID to send event to" },
+          "event": { "type": "string", "description": "Event type (e.g., restart, pause)" },
+          "payload": { "type": "object", "description": "Optional event payload" }
+        },
+        "required": ["session_id", "event"]
+      }
+    },
+    {
+      "name": "hex_session_interrupt",
+      "category": "steering",
+      "description": "Interrupt a running agent session with new instructions",
+      "route": { "method": "POST", "path": "/api/sessions/{session_id}/interrupt" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string", "description": "Session ID to interrupt" },
+          "instructions": { "type": "string", "description": "New instructions for the agent" }
+        },
+        "required": ["session_id", "instructions"]
+      }
+    },
+    {
+      "name": "hex_environment_create",
+      "category": "environment",
+      "description": "Create a new container environment",
+      "route": { "method": "POST", "path": "/api/environments" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "template": { "type": "string", "description": "Environment template (default: default)" },
+          "name": { "type": "string", "description": "Environment name prefix" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_environment_list",
+      "category": "environment",
+      "description": "List all container environments",
+      "route": { "method": "GET", "path": "/api/environments" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
       }
     }
   ]

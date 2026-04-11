@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod api_optimization;
+pub mod brain;
 pub mod capability;
 pub mod enforcement;
 pub mod hooks;
@@ -7,7 +8,7 @@ pub mod messages;
 pub mod sandbox;
 pub mod secret_grant;
 pub mod skills;
+pub mod swarm_task;
 pub mod tokens;
 pub mod tools;
-pub mod swarm_task;
 pub mod workplan;
