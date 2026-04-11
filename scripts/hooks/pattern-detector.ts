@@ -10,7 +10,7 @@
  * This prevents bugs like the ADR tracking false positive (commit a274139).
  */
 
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 interface PatternViolation {
@@ -27,9 +27,16 @@ interface PatternViolation {
  */
 function extractAlwaysInitializedPorts(rootPath: string): Set<string> {
   const compositionPath = join(rootPath, 'src/composition-root.ts');
-  const content = readFileSync(compositionPath, 'utf-8');
-
   const alwaysInitialized = new Set<string>();
+
+  // The TypeScript `src/` layout was deprecated in ADR-2603222050; hex is now a
+  // Rust workspace. This TS-specific heuristic has nothing to act on when the
+  // legacy file is missing, so skip silently instead of crashing the hook.
+  if (!existsSync(compositionPath)) {
+    return alwaysInitialized;
+  }
+
+  const content = readFileSync(compositionPath, 'utf-8');
 
   // Find the main AppContext return statement
   const returnMatch = content.match(/return\s*{([^}]+)}/s);
@@ -90,10 +97,16 @@ function extractAlwaysInitializedPorts(rootPath: string): Set<string> {
  */
 function extractNullablePorts(rootPath: string): Map<string, number> {
   const appContextPath = join(rootPath, 'src/core/ports/app-context.ts');
+  const nullablePorts = new Map<string, number>();
+
+  // Same rationale as extractAlwaysInitializedPorts: the legacy TS layout is
+  // gone (ADR-2603222050). Absence means "nothing to check", not "error".
+  if (!existsSync(appContextPath)) {
+    return nullablePorts;
+  }
+
   const content = readFileSync(appContextPath, 'utf-8');
   const lines = content.split('\n');
-
-  const nullablePorts = new Map<string, number>();
 
   // Look for: portName: Type | null
   for (let i = 0; i < lines.length; i++) {
@@ -138,6 +151,16 @@ function detectNullableButAlwaysInitialized(rootPath: string): PatternViolation[
  */
 function main() {
   const rootPath = process.cwd();
+
+  // Guard: this detector targets the deprecated TypeScript codebase
+  // (ADR-2603222050 migrated runtime to Rust). If the TS source files don't
+  // exist, there's nothing to validate — no-op silently.
+  const compositionPath = join(rootPath, 'src/composition-root.ts');
+  const appContextPath = join(rootPath, 'src/core/ports/app-context.ts');
+  if (!existsSync(compositionPath) || !existsSync(appContextPath)) {
+    console.log('  ⬡ Pattern detector: TypeScript source absent — skipping (Rust-only project)');
+    process.exit(0);
+  }
 
   console.log('🔍 Scanning for nullable-but-always-initialized anti-pattern...\n');
 
