@@ -37,11 +37,14 @@ coverage/
 *.log
 .hex-intf/
 
-# Docs — local-only by default, but track ADRs, workplans, and specs
+# Docs — local-only by default, but track the structured artifact dirs
 docs/*
 !docs/adrs/
 !docs/workplans/
 !docs/specs/
+!docs/analysis/
+!docs/guides/
+!docs/algebra/
 
 # Filesystem artifacts
 Volumes/

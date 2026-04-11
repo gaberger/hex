@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.75+-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
   <a href="https://spacetimedb.com/"><img src="https://img.shields.io/badge/SpacetimeDB-WASM-58a6ff?style=flat-square" alt="SpacetimeDB"></a>
   <a href="https://github.com/gaberger/hex/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
-  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-107_Accepted-bc8cff?style=flat-square" alt="ADRs"></a>
+  <a href="docs/adrs/"><img src="https://img.shields.io/badge/ADRs-145_Accepted-bc8cff?style=flat-square" alt="ADRs"></a>
 </p>
 
 <p align="center">
@@ -226,7 +226,7 @@ cd your-project && hex init
 ```bash
 # Architecture enforcement
 hex analyze .                   # Boundary check, dead code, coupling violations
-hex adr list                    # 107 Architecture Decision Records
+hex adr list                    # 145 Architecture Decision Records
 hex adr search "inference"      # Find relevant decisions
 
 # Autonomous development
@@ -252,7 +252,7 @@ hex secrets status              # Vault health check
 ```
 hex-cli/               Rust CLI — shell + MCP server (canonical entry point)
 hex-nexus/             Daemon — REST API, dashboard, filesystem bridge
-hex-core/              Domain types + 9 port traits (zero external deps)
+hex-core/              Domain types + 10 port traits (zero external deps)
 hex-agent/             Agent runtime — skills, hooks, architecture enforcement
 hex-desktop/           Desktop app (Tauri wrapper)
 hex-parser/            Code parsing utilities (tree-sitter)
@@ -263,14 +263,14 @@ spacetime-modules/     7 WASM modules (SpacetimeDB microkernel)
 |:------|:----------|:-----|
 | **hex-cli** | Shell | Every `hex` command + MCP tool server for IDE integration |
 | **hex-nexus** | System services | Filesystem ops, inference routing, fleet management, dashboard at `:5555` |
-| **hex-core** | Syscall interface | 9 port traits — the contracts agents code against (zero deps) |
+| **hex-core** | Syscall interface | 10 port traits — the contracts agents code against (zero deps) |
 | **hex-parser** | Compiler | Tree-sitter grammars for TypeScript, Go, and Rust — AST extraction without compilation |
-| **hex-agent** | Userland | 14 agent definitions, 21+ skills, hooks, architecture enforcement |
+| **hex-agent** | Userland | 18 agent definitions, 20 skills, hooks, architecture enforcement |
 | **spacetime-modules** | Microkernel | 7 WASM modules with ~130 reducers for transactional state |
 
 ### Agent Roles
 
-hex ships with **14 specialized agent definitions** in YAML. Each defines: model selection tiers, context loading strategy (L1 AST summary → L2 signatures → L3 full source), workflow phases, feedback loop gates, and quality thresholds.
+hex ships with **18 specialized agent definitions** in YAML. Each defines: model selection tiers, context loading strategy (L1 AST summary → L2 signatures → L3 full source), workflow phases, feedback loop gates, and quality thresholds.
 
 | Agent | What It Does |
 |:------|:-------------|
