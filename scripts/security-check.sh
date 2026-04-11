@@ -26,7 +26,7 @@ echo -e "${BOLD}hex Security Gate${NC}"
 echo "────────────────────────────────"
 
 # ── 1. Path Traversal ─────────────────────────────────
-echo -e "\n${BOLD}[1/4] Path Traversal${NC}"
+echo -e "\n${BOLD}[1/5] Path Traversal${NC}"
 
 # Check that FileSystemAdapter uses safePath
 if grep -rn 'path\.join.*filePath\|path\.resolve.*filePath' src/adapters/ --include="*.ts" | grep -v 'safePath\|resolve.*startsWith' | grep -v '\.test\.' > /dev/null 2>&1; then
@@ -48,7 +48,7 @@ if grep -rn 'req\.url\|req\.params\|decodeURIComponent' src/adapters/ --include=
 fi
 
 # ── 2. Secret Detection ──────────────────────────────
-echo -e "\n${BOLD}[2/4] Secret Detection${NC}"
+echo -e "\n${BOLD}[2/5] Secret Detection${NC}"
 
 # Staged files only (for pre-commit)
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null || git diff --name-only 2>/dev/null || find src/ -name "*.ts" -type f)
@@ -75,7 +75,7 @@ if echo "$STAGED_FILES" | grep -q '\.env$\|\.env\.local$\|\.env\.prod'; then
 fi
 
 # ── 3. Input Validation ──────────────────────────────
-echo -e "\n${BOLD}[3/4] Input Validation${NC}"
+echo -e "\n${BOLD}[3/5] Input Validation${NC}"
 
 # Check primary adapters validate inputs at boundaries
 PRIMARY_ADAPTERS=$(find src/adapters/primary -name "*.ts" -not -name "*.test.*" 2>/dev/null || true)
@@ -99,8 +99,29 @@ done
 
 echo -e "  ${GREEN}OK${NC} — primary adapter boundaries checked"
 
-# ── 4. Dependency Audit ──────────────────────────────
-echo -e "\n${BOLD}[4/4] Dependency Audit${NC}"
+# ── 4. ADR Format ────────────────────────────────────
+echo -e "\n${BOLD}[4/5] ADR Format${NC}"
+
+# Only run when staged files include ADRs (or when adrs/ exists locally).
+ADR_STAGED=$(echo "$STAGED_FILES" | grep -E '^docs/adrs/ADR-.*\.md$' || true)
+if [[ -n "$ADR_STAGED" ]] || [[ -d docs/adrs ]]; then
+  if command -v hex > /dev/null 2>&1; then
+    ADR_OUTPUT=$(hex adr list 2>&1 || true)
+    if echo "$ADR_OUTPUT" | grep -q 'unparseable status'; then
+      high "ADR(s) have unparseable status — frontmatter must use \`**Status:** <value>\` or \`## Status\\n<value>\`"
+      echo "$ADR_OUTPUT" | grep -A 20 'unparseable status' | sed 's/^/    /' | head -15
+    else
+      echo -e "  ${GREEN}OK${NC} — all ADRs parse cleanly"
+    fi
+  else
+    info "hex CLI not on PATH — skipping ADR format check"
+  fi
+else
+  echo -e "  ${GREEN}OK${NC} — no ADRs in repo"
+fi
+
+# ── 5. Dependency Audit ──────────────────────────────
+echo -e "\n${BOLD}[5/5] Dependency Audit${NC}"
 
 if command -v bun > /dev/null 2>&1; then
   # bun doesn't have built-in audit, check for known risky patterns

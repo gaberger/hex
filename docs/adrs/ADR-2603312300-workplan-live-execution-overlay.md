@@ -1,8 +1,8 @@
 # ADR-2603312300: Workplan Live Execution Overlay
 
-**Status**: Accepted
-**Date**: 2026-03-31
-**Deciders**: hex core team
+**Status:** Accepted
+**Date:** 2026-03-31
+**Deciders:** hex core team
 
 ## Context
 

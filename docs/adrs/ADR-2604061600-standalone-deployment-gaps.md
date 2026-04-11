@@ -1,7 +1,6 @@
 # ADR-2604061600: Standalone Deployment Gaps — Bazzite E2E Testing
 
-## Status
-Accepted
+**Status:** Accepted
 
 ## Context
 Full end-to-end testing of hex as a standalone install on Bazzite (AMD Ryzen AI MAX+ 395, Radeon 8060S, 128GB RAM) revealed several gaps in the deployment pipeline and swarm code generation.

@@ -1,7 +1,6 @@
 # ADR-2604101500: Local Inference First for RL Evaluator
 
-## Status
-**Accepted** | Open
+**Status:** Accepted
 
 ## Problem
 

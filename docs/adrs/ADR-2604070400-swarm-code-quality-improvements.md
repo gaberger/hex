@@ -1,7 +1,6 @@
 # ADR-2604070400: Swarm Code Generation Quality Improvements
 
-## Status
-Accepted
+**Status:** Accepted
 
 ## Context
 The hex dev swarm pipeline is fully functional (v26.4.16): worker→claim→generate→complete→STDB sync→supervisor iterate→fixer→compile check. But the generated code doesn't pass `hex ci`. The `qwen3:8b` model hallucinates file names, ignores hex layer rules, and generates off-topic code. After 8 fixer iterations the pipeline halts with compile errors.
