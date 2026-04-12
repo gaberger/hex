@@ -587,8 +587,11 @@ async fn execute_plan_local(_path: &std::path::Path, wp: &serde_json::Value) -> 
         println!();
     }
 
+    println!();
     println!("{} Results: {} passed, {} failed (ADR-005 gate pipeline)",
         "\u{2b21}".cyan(), total_passed, total_failed);
+    // TODO: register execution in SpacetimeDB via nexus API so hex plan report works
+    // Remote agents should write through the SSH tunnel to the coordinator's nexus.
     if total_failed > 0 {
         std::process::exit(1);
     }
