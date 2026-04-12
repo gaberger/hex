@@ -39,6 +39,39 @@ fn find_active_cc_agent_id() -> Option<String> {
     best.map(|(_, id)| id)
 }
 
+// ── Dispatch-evidence guard (ADR-2604111800) ──────────
+//
+// Rejects vacuous completions — where an agent (or mock) produced no
+// meaningful output yet the executor would naively mark the task "done".
+// The guard is a pure function so it can be tested independently of the
+// full executor machinery.
+
+/// Validate that the dispatch produced non-vacuous evidence of work.
+///
+/// Returns `Ok(())` when the output contains at least one non-whitespace
+/// character. Returns `Err` with a diagnostic message when the output is
+/// empty, whitespace-only, or None — preventing the executor from marking
+/// the task as completed.
+///
+/// This is the P6.3 contract from wp-hex-standalone-dispatch: the guard
+/// must reject empty/whitespace `MockInferencePort` output so that tasks
+/// cannot phantom-complete.
+pub fn validate_dispatch_evidence(output: Option<&str>) -> Result<(), String> {
+    match output {
+        Some(s) if !s.trim().is_empty() => Ok(()),
+        Some(_) => Err(
+            "dispatch-evidence guard: agent produced whitespace-only output — \
+             refusing to mark task as completed (ADR-2604111800)"
+                .to_string(),
+        ),
+        None => Err(
+            "dispatch-evidence guard: no dispatch output received — \
+             refusing to mark task as completed (ADR-2604111800)"
+                .to_string(),
+        ),
+    }
+}
+
 // ── Types ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -604,11 +637,27 @@ impl WorkplanExecutor {
         // P3: Pre-flight check — verify AgentManager is wired and state port is responsive
         // before committing to spawning any agents. Fail fast with a clear message rather
         // than spawning N agents that will all hit the same infrastructure problem.
+        //
+        // ADR-2604112000 P2.2: use the structured `MissingComposition` enum so the
+        // error names exactly which prerequisite is absent and carries an operator
+        // remediation hint. The executor's phase error path is stringly-typed today
+        // (`Result<PhaseResult, String>`), so we stringify — but the typed variant
+        // is preserved in `to_string()` + `.remediation()`.
         if shared_state.agent_manager.is_none() {
-            tracing::warn!(phase = %phase.name, "pre-flight: AgentManager not initialized — aborting phase dispatch");
+            let diag = crate::orchestration::errors::MissingComposition::IncompletePortWiring {
+                details: "AgentManager not wired at composition root (ADR-2604112000 P2)".to_string(),
+            };
+            tracing::warn!(
+                phase = %phase.name,
+                error = %diag,
+                remediation = %diag.remediation(),
+                "pre-flight: composition incomplete — aborting phase dispatch"
+            );
             return Err(format!(
-                "Pre-flight failed for phase '{}': AgentManager not initialized",
-                phase.name
+                "Pre-flight failed for phase '{}': {} (hint: {})",
+                phase.name,
+                diag,
+                diag.remediation()
             ));
         }
         match tokio::time::timeout(

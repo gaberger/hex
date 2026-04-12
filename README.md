@@ -247,6 +247,25 @@ hex secrets status              # Vault health check
 
 ---
 
+## Running hex Standalone (without Claude Code)
+
+hex can run as a fully self-sufficient AIOS without Claude Code installed. When `CLAUDE_SESSION_ID` is unset, hex-nexus automatically selects the standalone composition path with Ollama as the default inference adapter (ADR-2604112000).
+
+```bash
+# 1. Install and start Ollama (https://ollama.com)
+ollama serve && ollama pull llama3.2:3b-q4_k_m
+
+# 2. Start hex
+hex nexus start
+
+# 3. Execute a workplan
+hex plan execute wp-my-feature.json
+```
+
+Use `hex doctor composition` to diagnose which composition variant is active and verify prerequisites. See [ADR-2604112000](docs/adrs/ADR-2604112000-hex-standalone-dispatch.md) for the full design decision.
+
+---
+
 ## System Architecture
 
 ```

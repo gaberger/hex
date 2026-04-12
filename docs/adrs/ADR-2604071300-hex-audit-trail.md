@@ -1,7 +1,6 @@
 # ADR-2604071300: Unified Hex Dev Audit Trail via SpacetimeDB
 
-## Status
-Accepted
+**Status:** Accepted
 
 ## Context
 The hex dev pipeline produces code that compiles and passes tests (ADR-2604070400), but the audit trail is broken. Three data layers exist but never integrate:

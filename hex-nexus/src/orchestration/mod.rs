@@ -2,6 +2,7 @@ pub mod agent;
 pub mod agent_manager;
 pub mod constraint_enforcer;
 pub mod context_pressure;
+pub mod errors;
 pub mod skill_selector;
 pub mod workplan_executor;
 

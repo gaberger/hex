@@ -1,7 +1,6 @@
 # ADR-2604070200: Bazzite Standalone Inference Configuration
 
-## Status
-Accepted
+**Status:** Accepted
 
 ## Context
 hex requires local LLM inference for autonomous swarm code generation. Testing on Bazzite (immutable Fedora Linux) with AMD Ryzen AI MAX+ 395 + Radeon 8060S iGPU + 128GB unified memory revealed that the default Ollama setup underperforms, and a tuned llama.cpp Vulkan configuration is significantly faster.

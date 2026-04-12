@@ -64,22 +64,42 @@ fn find_adr_dir() -> Option<PathBuf> {
 
 /// Parse the status from an ADR markdown file.
 ///
-/// Handles both formats:
+/// Handles three formats:
 ///   - YAML frontmatter: `status: Accepted`
 ///   - Bold markdown:    `**Status:** Accepted`
+///   - Heading form:     `## Status\nAccepted` (value on next non-empty line)
+///
+/// Strict-by-design rejections (verified by tests):
+///   - `**Status**: Accepted` (colon outside bold)
+///   - `- **Status**: Accepted` (bullet-prefixed)
 fn parse_adr_status(content: &str) -> &str {
-    for line in content.lines() {
-        let trimmed = line.trim();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
         let lower = trimmed.to_lowercase();
 
-        // Extract the value after "status:" in either format
-        let val = if lower.starts_with("**status:**") {
+        // Extract the value via one of the three accepted formats.
+        let val: String = if lower.starts_with("**status:**") {
             // **Status:** Accepted
-            trimmed["**Status:**".len()..].trim()
+            trimmed["**Status:**".len()..].trim().to_string()
         } else if lower.starts_with("status:") && !lower.starts_with("status_") {
             // status: Accepted (YAML frontmatter)
-            trimmed["status:".len()..].trim()
+            trimmed["status:".len()..].trim().to_string()
+        } else if lower == "## status" || lower == "## status:" {
+            // ## Status (heading) — value is on the next non-empty line.
+            let mut j = i + 1;
+            while j < lines.len() && lines[j].trim().is_empty() {
+                j += 1;
+            }
+            if j >= lines.len() {
+                i += 1;
+                continue;
+            }
+            // Strip surrounding bold markers, e.g. "**Accepted** | Open" → "Accepted | Open"
+            lines[j].trim().trim_matches('*').trim().to_string()
         } else {
+            i += 1;
             continue;
         };
 
@@ -683,6 +703,42 @@ mod tests {
     fn parse_status_bullet_prefix_not_parsed() {
         // - **Status**: Accepted  ← bullet + colon outside — must NOT parse
         assert_eq!(parse_adr_status("# ADR-001\n\n- **Status**: Accepted\n"), "unknown");
+    }
+
+    #[test]
+    fn parse_status_heading_form_plain() {
+        // ## Status\nAccepted — value on the next line
+        assert_eq!(parse_adr_status("# ADR-001\n\n## Status\nAccepted\n"), "accepted");
+    }
+
+    #[test]
+    fn parse_status_heading_form_with_bold_value() {
+        // ## Status\n**Accepted** | Open — surrounding bold markers must be stripped
+        assert_eq!(
+            parse_adr_status("# ADR-001\n\n## Status\n**Accepted** | Open\n"),
+            "accepted"
+        );
+    }
+
+    #[test]
+    fn parse_status_heading_form_with_date_suffix() {
+        // ## Status\n**Accepted** — 2026-04-10
+        assert_eq!(
+            parse_adr_status("# ADR-001\n\n## Status\n**Accepted** — 2026-04-10\n"),
+            "accepted"
+        );
+    }
+
+    #[test]
+    fn parse_status_heading_form_blank_line_before_value() {
+        // ## Status\n\nProposed — blank line between heading and value
+        assert_eq!(parse_adr_status("# ADR-001\n\n## Status\n\nProposed\n"), "proposed");
+    }
+
+    #[test]
+    fn parse_status_heading_form_with_colon() {
+        // ## Status: heading with trailing colon
+        assert_eq!(parse_adr_status("# ADR-001\n\n## Status:\nAccepted\n"), "accepted");
     }
 
     #[test]

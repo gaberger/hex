@@ -1,7 +1,6 @@
 # ADR-2604102300: Agent Framework Competitive Positioning
 
-## Status
-Proposed
+**Status:** Proposed
 
 ## Context
 The AI agent framework landscape in 2026 has three dominant players:

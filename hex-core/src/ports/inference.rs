@@ -10,6 +10,12 @@ use serde::{Deserialize, Serialize};
 use crate::domain::messages::{ContentBlock, StopReason};
 use crate::domain::tools::ToolDefinition;
 
+/// Pure in-memory mock implementation of [`IInferencePort`]. Used by the
+/// standalone composition tests (ADR-2604112000 P2/P5). Left unconditionally
+/// `pub` because hex-core has no cargo features and downstream test code in
+/// hex-nexus/hex-cli imports it directly.
+pub mod mock;
+
 /// A request to an inference engine.
 #[derive(Debug, Clone)]
 pub struct InferenceRequest {
@@ -88,6 +94,25 @@ pub enum ModelTier {
     Local,
 }
 
+/// Backend reachability/health as reported by [`IInferencePort::health`].
+///
+/// Per ADR-2604112000 (Hex Self-Sufficient Dispatch), every inference
+/// backend exposes a `health()` probe so the composition root can decide
+/// whether a standalone provider is usable before dispatching a workplan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HealthStatus {
+    /// Backend is reachable and ready. `models` is an optional listing of
+    /// model ids the backend is currently serving (may be empty if the
+    /// backend cannot enumerate them cheaply).
+    Ok { models: Vec<String> },
+    /// Backend is reachable but not fully functional (e.g. model is still
+    /// loading, rate-limited, or in a degraded but non-fatal state).
+    Degraded { reason: String },
+    /// Backend is not reachable — connection refused, DNS failure, timeout,
+    /// binary missing from PATH, etc.
+    Unreachable { reason: String },
+}
+
 /// The inference port — every LLM backend implements this.
 #[async_trait]
 pub trait IInferencePort: Send + Sync {
@@ -102,6 +127,11 @@ pub trait IInferencePort: Send + Sync {
         &self,
         request: InferenceRequest,
     ) -> Result<Box<dyn futures_stream::Stream<Item = StreamChunk> + Send + Unpin>, InferenceError>;
+
+    /// Probe the backend. Ollama: `GET /api/tags`. ClaudeCode: `claude
+    /// --version`. SpacetimeDB: reducer roundtrip. Used by the composition
+    /// root (ADR-2604112000) to decide which standalone provider to wire.
+    async fn health(&self) -> Result<HealthStatus, InferenceError>;
 
     /// What capabilities does this backend support?
     fn capabilities(&self) -> InferenceCapabilities;

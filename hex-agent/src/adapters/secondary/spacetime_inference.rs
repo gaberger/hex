@@ -7,8 +7,8 @@
 use async_trait::async_trait;
 use hex_core::domain::messages::{ContentBlock, StopReason};
 use hex_core::ports::inference::{
-    futures_stream, InferenceCapabilities, InferenceError, InferenceRequest, InferenceResponse,
-    StreamChunk,
+    futures_stream, HealthStatus, InferenceCapabilities, InferenceError, InferenceRequest,
+    InferenceResponse, StreamChunk,
 };
 use serde_json::json;
 
@@ -136,6 +136,27 @@ impl hex_core::ports::inference::IInferencePort for SpacetimeInferenceAdapter {
         Err(InferenceError::ProviderUnavailable(
             "Streaming not supported via nexus HTTP bridge; use complete() instead".into(),
         ))
+    }
+
+    async fn health(&self) -> Result<HealthStatus, InferenceError> {
+        // TODO(ADR-2604112000 P5): real health via inference-gateway reducer.
+        // Today we probe the nexus HTTP surface; a hard failure is surfaced
+        // as Unreachable so the composition root can pick a different
+        // backend. A successful ping returns Ok with no listed models
+        // because the nexus aggregates provider-owned model lists out of
+        // band.
+        let url = format!("{}/api/health", self.nexus_url);
+        match self.http.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                Ok(HealthStatus::Ok { models: vec![] })
+            }
+            Ok(resp) => Ok(HealthStatus::Degraded {
+                reason: format!("nexus /api/health returned {}", resp.status()),
+            }),
+            Err(e) => Ok(HealthStatus::Unreachable {
+                reason: format!("nexus unreachable: {e}"),
+            }),
+        }
     }
 
     fn capabilities(&self) -> InferenceCapabilities {

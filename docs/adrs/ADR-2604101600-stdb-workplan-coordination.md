@@ -1,7 +1,7 @@
 # ADR-2604101600 — SpacetimeDB Workplan Coordination
 
-## Status
-**Accepted** — 2026-04-10
+**Status:** Accepted
+**Date:** 2026-04-10
 
 ## Context
 The current workplan executor runs in-memory in hex-nexus, causing:
