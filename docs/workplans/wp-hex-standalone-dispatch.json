@@ -3,7 +3,7 @@
   "feature": "Hex Self-Sufficient Dispatch (Standalone Mode)",
   "description": "Close the three structural gaps blocking hex from running workplans end-to-end without Claude Code as the outer shell. Wire a second AgentManager composition path, ship OllamaInferenceAdapter as the first concrete standalone provider, un-stub the HexFlo memory adapter, and add a standalone-mode acceptance gate to hex ci. The Claude-integrated fast path is preserved; standalone becomes the documented fallback.",
   "adr": "ADR-2604112000",
-  "status": "in_progress",
+  "status": "done",
   "priority": "P0-BLOCKER",
   "blocks": [
     "wp-dashboard-live-state (future)",
@@ -430,8 +430,11 @@
             "P7.2",
             "P7.3"
           ],
-          "files": [],
-          "status": "todo",
+          "files": [
+            "docs/analysis/adversarial-review-standalone-dispatch.md"
+          ],
+          "status": "done",
+          "result": "PASS-WITH-NOTES. 31 tests pass, 0 failures. No blocking issues. Two dangling string errors in defense-in-depth paths (non-blocking), one scope violation on main.rs (benign). Recommendation: SHIP-WITH-FOLLOWUP.",
           "agent": "reviewer"
         }
       ]
