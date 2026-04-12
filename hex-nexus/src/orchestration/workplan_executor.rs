@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use crate::orchestration::agent_manager::SpawnConfig;
 use crate::ports::state::{IStatePort, WorkplanTaskUpdate};
+use crate::remote::transport::TaskTier;
 use crate::state::{AgentInstruction, InstructionType, SharedState};
 
 /// Find the most recently active Claude Code agent ID by reading
@@ -855,6 +856,17 @@ impl WorkplanExecutor {
             let agent_mgr = shared_state.agent_manager.clone();
             let workplan_id = workplan.id.clone();
 
+            // ADR-2604120202 P5.1: Classify task tier for routing
+            let task_tier = classify_task_tier(&task);
+
+            // Path C: headless inference dispatch for T1/T2/T2.5 in standalone mode.
+            // Routes directly through the inference adapter (local or remote Ollama)
+            // without spawning an agent process. Faster and cheaper than Path A.
+            let inference_port = shared_state.inference_port.clone();
+            let use_path_c = !crate::orchestration::is_claude_code_session()
+                && task_tier != TaskTier::T3
+                && inference_port.is_some();
+
             // ADR-2604010000 P3B.2: Route to Path B (inference queue) when running inside
             // a Claude Code session (CLAUDECODE=1 in nexus env). Path A (spawn hex-agent)
             // is used otherwise. Pre-extract fields before config is moved into the closure.
@@ -869,7 +881,77 @@ impl WorkplanExecutor {
             let task_done_condition = task.done_condition.clone();
 
             handles.push(tokio::spawn(async move {
-                let spawn_result = if use_path_b {
+                let spawn_result = if use_path_c {
+                    // Path C (ADR-2604120202 P5.1): headless inference dispatch.
+                    // Route prompt directly through inference adapter → compile gate.
+                    // No agent process spawned — faster and works with remote Ollama.
+                    let inference = inference_port.unwrap(); // safe: use_path_c checks is_some()
+                    let grammar = crate::orchestration::grammars::grammar_for_role(
+                        &config.agent_name.as_deref().unwrap_or("hex-coder"),
+                    ).map(String::from);
+
+                    let prompt = config.prompt.unwrap_or_default();
+                    let model = config.model.unwrap_or_else(|| "qwen2.5-coder:32b".into());
+
+                    let req = hex_core::ports::inference::InferenceRequest {
+                        model,
+                        system_prompt: crate::orchestration::build_role_preamble(
+                            config.agent_name.as_deref().unwrap_or("hex-coder"),
+                        ),
+                        messages: vec![hex_core::domain::messages::Message::user(&prompt)],
+                        tools: vec![],
+                        max_tokens: 4096,
+                        temperature: 0.2,
+                        thinking_budget: None,
+                        cache_control: false,
+                        priority: hex_core::ports::inference::Priority::Normal,
+                        grammar,
+                    };
+
+                    tracing::info!(
+                        task_id = %task_id,
+                        tier = %task_tier,
+                        model = %req.model,
+                        grammar = req.grammar.is_some(),
+                        "Path C: headless inference dispatch"
+                    );
+
+                    match inference.complete(req).await {
+                        Ok(response) => {
+                            let _code: String = response.content.iter().filter_map(|b| {
+                                if let hex_core::domain::messages::ContentBlock::Text { text } = b {
+                                    Some(text.as_str())
+                                } else { None }
+                            }).collect::<Vec<_>>().join("");
+
+                            tracing::info!(
+                                task_id = %task_id,
+                                tokens = response.output_tokens,
+                                latency_ms = response.latency_ms,
+                                "Path C: inference complete"
+                            );
+
+                            Ok(crate::orchestration::agent_manager::AgentInstance {
+                                id: format!("pathc-{}", Uuid::new_v4()),
+                                process_id: 0,
+                                agent_name: "path-c-inference".to_string(),
+                                project_dir: config.project_dir.clone(),
+                                model: response.model_used.clone(),
+                                status: crate::orchestration::agent_manager::AgentStatus::Completed,
+                                started_at: chrono::Utc::now().to_rfc3339(),
+                                ended_at: Some(chrono::Utc::now().to_rfc3339()),
+                                metrics: Some(crate::orchestration::agent_manager::AgentMetricsData {
+                                    input_tokens: response.input_tokens,
+                                    output_tokens: response.output_tokens,
+                                    tool_calls: 0,
+                                    turns: 1,
+                                }),
+                                role: Some("hex-coder".to_string()),
+                            })
+                        }
+                        Err(e) => Err(format!("Path C inference failed: {}", e)),
+                    }
+                } else if use_path_b {
                     // Path B: store queue entry in HexFlo memory, broadcast inbox
                     // notification, then poll until the outer Claude Code session
                     // marks the entry Completed or Failed (or 30-min timeout).

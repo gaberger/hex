@@ -108,6 +108,14 @@ pub async fn build_app(config: &HubConfig) -> (axum::Router, SharedState) {
             );
             app_state.agent_manager = Some(agent_mgr);
             app_state.state_port = Some(state_port);
+
+            // Wire inference port for Path C headless dispatch (ADR-2604120202 P5.1).
+            // In standalone mode, this is OllamaInferenceAdapter pointed at OLLAMA_HOST.
+            if !orchestration::is_claude_code_session() {
+                app_state.inference_port = Some(composition::standalone::default_inference_adapter());
+                tracing::info!("Path C inference port wired (standalone Ollama)");
+            }
+
             tracing::info!("IStatePort wired — agent_manager + state_port ready");
         }
         Err(e) => {

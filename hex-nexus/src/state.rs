@@ -67,6 +67,10 @@ pub struct AppState {
     pub rate_limiter: RateLimitManager,
     // Agent steering (ADR-2604101900) — pending interrupt/steer instructions per agent
     pub agent_instructions: RwLock<HashMap<String, AgentInstruction>>,
+    // Direct inference port for Path C headless dispatch (ADR-2604120202 P5.1).
+    // Used by the workplan executor to route T1/T2/T2.5 tasks directly through
+    // the inference adapter (local or remote Ollama) without spawning an agent process.
+    pub inference_port: Option<Arc<dyn hex_core::ports::inference::IInferencePort>>,
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +123,7 @@ impl AppState {
             capability_token_service: Arc::new(CapabilityTokenService::from_env()),
             rate_limiter: RateLimitManager::new(),
             agent_instructions: RwLock::new(HashMap::new()),
+            inference_port: None,
         }
     }
 
