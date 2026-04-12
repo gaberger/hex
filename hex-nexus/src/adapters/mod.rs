@@ -1,5 +1,6 @@
 pub mod build;
 pub mod capability_token;
+pub mod inference;
 pub mod live_context;
 pub mod context_compressor;
 pub mod docker_sandbox;
