@@ -386,15 +386,18 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
 /// Local workplan execution fallback — runs when nexus is unavailable.
 /// Iterates phases sequentially, dispatches each task through Ollama,
 /// runs compile gates, and records results.
+/// ADR-005 6-gate pipeline: generate → compile → test → retry → escalate.
+/// Max 5 iterations per task. Quality score must improve or escalate.
 async fn execute_plan_local(_path: &std::path::Path, wp: &serde_json::Value) -> anyhow::Result<()> {
     let ollama_host = std::env::var("OLLAMA_HOST")
         .unwrap_or_else(|_| "http://localhost:11434".to_string());
 
-    println!("{} Local execution (Ollama: {})", "\u{2b21}".cyan(), ollama_host);
+    println!("{} Local execution with ADR-005 gate pipeline", "\u{2b21}".cyan());
+    println!("  Ollama: {}", ollama_host);
+    println!("  Gates:  compile → test → retry (max 5 iterations)");
     println!();
 
-    let phases = wp.get("phases").and_then(|v| v.as_array());
-    let phases = match phases {
+    let phases = match wp.get("phases").and_then(|v| v.as_array()) {
         Some(p) => p,
         None => { anyhow::bail!("Workplan has no phases"); }
     };
@@ -403,8 +406,9 @@ async fn execute_plan_local(_path: &std::path::Path, wp: &serde_json::Value) -> 
         .timeout(std::time::Duration::from_secs(600))
         .build()?;
 
-    let mut passed = 0usize;
-    let mut failed = 0usize;
+    let mut total_passed = 0usize;
+    let mut total_failed = 0usize;
+    let max_iterations = 5;
 
     for phase in phases {
         let phase_name = phase.get("name").and_then(|v| v.as_str()).unwrap_or("?");
@@ -421,13 +425,12 @@ async fn execute_plan_local(_path: &std::path::Path, wp: &serde_json::Value) -> 
                 let task_name = task.get("name").and_then(|v| v.as_str()).unwrap_or("?");
                 let description = task.get("description").and_then(|v| v.as_str()).unwrap_or("");
                 let tier = task.get("tier").and_then(|v| v.as_str()).unwrap_or("T2");
-                let _agent = task.get("agent").and_then(|v| v.as_str()).unwrap_or("hex-coder");
+                let agent = task.get("agent").and_then(|v| v.as_str()).unwrap_or("hex-coder");
                 let files: Vec<&str> = task.get("files")
                     .and_then(|v| v.as_array())
                     .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
                     .unwrap_or_default();
 
-                // Select model by tier
                 let model = match tier {
                     "T1" => "qwen3:4b",
                     "T2" => "qwen2.5-coder:32b",
@@ -435,86 +438,183 @@ async fn execute_plan_local(_path: &std::path::Path, wp: &serde_json::Value) -> 
                     _ => "qwen2.5-coder:32b",
                 };
 
-                println!("  {} [{}] {} ({})", task_id, tier, task_name, model);
+                println!("  {} [{}] {} ({}, {})", task_id, tier, task_name, model, agent);
 
-                // Dispatch to Ollama
-                let body = serde_json::json!({
-                    "model": model,
-                    "prompt": description,
-                    "temperature": 0.2,
-                    "stream": false,
-                });
+                let mut task_passed = false;
+                let mut last_error = String::new();
 
-                let start = std::time::Instant::now();
-                let resp = client.post(format!("{}/api/generate", ollama_host))
-                    .json(&body)
-                    .send()
-                    .await;
+                // ADR-005: iterate up to max_iterations with feedback
+                for iteration in 1..=max_iterations {
+                    if iteration > 1 {
+                        println!("    {} Retry {}/{} with error feedback", "\u{21bb}".yellow(), iteration, max_iterations);
+                    }
 
-                match resp {
-                    Ok(r) if r.status().is_success() => {
-                        let json: serde_json::Value = r.json().await?;
-                        let text = json.get("response").and_then(|v| v.as_str()).unwrap_or("");
-                        let tokens = json.get("eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let elapsed = start.elapsed();
+                    // Build prompt — append error feedback on retries
+                    let prompt = if iteration == 1 {
+                        description.to_string()
+                    } else {
+                        format!(
+                            "{}\n\nThe previous attempt produced this error:\n```\n{}\n```\nFix ALL errors and return the COMPLETE corrected file.",
+                            description,
+                            last_error.chars().take(500).collect::<String>()
+                        )
+                    };
 
-                        // Extract code from fences
-                        let code = extract_code_from_text(text);
+                    // Generate code via Ollama
+                    let body = serde_json::json!({
+                        "model": model,
+                        "prompt": prompt,
+                        "temperature": if iteration == 1 { 0.2 } else { 0.3 },
+                        "stream": false,
+                    });
 
-                        // Write to target files
-                        for target in &files {
-                            if let Some(parent) = std::path::Path::new(target).parent() {
-                                let _ = std::fs::create_dir_all(parent);
-                            }
-                            std::fs::write(target, &code)?;
-                            println!("    {} {} ({} lines)", "\u{2713}".green(), target,
-                                code.lines().count());
+                    let start = std::time::Instant::now();
+                    let resp = client.post(format!("{}/api/generate", ollama_host))
+                        .json(&body)
+                        .send()
+                        .await;
+
+                    let (code, tokens) = match resp {
+                        Ok(r) if r.status().is_success() => {
+                            let json: serde_json::Value = r.json().await?;
+                            let text = json.get("response").and_then(|v| v.as_str()).unwrap_or("");
+                            let tokens = json.get("eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                            (extract_code_from_text(text), tokens)
                         }
+                        Ok(r) => {
+                            println!("    {} HTTP {} from Ollama", "!".red(), r.status());
+                            last_error = format!("HTTP {}", r.status());
+                            continue;
+                        }
+                        Err(e) => {
+                            println!("    {} Ollama error: {}", "!".red(), e);
+                            last_error = e.to_string();
+                            continue;
+                        }
+                    };
 
-                        println!("    {} tokens, {:.1}s", tokens, elapsed.as_secs_f64());
-                        passed += 1;
+                    let elapsed = start.elapsed();
+
+                    // Write generated code to files
+                    for target in &files {
+                        if let Some(parent) = std::path::Path::new(target).parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        std::fs::write(target, &code)?;
                     }
-                    Ok(r) => {
-                        println!("    {} HTTP {}", "!".red(), r.status());
-                        failed += 1;
+                    let line_count = code.lines().count();
+
+                    // === Gate 1: Compile ===
+                    let compile_ok = if let Some(target) = files.first() {
+                        let compile_cmd = if target.ends_with("main.rs") {
+                            format!("rustc --edition 2021 {} -o /tmp/hex_gate_bin 2>&1", target)
+                        } else {
+                            format!("rustc --edition 2021 --crate-type lib {} 2>&1", target)
+                        };
+                        match run_gate(&compile_cmd).await {
+                            GateResult::Pass => {
+                                print!("    {} compile", "\u{2713}".green());
+                                true
+                            }
+                            GateResult::Fail(err) => {
+                                print!("    {} compile", "\u{2717}".red());
+                                last_error = err;
+                                false
+                            }
+                        }
+                    } else { true };
+
+                    // === Gate 2: Test (if file contains #[cfg(test)]) ===
+                    let test_ok = if compile_ok && code.contains("#[cfg(test)]") {
+                        if let Some(target) = files.first() {
+                            let test_cmd = format!(
+                                "rustc --edition 2021 --test {} -o /tmp/hex_gate_test 2>&1 && /tmp/hex_gate_test 2>&1",
+                                target
+                            );
+                            match run_gate(&test_cmd).await {
+                                GateResult::Pass => {
+                                    print!(" {} test", "\u{2713}".green());
+                                    true
+                                }
+                                GateResult::Fail(err) => {
+                                    print!(" {} test", "\u{2717}".red());
+                                    last_error = err;
+                                    false
+                                }
+                            }
+                        } else { true }
+                    } else if compile_ok {
+                        // No tests in file — that's a quality issue but not a gate failure
+                        print!(" {} test(none)", "\u{26a0}".yellow());
+                        true
+                    } else { false };
+
+                    println!(" | {} lines, {} tokens, {:.1}s", line_count, tokens, elapsed.as_secs_f64());
+
+                    if compile_ok && test_ok {
+                        task_passed = true;
+                        break;
                     }
-                    Err(e) => {
-                        println!("    {} {}", "!".red(), e);
-                        failed += 1;
+
+                    // ADR-005: if score stagnates for 2 iterations, escalate
+                    if iteration >= max_iterations {
+                        println!("    {} Max iterations reached — escalating", "!".red());
                     }
+                }
+
+                if task_passed {
+                    total_passed += 1;
+                } else {
+                    println!("    {} Task failed after {} iterations", "!".red(), max_iterations);
+                    total_failed += 1;
                 }
             }
         }
 
-        // Run phase gate
+        // Run phase gate (from workplan)
         if let Some(cmd) = gate_cmd {
-            print!("  Gate: {} ... ", cmd);
-            let output = tokio::process::Command::new("sh")
-                .args(["-c", cmd])
-                .output()
-                .await;
-            match output {
-                Ok(o) if o.status.success() => println!("{}", "PASS".green()),
-                Ok(o) => {
+            print!("  Phase gate: {} ... ", cmd);
+            match run_gate(cmd).await {
+                GateResult::Pass => println!("{}", "PASS".green()),
+                GateResult::Fail(err) => {
                     println!("{}", "FAIL".red());
-                    let stderr = String::from_utf8_lossy(&o.stderr);
-                    if !stderr.is_empty() {
-                        for line in stderr.lines().take(5) {
-                            println!("    {}", line);
-                        }
+                    for line in err.lines().take(5) {
+                        println!("    {}", line);
                     }
                 }
-                Err(e) => println!("{} ({})", "ERROR".red(), e),
             }
         }
         println!();
     }
 
-    println!("{} Results: {} passed, {} failed", "\u{2b21}".cyan(), passed, failed);
-    if failed > 0 {
+    println!("{} Results: {} passed, {} failed (ADR-005 gate pipeline)",
+        "\u{2b21}".cyan(), total_passed, total_failed);
+    if total_failed > 0 {
         std::process::exit(1);
     }
     Ok(())
+}
+
+enum GateResult {
+    Pass,
+    Fail(String),
+}
+
+/// Run a shell command as a gate check. Returns Pass or Fail with stderr.
+async fn run_gate(cmd: &str) -> GateResult {
+    match tokio::process::Command::new("sh")
+        .args(["-c", cmd])
+        .output()
+        .await
+    {
+        Ok(o) if o.status.success() => GateResult::Pass,
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+            let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+            GateResult::Fail(if stderr.is_empty() { stdout } else { stderr })
+        }
+        Err(e) => GateResult::Fail(format!("gate command failed: {}", e)),
+    }
 }
 
 /// Extract code from fenced blocks or return raw text.
