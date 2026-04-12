@@ -604,11 +604,27 @@ impl WorkplanExecutor {
         // P3: Pre-flight check — verify AgentManager is wired and state port is responsive
         // before committing to spawning any agents. Fail fast with a clear message rather
         // than spawning N agents that will all hit the same infrastructure problem.
+        //
+        // ADR-2604112000 P2.2: use the structured `MissingComposition` enum so the
+        // error names exactly which prerequisite is absent and carries an operator
+        // remediation hint. The executor's phase error path is stringly-typed today
+        // (`Result<PhaseResult, String>`), so we stringify — but the typed variant
+        // is preserved in `to_string()` + `.remediation()`.
         if shared_state.agent_manager.is_none() {
-            tracing::warn!(phase = %phase.name, "pre-flight: AgentManager not initialized — aborting phase dispatch");
+            let diag = crate::orchestration::errors::MissingComposition::IncompletePortWiring {
+                details: "AgentManager not wired at composition root (ADR-2604112000 P2)".to_string(),
+            };
+            tracing::warn!(
+                phase = %phase.name,
+                error = %diag,
+                remediation = %diag.remediation(),
+                "pre-flight: composition incomplete — aborting phase dispatch"
+            );
             return Err(format!(
-                "Pre-flight failed for phase '{}': AgentManager not initialized",
-                phase.name
+                "Pre-flight failed for phase '{}': {} (hint: {})",
+                phase.name,
+                diag,
+                diag.remediation()
             ));
         }
         match tokio::time::timeout(

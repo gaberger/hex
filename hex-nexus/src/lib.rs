@@ -16,6 +16,7 @@ pub use hex_core;
 
 pub mod adapters;
 pub mod analysis;
+pub mod composition;
 pub mod composition_root;
 pub mod complexity;
 pub mod neural_lab_quant;
