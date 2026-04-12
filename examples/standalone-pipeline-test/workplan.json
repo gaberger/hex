@@ -1,0 +1,81 @@
+{
+  "id": "wp-standalone-pipeline-test",
+  "feature": "Standalone Pipeline Smoke Test",
+  "adr": "ADR-2604120202",
+  "specs": "Verify that tiered inference routing dispatches T1/T2/T2.5 tasks to the correct local models and produces compilable output.",
+  "phases": [
+    {
+      "name": "T1-trivial-edit",
+      "tier": 0,
+      "tasks": [
+        {
+          "id": "t1.1",
+          "title": "Rename a variable",
+          "tier": "T1",
+          "description": "Rename the variable `x` to `count` in the provided Rust snippet:\n```rust\nfn main() {\n    let x = 42;\n    println!(\"Value: {}\", x);\n}\n```\nReturn ONLY the modified code, no explanation.",
+          "layer": "domain",
+          "done_condition": "Output contains `let count = 42`"
+        },
+        {
+          "id": "t1.2",
+          "title": "Fix a typo in a comment",
+          "tier": "T1",
+          "description": "Fix the typo in this Rust code (teh -> the):\n```rust\n// This is teh main function\nfn main() {\n    println!(\"hello\");\n}\n```\nReturn ONLY the fixed code.",
+          "layer": "domain",
+          "done_condition": "Output contains `This is the main function`"
+        }
+      ],
+      "gate": {
+        "gate_type": "string_match",
+        "command": "verify done_condition",
+        "blocking": true
+      }
+    },
+    {
+      "name": "T2-single-function",
+      "tier": 1,
+      "tasks": [
+        {
+          "id": "t2.1",
+          "title": "Generate a fibonacci function",
+          "tier": "T2",
+          "description": "Write a Rust function `fn fibonacci(n: u64) -> u64` that returns the nth Fibonacci number using iteration (not recursion). Include a `main()` that prints fibonacci(10). Return ONLY valid Rust code, no explanation.",
+          "layer": "domain",
+          "done_condition": "cargo check passes"
+        },
+        {
+          "id": "t2.2",
+          "title": "Generate a unit test",
+          "tier": "T2",
+          "description": "Write a Rust module with a function `fn is_palindrome(s: &str) -> bool` that checks if a string is a palindrome (case-insensitive, ignoring non-alphanumeric chars). Include `#[cfg(test)] mod tests` with at least 3 test cases. Return ONLY valid Rust code.",
+          "layer": "domain",
+          "done_condition": "cargo test passes"
+        }
+      ],
+      "gate": {
+        "gate_type": "compile",
+        "command": "cargo check",
+        "blocking": true
+      }
+    },
+    {
+      "name": "T25-multi-function",
+      "tier": 2,
+      "tasks": [
+        {
+          "id": "t25.1",
+          "title": "Generate a CLI argument parser",
+          "tier": "T2.5",
+          "description": "Write a complete Rust program (single file, no external crates) that:\n1. Parses command-line args: `--name <string>` and `--count <u32>` (both required)\n2. Prints the name repeated `count` times, one per line\n3. Prints a usage message and exits with code 1 if args are missing\n4. Include a `parse_args` function and a `main` function\nReturn ONLY valid Rust code.",
+          "layer": "adapters/primary",
+          "done_condition": "cargo check passes"
+        }
+      ],
+      "gate": {
+        "gate_type": "compile",
+        "command": "cargo check",
+        "blocking": true
+      }
+    }
+  ]
+}

@@ -7,26 +7,94 @@ use async_trait::async_trait;
 use crate::ports::inference_router::{FleetCapacity, IInferenceRouterPort};
 use crate::ports::remote_registry::IRemoteRegistryPort;
 use crate::ports::agent_transport::IAgentTransportPort;
-use crate::adapters::inference::ollama::OllamaInferenceAdapter;
 use crate::remote::transport::{
-    CodeGenRequest, CodeGenResult, InferenceServer, InferenceServerStatus, TransportError,
-    TokenUsage,
+    CodeGenRequest, CodeGenResult, InferenceServer, InferenceServerStatus, TaskTier,
+    TransportError, TokenUsage,
 };
 use hex_core::domain::messages::{ContentBlock, Message};
 use hex_core::ports::inference::{IInferencePort, InferenceRequest, Priority};
+
+/// Factory that creates an IInferencePort adapter for a given server URL.
+/// Injected by the composition root — keeps this adapter decoupled from
+/// concrete inference adapters (hex boundary rule #6).
+pub type InferenceAdapterFactory =
+    Arc<dyn Fn(&str) -> Arc<dyn IInferencePort> + Send + Sync>;
+
+/// Tier→model mapping for inference routing (ADR-2604120202).
+/// Loaded from `~/.hex/inference-servers.json` `tier_defaults` or
+/// `.hex/project.json` `inference.tier_models` by the composition root.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct TierModelConfig {
+    #[serde(alias = "T1")]
+    pub t1: String,
+    #[serde(alias = "T2")]
+    pub t2: String,
+    #[serde(alias = "T2.5", alias = "T2_5")]
+    pub t2_5: String,
+    #[serde(alias = "T3")]
+    pub t3: Option<String>,
+}
+
+impl Default for TierModelConfig {
+    fn default() -> Self {
+        Self {
+            t1: "qwen3:4b".into(),
+            t2: "qwen2.5-coder:32b".into(),
+            t2_5: "qwen3.5:27b".into(),
+            t3: None,
+        }
+    }
+}
+
+impl TierModelConfig {
+    /// Resolve the model name for a given tier.
+    /// Returns `Err` for T3 when no frontier model is configured.
+    pub fn model_for_tier(&self, tier: TaskTier) -> Result<&str, TransportError> {
+        match tier {
+            TaskTier::T1 => Ok(&self.t1),
+            TaskTier::T2 => Ok(&self.t2),
+            TaskTier::T2_5 => Ok(&self.t2_5),
+            TaskTier::T3 => self.t3.as_deref().ok_or_else(|| {
+                TransportError::Protocol(
+                    "T3 task requires frontier model but none configured. \
+                     Set inference.tier_models.t3 in .hex/project.json or add a cloud provider."
+                        .into(),
+                )
+            }),
+        }
+    }
+}
 
 pub struct InferenceRouterAdapter {
     registry: Arc<dyn IRemoteRegistryPort>,
     #[allow(dead_code)]
     transport: Arc<dyn IAgentTransportPort>,
+    adapter_factory: InferenceAdapterFactory,
+    tier_config: TierModelConfig,
 }
 
 impl InferenceRouterAdapter {
     pub fn new(
         registry: Arc<dyn IRemoteRegistryPort>,
         transport: Arc<dyn IAgentTransportPort>,
+        adapter_factory: InferenceAdapterFactory,
     ) -> Self {
-        Self { registry, transport }
+        Self {
+            registry,
+            transport,
+            adapter_factory,
+            tier_config: TierModelConfig::default(),
+        }
+    }
+
+    /// Construct with a custom tier→model mapping.
+    pub fn with_tier_config(
+        registry: Arc<dyn IRemoteRegistryPort>,
+        transport: Arc<dyn IAgentTransportPort>,
+        adapter_factory: InferenceAdapterFactory,
+        tier_config: TierModelConfig,
+    ) -> Self {
+        Self { registry, transport, adapter_factory, tier_config }
     }
 }
 
@@ -86,10 +154,23 @@ impl IInferenceRouterPort for InferenceRouterAdapter {
         &self,
         request: CodeGenRequest,
     ) -> Result<CodeGenResult, TransportError> {
-        let model = request.model.as_deref().unwrap_or("default");
+        // Tier-aware model override (ADR-2604120202 P1.2).
+        // When a tier is set, override the model from the tier→model mapping.
+        // When no tier is set, fall back to the model in the request.
+        let model = if let Some(tier) = request.tier {
+            let resolved = self.tier_config.model_for_tier(tier)?;
+            tracing::info!(
+                tier = tier.as_str(),
+                resolved_model = resolved,
+                "Tier-aware model override"
+            );
+            resolved.to_string()
+        } else {
+            request.model.as_deref().unwrap_or("default").to_string()
+        };
 
-        // Select best server for the requested model
-        let server = self.select_server(model, None).await?.ok_or_else(|| {
+        // Select best server for the (possibly overridden) model
+        let server = self.select_server(&model, None).await?.ok_or_else(|| {
             TransportError::Protocol(format!(
                 "No inference server available for model '{}'",
                 model
@@ -97,29 +178,17 @@ impl IInferenceRouterPort for InferenceRouterAdapter {
         })?;
 
         tracing::info!(
-            model,
+            model = model.as_str(),
             agent_id = %server.agent_id,
             server_id = %server.server_id,
             load = server.current_load,
             "Routing code gen request to selected server"
         );
 
-        // Build an IInferencePort adapter for the selected server.
-        // Currently Ollama-only; extend match arms for Vllm/OpenAi/Anthropic
-        // as those adapters are implemented.
-        let adapter: Box<dyn IInferencePort> = match server.provider {
-            crate::remote::transport::InferenceProvider::Ollama
-            | crate::remote::transport::InferenceProvider::Vllm
-            | crate::remote::transport::InferenceProvider::LlamaCpp => {
-                Box::new(OllamaInferenceAdapter::new(Some(server.base_url.clone())))
-            }
-            other => {
-                return Err(TransportError::Protocol(format!(
-                    "No adapter implemented for provider {:?}",
-                    other
-                )));
-            }
-        };
+        // Build an IInferencePort adapter for the selected server via the
+        // injected factory. The composition root decides which concrete
+        // adapter to create — this adapter never imports siblings (rule #6).
+        let adapter = (self.adapter_factory)(&server.base_url);
 
         // Bridge CodeGenRequest → InferenceRequest
         let inference_req = InferenceRequest {
@@ -132,6 +201,7 @@ impl IInferenceRouterPort for InferenceRouterAdapter {
             thinking_budget: None,
             cache_control: false,
             priority: Priority::Normal,
+            grammar: None,
         };
 
         let response = adapter.complete(inference_req).await.map_err(|e| {

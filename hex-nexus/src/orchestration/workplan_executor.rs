@@ -268,6 +268,45 @@ pub struct WorkplanTask {
     /// Exits 0 = condition met; non-zero = step fails.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_command: Option<String>,
+    /// Explicit task tier override (ADR-2604120202). When set in the workplan
+    /// JSON, bypasses the automatic classifier. Values: "T1", "T2", "T2.5", "T3".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<crate::remote::transport::TaskTier>,
+}
+
+/// Classify a workplan task into an inference routing tier (ADR-2604120202 P1.3).
+///
+/// Priority: explicit `tier` field > agent role heuristic > layer + deps heuristic.
+/// Conservative: false negatives (T3 classified as T2) are cheap (scaffolding
+/// retries), false positives (T1 classified as T3) waste frontier budget.
+pub fn classify_task_tier(task: &WorkplanTask) -> crate::remote::transport::TaskTier {
+    use crate::remote::transport::TaskTier;
+
+    // Explicit tier in workplan takes precedence
+    if let Some(tier) = task.tier {
+        return tier;
+    }
+
+    // Planner/reviewer agents → T2 (structured output, not heavy codegen)
+    match task.agent.as_deref() {
+        Some("planner" | "hex-planner") => return TaskTier::T2,
+        Some("reviewer" | "hex-reviewer") => return TaskTier::T2,
+        Some("integrator" | "hex-integrator") => return TaskTier::T2_5,
+        _ => {}
+    }
+
+    // Layer + dependency count heuristic
+    match task.layer.as_deref() {
+        Some("domain") | Some("ports") => TaskTier::T2,
+        Some("primary") | Some("secondary") => {
+            if task.deps.len() >= 2 {
+                TaskTier::T2_5
+            } else {
+                TaskTier::T2
+            }
+        }
+        _ => TaskTier::T2, // safe default
+    }
 }
 
 // ── Workplan Executor ──────────────────────────────────

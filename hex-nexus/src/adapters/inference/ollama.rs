@@ -113,6 +113,10 @@ struct GenerateRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<&'a str>,
     stream: bool,
+    /// GBNF grammar constraint — passed through to llama.cpp via Ollama's
+    /// `options.grammar` field (ADR-2604120202 Phase 2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    grammar: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,6 +221,7 @@ impl IInferencePort for OllamaInferenceAdapter {
                 Some(request.system_prompt.as_str())
             },
             stream: false,
+            grammar: request.grammar.as_deref(),
         };
 
         let resp = self
@@ -291,6 +296,7 @@ impl IInferencePort for OllamaInferenceAdapter {
                 Some(request.system_prompt.as_str())
             },
             stream: true,
+            grammar: request.grammar.as_deref(),
         };
 
         let resp = self

@@ -208,26 +208,27 @@ mod tests {
             thinking_budget: None,
             cache_control: false,
             priority: crate::ports::inference::Priority::Normal,
+            grammar: None,
         }
     }
 
-    #[tokio::test]
-    async fn with_response_returns_canned_text() {
+    #[test]
+    fn with_response_returns_canned_text() {
         let mock = MockInferencePort::with_response("hello");
-        let resp = mock.complete(req()).await.expect("complete ok");
+        let resp = block_on(mock.complete(req())).expect("complete ok");
         match resp.content.first() {
             Some(ContentBlock::Text { text }) => assert_eq!(text, "hello"),
             other => panic!("expected Text block, got {:?}", other),
         }
-        let health = mock.health().await.expect("health ok");
+        let health = block_on(mock.health()).expect("health ok");
         assert_eq!(health, HealthStatus::Ok { models: vec![] });
     }
 
-    #[tokio::test]
-    async fn streaming_yields_tokens_in_order() {
+    #[test]
+    fn streaming_yields_tokens_in_order() {
         let mock =
             MockInferencePort::streaming(vec!["he".to_string(), "llo".to_string()]);
-        let mut stream = mock.stream(req()).await.expect("stream ok");
+        let mut stream = block_on(mock.stream(req())).expect("stream ok");
         // Drain the canned stream manually since we rolled our own trait.
         let mut collected: Vec<String> = Vec::new();
         loop {
@@ -247,10 +248,10 @@ mod tests {
         assert_eq!(collected, vec!["he".to_string(), "llo".to_string()]);
     }
 
-    #[tokio::test]
-    async fn healthy_reports_models() {
+    #[test]
+    fn healthy_reports_models() {
         let mock = MockInferencePort::healthy(vec!["llama2".to_string()]);
-        let health = mock.health().await.expect("health ok");
+        let health = block_on(mock.health()).expect("health ok");
         assert_eq!(
             health,
             HealthStatus::Ok {
@@ -259,13 +260,26 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn unreachable_fails_complete_and_reports_unreachable() {
+    #[test]
+    fn unreachable_fails_complete_and_reports_unreachable() {
         let mock = MockInferencePort::unreachable();
-        let err = mock.complete(req()).await.expect_err("should fail");
+        let err = block_on(mock.complete(req())).expect_err("should fail");
         assert!(matches!(err, InferenceError::ProviderUnavailable(_)));
-        let health = mock.health().await.expect("health call ok");
+        let health = block_on(mock.health()).expect("health call ok");
         assert!(matches!(health, HealthStatus::Unreachable { .. }));
+    }
+
+    /// Minimal single-threaded async block_on — avoids pulling tokio as a dep
+    /// in hex-core which is deliberately dependency-free. Works because
+    /// MockInferencePort futures resolve immediately (no real I/O).
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        let waker = futures_task_noop_waker();
+        let mut cx = std::task::Context::from_waker(&waker);
+        let mut f = std::pin::pin!(f);
+        match f.as_mut().poll(&mut cx) {
+            std::task::Poll::Ready(v) => v,
+            std::task::Poll::Pending => panic!("MockInferencePort future returned Pending — it should resolve immediately"),
+        }
     }
 
     /// Hand-rolled noop waker — avoids pulling futures-task as a dep just

@@ -84,9 +84,6 @@ const OPENROUTER_EXPLORATION_BONUS: f64 = 0.15;
 #[allow(dead_code)]
 const OPENROUTER_STALE_DAYS: u64 = 30;
 
-/// Rate-limit penalty applied to the offending model action.
-const RATE_LIMIT_PENALTY: f64 = -0.5;
-
 /// Small boost given to alternative models when one is rate-limited.
 const RATE_LIMIT_ALT_BOOST: f64 = 0.1;
 

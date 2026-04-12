@@ -203,6 +203,40 @@ pub enum AgentMessage {
 
 // ── Code Generation Types ───────────────────────────
 
+/// Task complexity tier for inference routing (ADR-2604120202).
+/// Determines which model handles the request and how much scaffolding
+/// (Best-of-N, compile gate, retry loop) is applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskTier {
+    /// Trivial edits: renames, typo fixes, comment changes. Fastest model.
+    T1,
+    /// Single function/test generation. Best local codegen model.
+    T2,
+    /// Multi-function, 2-file agentic tasks. Strong reasoning model.
+    #[serde(alias = "t2.5")]
+    T2_5,
+    /// Multi-file features. Frontier model only.
+    T3,
+}
+
+impl TaskTier {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::T1 => "T1",
+            Self::T2 => "T2",
+            Self::T2_5 => "T2.5",
+            Self::T3 => "T3",
+        }
+    }
+}
+
+impl std::fmt::Display for TaskTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeGenRequest {
@@ -212,6 +246,10 @@ pub struct CodeGenRequest {
     pub target_file: Option<String>,
     pub model: Option<String>,
     pub max_tokens: Option<u32>,
+    /// Task complexity tier. When set, the router overrides model selection
+    /// based on the tier→model mapping (ADR-2604120202).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<TaskTier>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

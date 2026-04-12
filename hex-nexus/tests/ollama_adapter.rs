@@ -39,6 +39,7 @@ fn request(model: &str, prompt: &str) -> InferenceRequest {
         thinking_budget: None,
         cache_control: false,
         priority: Priority::Normal,
+        grammar: None,
     }
 }
 

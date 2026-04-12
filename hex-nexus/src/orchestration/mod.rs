@@ -3,6 +3,8 @@ pub mod agent_manager;
 pub mod constraint_enforcer;
 pub mod context_pressure;
 pub mod errors;
+pub mod grammars;
+pub mod scaffolding;
 pub mod skill_selector;
 pub mod workplan_executor;
 

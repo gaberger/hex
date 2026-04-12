@@ -28,6 +28,11 @@ pub struct InferenceRequest {
     pub thinking_budget: Option<u32>,
     pub cache_control: bool,
     pub priority: Priority,
+    /// GBNF grammar constraint for structured output (ADR-2604120202 Phase 2).
+    /// When set, the inference backend constrains token generation to only
+    /// grammar-valid continuations. Ollama passes this to llama.cpp's GBNF
+    /// decoder; other backends may ignore it.
+    pub grammar: Option<String>,
 }
 
 /// Priority levels for inference requests.
