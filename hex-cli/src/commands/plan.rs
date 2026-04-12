@@ -347,19 +347,22 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
     // Resolve absolute path for nexus
     let _abs_path = std::fs::canonicalize(&path)?;
 
-    // Resolve nexus client with agent identity
-    let nexus_url = std::env::var("HEX_NEXUS_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:5555".to_string());
-    let client = NexusClient::new(nexus_url);
+    // Build authenticated nexus client
+    let client = NexusClient::from_env();
 
     // Check if nexus is reachable
     match client.get("/api/health").await {
         Ok(_) => {
             println!("  {} Nexus connected — dispatching to remote workers", "\u{2713}".green());
             println!();
-            return execute_plan_distributed(&client, &wp).await;
+            return execute_plan_distributed(&wp).await;
         }
         Err(_) => {
+            // Fix OLLAMA_HOST if it's a bind address (not connectable)
+            let host = std::env::var("OLLAMA_HOST").unwrap_or_default();
+            if host == "0.0.0.0" || host.starts_with("0.0.0.0:") {
+                std::env::set_var("OLLAMA_HOST", "http://localhost:11434");
+            }
             println!("  {} Nexus not reachable — executing locally", "\u{2192}".dimmed());
             println!();
             return execute_plan_local(&path, &wp).await;
@@ -371,21 +374,15 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
 /// for remote workers to complete them (ADR-2604121630).
 ///
 /// Flow: create swarm → create tasks per phase → poll until complete → run gates → next phase
-async fn execute_plan_distributed(_client: &NexusClient, wp: &serde_json::Value) -> anyhow::Result<()> {
+async fn execute_plan_distributed(wp: &serde_json::Value) -> anyhow::Result<()> {
     let feature = wp.get("feature").and_then(|v| v.as_str()).unwrap_or("workplan");
     let phases = match wp.get("phases").and_then(|v| v.as_array()) {
         Some(p) => p,
         None => { anyhow::bail!("Workplan has no phases"); }
     };
 
-    // Resolve agent identity for authenticated API calls
-    let agent_id = crate::nexus_client::resolve_agent_id_detailed()
-        .map(|r| r.agent_id)
-        .unwrap_or_else(|| "unknown".to_string());
-    // Build a new client with agent identity for authenticated API calls
-    let client = NexusClient::new(
-        std::env::var("HEX_NEXUS_URL").unwrap_or_else(|_| "http://127.0.0.1:5555".to_string())
-    ).with_agent_id(agent_id.clone());
+    // NexusClient::from_env auto-resolves agent identity from session files + env
+    let client = NexusClient::from_env();
 
     // Step 1: Create swarm for this execution
     let swarm_resp = client.post("/api/swarms", &serde_json::json!({
