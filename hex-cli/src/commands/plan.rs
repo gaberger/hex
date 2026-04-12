@@ -345,41 +345,210 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
     println!();
 
     // Resolve absolute path for nexus
-    let abs_path = std::fs::canonicalize(&path)?;
+    let _abs_path = std::fs::canonicalize(&path)?;
 
-    // Send to nexus for execution
+    // Resolve nexus client with agent identity
     let nexus_url = std::env::var("HEX_NEXUS_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:5555".to_string());
     let client = NexusClient::new(nexus_url);
-    let body = serde_json::json!({
-        "workplan_path": abs_path.to_string_lossy(),
-    });
 
-    match client.post("/api/workplan/execute", &body).await {
-        Ok(result) => {
-            if let Some(execution_id) = result.get("execution_id").and_then(|v| v.as_str()) {
-                println!("{} Execution started: {}", "\u{2b21}".green(), execution_id);
-                println!("  Monitor: hex plan active");
-                println!("  Report:  hex plan report {}", execution_id);
-            } else if let Some(error) = result.get("error").and_then(|v| v.as_str()) {
-                println!("{} Execution failed: {}", "!".red(), error);
-                // If nexus doesn't have the execute endpoint, fall back to local dispatch
-                if error.contains("404") || error.contains("not found") {
-                    println!();
-                    return execute_plan_local(&path, &wp).await;
-                }
-            } else {
-                println!("{} Execution response: {}", "\u{2b21}".green(), result);
-            }
+    // Check if nexus is reachable
+    match client.get("/api/health").await {
+        Ok(_) => {
+            println!("  {} Nexus connected — dispatching to remote workers", "\u{2713}".green());
+            println!();
+            return execute_plan_distributed(&client, &wp).await;
         }
         Err(_) => {
-            // Nexus not running — fall back to local execution
             println!("  {} Nexus not reachable — executing locally", "\u{2192}".dimmed());
             println!();
             return execute_plan_local(&path, &wp).await;
         }
     }
+}
 
+/// Distributed workplan execution — creates HexFlo swarm tasks and waits
+/// for remote workers to complete them (ADR-2604121630).
+///
+/// Flow: create swarm → create tasks per phase → poll until complete → run gates → next phase
+async fn execute_plan_distributed(_client: &NexusClient, wp: &serde_json::Value) -> anyhow::Result<()> {
+    let feature = wp.get("feature").and_then(|v| v.as_str()).unwrap_or("workplan");
+    let phases = match wp.get("phases").and_then(|v| v.as_array()) {
+        Some(p) => p,
+        None => { anyhow::bail!("Workplan has no phases"); }
+    };
+
+    // Resolve agent identity for authenticated API calls
+    let agent_id = crate::nexus_client::resolve_agent_id_detailed()
+        .map(|r| r.agent_id)
+        .unwrap_or_else(|| "unknown".to_string());
+    // Build a new client with agent identity for authenticated API calls
+    let client = NexusClient::new(
+        std::env::var("HEX_NEXUS_URL").unwrap_or_else(|_| "http://127.0.0.1:5555".to_string())
+    ).with_agent_id(agent_id.clone());
+
+    // Step 1: Create swarm for this execution
+    let swarm_resp = client.post("/api/swarms", &serde_json::json!({
+        "name": feature,
+        "topology": "hierarchical",
+        "projectId": feature,
+    })).await?;
+
+    let swarm_id = swarm_resp["id"].as_str().unwrap_or("").to_string();
+    if swarm_id.is_empty() {
+        anyhow::bail!("Failed to create swarm: {:?}", swarm_resp);
+    }
+    println!("{} Swarm created: {} ({})", "\u{2b21}".green(), feature, &swarm_id[..8]);
+
+    let mut total_passed = 0usize;
+    let mut total_failed = 0usize;
+
+    // Step 2: Execute phases sequentially
+    for phase in phases {
+        let phase_name = phase.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let tasks = phase.get("tasks").and_then(|v| v.as_array());
+        let gate_cmd = phase.get("gate")
+            .and_then(|g| g.get("command"))
+            .and_then(|v| v.as_str());
+
+        println!("{} Phase: {}", "\u{2501}".dimmed(), phase_name);
+
+        let Some(tasks) = tasks else { continue };
+
+        // Step 3: Create HexFlo tasks for this phase
+        let mut task_ids: Vec<(String, String)> = Vec::new(); // (task_id, title)
+
+        for task in tasks {
+            let task_name = task.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+            let description = task.get("description").and_then(|v| v.as_str()).unwrap_or("");
+            let agent = task.get("agent").and_then(|v| v.as_str()).unwrap_or("hex-coder");
+            let tier = task.get("tier").and_then(|v| v.as_str()).unwrap_or("T2");
+
+            // Format title so worker can parse role + description
+            let title = format!("{}: {}", agent, description);
+
+            let resp = client.post(
+                &format!("/api/swarms/{}/tasks", swarm_id),
+                &serde_json::json!({ "title": title }),
+            ).await;
+
+            match resp {
+                Ok(r) => {
+                    let tid = r["id"].as_str().unwrap_or("").to_string();
+                    if !tid.is_empty() {
+                        println!("  {} [{}] {} → task {}", task_name, tier, agent, &tid[..8.min(tid.len())]);
+                        task_ids.push((tid, task_name.to_string()));
+                    } else {
+                        println!("  {} [{}] {} → failed to create task", task_name, tier, agent);
+                    }
+                }
+                Err(e) => {
+                    println!("  {} Failed: {}", "!".red(), e);
+                }
+            }
+        }
+
+        if task_ids.is_empty() {
+            println!("  {} No tasks created for phase", "!".yellow());
+            continue;
+        }
+
+        // Step 4: Poll until all tasks complete (60s timeout per task)
+        let timeout = std::time::Duration::from_secs(300); // 5 min per phase
+        let start = std::time::Instant::now();
+        let poll_interval = std::time::Duration::from_secs(3);
+
+        println!("  {} Waiting for {} worker(s)...", "\u{231b}".dimmed(), task_ids.len());
+
+        loop {
+            if start.elapsed() > timeout {
+                println!("  {} Phase timed out after {}s", "!".red(), timeout.as_secs());
+                total_failed += task_ids.len();
+                break;
+            }
+
+            tokio::time::sleep(poll_interval).await;
+
+            // Check task statuses
+            let mut all_done = true;
+            let mut phase_passed = 0;
+            let mut phase_failed = 0;
+
+            if let Ok(swarms_resp) = client.get("/api/swarms/active").await {
+                if let Some(swarms) = swarms_resp.as_array() {
+                    for swarm in swarms {
+                        if swarm["id"].as_str() != Some(&swarm_id) { continue; }
+                        if let Some(stasks) = swarm["tasks"].as_array() {
+                            for (tid, _tname) in &task_ids {
+                                if let Some(st) = stasks.iter().find(|t| t["id"].as_str() == Some(tid)) {
+                                    match st["status"].as_str().unwrap_or("") {
+                                        "completed" => { phase_passed += 1; }
+                                        "failed" => { phase_failed += 1; }
+                                        _ => { all_done = false; }
+                                    }
+                                } else {
+                                    all_done = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if all_done || (phase_passed + phase_failed == task_ids.len()) {
+                for (tid, tname) in &task_ids {
+                    // Find final status
+                    let status = if let Ok(resp) = client.get("/api/swarms/active").await {
+                        resp.as_array()
+                            .and_then(|s| s.iter().find(|sw| sw["id"].as_str() == Some(&swarm_id)))
+                            .and_then(|sw| sw["tasks"].as_array())
+                            .and_then(|ts| ts.iter().find(|t| t["id"].as_str() == Some(tid.as_str())))
+                            .and_then(|t| t["status"].as_str())
+                            .unwrap_or("?")
+                            .to_string()
+                    } else { "?".to_string() };
+
+                    if status == "completed" {
+                        println!("  {} {}", "\u{2713}".green(), tname);
+                        total_passed += 1;
+                    } else {
+                        println!("  {} {} ({})", "\u{2717}".red(), tname, status);
+                        total_failed += 1;
+                    }
+                }
+                break;
+            }
+        }
+
+        // Step 5: Run phase gate
+        if let Some(cmd) = gate_cmd {
+            print!("  Phase gate: {} ... ", cmd);
+            match run_gate(cmd).await {
+                GateResult::Pass => println!("{}", "PASS".green()),
+                GateResult::Fail(err) => {
+                    println!("{}", "FAIL".red());
+                    for line in err.lines().take(3) {
+                        println!("    {}", line);
+                    }
+                }
+            }
+        }
+        println!();
+    }
+
+    // Complete the swarm
+    let _ = client.patch(
+        &format!("/api/swarms/{}", swarm_id),
+        &serde_json::json!({"status": "completed"}),
+    ).await;
+
+    println!("{} Results: {} passed, {} failed", "\u{2b21}".cyan(), total_passed, total_failed);
+    println!("  Swarm: {} ({})", feature, &swarm_id[..8]);
+    println!("  Workers assigned tasks automatically — use `hex task list` to review");
+
+    if total_failed > 0 {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
