@@ -21,7 +21,7 @@
       "description": "Define the IInferencePort trait surface that OllamaInferenceAdapter (P3) and the reworked ClaudeCodeInferenceAdapter (P4) will implement. Must expose: (1) complete(prompt, params) -> Result<Response>, (2) stream(prompt, params) -> Result<TokenStream>, (3) health() -> Result<HealthStatus>. No concrete adapter yet — this phase is pure interface + unit-testable mock. Domain types live in hex-core; port trait lives in hex-core::ports. Audit current hex-nexus/src/adapters/inference* to identify any ad-hoc trait that is half-formed and either adopt it or replace it. Do NOT leave two competing traits.",
       "gate": {
         "type": "typecheck",
-        "command": "cargo check -p hex-core -p hex-nexus",
+        "command": "cargo check --workspace",
         "blocking": true
       },
       "tasks": [
@@ -39,12 +39,13 @@
           "id": "P1.2",
           "name": "Define canonical IInferencePort in hex-core",
           "layer": "ports",
-          "description": "Based on the P1.1 audit, define/consolidate IInferencePort in hex-core/src/ports/inference.rs with complete/stream/health methods. Use associated types for Request/Response/Error so hex-core stays dependency-free. Include a MockInferencePort in hex-core/src/ports/inference/mock.rs used by P2 and P5 tests. Delete any ad-hoc inference traits the audit flagged as redundant (do NOT leave legacy traits 'just in case').",
+          "description": "REFINE-IN-PLACE (not a rewrite). P1.1 audit found IInferencePort already exists in hex-core/src/ports/inference.rs with complete/stream/capabilities and zero Claude-specific assumptions in the trait itself. P1.2 scope: (1) add health() -> Result<HealthStatus, InferenceError> as a new async method matching the existing async_trait convention, (2) add HealthStatus enum (Ok { models }, Degraded { reason }, Unreachable { reason }) in the same module, (3) create MockInferencePort in hex-core/src/ports/inference/mock.rs for P2/P5 test use (pure in-memory, no feature flag since hex-core has no cargo features yet), (4) implement health() on the one existing impl — SpacetimeInferenceAdapter in hex-agent/src/adapters/secondary/spacetime_inference.rs — because adding a trait method is breaking. No ad-hoc inference traits exist to delete (audit §6). Gate widened from `cargo check -p hex-core -p hex-nexus` to `cargo check --workspace` per audit §7 gotcha #2 so the hex-agent impl is covered.",
           "deps": ["P1.1"],
           "files": [
             "hex-core/src/ports/inference.rs",
             "hex-core/src/ports/inference/mock.rs",
-            "hex-core/src/ports/mod.rs"
+            "hex-core/src/ports/mod.rs",
+            "hex-agent/src/adapters/secondary/spacetime_inference.rs"
           ],
           "status": "todo",
           "agent": "hex-coder"
