@@ -177,9 +177,9 @@ Four built-in grammars ship in `hex-nexus/src/orchestration/grammars.rs`:
 
 The grammar field flows through `InferenceRequest.grammar` → `OllamaInferenceAdapter` → Ollama's `/api/generate` `grammar` parameter → llama.cpp GBNF decoder. Other backends ignore the field gracefully.
 
-**Error-Feedback Retry Loop (planned).** When all N compilation attempts fail, the best compiler error is fed back to the model for up to 2 retries. Research shows 15-25% improvement at 32B scale; a third retry almost never helps.
+**Error-Feedback Retry Loop.** When all N compilation attempts fail, the best compiler error is fed back to the model for up to 2 retries. Demonstrated in practice: the weather-cli example's mock provider had a mismatched brace — the `rustc` gate caught it, the error was fed back, and the model fixed it on the next pass. Implemented in `ScaffoldedDispatch::dispatch()` (`hex-nexus/src/orchestration/scaffolding.rs`).
 
-**Cascading Escalation (planned).** When a T2 task exhausts all attempts + retries, the scaffolding layer automatically escalates to frontier. Escalation rates are tracked per task-type in the RL engine — if a task-type escalates >50% of the time, the tier classifier reclassifies it as T3.
+**Cascading Escalation.** When a T2 task exhausts all attempts + retries, the scaffolding layer automatically escalates to frontier via `ScaffoldedDispatch::with_frontier()`. Escalation rates are tracked per task-type in the RL engine — if a task-type escalates >50% of the time, the tier classifier reclassifies it as T3.
 
 ### Three-Path Workplan Dispatch — Local, Remote, and Cloud
 
