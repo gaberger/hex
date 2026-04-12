@@ -1065,24 +1065,73 @@ mod real {
 
     }
 
+    // ── HexFlo memory (ADR-2604112000 P5) ──
+    //
+    // The four methods below are the data-plane calls for
+    // `HexFlo::memory_*` → `IHexFloMemoryStatePort`. They talk to the
+    // `hexflo-coordination` SpacetimeDB module over its HTTP API:
+    //
+    //   * store/delete → POST /v1/database/<db>/call/memory_{store,delete}
+    //   * retrieve/search → POST /v1/database/<db>/sql
+    //
+    // The module-side reducers live in
+    // `spacetime-modules/hexflo-coordination/src/lib.rs` at lines 1496
+    // (`memory_store`) and 1520 (`memory_delete`). Read paths go through
+    // raw SQL because SpacetimeDB does not expose per-key read reducers.
+    //
+    // See `docs/analysis/hexflo-memory-reducer-gap.md` for the full audit
+    // and decision rationale.
+
+    /// Escape a string for safe interpolation into a SpacetimeDB SQL
+    /// string literal. SpacetimeDB's SQL dialect uses single-quote
+    /// delimiters with SQL-standard doubling for embedded quotes
+    /// (`'it''s'` rather than `'it\'s'`). No parameter-binding API is
+    /// exposed via the HTTP `/sql` endpoint, so callers must escape
+    /// user input before concatenation.
+    ///
+    /// This is a minimal, defensive escape — it only handles the single
+    /// quote. Keys with other SQL metacharacters (backticks, semicolons,
+    /// comments) are passed through unchanged; memory keys are not user
+    /// input in the security-boundary sense (they come from hex-internal
+    /// code paths), but the escape is still load-bearing for correctness
+    /// on keys like `it's-a-workplan`.
+    pub(super) fn escape_sql_string(s: &str) -> String {
+        s.replace('\'', "''")
+    }
+
     #[async_trait]
     impl IHexFloMemoryStatePort for SpacetimeStateAdapter {
         async fn hexflo_memory_store(&self, key: &str, value: &str, scope: &str) -> Result<(), StateError> {
             let now = chrono::Utc::now().to_rfc3339();
+            tracing::debug!(
+                key = %key,
+                value_len = value.len(),
+                scope = %scope,
+                "hexflo_memory_store: calling memory_store reducer"
+            );
             self.call_reducer("memory_store", serde_json::json!([key, value, scope, now])).await?;
             Ok(())
         }
 
         async fn hexflo_memory_retrieve(&self, key: &str) -> Result<Option<String>, StateError> {
-            let rows = self.query_table(&format!("SELECT value FROM hexflo_memory WHERE key = '{}'", key)).await?;
+            // Escape the key so single-quote characters don't break the
+            // SQL string literal or open an injection seam.
+            let escaped = escape_sql_string(key);
+            let sql = format!("SELECT value FROM hexflo_memory WHERE key = '{}'", escaped);
+            tracing::debug!(key = %key, sql = %sql, "hexflo_memory_retrieve: querying hexflo_memory");
+            let rows = self.query_table(&sql).await?;
             Ok(rows.first().and_then(|r| r.get("value")?.as_str().map(String::from)))
         }
 
         async fn hexflo_memory_search(&self, query: &str) -> Result<Vec<(String, String)>, StateError> {
             // SpacetimeDB does not support LIKE — fetch all rows and filter client-side.
+            // See follow-up ticket in docs/analysis/hexflo-memory-reducer-gap.md §7:
+            // this method currently ignores `scope` because the port trait has no scope
+            // parameter. A future port-trait change is tracked there.
+            tracing::debug!(query = %query, "hexflo_memory_search: full table scan");
             let rows = self.query_table("SELECT key, value FROM hexflo_memory").await?;
             let q_lower = query.to_lowercase();
-            Ok(rows.into_iter().filter_map(|r| {
+            let matches: Vec<(String, String)> = rows.into_iter().filter_map(|r| {
                 let k = r.get("key")?.as_str()?.to_string();
                 let v = r.get("value")?.as_str()?.to_string();
                 if k.to_lowercase().contains(&q_lower) || v.to_lowercase().contains(&q_lower) {
@@ -1090,10 +1139,13 @@ mod real {
                 } else {
                     None
                 }
-            }).collect())
+            }).collect();
+            tracing::debug!(query = %query, hit_count = matches.len(), "hexflo_memory_search: results");
+            Ok(matches)
         }
 
         async fn hexflo_memory_delete(&self, key: &str) -> Result<(), StateError> {
+            tracing::debug!(key = %key, "hexflo_memory_delete: calling memory_delete reducer");
             self.call_reducer("memory_delete", serde_json::json!([key])).await?;
             Ok(())
         }

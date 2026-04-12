@@ -261,14 +261,14 @@
           "files": [
             "docs/analysis/hexflo-memory-reducer-gap.md"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "planner"
         },
         {
           "id": "P5.2",
           "name": "Extend hexflo-coordination reducers if needed",
           "layer": "secondary",
-          "description": "Only runs if P5.1 identifies missing reducers. Adds/extends spacetime-modules/hexflo-coordination/src/lib.rs. Republishes the module. Regenerates bindings in hex-nexus/src/adapters/spacetime_bindings/. If P5.1 finds all four reducers are already sufficient, this task is skipped and marked `done` with result 'no reducer changes needed'.",
+          "description": "Only runs if P5.1 identifies missing reducers. Adds/extends spacetime-modules/hexflo-coordination/src/lib.rs. Republishes the module. Regenerates bindings in hex-nexus/src/adapters/spacetime_bindings/. If P5.1 finds all four reducers are already sufficient, this task is skipped and marked `done` with result 'no reducer changes needed'. P5.1 verdict: GREEN — all reducers present. Skipped (no reducer changes needed).",
           "deps": [
             "P5.1"
           ],
@@ -276,14 +276,14 @@
             "spacetime-modules/hexflo-coordination/src/lib.rs",
             "hex-nexus/src/adapters/spacetime_bindings/hexflo_coordination.rs"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
           "id": "P5.3",
           "name": "Implement hexflo_memory_* adapter methods",
           "layer": "secondary",
-          "description": "Replace Err(Self::err()) bodies in hex-nexus/src/adapters/spacetime_state.rs. Each method calls the corresponding reducer, maps SpacetimeDB errors to domain error types, and returns structured results. Add instrumentation (tracing::debug spans) so failures are diagnosable without attaching a debugger. Adapter-level tests use an in-memory SpacetimeDB fixture (or the existing test harness if one exists \u2014 grep hex-nexus/tests/ first).",
+          "description": "Replace Err(Self::err()) bodies in hex-nexus/src/adapters/spacetime_state.rs. Each method calls the corresponding reducer, maps SpacetimeDB errors to domain error types, and returns structured results. Add instrumentation (tracing::debug spans) so failures are diagnosable without attaching a debugger. Adapter-level tests use an in-memory SpacetimeDB fixture (or the existing test harness if one exists \u2014 grep hex-nexus/tests/ first). P5.1 audit found real impl already wired; P5.3 hardened SQL escaping in hexflo_memory_retrieve and added tracing::debug spans to all four methods.",
           "deps": [
             "P5.1",
             "P5.2"
@@ -291,21 +291,21 @@
           "files": [
             "hex-nexus/src/adapters/spacetime_state.rs"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
           "id": "P5.4",
           "name": "End-to-end hexflo_memory test via REST",
           "layer": "secondary",
-          "description": "hex-nexus/tests/hexflo_memory_e2e.rs: start hex-nexus against an in-memory SpacetimeDB fixture, POST /api/hexflo/memory to store, GET /api/hexflo/memory/:key to retrieve, GET /api/hexflo/memory/search?q= to search, DELETE to remove. Asserts the full CLI -> REST -> adapter -> reducer path works. This test exists to prove the un-stubbing landed end-to-end, not just at the unit level.",
+          "description": "hex-nexus/tests/hexflo_memory_e2e.rs: start hex-nexus against an in-memory SpacetimeDB fixture, POST /api/hexflo/memory to store, GET /api/hexflo/memory/:key to retrieve, GET /api/hexflo/memory/search?q= to search, DELETE to remove. Asserts the full CLI -> REST -> adapter -> reducer path works. This test exists to prove the un-stubbing landed end-to-end, not just at the unit level. Implemented as httpmock-backed stateful fake (19 tests total: 14 adapter + 5 e2e).",
           "deps": [
             "P5.3"
           ],
           "files": [
             "hex-nexus/tests/hexflo_memory_e2e.rs"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         }
       ]
