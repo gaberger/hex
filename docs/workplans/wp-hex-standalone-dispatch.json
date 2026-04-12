@@ -330,7 +330,7 @@
           "files": [
             "hex-nexus/src/orchestration/workplan_executor.rs"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
@@ -346,7 +346,7 @@
           "files": [
             "hex-nexus/tests/standalone_dispatch_e2e.rs"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
@@ -360,7 +360,7 @@
           "files": [
             "hex-nexus/tests/standalone_dispatch_e2e.rs"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         }
       ]
