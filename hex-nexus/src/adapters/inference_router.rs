@@ -7,9 +7,13 @@ use async_trait::async_trait;
 use crate::ports::inference_router::{FleetCapacity, IInferenceRouterPort};
 use crate::ports::remote_registry::IRemoteRegistryPort;
 use crate::ports::agent_transport::IAgentTransportPort;
+use crate::adapters::inference::ollama::OllamaInferenceAdapter;
 use crate::remote::transport::{
     CodeGenRequest, CodeGenResult, InferenceServer, InferenceServerStatus, TransportError,
+    TokenUsage,
 };
+use hex_core::domain::messages::{ContentBlock, Message};
+use hex_core::ports::inference::{IInferencePort, InferenceRequest, Priority};
 
 pub struct InferenceRouterAdapter {
     registry: Arc<dyn IRemoteRegistryPort>,
@@ -96,15 +100,68 @@ impl IInferenceRouterPort for InferenceRouterAdapter {
             model,
             agent_id = %server.agent_id,
             server_id = %server.server_id,
-            "Routing code gen request"
+            load = server.current_load,
+            "Routing code gen request to selected server"
         );
 
-        // Stub: actual routing will be completed in T3-4 orchestrator
-        // The full pipeline requires sending an InferenceRequest via transport,
-        // subscribing for InferenceComplete, and assembling the CodeGenResult.
-        Err(TransportError::Protocol(
-            "Inference routing not yet wired to transport — requires orchestrator (T3-4)".into(),
-        ))
+        // Build an IInferencePort adapter for the selected server.
+        // Currently Ollama-only; extend match arms for Vllm/OpenAi/Anthropic
+        // as those adapters are implemented.
+        let adapter: Box<dyn IInferencePort> = match server.provider {
+            crate::remote::transport::InferenceProvider::Ollama
+            | crate::remote::transport::InferenceProvider::Vllm
+            | crate::remote::transport::InferenceProvider::LlamaCpp => {
+                Box::new(OllamaInferenceAdapter::new(Some(server.base_url.clone())))
+            }
+            other => {
+                return Err(TransportError::Protocol(format!(
+                    "No adapter implemented for provider {:?}",
+                    other
+                )));
+            }
+        };
+
+        // Bridge CodeGenRequest → InferenceRequest
+        let inference_req = InferenceRequest {
+            model: model.to_string(),
+            system_prompt: String::new(),
+            messages: vec![Message::user(&request.prompt)],
+            tools: vec![],
+            max_tokens: request.max_tokens.unwrap_or(4096),
+            temperature: 0.2,
+            thinking_budget: None,
+            cache_control: false,
+            priority: Priority::Normal,
+        };
+
+        let response = adapter.complete(inference_req).await.map_err(|e| {
+            TransportError::Protocol(format!(
+                "Inference failed on {} ({}): {}",
+                server.server_id, model, e
+            ))
+        })?;
+
+        // Bridge InferenceResponse → CodeGenResult
+        let code = response
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+
+        Ok(CodeGenResult {
+            code,
+            model_used: response.model_used,
+            tokens_used: TokenUsage {
+                input_tokens: response.input_tokens as u32,
+                output_tokens: response.output_tokens as u32,
+                total_tokens: (response.input_tokens + response.output_tokens) as u32,
+            },
+            files_modified: request.target_file.into_iter().collect(),
+        })
     }
 
     async fn has_model(&self, model: &str) -> Result<bool, TransportError> {
