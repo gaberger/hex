@@ -35,6 +35,11 @@ pub enum PlanAction {
         #[arg(long, default_value_t = false)]
         no_adr: bool,
     },
+    /// Execute a workplan — dispatches tasks through tiered inference routing
+    Execute {
+        /// Path to workplan JSON file
+        file: String,
+    },
     /// List existing workplans
     List,
     /// Show status of a specific workplan
@@ -291,6 +296,7 @@ struct HistoryRow {
 pub async fn run(action: PlanAction) -> anyhow::Result<()> {
     match action {
         PlanAction::Create { requirements, lang, adr, no_adr } => create_plan(&requirements, &lang, adr.as_deref(), no_adr).await,
+        PlanAction::Execute { file } => execute_plan(&file).await,
         PlanAction::List => list_plans().await,
         PlanAction::Status { file } => show_plan_status(&file).await,
         PlanAction::Active => show_active_executions().await,
@@ -301,6 +307,239 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Draft { prompt, background } => draft_plan(&prompt, background).await,
         PlanAction::Drafts { action } => drafts_dispatch(action).await,
     }
+}
+
+/// Execute a workplan — dispatches tasks through tiered inference routing (ADR-2604120202).
+///
+/// Sends the workplan to hex-nexus for execution. Nexus routes each task through
+/// Path C (headless inference for T1/T2/T2.5) or Path A (spawn agent for T3),
+/// with compile gates, GBNF grammar constraints, and RL reward recording.
+async fn execute_plan(file: &str) -> anyhow::Result<()> {
+    let path = std::path::Path::new(file);
+    let path = if path.exists() {
+        path.to_path_buf()
+    } else {
+        let wp_path = std::path::Path::new("docs/workplans").join(file);
+        if !wp_path.exists() {
+            anyhow::bail!("Workplan not found: {} (also tried docs/workplans/{})", file, file);
+        }
+        wp_path
+    };
+
+    // Parse and validate the workplan
+    let content = std::fs::read_to_string(&path)?;
+    let wp: serde_json::Value = serde_json::from_str(&content)?;
+    let feature = wp.get("feature").and_then(|v| v.as_str()).unwrap_or("(unnamed)");
+    let phases = wp.get("phases").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let total_tasks: usize = wp.get("phases")
+        .and_then(|v| v.as_array())
+        .map(|phases| phases.iter()
+            .filter_map(|p| p.get("tasks").and_then(|t| t.as_array()))
+            .map(|t| t.len())
+            .sum())
+        .unwrap_or(0);
+
+    println!("{} Executing workplan: {}", "\u{2b21}".cyan(), feature);
+    println!("  Phases: {}  Tasks: {}", phases, total_tasks);
+    println!("  File:   {}", path.display());
+    println!();
+
+    // Resolve absolute path for nexus
+    let abs_path = std::fs::canonicalize(&path)?;
+
+    // Send to nexus for execution
+    let nexus_url = std::env::var("HEX_NEXUS_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:5555".to_string());
+    let client = NexusClient::new(nexus_url);
+    let body = serde_json::json!({
+        "workplan_path": abs_path.to_string_lossy(),
+    });
+
+    match client.post("/api/workplan/execute", &body).await {
+        Ok(result) => {
+            if let Some(execution_id) = result.get("execution_id").and_then(|v| v.as_str()) {
+                println!("{} Execution started: {}", "\u{2b21}".green(), execution_id);
+                println!("  Monitor: hex plan active");
+                println!("  Report:  hex plan report {}", execution_id);
+            } else if let Some(error) = result.get("error").and_then(|v| v.as_str()) {
+                println!("{} Execution failed: {}", "!".red(), error);
+                // If nexus doesn't have the execute endpoint, fall back to local dispatch
+                if error.contains("404") || error.contains("not found") {
+                    println!();
+                    return execute_plan_local(&path, &wp).await;
+                }
+            } else {
+                println!("{} Execution response: {}", "\u{2b21}".green(), result);
+            }
+        }
+        Err(_) => {
+            // Nexus not running — fall back to local execution
+            println!("  {} Nexus not reachable — executing locally", "\u{2192}".dimmed());
+            println!();
+            return execute_plan_local(&path, &wp).await;
+        }
+    }
+
+    Ok(())
+}
+
+/// Local workplan execution fallback — runs when nexus is unavailable.
+/// Iterates phases sequentially, dispatches each task through Ollama,
+/// runs compile gates, and records results.
+async fn execute_plan_local(_path: &std::path::Path, wp: &serde_json::Value) -> anyhow::Result<()> {
+    let ollama_host = std::env::var("OLLAMA_HOST")
+        .unwrap_or_else(|_| "http://localhost:11434".to_string());
+
+    println!("{} Local execution (Ollama: {})", "\u{2b21}".cyan(), ollama_host);
+    println!();
+
+    let phases = wp.get("phases").and_then(|v| v.as_array());
+    let phases = match phases {
+        Some(p) => p,
+        None => { anyhow::bail!("Workplan has no phases"); }
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()?;
+
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+
+    for phase in phases {
+        let phase_name = phase.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let tasks = phase.get("tasks").and_then(|v| v.as_array());
+        let gate_cmd = phase.get("gate")
+            .and_then(|g| g.get("command"))
+            .and_then(|v| v.as_str());
+
+        println!("{} Phase: {}", "\u{2501}".dimmed(), phase_name);
+
+        if let Some(tasks) = tasks {
+            for task in tasks {
+                let task_id = task.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                let task_name = task.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                let description = task.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                let tier = task.get("tier").and_then(|v| v.as_str()).unwrap_or("T2");
+                let _agent = task.get("agent").and_then(|v| v.as_str()).unwrap_or("hex-coder");
+                let files: Vec<&str> = task.get("files")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+
+                // Select model by tier
+                let model = match tier {
+                    "T1" => "qwen3:4b",
+                    "T2" => "qwen2.5-coder:32b",
+                    "T2.5" => "qwen3.5:27b",
+                    _ => "qwen2.5-coder:32b",
+                };
+
+                println!("  {} [{}] {} ({})", task_id, tier, task_name, model);
+
+                // Dispatch to Ollama
+                let body = serde_json::json!({
+                    "model": model,
+                    "prompt": description,
+                    "temperature": 0.2,
+                    "stream": false,
+                });
+
+                let start = std::time::Instant::now();
+                let resp = client.post(format!("{}/api/generate", ollama_host))
+                    .json(&body)
+                    .send()
+                    .await;
+
+                match resp {
+                    Ok(r) if r.status().is_success() => {
+                        let json: serde_json::Value = r.json().await?;
+                        let text = json.get("response").and_then(|v| v.as_str()).unwrap_or("");
+                        let tokens = json.get("eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let elapsed = start.elapsed();
+
+                        // Extract code from fences
+                        let code = extract_code_from_text(text);
+
+                        // Write to target files
+                        for target in &files {
+                            if let Some(parent) = std::path::Path::new(target).parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            std::fs::write(target, &code)?;
+                            println!("    {} {} ({} lines)", "\u{2713}".green(), target,
+                                code.lines().count());
+                        }
+
+                        println!("    {} tokens, {:.1}s", tokens, elapsed.as_secs_f64());
+                        passed += 1;
+                    }
+                    Ok(r) => {
+                        println!("    {} HTTP {}", "!".red(), r.status());
+                        failed += 1;
+                    }
+                    Err(e) => {
+                        println!("    {} {}", "!".red(), e);
+                        failed += 1;
+                    }
+                }
+            }
+        }
+
+        // Run phase gate
+        if let Some(cmd) = gate_cmd {
+            print!("  Gate: {} ... ", cmd);
+            let output = tokio::process::Command::new("sh")
+                .args(["-c", cmd])
+                .output()
+                .await;
+            match output {
+                Ok(o) if o.status.success() => println!("{}", "PASS".green()),
+                Ok(o) => {
+                    println!("{}", "FAIL".red());
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    if !stderr.is_empty() {
+                        for line in stderr.lines().take(5) {
+                            println!("    {}", line);
+                        }
+                    }
+                }
+                Err(e) => println!("{} ({})", "ERROR".red(), e),
+            }
+        }
+        println!();
+    }
+
+    println!("{} Results: {} passed, {} failed", "\u{2b21}".cyan(), passed, failed);
+    if failed > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Extract code from fenced blocks or return raw text.
+fn extract_code_from_text(text: &str) -> String {
+    // Try ```rust fences first
+    if let Some(start) = text.find("```rust") {
+        let after = &text[start + 7..];
+        if let Some(nl) = after.find('\n') {
+            let code_start = &after[nl + 1..];
+            if let Some(end) = code_start.find("```") {
+                return code_start[..end].to_string();
+            }
+        }
+    }
+    // Try generic ``` fences
+    if let Some(start) = text.find("```") {
+        let after = &text[start + 3..];
+        if let Some(nl) = after.find('\n') {
+            let code_start = &after[nl + 1..];
+            if let Some(end) = code_start.find("```") {
+                return code_start[..end].to_string();
+            }
+        }
+    }
+    text.to_string()
 }
 
 /// Decompose requirements into hex-bounded tasks by tier.

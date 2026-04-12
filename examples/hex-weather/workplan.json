@@ -1,0 +1,100 @@
+{
+  "id": "wp-hex-weather-demo",
+  "feature": "Hexagonal Weather CLI — Architecture Demo",
+  "adr": "ADR-001",
+  "specs": "Demonstrate hex's hexagonal architecture enforcement with a multi-layer Rust CLI app. Domain layer has zero deps, ports define trait contracts, adapters implement them, composition root wires everything.",
+  "phases": [
+    {
+      "name": "domain",
+      "tier": 0,
+      "description": "Pure domain types — zero external dependencies",
+      "gate": {
+        "type": "typecheck",
+        "command": "rustc --edition 2021 --crate-type lib src/domain/mod.rs",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Domain value objects",
+          "tier": "T2",
+          "description": "Create src/domain/mod.rs with pure value objects for a weather app. ZERO external dependencies — only std.\n\nInclude:\n- pub struct Temperature { pub celsius: f64 } with methods: pub fn to_fahrenheit(&self) -> f64 and impl Display\n- pub enum Condition { Sunny, Cloudy, Rainy, Snowy, Windy } with impl Display\n- pub struct Weather { pub city: String, pub temp: Temperature, pub humidity: u8, pub condition: Condition } with impl Display\n- pub struct DayForecast { pub date: String, pub high: Temperature, pub low: Temperature, pub condition: Condition }\n- pub struct Forecast { pub city: String, pub days: Vec<DayForecast> } with impl Display that formats a table\n\nReturn ONLY the complete Rust source file.",
+          "layer": "domain",
+          "agent": "hex-coder",
+          "deps": [],
+          "files": ["src/domain/mod.rs"],
+          "done_condition": "rustc --edition 2021 --crate-type lib src/domain/mod.rs succeeds"
+        }
+      ]
+    },
+    {
+      "name": "ports",
+      "tier": 0,
+      "description": "Trait interfaces — depend only on domain",
+      "gate": {
+        "type": "typecheck",
+        "command": "rustc --edition 2021 --crate-type lib src/ports/mod.rs",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Port traits",
+          "tier": "T2",
+          "description": "Create src/ports/mod.rs with trait interfaces. Import ONLY from domain (use super::domain::*).\n\nInclude:\n- pub trait WeatherService: Send + Sync { fn current(&self, city: &str) -> Result<Weather, String>; fn forecast(&self, city: &str, days: usize) -> Result<Forecast, String>; }\n- pub struct CliRequest { pub city: String, pub show_forecast: bool, pub fahrenheit: bool }\n- pub trait CliParser { fn parse(&self) -> Result<CliRequest, String>; }\n\nThese are contracts — no implementations here.\n\nReturn ONLY the complete Rust source file.",
+          "layer": "ports",
+          "agent": "hex-coder",
+          "deps": ["P1.1"],
+          "files": ["src/ports/mod.rs"],
+          "done_condition": "File imports only from super::domain"
+        }
+      ]
+    },
+    {
+      "name": "adapters",
+      "tier": 1,
+      "description": "Concrete implementations — depend only on ports",
+      "gate": {
+        "type": "typecheck",
+        "command": "rustc --edition 2021 --crate-type lib src/adapters/mod.rs",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Weather adapter + CLI adapter",
+          "tier": "T2",
+          "description": "Create src/adapters/mod.rs implementing the port traits. Import from super::domain and super::ports ONLY.\n\nInclude:\n- pub struct MockWeatherService; implementing WeatherService — generate deterministic mock data using city name byte sum as seed\n- pub struct EnvCliParser; implementing CliParser — parse std::env::args() for: <city> [--forecast] [--fahrenheit]\n\nIMPORTANT: Use the EXACT field names from the domain structs and port traits. Read P1.1 and P2.1 outputs before writing.\n\nReturn ONLY the complete Rust source file.",
+          "layer": "secondary",
+          "agent": "hex-coder",
+          "deps": ["P1.1", "P2.1"],
+          "files": ["src/adapters/mod.rs"],
+          "done_condition": "File imports only from super::domain and super::ports, never from other adapters"
+        }
+      ]
+    },
+    {
+      "name": "composition",
+      "tier": 2,
+      "description": "Composition root — the ONLY file that imports adapters",
+      "gate": {
+        "type": "compile",
+        "command": "rustc --edition 2021 src/main.rs -o weather",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Composition root + main",
+          "tier": "T2",
+          "description": "Create src/main.rs — the composition root. This is the ONLY file allowed to import adapters.\n\nStructure:\nmod domain;\nmod ports;\nmod adapters;\n\nuse ports::{WeatherService, CliParser, CliRequest};\nuse adapters::{MockWeatherService, EnvCliParser};\n\nfn main() {\n    let cli = EnvCliParser;\n    let weather = MockWeatherService;\n    \n    let request = match cli.parse() { Ok(r) => r, Err(e) => { eprintln!(\"Error: {}\", e); std::process::exit(1); } };\n    \n    if request.show_forecast {\n        match weather.forecast(&request.city, 5) { ... print with fahrenheit conversion if needed }\n    } else {\n        match weather.current(&request.city) { ... print with fahrenheit conversion if needed }\n    }\n}\n\nUse trait objects or direct calls. Handle errors gracefully.\nIMPORTANT: Read P1.1, P2.1, P3.1 outputs to use exact type names and method signatures.\n\nReturn ONLY the complete Rust source file.",
+          "layer": "primary",
+          "agent": "hex-coder",
+          "deps": ["P1.1", "P2.1", "P3.1"],
+          "files": ["src/main.rs"],
+          "done_condition": "rustc --edition 2021 src/main.rs -o weather succeeds and ./weather London prints output"
+        }
+      ]
+    }
+  ]
+}
