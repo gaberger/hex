@@ -1,0 +1,239 @@
+{
+  "id": "wp-embedded-assets-genericization",
+  "feature": "Generic-only embedded assets in hex-cli/assets/",
+  "description": "Close the pre-existing hex-intf-specific leaks in hex-cli/assets/ (skills, agents, hooks, context-templates, ci, and the scaffold parallel tree), then add a hex doctor guardrail that fails CI on any future regression. Follow-up to the 2026-04-11 cleanup that deleted hex-publish-module, hex-spacetime, and hex-dev-rebuild from the embed set.",
+  "adr": "ADR-2604111142",
+  "status": "planned",
+  "priority": "normal",
+  "created_at": "2026-04-11T11:45:00Z",
+  "created_by": "human",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Audit and fix skills leaks",
+      "tier": 2,
+      "description": "Audit the three remaining suspect skills in hex-cli/assets/skills/ for hex-intf markers and either genericize in place or delete-and-preserve-in-.claude if fundamentally project-specific.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Audit hex-adr-create.md for hex-nexus references",
+          "layer": "primary",
+          "description": "Grep for hex-nexus, hex-cli, hex-core, spacetime-modules markers. Categorize each hit as (a) generic example that can stay, (b) hex-intf-specific that must be replaced with language-agnostic wording, or (c) fundamentally project-specific that requires delete-and-preserve-in-.claude.",
+          "deps": [],
+          "files": ["hex-cli/assets/skills/hex-adr-create.md"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Audit hex-analyze-arch/SKILL.md for crate references",
+          "layer": "primary",
+          "description": "Same marker grep as P1.1. This skill describes architecture analysis — references to hex-nexus/hex-cli as the 'example project' must be removed or replaced with <your-project>.",
+          "deps": [],
+          "files": ["hex-cli/assets/skills/hex-analyze-arch/SKILL.md"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "Audit hex-feature-dev/SKILL.md for workspace specifics",
+          "layer": "primary",
+          "description": "This skill describes the feature-development workflow. References to the hex-intf Rust workspace layout (6 crates) must be abstracted to language-agnostic phase descriptions. The 7-phase lifecycle itself is generic and should stay.",
+          "deps": [],
+          "files": ["hex-cli/assets/skills/hex-feature-dev/SKILL.md"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.4",
+          "name": "Apply fixes from P1.1-P1.3 (edit or delete)",
+          "layer": "primary",
+          "description": "For each audit finding: if generic-with-leaks, edit in place to strip hex-intf markers; if project-specific, rm from hex-cli/assets/skills/ and verify the file still exists under .claude/skills/ (preserve hex-intf's own use). cargo check -p hex-cli must stay green throughout.",
+          "deps": ["P1.1", "P1.2", "P1.3"],
+          "files": [
+            "hex-cli/assets/skills/hex-adr-create.md",
+            "hex-cli/assets/skills/hex-analyze-arch/SKILL.md",
+            "hex-cli/assets/skills/hex-feature-dev/SKILL.md"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Audit and fix agents, hooks, context-templates, ci",
+      "tier": 2,
+      "description": "Apply the same marker-audit-then-fix approach to the non-skills assets. Each file either gets genericized in place or deleted from hex-cli/assets/ with a preservation check against hex-intf's live copy.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Fix adversarial-reviewer.yml crate references",
+          "layer": "primary",
+          "description": "The agent YAML references cargo build -p hex-nexus, hex-core, hex-cli by name in its review checklist. Replace with language-agnostic build commands (e.g. 'the project build command' or a variable the agent resolves from project config).",
+          "deps": [],
+          "files": ["hex-cli/assets/agents/hex/hex/adversarial-reviewer.yml"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Fix hex-adr-lifecycle.yml and hex-no-rest-state-mutation.yml hook paths",
+          "layer": "primary",
+          "description": "Both hooks reference hex-nexus/src/ paths in their descriptions or example violations. Rewrite to use generic adapter-boundary language.",
+          "deps": [],
+          "files": [
+            "hex-cli/assets/hooks/hex/hex-adr-lifecycle.yml",
+            "hex-cli/assets/hooks/hex/hex-no-rest-state-mutation.yml"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.3",
+          "name": "Fix context-templates/tools/*.md tool guidance",
+          "layer": "primary",
+          "description": "read.md, grep.md, edit.md each include examples referencing hex-nexus or hex-cli paths. Replace with generic src/ or <adapter>/ examples that translate to any language.",
+          "deps": [],
+          "files": [
+            "hex-cli/assets/context-templates/tools/read.md",
+            "hex-cli/assets/context-templates/tools/grep.md",
+            "hex-cli/assets/context-templates/tools/edit.md"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.4",
+          "name": "Fix context-templates/services/{hexflo-global,session-memory}.md",
+          "layer": "primary",
+          "description": "hexflo-global.md has hardcoded /Volumes/ExtendedStorage/hex-intf paths. session-memory.md has cargo build -p hex-nexus specific commands. Both need to be rewritten to describe the concept generically without referencing hex's own deployment.",
+          "deps": [],
+          "files": [
+            "hex-cli/assets/context-templates/services/hexflo-global.md",
+            "hex-cli/assets/context-templates/services/session-memory.md"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.5",
+          "name": "Fix or remove ci/hex-ci.yml",
+          "layer": "primary",
+          "description": "The CI template references /Volumes/ and hex-intf layout. Decide: (a) genericize to a language-agnostic CI template, or (b) move to hex-cli/assets/ci/examples/rust-workspace.yml as a named example and ship an empty-by-default ci/ directory. Option (b) is cleaner — a CI template that leaks repo-specific paths is worse than no template.",
+          "deps": [],
+          "files": ["hex-cli/assets/ci/hex-ci.yml"],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Reconcile scaffold parallel tree",
+      "tier": 2,
+      "description": "hex-cli/assets/scaffold/.claude/ is a second embed subtree used by hex init / hex scaffold. It currently duplicates much of hex-cli/assets/skills/ with its own independent drift. Establish a single source of truth or a documented intentional divergence.",
+      "gate": {
+        "type": "build",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Read hex-cli init and scaffold command handlers",
+          "layer": "primary",
+          "description": "Read hex-cli/src/commands/init.rs and any scaffold command to determine how hex-cli/assets/scaffold/ is consumed vs hex-cli/assets/skills/. Are both consumed? Is one authoritative? Document the answer in a comment at the top of init.rs.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/init.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Decide reconciliation strategy and execute",
+          "layer": "primary",
+          "description": "Based on P3.1 findings, either (a) delete the scaffold duplicate subtree and have init read from hex-cli/assets/skills/, (b) keep both but add a cargo build-time check that asserts they're byte-identical, or (c) document what intentionally differs and add a test. Preferred: (a) if feasible.",
+          "deps": ["P3.1"],
+          "files": [
+            "hex-cli/assets/scaffold/.claude/skills/",
+            "hex-cli/src/commands/init.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Add hex doctor embedded-assets-generic guardrail",
+      "tier": 2,
+      "description": "Implement the CI-enforceable check described in ADR-2604111142 §Decision.3. After P1-P3 have cleaned the current state, this check prevents any future edit from re-introducing the pollution.",
+      "gate": {
+        "type": "test",
+        "command": "cargo test -p hex-cli embedded_assets_generic",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Add embedded-assets-generic check to hex doctor",
+          "layer": "primary",
+          "description": "In hex-cli/src/commands/doctor.rs (or the checks module it delegates to), add a new check that walks Assets::iter() and greps every embedded file for the marker regex: /Volumes/|hex-intf|hex-(nexus|cli|core|agent|parser|desktop)(/src/|-[a-z]+|\\s)|spacetime-modules/|hexflo-coordination|agent-registry|inference-gateway|secret-grant|rl-engine|chat-relay|neural-lab. Exception: the literal hex CLI commands (hex analyze, hex plan execute, hex init, etc.) are allowed — those are the user-facing interface.",
+          "deps": [],
+          "files": [
+            "hex-cli/src/commands/doctor.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.2",
+          "name": "Wire the check into hex ci strict mode",
+          "layer": "primary",
+          "description": "Update hex-cli/src/commands/ci.rs so that `hex ci` runs the embedded-assets-generic check in its strict-mode sweep. Any marker hit fails the CI run with a clear message pointing at file:line and the matched marker.",
+          "deps": ["P4.1"],
+          "files": [
+            "hex-cli/src/commands/ci.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.3",
+          "name": "Add regression test with poison fixture",
+          "layer": "primary",
+          "description": "Add a unit test in hex-cli/src/commands/doctor.rs that feeds a synthetic in-memory 'embedded asset' containing /Volumes/ExtendedStorage and asserts the check reports it as a failure with the expected file:marker message. Also a positive test with a clean synthetic asset that must pass.",
+          "deps": ["P4.1"],
+          "files": [
+            "hex-cli/src/commands/doctor.rs"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.4",
+          "name": "Document the guardrail in CLAUDE.md",
+          "layer": "primary",
+          "description": "Add a short section to CLAUDE.md under the 'hex-cli/assets — Embedded Templates' block explaining the generic-only rule, the marker list, and how to add exceptions (via an allowlist file that the check reads — design TBD, can land in a follow-up). Link back to ADR-2604111142.",
+          "deps": ["P4.1", "P4.2"],
+          "files": [
+            "CLAUDE.md"
+          ],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ]
+}

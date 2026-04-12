@@ -1,6 +1,6 @@
 # ADR-2604120202: Tiered Inference Routing with Local Model Scaffolding
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-12
 **Drivers:** Research synthesis (2026-04-11) from three parallel studies on prompt compression, context optimization, and small-model code generation quality. Findings: local models at 32B reach ~85% HumanEval but collapse to ~20% on SWE-Bench repository-level tasks. The gap is closable for T1-T2 tasks via tier-based routing, compile-gate Best-of-N, GBNF grammar constraints, and KV-cache prefix sharing — all production-ready techniques that build on the standalone dispatch path (ADR-2604112000).
 **Supersedes:** None (complements ADR-2604112000 standalone dispatch, ADR-2604101500 local-inference-first, ADR-040 inference routing)
