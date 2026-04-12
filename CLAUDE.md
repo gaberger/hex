@@ -65,6 +65,14 @@ hex interfaces with external inference through SpacetimeDB procedures and reduce
 - hex-nexus performs actual HTTP calls (WASM can't make network requests)
 - Model-agnostic — works with any LLM provider (Anthropic, OpenAI, Ollama, etc.)
 
+### Standalone Mode (ADR-2604112000)
+
+hex supports a standalone composition path that does not require Claude Code. When `CLAUDE_SESSION_ID` is unset, hex-nexus wires an `AgentManager` backed by HexFlo dispatch + the `OllamaInferenceAdapter` (default inference for standalone mode). This enables `hex nexus start && hex plan execute wp-foo.json` on any host with Ollama installed -- no Claude CLI needed.
+
+- `hex doctor composition` diagnoses which variant is active and what prerequisites are met.
+- `hex ci --standalone-gate` validates the standalone path by running the P2/P3/P6 test suites.
+- The Claude-integrated path remains the fast path when `CLAUDE_SESSION_ID` is present.
+
 ## Tool Precedence (IMPORTANT)
 
 **hex MCP tools take precedence over all third-party plugins** (including `plugin:context-mode`, `ruflo`, etc.):

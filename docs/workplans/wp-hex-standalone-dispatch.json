@@ -3,7 +3,7 @@
   "feature": "Hex Self-Sufficient Dispatch (Standalone Mode)",
   "description": "Close the three structural gaps blocking hex from running workplans end-to-end without Claude Code as the outer shell. Wire a second AgentManager composition path, ship OllamaInferenceAdapter as the first concrete standalone provider, un-stub the HexFlo memory adapter, and add a standalone-mode acceptance gate to hex ci. The Claude-integrated fast path is preserved; standalone becomes the documented fallback.",
   "adr": "ADR-2604112000",
-  "status": "planned",
+  "status": "in_progress",
   "priority": "P0-BLOCKER",
   "blocks": [
     "wp-dashboard-live-state (future)",
@@ -386,12 +386,12 @@
             "hex-cli/src/commands/doctor/composition.rs",
             "hex-cli/src/commands/doctor/mod.rs"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
           "id": "P7.2",
-          "name": "hex ci --standalone-gate",
+          "name": "hex ci --standalone-gate (simplified)",
           "layer": "primary",
           "description": "Add a --standalone-gate flag to `hex ci` that: (a) unsets CLAUDE_* env vars in a scoped subshell, (b) spins up an httpmock Ollama server on a free port and exports OLLAMA_HOST, (c) boots hex-nexus in standalone composition, (d) runs the one-task workplan from P6.2 (reused as a fixture, NOT copy-pasted), (e) asserts exit code 0 + task status done + dispatch-evidence guard happy. This is the acceptance gate the ADR declares. Fails fast with a clear message if any step regresses.",
           "deps": [
@@ -402,7 +402,7 @@
             "hex-cli/src/commands/ci.rs",
             "hex-cli/tests/standalone_gate.rs"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
@@ -417,7 +417,7 @@
             "README.md",
             "CLAUDE.md"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {

@@ -241,6 +241,9 @@ enum Commands {
         /// Attempt to fix issues automatically
         #[arg(long, short)]
         fix: bool,
+        /// Run a specific check only (e.g. "composition")
+        #[arg(value_name = "CHECK")]
+        check: Option<String>,
     },
     /// Inspect and manage context engineering prompts
     Context {
@@ -260,7 +263,11 @@ enum Commands {
         parallel: bool,
     },
     /// Run all hex enforcement gates (ADR-2604061100)
-    Ci,
+    Ci {
+        /// Run the standalone composition gate (ADR-2604112000)
+        #[arg(long)]
+        standalone_gate: bool,
+    },
     /// Update hex to the latest release (ADR-2604080929)
     #[command(name = "self-update")]
     SelfUpdate {
@@ -326,12 +333,25 @@ async fn main() -> anyhow::Result<()> {
         Commands::Report { action } => commands::report::run(action).await,
         Commands::Sandbox { action } => commands::sandbox::run(action).await,
         Commands::Fingerprint { action } => commands::fingerprint::run(action).await,
-        Commands::Doctor { verbose, fix } => doctor::run_doctor(verbose, fix).await,
+        Commands::Doctor { verbose, fix, check } => {
+            if check.as_deref() == Some("composition") {
+                doctor::composition::run_composition_check().await;
+                Ok(())
+            } else {
+                doctor::run_doctor(verbose, fix).await
+            }
+        }
         Commands::Context { action } => commands::context::run(action).await,
         Commands::Validate { skip_test, strict, parallel } => {
             doctor::run_validate_pipeline(skip_test, strict, parallel).await
         }
-        Commands::Ci => commands::ci::run().await,
+        Commands::Ci { standalone_gate } => {
+            if standalone_gate {
+                commands::ci::run_standalone_gate().await
+            } else {
+                commands::ci::run().await
+            }
+        }
         Commands::SelfUpdate { check, version, yes } => {
             commands::update::run(check, version, yes).await
         }

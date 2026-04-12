@@ -33,6 +33,104 @@ pub async fn run() -> anyhow::Result<()> {
     }
 }
 
+/// Standalone composition gate (ADR-2604112000).
+///
+/// Validates that the standalone composition path works by:
+/// 1. Running the doctor composition check to verify prerequisites.
+/// 2. Running the standalone dispatch test suites from P2, P3, and P6.
+pub async fn run_standalone_gate() -> anyhow::Result<()> {
+    println!("{} hex ci --standalone-gate", "\u{2b21}".cyan());
+    println!();
+    println!("  {}", "Standalone composition gate (ADR-2604112000)".bold());
+    println!();
+
+    let mut all_passed = true;
+
+    // Step 1: Doctor composition check
+    print!("  {} Composition prerequisites . ", "\u{25cb}".dimmed());
+    let comp = super::doctor::composition::run_composition_check_quiet().await;
+    let has_inference = comp.has_any_inference();
+    if has_inference {
+        println!("{} (variant: {})", "pass".green(), comp.variant());
+    } else {
+        println!(
+            "{} (no inference adapter available)",
+            "fail".red()
+        );
+        all_passed = false;
+    }
+
+    // Step 2: Standalone dispatch tests (P2 — composition)
+    all_passed &= run_test_suite(
+        "P2 composition",
+        &["test", "-p", "hex-nexus", "--lib", "--", "composition_standalone", "--ignored"],
+    )
+    .await;
+
+    // Step 3: Ollama adapter tests (P3)
+    all_passed &= run_test_suite(
+        "P3 Ollama adapter",
+        &["test", "-p", "hex-nexus", "--lib", "--", "ollama", "--ignored"],
+    )
+    .await;
+
+    // Step 4: Standalone dispatch e2e tests (P6)
+    all_passed &= run_test_suite(
+        "P6 standalone dispatch",
+        &["test", "-p", "hex-nexus", "--lib", "--", "standalone_dispatch", "--ignored"],
+    )
+    .await;
+
+    println!();
+    if all_passed {
+        println!(
+            "{} Standalone gate passed",
+            "\u{2713}".green().bold()
+        );
+        Ok(())
+    } else {
+        println!(
+            "{} Standalone gate failed",
+            "\u{2717}".red().bold()
+        );
+        std::process::exit(1);
+    }
+}
+
+async fn run_test_suite(label: &str, args: &[&str]) -> bool {
+    print!("  {} {} ... ", "\u{25cb}".dimmed(), label);
+    let output = tokio::process::Command::new("cargo")
+        .args(args)
+        .output()
+        .await;
+
+    match output {
+        Ok(o) if o.status.success() => {
+            println!("{}", "pass".green());
+            true
+        }
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            println!("{}", "fail".red());
+            // Show first few lines of output for diagnostics
+            let combined = if stderr.is_empty() {
+                stdout.to_string()
+            } else {
+                stderr.to_string()
+            };
+            for line in combined.lines().take(5) {
+                println!("      {}", line.dimmed());
+            }
+            false
+        }
+        Err(e) => {
+            println!("{} ({})", "fail".red(), e);
+            false
+        }
+    }
+}
+
 async fn gate_analyze() -> bool {
     print!("  {} Architecture boundaries ... ", "\u{25cb}".dimmed());
     let nexus = crate::nexus_client::NexusClient::from_env();

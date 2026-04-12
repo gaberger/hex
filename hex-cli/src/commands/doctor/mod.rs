@@ -1,7 +1,10 @@
 //! Installation and pipeline validation command.
 //!
 //! `hex doctor` — verifies hex installation and project health
+//! `hex doctor composition` — probes composition prerequisites (standalone vs Claude-integrated)
 //! `hex validate pipeline` — runs full build pipeline (build → test → analyze → validate)
+
+pub mod composition;
 
 use colored::Colorize;
 
@@ -123,6 +126,14 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
     println!("  {}", "Embedded assets:".bold());
     let asset_count = Assets::iter().count();
     println!("    loaded:       {} assets baked in", asset_count);
+
+    println!();
+
+    // 5. Composition prerequisites
+    let comp_result = composition::run_composition_check().await;
+    if !comp_result.all_ok() {
+        all_ok = false;
+    }
 
     println!();
 
