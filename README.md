@@ -181,6 +181,48 @@ The grammar field flows through `InferenceRequest.grammar` → `OllamaInferenceA
 
 **Cascading Escalation (planned).** When a T2 task exhausts all attempts + retries, the scaffolding layer automatically escalates to frontier. Escalation rates are tracked per task-type in the RL engine — if a task-type escalates >50% of the time, the tier classifier reclassifies it as T3.
 
+### Three-Path Workplan Dispatch — Local, Remote, and Cloud
+
+The workplan executor classifies every task and routes it through the optimal dispatch path:
+
+```
+hex plan execute workplan.json
+  │
+  ├─ Path C (T1/T2/T2.5) ─── headless inference ──→ Ollama (local or remote)
+  │   No agent process spawned. Direct inference + GBNF grammar + compile gate.
+  │   Fastest path: typo fix in 2.3s, function generation in 10s.
+  │
+  ├─ Path A (T3 fallback) ─── spawn hex-agent ────→ local process with full tooling
+  │   For multi-file features that need filesystem access, git, and tool use.
+  │
+  └─ Path B (Claude Code) ─── inference queue ────→ Claude session dispatches
+      When running inside Claude Code, tasks queue for the outer session.
+```
+
+**Path C is the breakthrough.** It eliminates the agent spawning overhead for 70% of workplan tasks. Instead of forking a process, loading tools, and waiting for a shell — the executor sends the prompt directly to Ollama with a GBNF grammar constraint and gets compilable code back in seconds. The inference router picks the best available server automatically, whether it's localhost or a GPU box on your LAN.
+
+**Remote agents work over SSH tunnels.** Connect any machine with Ollama as a compute node:
+
+```bash
+# On the remote machine (e.g. a GPU workstation called "bazzite"):
+hex agent connect http://nexus-host:5555
+
+# On the coordinator:
+hex agent list     # See all agents across your fleet
+hex plan execute   # Tasks auto-route to the best available model
+```
+
+Tested with a two-node fleet (Mac coordinator + Linux GPU box):
+
+| Where | Model | Task | Time |
+|:------|:------|:-----|:-----|
+| Bazzite (local Ollama) | qwen3:4b | Rename variable | **2.3s** |
+| Mac → Bazzite (network) | qwen3:4b | Rename variable | 4.9s |
+| Bazzite (local Ollama) | qwen2.5-coder:32b | Generate function | **10.5s** |
+| Mac → Bazzite (network) | qwen2.5-coder:32b | Generate function | 17.3s |
+
+Running the agent directly on the GPU box is **2x faster** — no network round-trip per token. hex supports both topologies: centralized (Mac dispatches to remote Ollama) and distributed (each machine runs its own hex-nexus with local Ollama). The RL engine on each machine learns its own optimal model selection independently.
+
 ### Capability-Based Agent Security
 
 Every agent receives an **HMAC-SHA256 signed capability token** at spawn, scoped to exactly what it needs. Secrets never enter persistent storage — the SpacetimeDB grant table stores only metadata (key names, TTLs). If the database is compromised, attackers see zero secret values.
