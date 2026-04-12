@@ -206,7 +206,7 @@
           "files": [
             "docs/analysis/claude-code-adapter-audit.md"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "planner"
         },
         {
@@ -222,7 +222,7 @@
             "hex-nexus/src/adapters/inference/claude_code.rs",
             "hex-nexus/src/adapters/inference/mod.rs"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         },
         {
@@ -236,7 +236,7 @@
           "files": [
             "hex-nexus/tests/claude_code_adapter.rs"
           ],
-          "status": "todo",
+          "status": "done",
           "agent": "hex-coder"
         }
       ]
