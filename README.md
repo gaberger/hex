@@ -369,6 +369,31 @@ The pipeline test exercises all tiers end-to-end with real compile gates and RL 
 
 Use `hex doctor composition` to diagnose which composition variant is active. Use `--tier T1` for a 10-second smoke test, or `--no-grammar` to compare with/without GBNF constraints.
 
+### Example: Building a Real App with Zero Cloud APIs
+
+The `examples/weather-cli/` directory contains a 146-line Rust CLI app that was **generated entirely by a local 32B model** running on a remote GPU workstation. No cloud APIs, no API keys, $0 cost.
+
+```bash
+$ ./weather-cli London
+Weather in London: -1.5°C, Humidity: 76%, Sunny, Wind: 40.0 km/h
+
+$ ./weather-cli Tokyo --forecast
+Day 1: High 7.5°C, Low -7.5°C, Cloudy
+Day 2: High 8.5°C, Low -6.5°C, Rainy
+Day 3: High 9.5°C, Low -5.5°C, Snowy
+```
+
+**How it was built:** 5 generation steps, each classified by tier and routed to qwen2.5-coder:32b on Ollama. 3 of 4 modules compiled on the first attempt. The one that failed (mismatched brace) was caught by the `rustc` compile gate and fixed automatically via error-feedback retry — the compiler error was fed back to the model, which corrected it on the next pass.
+
+| Step | Task | Result |
+|:-----|:-----|:-------|
+| 1. Data structures | WeatherData, Forecast, Display impls | PASS (first attempt) |
+| 2. CLI parser | parse_args, CliArgs | PASS (first attempt) |
+| 3. Mock provider | get_weather, get_forecast | FAIL → PASS (error-feedback retry) |
+| 4. Wire main.rs | Compose all modules | PASS (first attempt after retry) |
+
+See [`examples/weather-cli/BUILD.md`](examples/weather-cli/BUILD.md) for the full build log with model names, token counts, and compile gate results.
+
 ---
 
 ## System Architecture
