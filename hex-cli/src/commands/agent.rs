@@ -1493,47 +1493,90 @@ async fn execute_worker_task(
                 Err(_)   => worker_stub_step(task_id, title),
             };
 
-            // 2. Run code generation — read model/provider from env (propagated by supervisor)
+            // 2. Run code generation with ADR-005 retry loop (max 5 iterations)
             let model_override = std::env::var("HEX_MODEL").ok();
             let provider_pref = std::env::var("HEX_PROVIDER").ok();
-            let phase = crate::pipeline::code_phase::CodePhase::from_env();
-            let step_result = phase
-                .execute_step(
-                    &workplan_step,
-                    &workplan_data,
-                    model_override.as_deref(),
-                    provider_pref.as_deref(),
-                    Some(output_dir.as_str()),
-                )
-                .await?;
+            let language = std::env::var("HEX_LANGUAGE").unwrap_or_else(|_| worker_detect_language(&output_dir));
+            let max_iterations = 5;
+            let mut compile_pass = false;
+            let mut tests_pass = false;
+            let mut test_output = String::new();
+            let mut rel_path = String::new();
+            let mut last_error = String::new();
+            let mut current_step = workplan_step.clone();
 
-            // 3. Write generated file to output_dir (P3: sanitize path — ADR-2604070400)
-            let raw_path = step_result.file_path.as_deref().unwrap_or("main.go");
-            let sanitized_path = crate::pipeline::code_phase::CodePhase::sanitize_file_path(raw_path)
-                .map_err(|e| anyhow::anyhow!("invalid file path from LLM '{}': {}", raw_path, e))?;
-            let rel_path = worker_strip_prefix(&sanitized_path, &output_dir);
-            let full_path = PathBuf::from(&output_dir).join(rel_path);
-            if let Some(parent) = full_path.parent() {
-                std::fs::create_dir_all(parent)?;
+            for iteration in 1..=max_iterations {
+                if iteration > 1 {
+                    tracing::info!(iteration, "ADR-005 retry with compile error feedback");
+                    // Augment description with compiler error
+                    current_step.description = format!(
+                        "{}\n\nThe previous attempt produced this compiler error:\n```\n{}\n```\nFix ALL errors. Return the COMPLETE corrected file.",
+                        workplan_step.description,
+                        &last_error[..last_error.len().min(500)]
+                    );
+                }
+
+                let phase = crate::pipeline::code_phase::CodePhase::from_env();
+                let step_result = phase
+                    .execute_step(
+                        &current_step,
+                        &workplan_data,
+                        model_override.as_deref(),
+                        provider_pref.as_deref(),
+                        Some(output_dir.as_str()),
+                    )
+                    .await?;
+
+                // 3. Write generated file
+                let default_ext = if language == "rust" { "main.rs" } else { "main.go" };
+                let raw_path = step_result.file_path.as_deref().unwrap_or(default_ext);
+                let sanitized_path = crate::pipeline::code_phase::CodePhase::sanitize_file_path(raw_path)
+                    .map_err(|e| anyhow::anyhow!("invalid file path from LLM '{}': {}", raw_path, e))?;
+                rel_path = worker_strip_prefix(&sanitized_path, &output_dir).to_string();
+                let full_path = PathBuf::from(&output_dir).join(&rel_path);
+                if let Some(parent) = full_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&full_path, &step_result.content)?;
+
+                // 4. Compile + test gates
+                compile_pass = worker_compile_check(&output_dir, &language);
+                if compile_pass {
+                    let (tp, to) = worker_test_check(&output_dir, &language);
+                    tests_pass = tp;
+                    test_output = to;
+                    if tests_pass || !step_result.content.contains("#[cfg(test)]") {
+                        tracing::info!(iteration, compile_pass, tests_pass, "ADR-005 gates passed");
+                        break;
+                    }
+                    last_error = test_output.clone();
+                } else {
+                    // Capture compile error for retry
+                    let err_output = std::process::Command::new("sh")
+                        .arg("-c")
+                        .arg(format!("cd {} && cargo check 2>&1 || rustc --edition 2021 --crate-type lib {} 2>&1",
+                            &output_dir, full_path.display()))
+                        .output()
+                        .map(|o| String::from_utf8_lossy(&o.stderr).to_string())
+                        .unwrap_or_default();
+                    last_error = err_output;
+                    tracing::warn!(iteration, "compile failed, retrying with error feedback");
+                }
+
+                if iteration == max_iterations {
+                    tracing::warn!("ADR-005: max iterations reached, accepting best result");
+                }
             }
-            std::fs::write(&full_path, &step_result.content)?;
-
-            // 4. Compile + test checks
-            let language = worker_detect_language(&output_dir);
-            let compile_pass = worker_compile_check(&output_dir, &language);
-            let (tests_pass, test_output) = worker_test_check(&output_dir, &language);
 
             // 5. Store structured result so supervisor can update ObjectiveState (P2.1)
+            let model_used = model_override.as_deref().unwrap_or("unknown");
             let result_key = format!("{}:result", task_id);
             let result_val = json!({
                 "file_path": rel_path,
-                "content_len": step_result.content.len(),
                 "compile_pass": compile_pass,
                 "tests_pass": tests_pass,
                 "test_output": &test_output[..test_output.len().min(500)],
-                "model": step_result.model_used,
-                "cost_usd": step_result.cost_usd,
-                "tokens": step_result.tokens,
+                "model": model_used,
             });
             let _ = nexus
                 .post(
