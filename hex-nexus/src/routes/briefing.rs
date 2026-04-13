@@ -1,6 +1,9 @@
 //! REST endpoints for the AIOS morning briefing (ADR-2604131500 P1.4).
 //!
 //! GET /api/briefing            — full briefing with events + pending decisions
+//!     ?limit=N                 — max events per project (default 5)
+//!     ?summary=true            — counts only, no event bodies
+//!     ?since=<ISO8601|unix>    — filter events after timestamp
 //! GET /api/briefing/decisions  — pending decisions only
 
 use axum::{
@@ -30,6 +33,10 @@ pub struct BriefingParams {
     pub since: Option<String>,
     /// Mark retrieved briefing events as seen (default false).
     pub seen: Option<bool>,
+    /// Maximum number of events per project (default 5).
+    pub limit: Option<usize>,
+    /// When true, return only counts (no event bodies). Default false.
+    pub summary: Option<bool>,
 }
 
 /// GET /api/briefing — generate a developer morning briefing.
@@ -142,6 +149,8 @@ pub async fn get_briefing(
         .collect();
 
     let mark_seen = params.seen.unwrap_or(false);
+    let event_limit = params.limit.unwrap_or(5);
+    let summary_only = params.summary.unwrap_or(false);
 
     // ── Build per-project briefing ───────────────────────
     let mut result_projects: Vec<Value> = Vec::new();
@@ -213,15 +222,28 @@ pub async fn get_briefing(
             all_events.push((*ev).clone());
         }
 
+        // Apply pagination: track total count, then truncate to limit.
+        let total_event_count = all_events.len();
+        let truncated = total_event_count > event_limit;
+
+        // In summary mode, omit event bodies entirely; otherwise truncate to limit.
+        let events_payload = if summary_only {
+            json!([])
+        } else {
+            all_events.truncate(event_limit);
+            json!(all_events)
+        };
+
         result_projects.push(json!({
             "project_id": pid,
             "name": &proj.name,
-            "events": all_events,
+            "events": events_payload,
             "pending_decisions": pending_decisions,
             "summary": {
                 "agent_count": agent_count,
-                "event_count": all_events.len(),
+                "event_count": total_event_count,
                 "decision_count": pending_decisions.len(),
+                "truncated": truncated,
                 "health": 0,
                 "spend": 0.0
             }
@@ -246,22 +268,33 @@ pub async fn get_briefing(
                 .collect();
 
             // Briefing events matching the filter or broadcast
-            let fallback_events: Vec<&Value> = briefing_events
+            let fallback_events: Vec<Value> = briefing_events
                 .iter()
                 .filter(|(proj_id, _)| proj_id == filter || proj_id == "*")
-                .map(|(_, ev)| ev)
+                .map(|(_, ev)| ev.clone())
                 .collect();
+
+            let total_event_count = fallback_events.len();
+            let truncated = total_event_count > event_limit;
+
+            let events_payload = if summary_only {
+                json!([])
+            } else {
+                let limited: Vec<&Value> = fallback_events.iter().take(event_limit).collect();
+                json!(limited)
+            };
 
             result_projects.push(json!({
                 "project_id": filter,
                 "active_tasks": [],
-                "events": fallback_events,
+                "events": events_payload,
                 "pending_decisions": pending_decisions,
                 "summary": {
                     "agent_count": 0,
                     "task_count": 0,
-                    "event_count": fallback_events.len(),
+                    "event_count": total_event_count,
                     "decision_count": pending_decisions.len(),
+                    "truncated": truncated,
                     "health": 0,
                     "spend": 0.0
                 }
