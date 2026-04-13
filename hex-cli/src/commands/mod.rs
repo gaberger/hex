@@ -38,5 +38,6 @@ pub mod steer;
 pub mod swarm;
 pub mod task;
 pub mod test;
+pub mod taste;
 pub mod trust;
 pub mod update;

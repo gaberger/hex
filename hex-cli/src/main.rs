@@ -46,6 +46,7 @@ use commands::{
     status,
     steer::SteerAction,
     swarm::SwarmAction,
+    taste::TasteAction,
     task::TaskAction,
     trust::TrustAction,
 };
@@ -302,6 +303,11 @@ enum Commands {
         #[command(subcommand)]
         action: SteerAction,
     },
+    /// Manage developer taste preferences (ADR-2604131500)
+    Taste {
+        #[command(subcommand)]
+        action: TasteAction,
+    },
 }
 
 #[tokio::main]
@@ -379,5 +385,6 @@ async fn main() -> anyhow::Result<()> {
         Commands::Decide { action } => commands::decide::run(action).await,
         Commands::Trust { action } => commands::trust::run(action).await,
         Commands::Steer { action } => commands::steer::run(action).await,
+        Commands::Taste { action } => commands::taste::run(action).await,
     }
 }
