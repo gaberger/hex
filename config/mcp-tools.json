@@ -1537,6 +1537,62 @@
         },
         "required": ["scope", "category", "name", "value"]
       }
+    },
+    {
+      "name": "hex_new",
+      "category": "aios",
+      "cli": "hex new <path> [--name <name>] [--description <desc>] [--taste-from <project>]",
+      "description": "Structured project intake: create or adopt a directory, register the project, seed trust at suggest level, and optionally copy taste preferences (ADR-2604131500 §2).",
+      "route": { "method": "POST", "path": "/api/projects/register" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Target directory path for the new project" },
+          "name": { "type": "string", "description": "Project name (default: directory name)" },
+          "description": { "type": "string", "description": "One-line project description" },
+          "taste_from": { "type": "string", "description": "Copy taste preferences from this existing project" }
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "hex_pause",
+      "category": "aios",
+      "cli": "hex pause",
+      "description": "Emergency pause: halt the active workplan. In-flight agents finish their current task but no new tasks are dispatched. AIOS Override layer (ADR-2604131500 §1 Layer 4).",
+      "route": { "method": "POST", "path": "/api/workplan/pause" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_resume",
+      "category": "aios",
+      "cli": "hex resume",
+      "description": "Resume a paused workplan. Dispatches the next tier of tasks. AIOS Override layer (ADR-2604131500 §1 Layer 4).",
+      "route": { "method": "POST", "path": "/api/workplan/resume" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_override",
+      "category": "aios",
+      "cli": "hex override <project> <instruction>",
+      "description": "Emergency override: send a priority-2 notification to all agents in a project. Agents must acknowledge before continuing. AIOS Override layer (ADR-2604131500 §1 Layer 4).",
+      "route": { "method": "POST", "path": "/api/hexflo/inbox/notify" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": { "type": "string", "description": "Target project ID" },
+          "instruction": { "type": "string", "description": "Override instruction (free text, e.g. 'stop all deploys', 'revert last commit')" }
+        },
+        "required": ["project", "instruction"]
+      }
     }
   ]
 }

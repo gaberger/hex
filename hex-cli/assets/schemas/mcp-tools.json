@@ -1483,6 +1483,58 @@
         },
         "required": ["scope", "category", "name", "value"]
       }
+    },
+    {
+      "name": "hex_new",
+      "category": "aios",
+      "description": "Structured project intake: create directory, register project, seed trust, copy taste (ADR-2604131500 §2)",
+      "route": { "method": "POST", "path": "/api/projects/register" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Target directory path" },
+          "name": { "type": "string", "description": "Project name (default: directory name)" },
+          "description": { "type": "string", "description": "One-line project description" },
+          "taste_from": { "type": "string", "description": "Copy taste preferences from this project" }
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "hex_pause",
+      "category": "aios",
+      "description": "Emergency pause: halt active workplan, no new tasks dispatched (ADR-2604131500 §1 Layer 4)",
+      "route": { "method": "POST", "path": "/api/workplan/pause" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_resume",
+      "category": "aios",
+      "description": "Resume a paused workplan, dispatch next tier of tasks (ADR-2604131500 §1 Layer 4)",
+      "route": { "method": "POST", "path": "/api/workplan/resume" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_override",
+      "category": "aios",
+      "description": "Emergency override: priority-2 notification to all project agents (ADR-2604131500 §1 Layer 4)",
+      "route": { "method": "POST", "path": "/api/hexflo/inbox/notify" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": { "type": "string", "description": "Target project ID" },
+          "instruction": { "type": "string", "description": "Override instruction" }
+        },
+        "required": ["project", "instruction"]
+      }
     }
   ]
 }

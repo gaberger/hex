@@ -1682,6 +1682,35 @@ async fn dispatch_tool(nexus: &NexusClient, name: &str, args: &Value) -> Value {
             nexus.post("/api/taste", &body).await.map_err(|e| e.to_string())
         }
 
+        // ── AIOS Lifecycle: new, pause, resume, override (ADR-2604131500) ──
+        "hex_new" => {
+            let body = serde_json::json!({
+                "rootPath": args.get("path").and_then(|v| v.as_str()).unwrap_or("."),
+                "name": args.get("name").and_then(|v| v.as_str()),
+                "description": args.get("description").and_then(|v| v.as_str()),
+                "taste_from": args.get("taste_from").and_then(|v| v.as_str()),
+            });
+            nexus.post("/api/projects/register", &body).await.map_err(|e| e.to_string())
+        }
+
+        "hex_pause" => {
+            nexus.post("/api/workplan/pause", &serde_json::json!({})).await.map_err(|e| e.to_string())
+        }
+
+        "hex_resume" => {
+            nexus.post("/api/workplan/resume", &serde_json::json!({})).await.map_err(|e| e.to_string())
+        }
+
+        "hex_override" => {
+            let body = serde_json::json!({
+                "project_id": args.get("project").and_then(|v| v.as_str()).unwrap_or(""),
+                "priority": 2,
+                "kind": "override",
+                "payload": args.get("instruction").and_then(|v| v.as_str()).unwrap_or(""),
+            });
+            nexus.post("/api/hexflo/inbox/notify", &body).await.map_err(|e| e.to_string())
+        }
+
         _ => Err(format!("Unknown tool: {}", name)),
     };
 
