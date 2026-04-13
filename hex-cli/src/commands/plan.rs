@@ -370,7 +370,7 @@ async fn execute_plan(file: &str) -> anyhow::Result<()> {
 
                 // Send workplan to nexus executor (it creates swarm + uses Path B internally)
                 let body = serde_json::json!({
-                    "workplan_path": _abs_path.to_string_lossy(),
+                    "workplanPath": _abs_path.to_string_lossy(),
                 });
                 match client.post_long("/api/workplan/execute", &body).await {
                     Ok(resp) => {
