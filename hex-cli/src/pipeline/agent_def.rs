@@ -18,6 +18,33 @@ use crate::assets::Assets;
 
 // ── Custom Deserializers ────────────────────────────────────────────────
 
+/// Deserialize `tier` which can be:
+///
+/// - A number: `2`
+/// - A string like `"T2"` or `"T3"` (KV-cache prefix sharing format)
+fn deserialize_tier<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_yaml::Value::deserialize(deserializer)?;
+    match value {
+        serde_yaml::Value::Number(n) => {
+            n.as_u64()
+                .and_then(|v| u8::try_from(v).ok())
+                .ok_or_else(|| de::Error::custom("tier number out of u8 range"))
+        }
+        serde_yaml::Value::String(s) => {
+            // Handle "T1", "T2", "T3" format
+            let trimmed = s.trim().trim_start_matches('T').trim_start_matches('t');
+            trimmed.parse::<u8>().map_err(|_| {
+                de::Error::custom(format!("cannot parse tier from string: {}", s))
+            })
+        }
+        serde_yaml::Value::Null => Ok(0),
+        _ => Err(de::Error::custom("expected number or string for tier")),
+    }
+}
+
 /// Deserialize `constraints` which can be:
 ///
 /// - Vec<String> (hex-coder, planner)
@@ -141,7 +168,8 @@ pub struct AgentDefinition {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ModelConfig {
     /// Model tier (1=cheap, 2=mid, 3=expensive).
-    #[serde(default)]
+    /// Accepts both numeric (`2`) and string (`"T2"`) formats in YAML.
+    #[serde(default, deserialize_with = "deserialize_tier")]
     pub tier: u8,
     /// Preferred model name (e.g. "sonnet", "opus", "haiku").
     #[serde(default)]
