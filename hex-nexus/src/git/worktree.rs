@@ -239,6 +239,118 @@ fn detect_main_branch(root_path: &Path) -> Result<String, String> {
     Ok("HEAD".to_string())
 }
 
+/// Check if a branch has been merged into main.
+pub fn is_branch_merged(root_path: &Path, branch: &str) -> Result<bool, String> {
+    let main_branch = detect_main_branch(root_path)?;
+    let output = std::process::Command::new("git")
+        .args(["branch", "--merged", &main_branch])
+        .current_dir(root_path)
+        .output()
+        .map_err(|e| format!("Failed to run git branch --merged: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "git branch --merged failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .lines()
+        .any(|l| l.trim_start_matches(['*', '+', ' ']).trim() == branch))
+}
+
+/// Auto-cleanup a worktree whose task is completed.
+///
+/// If the branch is merged into main, removes the worktree and deletes the branch.
+/// If not merged, logs a warning and returns `Ok(false)` — the caller should
+/// leave it for manual merge.
+pub fn cleanup_completed_worktree(
+    root_path: &Path,
+    worktree_path: &str,
+    branch: &str,
+) -> Result<bool, String> {
+    if branch.is_empty() || branch == "(detached)" {
+        tracing::warn!(
+            "Skipping cleanup for worktree {} — no branch associated",
+            worktree_path
+        );
+        return Ok(false);
+    }
+
+    if !is_branch_merged(root_path, branch)? {
+        tracing::warn!(
+            "Branch '{}' is not merged into main — skipping worktree cleanup for {}",
+            branch,
+            worktree_path
+        );
+        return Ok(false);
+    }
+
+    // Branch is merged — safe to remove worktree + delete branch
+    tracing::info!(
+        "Cleaning up completed worktree {} (branch {} merged)",
+        worktree_path,
+        branch
+    );
+
+    remove_worktree(root_path, worktree_path, false, true)?;
+    Ok(true)
+}
+
+/// Get the list of files changed in a branch relative to main.
+pub fn changed_files_vs_main(root_path: &Path, branch: &str) -> Result<Vec<String>, String> {
+    let main_branch = detect_main_branch(root_path)?;
+    let output = std::process::Command::new("git")
+        .args(["diff", &format!("{}...{}", main_branch, branch), "--name-only"])
+        .current_dir(root_path)
+        .output()
+        .map_err(|e| format!("Failed to run git diff: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "git diff --name-only failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect())
+}
+
+/// Checkout files from a branch into the current working tree.
+pub fn checkout_files_from_branch(
+    root_path: &Path,
+    branch: &str,
+    files: &[String],
+) -> Result<(), String> {
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    let mut args = vec!["checkout".to_string(), branch.to_string(), "--".to_string()];
+    args.extend(files.iter().cloned());
+
+    let output = std::process::Command::new("git")
+        .args(&args)
+        .current_dir(root_path)
+        .output()
+        .map_err(|e| format!("Failed to run git checkout: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "git checkout files failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -36,34 +36,7 @@ impl HexFlo {
             .await
             .map_err(|e| e.to_string())?;
 
-        let result = CleanupReport::from_state_report(report)?;
-
-        // ADR-2604131500 P0.2: briefing events for agent death/stale detection
-        if result.dead_count > 0 {
-            self.log_briefing_event(
-                "critical",
-                "swarm",
-                &format!("{} agent(s) declared dead", result.dead_count),
-                &format!(
-                    "{} dead, {} stale, {} tasks reclaimed",
-                    result.dead_count, result.stale_count, result.reclaimed_tasks
-                ),
-            )
-            .await;
-        } else if result.stale_count > 0 {
-            self.log_briefing_event(
-                "notable",
-                "swarm",
-                &format!("{} agent(s) went stale", result.stale_count),
-                &format!(
-                    "{} stale agents detected (no heartbeat for {}s)",
-                    result.stale_count, STALE_THRESHOLD_SECS
-                ),
-            )
-            .await;
-        }
-
-        Ok(result)
+        CleanupReport::from_state_report(report)
     }
 }
 
@@ -76,5 +49,41 @@ impl CleanupReport {
             dead_count: r.dead_count,
             reclaimed_tasks: r.reclaimed_tasks,
         })
+    }
+}
+
+impl HexFlo {
+    /// Auto-cleanup worktrees for completed tasks.
+    ///
+    /// Scans all worktrees and removes any whose branch is merged into main.
+    /// Returns the number of worktrees cleaned up.
+    pub fn cleanup_completed_worktrees(&self, repo_root: &std::path::Path) -> Result<u32, String> {
+        let worktrees = crate::git::worktree::list_worktrees(repo_root)?;
+        let mut cleaned = 0u32;
+
+        for wt in &worktrees {
+            if wt.is_main || wt.is_bare || wt.branch.is_empty() || wt.branch == "(detached)" {
+                continue;
+            }
+
+            match crate::git::worktree::cleanup_completed_worktree(
+                repo_root,
+                &wt.path,
+                &wt.branch,
+            ) {
+                Ok(true) => {
+                    tracing::info!("Auto-cleaned worktree: {} (branch: {})", wt.path, wt.branch);
+                    cleaned += 1;
+                }
+                Ok(false) => {
+                    // Not merged — skip silently (warning already logged)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to cleanup worktree {}: {}", wt.path, e);
+                }
+            }
+        }
+
+        Ok(cleaned)
     }
 }

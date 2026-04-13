@@ -44,6 +44,7 @@ use commands::{
     status,
     swarm::SwarmAction,
     task::TaskAction,
+    worktree::WorktreeAction,
 };
 
 #[derive(Parser)]
@@ -203,8 +204,11 @@ enum Commands {
         #[command(subcommand)]
         action: GitAction,
     },
-    /// Developer briefing — compact summary of recent events
-    Brief(commands::brief::BriefArgs),
+    /// Git worktree management (list, merge, cleanup)
+    Worktree {
+        #[command(subcommand)]
+        action: WorktreeAction,
+    },
     /// Project status
     Status,
     /// Inject hex context into opencode (ADR-2603231800)
@@ -324,8 +328,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Skill { action } => commands::skill::run(action).await,
         Commands::Enforce { action } => commands::enforce::run(action).await,
         Commands::Git { action } => commands::git_cmd::run(action).await,
+        Commands::Worktree { action } => commands::worktree::run(action).await,
         Commands::Assets { action } => commands::assets_cmd::run(action).await,
-        Commands::Brief(args) => commands::brief::run(args).await,
         Commands::Status => status::run().await,
         Commands::Opencode { action } => commands::opencode::run(action),
         Commands::Dev { action } => commands::dev::run(action).await,

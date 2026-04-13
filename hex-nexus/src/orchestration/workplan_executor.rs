@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -309,6 +310,101 @@ pub fn classify_task_tier(task: &WorkplanTask) -> crate::remote::transport::Task
         }
         _ => TaskTier::T2, // safe default
     }
+}
+
+// ── File Scope Tracking (ADR-2604131800 P5.1) ────────
+//
+// Prevents parallel agents from editing the same files within a phase.
+// Tasks are partitioned into sequential batches where no two tasks in the
+// same batch share a file path. Tasks within a batch run concurrently;
+// batches execute sequentially. This implements the "parallelize by file
+// boundary, serialize by file overlap" principle.
+
+/// Partition phase tasks into sequential batches where no two tasks in the
+/// same batch modify the same file.
+///
+/// Maintains a `HashMap<String, HashSet<String>>` per batch mapping
+/// task_id → files. Before placing a task, checks for file intersection
+/// with all tasks already in the candidate batch. If non-empty, the task
+/// is deferred to a later batch and a warning is logged. Deferred tasks
+/// are dispatched once the conflicting batch completes.
+///
+/// Tasks with no declared `files` are placed in the first batch (no
+/// conflict possible). Returns at least one batch (possibly empty).
+fn compute_file_scope_batches(tasks: &[WorkplanTask]) -> Vec<Vec<usize>> {
+    if tasks.is_empty() {
+        return vec![];
+    }
+
+    let mut batches: Vec<Vec<usize>> = Vec::new();
+    // Per-batch scope: maps task_id → set of files that task modifies.
+    let mut batch_scopes: Vec<HashMap<String, HashSet<String>>> = Vec::new();
+
+    for (idx, task) in tasks.iter().enumerate() {
+        let task_id = if !task.id.is_empty() {
+            task.id.clone()
+        } else {
+            task.name.clone()
+        };
+
+        if task.files.is_empty() {
+            // Tasks with no declared files can go in any batch — no conflict possible.
+            if batches.is_empty() {
+                batches.push(Vec::new());
+                batch_scopes.push(HashMap::new());
+            }
+            batches[0].push(idx);
+            continue;
+        }
+
+        let file_set: HashSet<String> = task.files.iter().cloned().collect();
+
+        // Find the first batch where this task has no file overlap.
+        let mut placed = false;
+        for (bi, scope) in batch_scopes.iter_mut().enumerate() {
+            let all_batch_files: HashSet<&String> =
+                scope.values().flat_map(|fs| fs.iter()).collect();
+            let has_overlap = file_set.iter().any(|f| all_batch_files.contains(f));
+
+            if !has_overlap {
+                batches[bi].push(idx);
+                scope.insert(task_id.clone(), file_set.clone());
+                placed = true;
+                break;
+            }
+        }
+
+        if !placed {
+            // Log the conflict: identify which tasks and files caused the deferral.
+            if let Some(last_scope) = batch_scopes.last() {
+                let all_files: HashSet<&String> =
+                    last_scope.values().flat_map(|fs| fs.iter()).collect();
+                let conflicts: Vec<&String> = file_set
+                    .iter()
+                    .filter(|f| all_files.contains(f))
+                    .collect();
+                let holders: Vec<&String> = last_scope
+                    .iter()
+                    .filter(|(_, fs)| fs.iter().any(|f| file_set.contains(f)))
+                    .map(|(tid, _)| tid)
+                    .collect();
+                tracing::warn!(
+                    task_id = %task_id,
+                    conflicting_tasks = ?holders,
+                    conflicting_files = ?conflicts,
+                    deferred_to_batch = batches.len(),
+                    "File scope conflict — deferring task until conflicting agents complete"
+                );
+            }
+
+            let mut scope = HashMap::new();
+            scope.insert(task_id.clone(), file_set);
+            batch_scopes.push(scope);
+            batches.push(vec![idx]);
+        }
+    }
+
+    batches
 }
 
 // ── Workplan Executor ──────────────────────────────────
@@ -720,9 +816,26 @@ impl WorkplanExecutor {
 
         let mut agent_ids = Vec::new();
         let mut errors = Vec::new();
+        let mut completed_task_ids = Vec::new();
+
+        // ADR-2604131800 P5.1: Partition tasks into file-scope-safe batches.
+        // Tasks sharing file paths are placed in later batches and dispatched
+        // only after conflicting tasks in earlier batches complete.
+        let scope_batches = compute_file_scope_batches(&phase.tasks);
+        if scope_batches.len() > 1 {
+            tracing::info!(
+                phase = %phase.name,
+                batches = scope_batches.len(),
+                "File scope analysis: serializing {} batches to avoid parallel file conflicts",
+                scope_batches.len()
+            );
+        }
+
+        for batch in &scope_batches {
         let mut handles = Vec::new();
 
-        for task in &phase.tasks {
+        for &task_idx in batch {
+            let task = &phase.tasks[task_idx];
             // ADR-2604100000: Task heartbeat for observability
             let task_id = if !task.id.is_empty() { task.id.clone() } else { task.name.clone() };
             let task_name = task.name.clone();
@@ -1124,8 +1237,7 @@ impl WorkplanExecutor {
             }));
         }
 
-        // Wait for all spawned agents
-        let mut completed_task_ids = Vec::new();
+        // Wait for all spawned agents in this batch
         for handle in handles {
             match handle.await {
                 Ok(Ok((task_id, agent_id))) => {
@@ -1136,6 +1248,7 @@ impl WorkplanExecutor {
                 Err(e) => errors.push(format!("Join error: {}", e)),
             }
         }
+        } // end for batch in scope_batches (P5.1)
 
         let status = if errors.is_empty() {
             "completed"
