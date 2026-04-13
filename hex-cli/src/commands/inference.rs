@@ -149,6 +149,8 @@ pub enum InferenceAction {
     Queue,
     /// Show inference cost attribution and provider statistics (ADR-2604052125)
     Stats,
+    /// Show escalation rates per task-tier and model (P4.2 — escalation tracking)
+    EscalationReport,
     /// Benchmark a model: code-gen, reasoning, and identity prompts — quality + speed + tier recommendation (ADR-2604131238)
     Bench {
         /// Provider ID, model name, or URL (e.g. "bazzite-ollama", "minimax-m2.7:cloud", "http://bazzite:11434")
@@ -166,9 +168,6 @@ pub enum InferenceAction {
         #[arg(long)]
         save: bool,
     },
-    /// Show escalation rates per task-type and model (P4.2)
-    #[clap(name = "escalation-report")]
-    EscalationReport,
 }
 
 /// Write the full inference endpoint list to ~/.hex/inference-servers.json.
@@ -230,10 +229,10 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         InferenceAction::Watch { agent_id, daemon } => watch(agent_id, daemon).await,
         InferenceAction::Queue => queue_list().await,
         InferenceAction::Stats => inference_stats().await,
+        InferenceAction::EscalationReport => escalation_report().await,
         InferenceAction::Bench { target, model, quick, compare, save } => {
             bench_provider(&target, model.as_deref(), quick, compare.as_deref(), save).await
         }
-        InferenceAction::EscalationReport => escalation_report().await,
     }
 }
 
@@ -571,136 +570,6 @@ async fn discover_free_tier() -> anyhow::Result<()> {
 }
 
 /// Show inference cost attribution and provider statistics (ADR-2604052125).
-/// `hex inference escalation-report` — reads escalation/success keys from
-/// HexFlo memory and prints a table with escalation rates per task-type+model.
-async fn escalation_report() -> anyhow::Result<()> {
-    let client = NexusClient::from_env();
-    println!("{}", "── Escalation Report (P4.2) ──".cyan());
-    println!();
-
-    // Search HexFlo memory for escalation: and success: keys
-    let esc_results = client
-        .get("/api/hexflo/memory/search?q=escalation:")
-        .await
-        .unwrap_or_default();
-    let suc_results = client
-        .get("/api/hexflo/memory/search?q=success:")
-        .await
-        .unwrap_or_default();
-
-    // Parse into a map of (task_type, model) → (escalations, successes, sample_error)
-    let mut stats: std::collections::HashMap<(String, String), (u64, u64, Option<String>)> =
-        std::collections::HashMap::new();
-
-    if let Some(entries) = esc_results.get("entries").and_then(|v| v.as_array()) {
-        for entry in entries {
-            let key = entry.get("key").and_then(|v| v.as_str()).unwrap_or("");
-            let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("{}");
-            // key format: escalation:{task_type}:{model}
-            let parts: Vec<&str> = key.splitn(3, ':').collect();
-            if parts.len() == 3 {
-                let parsed: serde_json::Value =
-                    serde_json::from_str(value).unwrap_or_default();
-                let count = parsed.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
-                let sample = parsed
-                    .get("sample_error")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                let entry = stats
-                    .entry((parts[1].to_string(), parts[2].to_string()))
-                    .or_insert((0, 0, None));
-                entry.0 = count;
-                if sample.is_some() {
-                    entry.2 = sample;
-                }
-            }
-        }
-    }
-
-    if let Some(entries) = suc_results.get("entries").and_then(|v| v.as_array()) {
-        for entry in entries {
-            let key = entry.get("key").and_then(|v| v.as_str()).unwrap_or("");
-            let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("{}");
-            // key format: success:{task_type}:{model}
-            let parts: Vec<&str> = key.splitn(3, ':').collect();
-            if parts.len() == 3 {
-                let parsed: serde_json::Value =
-                    serde_json::from_str(value).unwrap_or_default();
-                let count = parsed.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
-                let entry = stats
-                    .entry((parts[1].to_string(), parts[2].to_string()))
-                    .or_insert((0, 0, None));
-                entry.1 = count;
-            }
-        }
-    }
-
-    if stats.is_empty() {
-        println!(
-            "  {} No escalation data recorded yet. Run scaffolded dispatches to generate data.",
-            "ℹ".blue()
-        );
-        return Ok(());
-    }
-
-    // Print table header
-    println!(
-        "  {:<8} {:<30} {:>8} {:>8} {:>10}",
-        "Tier", "Model", "Success", "Escalate", "Rate"
-    );
-    println!("  {}", "─".repeat(70));
-
-    let mut sorted: Vec<_> = stats.into_iter().collect();
-    sorted.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let mut recommendations = Vec::new();
-
-    for ((task_type, model), (escalations, successes, sample_error)) in &sorted {
-        let total = successes + escalations;
-        let rate = if total > 0 {
-            *escalations as f64 / total as f64
-        } else {
-            0.0
-        };
-        let rate_str = format!("{:.0}%", rate * 100.0);
-        let rate_colored = if rate > 0.5 {
-            rate_str.red().to_string()
-        } else if rate > 0.25 {
-            rate_str.yellow().to_string()
-        } else {
-            rate_str.green().to_string()
-        };
-
-        println!(
-            "  {:<8} {:<30} {:>8} {:>8} {:>10}",
-            task_type, model, successes, escalations, rate_colored,
-        );
-
-        if rate > 0.5 {
-            recommendations.push((task_type.clone(), model.clone(), rate, sample_error.clone()));
-        }
-    }
-
-    if !recommendations.is_empty() {
-        println!();
-        println!("  {}", "⚠ Recommendations".yellow().bold());
-        for (task_type, model, rate, sample_error) in &recommendations {
-            println!(
-                "    {} {task_type} on {model} has {:.0}% escalation rate — consider reclassifying to a higher tier",
-                "→".yellow(),
-                rate * 100.0,
-            );
-            if let Some(err) = sample_error {
-                let preview: String = err.chars().take(80).collect();
-                println!("      Last error: {}", preview.dimmed());
-            }
-        }
-    }
-
-    println!();
-    Ok(())
-}
-
 async fn inference_stats() -> anyhow::Result<()> {
     let client = NexusClient::from_env();
     println!("{}", "── Inference Cost Attribution (ADR-2604052125) ──".cyan());
@@ -1907,94 +1776,66 @@ impl BenchResult {
 }
 
 /// Send a chat completion to either Ollama or OpenAI-compatible endpoint.
-///
-/// Accepts pre-built `messages` (e.g. `[{"role":"user","content":"..."}]`) so callers
-/// can compose multi-turn prompts.  Dispatches to Ollama `/api/chat` or OpenAI-style
-/// `/v1/chat/completions` based on `provider_type` / URL heuristics.
-///
-/// Returns a [`BenchResult`] with quality fields zeroed — callers overlay scoring.
-async fn run_bench_prompt(
+async fn bench_chat(
     http: &reqwest::Client,
     url: &str,
     provider_type: &str,
     model: &str,
-    messages: Vec<serde_json::Value>,
-) -> anyhow::Result<BenchResult> {
+    prompt: &str,
+) -> anyhow::Result<(String, u64, f64)> {
     let start = std::time::Instant::now();
 
-    let (content, tokens) = if provider_type == "openrouter"
-        || url.contains("openrouter.ai")
-        || url.contains("/v1")
-    {
-        // ── OpenAI-compatible /v1/chat/completions ──
+    if provider_type == "openrouter" || url.contains("openrouter.ai") || url.contains("/v1") {
         let api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
         let chat_url = format!("{}/chat/completions", url.trim_end_matches('/'));
         let body = serde_json::json!({
             "model": model,
-            "messages": messages,
+            "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
         });
-        let resp = http
-            .post(&chat_url)
+        let resp = http.post(&chat_url)
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
-            .send()
-            .await?;
+            .send().await?;
         let d: serde_json::Value = resp.json().await?;
-        let text = d["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-        let tok = d["usage"]["completion_tokens"]
-            .as_u64()
-            .unwrap_or(text.len() as u64 / 4);
-        (text, tok)
+        let content = d["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
+        let tokens = d["usage"]["completion_tokens"].as_u64().unwrap_or(content.len() as u64 / 4);
+        let wall = start.elapsed().as_secs_f64();
+        Ok((content, tokens, wall))
     } else {
-        // ── Ollama /api/chat ──
+        // Ollama /api/chat
         let chat_url = format!("{}/api/chat", url.trim_end_matches('/'));
         let body = serde_json::json!({
             "model": model,
-            "messages": messages,
+            "messages": [{"role": "user", "content": prompt}],
             "stream": false,
             "options": {"temperature": 0.2},
         });
         let resp = http.post(&chat_url).json(&body).send().await?;
         let d: serde_json::Value = resp.json().await?;
-        let text = d["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-        let tok = d["eval_count"]
-            .as_u64()
-            .unwrap_or(text.len() as u64 / 4);
-        (text, tok)
-    };
-
-    let wall = start.elapsed().as_secs_f64();
-
-    Ok(BenchResult {
-        name: "",
-        response: content,
-        tokens,
-        wall_secs: wall,
-        quality_score: 0.0,
-        quality_max: 0,
-        quality_details: vec![],
-    })
+        let content = d["message"]["content"].as_str().unwrap_or("").to_string();
+        let tokens = d["eval_count"].as_u64().unwrap_or(content.len() as u64 / 4);
+        let wall = start.elapsed().as_secs_f64();
+        Ok((content, tokens, wall))
+    }
 }
 
 /// Run the identity prompt — measures latency floor and basic responsiveness.
 async fn bench_identity(
     http: &reqwest::Client, url: &str, ptype: &str, model: &str,
 ) -> anyhow::Result<BenchResult> {
-    let messages = vec![serde_json::json!({"role": "user", "content": "What model are you? Respond in one sentence."})];
-    let mut r = run_bench_prompt(http, url, ptype, model, messages).await?;
-    let non_empty = !r.response.trim().is_empty();
-    r.name = "Identity";
-    r.quality_score = if non_empty { 1.0 } else { 0.0 };
-    r.quality_max = 1;
-    r.quality_details = vec![("responsive", non_empty)];
-    Ok(r)
+    let (response, tokens, wall) = bench_chat(
+        http, url, ptype, model,
+        "What model are you? Respond in one sentence.",
+    ).await?;
+    let non_empty = !response.trim().is_empty();
+    Ok(BenchResult {
+        name: "Identity",
+        quality_score: if non_empty { 1.0 } else { 0.0 },
+        quality_max: 1,
+        quality_details: vec![("responsive", non_empty)],
+        response, tokens, wall_secs: wall,
+    })
 }
 
 /// Run the code generation prompt — measures Rust code quality for hex adapter work.
@@ -2011,28 +1852,29 @@ Requirements:
 6. All code must compile. Use proper error handling.
 Output complete Rust code."#;
 
-    let messages = vec![serde_json::json!({"role": "user", "content": prompt})];
-    let mut r = run_bench_prompt(http, url, ptype, model, messages).await?;
+    let (response, tokens, wall) = bench_chat(http, url, ptype, model, prompt).await?;
 
     let checks: Vec<(&str, bool)> = vec![
-        ("async fn", r.response.contains("async fn")),
-        ("thiserror", r.response.contains("thiserror")),
-        ("tests", r.response.contains("#[cfg(test)]") || r.response.contains("#[test]")),
-        ("reqwest", r.response.contains("reqwest")),
-        ("error variants", r.response.matches("Error").count() >= 3),
-        ("Result<>", r.response.contains("Result<")),
-        ("trait def", r.response.contains("trait Weather") || r.response.contains("trait weather")),
-        ("mock test", r.response.to_lowercase().contains("mock")),
-        ("derives", r.response.contains("#[derive")),
-        ("timeout", r.response.to_lowercase().contains("timeout")),
+        ("async fn", response.contains("async fn")),
+        ("thiserror", response.contains("thiserror")),
+        ("tests", response.contains("#[cfg(test)]") || response.contains("#[test]")),
+        ("reqwest", response.contains("reqwest")),
+        ("error variants", response.matches("Error").count() >= 3),
+        ("Result<>", response.contains("Result<")),
+        ("trait def", response.contains("trait Weather") || response.contains("trait weather")),
+        ("mock test", response.to_lowercase().contains("mock")),
+        ("derives", response.contains("#[derive")),
+        ("timeout", response.to_lowercase().contains("timeout")),
     ];
     let passed = checks.iter().filter(|(_, v)| *v).count() as f32;
 
-    r.name = "Code-gen";
-    r.quality_score = passed / 10.0;
-    r.quality_max = 10;
-    r.quality_details = checks;
-    Ok(r)
+    Ok(BenchResult {
+        name: "Code-gen",
+        quality_score: passed / 10.0,
+        quality_max: 10,
+        quality_details: checks,
+        response, tokens, wall_secs: wall,
+    })
 }
 
 /// Run the reasoning prompt — measures architectural analysis capability.
@@ -2045,24 +1887,25 @@ use crate::adapters::database::PostgresRepo;
 ```
 Identify the architectural violation, explain which rule it breaks, and describe how to fix it. Be specific about dependency inversion."#;
 
-    let messages = vec![serde_json::json!({"role": "user", "content": prompt})];
-    let mut r = run_bench_prompt(http, url, ptype, model, messages).await?;
-    let lower = r.response.to_lowercase();
+    let (response, tokens, wall) = bench_chat(http, url, ptype, model, prompt).await?;
+    let lower = response.to_lowercase();
 
     let checks: Vec<(&str, bool)> = vec![
         ("cross-adapter", lower.contains("adapter") && (lower.contains("import") || lower.contains("depend") || lower.contains("coupl"))),
         ("names rule", lower.contains("port") || lower.contains("boundary") || lower.contains("hexagonal")),
         ("port extraction", lower.contains("trait") || lower.contains("interface") || lower.contains("port")),
         ("dep inversion", lower.contains("inversion") || lower.contains("abstraction") || lower.contains("inject")),
-        ("code example", r.response.contains("trait ") || r.response.contains("fn ") || r.response.contains("impl ")),
+        ("code example", response.contains("trait ") || response.contains("fn ") || response.contains("impl ")),
     ];
     let passed = checks.iter().filter(|(_, v)| *v).count() as f32;
 
-    r.name = "Reasoning";
-    r.quality_score = passed / 5.0;
-    r.quality_max = 5;
-    r.quality_details = checks;
-    Ok(r)
+    Ok(BenchResult {
+        name: "Reasoning",
+        quality_score: passed / 5.0,
+        quality_max: 5,
+        quality_details: checks,
+        response, tokens, wall_secs: wall,
+    })
 }
 
 /// Compute overall score and recommend tier.
@@ -2102,104 +1945,24 @@ fn compute_tier(results: &[&BenchResult]) -> (f32, u8, &'static str) {
     (overall, tier, label)
 }
 
-/// Color a quality ratio like "8/10" based on percentage.
-fn quality_colored(score: f32, achieved: u32, max: u32) -> String {
-    let text = format!("{}/{}", achieved, max);
-    if score >= 0.8 { text.green().bold().to_string() }
-    else if score >= 0.6 { text.green().to_string() }
-    else if score >= 0.3 { text.yellow().to_string() }
-    else { text.red().to_string() }
-}
-
-/// Color tok/s based on throughput tier.
-fn tps_colored(tps: f64) -> String {
-    let text = format!("{:.0}", tps);
-    if tps >= 100.0 { text.green().bold().to_string() }
-    else if tps >= 50.0 { text.green().to_string() }
-    else if tps >= 20.0 { text.yellow().to_string() }
-    else if tps >= 5.0 { text.dimmed().to_string() }
-    else { text.red().to_string() }
-}
-
-/// Build a compact quality-check grid: `✓ async_fn  ✓ tests  ✗ timeout`
-fn quality_grid(details: &[(&str, bool)]) -> String {
-    details.iter().map(|(name, passed)| {
-        let mark = if *passed { "✓".green() } else { "✗".red() };
-        format!("{} {}", mark, name.dimmed())
-    }).collect::<Vec<_>>().join("  ")
-}
-
-/// Colored overall score with letter grade.
-fn overall_badge(score: f32) -> String {
-    let pct = (score * 100.0) as u32;
-    let grade = match pct {
-        90..=100 => "A",
-        80..=89 => "B",
-        70..=79 => "C",
-        60..=69 => "D",
-        _ => "F",
-    };
-    let text = format!("{:.0}% ({})", score * 100.0, grade);
-    match pct {
-        80..=100 => text.green().bold().to_string(),
-        60..=79 => text.yellow().bold().to_string(),
-        40..=59 => text.yellow().to_string(),
-        _ => text.red().to_string(),
-    }
-}
-
-/// Determine best-for task types from individual prompt scores.
-fn best_for_tasks(results: &[&BenchResult]) -> Vec<&'static str> {
-    let codegen = results.iter().find(|r| r.name == "Code-gen");
-    let reasoning = results.iter().find(|r| r.name == "Reasoning");
-
-    let mut tasks = Vec::new();
-
-    if let Some(cg) = codegen {
-        if cg.quality_score >= 0.8 { tasks.extend_from_slice(&["code_generation", "code_edit", "refactor"]); }
-        else if cg.quality_score >= 0.5 { tasks.extend_from_slice(&["code_generation", "code_edit"]); }
-        else if cg.quality_score >= 0.3 { tasks.push("structured_output"); }
-    }
-    if let Some(rs) = reasoning {
-        if rs.quality_score >= 0.8 { tasks.extend_from_slice(&["planning", "specs", "validation"]); }
-        else if rs.quality_score >= 0.6 { tasks.extend_from_slice(&["review", "analysis"]); }
-    }
-    // All models that respond get at least one task type
-    if tasks.is_empty() { tasks.push("general"); }
-    tasks
-}
-
 /// Print benchmark results for one model.
 fn print_bench_results(model: &str, results: &[BenchResult], label: Option<&str>) {
-    let header = if let Some(lbl) = label {
-        format!("── {}: {} ", lbl, model)
-    } else {
-        format!("── {} ", model)
-    };
-    let pad = 56usize.saturating_sub(header.len());
-    println!("  {}{}", header.cyan().bold(), "─".repeat(pad).dimmed());
+    if let Some(lbl) = label {
+        println!("  {}", format!("── {} ──", lbl).cyan());
+    }
     println!();
-
-    // ── Per-prompt result lines ──
     for r in results {
-        let status = if r.quality_score >= 0.8 { "✓".green().bold() }
-            else if r.quality_score >= 0.5 { "✓".green() }
-            else if r.quality_score >= 0.3 { "~".yellow() }
-            else { "✗".red() };
+        let status = if r.quality_score >= 0.6 { "✓".green() } else if r.quality_score >= 0.3 { "~".yellow() } else { "✗".red() };
         let q = (r.quality_score * r.quality_max as f32) as u32;
-        println!("  {}  {:<12} {:>5.1}s   {}   {} tok/s",
-            status,
-            r.name.bold(),
-            r.wall_secs,
-            quality_colored(r.quality_score, q, r.quality_max),
-            tps_colored(r.tok_per_sec()),
-        );
-        if !r.quality_details.is_empty() {
-            println!("     {}", quality_grid(&r.quality_details));
+        println!("  {}  {:<12} {:>5.1}s  ({}/{} quality, {:.0} tok/s)",
+            status, r.name, r.wall_secs, q, r.quality_max, r.tok_per_sec());
+        for (name, passed) in &r.quality_details {
+            let mark = if *passed { "✓".green() } else { "✗".red() };
+            print!("     {} {}", mark, name);
         }
+        println!();
     }
 
-    // ── Summary block ──
     let refs: Vec<&BenchResult> = results.iter().collect();
     let (overall, tier, tier_label) = compute_tier(&refs);
 
@@ -2208,23 +1971,20 @@ fn print_bench_results(model: &str, results: &[BenchResult], label: Option<&str>
         heavy.iter().map(|r| r.tok_per_sec()).sum::<f64>() / heavy.len() as f64
     };
 
-    let tasks = best_for_tasks(&refs);
-
     println!();
-    println!("  {}", "── Summary ─────────────────────────────────────".dimmed());
-    println!("  {}  {}", "Model:".dimmed(), model.bold());
-    println!("  {}  {}", "Score:".dimmed(), overall_badge(overall));
-    println!("  {}  {} tok/s", "Speed:".dimmed(), tps_colored(avg_tps));
-
-    let tier_text = match tier {
-        3 => tier_label.green().bold().to_string(),
-        2 => tier_label.cyan().bold().to_string(),
-        1 => tier_label.yellow().to_string(),
-        _ => tier_label.red().to_string(),
-    };
-    println!("  {}   {}", "Tier:".dimmed(), tier_text);
-    println!("  {}  {}", "Best for:".dimmed(), tasks.join(", ").cyan());
+    println!("  {}", "── Summary ──────────────────────────────────".dimmed());
+    println!("  Model:            {}", model);
+    println!("  Overall score:    {:.2}", overall);
+    println!("  Avg tok/s:        {:.0}", avg_tps);
+    println!("  Recommended:      {}", tier_label);
+    if tier >= 2 {
+        println!("  Best for:         code_generation, code_edit");
+    } else if tier == 1 {
+        println!("  Best for:         general, structured_output");
+    }
     println!();
+
+    // score is computed inline
 }
 
 /// `hex inference bench` — benchmark a model with hex-specific prompts (ADR-2604131238).
@@ -2237,7 +1997,7 @@ async fn bench_provider(
 ) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
     let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(600))
+        .timeout(std::time::Duration::from_secs(300))
         .build()?;
 
     // ── Resolve target ──────────────────────────────────────────────────────
@@ -2418,6 +2178,128 @@ async fn bench_provider(
         } else {
             println!("{} hex-nexus not running — calibration not saved", "!".yellow());
         }
+    }
+
+    Ok(())
+}
+
+/// `hex inference escalation-report` — read escalation/success keys from HexFlo
+/// memory and print a table of escalation rates per task-tier and model (P4.2).
+async fn escalation_report() -> anyhow::Result<()> {
+    let nexus = NexusClient::from_env();
+    nexus.ensure_running().await?;
+
+    // Search for all escalation and success tracking keys
+    let esc_results = nexus
+        .get("/api/hexflo/memory/search?q=escalation:")
+        .await
+        .unwrap_or_else(|_| serde_json::json!({"results": []}));
+    let suc_results = nexus
+        .get("/api/hexflo/memory/search?q=success:")
+        .await
+        .unwrap_or_else(|_| serde_json::json!({"results": []}));
+
+    // Parse results into maps: (tier:model) -> count
+    let mut escalations: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let mut successes: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+
+    if let Some(results) = esc_results.get("results").and_then(|r| r.as_array()) {
+        for entry in results {
+            let key = entry.get("key").and_then(|k| k.as_str()).unwrap_or_default();
+            let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("{}");
+            // key format: "escalation:{tier}:{model}"
+            let suffix = key.strip_prefix("escalation:").unwrap_or(key);
+            if let Ok(obj) = serde_json::from_str::<serde_json::Value>(value) {
+                let count = obj.get("count").and_then(|c| c.as_u64()).unwrap_or(0);
+                escalations.insert(suffix.to_string(), count);
+            }
+        }
+    }
+
+    if let Some(results) = suc_results.get("results").and_then(|r| r.as_array()) {
+        for entry in results {
+            let key = entry.get("key").and_then(|k| k.as_str()).unwrap_or_default();
+            let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("{}");
+            // key format: "success:{tier}:{model}"
+            let suffix = key.strip_prefix("success:").unwrap_or(key);
+            if let Ok(obj) = serde_json::from_str::<serde_json::Value>(value) {
+                let count = obj.get("count").and_then(|c| c.as_u64()).unwrap_or(0);
+                successes.insert(suffix.to_string(), count);
+            }
+        }
+    }
+
+    // Collect all unique tier:model combinations
+    let mut all_keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    all_keys.extend(escalations.keys().cloned());
+    all_keys.extend(successes.keys().cloned());
+
+    if all_keys.is_empty() {
+        println!(
+            "{} No escalation tracking data found. Escalation tracking is recorded when ScaffoldedDispatch runs with a HexFlo handle.",
+            "i".cyan()
+        );
+        return Ok(());
+    }
+
+    // Print header
+    println!(
+        "\n{}\n",
+        "Inference Escalation Report (P4.2)".bold().underline()
+    );
+    println!(
+        "  {:<10} {:<30} {:>10} {:>10} {:>12}",
+        "Tier", "Model", "Success", "Escalated", "Esc. Rate"
+    );
+    println!("  {}", "-".repeat(76));
+
+    let mut any_high = false;
+    for key in &all_keys {
+        let esc_count = escalations.get(key).copied().unwrap_or(0);
+        let suc_count = successes.get(key).copied().unwrap_or(0);
+        let total = esc_count + suc_count;
+        let rate = if total > 0 {
+            esc_count as f64 / total as f64
+        } else {
+            0.0
+        };
+
+        // Split key into tier and model
+        let parts: Vec<&str> = key.splitn(2, ':').collect();
+        let (tier, model) = if parts.len() == 2 {
+            (parts[0], parts[1])
+        } else {
+            (key.as_str(), "unknown")
+        };
+
+        let rate_str = format!("{:.1}%", rate * 100.0);
+        let rate_display = if rate > 0.5 {
+            any_high = true;
+            rate_str.red().bold().to_string()
+        } else if rate > 0.25 {
+            rate_str.yellow().to_string()
+        } else {
+            rate_str.green().to_string()
+        };
+
+        println!(
+            "  {:<10} {:<30} {:>10} {:>10} {:>12}",
+            tier, model, suc_count, esc_count, rate_display
+        );
+    }
+
+    println!();
+    if any_high {
+        println!(
+            "  {} One or more task-tier/model combinations exceed 50%% escalation rate.",
+            "!".yellow().bold()
+        );
+        println!(
+            "    Consider reclassifying these tiers to use a stronger local model,"
+        );
+        println!(
+            "    or adjusting ScaffoldConfig (increase N or max_retries).\n"
+        );
     }
 
     Ok(())

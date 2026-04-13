@@ -1,420 +1,434 @@
-//! End-to-end test: T2 task with mock Ollama (ADR-2604120202, task P5.2).
+//! End-to-end integration test for T2 scaffolded dispatch (ADR-2604120202 P5.2).
 //!
-//! Integration test that wires ScaffoldedDispatch with a sequenced mock
-//! inference port (fails on first attempt, succeeds on second) and a mock
-//! escalation tracker. Asserts:
-//!   (a) Two attempts made
-//!   (b) Compile gate checked both attempts
-//!   (c) Second attempt's code returned
-//!   (d) Escalation NOT triggered (no frontier call)
-//!   (e) HexFlo memory records local success (not escalation)
+//! Verifies the full ScaffoldedDispatch path with a mock inference port that
+//! fails on the first call (returns code that doesn't compile) and succeeds on
+//! the second (returns valid code), plus a mock compile checker that mirrors
+//! this sequence. Asserts:
+//!
+//! - Two inference attempts were made before success.
+//! - The second attempt's response was returned.
+//! - Escalation to a frontier model was NOT triggered.
+//! - The overall result is `ScaffoldResult::Success`.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+mod tiered_routing_e2e {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
-use async_trait::async_trait;
+    use async_trait::async_trait;
+    use hex_core::domain::messages::{ContentBlock, Message, StopReason};
+    use hex_core::ports::inference::{
+        futures_stream, HealthStatus, IInferencePort, InferenceCapabilities, InferenceError,
+        InferenceRequest, InferenceResponse, ModelInfo, ModelTier, StreamChunk,
+    };
+    use hex_nexus::orchestration::scaffolding::{
+        CompileChecker, CompileError, ScaffoldConfig, ScaffoldResult, ScaffoldedDispatch,
+    };
+    use hex_nexus::remote::transport::TaskTier;
 
-use hex_core::domain::messages::{ContentBlock, Message, StopReason};
-use hex_core::ports::inference::{
-    IInferencePort, InferenceCapabilities, InferenceError, InferenceRequest, InferenceResponse,
-    ModelInfo, ModelTier, Priority, StreamChunk,
-};
-use hex_nexus::orchestration::scaffolding::{
-    CompileChecker, CompileError, EscalationTracker, ScaffoldConfig, ScaffoldResult,
-    ScaffoldedDispatch,
-};
-use hex_nexus::remote::transport::TaskTier;
+    // ── Sequenced mock inference port ───────────────────────
 
-// ── Mock inference port (simulates Ollama: fail → succeed) ──
+    /// Mock inference port that returns different responses on successive calls.
+    /// First call returns "bad code", second call returns "fn valid() {}".
+    struct SequencedInferencePort {
+        call_count: AtomicUsize,
+        responses: Vec<String>,
+    }
 
-/// Mock inference that returns a different canned response per call.
-/// First call returns code that won't compile; second returns valid code.
-struct MockOllamaInference {
-    responses: Vec<String>,
-    call_count: AtomicUsize,
-}
+    impl SequencedInferencePort {
+        fn new(responses: Vec<String>) -> Self {
+            Self {
+                call_count: AtomicUsize::new(0),
+                responses,
+            }
+        }
 
-impl MockOllamaInference {
-    fn new(responses: Vec<&str>) -> Self {
-        Self {
-            responses: responses.into_iter().map(String::from).collect(),
-            call_count: AtomicUsize::new(0),
+        fn total_calls(&self) -> usize {
+            self.call_count.load(Ordering::SeqCst)
         }
     }
-
-    fn calls(&self) -> usize {
-        self.call_count.load(Ordering::SeqCst)
-    }
-}
-
-#[async_trait]
-impl IInferencePort for MockOllamaInference {
-    async fn complete(
-        &self,
-        request: InferenceRequest,
-    ) -> Result<InferenceResponse, InferenceError> {
-        let idx = self.call_count.fetch_add(1, Ordering::SeqCst);
-        let text = self
-            .responses
-            .get(idx)
-            .cloned()
-            .unwrap_or_else(|| format!("unexpected call #{idx}"));
-
-        Ok(InferenceResponse {
-            content: vec![ContentBlock::Text { text }],
-            model_used: request.model.clone(),
-            stop_reason: StopReason::EndTurn,
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_read_tokens: 0,
-            cache_write_tokens: 0,
-            latency_ms: 0,
-        })
-    }
-
-    async fn stream(
-        &self,
-        _request: InferenceRequest,
-    ) -> Result<
-        Box<dyn hex_core::ports::inference::futures_stream::Stream<Item = StreamChunk> + Send + Unpin>,
-        InferenceError,
-    > {
-        Err(InferenceError::ProviderUnavailable(
-            "stream not implemented in test mock".into(),
-        ))
-    }
-
-    async fn health(
-        &self,
-    ) -> Result<hex_core::ports::inference::HealthStatus, InferenceError> {
-        Ok(hex_core::ports::inference::HealthStatus::Ok {
-            models: vec![],
-        })
-    }
-
-    fn capabilities(&self) -> InferenceCapabilities {
-        InferenceCapabilities {
-            models: vec![ModelInfo {
-                id: "qwen2.5-coder:7b".into(),
-                provider: "ollama".into(),
-                tier: ModelTier::Local,
-                context_window: 32_768,
-            }],
-            supports_tool_use: false,
-            supports_thinking: false,
-            supports_caching: false,
-            supports_streaming: false,
-            max_context_tokens: 32_768,
-            cost_per_mtok_input: 0.0,
-            cost_per_mtok_output: 0.0,
-        }
-    }
-}
-
-// ── Mock compile checker with call tracking ──────────────
-
-/// Compile checker that tracks which code strings were checked.
-/// Accepts any code starting with "GOOD", rejects the rest.
-struct TrackingCompileChecker {
-    checked: Mutex<Vec<String>>,
-}
-
-impl TrackingCompileChecker {
-    fn new() -> Self {
-        Self {
-            checked: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn checked_codes(&self) -> Vec<String> {
-        self.checked.lock().unwrap().clone()
-    }
-}
-
-#[async_trait]
-impl CompileChecker for TrackingCompileChecker {
-    async fn check(&self, code: &str) -> Result<(), CompileError> {
-        self.checked.lock().unwrap().push(code.to_string());
-        if code.starts_with("GOOD") {
-            Ok(())
-        } else {
-            Err(CompileError {
-                stderr: format!("error[E0308]: expected `u64`, found `&str` in `{}`",
-                    &code[..code.len().min(30)]),
-            })
-        }
-    }
-}
-
-// ── Mock escalation tracker ──────────────────────────────
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-enum TrackerEvent {
-    LocalSuccess { task_type: String, model: String },
-    Escalation { task_type: String, model: String, sample_error: String },
-}
-
-struct MockHexFloTracker {
-    events: Mutex<Vec<TrackerEvent>>,
-}
-
-impl MockHexFloTracker {
-    fn new() -> Self {
-        Self {
-            events: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn events(&self) -> Vec<TrackerEvent> {
-        self.events.lock().unwrap().clone()
-    }
-}
-
-#[async_trait]
-impl EscalationTracker for MockHexFloTracker {
-    async fn record_local_success(&self, task_type: &str, model: &str) {
-        self.events.lock().unwrap().push(TrackerEvent::LocalSuccess {
-            task_type: task_type.to_string(),
-            model: model.to_string(),
-        });
-    }
-
-    async fn record_escalation(&self, task_type: &str, model: &str, sample_error: &str) {
-        self.events.lock().unwrap().push(TrackerEvent::Escalation {
-            task_type: task_type.to_string(),
-            model: model.to_string(),
-            sample_error: sample_error.to_string(),
-        });
-    }
-}
-
-// ── Helpers ──────────────────────────────────────────────
-
-fn make_t2_workplan_request() -> InferenceRequest {
-    InferenceRequest {
-        model: "qwen2.5-coder:7b".into(),
-        system_prompt: "You are a Rust code generator.".into(),
-        messages: vec![Message::user(
-            "Implement a function `parse_config(input: &str) -> Result<Config, ParseError>` \
-             that reads a TOML string into a Config struct.",
-        )],
-        tools: vec![],
-        max_tokens: 1024,
-        temperature: 0.7,
-        thinking_budget: None,
-        cache_control: false,
-        priority: Priority::Normal,
-        grammar: None,
-    }
-}
-
-/// N=3 for T2 (matches production default), but we stop after first success.
-fn n_for_tier_production(tier: TaskTier) -> usize {
-    match tier {
-        TaskTier::T1 => 1,
-        TaskTier::T2 => 3,
-        TaskTier::T2_5 => 5,
-        TaskTier::T3 => 1,
-    }
-}
-
-// ══════════════════════════════════════════════════════════
-// Main E2E test: T2 task — fail once, succeed on second attempt
-// ══════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn t2_e2e_mock_ollama_fail_then_succeed() {
-    // Setup: mock Ollama returns bad code first, good code second.
-    let ollama = Arc::new(MockOllamaInference::new(vec![
-        "BAD: fn parse_config(input: &str) -> Config { unimplemented!() }",
-        "GOOD: fn parse_config(input: &str) -> Result<Config, ParseError> { toml::from_str(input) }",
-        "BAD: should never be reached",
-    ]));
-
-    let checker = TrackingCompileChecker::new();
-    let tracker = Arc::new(MockHexFloTracker::new());
-
-    // Wire everything together — no frontier configured (T2 should not need it).
-    let dispatch = ScaffoldedDispatch::new(ollama.clone(), Box::new(checker))
-        .with_config(ScaffoldConfig {
-            n_for_tier: n_for_tier_production,
-            max_retries: 1,
-        })
-        .with_tracker(tracker.clone());
-
-    // Dispatch as T2 (single-function code generation).
-    let result = dispatch
-        .dispatch(&make_t2_workplan_request(), TaskTier::T2)
-        .await
-        .expect("dispatch should not return Err");
-
-    // ── Assertion (a): exactly two attempts made ──
-    assert_eq!(
-        ollama.calls(),
-        2,
-        "mock Ollama should have been called exactly twice (fail + succeed)"
-    );
-
-    match result {
-        ScaffoldResult::Success {
-            response,
-            attempt,
-            total_attempts,
-        } => {
-            // ── Assertion (a) continued: attempt counters ──
-            assert_eq!(attempt, 2, "should succeed on attempt 2");
-            assert_eq!(total_attempts, 2, "should stop early after success (not exhaust all N=3)");
-
-            // ── Assertion (c): second attempt's code returned ──
-            let text = match response.content.first() {
-                Some(ContentBlock::Text { text }) => text.as_str(),
-                _ => panic!("expected Text content block"),
-            };
-            assert!(
-                text.starts_with("GOOD"),
-                "response should be the second (successful) completion, got: {text}"
-            );
-            assert!(
-                text.contains("Result<Config, ParseError>"),
-                "returned code should be the correct implementation"
-            );
-        }
-        ScaffoldResult::CompileGateFailed { .. } => {
-            panic!("expected Success, got CompileGateFailed — second attempt should have compiled");
-        }
-    }
-
-    // ── Assertion (d): escalation NOT triggered ──
-    // No frontier was configured, and even if it were, dispatch should have
-    // succeeded locally on attempt 2 without needing escalation.
-    let events = tracker.events();
-    for event in &events {
-        assert!(
-            !matches!(event, TrackerEvent::Escalation { .. }),
-            "escalation should NOT have been triggered — local succeeded on attempt 2"
-        );
-    }
-
-    // ── Assertion (e): HexFlo memory records local success ──
-    assert_eq!(events.len(), 1, "tracker should record exactly one event");
-    match &events[0] {
-        TrackerEvent::LocalSuccess { task_type, model } => {
-            assert_eq!(task_type, "T2", "task_type should be T2");
-            assert_eq!(model, "qwen2.5-coder:7b", "model should match the request");
-        }
-        other => panic!("expected LocalSuccess event, got: {:?}", other),
-    }
-}
-
-// ══════════════════════════════════════════════════════════
-// Supplementary: compile gate verified both attempts
-// ══════════════════════════════════════════════════════════
-
-/// Separate test that uses a tracking checker to verify assertion (b):
-/// the compile gate was invoked for both the failing and succeeding attempts.
-#[tokio::test]
-async fn t2_e2e_compile_gate_checked_both_attempts() {
-    let ollama = Arc::new(MockOllamaInference::new(vec![
-        "BAD: fn parse_config() {}",
-        "GOOD: fn parse_config(input: &str) -> Result<Config, ParseError> { Ok(Config {}) }",
-    ]));
-
-    // Use a checker we can inspect after dispatch.
-    let checker = Arc::new(TrackingCompileChecker::new());
-    // Clone the Arc for post-dispatch inspection.
-    let checker_ref = checker.clone();
-
-    // We need to pass ownership of a CompileChecker to ScaffoldedDispatch.
-    // Wrap the Arc in a delegating struct.
-    struct DelegatingChecker(Arc<TrackingCompileChecker>);
 
     #[async_trait]
-    impl CompileChecker for DelegatingChecker {
-        async fn check(&self, code: &str) -> Result<(), CompileError> {
-            self.0.check(code).await
+    impl IInferencePort for SequencedInferencePort {
+        async fn complete(
+            &self,
+            _request: InferenceRequest,
+        ) -> Result<InferenceResponse, InferenceError> {
+            let idx = self.call_count.fetch_add(1, Ordering::SeqCst);
+            let text = self
+                .responses
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| self.responses.last().cloned().unwrap_or_default());
+
+            Ok(InferenceResponse {
+                content: vec![ContentBlock::Text { text: text.clone() }],
+                model_used: "mock-sequenced".to_string(),
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 0,
+                output_tokens: text.len() as u64,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                latency_ms: 0,
+            })
+        }
+
+        async fn stream(
+            &self,
+            _request: InferenceRequest,
+        ) -> Result<
+            Box<dyn futures_stream::Stream<Item = StreamChunk> + Send + Unpin>,
+            InferenceError,
+        > {
+            Err(InferenceError::ProviderUnavailable(
+                "stream not implemented in test mock".into(),
+            ))
+        }
+
+        async fn health(&self) -> Result<HealthStatus, InferenceError> {
+            Ok(HealthStatus::Ok { models: vec![] })
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities {
+                models: vec![ModelInfo {
+                    id: "mock-sequenced".to_string(),
+                    provider: "test".to_string(),
+                    tier: ModelTier::Local,
+                    context_window: 8_192,
+                }],
+                supports_tool_use: false,
+                supports_thinking: false,
+                supports_caching: false,
+                supports_streaming: false,
+                max_context_tokens: 8_192,
+                cost_per_mtok_input: 0.0,
+                cost_per_mtok_output: 0.0,
+            }
         }
     }
 
-    let dispatch = ScaffoldedDispatch::new(ollama.clone(), Box::new(DelegatingChecker(checker)))
-        .with_config(ScaffoldConfig {
-            n_for_tier: n_for_tier_production,
-            max_retries: 1,
-        });
+    // ── Sequenced mock compile checker ──────────────────────
 
-    let result = dispatch
-        .dispatch(&make_t2_workplan_request(), TaskTier::T2)
-        .await
-        .expect("dispatch should not error");
+    /// Mock compile checker that fails on the first call and succeeds on the
+    /// second, simulating the real scenario where the first LLM output has
+    /// compile errors and the retry (with error feedback) produces valid code.
+    struct SequencedCompileChecker {
+        call_count: AtomicUsize,
+    }
 
-    assert!(
-        matches!(result, ScaffoldResult::Success { .. }),
-        "should succeed on second attempt"
-    );
-
-    // ── Assertion (b): compile gate checked BOTH attempts ──
-    let checked = checker_ref.checked_codes();
-    assert_eq!(
-        checked.len(),
-        2,
-        "compile gate should have been invoked exactly twice, got {}",
-        checked.len()
-    );
-    assert!(
-        checked[0].starts_with("BAD"),
-        "first checked code should be the failing attempt"
-    );
-    assert!(
-        checked[1].starts_with("GOOD"),
-        "second checked code should be the succeeding attempt"
-    );
-}
-
-// ══════════════════════════════════════════════════════════
-// Edge case: T2 succeeds on first attempt — no retry overhead
-// ══════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn t2_e2e_first_attempt_success_no_retry() {
-    let ollama = Arc::new(MockOllamaInference::new(vec![
-        "GOOD: fn parse_config(input: &str) -> Result<Config, ParseError> { toml::from_str(input) }",
-    ]));
-
-    let checker = TrackingCompileChecker::new();
-    let tracker = Arc::new(MockHexFloTracker::new());
-
-    let dispatch = ScaffoldedDispatch::new(ollama.clone(), Box::new(checker))
-        .with_config(ScaffoldConfig {
-            n_for_tier: n_for_tier_production,
-            max_retries: 1,
-        })
-        .with_tracker(tracker.clone());
-
-    let result = dispatch
-        .dispatch(&make_t2_workplan_request(), TaskTier::T2)
-        .await
-        .expect("dispatch should not error");
-
-    match result {
-        ScaffoldResult::Success {
-            attempt,
-            total_attempts,
-            ..
-        } => {
-            assert_eq!(attempt, 1, "should succeed on first attempt");
-            assert_eq!(total_attempts, 1, "only one attempt needed");
-        }
-        ScaffoldResult::CompileGateFailed { .. } => {
-            panic!("expected Success on first attempt");
+    impl SequencedCompileChecker {
+        fn new() -> Self {
+            Self {
+                call_count: AtomicUsize::new(0),
+            }
         }
     }
 
-    assert_eq!(ollama.calls(), 1, "only one inference call needed");
+    #[async_trait]
+    impl CompileChecker for SequencedCompileChecker {
+        async fn check(&self, _code: &str) -> Result<(), CompileError> {
+            let idx = self.call_count.fetch_add(1, Ordering::SeqCst);
+            if idx == 0 {
+                Err(CompileError {
+                    stderr: "error[E0308]: mismatched types\n  --> src/main.rs:3:5"
+                        .to_string(),
+                })
+            } else {
+                Ok(())
+            }
+        }
+    }
 
-    let events = tracker.events();
-    assert_eq!(events.len(), 1);
-    assert!(
-        matches!(&events[0], TrackerEvent::LocalSuccess { task_type, .. } if task_type == "T2"),
-        "should record local success for T2"
-    );
+    // ── Tracking frontier mock (should NOT be called) ───────
+
+    /// Mock frontier port that records whether it was called. Used to assert
+    /// that escalation does NOT happen when the local model succeeds on retry.
+    struct TrackingFrontierPort {
+        called: AtomicUsize,
+    }
+
+    impl TrackingFrontierPort {
+        fn new() -> Self {
+            Self {
+                called: AtomicUsize::new(0),
+            }
+        }
+
+        fn was_called(&self) -> bool {
+            self.called.load(Ordering::SeqCst) > 0
+        }
+    }
+
+    #[async_trait]
+    impl IInferencePort for TrackingFrontierPort {
+        async fn complete(
+            &self,
+            _request: InferenceRequest,
+        ) -> Result<InferenceResponse, InferenceError> {
+            self.called.fetch_add(1, Ordering::SeqCst);
+            Ok(InferenceResponse {
+                content: vec![ContentBlock::Text {
+                    text: "frontier fallback".to_string(),
+                }],
+                model_used: "frontier-mock".to_string(),
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                latency_ms: 0,
+            })
+        }
+
+        async fn stream(
+            &self,
+            _request: InferenceRequest,
+        ) -> Result<
+            Box<dyn futures_stream::Stream<Item = StreamChunk> + Send + Unpin>,
+            InferenceError,
+        > {
+            Err(InferenceError::ProviderUnavailable("not impl".into()))
+        }
+
+        async fn health(&self) -> Result<HealthStatus, InferenceError> {
+            Ok(HealthStatus::Ok { models: vec![] })
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities {
+                models: vec![],
+                supports_tool_use: false,
+                supports_thinking: false,
+                supports_caching: false,
+                supports_streaming: false,
+                max_context_tokens: 0,
+                cost_per_mtok_input: 0.0,
+                cost_per_mtok_output: 0.0,
+            }
+        }
+    }
+
+    // ── Helper ──────────────────────────────────────────────
+
+    fn make_t2_request() -> InferenceRequest {
+        InferenceRequest {
+            model: "test-t2".to_string(),
+            system_prompt: "You are a Rust code generator.".to_string(),
+            messages: vec![Message::user("write a fibonacci function in Rust")],
+            tools: vec![],
+            max_tokens: 512,
+            temperature: 0.2,
+            thinking_budget: None,
+            cache_control: false,
+            priority: hex_core::ports::inference::Priority::Normal,
+            grammar: None,
+        }
+    }
+
+    // ── Tests ───────────────────────────────────────────────
+
+    /// Core E2E test: T2 task with Best-of-N=1 (to make sequencing
+    /// deterministic), first attempt fails compile gate, second succeeds.
+    /// Verifies: (a) two attempts, (b) second response returned, (c) no
+    /// escalation, (d) result is Ok(Success).
+    #[tokio::test]
+    async fn t2_scaffolded_dispatch_retries_on_compile_failure() {
+        let inference = Arc::new(SequencedInferencePort::new(vec![
+            "let x: u32 = \"not a number\";".to_string(), // bad code
+            "fn valid() -> u64 { 42 }".to_string(),       // good code
+        ]));
+        let checker = SequencedCompileChecker::new();
+        let frontier = Arc::new(TrackingFrontierPort::new());
+
+        // N=1 per tier so we get exactly one completion per round.
+        // max_retries=2 gives us room for the retry with error feedback.
+        let config = ScaffoldConfig {
+            n_for_tier: |_| 1,
+            max_retries: 2,
+        };
+
+        let dispatch = ScaffoldedDispatch::new(
+            inference.clone() as Arc<dyn IInferencePort>,
+            Box::new(checker),
+        )
+        .with_config(config)
+        .with_frontier(frontier.clone() as Arc<dyn IInferencePort>);
+
+        let request = make_t2_request();
+        let result = dispatch
+            .dispatch(&request, TaskTier::T2)
+            .await
+            .expect("dispatch should not return Err");
+
+        // (a) Two inference calls were made (one failed, one succeeded).
+        assert_eq!(
+            inference.total_calls(),
+            2,
+            "expected exactly 2 inference calls"
+        );
+
+        // (b) The successful response contains the valid code.
+        match &result {
+            ScaffoldResult::Success { response, .. } => {
+                let text = response
+                    .content
+                    .iter()
+                    .filter_map(|b| {
+                        if let ContentBlock::Text { text } = b {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<String>();
+                assert!(
+                    text.contains("fn valid()"),
+                    "expected valid code in response, got: {text}"
+                );
+            }
+            ScaffoldResult::CompileGateFailed { .. } => {
+                panic!("expected Success, got CompileGateFailed");
+            }
+        }
+
+        // (c) Escalation was NOT triggered.
+        assert!(
+            !frontier.was_called(),
+            "frontier should NOT have been called — local retry succeeded"
+        );
+
+        // (d) Result is Success with attempt=2.
+        match result {
+            ScaffoldResult::Success {
+                attempt,
+                total_attempts,
+                ..
+            } => {
+                assert_eq!(attempt, 2, "success should be on attempt 2");
+                assert_eq!(total_attempts, 2, "total attempts should be 2");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Verify that when all attempts exhaust (both N completions and retries),
+    /// and a frontier is configured, the frontier IS called (escalation path).
+    #[tokio::test]
+    async fn t2_escalates_to_frontier_when_all_local_attempts_fail() {
+        // Inference always returns bad code.
+        let inference = Arc::new(SequencedInferencePort::new(vec![
+            "bad code forever".to_string(),
+        ]));
+        // Compile checker always rejects.
+        struct AlwaysRejectChecker;
+        #[async_trait]
+        impl CompileChecker for AlwaysRejectChecker {
+            async fn check(&self, _code: &str) -> Result<(), CompileError> {
+                Err(CompileError {
+                    stderr: "error: everything is wrong".to_string(),
+                })
+            }
+        }
+
+        let frontier = Arc::new(TrackingFrontierPort::new());
+
+        let config = ScaffoldConfig {
+            n_for_tier: |_| 1,
+            max_retries: 1,
+        };
+
+        let dispatch = ScaffoldedDispatch::new(
+            inference.clone() as Arc<dyn IInferencePort>,
+            Box::new(AlwaysRejectChecker),
+        )
+        .with_config(config)
+        .with_frontier(frontier.clone() as Arc<dyn IInferencePort>);
+
+        let result = dispatch
+            .dispatch(&make_t2_request(), TaskTier::T2)
+            .await
+            .expect("dispatch should not return Err");
+
+        // Frontier WAS called (escalation).
+        assert!(
+            frontier.was_called(),
+            "frontier should have been called after all local attempts failed"
+        );
+
+        // Result should be Success (from frontier).
+        match result {
+            ScaffoldResult::Success { response, .. } => {
+                let text = response
+                    .content
+                    .iter()
+                    .filter_map(|b| {
+                        if let ContentBlock::Text { text } = b {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<String>();
+                assert!(
+                    text.contains("frontier fallback"),
+                    "expected frontier response, got: {text}"
+                );
+            }
+            ScaffoldResult::CompileGateFailed { .. } => {
+                panic!("expected Success from frontier escalation");
+            }
+        }
+    }
+
+    /// Without a frontier configured, exhausting all attempts returns
+    /// `CompileGateFailed` (no escalation path).
+    #[tokio::test]
+    async fn t2_without_frontier_returns_compile_gate_failed() {
+        let inference = Arc::new(SequencedInferencePort::new(vec![
+            "bad code".to_string(),
+        ]));
+
+        struct AlwaysRejectChecker;
+        #[async_trait]
+        impl CompileChecker for AlwaysRejectChecker {
+            async fn check(&self, _code: &str) -> Result<(), CompileError> {
+                Err(CompileError {
+                    stderr: "error[E0599]: no method named `foo`".to_string(),
+                })
+            }
+        }
+
+        let config = ScaffoldConfig {
+            n_for_tier: |_| 1,
+            max_retries: 0,
+        };
+
+        let dispatch = ScaffoldedDispatch::new(
+            inference.clone() as Arc<dyn IInferencePort>,
+            Box::new(AlwaysRejectChecker),
+        )
+        .with_config(config);
+        // No .with_frontier() — escalation path absent.
+
+        let result = dispatch
+            .dispatch(&make_t2_request(), TaskTier::T2)
+            .await
+            .expect("dispatch should not return Err");
+
+        match result {
+            ScaffoldResult::CompileGateFailed {
+                total_attempts,
+                best_error,
+            } => {
+                assert_eq!(total_attempts, 1, "N=1, retries=0 → 1 attempt");
+                assert!(
+                    best_error.contains("E0599"),
+                    "best_error should contain the compiler error: {best_error}"
+                );
+            }
+            ScaffoldResult::Success { .. } => {
+                panic!("expected CompileGateFailed without frontier");
+            }
+        }
+    }
 }

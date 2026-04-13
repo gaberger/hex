@@ -65,24 +65,6 @@ hex interfaces with external inference through SpacetimeDB procedures and reduce
 - hex-nexus performs actual HTTP calls (WASM can't make network requests)
 - Model-agnostic — works with any LLM provider (Anthropic, OpenAI, Ollama, etc.)
 
-### Tiered Inference Routing (ADR-2604120202)
-
-hex classifies every workplan task into a tier (T1–T3) and routes it to the cheapest model that can handle it. The tier classifier uses `strategy_hint`, agent role, and layer/dependency heuristics (see `workplan_executor.rs::classify_task_tier`). Default tier→model mapping:
-
-| Tier | Default Model | Use Case |
-|------|---------------|----------|
-| T1 | qwen3:4b | Scaffolding, renames, trivial edits |
-| T2 | qwen2.5-coder:32b | Single-adapter codegen, planning |
-| T2.5 | devstral-small-2:24b | Cross-adapter integration, complex reasoning |
-| T3 | *(none — requires cloud)* | Frontier tasks needing Opus/Sonnet |
-
-**Configure** per-project in `.hex/project.json` under `inference.tier_models`:
-```json
-{ "inference": { "tier_models": { "T1": "qwen3:4b", "T2": "qwen2.5-coder:32b", "T2.5": "devstral-small-2:24b", "T3": "claude-sonnet-4-6" } } }
-```
-
-**Override** tier for a specific workplan task by setting `"tier": "T2"` in the task JSON. **Check escalation rates** with `hex inference escalation-report` — tasks that escalate above 30% should be reclassified to a higher tier.
-
 ### Standalone Mode (ADR-2604112000)
 
 hex supports a standalone composition path that does not require Claude Code. When `CLAUDE_SESSION_ID` is unset, hex-nexus wires an `AgentManager` backed by HexFlo dispatch + the `OllamaInferenceAdapter` (default inference for standalone mode). This enables `hex nexus start && hex plan execute wp-foo.json` on any host with Ollama installed -- no Claude CLI needed.
@@ -90,6 +72,28 @@ hex supports a standalone composition path that does not require Claude Code. Wh
 - `hex doctor composition` diagnoses which variant is active and what prerequisites are met.
 - `hex ci --standalone-gate` validates the standalone path by running the P2/P3/P6 test suites.
 - The Claude-integrated path remains the fast path when `CLAUDE_SESSION_ID` is present.
+
+### Tiered Inference Routing (ADR-2604120202 + ADR-2604131630)
+
+Tasks are classified into inference tiers that map to progressively more capable models:
+
+| Tier | Default Model | Use Case |
+|------|--------------|----------|
+| T1 | `qwen3:4b` | Scaffold, transform, script — boilerplate generation |
+| T2 | `qwen2.5-coder:32b` | Standard codegen — adapter implementations, tests |
+| T2.5 | `devstral-small-2:24b` | Complex reasoning — cross-adapter wiring, architecture |
+| T3 | Claude (frontier) | Frontier tasks — bypasses scaffolded dispatch entirely |
+
+**Tier selection**: WorkplanTask `strategy_hint` controls tier directly (`scaffold`/`transform`/`script` = T1, `codegen` = T2, `inference` = T2.5). When `strategy_hint` is absent, heuristics classify based on layer depth and dependency count.
+
+**Scaffolded dispatch** (T1/T2/T2.5): Best-of-N completions where each candidate must pass a compile gate (`cargo check` / `tsc --noEmit`) before acceptance. T3 bypasses scaffolding — frontier models produce single-shot output.
+
+**Configuration**: Override default models per-tier in `.hex/project.json`:
+```json
+{ "inference": { "tier_models": { "t1": "qwen3:4b", "t2": "qwen2.5-coder:32b", "t2_5": "devstral-small-2:24b" } } }
+```
+
+**Monitoring**: Run `hex inference escalation-report` to see how often tasks escalate from lower tiers to higher ones — high escalation rates indicate tier thresholds need tuning.
 
 ## Tool Precedence (IMPORTANT)
 

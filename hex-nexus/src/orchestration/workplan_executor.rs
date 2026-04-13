@@ -3,6 +3,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::orchestration::agent_manager::SpawnConfig;
+use crate::orchestration::scaffolding::{ScaffoldedDispatch, ShellCompileChecker, ScaffoldResult};
 use crate::ports::state::{IStatePort, WorkplanTaskUpdate};
 use crate::remote::transport::TaskTier;
 use crate::state::{AgentInstruction, InstructionType, SharedState};
@@ -273,12 +274,6 @@ pub struct WorkplanTask {
     /// JSON, bypasses the automatic classifier. Values: "T1", "T2", "T2.5", "T3".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier: Option<crate::remote::transport::TaskTier>,
-    /// Hint for inference routing tier classification (ADR-2604120202 P1.3).
-    /// Values: "scaffold", "transform", "script" → T1; "codegen" → T2;
-    /// "inference" → T2.5. When absent, the classifier falls back to
-    /// layer + deps heuristics.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub strategy_hint: Option<String>,
 }
 
 /// Classify a workplan task into an inference routing tier (ADR-2604120202 P1.3).
@@ -292,14 +287,6 @@ pub fn classify_task_tier(task: &WorkplanTask) -> crate::remote::transport::Task
     // Explicit tier in workplan takes precedence
     if let Some(tier) = task.tier {
         return tier;
-    }
-
-    // strategy_hint mapping (ADR-2604120202 P1.3)
-    match task.strategy_hint.as_deref() {
-        Some("scaffold" | "transform" | "script") => return TaskTier::T1,
-        Some("codegen") => return TaskTier::T2,
-        Some("inference") => return TaskTier::T2_5,
-        _ => {} // fall through to agent/layer heuristics
     }
 
     // Planner/reviewer agents → T2 (structured output, not heavy codegen)
@@ -324,21 +311,6 @@ pub fn classify_task_tier(task: &WorkplanTask) -> crate::remote::transport::Task
     }
 }
 
-/// Map a classified TaskTier to a default model name (ADR-2604120202 P1.3).
-///
-/// Mirrors the `TierModelConfig` defaults without importing the adapter —
-/// the executor lives in the orchestration layer and must not depend on
-/// adapter internals. Escalation tracking (P4) will refine these mappings.
-pub fn tier_default_model(tier: crate::remote::transport::TaskTier) -> &'static str {
-    use crate::remote::transport::TaskTier;
-    match tier {
-        TaskTier::T1 => "qwen3:4b",
-        TaskTier::T2 => "qwen2.5-coder:32b",
-        TaskTier::T2_5 => "devstral-small-2:24b",
-        TaskTier::T3 => "claude-sonnet-4-20250514",
-    }
-}
-
 // ── Workplan Executor ──────────────────────────────────
 
 pub struct WorkplanExecutor {
@@ -357,53 +329,6 @@ impl WorkplanExecutor {
     /// Storage key for a workplan execution.
     fn workplan_key(id: &str) -> String {
         format!("workplan:{}", id)
-    }
-
-    /// ADR-2604131500 P2.3: Log a briefing event for the developer's morning briefing.
-    /// Events are stored in HexFlo memory with key `briefing:{timestamp}` and
-    /// queried by the GET /api/briefing endpoint.
-    async fn log_briefing_event(
-        port: &dyn IStatePort,
-        severity: &str,
-        category: &str,
-        title: &str,
-        body: &str,
-    ) {
-        let ts = chrono::Utc::now().to_rfc3339();
-        let key = format!("briefing:{}", ts);
-        let value = serde_json::json!({
-            "severity": severity,
-            "category": category,
-            "title": title,
-            "body": body,
-            "created_at": ts,
-        })
-        .to_string();
-        if let Err(e) = port.hexflo_memory_store(&key, &value, "global").await {
-            tracing::debug!("Failed to log briefing event: {}", e);
-        }
-    }
-
-    /// ADR-2604131500 P3.2: Check delegation trust for a scope.
-    /// Returns the trust level string ("observe", "suggest", "act", "silent").
-    /// Defaults to "suggest" if no trust entry exists.
-    async fn check_trust_level(
-        port: &dyn IStatePort,
-        project_id: &str,
-        scope: &str,
-    ) -> String {
-        // Try exact scope first, then fall back to parent
-        for s in &[scope, "adapters/secondary", "adapters/primary"] {
-            let key = format!("trust:{}:{}", project_id, s);
-            if let Ok(Some(val)) = port.hexflo_memory_retrieve(&key).await {
-                if let Ok(entry) = serde_json::from_str::<serde_json::Value>(&val) {
-                    if let Some(level) = entry["level"].as_str() {
-                        return level.to_string();
-                    }
-                }
-            }
-        }
-        "suggest".to_string()
     }
 
     /// Persist an ExecutionState via the state port.
@@ -613,102 +538,6 @@ impl WorkplanExecutor {
                 "Phase START"
             );
 
-            // ADR-2604131500 P2.3: Log phase start to briefing buffer
-            Self::log_briefing_event(
-                state_port.as_ref(),
-                "nominal",
-                "swarm",
-                &format!("Phase started: {}", phase.name),
-                &format!("{} tasks in phase {}", phase.tasks.len(), phase.id),
-            )
-            .await;
-
-            // ADR-2604131500 P3.2: Check delegation trust before phase execution.
-            // Determine scope from the first task's layer (or "deployment" as fallback).
-            let phase_scope = phase
-                .tasks
-                .first()
-                .and_then(|t| t.layer.as_deref())
-                .unwrap_or("deployment");
-            let trust_level = Self::check_trust_level(
-                state_port.as_ref(),
-                &workplan.id,
-                phase_scope,
-            )
-            .await;
-            if trust_level == "observe" || trust_level == "suggest" {
-                // Surface decision with structured payload (ADR-2604131500 P1.1).
-                // "observe" → default is to pause (developer must explicitly approve).
-                // "suggest" → default is to approve after deadline (autonomous proceed).
-                let default_action = if trust_level == "observe" {
-                    "pause"
-                } else {
-                    "approve"
-                };
-                let deadline_minutes: u64 = if trust_level == "observe" { 0 } else { 120 };
-                let deadline_at = if deadline_minutes > 0 {
-                    let deadline = chrono::Utc::now()
-                        + chrono::Duration::minutes(deadline_minutes as i64);
-                    deadline.to_rfc3339()
-                } else {
-                    String::new() // observe has no auto-resolution
-                };
-                let reasoning = format!(
-                    "Trust level is '{}' for scope '{}'. {}",
-                    trust_level,
-                    phase_scope,
-                    if trust_level == "observe" {
-                        "Manual approval required — hex will not proceed until you decide."
-                    } else {
-                        "hex will auto-approve in 2h unless you override."
-                    }
-                );
-
-                tracing::info!(
-                    execution_id = %execution_id,
-                    phase = %phase.name,
-                    scope = %phase_scope,
-                    trust = %trust_level,
-                    default_action = %default_action,
-                    "Trust check — surfacing decision (non-blocking in P1)"
-                );
-
-                let decision_payload = serde_json::json!({
-                    "phase": phase.name,
-                    "phase_id": phase.id,
-                    "scope": phase_scope,
-                    "trust_level": trust_level,
-                    "default_action": default_action,
-                    "reasoning": reasoning,
-                    "deadline_at": deadline_at,
-                    "workplan_id": workplan.id,
-                    "execution_id": execution_id,
-                    "task_count": phase.tasks.len(),
-                });
-                let payload_str = decision_payload.to_string();
-
-                // Log briefing event with structured detail
-                Self::log_briefing_event(
-                    state_port.as_ref(),
-                    "decision",
-                    "architecture",
-                    &format!("Awaiting approval: phase {}", phase.name),
-                    &payload_str,
-                )
-                .await;
-
-                // Send inbox notification so `hex brief --decisions` picks it up
-                if let Some(cc_agent_id) = find_active_cc_agent_id() {
-                    let _ = state_port
-                        .inbox_notify(&cc_agent_id, 1, "trust-decision", &payload_str)
-                        .await;
-                } else {
-                    let _ = state_port
-                        .inbox_notify_all("", 1, "trust-decision", &payload_str)
-                        .await;
-                }
-            }
-
             // Update current phase
             Self::update_phase(state_port.as_ref(), &execution_id, &phase.name).await.ok();
 
@@ -760,32 +589,9 @@ impl WorkplanExecutor {
                     }
 
                     if result.status == "failed" {
-                        // ADR-2604131500 P2.3: Log phase failure
-                        Self::log_briefing_event(
-                            state_port.as_ref(),
-                            "critical",
-                            "swarm",
-                            &format!("Phase failed: {}", phase.name),
-                            &result.errors.join("; "),
-                        )
-                        .await;
                         Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&result.errors)).await.ok();
                         return;
                     }
-
-                    // ADR-2604131500 P2.3: Log phase completion
-                    Self::log_briefing_event(
-                        state_port.as_ref(),
-                        "notable",
-                        "swarm",
-                        &format!("Phase completed: {}", phase.name),
-                        &format!(
-                            "{} agents, {} errors",
-                            result.agent_ids.len(),
-                            result.errors.len()
-                        ),
-                    )
-                    .await;
 
                     // ADR-046: Execute phase gate if present
                     if let Some(ref gate) = phase.gate {
@@ -804,35 +610,6 @@ impl WorkplanExecutor {
                                     gate = %gate.command,
                                     "Phase gate FAILED"
                                 );
-
-                                // ADR-2604131500 P2 P1.2: Detect regressions and decay trust
-                                let project_dir = std::env::current_dir()
-                                    .map(|p| p.to_string_lossy().to_string())
-                                    .unwrap_or_else(|_| ".".to_string());
-                                let reports = crate::orchestration::regression::detect_regression(
-                                    &project_dir,
-                                    &gate.command,
-                                    3600,
-                                )
-                                .await;
-                                let wp_project_id = if !workplan.id.is_empty() {
-                                    workplan.id.clone()
-                                } else {
-                                    execution_id.clone()
-                                };
-                                for report in &reports {
-                                    match crate::orchestration::regression::apply_trust_decay(
-                                        state_port.as_ref(),
-                                        &wp_project_id,
-                                        report,
-                                    )
-                                    .await
-                                    {
-                                        Ok(msg) => tracing::info!(msg = %msg, "Trust decay applied"),
-                                        Err(e) => tracing::warn!(error = %e, "Trust decay failed"),
-                                    }
-                                }
-
                                 if gate.blocking {
                                 Self::mark_status(
                                     state_port.as_ref(),
@@ -879,17 +656,6 @@ impl WorkplanExecutor {
         }
 
         Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Completed, None).await.ok();
-
-        // ADR-2604131500 P2.3: Log workplan completion to briefing buffer
-        Self::log_briefing_event(
-            state_port.as_ref(),
-            "notable",
-            "swarm",
-            &format!("Workplan completed: {}", workplan.feature.as_deref().unwrap_or(&workplan.id)),
-            &format!("All {} phases completed successfully", workplan.phases.len()),
-        )
-        .await;
-
         // P5.2: Store full execution record in memory ledger (ADR-2604010000)
         let exec_key = format!("workplan:{}:execution:{}", workplan.id, execution_id);
         let exec_val = serde_json::json!({
@@ -1126,10 +892,7 @@ impl WorkplanExecutor {
                     ).map(String::from);
 
                     let prompt = config.prompt.unwrap_or_default();
-                    // ADR-2604120202 P1.3: tier-aware model selection.
-                    // Explicit model in workplan task takes precedence; otherwise
-                    // fall back to the tier→model mapping from classify_task_tier.
-                    let model = config.model.unwrap_or_else(|| tier_default_model(task_tier).into());
+                    let model = config.model.unwrap_or_else(|| "qwen2.5-coder:32b".into());
 
                     let req = hex_core::ports::inference::InferenceRequest {
                         model,
@@ -1151,34 +914,23 @@ impl WorkplanExecutor {
                         tier = %task_tier,
                         model = %req.model,
                         grammar = req.grammar.is_some(),
-                        "Path C: headless inference dispatch"
+                        "Path C: headless inference dispatch (scaffolded)"
                     );
 
-                    // ADR-2604120202 P5.1: Wrap inference in ScaffoldedDispatch.
-                    // T1/T2/T2.5 get Best-of-N + compile gate + error-feedback
-                    // retries. The scaffolding is transparent — the executor sees
-                    // the same InferenceResponse on success.
-                    let compile_cmd = "rustc --edition 2021 --crate-type lib";
-                    let checker = crate::orchestration::scaffolding::ShellCompileChecker {
-                        command: compile_cmd.to_string(),
-                    };
-                    let scaffold = crate::orchestration::scaffolding::ScaffoldedDispatch::new(
-                        Arc::clone(&inference),
-                        Box::new(checker),
+                    // ADR-2604120202 P5.1: Wrap inference in ScaffoldedDispatch for
+                    // T1/T2/T2.5 tasks. The scaffolding layer adds Best-of-N generation,
+                    // compile-gate validation, and error-feedback retries — transparent
+                    // to the executor. T3 tasks never reach Path C (filtered above).
+                    let compile_checker = Box::new(ShellCompileChecker {
+                        command: "cargo check".to_string(),
+                    });
+                    let scaffolded = ScaffoldedDispatch::new(
+                        inference.clone(),
+                        compile_checker,
                     );
 
-                    tracing::info!(
-                        task_id = %task_id,
-                        tier = %task_tier,
-                        "Path C: dispatching via ScaffoldedDispatch"
-                    );
-
-                    match scaffold.dispatch(&req, task_tier).await {
-                        Ok(crate::orchestration::scaffolding::ScaffoldResult::Success {
-                            response,
-                            attempt,
-                            total_attempts,
-                        }) => {
+                    match scaffolded.dispatch(&req, task_tier).await {
+                        Ok(ScaffoldResult::Success { response, attempt, total_attempts }) => {
                             tracing::info!(
                                 task_id = %task_id,
                                 tokens = response.output_tokens,
@@ -1201,27 +953,24 @@ impl WorkplanExecutor {
                                     input_tokens: response.input_tokens,
                                     output_tokens: response.output_tokens,
                                     tool_calls: 0,
-                                    turns: total_attempts as u32,
+                                    turns: 1,
                                 }),
                                 role: Some("hex-coder".to_string()),
                             })
                         }
-                        Ok(crate::orchestration::scaffolding::ScaffoldResult::CompileGateFailed {
-                            total_attempts,
-                            best_error,
-                            remediation,
-                        }) => {
-                            let msg = format!(
-                                "Path C: scaffolded dispatch exhausted {} attempts, \
-                                 compile gate never passed. Best error: {}{}",
+                        Ok(ScaffoldResult::CompileGateFailed { total_attempts, best_error }) => {
+                            tracing::warn!(
+                                task_id = %task_id,
                                 total_attempts,
-                                &best_error[..best_error.len().min(200)],
-                                remediation.map(|r| format!(" — {}", r)).unwrap_or_default(),
+                                "Path C: all scaffolded attempts failed compile gate"
                             );
-                            tracing::warn!(task_id = %task_id, "{}", msg);
-                            Err(msg)
+                            Err(format!(
+                                "Path C scaffolded dispatch: all {} attempts failed compile gate: {}",
+                                total_attempts,
+                                best_error.chars().take(200).collect::<String>()
+                            ))
                         }
-                        Err(e) => Err(format!("Path C scaffolded inference failed: {}", e)),
+                        Err(e) => Err(format!("Path C inference failed: {}", e)),
                     }
                 } else if use_path_b {
                     // Path B: store queue entry in HexFlo memory, broadcast inbox
@@ -1244,14 +993,13 @@ impl WorkplanExecutor {
                         "queue_id": queue_id,
                         "task_id": task_id,
                         "workplan_id": workplan_id,
-                        "tier": task_tier.as_str(),
                         "summary": format!("Task queued: {}", task_label),
                     }).to_string();
                     // Target the active CC agent directly (most recent session heartbeat).
                     // Fall back to broadcast if no session found.
                     if let Some(cc_agent_id) = find_active_cc_agent_id() {
                         let _ = sp.inbox_notify(&cc_agent_id, 2, "inference-queue", &payload).await;
-                        tracing::info!(queue_id = %queue_id, task_id = %task_id, tier = %task_tier, cc_agent = %cc_agent_id, "Path B: task enqueued, inbox notified");
+                        tracing::info!(queue_id = %queue_id, task_id = %task_id, cc_agent = %cc_agent_id, "Path B: task enqueued, inbox notified");
                     } else {
                         let _ = sp.inbox_notify_all("", 2, "inference-queue", &payload).await;
                         tracing::info!(queue_id = %queue_id, task_id = %task_id, "Path B: task enqueued, broadcast notification (no session found)");
@@ -1278,16 +1026,7 @@ impl WorkplanExecutor {
                                     role: None,
                                 }),
                                 "Failed" => {
-                                    let reason = if task.error.is_empty() {
-                                        if task.result.is_empty() {
-                                            "(no error detail captured — check inference provider logs)".to_string()
-                                        } else {
-                                            task.result.clone()
-                                        }
-                                    } else {
-                                        task.error.clone()
-                                    };
-                                    break Err(format!("inference task {} failed: {}", queue_id, reason));
+                                    break Err(format!("inference task {} failed: {}", queue_id, task.error));
                                 }
                                 _ => {} // Pending or InProgress — keep waiting
                             },
