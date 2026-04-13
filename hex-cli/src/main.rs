@@ -282,6 +282,10 @@ enum Commands {
         /// Optional project description
         #[arg(short, long)]
         description: Option<String>,
+
+        /// Copy taste preferences from an existing project
+        #[arg(long, value_name = "PROJECT")]
+        taste_from: Option<String>,
     },
     /// Pause the active workplan (emergency brake, ADR-2604131500 §1 Layer 4)
     Pause,
@@ -403,8 +407,8 @@ async fn main() -> anyhow::Result<()> {
                 commands::ci::run().await
             }
         }
-        Commands::New { path, name, description } => {
-            commands::new::run(&path, name, description).await
+        Commands::New { path, name, description, taste_from } => {
+            commands::new::run(&path, name, description, taste_from).await
         }
         Commands::Pause => commands::pause::run_pause().await,
         Commands::Resume => commands::pause::run_resume().await,
