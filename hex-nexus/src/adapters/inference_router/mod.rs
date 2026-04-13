@@ -1,5 +1,13 @@
 //! Adapter implementing IInferenceRouterPort — routes inference requests
 //! to the best available agent based on model availability, load, and locality (ADR-040).
+//!
+//! Tier-aware model selection (ADR-2604120202 P1.2): when a request carries
+//! a `TaskTier`, the router overrides the model name from `TierModelConfig`
+//! before server selection. T3 requests without a configured frontier model
+//! fail early with a remediation hint.
+
+mod tier_config;
+pub use tier_config::TierModelConfig;
 
 use std::sync::Arc;
 use async_trait::async_trait;
@@ -19,51 +27,6 @@ use hex_core::ports::inference::{IInferencePort, InferenceRequest, Priority};
 /// concrete inference adapters (hex boundary rule #6).
 pub type InferenceAdapterFactory =
     Arc<dyn Fn(&str) -> Arc<dyn IInferencePort> + Send + Sync>;
-
-/// Tier→model mapping for inference routing (ADR-2604120202).
-/// Loaded from `~/.hex/inference-servers.json` `tier_defaults` or
-/// `.hex/project.json` `inference.tier_models` by the composition root.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct TierModelConfig {
-    #[serde(alias = "T1")]
-    pub t1: String,
-    #[serde(alias = "T2")]
-    pub t2: String,
-    #[serde(alias = "T2.5", alias = "T2_5")]
-    pub t2_5: String,
-    #[serde(alias = "T3")]
-    pub t3: Option<String>,
-}
-
-impl Default for TierModelConfig {
-    fn default() -> Self {
-        Self {
-            t1: "qwen3:4b".into(),
-            t2: "qwen2.5-coder:32b".into(),
-            t2_5: "qwen3.5:27b".into(),
-            t3: None,
-        }
-    }
-}
-
-impl TierModelConfig {
-    /// Resolve the model name for a given tier.
-    /// Returns `Err` for T3 when no frontier model is configured.
-    pub fn model_for_tier(&self, tier: TaskTier) -> Result<&str, TransportError> {
-        match tier {
-            TaskTier::T1 => Ok(&self.t1),
-            TaskTier::T2 => Ok(&self.t2),
-            TaskTier::T2_5 => Ok(&self.t2_5),
-            TaskTier::T3 => self.t3.as_deref().ok_or_else(|| {
-                TransportError::Protocol(
-                    "T3 task requires frontier model but none configured. \
-                     Set inference.tier_models.t3 in .hex/project.json or add a cloud provider."
-                        .into(),
-                )
-            }),
-        }
-    }
-}
 
 pub struct InferenceRouterAdapter {
     registry: Arc<dyn IRemoteRegistryPort>,
@@ -169,13 +132,26 @@ impl IInferenceRouterPort for InferenceRouterAdapter {
             request.model.as_deref().unwrap_or("default").to_string()
         };
 
-        // Select best server for the (possibly overridden) model
-        let server = self.select_server(&model, None).await?.ok_or_else(|| {
-            TransportError::Protocol(format!(
-                "No inference server available for model '{}'",
-                model
-            ))
-        })?;
+        // Select best server for the (possibly overridden) model.
+        // For T3 (frontier) requests, produce a tier-specific remediation hint
+        // instead of the generic "no server" message.
+        let server = match self.select_server(&model, None).await? {
+            Some(s) => s,
+            None if matches!(request.tier, Some(TaskTier::T3)) => {
+                return Err(TransportError::Protocol(format!(
+                    "T3 task requires frontier model '{}' but no server provides it. \
+                     Add a cloud provider with `hex inference add --cloud` or \
+                     configure inference.tier_models.t3 in .hex/project.json.",
+                    model
+                )));
+            }
+            None => {
+                return Err(TransportError::Protocol(format!(
+                    "No inference server available for model '{}'",
+                    model
+                )));
+            }
+        };
 
         tracing::info!(
             model = model.as_str(),
