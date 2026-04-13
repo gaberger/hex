@@ -65,6 +65,27 @@ pub async fn register(
         if state.ws_tx.send(envelope).is_err() {
             tracing::debug!("WS broadcast: no receivers for project-registered");
         }
+
+        // ADR-2604131500 P4.2: Seed default trust entries for all hex scopes
+        let default_scopes = [
+            "domain", "ports", "adapters/primary", "adapters/secondary",
+            "dependencies", "deployment",
+        ];
+        let now = chrono::Utc::now().to_rfc3339();
+        for scope in &default_scopes {
+            let key = format!("trust:{}:{}", id, scope);
+            let value = serde_json::to_string(&json!({
+                "project_id": id,
+                "scope": scope,
+                "level": "suggest",
+                "pinned": false,
+                "updated_at": now,
+            })).unwrap_or_default();
+            if let Err(e) = sp.hexflo_memory_store(&key, &value, "global").await {
+                tracing::warn!("Failed to seed trust for {}:{}: {}", id, scope, e);
+            }
+        }
+        tracing::info!("Seeded default trust entries for new project {}", id);
     }
 
     (StatusCode::OK, Json(json!({ "id": id, "name": name, "rootPath": root_path })))

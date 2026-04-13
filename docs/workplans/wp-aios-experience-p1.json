@@ -1,0 +1,310 @@
+{
+  "id": "wp-aios-experience-p1",
+  "feature": "AIOS Developer Experience — Phase 1",
+  "description": "Ship the 'walk away' moment: Pulse statusline, hex brief narrative, hex decide async decisions, and basic delegation trust model. After this phase, a developer can manage 3+ hex projects with 5-15 minutes of interaction per day.",
+  "adr": "ADR-2604131500",
+  "status": "completed",
+  "priority": "high",
+  "created_at": "2026-04-13T15:00:00Z",
+  "created_by": "human+judge-synthesis",
+  "relates_to": "wp-hex-standalone-dispatch",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "SpacetimeDB schema + hex-nexus REST foundation",
+      "tier": 0,
+      "description": "Create the SpacetimeDB tables and hex-nexus REST endpoints that all other features depend on. This is the data layer.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check --workspace",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add developer_inbox table to hexflo-coordination WASM module",
+          "layer": "secondary",
+          "description": "New SpacetimeDB table: developer_inbox with columns: id (u64, auto_inc, primary_key), project_id (String), decision_type (String: taste|dependency|architecture|escalation|budget), title (String), description (String), default_action (String), default_reason (String), alternatives (String, JSON array), deadline_at (Timestamp), auto_resolved (bool), resolved_action (Option<String>), resolved_by (Option<String>: human|auto), resolved_at (Option<Timestamp>), created_at (Timestamp). Add reducers: surface_decision(), resolve_decision(id, action, resolved_by), expire_decisions() — auto-resolves past deadline. Mirror pattern from existing agent_inbox table.",
+          "deps": [],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Add delegation_trust table to hexflo-coordination WASM module",
+          "layer": "secondary",
+          "description": "New SpacetimeDB table: delegation_trust with columns: id (u64, auto_inc, primary_key), project_id (String), scope (String, hierarchical like 'adapters/secondary/stripe'), trust_level (String: observe|suggest|act|silent), last_elevated_at (Option<Timestamp>), last_decayed_at (Option<Timestamp>), decay_reason (Option<String>), pinned (bool). Add reducers: set_trust(project_id, scope, level), decay_trust(project_id, scope, reason), pin_trust(project_id, scope). Add init_project_trust(project_id) reducer that creates default rows for all hex scopes (domain, ports, adapters/primary, adapters/secondary, dependencies, deployment) at 'suggest' level.",
+          "deps": [],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "Add briefing_buffer table to hexflo-coordination WASM module",
+          "layer": "secondary",
+          "description": "New SpacetimeDB table: briefing_buffer with columns: id (u64, auto_inc, primary_key), project_id (String), severity (String: nominal|notable|decision|critical), category (String: architecture|swarm|build|inference|anomaly), title (String), body (String), related_task_id (Option<String>), related_agent_id (Option<String>), seen (bool), created_at (Timestamp). Add reducers: log_event(project_id, severity, category, title, body), mark_seen(id), archive_old(age_hours: u64). The workplan executor, swarm coordinator, and architecture analyzer should call log_event() at key state transitions.",
+          "deps": [],
+          "files": ["spacetime-modules/hexflo-coordination/src/lib.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.4",
+          "name": "hex-nexus REST endpoints for briefing, decisions, and trust",
+          "layer": "secondary",
+          "description": "Add axum routes to hex-nexus: GET /api/pulse — returns per-project state (active/decision/blocked/idle) aggregated from swarm_task + developer_inbox + delegation_trust tables. GET /api/briefing?project=X&since=Y — queries briefing_buffer, groups by category, returns structured JSON (not narrative yet). GET /api/briefing/decisions?project=X — returns pending developer_inbox entries. POST /api/decisions/:id — body {action: approve|reject|override, value: Option<String>} — calls resolve_decision reducer. GET /api/trust?project=X — returns all delegation_trust rows for project. PATCH /api/trust — body {project_id, scope, level} — calls set_trust reducer. Wire all routes in hex-nexus/src/main.rs router.",
+          "deps": ["P1.1", "P1.2", "P1.3"],
+          "files": [
+            "hex-nexus/src/main.rs",
+            "hex-nexus/src/api/briefing.rs",
+            "hex-nexus/src/api/trust.rs",
+            "hex-nexus/src/api/decisions.rs",
+            "hex-nexus/src/api/pulse.rs"
+          ],
+          "status": "done",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "hex brief CLI command",
+      "tier": 1,
+      "description": "The narrative briefing command — the developer's primary daily interaction with hex.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "Add Brief command to hex-cli",
+          "layer": "primary",
+          "description": "Add BriefAction enum to hex-cli/src/commands/ with variants: Show { project: Option<String>, since: Option<String>, decisions_only: bool, costs_only: bool }. Wire as 'hex brief' subcommand with clap. Implement by calling GET /api/briefing and GET /api/briefing/decisions from hex-nexus.",
+          "deps": ["P1.4"],
+          "files": ["hex-cli/src/commands/brief.rs", "hex-cli/src/main.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Narrative template renderer",
+          "layer": "primary",
+          "description": "Implement a render_briefing() function that takes the structured JSON from /api/briefing and produces the narrative output shown in the UX spec (docs/design/aios-developer-experience.md section 2.1). Per-project sections with: what happened (completed tasks, health changes), what's happening (active agents, current phase), what needs input (decisions with defaults and deadlines, formatted as numbered items with hex decide commands). Use colored crate for terminal formatting. Include inference spend summary per project. Handle --project filter, --since time filter, --decisions-only mode.",
+          "deps": ["P2.1"],
+          "files": ["hex-cli/src/commands/brief.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.3",
+          "name": "Wire briefing_buffer event logging into existing hex-nexus operations",
+          "layer": "secondary",
+          "description": "Add log_event() calls at key state transitions in hex-nexus: (1) workplan_executor.rs — when a phase starts, completes, or fails. (2) coordination/mod.rs — when a swarm task completes or an agent dies. (3) analysis/ — when architecture health score changes by >3 points. (4) adapters/inference/ — when model escalation occurs (e.g. Ollama → Sonnet). Each event should have appropriate severity: phase complete = notable, task complete = nominal, agent death = critical, health drop = decision.",
+          "deps": ["P1.3"],
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs",
+            "hex-nexus/src/coordination/mod.rs"
+          ],
+          "status": "done",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "hex decide CLI command",
+      "tier": 1,
+      "description": "Async decision resolution — the developer responds to hex's questions.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P3.1",
+          "name": "Add Decide command to hex-cli",
+          "layer": "primary",
+          "description": "Add DecideAction enum with variants: Resolve { project: String, decision_id: u64, action: String (approve|reject|override), value: Option<String> }, ApproveAll, Explain { project: String, decision_id: u64 }. Wire as 'hex decide' subcommand. Implement by calling POST /api/decisions/:id. Print confirmation showing what was resolved and what hex will do next. For 'explain', fetch the decision detail and print the full reasoning, alternatives, and implications.",
+          "deps": ["P1.4"],
+          "files": ["hex-cli/src/commands/decide.rs", "hex-cli/src/main.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.2",
+          "name": "Decision surfacing in workplan executor",
+          "layer": "secondary",
+          "description": "Modify workplan_executor.rs to check delegation_trust before autonomous execution. At each phase gate and before dependency additions: (1) Read trust level for the relevant scope from /api/trust. (2) If trust is 'observe' or 'suggest', call surface_decision() reducer to create a developer_inbox entry with default action, reasoning, and deadline. (3) If trust is 'suggest', continue executing with the default after deadline. If 'observe', block until resolved. (4) If trust is 'act' or 'silent', proceed without surfacing. Log the decision (or auto-proceed) to briefing_buffer.",
+          "deps": ["P1.1", "P1.2", "P1.4"],
+          "files": ["hex-nexus/src/orchestration/workplan_executor.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P3.3",
+          "name": "Decision deadline auto-resolution daemon",
+          "layer": "secondary",
+          "description": "Add a tokio interval task in hex-nexus that runs every 60 seconds. It calls the expire_decisions() SpacetimeDB reducer which: queries developer_inbox for entries past deadline_at that are not yet resolved, marks each as auto_resolved=true, resolved_action=default_action, resolved_by='auto'. Log each auto-resolution to briefing_buffer with severity 'notable'. This ensures hex never blocks indefinitely.",
+          "deps": ["P1.1"],
+          "files": ["hex-nexus/src/main.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "hex trust CLI command",
+      "tier": 1,
+      "description": "Trust level management — the developer controls hex's autonomy.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P4.1",
+          "name": "Add Trust command to hex-cli",
+          "layer": "primary",
+          "description": "Add TrustAction enum with variants: Show { project: Option<String> }, Elevate { project: String, scope: String, level: String }, Reduce { project: String, scope: String, level: String }, Pin { project: String, scope: String }, History { project: Option<String> }. Wire as 'hex trust' subcommand. 'show' renders a tree view of scopes with current trust levels using colored output (green=silent, blue=act, yellow=suggest, red=observe). 'elevate' and 'reduce' call PATCH /api/trust. 'pin' calls the pin_trust reducer to prevent auto-decay.",
+          "deps": ["P1.4"],
+          "files": ["hex-cli/src/commands/trust.rs", "hex-cli/src/main.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P4.2",
+          "name": "Trust initialization on project creation",
+          "layer": "secondary",
+          "description": "When hex-nexus creates a new project (via POST /api/projects or during hex init), call init_project_trust(project_id) reducer to seed all scopes at 'suggest' level. If cross-project trust data exists (for Phase 2 Taste Graph), inherit from average minus one level — but for P1, always seed at 'suggest'.",
+          "deps": ["P1.2"],
+          "files": ["hex-nexus/src/orchestration/mod.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "hex steer CLI command",
+      "tier": 2,
+      "description": "Natural language steering — the developer expresses intent without implementation details.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P5.1",
+          "name": "Add Steer command to hex-cli",
+          "layer": "primary",
+          "description": "Add SteerAction enum with variant: Direct { project: String, directive: String }. Wire as 'hex steer <project> \"<directive>\"' subcommand. Implement by calling POST /api/steer with the raw directive text.",
+          "deps": ["P1.4"],
+          "files": ["hex-cli/src/commands/steer.rs", "hex-cli/src/main.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.2",
+          "name": "Directive classifier in hex-nexus",
+          "layer": "secondary",
+          "description": "Add POST /api/steer endpoint in hex-nexus. Implement classify_directive() that categorizes the natural language input into: priority_change (contains 'first', 'prioritize', 'before', 'demo', 'urgent'), approach_change (contains 'use X instead of Y', 'switch to', 'replace'), constraint_add (contains 'must', 'never', 'always', 'all X should'), quality_preference (contains 'optimize for', 'prefer', 'focus on'). Classification is keyword-based in P1 (inference-based classification deferred to P2). Store the directive in a new steer_directive table for audit trail.",
+          "deps": ["P1.4"],
+          "files": [
+            "hex-nexus/src/api/steer.rs",
+            "hex-nexus/src/orchestration/directive.rs"
+          ],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P5.3",
+          "name": "Directive executor — priority reordering",
+          "layer": "secondary",
+          "description": "For priority_change directives: identify which workplan tasks match the directive target (by keyword match against task name/description), move matching tasks earlier in the phase ordering, reassign agents if needed via HexFlo task_assign. Log the reordering to briefing_buffer. Print confirmation: '✓ <task> prioritized. N agents reassigned.' For other directive types in P1: store the directive as a constraint/note in HexFlo memory and inject it into subsequent agent prompts. Full semantic understanding of approach_change and constraint_add deferred to P2.",
+          "deps": ["P5.2"],
+          "files": ["hex-nexus/src/orchestration/directive.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "name": "Enhanced Pulse statusline",
+      "tier": 2,
+      "description": "Upgrade the existing statusline to show per-project Pulse state.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check -p hex-cli",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P6.1",
+          "name": "Add /api/pulse endpoint to hex-nexus",
+          "layer": "secondary",
+          "description": "GET /api/pulse returns JSON array of {project_id, name, state: active|decision|blocked|idle|complete, agent_count, spend_rate, decision_count}. State is derived from: blocked if any critical inbox entry, decision if any unresolved developer_inbox entries, active if any in-progress swarm tasks, complete if all tasks done, idle otherwise.",
+          "deps": ["P1.1", "P1.3"],
+          "files": ["hex-nexus/src/api/pulse.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P6.2",
+          "name": "Update hex-statusline.cjs to render Pulse format",
+          "layer": "primary",
+          "description": "Modify the existing statusline helper to call /api/pulse and render the per-project Pulse line: symbol + name + state + agent count + spend. Symbols: ● (active, green), ◐ (decision, yellow), ◉ (blocked, red), ○ (idle, dim), ✓ (complete, green). Fall back to existing statusline format if /api/pulse returns error (nexus offline). Keep total width under 80 chars — truncate project names if needed. Show max 4 projects; if more, show count: '...+3 more'.",
+          "deps": ["P6.1"],
+          "files": ["hex-cli/assets/helpers/hex-statusline.cjs"],
+          "status": "done",
+          "agent": "hex-coder"
+        }
+      ]
+    },
+    {
+      "id": "P7",
+      "name": "MCP tools + integration smoke test",
+      "tier": 3,
+      "description": "Expose all new commands as MCP tools and validate end-to-end.",
+      "gate": {
+        "type": "test",
+        "command": "cargo check --workspace",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P7.1",
+          "name": "Wire MCP tools for brief, decide, trust, steer, pulse",
+          "layer": "primary",
+          "description": "Add MCP tools to hex-cli/src/commands/mcp.rs: hex_brief (params: project, since, decisions_only), hex_decide (params: project, decision_id, action, value), hex_trust_show (params: project), hex_trust_set (params: project, scope, level), hex_steer (params: project, directive), hex_pulse (no params). Each tool delegates to the corresponding /api/ endpoint and returns JSON. Update hex-cli/assets/mcp/mcp-tools.json and hex-cli/assets/schemas/mcp-tools.json with tool definitions.",
+          "deps": ["P2.1", "P3.1", "P4.1", "P5.1", "P6.1"],
+          "files": [
+            "hex-cli/src/commands/mcp.rs",
+            "hex-cli/assets/mcp/mcp-tools.json",
+            "hex-cli/assets/schemas/mcp-tools.json"
+          ],
+          "status": "done",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P7.2",
+          "name": "End-to-end smoke test",
+          "layer": "integration",
+          "description": "Integration test that validates the full flow: (1) Start hex-nexus with SpacetimeDB. (2) Create a test project via /api/projects. (3) Verify init_project_trust created default trust rows. (4) Surface a mock decision via surface_decision reducer. (5) Call hex brief and verify the decision appears in output. (6) Call hex decide to resolve it. (7) Verify the decision is marked resolved. (8) Call hex trust elevate to change a scope. (9) Verify the trust change via hex trust show. (10) Call hex steer with a priority directive. (11) Verify the directive is stored. (12) Call hex pulse and verify project state reflects changes. Test should be runnable with `cargo test --test aios_smoke -- --ignored` (ignored by default since it requires SpacetimeDB).",
+          "deps": ["P7.1"],
+          "files": ["hex-cli/tests/aios_smoke.rs"],
+          "status": "done",
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ]
+}

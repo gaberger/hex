@@ -92,6 +92,40 @@ impl CleanupService {
                 }
             }
 
+            // ── Decision auto-resolution (ADR-2604131500 P3.3) ──
+            // Auto-acknowledge unresolved decision notifications older than 4 hours.
+            // This ensures hex never blocks indefinitely on developer decisions.
+            if let Some(sp) = &self.state.state_port {
+                match sp.inbox_query("*", None, true).await {
+                    Ok(notifications) => {
+                        let now = chrono::Utc::now();
+                        let deadline_secs = 4 * 3600; // 4 hours
+                        let mut auto_resolved = 0u32;
+                        for notif in &notifications {
+                            if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&notif.created_at) {
+                                let age = (now - created.with_timezone(&chrono::Utc)).num_seconds();
+                                if age > deadline_secs {
+                                    if let Err(e) = sp.inbox_acknowledge(notif.id, "auto-expiry").await {
+                                        debug!("Decision auto-resolve failed for {}: {}", notif.id, e);
+                                    } else {
+                                        auto_resolved += 1;
+                                    }
+                                }
+                            }
+                        }
+                        if auto_resolved > 0 {
+                            info!(
+                                "Decision auto-resolution: {} decision(s) past 4h deadline auto-resolved",
+                                auto_resolved
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Decision auto-resolution query failed: {}", e);
+                    }
+                }
+            }
+
             // ── Idle agent escalation (ADR-060 step 9) ──────
             if let Some(sp) = &self.state.state_port {
                 escalate_idle_agents(sp.as_ref(), &mut last_escalation, &mut escalation_failures).await;

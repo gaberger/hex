@@ -330,6 +330,53 @@ impl WorkplanExecutor {
         format!("workplan:{}", id)
     }
 
+    /// ADR-2604131500 P2.3: Log a briefing event for the developer's morning briefing.
+    /// Events are stored in HexFlo memory with key `briefing:{timestamp}` and
+    /// queried by the GET /api/briefing endpoint.
+    async fn log_briefing_event(
+        port: &dyn IStatePort,
+        severity: &str,
+        category: &str,
+        title: &str,
+        body: &str,
+    ) {
+        let ts = chrono::Utc::now().to_rfc3339();
+        let key = format!("briefing:{}", ts);
+        let value = serde_json::json!({
+            "severity": severity,
+            "category": category,
+            "title": title,
+            "body": body,
+            "created_at": ts,
+        })
+        .to_string();
+        if let Err(e) = port.hexflo_memory_store(&key, &value, "global").await {
+            tracing::debug!("Failed to log briefing event: {}", e);
+        }
+    }
+
+    /// ADR-2604131500 P3.2: Check delegation trust for a scope.
+    /// Returns the trust level string ("observe", "suggest", "act", "silent").
+    /// Defaults to "suggest" if no trust entry exists.
+    async fn check_trust_level(
+        port: &dyn IStatePort,
+        project_id: &str,
+        scope: &str,
+    ) -> String {
+        // Try exact scope first, then fall back to parent
+        for s in &[scope, "adapters/secondary", "adapters/primary"] {
+            let key = format!("trust:{}:{}", project_id, s);
+            if let Ok(Some(val)) = port.hexflo_memory_retrieve(&key).await {
+                if let Ok(entry) = serde_json::from_str::<serde_json::Value>(&val) {
+                    if let Some(level) = entry["level"].as_str() {
+                        return level.to_string();
+                    }
+                }
+            }
+        }
+        "suggest".to_string()
+    }
+
     /// Persist an ExecutionState via the state port.
     async fn store_execution(
         port: &dyn IStatePort,
@@ -537,6 +584,53 @@ impl WorkplanExecutor {
                 "Phase START"
             );
 
+            // ADR-2604131500 P2.3: Log phase start to briefing buffer
+            Self::log_briefing_event(
+                state_port.as_ref(),
+                "nominal",
+                "swarm",
+                &format!("Phase started: {}", phase.name),
+                &format!("{} tasks in phase {}", phase.tasks.len(), phase.id),
+            )
+            .await;
+
+            // ADR-2604131500 P3.2: Check delegation trust before phase execution.
+            // Determine scope from the first task's layer (or "deployment" as fallback).
+            let phase_scope = phase
+                .tasks
+                .first()
+                .and_then(|t| t.layer.as_deref())
+                .unwrap_or("deployment");
+            let trust_level = Self::check_trust_level(
+                state_port.as_ref(),
+                &workplan.id,
+                phase_scope,
+            )
+            .await;
+            if trust_level == "observe" {
+                // Block: surface decision and wait — for P1, log and continue
+                // (full blocking deferred to P2 when we have async decision polling)
+                tracing::info!(
+                    execution_id = %execution_id,
+                    phase = %phase.name,
+                    scope = %phase_scope,
+                    trust = "observe",
+                    "Trust level is 'observe' — surfacing decision (non-blocking in P1)"
+                );
+                Self::log_briefing_event(
+                    state_port.as_ref(),
+                    "decision",
+                    "architecture",
+                    &format!("Awaiting approval: phase {}", phase.name),
+                    &format!(
+                        "Trust level for '{}' is 'observe'. Phase will proceed with default action. \
+                         Use `hex trust elevate {} {} act` to allow autonomous execution.",
+                        phase_scope, workplan.id, phase_scope
+                    ),
+                )
+                .await;
+            }
+
             // Update current phase
             Self::update_phase(state_port.as_ref(), &execution_id, &phase.name).await.ok();
 
@@ -588,9 +682,32 @@ impl WorkplanExecutor {
                     }
 
                     if result.status == "failed" {
+                        // ADR-2604131500 P2.3: Log phase failure
+                        Self::log_briefing_event(
+                            state_port.as_ref(),
+                            "critical",
+                            "swarm",
+                            &format!("Phase failed: {}", phase.name),
+                            &result.errors.join("; "),
+                        )
+                        .await;
                         Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Failed, Some(&result.errors)).await.ok();
                         return;
                     }
+
+                    // ADR-2604131500 P2.3: Log phase completion
+                    Self::log_briefing_event(
+                        state_port.as_ref(),
+                        "notable",
+                        "swarm",
+                        &format!("Phase completed: {}", phase.name),
+                        &format!(
+                            "{} agents, {} errors",
+                            result.agent_ids.len(),
+                            result.errors.len()
+                        ),
+                    )
+                    .await;
 
                     // ADR-046: Execute phase gate if present
                     if let Some(ref gate) = phase.gate {
@@ -655,6 +772,17 @@ impl WorkplanExecutor {
         }
 
         Self::mark_status(state_port.as_ref(), &execution_id, ExecutionStatus::Completed, None).await.ok();
+
+        // ADR-2604131500 P2.3: Log workplan completion to briefing buffer
+        Self::log_briefing_event(
+            state_port.as_ref(),
+            "notable",
+            "swarm",
+            &format!("Workplan completed: {}", workplan.feature.as_deref().unwrap_or(&workplan.id)),
+            &format!("All {} phases completed successfully", workplan.phases.len()),
+        )
+        .await;
+
         // P5.2: Store full execution record in memory ledger (ADR-2604010000)
         let exec_key = format!("workplan:{}:execution:{}", workplan.id, execution_id);
         let exec_val = serde_json::json!({

@@ -161,8 +161,8 @@ const agentIdShort = agentId ? agentId.slice(0, 8) : null;
 
 // HexFlo live status — fetch from hex-nexus REST API if daemon is running
 let hexfloSwarms = 0, hexfloTasks = 0, hexfloTasksDone = 0, hexfloAgents = 0;
+let pulseProjects = [];
 if (hubRunning) {
-  const http = require('http');
   const fetchSync = (urlPath) => safe(() => {
     const result = execFileSync('node', ['-e', `
       const http = require('http');
@@ -185,6 +185,12 @@ if (hubRunning) {
       hexfloTasks += tasks.length;
       hexfloTasksDone += tasks.filter(t => t.status === 'completed').length;
     }
+  }
+
+  // Pulse — per-project state from /api/pulse (ADR-2604131500 P6.2)
+  const pulseData = fetchSync('/api/pulse');
+  if (Array.isArray(pulseData)) {
+    pulseProjects = pulseData;
   }
 }
 
@@ -231,22 +237,49 @@ if (activeAdr) {
   parts.push(`${P.adr}◆${label}`);
 }
 
-// HexFlo swarm — ●hexflo 2⚡ [3/5]
-const agt = activeAgents || hexfloAgents;
-const tTotal = totalTasks || hexfloTasks;
-const tDone = completedTasks || hexfloTasksDone;
-const nSwarms = hexfloSwarms;
+// Pulse — per-project state (ADR-2604131500 P6.2)
+// Symbols: ● active (green), ◐ decision (yellow), ◉ blocked (red), ○ idle (dim), ✓ complete (green)
+const pulseSymbol = (state) => {
+  switch (state) {
+    case 'active':   return `${P.active}●`;
+    case 'decision': return `${P.idle}◐`;
+    case 'blocked':  return `${P.scoreBd}◉`;
+    case 'complete': return `${P.active}✓`;
+    default:         return `${P.dim}○`;
+  }
+};
 
-if (agt > 0 || nSwarms > 0) {
-  const agentCounts = agt > 0 ? ` ${agt}⚡` : '';
-  const swarmCount = nSwarms > 1 ? ` ${nSwarms}▣` : '';
-  const tasks = tTotal ? ` [${tDone}/${tTotal}]` : '';
-  parts.push(`${P.active}●hexflo${swarmCount}${agentCounts}${P.branch}${tasks}`);
-} else if (swarmShow) {
-  const idleTag = idleAgents > 0 ? ` ${idleAgents}💤` : '';
-  parts.push(`${P.idle}●hexflo${idleTag}`);
+if (pulseProjects.length > 0) {
+  const maxShow = 4;
+  const shown = pulseProjects.slice(0, maxShow);
+  const pulseParts = shown.map(p => {
+    const name = (p.name || p.project_id || '?').length > 12
+      ? (p.name || p.project_id || '?').slice(0, 11) + '…'
+      : (p.name || p.project_id || '?');
+    const agents = p.agent_count > 0 ? `${p.agent_count}⚡` : '';
+    const decs = p.decision_count > 0 ? `${P.idle}${p.decision_count}?` : '';
+    return `${pulseSymbol(p.state)}${name}${agents ? ' ' + agents : ''}${decs ? ' ' + decs : ''}`;
+  });
+  const extra = pulseProjects.length > maxShow ? ` ${P.dim}+${pulseProjects.length - maxShow}` : '';
+  parts.push(pulseParts.join(' ') + extra);
 } else {
-  parts.push(`${P.dim}○hexflo`);
+  // Fallback to legacy HexFlo swarm display
+  const agt = activeAgents || hexfloAgents;
+  const tTotal = totalTasks || hexfloTasks;
+  const tDone = completedTasks || hexfloTasksDone;
+  const nSwarms = hexfloSwarms;
+
+  if (agt > 0 || nSwarms > 0) {
+    const agentCounts = agt > 0 ? ` ${agt}⚡` : '';
+    const swarmCount = nSwarms > 1 ? ` ${nSwarms}▣` : '';
+    const tasks = tTotal ? ` [${tDone}/${tTotal}]` : '';
+    parts.push(`${P.active}●hexflo${swarmCount}${agentCounts}${P.branch}${tasks}`);
+  } else if (swarmShow) {
+    const idleTag = idleAgents > 0 ? ` ${idleAgents}💤` : '';
+    parts.push(`${P.idle}●hexflo${idleTag}`);
+  } else {
+    parts.push(`${P.dim}○hexflo`);
+  }
 }
 
 // Services — README format: ●db │ ◉localhost:3456 │ ◉mcp

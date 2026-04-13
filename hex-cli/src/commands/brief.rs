@@ -38,23 +38,55 @@ struct BriefingResponse {
 #[derive(Deserialize, Debug)]
 struct ProjectBrief {
     #[serde(default)]
+    project_id: String,
+    #[serde(default)]
     name: String,
     #[serde(default)]
-    phase: String,
+    events: Vec<BriefEvent>,
     #[serde(default)]
-    phase_step: u32,
+    pending_decisions: Vec<BriefDecision>,
     #[serde(default)]
-    phase_total: u32,
+    summary: BriefSummary,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct BriefSummary {
     #[serde(default)]
-    summary: String,
+    agent_count: u32,
     #[serde(default)]
-    health_score: u32,
+    event_count: u32,
     #[serde(default)]
-    spend: String,
+    decision_count: u32,
     #[serde(default)]
-    active_agents: u32,
+    health: u32,
     #[serde(default)]
-    pending_decisions: u32,
+    spend: f64,
+}
+
+#[derive(Deserialize, Debug)]
+struct BriefEvent {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    agent_id: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct BriefDecision {
+    #[serde(default)]
+    id: serde_json::Value,
+    #[serde(default)]
+    priority: u32,
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    payload: String,
+    #[serde(default)]
+    created_at: String,
 }
 
 pub async fn run(action: BriefAction) -> anyhow::Result<()> {
@@ -101,7 +133,7 @@ async fn show_briefing(
     match nexus.get(&path).await {
         Ok(value) => {
             let briefing: BriefingResponse = serde_json::from_value(value)?;
-            render_briefing(&briefing);
+            render_briefing(&briefing, decisions);
         }
         Err(_) => {
             eprintln!(
@@ -114,19 +146,19 @@ async fn show_briefing(
     Ok(())
 }
 
-fn render_briefing(briefing: &BriefingResponse) {
+fn render_briefing(briefing: &BriefingResponse, decisions_only: bool) {
     let date = if briefing.generated_at.is_empty() {
-        chrono::Local::now().format("%Y-%m-%d").to_string()
+        chrono::Local::now().format("%Y-%m-%d %H:%M").to_string()
     } else {
-        briefing.generated_at.clone()
+        briefing.generated_at.chars().take(16).collect::<String>()
     };
 
-    let bar = "\u{2550}".repeat(55);
+    let bar = "\u{2550}".repeat(58);
     println!("{}", bar.dimmed());
     println!(
         "  {}{}",
         "hex briefing".bold(),
-        format!("{:>43}", date).dimmed()
+        format!("{:>46}", date).dimmed()
     );
     println!("{}", bar.dimmed());
 
@@ -136,36 +168,134 @@ fn render_briefing(briefing: &BriefingResponse) {
         return;
     }
 
-    for proj in &briefing.projects {
-        println!();
-        let phase_info = if proj.phase_total > 0 {
-            format!(
-                " \u{2014} Phase: {} ({} of {})",
-                proj.phase.to_uppercase(),
-                proj.phase_step,
-                proj.phase_total
-            )
-        } else if !proj.phase.is_empty() {
-            format!(" \u{2014} Phase: {}", proj.phase.to_uppercase())
-        } else {
-            String::new()
-        };
-        println!("  {}{}", proj.name.bold().cyan(), phase_info);
-        println!("  {}", "\u{2500}".repeat(53).dimmed());
+    let mut total_decisions = 0usize;
 
-        if !proj.summary.is_empty() {
-            println!("  {}", proj.summary);
+    for proj in &briefing.projects {
+        let proj_name = if proj.name.is_empty() {
+            &proj.project_id
+        } else {
+            &proj.name
+        };
+
+        println!();
+        println!("  {}", proj_name.bold().cyan());
+        println!("  {}", "\u{2500}".repeat(56).dimmed());
+
+        // ── What happened (completed events) ──
+        if !decisions_only {
+            let completed: Vec<&BriefEvent> =
+                proj.events.iter().filter(|e| e.status == "completed").collect();
+            let in_progress: Vec<&BriefEvent> =
+                proj.events.iter().filter(|e| e.status == "in_progress").collect();
+
+            if !completed.is_empty() {
+                println!("  {} {}", "\u{2714}".green(), "What happened:".bold());
+                for ev in &completed {
+                    println!("    {} {}", "\u{2022}".dimmed(), ev.title);
+                }
+            }
+
+            // ── What's happening (active tasks) ──
+            if !in_progress.is_empty() {
+                println!(
+                    "  {} {} ({} agent{})",
+                    "\u{25B6}".blue(),
+                    "What's happening:".bold(),
+                    proj.summary.agent_count,
+                    if proj.summary.agent_count == 1 { "" } else { "s" }
+                );
+                for ev in &in_progress {
+                    let agent_tag = if ev.agent_id.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", format!("[{}]", &ev.agent_id[..8.min(ev.agent_id.len())]).dimmed())
+                    };
+                    println!("    {} {}{}", "\u{25CF}".blue(), ev.title, agent_tag);
+                }
+            }
+
+            if completed.is_empty() && in_progress.is_empty() {
+                println!("  {}", "No recent activity.".dimmed());
+            }
         }
 
-        println!(
-            "  Health: {} | Spend: {} | Agents: {}",
-            format!("{}/100", proj.health_score).green(),
-            proj.spend.yellow(),
-            proj.active_agents
-        );
-        println!();
-        println!("  Pending decisions: {}", proj.pending_decisions);
+        // ── What needs input (pending decisions) ──
+        if !proj.pending_decisions.is_empty() {
+            total_decisions += proj.pending_decisions.len();
+            println!(
+                "  {} {} ({})",
+                "\u{26A0}".yellow(),
+                "Needs your input:".bold().yellow(),
+                proj.pending_decisions.len()
+            );
+            for (i, dec) in proj.pending_decisions.iter().enumerate() {
+                let priority_tag = match dec.priority {
+                    2 => " CRITICAL".red().bold().to_string(),
+                    1 => " important".yellow().to_string(),
+                    _ => String::new(),
+                };
+                let payload_preview = if dec.payload.len() > 60 {
+                    format!("{}...", &dec.payload[..57])
+                } else {
+                    dec.payload.clone()
+                };
+                println!(
+                    "    {}. {}{} {}",
+                    i + 1,
+                    payload_preview,
+                    priority_tag,
+                    format!("[{}]", dec.kind).dimmed()
+                );
+                println!(
+                    "       {} hex decide {} {} approve",
+                    "\u{2192}".dimmed(),
+                    proj_name,
+                    dec.id
+                );
+            }
+        }
+
+        // ── Summary line ──
+        if !decisions_only {
+            let health_str = if proj.summary.health > 0 {
+                let h = proj.summary.health;
+                let colored = if h >= 80 {
+                    format!("{}/100", h).green().to_string()
+                } else if h >= 50 {
+                    format!("{}/100", h).yellow().to_string()
+                } else {
+                    format!("{}/100", h).red().to_string()
+                };
+                format!("Health: {}", colored)
+            } else {
+                String::new()
+            };
+
+            let spend_str = if proj.summary.spend > 0.0 {
+                format!(" | Spend: {}", format!("${:.2}", proj.summary.spend).yellow())
+            } else {
+                String::new()
+            };
+
+            if !health_str.is_empty() || !spend_str.is_empty() {
+                println!("  {}{}", health_str, spend_str);
+            }
+        }
     }
 
     println!("{}", bar.dimmed());
+
+    // ── Footer ──
+    if total_decisions > 0 {
+        println!(
+            "  {} {} pending decision{}. Run {} to view.",
+            "\u{25CF}".yellow(),
+            total_decisions,
+            if total_decisions == 1 { "" } else { "s" },
+            "hex brief --decisions".bold()
+        );
+    } else {
+        println!("  {} All clear — no decisions needed.", "\u{2714}".green());
+    }
+    println!();
 }
