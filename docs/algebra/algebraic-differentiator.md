@@ -309,6 +309,113 @@ Strip any one layer and you lose a class of guarantee that the remaining layers 
 
 ---
 
+## Verification Audit (2026-04-12)
+
+Each algebraic claim was audited against the hex codebase. The verdicts below use three levels: **ENFORCED** (invariant holds by construction — type system, serialization, or runtime gate makes violation impossible), **IMPLEMENTED** (mechanism exists and works under test, but no exhaustive formal proof covers all interleavings/states), and **DESIGNED** (specified in ADR or port trait, but the enforcement mechanism is not yet built).
+
+### Claim 1: Sigma-algebra — Trait Boundaries as Effect Isolation
+
+**Verdict: ENFORCED (partial)**
+
+| Aspect | Status | Evidence |
+|:---|:---|:---|
+| Port traits exist with typed signatures | ENFORCED | 10 traits in `hex-core/src/ports/`, 43 operations |
+| Use cases receive ports via `dyn Trait` injection | ENFORCED | Composition root in `hex-nexus/src/composition/mod.rs` wires `Arc<dyn IStatePort>`, `Arc<dyn IInferencePort>` |
+| `rustc` prevents calling un-injected ports | ENFORCED | A function accepting `&dyn IInferencePort` cannot call `fs.write_file()` — compile error |
+| `hex analyze` checks import-edge boundaries | ENFORCED | Tree-sitter scan flags files importing modules from wrong layers |
+| Operation-level signature checking (beyond imports) | DESIGNED | Sigma-algebra specifies it; `hex analyze` doesn't implement it yet. A use case that imports `IInferencePort` but calls ops from another port via indirect path is not caught by import analysis. |
+| Composition root is a single wiring location | ENFORCED | `hex-nexus/src/composition/mod.rs` — the only file that sees all adapters simultaneously |
+
+**Gap:** `hex analyze` validates the import graph, not the operation graph. The Sigma-algebra defines a strictly stronger check. A domain file that imports a port (violation) is caught, but a use case that receives a port and passes it to code outside its layer via closure or channel is not. Rust's type system catches most of these at compile time, but the architecture validator doesn't have this second line of defense yet.
+
+### Claim 2: Petri Net — Supervisor Phase Gates
+
+**Verdict: ENFORCED (not formally encoded)**
+
+| Aspect | Status | Evidence |
+|:---|:---|:---|
+| 7-phase sequential pipeline | ENFORCED | `hex-cli/src/pipeline/supervisor.rs` — phases run sequentially |
+| BLOCKING gates between phases | ENFORCED | Lines ~1940-1953: `gate.blocking` check halts pipeline on `FAIL` |
+| Tier ordering within Code phase | ENFORCED | `run_tier()` at line ~1227 — tier-0 completes before tier-1 dispatches |
+| Formal Petri net encoding | DESIGNED | ADR-2604111229 P3 — no `lifecycle-net.md` or `.tla` file exists |
+| Machine-checkable reachability proof | DESIGNED | No model checker runs against the lifecycle |
+
+**Gap:** The ordering guarantees work — they're tested and used in production workplan execution. But the 3,646-line supervisor file encodes them as imperative Rust control flow (`if/else`, `match`, loops). A refactor could accidentally break a tier barrier, and only a test that exercises that specific phase sequence would catch it. A Petri net encoding would make the ordering a checkable structural property independent of the code.
+
+### Claim 3: Pi-calculus — HexFlo CAS + Heartbeat + Reclamation
+
+**Verdict: IMPLEMENTED (not formally verified)**
+
+| Aspect | Status | Evidence |
+|:---|:---|:---|
+| CAS task claims | ENFORCED | `spacetime-modules/hexflo-coordination/src/lib.rs` — `task_assign` reducer checks version before assigning. SpacetimeDB single-writer serialization guarantees exactly-one-winner. |
+| Heartbeat timeout (45s stale, 120s dead) | IMPLEMENTED | `hex-nexus/src/coordination/cleanup.rs` — runs detection loop, marks agents stale/dead |
+| Dead agent task reclamation | IMPLEMENTED | Cleanup resets orphaned tasks to `pending` status |
+| Deadlock freedom | UNPROVEN | Protocol design avoids circular waits (agents don't wait on each other — they poll a shared queue). Believed safe, but no model checker has verified all interleavings. |
+| No-task-loss under crash | IMPLEMENTED | Heartbeat timeout + reclamation handles the common case. Edge case: agent A crashes, recovers before timeout, emits `task_complete` for a task that was already reclaimed and reassigned to B. The version field on `task_assign` mitigates this (A's complete would fail version check), but this specific scenario has not been formally proven safe. |
+| TLA+ specification | NOT STARTED | ADR-2604111229 P4 — zero `.tla` files in the repo |
+
+**Gap:** The CAS is solid (backed by SpacetimeDB serialization). The heartbeat/reclamation works in practice. But "works in practice" and "proven correct for all interleavings" are different claims. The crash-recover-race (agent dies, task reclaimed, agent recovers) is the scenario most likely to harbor a subtle bug, and it's exactly what TLA+ model checking would exhaust.
+
+### Claim 4: Kleisli — Classify-Dispatch Pipeline
+
+**Verdict: ENFORCED**
+
+| Aspect | Status | Evidence |
+|:---|:---|:---|
+| `classify_work_intent` is pure | ENFORCED | `hex-cli/src/commands/hook.rs` line ~2482 — deterministic function, no side effects, tested with fixed inputs |
+| Pipeline uses `?` (monadic bind) for composition | ENFORCED | Downstream dispatch is `Result`-returning functions chained with `?` |
+| T1 short-circuits before dispatch | ENFORCED | T1 prompts (questions, trivial edits) return early, never reach workplan machinery |
+| Full pipeline expressed as explicit Kleisli arrows | PARTIAL | The classify step is clean. The downstream steps (`dispatch_tier`, `heal_if_needed`, `persist_action`) exist but are stitched inline rather than composed as named combinators. |
+
+**Gap:** Minimal. This is the most honest layer — the pure function exists, it works, and the short-circuit behavior is structural. The only refinement would be extracting the downstream steps into named Kleisli arrows for readability, which is a code quality improvement, not a correctness concern.
+
+### Claim 5: Effect Rows — Capability Grants as Confinement
+
+**Verdict: DESIGNED (partially implemented)**
+
+| Aspect | Status | Evidence |
+|:---|:---|:---|
+| Secret grant table with TTL | IMPLEMENTED | `spacetime-modules/secret-grant/src/lib.rs` — `SecretGrant` table with `agent_id`, `secret_key`, `expires_at`, `claimed` field |
+| Grant/revoke lifecycle | IMPLEMENTED | `hex secrets grant` / `hex secrets revoke` CLI commands |
+| One-shot claim semantics | SPECIFIED, NOT ENFORCED | Port trait (`ISecretPort.claim_secrets`) specifies `AlreadyClaimed` error. SpacetimeDB reducer uses upsert — a grant can be reset and re-claimed. The linear consumption invariant is in the algebra, not the adapter. |
+| Enforcement port gates operations | IMPLEMENTED | `IEnforcementPort.check()` returns `Allow`/`Warn`/`Block` before effectful ops |
+| PathTraversal protection | ENFORCED | `IFileSystemPort` — `safePath()` rejects escapes from sandbox root |
+| Compile-time effect row types | NOT STARTED | ADR-2604111229 P5 — no `Capability` marker trait or row-type machinery exists |
+| Agent capability checked before dispatch | DESIGNED | Port trait states the precondition; no code verifies grants match task requirements pre-dispatch |
+
+**Gap:** This is the weakest layer. The runtime pieces exist (grants, TTLs, enforcement port, path traversal protection), but they're disconnected — the enforcement port doesn't check grant-vs-task alignment, and the one-shot semantics aren't enforced by the adapter. The type-level effect rows (P5) would close this gap by making capability subsumption a compile-time check, but that's the highest-effort phase in the ADR.
+
+### Claim 6: TLA+ Specifications
+
+**Verdict: NOT STARTED**
+
+| Aspect | Status | Evidence |
+|:---|:---|:---|
+| `.tla` files in repo | NONE | `find . -name "*.tla"` returns zero results |
+| TLA+ model checker in CI | NONE | No CI job references TLA+ or TLC |
+| Formal deadlock-freedom proof | NONE | Claimed as planned in ADR-2604111229 P4 |
+| Formal lifecycle reachability proof | NONE | Claimed as planned in ADR-2604111229 P3 |
+
+**Gap:** Complete. TLA+ appears only in the ADR as a tool recommendation and in this document as a target. No formal specification work has begun.
+
+### Summary Matrix
+
+| Layer | Mechanism | Enforced by | Formally verified | Formal spec exists |
+|:---|:---|:---|:---|:---|
+| **Sigma-algebra** | Rust traits + `hex analyze` imports | `rustc` (compile) + tree-sitter (analysis) | Partially (type system is the proof for injected ports) | Yes — `ports-signature.md` |
+| **Kleisli pipeline** | Pure function + `?` composition | Rust type system | Yes (pure function — same input, same output) | Inline in this doc |
+| **HexFlo CAS** | SpacetimeDB version-checked reducer | SpacetimeDB single-writer | No formal proof | No |
+| **Heartbeat/reclamation** | Cleanup loop in hex-nexus | Runtime timer | No formal proof | No |
+| **Phase gates** | Supervisor BLOCKING checks | Runtime control flow | No formal proof | No |
+| **Tier ordering** | `run_tier()` sequential dispatch | Runtime control flow | No formal proof | No |
+| **Capability grants** | Secret table + enforcement port | Runtime `if` check | No | No |
+| **Path confinement** | `safePath()` in FileSystemAdapter | Runtime validation | No | No |
+
+**Bottom line:** Two layers are enforced by construction (Sigma-algebra via Rust types, Kleisli via pure functions). Four layers are implemented and working but rely on runtime enforcement without formal proofs. One layer (effect rows) is designed but not built. The formal verification tooling (TLA+, Petri nets) that would upgrade the runtime-enforced layers to provably-correct has not been started.
+
+---
+
 ## Maturity Ladder
 
 Where hex stands today, and what comes next:
