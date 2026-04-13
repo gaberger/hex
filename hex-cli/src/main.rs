@@ -46,6 +46,11 @@ use commands::{
     swarm::SwarmAction,
     task::TaskAction,
     worktree::WorktreeAction,
+    decide::DecideAction,
+    pause::PauseAction,
+    taste::TasteAction,
+    trust::TrustAction,
+    steer::SteerAction,
 };
 
 #[derive(Parser)]
@@ -287,6 +292,52 @@ enum Commands {
         #[arg(long, short)]
         yes: bool,
     },
+    /// Resolve, approve, or explain pending project decisions (ADR-2604131500)
+    Decide {
+        #[command(subcommand)]
+        action: DecideAction,
+    },
+    /// Structured project intake — create, init, register, seed trust (ADR-2604131500)
+    New {
+        /// Target directory path
+        path: String,
+        /// Project name (defaults to directory name)
+        #[arg(long)]
+        name: Option<String>,
+        /// Project description
+        #[arg(long)]
+        description: Option<String>,
+        /// Copy taste preferences from an existing project
+        #[arg(long)]
+        taste_from: Option<String>,
+    },
+    /// Emergency override — send priority-2 directive to all agents (ADR-2604131500)
+    Override {
+        /// Project name
+        project: String,
+        /// Override instruction (natural language)
+        instruction: String,
+    },
+    /// Emergency pause/resume the active workplan (ADR-2604131500)
+    Pause {
+        #[command(subcommand)]
+        action: PauseAction,
+    },
+    /// Manage developer taste preferences (ADR-2604131500)
+    Taste {
+        #[command(subcommand)]
+        action: TasteAction,
+    },
+    /// Manage delegation trust levels per scope (ADR-2604131500)
+    Trust {
+        #[command(subcommand)]
+        action: TrustAction,
+    },
+    /// Send natural-language directives to a project (ADR-2604131500)
+    Steer {
+        #[command(subcommand)]
+        action: SteerAction,
+    },
 }
 
 #[tokio::main]
@@ -362,5 +413,21 @@ async fn main() -> anyhow::Result<()> {
         Commands::SelfUpdate { check, version, yes } => {
             commands::update::run(check, version, yes).await
         }
+        Commands::Decide { action } => commands::decide::run(action).await,
+        Commands::New { path, name, description, taste_from } => {
+            commands::new::run(&path, name, description, taste_from).await
+        }
+        Commands::Override { project, instruction } => {
+            commands::override_cmd::run(&project, &instruction).await
+        }
+        Commands::Pause { action } => {
+            match action {
+                PauseAction::Pause => commands::pause::run_pause().await,
+                PauseAction::Resume => commands::pause::run_resume().await,
+            }
+        }
+        Commands::Taste { action } => commands::taste::run(action).await,
+        Commands::Trust { action } => commands::trust::run(action).await,
+        Commands::Steer { action } => commands::steer::run(action).await,
     }
 }
