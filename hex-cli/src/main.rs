@@ -21,8 +21,10 @@ use commands::{
     adr::AdrAction,
     agent::AgentAction,
     brain::BrainAction,
+    brief::BriefAction,
     chat::ChatArgs,
     context::ContextAction,
+    decide::DecideAction,
     spec::SpecAction,
     analyze,
     dev::DevAction,
@@ -42,8 +44,10 @@ use commands::{
     skill::SkillAction,
     stdb::StdbAction,
     status,
+    steer::SteerAction,
     swarm::SwarmAction,
     task::TaskAction,
+    trust::TrustAction,
 };
 
 #[derive(Parser)]
@@ -278,6 +282,26 @@ enum Commands {
         #[arg(long, short)]
         yes: bool,
     },
+    /// Project briefing — what happened, what needs attention (ADR-2604131500)
+    Brief {
+        #[command(subcommand)]
+        action: BriefAction,
+    },
+    /// Resolve pending decisions (ADR-2604131500)
+    Decide {
+        #[command(subcommand)]
+        action: DecideAction,
+    },
+    /// Manage delegation trust levels (ADR-2604131500)
+    Trust {
+        #[command(subcommand)]
+        action: TrustAction,
+    },
+    /// Steer project priorities and approach (ADR-2604131500)
+    Steer {
+        #[command(subcommand)]
+        action: SteerAction,
+    },
 }
 
 #[tokio::main]
@@ -351,5 +375,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::SelfUpdate { check, version, yes } => {
             commands::update::run(check, version, yes).await
         }
+        Commands::Brief { action } => commands::brief::run(action).await,
+        Commands::Decide { action } => commands::decide::run(action).await,
+        Commands::Trust { action } => commands::trust::run(action).await,
+        Commands::Steer { action } => commands::steer::run(action).await,
     }
 }
