@@ -1751,6 +1751,52 @@ fn update_status_json(adr_id: &str, adr_title: &str) {
 /// Reads JSON-RPC messages from stdin (one per line), dispatches them, and
 /// writes responses to stdout. Tools delegate to hex-nexus via NexusClient.
 pub async fn run_mcp_server() -> anyhow::Result<()> {
+    // ── Auto-generate session ID when CLAUDE_SESSION_ID is unset (standalone mode) ──
+    // Deterministic: hostname + PID + epoch seconds → hex-mcp-<hash-prefix>
+    if std::env::var("CLAUDE_SESSION_ID").is_err() {
+        let hostname = gethostname::gethostname().to_string_lossy().to_string();
+        let pid = std::process::id();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let seed = format!("{}-{}-{}", hostname, pid, ts);
+        // Simple hash: take first 12 hex chars of a basic hash for brevity
+        let hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            seed.hash(&mut hasher);
+            format!("{:016x}", hasher.finish())
+        };
+        let session_id = format!("hex-mcp-{}", &hash[..12]);
+        std::env::set_var("CLAUDE_SESSION_ID", &session_id);
+        eprintln!("[hex] Auto-generated session ID: {}", session_id);
+
+        // Fire session-start hook so downstream state (agent registration, heartbeats) initialises
+        let project_dir = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let hook_result = std::process::Command::new("hex")
+            .args(["hook", "session-start"])
+            .env("CLAUDE_SESSION_ID", &session_id)
+            .env("HEX_PROJECT_ROOT", &project_dir)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .output();
+        match hook_result {
+            Ok(output) if output.status.success() => {
+                eprintln!("[hex] session-start hook completed");
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("[hex] session-start hook failed (non-fatal): {}", stderr.trim());
+            }
+            Err(e) => {
+                eprintln!("[hex] session-start hook skipped (non-fatal): {}", e);
+            }
+        }
+    }
+
     let nexus = NexusClient::from_env();
     let tool_list = build_tool_list();
     let tool_count = tool_list["tools"].as_array().map(|a| a.len()).unwrap_or(0);
