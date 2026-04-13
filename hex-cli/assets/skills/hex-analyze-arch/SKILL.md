@@ -40,11 +40,11 @@ Display the full report to the user.
 
 Use the action item extractor from the domain layer to convert findings into structured tasks:
 
-```typescript
-import { buildActionItemReport, formatActionItems } from 'src/core/domain/action-items.ts';
+Use the domain layer's action item extractor to convert findings into structured tasks:
 
-const actionReport = buildActionItemReport(archResult);
-const formatted = formatActionItems(actionReport);
+```
+actionReport = buildActionItemReport(archResult)
+formatted = formatActionItems(actionReport)
 ```
 
 Display the ACTION ITEMS report showing:
@@ -120,7 +120,7 @@ Rules:
 - domain/ may only import from domain/
 - usecases/ may only import from domain/ and ports/
 
-After fixing, run: bun test
+After fixing, run the project's test suite.
 ```
 
 **Circular Dependency**:
@@ -132,7 +132,7 @@ Strategies (pick the simplest):
 2. Introduce a port interface to break the direct dependency
 3. Use event-based decoupling if the cycle is behavioral
 
-After fixing, run: bun test
+After fixing, run the project's test suite.
 ```
 
 **Domain Leak** (domain imports non-domain):
@@ -141,7 +141,7 @@ Fix domain purity violation in {file}.
 Domain layer must have zero external dependencies.
 Move the imported types to domain/ or inject via port interface.
 
-After fixing, run: bun test
+After fixing, run the project's test suite.
 ```
 
 ### 6. Monitor Fix Results
@@ -203,6 +203,6 @@ The analyzer excludes these by default:
 
 - Full health report displayed inline
 - Action items report displayed inline
-- Ruflo tasks created for critical/high issues
+- HexFlo tasks created for critical/high issues
 - Fix agents spawned for violations (unless reportOnly)
 - Report written to `docs/analysis/arch-report.md`

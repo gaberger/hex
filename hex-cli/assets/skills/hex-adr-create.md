@@ -52,7 +52,7 @@ Artifact: <name>
 │   └── ...
 ├── Config references (Cargo.toml, package.json, CI, Dockerfiles):
 │   └── ...
-├── Documentation references (ADRs, CLAUDE.md, README, workplans):
+├── Documentation references (ADRs, README, workplans):
 │   └── ...
 └── Test references (unit, integration, e2e):
     └── ...
@@ -78,9 +78,8 @@ Define explicit gates that the workplan MUST include:
 
 | Gate | Command | Scope |
 |------|---------|-------|
-| Workspace compile | `cargo check --workspace` | All Rust crates |
-| TypeScript compile | `bun run check` | All TS code |
-| Unit tests | `bun test` / `cargo test` | Per-crate |
+| Workspace compile | Project's compile check (e.g. `cargo check --workspace`) | All code |
+| Unit tests | Project's test runner (e.g. `cargo test`) | Per-module |
 | Integration tests | Defined per-ADR | Cross-crate |
 
 **CRITICAL**: The workplan derived from this ADR MUST include a validation step that
