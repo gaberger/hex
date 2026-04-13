@@ -1516,28 +1516,63 @@ async fn execute_worker_task(
                     );
                 }
 
-                let phase = crate::pipeline::code_phase::CodePhase::from_env();
-                let step_result = phase
-                    .execute_step(
-                        &current_step,
-                        &workplan_data,
-                        model_override.as_deref(),
-                        provider_pref.as_deref(),
-                        Some(output_dir.as_str()),
-                    )
-                    .await?;
+                // Direct Ollama call — same pattern as execute_plan_local (proven working).
+                // Bypasses CodePhase which adds a large system prompt that slows inference.
+                let ollama_host = std::env::var("OLLAMA_HOST")
+                    .unwrap_or_else(|_| "http://localhost:11434".to_string());
+                let model = model_override.as_deref().unwrap_or("qwen2.5-coder:32b");
 
-                // 3. Write generated file
-                let default_ext = if language == "rust" { "main.rs" } else { "main.go" };
-                let raw_path = step_result.file_path.as_deref().unwrap_or(default_ext);
-                let sanitized_path = crate::pipeline::code_phase::CodePhase::sanitize_file_path(raw_path)
-                    .map_err(|e| anyhow::anyhow!("invalid file path from LLM '{}': {}", raw_path, e))?;
-                rel_path = worker_strip_prefix(&sanitized_path, &output_dir).to_string();
-                let full_path = PathBuf::from(&output_dir).join(&rel_path);
+                let ollama_body = json!({
+                    "model": model,
+                    "prompt": &current_step.description,
+                    "temperature": 0.2,
+                    "stream": false,
+                });
+
+                tracing::info!(model, host = %ollama_host, iteration, "Direct Ollama inference");
+
+                let http = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(300))
+                    .build()?;
+                let raw_resp = http
+                    .post(format!("{}/api/generate", ollama_host))
+                    .json(&ollama_body)
+                    .send()
+                    .await?;
+                let ollama_json: serde_json::Value = raw_resp.json().await?;
+                let raw_content = ollama_json["response"].as_str().unwrap_or("");
+
+                // Extract code from fences
+                let content = {
+                    let text = raw_content;
+                    if let Some(start) = text.find("```rust") {
+                        let after = &text[start + 7..];
+                        if let Some(nl) = after.find('\n') {
+                            let code_start = &after[nl + 1..];
+                            if let Some(end) = code_start.find("```") {
+                                code_start[..end].to_string()
+                            } else { text.to_string() }
+                        } else { text.to_string() }
+                    } else if let Some(start) = text.find("```") {
+                        let after = &text[start + 3..];
+                        if let Some(nl) = after.find('\n') {
+                            let code_start = &after[nl + 1..];
+                            if let Some(end) = code_start.find("```") {
+                                code_start[..end].to_string()
+                            } else { text.to_string() }
+                        } else { text.to_string() }
+                    } else { text.to_string() }
+                };
+
+                // 3. Write to target file
+                let target = if language == "rust" { "src/main.rs" } else { "main.go" };
+                rel_path = target.to_string();
+                let full_path = PathBuf::from(&output_dir).join(target);
                 if let Some(parent) = full_path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                std::fs::write(&full_path, &step_result.content)?;
+                std::fs::write(&full_path, &content)?;
+                tracing::info!(file = %full_path.display(), lines = content.lines().count(), "Wrote generated code");
 
                 // 4. Compile + test gates
                 compile_pass = worker_compile_check(&output_dir, &language);
@@ -1545,7 +1580,7 @@ async fn execute_worker_task(
                     let (tp, to) = worker_test_check(&output_dir, &language);
                     tests_pass = tp;
                     test_output = to;
-                    if tests_pass || !step_result.content.contains("#[cfg(test)]") {
+                    if tests_pass || !content.contains("#[cfg(test)]") {
                         tracing::info!(iteration, compile_pass, tests_pass, "ADR-005 gates passed");
                         break;
                     }
