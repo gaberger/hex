@@ -761,6 +761,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/briefing", get(briefing::get_briefing))
         .route("/api/briefing/decisions", get(briefing::get_decisions))
         .route("/api/trust", get(trust::get_trust).patch(trust::set_trust))
+        .route("/api/trust/history", get(trust::get_trust_history))
         .route("/api/trust/pin", post(trust::pin_trust)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/steer", post(steer::handle_steer)

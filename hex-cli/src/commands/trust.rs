@@ -238,20 +238,45 @@ async fn pin(scope_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A single trust history entry as returned by GET /api/trust/history.
+#[derive(Deserialize, Debug)]
+struct TrustHistoryEntry {
+    #[serde(default)]
+    project_id: String,
+    #[serde(default)]
+    scope: String,
+    #[serde(default)]
+    old_level: String,
+    #[serde(default)]
+    new_level: String,
+    #[serde(default)]
+    reason: String,
+    #[serde(default)]
+    changed_at: String,
+}
+
+/// Trust level ordering for determining elevation vs decay.
+fn trust_level_rank(level: &str) -> u8 {
+    match level {
+        "observe" => 0,
+        "suggest" => 1,
+        "act" => 2,
+        "silent" => 3,
+        _ => 0,
+    }
+}
+
 async fn history(project: Option<&str>) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
 
-    // No dedicated history endpoint yet — reuse GET /api/trust and show
-    // the `updated_at` timestamps. When a /api/trust/history route is added,
-    // switch to it.
     let path = match project {
-        Some(p) => format!("/api/trust?project={}", p),
-        None => "/api/trust".to_string(),
+        Some(p) => format!("/api/trust/history?project={}", p),
+        None => "/api/trust/history".to_string(),
     };
 
     match nexus.get(&path).await {
         Ok(value) => {
-            let mut entries: Vec<TrustEntry> = if value.is_array() {
+            let entries: Vec<TrustHistoryEntry> = if value.is_array() {
                 serde_json::from_value(value)?
             } else {
                 vec![serde_json::from_value(value)?]
@@ -262,26 +287,53 @@ async fn history(project: Option<&str>) -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            // Sort by updated_at descending (most recent first)
-            entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-
-            println!("{} Trust change history:", "\u{2b21}".cyan());
-            println!();
+            let header = format!(
+                "  hex trust history{}",
+                project.map(|p| format!(" \u{2014} {}", p)).unwrap_or_default()
+            );
+            println!("{}", header.bold());
+            let separator = "\u{2500}".repeat(55);
+            println!("  {}", separator.dimmed());
 
             for entry in &entries {
-                let ts = if entry.updated_at.is_empty() {
+                // Format timestamp: trim to "YYYY-MM-DD HH:MM" if RFC3339
+                let ts_display = if entry.changed_at.len() >= 16 {
+                    entry.changed_at[..16].replace('T', " ")
+                } else if entry.changed_at.is_empty() {
                     "unknown".to_string()
                 } else {
-                    entry.updated_at.clone()
+                    entry.changed_at.clone()
                 };
+
+                let is_elevation =
+                    trust_level_rank(&entry.new_level) > trust_level_rank(&entry.old_level);
+
+                let arrow_str = if entry.old_level.is_empty() {
+                    format!("\u{2192} {}", colorize_level(&entry.new_level))
+                } else if is_elevation {
+                    format!(
+                        "{} \u{2192} {}",
+                        colorize_level(&entry.old_level),
+                        entry.new_level.green()
+                    )
+                } else {
+                    format!(
+                        "{} \u{2192} {}",
+                        colorize_level(&entry.old_level),
+                        entry.new_level.red()
+                    )
+                };
+
                 println!(
-                    "  {} {}/{} \u{2192} {}",
-                    ts.dimmed(),
-                    entry.project_id.bold(),
+                    "  {}  {:<16} {}  {}",
+                    ts_display.dimmed(),
                     entry.scope,
-                    colorize_level(&entry.level),
+                    arrow_str,
+                    entry.reason.dimmed(),
                 );
             }
+
+            println!("  {}", separator.dimmed());
         }
         Err(e) => {
             let msg = e.to_string();

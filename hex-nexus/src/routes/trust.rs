@@ -88,22 +88,94 @@ pub async fn set_trust(
     }
 
     let key = format!("{}{}:{}", TRUST_KEY_PREFIX, body.project_id, body.scope);
+
+    // Read existing trust entry to capture old_level for history
+    let old_level = match port.hexflo_memory_retrieve(&key).await {
+        Ok(Some(v)) => serde_json::from_str::<Value>(&v)
+            .ok()
+            .and_then(|obj| obj["level"].as_str().map(|s| s.to_string()))
+            .unwrap_or_default(),
+        _ => String::new(),
+    };
+
+    let now = chrono::Utc::now();
     let value = serde_json::to_string(&json!({
         "project_id": body.project_id,
         "scope": body.scope,
         "level": body.level,
         "pinned": false,
-        "updated_at": chrono::Utc::now().to_rfc3339(),
+        "updated_at": now.to_rfc3339(),
     }))
     .unwrap_or_default();
 
     match port.hexflo_memory_store(&key, &value, "global").await {
-        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))),
+        Ok(()) => {
+            // Store a history entry for this trust change
+            let ts = now.format("%Y%m%d%H%M%S%.3f").to_string();
+            let history_key = format!("trust-history:{}:{}", body.project_id, ts);
+            let history_value = serde_json::to_string(&json!({
+                "project_id": body.project_id,
+                "scope": body.scope,
+                "old_level": old_level,
+                "new_level": body.level,
+                "reason": "human",
+                "changed_at": now.to_rfc3339(),
+            }))
+            .unwrap_or_default();
+
+            // Best-effort — don't fail the main operation if history write fails
+            let _ = port
+                .hexflo_memory_store(&history_key, &history_value, "global")
+                .await;
+
+            (StatusCode::OK, Json(json!({ "ok": true, "previous_level": old_level })))
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e.to_string() })),
         ),
     }
+}
+
+/// GET /api/trust/history — list trust change history for a project.
+///
+/// History entries are stored in HexFlo memory with keys prefixed by
+/// `trust-history:{project_id}:`. Returns up to 50 entries sorted newest first.
+pub async fn get_trust_history(
+    State(state): State<SharedState>,
+    Query(params): Query<TrustQueryParams>,
+) -> (StatusCode, Json<Value>) {
+    let port = match &state.state_port {
+        Some(p) => p,
+        None => return no_state_port(),
+    };
+
+    let search_query = match &params.project {
+        Some(proj) => format!("trust-history:{}", proj),
+        None => "trust-history:".to_string(),
+    };
+
+    let entries = port
+        .hexflo_memory_search(&search_query)
+        .await
+        .unwrap_or_default();
+
+    let mut history_entries: Vec<Value> = entries
+        .into_iter()
+        .filter_map(|(_key, value)| serde_json::from_str::<Value>(&value).ok())
+        .collect();
+
+    // Sort by changed_at descending (newest first)
+    history_entries.sort_by(|a, b| {
+        let a_ts = a["changed_at"].as_str().unwrap_or("");
+        let b_ts = b["changed_at"].as_str().unwrap_or("");
+        b_ts.cmp(a_ts)
+    });
+
+    // Limit to 50 entries
+    history_entries.truncate(50);
+
+    (StatusCode::OK, Json(json!(history_entries)))
 }
 
 #[derive(Debug, Deserialize)]
