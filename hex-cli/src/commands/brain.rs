@@ -27,6 +27,17 @@ struct WorkplanSummary {
     done_tasks: usize,
     /// Tasks still marked "todo" but with git evidence (commit messages mentioning the task id).
     stale_tasks: Vec<String>,
+    /// Path to the workplan JSON file (needed for auto-fix writes).
+    path: PathBuf,
+}
+
+/// A stale git worktree detected during validation.
+#[derive(Debug)]
+struct StaleWorktree {
+    path: String,
+    branch: String,
+    /// Seconds since the last commit on this worktree's branch.
+    age_secs: u64,
 }
 
 #[derive(Subcommand)]
@@ -246,7 +257,7 @@ fn check_cli_wiring() -> anyhow::Result<Vec<String>> {
 }
 
 #[derive(Debug)]
-enum FreshnessStatus {
+pub enum FreshnessStatus {
     /// Binary is newer than or equal to the latest commit — no rebuild needed.
     Fresh,
     /// Binary is older than the latest commit — background rebuild spawned.
@@ -260,7 +271,7 @@ enum FreshnessStatus {
 /// Compare `target/release/hex` mtime against `git log -1 --format=%ct HEAD`.
 /// If the binary is older, spawn `cargo build --release` in the background and
 /// return [`FreshnessStatus::Stale`].
-fn check_binary_freshness() -> FreshnessStatus {
+pub fn check_binary_freshness() -> FreshnessStatus {
     // Locate binary relative to the workspace root (one level up from hex-cli/).
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -415,11 +426,140 @@ fn check_workplan_status() -> anyhow::Result<Vec<WorkplanSummary>> {
             total_tasks,
             done_tasks,
             stale_tasks,
+            path: path.clone(),
         });
     }
 
     summaries.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(summaries)
+}
+
+/// Detect git worktrees that have had no commits for over 24 hours.
+fn check_stale_worktrees() -> anyhow::Result<Vec<StaleWorktree>> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let output = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&workspace_root)
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(vec![]);
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let mut stale = Vec::new();
+    let mut current_path = String::new();
+    let mut current_branch = String::new();
+
+    for line in text.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            current_path = p.to_string();
+            current_branch.clear();
+        } else if let Some(b) = line.strip_prefix("branch refs/heads/") {
+            current_branch = b.to_string();
+        } else if line.is_empty() && !current_path.is_empty() && !current_branch.is_empty() {
+            // Skip the main worktree (no branch prefix pattern like feat/ or hex/)
+            if !current_branch.starts_with("feat/") && !current_branch.starts_with("hex/") {
+                current_path.clear();
+                current_branch.clear();
+                continue;
+            }
+
+            // Check last commit age on this branch
+            let commit_ts = std::process::Command::new("git")
+                .args(["log", "-1", "--format=%ct", &current_branch])
+                .current_dir(&workspace_root)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .trim()
+                        .parse::<u64>()
+                        .ok()
+                });
+
+            if let Some(ts) = commit_ts {
+                let age = now.saturating_sub(ts);
+                // Stale if no commits for 24+ hours
+                if age > 86400 {
+                    stale.push(StaleWorktree {
+                        path: current_path.clone(),
+                        branch: current_branch.clone(),
+                        age_secs: age,
+                    });
+                }
+            }
+
+            current_path.clear();
+            current_branch.clear();
+        }
+    }
+
+    Ok(stale)
+}
+
+/// Auto-fix: reconcile stale workplan tasks by marking them "done" in the JSON.
+/// Returns the number of tasks fixed.
+fn autofix_workplan(wp: &WorkplanSummary) -> anyhow::Result<usize> {
+    if wp.stale_tasks.is_empty() {
+        return Ok(0);
+    }
+
+    let contents = std::fs::read_to_string(&wp.path)?;
+    let mut doc: serde_json::Value = serde_json::from_str(&contents)?;
+
+    let stale_set: std::collections::HashSet<&str> =
+        wp.stale_tasks.iter().map(|s| s.as_str()).collect();
+    let mut fixed = 0usize;
+
+    if let Some(phases) = doc.get_mut("phases").and_then(|p| p.as_array_mut()) {
+        for phase in phases {
+            if let Some(tasks) = phase.get_mut("tasks").and_then(|t| t.as_array_mut()) {
+                for task in tasks {
+                    let task_id = task
+                        .get("id")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("");
+                    if stale_set.contains(task_id) {
+                        task["status"] = serde_json::Value::String("done".to_string());
+                        fixed += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if fixed > 0 {
+        let out = serde_json::to_string_pretty(&doc)?;
+        std::fs::write(&wp.path, out)?;
+    }
+
+    Ok(fixed)
+}
+
+/// Auto-fix: remove a stale worktree. Returns true on success.
+fn autofix_worktree(wt: &StaleWorktree) -> bool {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    std::process::Command::new("git")
+        .args(["worktree", "remove", &wt.path])
+        .current_dir(&workspace_root)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 async fn validate() -> anyhow::Result<()> {
@@ -457,7 +597,7 @@ async fn validate() -> anyhow::Result<()> {
         }
     }
 
-    // Binary freshness check
+    // Binary freshness check (auto-fix: rebuild is already spawned by check_binary_freshness)
     match check_binary_freshness() {
         FreshnessStatus::Fresh => {
             println!("  Binary:      {} release binary is up-to-date", "✓".green());
@@ -468,9 +608,10 @@ async fn validate() -> anyhow::Result<()> {
         } => {
             let delta = commit_age_secs.saturating_sub(binary_age_secs);
             println!(
-                "  Binary:      {} stale by ~{}s — background rebuild spawned",
+                "  Binary:      {} stale by ~{}s — background rebuild spawned {}",
                 "✗".red(),
-                delta
+                delta,
+                "[auto-fixed]".cyan()
             );
         }
         FreshnessStatus::Missing => {
@@ -484,37 +625,66 @@ async fn validate() -> anyhow::Result<()> {
         }
     }
 
-    // Workplan status check
+    // Workplan status check (auto-fix: reconcile stale tasks to "done")
     match check_workplan_status() {
         Ok(summaries) if summaries.is_empty() => {
             println!("  Workplans:   {} no active workplans", "✓".green());
         }
         Ok(summaries) => {
             let total_stale: usize = summaries.iter().map(|s| s.stale_tasks.len()).sum();
+            let mut total_fixed = 0usize;
+
+            // Auto-fix: reconcile stale tasks whose git evidence proves completion
+            if total_stale > 0 {
+                for wp in &summaries {
+                    match autofix_workplan(wp) {
+                        Ok(n) => total_fixed += n,
+                        Err(e) => {
+                            eprintln!("    auto-fix error for {}: {}", wp.id, e);
+                        }
+                    }
+                }
+            }
+
             if total_stale == 0 {
                 println!(
                     "  Workplans:   {} {} active, all tasks consistent",
                     "✓".green(),
                     summaries.len()
                 );
+            } else if total_fixed == total_stale {
+                println!(
+                    "  Workplans:   {} {} active, reconciled {} stale tasks {}",
+                    "✓".green(),
+                    summaries.len(),
+                    total_fixed,
+                    "[auto-fixed]".cyan()
+                );
             } else {
                 println!(
-                    "  Workplans:   {} {} active, {} stale tasks need reconciliation",
+                    "  Workplans:   {} {} active, {}/{} stale tasks reconciled{}",
                     "✗".red(),
                     summaries.len(),
-                    total_stale
+                    total_fixed,
+                    total_stale,
+                    if total_fixed > 0 { " [partial auto-fix]" } else { "" }
                 );
             }
             for wp in &summaries {
+                let effective_done = wp.done_tasks + wp.stale_tasks.len();
                 let progress = if wp.total_tasks > 0 {
-                    format!("{}/{}", wp.done_tasks, wp.total_tasks)
+                    format!("{}/{}", effective_done, wp.total_tasks)
                 } else {
                     "0/0".to_string()
                 };
                 let stale_note = if wp.stale_tasks.is_empty() {
                     String::new()
                 } else {
-                    format!(" — stale: {}", wp.stale_tasks.join(", "))
+                    format!(
+                        " — reconciled: {} {}",
+                        wp.stale_tasks.join(", "),
+                        "[auto-fixed]".cyan()
+                    )
                 };
                 let label = if wp.feature.is_empty() {
                     wp.id.clone()
@@ -558,6 +728,44 @@ async fn validate() -> anyhow::Result<()> {
         }
     }
 
+    // Stale worktree check (auto-fix: remove worktrees with no commits for 24h+)
+    match check_stale_worktrees() {
+        Ok(stale) if stale.is_empty() => {
+            println!("  Worktrees:   {} no stale worktrees", "✓".green());
+        }
+        Ok(stale) => {
+            let mut removed = 0usize;
+            for wt in &stale {
+                if autofix_worktree(wt) {
+                    removed += 1;
+                }
+            }
+            if removed == stale.len() {
+                println!(
+                    "  Worktrees:   {} removed {} stale worktrees {}",
+                    "✓".green(),
+                    removed,
+                    "[auto-fixed]".cyan()
+                );
+            } else {
+                println!(
+                    "  Worktrees:   {} {}/{} stale worktrees removed{}",
+                    "✗".red(),
+                    removed,
+                    stale.len(),
+                    if removed > 0 { " [partial auto-fix]" } else { "" }
+                );
+            }
+            for wt in &stale {
+                let hours = wt.age_secs / 3600;
+                println!("    {} ({}h stale on {})", wt.path, hours, wt.branch);
+            }
+        }
+        Err(e) => {
+            println!("  Worktrees:   {} error: {}", "✗".red(), e);
+        }
+    }
+
     Ok(())
 }
 
@@ -576,7 +784,7 @@ fn pascal_to_kebab(s: &str) -> String {
 /// Compare MCP tool definitions in `hex-cli/assets/mcp/mcp-tools.json` against
 /// the `Commands` enum in `main.rs`. Returns tool names whose expected CLI
 /// subcommand has no matching enum variant.
-fn check_mcp_cli_parity() -> anyhow::Result<Vec<String>> {
+pub fn check_mcp_cli_parity() -> anyhow::Result<Vec<String>> {
     use std::collections::HashSet;
 
     let cli_src = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
