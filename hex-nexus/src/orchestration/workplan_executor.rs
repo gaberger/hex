@@ -310,6 +310,21 @@ pub fn classify_task_tier(task: &WorkplanTask) -> crate::remote::transport::Task
     }
 }
 
+/// Map a classified TaskTier to a default model name (ADR-2604120202 P1.3).
+///
+/// Mirrors the `TierModelConfig` defaults without importing the adapter —
+/// the executor lives in the orchestration layer and must not depend on
+/// adapter internals. Escalation tracking (P4) will refine these mappings.
+pub fn tier_default_model(tier: crate::remote::transport::TaskTier) -> &'static str {
+    use crate::remote::transport::TaskTier;
+    match tier {
+        TaskTier::T1 => "qwen3:4b",
+        TaskTier::T2 => "qwen2.5-coder:32b",
+        TaskTier::T2_5 => "devstral-small-2:24b",
+        TaskTier::T3 => "claude-sonnet-4-20250514",
+    }
+}
+
 // ── Workplan Executor ──────────────────────────────────
 
 pub struct WorkplanExecutor {
@@ -1097,7 +1112,10 @@ impl WorkplanExecutor {
                     ).map(String::from);
 
                     let prompt = config.prompt.unwrap_or_default();
-                    let model = config.model.unwrap_or_else(|| "qwen2.5-coder:32b".into());
+                    // ADR-2604120202 P1.3: tier-aware model selection.
+                    // Explicit model in workplan task takes precedence; otherwise
+                    // fall back to the tier→model mapping from classify_task_tier.
+                    let model = config.model.unwrap_or_else(|| tier_default_model(task_tier).into());
 
                     let req = hex_core::ports::inference::InferenceRequest {
                         model,
@@ -1178,13 +1196,14 @@ impl WorkplanExecutor {
                         "queue_id": queue_id,
                         "task_id": task_id,
                         "workplan_id": workplan_id,
+                        "tier": task_tier.as_str(),
                         "summary": format!("Task queued: {}", task_label),
                     }).to_string();
                     // Target the active CC agent directly (most recent session heartbeat).
                     // Fall back to broadcast if no session found.
                     if let Some(cc_agent_id) = find_active_cc_agent_id() {
                         let _ = sp.inbox_notify(&cc_agent_id, 2, "inference-queue", &payload).await;
-                        tracing::info!(queue_id = %queue_id, task_id = %task_id, cc_agent = %cc_agent_id, "Path B: task enqueued, inbox notified");
+                        tracing::info!(queue_id = %queue_id, task_id = %task_id, tier = %task_tier, cc_agent = %cc_agent_id, "Path B: task enqueued, inbox notified");
                     } else {
                         let _ = sp.inbox_notify_all("", 2, "inference-queue", &payload).await;
                         tracing::info!(queue_id = %queue_id, task_id = %task_id, "Path B: task enqueued, broadcast notification (no session found)");
