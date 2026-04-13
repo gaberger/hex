@@ -8,6 +8,9 @@
 //! models   - List available models for brain selection
 //! validate - Run self-diagnostics (CLI wiring, etc.)
 
+use std::path::PathBuf;
+use std::time::SystemTime;
+
 use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
@@ -183,24 +186,39 @@ fn check_cli_wiring() -> anyhow::Result<Vec<String>> {
         }
     }
 
-    // 3. Parse main.rs for the Commands enum variants — look for `use commands::*` imports
-    //    which tell us which modules are actually wired into the CLI dispatch.
+    // 3. Parse main.rs for modules referenced in `use commands::{...}` block
+    //    and in `commands::X::run()` match arms.
     let main_rs = std::fs::read_to_string(&main_rs_path)?;
     let mut main_entries = HashSet::new();
+    let mut in_use_block = false;
     for line in main_rs.lines() {
         let trimmed = line.trim();
-        // Match patterns like `commands::brain::BrainAction,` or `commands::analyze,`
+        // Detect `use commands::{` block
+        if trimmed.starts_with("use commands::{") {
+            in_use_block = true;
+            continue;
+        }
+        if in_use_block {
+            if trimmed.contains('}') {
+                in_use_block = false;
+                continue;
+            }
+            // Lines like `adr::AdrAction,` or `analyze,`
+            let seg = trimmed.split("::").next().unwrap_or("")
+                .trim_end_matches([',', ';', '{', '}'])
+                .trim();
+            if !seg.is_empty() {
+                main_entries.insert(seg.to_string());
+            }
+            continue;
+        }
+        // Also catch `commands::X::run(action)` in match arms
         if let Some(rest) = trimmed.strip_prefix("commands::") {
-            // Extract the module name (first path segment)
-            if let Some(mod_name) = rest.split("::").next() {
-                // Clean trailing comma, brace, etc.
-                let clean = mod_name
-                    .trim_end_matches(',')
-                    .trim_end_matches('{')
-                    .trim();
-                if !clean.is_empty() {
-                    main_entries.insert(clean.to_string());
-                }
+            let seg = rest.split("::").next().unwrap_or("")
+                .trim_end_matches([',', ';', '(', '{'])
+                .trim();
+            if !seg.is_empty() {
+                main_entries.insert(seg.to_string());
             }
         }
     }
@@ -213,6 +231,87 @@ fn check_cli_wiring() -> anyhow::Result<Vec<String>> {
         .collect();
     unwired.sort();
     Ok(unwired)
+}
+
+#[derive(Debug)]
+enum FreshnessStatus {
+    /// Binary is newer than or equal to the latest commit — no rebuild needed.
+    Fresh,
+    /// Binary is older than the latest commit — background rebuild spawned.
+    Stale { binary_age_secs: u64, commit_age_secs: u64 },
+    /// Binary does not exist at the expected path (never built).
+    Missing,
+    /// Could not determine freshness (git not available, etc.).
+    Unknown(String),
+}
+
+/// Compare `target/release/hex` mtime against `git log -1 --format=%ct HEAD`.
+/// If the binary is older, spawn `cargo build --release` in the background and
+/// return [`FreshnessStatus::Stale`].
+fn check_binary_freshness() -> FreshnessStatus {
+    // Locate binary relative to the workspace root (one level up from hex-cli/).
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let binary_path = workspace_root.join("target/release/hex");
+
+    // 1. Stat the binary
+    let binary_mtime = match std::fs::metadata(&binary_path) {
+        Ok(meta) => match meta.modified() {
+            Ok(t) => t,
+            Err(e) => return FreshnessStatus::Unknown(format!("mtime error: {e}")),
+        },
+        Err(_) => return FreshnessStatus::Missing,
+    };
+
+    // 2. Get latest commit timestamp via git
+    let git_output = match std::process::Command::new("git")
+        .args(["log", "-1", "--format=%ct", "HEAD"])
+        .current_dir(&workspace_root)
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        Ok(o) => {
+            return FreshnessStatus::Unknown(format!(
+                "git exited {}",
+                o.status.code().unwrap_or(-1)
+            ))
+        }
+        Err(e) => return FreshnessStatus::Unknown(format!("git not available: {e}")),
+    };
+
+    let commit_ts: u64 = match String::from_utf8_lossy(&git_output.stdout)
+        .trim()
+        .parse()
+    {
+        Ok(ts) => ts,
+        Err(e) => return FreshnessStatus::Unknown(format!("parse commit ts: {e}")),
+    };
+
+    // 3. Convert binary mtime to epoch seconds
+    let binary_epoch = binary_mtime
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // 4. Compare
+    if binary_epoch >= commit_ts {
+        return FreshnessStatus::Fresh;
+    }
+
+    // 5. Stale — spawn background rebuild
+    let _ = std::process::Command::new("cargo")
+        .args(["build", "--release", "-p", "hex-cli"])
+        .current_dir(&workspace_root)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn(); // fire-and-forget
+
+    FreshnessStatus::Stale {
+        binary_age_secs: binary_epoch,
+        commit_age_secs: commit_ts,
+    }
 }
 
 async fn validate() -> anyhow::Result<()> {
@@ -247,6 +346,33 @@ async fn validate() -> anyhow::Result<()> {
         }
         Err(e) => {
             println!("  CLI wiring:  {} error: {}", "✗".red(), e);
+        }
+    }
+
+    // Binary freshness check
+    match check_binary_freshness() {
+        FreshnessStatus::Fresh => {
+            println!("  Binary:      {} release binary is up-to-date", "✓".green());
+        }
+        FreshnessStatus::Stale {
+            binary_age_secs,
+            commit_age_secs,
+        } => {
+            let delta = commit_age_secs.saturating_sub(binary_age_secs);
+            println!(
+                "  Binary:      {} stale by ~{}s — background rebuild spawned",
+                "✗".red(),
+                delta
+            );
+        }
+        FreshnessStatus::Missing => {
+            println!(
+                "  Binary:      {} target/release/hex not found (run cargo build --release)",
+                "✗".red()
+            );
+        }
+        FreshnessStatus::Unknown(reason) => {
+            println!("  Binary:      {} unknown: {}", "?".yellow(), reason);
         }
     }
 
