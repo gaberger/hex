@@ -1,0 +1,89 @@
+{
+  "id": "wp-worker-local-inference",
+  "feature": "Worker Local Inference Discovery",
+  "description": "Remote agent workers discover and use local Ollama directly for inference. Control plane through nexus, data plane always local.",
+  "adr": "ADR-2604130010",
+  "status": "planned",
+  "priority": "critical",
+  "created_at": "2026-04-13T00:10:00Z",
+  "created_by": "human",
+  "relates_to": "wp-nexus-coordinated-remote-execution",
+  "phases": [
+    {
+      "id": "P1",
+      "name": "CodePhase local Ollama override",
+      "tier": 0,
+      "description": "Make CodePhase respect HEX_PROVIDER=ollama and call local Ollama directly",
+      "gate": {
+        "type": "test",
+        "command": "cargo check --workspace",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P1.1",
+          "name": "Add local Ollama path to CodePhase::execute_step",
+          "layer": "secondary",
+          "description": "In hex-cli/src/pipeline/code_phase.rs, when HEX_PROVIDER=ollama is set, call OLLAMA_HOST/api/generate directly with the prompt instead of POST /api/inference/complete on nexus. Extract code from response, return as StepResult. This bypasses the nexus inference endpoint entirely.",
+          "deps": [],
+          "files": ["hex-cli/src/pipeline/code_phase.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.2",
+          "name": "Worker startup inference discovery",
+          "layer": "primary",
+          "description": "In hex-cli/src/commands/agent.rs worker function, on startup before entering poll loop: probe OLLAMA_HOST/api/tags for available models. Log discovered models with sizes. Set HEX_PROVIDER=ollama and HEX_MODEL to best available model if not already set.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/agent.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P1.3",
+          "name": "E2E: worker generates code with local Ollama + compile=true",
+          "layer": "primary",
+          "description": "Create a swarm task from Mac coordinator. Bazzite worker claims it, generates code via local Ollama (not tunnel), runs compile gate, reports compile=true back to nexus. Verify with hex report swarm.",
+          "deps": ["P1.1", "P1.2"],
+          "files": [],
+          "status": "todo",
+          "agent": "integrator"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Worker capability reporting",
+      "tier": 1,
+      "description": "Workers report available models to coordinator for intelligent task routing",
+      "gate": {
+        "type": "test",
+        "command": "cargo check --workspace",
+        "blocking": true
+      },
+      "tasks": [
+        {
+          "id": "P2.1",
+          "name": "POST worker capabilities to nexus on connect",
+          "layer": "primary",
+          "description": "After worker registers via /api/hex-agents/connect, POST available models and estimated tok/s to /api/hex-agents/{id}/capabilities. Nexus stores in SpacetimeDB agent_registry.",
+          "deps": [],
+          "files": ["hex-cli/src/commands/agent.rs", "hex-nexus/src/routes/agents.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        },
+        {
+          "id": "P2.2",
+          "name": "Coordinator reads capabilities for task assignment",
+          "layer": "primary",
+          "description": "In execute_plan_distributed, before creating tasks, query worker capabilities via GET /api/hex-agents/capabilities. Assign T2.5 tasks to workers with 27B+ models. Assign T1 to any worker.",
+          "deps": ["P2.1"],
+          "files": ["hex-cli/src/commands/plan.rs"],
+          "status": "todo",
+          "agent": "hex-coder"
+        }
+      ]
+    }
+  ]
+}
