@@ -85,9 +85,9 @@ outputs:
 
 constraints:
   - "NEVER trust 'workplan status: done' — verify with actual build gates"
-  - "ALWAYS grep the ENTIRE workspace, never restrict to a single crate"
-  - "ALWAYS run cargo check --workspace as the first verification step"
-  - "Feature-gated code (#[cfg(feature = ...)]) must be checked under ALL feature combinations"
+  - "ALWAYS grep the ENTIRE workspace, never restrict to a single module"
+  - "ALWAYS run the workspace-wide build check as the first verification step"
+  - "Conditionally compiled code (feature flags, cfg, ifdef) must be checked under ALL flag combinations"
   - "Auto-generated code (bindings, proto, etc.) must be checked for staleness"
   - "Documentation claims (module counts, architecture diagrams) must match reality"
   - "TOOL PREFERENCE: Always use mcp__hex__* MCP tools before falling back to Bash"
@@ -148,30 +148,29 @@ workflow:
       description: Check configuration files for drift
       action: |
         Check these config surfaces:
-        1. Cargo.toml workspace members — do all listed crates exist?
-        2. Feature flags — do all feature-gated deps exist?
-        3. STDB_MODULE_DATABASES constant — does it match actual modules?
-        4. MODULE_TIERS in spacetime_launcher.rs — does it match deployed modules?
-        5. CI/CD configs — do they reference deleted modules or scripts?
-        6. Dockerfiles — do COPY commands reference existing paths?
-        7. package.json scripts — do they reference existing files?
-        8. sandbox.yml — do network allow-lists match actual services?
+        1. Workspace manifest (Cargo.toml, package.json, etc.) — do all listed members exist?
+        2. Feature flags / conditional compilation — do all gated dependencies exist?
+        3. Module registry constants — do they match actually deployed modules?
+        4. CI/CD configs — do they reference deleted modules or scripts?
+        5. Dockerfiles — do COPY commands reference existing paths?
+        6. Build scripts — do they reference existing files?
+        7. Sandbox/network configs — do allow-lists match actual services?
 
-    - id: cross-crate-integrity
-      description: Verify cross-crate imports and re-exports are valid
+    - id: cross-module-integrity
+      description: Verify cross-module imports and re-exports are valid
       action: |
-        For each crate in the workspace:
-        1. Parse its Cargo.toml for inter-workspace dependencies
-        2. Verify every `use <dep>::<path>` resolves to an existing module
-        3. Check feature-gated imports: compile with --features and --no-default-features
-        4. Verify pub re-exports from lib.rs match what consumers import
+        For each module in the workspace:
+        1. Parse its manifest for inter-workspace dependencies
+        2. Verify every import path resolves to an existing module
+        3. Check feature-gated or conditional imports under all relevant flag combinations
+        4. Verify public re-exports from the module entry point match what consumers import
 
     - id: documentation-drift
       description: Check that documentation matches implementation
       action: |
         Compare:
-        1. CLAUDE.md module counts vs actual: ls spacetime-modules/*/Cargo.toml | wc -l
-        2. CLAUDE.md module list vs actual directory listing
+        1. Project documentation module/package counts vs actual workspace members
+        2. Documented module list vs actual directory listing
         3. ADR status vs implementation status in workplans
         4. README instructions vs actual build commands
         5. Architecture diagrams vs actual dependency graph
@@ -193,7 +192,7 @@ workflow:
       action: |
         Check for:
         1. Binding directories with no consumers
-        2. Module files not referenced in mod.rs or lib.rs
+        2. Source files not referenced by the module's entry point
         3. Test files for deleted modules
         4. Empty stub files (< 5 lines of actual code)
         5. Feature-gated code where the feature is never enabled
@@ -209,14 +208,14 @@ workflow:
 
         Include:
           - Total findings by severity
-          - Build gate results (pass/fail per crate)
+          - Build gate results (pass/fail per module)
           - Top 3 most impactful issues with specific fix instructions
           - Recommendations for preventing recurrence
 
 escalation:
   conditions:
     - "Any CRITICAL finding — build is broken"
-    - "More than 5 HIGH findings in a single crate"
+    - "More than 5 HIGH findings in a single module"
     - "Security vulnerability detected"
     - "Workplan marked 'done' but build gates fail"
   action: >
