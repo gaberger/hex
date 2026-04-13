@@ -2,6 +2,7 @@ pub mod agent;
 pub mod agent_manager;
 pub mod constraint_enforcer;
 pub mod context_pressure;
+pub mod directive;
 pub mod errors;
 pub mod grammars;
 pub mod scaffolding;

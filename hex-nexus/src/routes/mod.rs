@@ -766,6 +766,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/steer", post(steer::handle_steer)
             .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
         .route("/api/pulse", get(pulse::get_pulse))
+        .route("/api/decisions/{id}", post(decisions::resolve_decision)
+            .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT)))
 
         // Unified Agent Registry (ADR-058) — hex_agent table
         // NOTE: /connect and /evict must be registered BEFORE /{id} to avoid path conflicts

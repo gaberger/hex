@@ -10,6 +10,7 @@ use http::StatusCode;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::orchestration::directive::execute_directive;
 use crate::state::SharedState;
 
 fn no_state_port() -> (StatusCode, Json<Value>) {
@@ -100,18 +101,34 @@ pub async fn handle_steer(
     }))
     .unwrap_or_default();
 
-    match port.hexflo_memory_store(&key, &value, "global").await {
-        Ok(()) => (
+    if let Err(e) = port.hexflo_memory_store(&key, &value, "global").await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        );
+    }
+
+    // Execute the directive (P5.3) — priority reordering, constraint storage, etc.
+    let execution = execute_directive(&state, &body.project_id, &body.directive, classification).await;
+
+    match execution {
+        Ok(result) => (
             StatusCode::OK,
             Json(json!({
                 "ok": true,
                 "classification": classification,
                 "message": "Directive received and classified.",
+                "execution": {
+                    "applied": result.applied,
+                    "summary": result.summary,
+                    "tasks_reordered": result.tasks_reordered,
+                    "agents_reassigned": result.agents_reassigned,
+                },
             })),
         ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": e.to_string() })),
+            Json(json!({ "error": format!("Directive stored but execution failed: {}", e) })),
         ),
     }
 }
