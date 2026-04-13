@@ -48,6 +48,11 @@ docs/*
 !docs/analysis/
 !docs/guides/
 !docs/algebra/
+!docs/ARCHITECTURE.md
+!docs/GETTING-STARTED.md
+!docs/INFERENCE.md
+!docs/COMPARISON.md
+!docs/DEVELOPER-EXPERIENCE.md
 
 # Filesystem artifacts
 Volumes/

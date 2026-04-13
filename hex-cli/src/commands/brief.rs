@@ -24,6 +24,9 @@ pub enum BriefAction {
         /// Show events since this time (e.g. "1h", "yesterday")
         #[arg(long)]
         since: Option<String>,
+        /// Show all events (default: last 5)
+        #[arg(long)]
+        full: bool,
     },
 }
 
@@ -105,7 +108,8 @@ pub async fn run(action: BriefAction) -> anyhow::Result<()> {
             decisions,
             costs,
             since,
-        } => show_briefing(project, decisions, costs, since).await,
+            full,
+        } => show_briefing(project, decisions, costs, since, full).await,
     }
 }
 
@@ -114,8 +118,10 @@ async fn show_briefing(
     decisions: bool,
     costs: bool,
     since: Option<String>,
+    full: bool,
 ) -> anyhow::Result<()> {
     let nexus = NexusClient::from_env();
+    let limit: u32 = if full { 0 } else { 5 };
 
     // Build query string
     let mut params = Vec::new();
@@ -131,6 +137,7 @@ async fn show_briefing(
     if let Some(ref s) = since {
         params.push(format!("since={}", s));
     }
+    params.push(format!("limit={}", limit));
     let qs = if params.is_empty() {
         String::new()
     } else {
@@ -142,7 +149,7 @@ async fn show_briefing(
     match nexus.get(&path).await {
         Ok(value) => {
             let briefing: BriefingResponse = serde_json::from_value(value)?;
-            render_briefing(&briefing, decisions);
+            render_briefing(&briefing, decisions, limit);
         }
         Err(_) => {
             eprintln!(
@@ -155,7 +162,7 @@ async fn show_briefing(
     Ok(())
 }
 
-fn render_briefing(briefing: &BriefingResponse, decisions_only: bool) {
+fn render_briefing(briefing: &BriefingResponse, decisions_only: bool, limit: u32) {
     let date = if briefing.generated_at.is_empty() {
         chrono::Local::now().format("%Y-%m-%d %H:%M").to_string()
     } else {
@@ -225,6 +232,17 @@ fn render_briefing(briefing: &BriefingResponse, decisions_only: bool) {
 
             if completed.is_empty() && in_progress.is_empty() {
                 println!("  {}", "No recent activity.".dimmed());
+            }
+
+            // Truncation notice when limit is active
+            let total_events = proj.events.len();
+            if limit > 0 && total_events >= limit as usize {
+                println!(
+                    "  {} Showing last {} events. Run {} to see all.",
+                    "\u{2026}".dimmed(),
+                    limit,
+                    "hex brief --full".bold()
+                );
             }
         }
 
