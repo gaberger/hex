@@ -51,6 +51,31 @@ pub trait CompileChecker: Send + Sync {
     async fn check(&self, code: &str) -> Result<(), CompileError>;
 }
 
+/// Trait for tracking escalation events (local success vs frontier escalation).
+/// Used by ScaffoldedDispatch to record outcomes for `hex inference escalation-report`.
+#[async_trait]
+pub trait EscalationTracker: Send + Sync {
+    async fn record_local_success(&self, task_type: &str, model: &str);
+    async fn record_escalation(&self, task_type: &str, model: &str, sample_error: &str);
+}
+
+/// Aggregated escalation statistics for a task_type + model combination.
+#[derive(Debug, Clone)]
+pub struct EscalationStats {
+    pub task_type: String,
+    pub model: String,
+    pub local_successes: u64,
+    pub escalations: u64,
+    pub last_sample_error: Option<String>,
+}
+
+impl EscalationStats {
+    pub fn escalation_rate(&self) -> f64 {
+        let total = self.local_successes + self.escalations;
+        if total == 0 { 0.0 } else { self.escalations as f64 / total as f64 }
+    }
+}
+
 /// Shell-based compile checker that runs an external command.
 pub struct ShellCompileChecker {
     /// Command to run (e.g. "cargo check", "tsc --noEmit", "go build").
