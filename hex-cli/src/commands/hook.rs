@@ -1690,6 +1690,13 @@ async fn route(project_dir: &Path) -> Result<()> {
                     let auto_plan_enabled = auto_plan_enabled(project_dir);
                     let tier = classify_work_intent(&lower);
 
+                    // ADR-2604131800 G1: Archive stale task.json on context change.
+                    // When on main and a new T2/T3 prompt arrives, the previous
+                    // task.json is from a completed feature — move it to history.
+                    if matches!(tier, Tier::T2MiniPlan | Tier::T3Workplan) {
+                        archive_stale_task_json(project_dir);
+                    }
+
                     match tier {
                         Tier::T1Todo => {
                             // No action — let the host agent handle it.
@@ -1800,6 +1807,57 @@ fn spawn_plan_draft(prompt: &str) -> Result<String> {
         .unwrap_or_else(|| "docs/workplans/drafts/".to_string());
 
     Ok(newest)
+}
+
+/// ADR-2604131800 G1: Archive `.hex/task.json` when on `main` and a new
+/// T2/T3 prompt arrives, indicating a task context change. The stale file
+/// is moved to `.hex/task-history/{timestamp}.json` so it remains available
+/// for audit but no longer pollutes the active session.
+fn archive_stale_task_json(project_dir: &Path) {
+    // Only archive when on `main` — feature branches own their task state.
+    let branch = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(project_dir)
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    if branch != "main" && branch != "master" {
+        return;
+    }
+
+    let task_file = project_dir.join(".hex/task.json");
+    if !task_file.exists() {
+        return;
+    }
+
+    let history_dir = project_dir.join(".hex/task-history");
+    if let Err(e) = std::fs::create_dir_all(&history_dir) {
+        eprintln!("[HEX] warn: could not create task-history dir: {}", e);
+        return;
+    }
+
+    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let dest = history_dir.join(format!("{}.json", ts));
+
+    match std::fs::rename(&task_file, &dest) {
+        Ok(()) => {
+            println!(
+                "[HEX] archived stale task.json → .hex/task-history/{}.json",
+                ts
+            );
+        }
+        Err(e) => {
+            eprintln!("[HEX] warn: could not archive task.json: {}", e);
+        }
+    }
 }
 
 // ── Boundary validation ──────────────────────────────────────────────
