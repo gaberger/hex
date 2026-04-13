@@ -354,14 +354,13 @@ impl IInferencePort for OllamaInferenceAdapter {
                     let parsed: Result<GenerateResponse, _> = serde_json::from_slice(line);
                     match parsed {
                         Ok(gen) => {
-                            if !gen.response.is_empty() {
-                                if tx
+                            if !gen.response.is_empty()
+                                && tx
                                     .send(StreamChunk::TextDelta(gen.response.clone()))
                                     .await
                                     .is_err()
-                                {
-                                    return;
-                                }
+                            {
+                                return;
                             }
                             if gen.done {
                                 let usage = StreamChunk::Usage {

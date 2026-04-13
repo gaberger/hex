@@ -10,6 +10,7 @@ use std::time::Duration;
 /// Result of the composition prerequisite check.
 pub struct CompositionResult {
     pub claude_session_id: CheckStatus,
+    #[allow(dead_code)]
     pub session_file: CheckStatus,
     pub ollama: CheckStatus,
     pub claude_binary: CheckStatus,
@@ -20,6 +21,7 @@ pub struct CompositionResult {
 pub enum CheckStatus {
     Pass(String),
     Fail(String),
+    #[allow(dead_code)]
     Warn(String),
 }
 
@@ -160,9 +162,7 @@ fn check_session_file() -> CheckStatus {
 
     let sessions_dir = home.join(".hex").join("sessions");
     if !sessions_dir.is_dir() {
-        return CheckStatus::Fail(format!(
-            "~/.hex/sessions/ not found"
-        ));
+        return CheckStatus::Fail("~/.hex/sessions/ not found".to_string());
     }
 
     // Look for agent-*.json files
@@ -256,7 +256,7 @@ async fn check_claude_binary() -> CheckStatus {
                 Some(v) if !v.is_empty() => {
                     CheckStatus::Pass(format!("{}, {}", path, v))
                 }
-                _ => CheckStatus::Pass(format!("{}", path)),
+                _ => CheckStatus::Pass(path.to_string()),
             }
         }
         _ => CheckStatus::Fail("not found on PATH".to_string()),
@@ -281,7 +281,7 @@ async fn check_nexus() -> CheckStatus {
         .await
     {
         Ok(resp) if resp.status().is_success() => {
-            CheckStatus::Pass(format!("{}", nexus_url))
+            CheckStatus::Pass(nexus_url.to_string())
         }
         Ok(resp) => CheckStatus::Fail(format!("{}, HTTP {}", nexus_url, resp.status())),
         Err(e) => {

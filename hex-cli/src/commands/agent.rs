@@ -1485,7 +1485,7 @@ async fn execute_worker_task(
 
             // 1. Fetch WorkplanStep from hexflo memory (best-effort — fall back to title-stub)
             let metadata_key = format!("{}:step_metadata", task_id);
-            let (workplan_step, workplan_data) = match nexus
+            let (workplan_step, _workplan_data) = match nexus
                 .get(&format!("/api/hexflo/memory/{}", metadata_key))
                 .await
             {
@@ -1495,7 +1495,7 @@ async fn execute_worker_task(
 
             // 2. Run code generation with ADR-005 retry loop (max 5 iterations)
             let model_override = std::env::var("HEX_MODEL").ok();
-            let provider_pref = std::env::var("HEX_PROVIDER").ok();
+            let _provider_pref = std::env::var("HEX_PROVIDER").ok();
             let language = std::env::var("HEX_LANGUAGE").unwrap_or_else(|_| worker_detect_language(&output_dir));
             let max_iterations = 5;
             let mut compile_pass = false;
@@ -2012,6 +2012,7 @@ fn worker_stub_step(task_id: &str, title: &str) -> (WorkplanStep, WorkplanData) 
 
 /// Strip the output_dir prefix from a coder-returned file path so we get a
 /// path relative to the project root (mirrors supervisor's strip logic).
+#[allow(dead_code)]
 fn worker_strip_prefix<'a>(path: &'a str, output_dir: &str) -> &'a str {
     let prefix = format!("{}/", output_dir);
     if let Some(stripped) = path.strip_prefix(&prefix) {

@@ -857,7 +857,7 @@ impl WorkplanExecutor {
             let workplan_id = workplan.id.clone();
 
             // ADR-2604120202 P5.1: Classify task tier for routing
-            let task_tier = classify_task_tier(&task);
+            let task_tier = classify_task_tier(task);
 
             // Path C: headless inference dispatch for T1/T2/T2.5 in standalone mode.
             // Routes directly through the inference adapter (local or remote Ollama)
@@ -887,7 +887,7 @@ impl WorkplanExecutor {
                     // No agent process spawned — faster and works with remote Ollama.
                     let inference = inference_port.unwrap(); // safe: use_path_c checks is_some()
                     let grammar = crate::orchestration::grammars::grammar_for_role(
-                        &config.agent_name.as_deref().unwrap_or("hex-coder"),
+                        config.agent_name.as_deref().unwrap_or("hex-coder"),
                     ).map(String::from);
 
                     let prompt = config.prompt.unwrap_or_default();
