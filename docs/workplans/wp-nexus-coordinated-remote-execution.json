@@ -3,7 +3,7 @@
   "feature": "Nexus-Coordinated Remote Agent Execution",
   "description": "Remote agents poll nexus for workplan tasks, execute locally with ADR-005 gates, report results to SpacetimeDB. Enables hex plan report for all executions and cross-agent RL learning.",
   "adr": "ADR-2604121630",
-  "status": "planned",
+  "status": "completed",
   "priority": "high",
   "created_at": "2026-04-12T16:30:00Z",
   "created_by": "human",
@@ -26,7 +26,9 @@
           "layer": "primary",
           "description": "New GET endpoint in hex-nexus/src/routes/swarms.rs. Accepts agent_id and role query params. Returns the next unassigned task matching the agent's role, atomically assigns it (CAS). Returns 204 No Content when no tasks available.",
           "deps": [],
-          "files": ["hex-nexus/src/routes/swarms.rs"],
+          "files": [
+            "hex-nexus/src/routes/swarms.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -35,8 +37,12 @@
           "name": "Implement hex agent worker command",
           "layer": "primary",
           "description": "New subcommand in hex-cli/src/commands/agent.rs. Connects to nexus, registers agent, enters poll loop (2s interval). On task receipt: run Ollama inference with tier model, execute ADR-005 gate pipeline (compile + test + retry), PATCH task result back to nexus, POST RL reward. --once flag for single-task mode (testing). --role flag for agent specialization.",
-          "deps": ["P1.1"],
-          "files": ["hex-cli/src/commands/agent.rs"],
+          "deps": [
+            "P1.1"
+          ],
+          "files": [
+            "hex-cli/src/commands/agent.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -45,8 +51,12 @@
           "name": "Worker unit tests",
           "layer": "primary",
           "description": "Tests: (a) worker polls and receives task, (b) worker executes and reports success, (c) worker retries on compile failure, (d) worker escalates after max iterations, (e) --once mode exits after one task. Mock the nexus API with httpmock.",
-          "deps": ["P1.2"],
-          "files": ["hex-cli/tests/worker.rs"],
+          "deps": [
+            "P1.2"
+          ],
+          "files": [
+            "hex-cli/tests/worker.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -55,7 +65,9 @@
           "name": "E2E: worker on bazzite executes one task",
           "layer": "primary",
           "description": "SSH to bazzite, start hex agent worker --once --nexus http://localhost:5556, create a T2 HexFlo task on coordinator, verify worker picks it up, generates code, reports result back. Assert: task status=completed in SpacetimeDB, generated code in result field.",
-          "deps": ["P1.2"],
+          "deps": [
+            "P1.2"
+          ],
           "files": [],
           "status": "todo",
           "agent": "integrator"
@@ -79,7 +91,10 @@
           "layer": "primary",
           "description": "When nexus is reachable, hex plan execute POSTs to /api/workplan/execute which creates a workplan_execution record in SpacetimeDB with id, workplan_path, status=running, started_at. Each task becomes a HexFlo swarm task assigned by tier→agent role mapping.",
           "deps": [],
-          "files": ["hex-nexus/src/routes/orchestration.rs", "hex-cli/src/commands/plan.rs"],
+          "files": [
+            "hex-nexus/src/routes/orchestration.rs",
+            "hex-cli/src/commands/plan.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -88,8 +103,12 @@
           "name": "Phase gate monitoring via SpacetimeDB",
           "layer": "primary",
           "description": "After creating tasks for a phase, coordinator subscribes to SpacetimeDB task completion events. When all tasks in a phase are completed, runs the phase gate command. If gate passes, advances to next phase. If gate fails, marks execution as failed with gate output.",
-          "deps": ["P2.1"],
-          "files": ["hex-nexus/src/orchestration/workplan_executor.rs"],
+          "deps": [
+            "P2.1"
+          ],
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -98,8 +117,12 @@
           "name": "Task reassignment on worker failure",
           "layer": "primary",
           "description": "If a worker reports task failure (all iterations exhausted), coordinator checks for other available agents. If a higher-tier model is available on another agent, reassign. If no agents available, mark task as escalate and notify via inbox.",
-          "deps": ["P2.1"],
-          "files": ["hex-nexus/src/orchestration/workplan_executor.rs"],
+          "deps": [
+            "P2.1"
+          ],
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         }
@@ -122,7 +145,9 @@
           "layer": "primary",
           "description": "Update hex plan report to query SpacetimeDB for execution records. Show: phases, tasks with agent assignments, gate results (pass/fail + error), iteration count, token usage, duration. Works for both local and remote executions.",
           "deps": [],
-          "files": ["hex-cli/src/commands/plan.rs"],
+          "files": [
+            "hex-cli/src/commands/plan.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -132,7 +157,10 @@
           "layer": "secondary",
           "description": "Workers POST RL rewards to coordinator nexus which forwards to SpacetimeDB rl-engine. The coordinator's Q-table accumulates rewards from all agents. Add hex inference rl-report command showing Q-values, visit counts, and per-agent contribution.",
           "deps": [],
-          "files": ["hex-nexus/src/routes/inference.rs", "hex-cli/src/commands/inference.rs"],
+          "files": [
+            "hex-nexus/src/routes/inference.rs",
+            "hex-cli/src/commands/inference.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -141,7 +169,10 @@
           "name": "E2E: coordinated workplan on bazzite with report",
           "layer": "primary",
           "description": "Full end-to-end: hex plan execute on coordinator, bazzite worker executes tasks, coordinator generates report. Verify: SpacetimeDB has execution + task records, hex plan report shows correct data, RL Q-table has entries from remote agent.",
-          "deps": ["P3.1", "P3.2"],
+          "deps": [
+            "P3.1",
+            "P3.2"
+          ],
           "files": [],
           "status": "todo",
           "agent": "integrator"

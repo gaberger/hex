@@ -3,7 +3,7 @@
   "feature": "Inference Bench Command",
   "description": "hex inference bench <target> — run code-gen, reasoning, and identity prompts against a model, measure quality + speed, recommend hex agent tier. Replaces ad-hoc curl/python benchmarking.",
   "adr": "ADR-2604131238",
-  "status": "planned",
+  "status": "completed",
   "priority": "normal",
   "created_at": "2026-04-13T12:38:00Z",
   "created_by": "human",
@@ -26,7 +26,9 @@
           "layer": "primary",
           "description": "Add Bench { target: String, model: Option<String>, quick: bool, compare: Option<String>, save: bool } to the InferenceAction enum in hex-cli/src/commands/inference.rs. Add clap arg attributes matching the ADR CLI interface.",
           "deps": [],
-          "files": ["hex-cli/src/commands/inference.rs"],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -35,8 +37,12 @@
           "name": "Wire match arm + stub bench_provider()",
           "layer": "primary",
           "description": "Add match arm in run() dispatching to bench_provider(). Implement bench_provider() with target resolution: reuse the ProviderRecord lookup pattern from test_provider() — exact ID match, prefix match, URL detection. Return early with resolved (url, provider_type, model).",
-          "deps": ["P1.1"],
-          "files": ["hex-cli/src/commands/inference.rs"],
+          "deps": [
+            "P1.1"
+          ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         }
@@ -58,8 +64,12 @@
           "name": "Implement run_bench_prompt() helper",
           "layer": "primary",
           "description": "Create async fn run_bench_prompt(http: &reqwest::Client, url: &str, provider_type: &str, model: &str, messages: Vec<serde_json::Value>) -> BenchResult. BenchResult struct holds: response text, eval_count (tokens), wall_time Duration. Handle both Ollama /api/chat and OpenAI /v1/chat/completions endpoints based on provider_type.",
-          "deps": ["P1.2"],
-          "files": ["hex-cli/src/commands/inference.rs"],
+          "deps": [
+            "P1.2"
+          ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -68,8 +78,12 @@
           "name": "Identity prompt",
           "layer": "primary",
           "description": "Prompt: 'What model are you? Respond in one sentence.' Signals: non-empty response (bool), response latency (ms). This is the latency floor measurement.",
-          "deps": ["P2.1"],
-          "files": ["hex-cli/src/commands/inference.rs"],
+          "deps": [
+            "P2.1"
+          ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -78,8 +92,12 @@
           "name": "Code generation prompt + quality checklist",
           "layer": "primary",
           "description": "Prompt: Generate a Rust secondary adapter implementing a WeatherPort (full prompt from ADR). Extract 10 quality signals: async fn, thiserror, tests (#[cfg(test)] or #[test]), reqwest, error variants (>=3 'Error' occurrences), Result<>, trait definition, mock test, #[derive], timeout handling. Each signal is bool, total 0-10.",
-          "deps": ["P2.1"],
-          "files": ["hex-cli/src/commands/inference.rs"],
+          "deps": [
+            "P2.1"
+          ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -88,8 +106,12 @@
           "name": "Reasoning prompt + quality checklist",
           "layer": "primary",
           "description": "Prompt: Given a hex project where adapters/http imports from adapters/database, identify the violation and explain the fix. Signals (5): identifies cross-adapter coupling, names the violated rule, suggests port extraction, mentions dependency inversion, provides code example. Total 0-5.",
-          "deps": ["P2.1"],
-          "files": ["hex-cli/src/commands/inference.rs"],
+          "deps": [
+            "P2.1"
+          ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         }
@@ -111,8 +133,13 @@
           "name": "Scoring algorithm",
           "layer": "primary",
           "description": "Compute overall score (0.0-1.0): code_quality (0-10 / 10.0) * 0.5 + reasoning_quality (0-5 / 5.0) * 0.3 + latency_score * 0.2. Latency score: >100 tok/s = 1.0, >50 = 0.8, >20 = 0.6, >5 = 0.3, else 0.1. Tier recommendation per ADR thresholds.",
-          "deps": ["P2.3", "P2.4"],
-          "files": ["hex-cli/src/commands/inference.rs"],
+          "deps": [
+            "P2.3",
+            "P2.4"
+          ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -121,8 +148,12 @@
           "name": "Pretty-print output",
           "layer": "primary",
           "description": "Print formatted output matching ADR output format: per-prompt line with status/time/quality, summary block with overall score, tok/s, recommended tier, best-for task types. Use colored crate for terminal formatting.",
-          "deps": ["P3.1"],
-          "files": ["hex-cli/src/commands/inference.rs"],
+          "deps": [
+            "P3.1"
+          ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         }
@@ -144,8 +175,12 @@
           "name": "--compare baseline support",
           "layer": "primary",
           "description": "When --compare <id> is provided, resolve the baseline provider, run the same 3 prompts against it, display side-by-side results table: Model | Identity | Code-gen | Reasoning | Score | Tier.",
-          "deps": ["P3.2"],
-          "files": ["hex-cli/src/commands/inference.rs"],
+          "deps": [
+            "P3.2"
+          ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -154,8 +189,12 @@
           "name": "--save calibration persistence",
           "layer": "primary",
           "description": "When --save is provided, PATCH /api/inference/endpoints/<id> with quality_score and recommended tier. Also update the inference cache via write_inference_cache(). Print confirmation.",
-          "deps": ["P3.1"],
-          "files": ["hex-cli/src/commands/inference.rs"],
+          "deps": [
+            "P3.1"
+          ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         }
@@ -177,8 +216,12 @@
           "name": "Wire MCP tool hex_inference_bench",
           "layer": "primary",
           "description": "Add hex_inference_bench tool to the MCP tool registry in hex-cli/src/commands/mcp.rs. Parameters: target (required), model (optional), quick (optional bool). Returns JSON with score, tier, per-prompt results.",
-          "deps": ["P3.2"],
-          "files": ["hex-cli/src/commands/mcp.rs"],
+          "deps": [
+            "P3.2"
+          ],
+          "files": [
+            "hex-cli/src/commands/mcp.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -187,8 +230,12 @@
           "name": "Integration test against localhost Ollama",
           "layer": "primary",
           "description": "Test that bench_provider resolves a local Ollama target, runs at least the identity prompt, returns a valid BenchResult with non-zero tokens. Skip if OLLAMA_HOST not available.",
-          "deps": ["P3.2"],
-          "files": ["hex-cli/src/commands/inference.rs"],
+          "deps": [
+            "P3.2"
+          ],
+          "files": [
+            "hex-cli/src/commands/inference.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         }

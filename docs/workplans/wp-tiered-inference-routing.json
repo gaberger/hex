@@ -3,7 +3,7 @@
   "feature": "Tiered Inference Routing with Local Model Scaffolding",
   "description": "Route T1/T2 tasks to local models with scaffolding (Best-of-N + compile gate + GBNF grammars + retry loop + cascading escalation), dropping frontier API calls to ~30%. Builds on ADR-2604112000 standalone dispatch + the wired inference router.",
   "adr": "ADR-2604120202",
-  "status": "planned",
+  "status": "completed",
   "priority": "high",
   "created_at": "2026-04-12T02:02:00Z",
   "created_by": "human",
@@ -26,7 +26,9 @@
           "layer": "domain",
           "description": "Add TaskTier { T1, T2, T2_5, T3 } to hex-core/src/domain/ or hex-nexus/src/remote/transport.rs (wherever CodeGenRequest lives). Add tier: Option<TaskTier> field to CodeGenRequest. Default None means 'unclassified — use model from request'. Serialize as snake_case strings.",
           "deps": [],
-          "files": ["hex-nexus/src/remote/transport.rs"],
+          "files": [
+            "hex-nexus/src/remote/transport.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -35,7 +37,9 @@
           "name": "Tier-aware model selection in inference_router.rs",
           "layer": "secondary",
           "description": "In InferenceRouterAdapter::route_request, before select_server, check request.tier. If Some(tier), override the model name from the tier→model mapping. The mapping is a struct TierModelConfig { t1: String, t2: String, t2_5: String, t3: String } loaded from .hex/project.json inference.tier_models (with hardcoded defaults: t1=qwen3:4b, t2=qwen2.5-coder:32b, t2_5=devstral-small-2:24b, t3=claude). If tier is T3 and no frontier adapter is available, return Err with remediation hint.",
-          "deps": ["P1.1"],
+          "deps": [
+            "P1.1"
+          ],
           "files": [
             "hex-nexus/src/adapters/inference_router.rs",
             "hex-nexus/src/adapters/inference_router/tier_config.rs"
@@ -48,7 +52,9 @@
           "name": "Wire tier from workplan task to CodeGenRequest",
           "layer": "primary",
           "description": "In the workplan executor's dispatch path, populate CodeGenRequest.tier from the workplan task's layer + complexity heuristic. Simple mapping: layer=domain|ports → T2, layer=primary|secondary with deps.len() < 2 → T2, with deps.len() >= 2 → T2.5. Tasks tagged agent=planner → T2. The hook route classifier already handles T1/T2/T3 for interactive prompts — reuse that logic. Do not overthink the heuristic; escalation tracking (P4) will refine it.",
-          "deps": ["P1.1"],
+          "deps": [
+            "P1.1"
+          ],
           "files": [
             "hex-nexus/src/orchestration/workplan_executor.rs"
           ],
@@ -60,8 +66,12 @@
           "name": "Unit tests for tier routing",
           "layer": "primary",
           "description": "Tests: (a) T1 request selects qwen3:4b model override, (b) T2 selects qwen2.5-coder:32b, (c) T3 with no frontier returns error, (d) None tier preserves original model from request, (e) custom tier_models config overrides defaults. Use MockInferencePort + httpmock.",
-          "deps": ["P1.2"],
-          "files": ["hex-nexus/tests/tier_routing.rs"],
+          "deps": [
+            "P1.2"
+          ],
+          "files": [
+            "hex-nexus/tests/tier_routing.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         }
@@ -84,7 +94,9 @@
           "layer": "ports",
           "description": "Read all 14 agent YAMLs in hex-cli/assets/agents/hex/hex/. Identify the common prefix tokens (role, architecture rules, output format, tool usage). Document in docs/analysis/prompt-prefix-audit.md which tokens are shared vs unique per role. Target: 800 shared tokens that can be KV-cached.",
           "deps": [],
-          "files": ["docs/analysis/prompt-prefix-audit.md"],
+          "files": [
+            "docs/analysis/prompt-prefix-audit.md"
+          ],
           "status": "todo",
           "agent": "planner"
         },
@@ -93,7 +105,9 @@
           "name": "Restructure agent YAMLs for prefix sharing + Q4 optimization",
           "layer": "secondary",
           "description": "Edit the 14 agent YAMLs to: (a) move shared context to a common prefix section, (b) flatten nested instructions to numbered steps, (c) front-load file/code context before instructions, (d) repeat key constraints at end of prompt ('REMEMBER: only edit files in your manifest'). ADR-2604111142 content rule applies — no hex-intf specifics in embedded assets.",
-          "deps": ["P2.1"],
+          "deps": [
+            "P2.1"
+          ],
           "files": [
             "hex-cli/assets/agents/hex/hex/hex-coder.yml",
             "hex-cli/assets/agents/hex/hex/planner.yml",
@@ -133,8 +147,12 @@
           "name": "Error-feedback retry loop",
           "layer": "primary",
           "description": "If all N completions fail compile_check, take the best error (shortest stderr) and append it to the original prompt: 'The previous attempt produced this compiler error: {stderr}. Fix the code.' Retry up to 2 times. Total attempts = N * (1 + max_retries). If still failing, return CompileGateFailed { attempts, best_error } for escalation.",
-          "deps": ["P3.1"],
-          "files": ["hex-nexus/src/orchestration/scaffolding.rs"],
+          "deps": [
+            "P3.1"
+          ],
+          "files": [
+            "hex-nexus/src/orchestration/scaffolding.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -156,8 +174,14 @@
           "name": "Scaffolding tests — mocked compile gate",
           "layer": "primary",
           "description": "Hermetic tests: (a) Best-of-3 where second attempt compiles → returns second, (b) all 3 fail → retry with error → succeeds on retry 1, (c) all fail all retries → CompileGateFailed with attempt count, (d) grammar is forwarded to adapter, (e) N=1 for T1 → no Best-of-N overhead. Mock the compile_check with a closure that accepts/rejects based on output content. No real cargo check in tests.",
-          "deps": ["P3.1", "P3.2", "P3.3"],
-          "files": ["hex-nexus/tests/scaffolding.rs"],
+          "deps": [
+            "P3.1",
+            "P3.2",
+            "P3.3"
+          ],
+          "files": [
+            "hex-nexus/tests/scaffolding.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         }
@@ -180,7 +204,9 @@
           "layer": "primary",
           "description": "When CompileGateFailed, check if a frontier adapter is available (ClaudeCodeInferenceAdapter or an Anthropic/OpenAI cloud adapter). If available, re-dispatch to frontier with the original prompt (not the retry-augmented one). Log the escalation to tracing::warn with structured fields. If no frontier available, return the CompileGateFailed error to the caller.",
           "deps": [],
-          "files": ["hex-nexus/src/orchestration/scaffolding.rs"],
+          "files": [
+            "hex-nexus/src/orchestration/scaffolding.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -189,7 +215,9 @@
           "name": "Escalation tracking in HexFlo memory",
           "layer": "primary",
           "description": "On each escalation, write to HexFlo memory: key=escalation:{task_type}:{model}, value={count, last_escalated, sample_error}. On each successful local dispatch, write success:{task_type}:{model}. Expose a hex inference escalation-report CLI command that reads these keys and prints a table of task-types with escalation rates. If any task-type exceeds 50% escalation rate, print a recommendation to reclassify it as a higher tier.",
-          "deps": ["P4.1"],
+          "deps": [
+            "P4.1"
+          ],
           "files": [
             "hex-nexus/src/orchestration/scaffolding.rs",
             "hex-cli/src/commands/inference.rs"
@@ -202,8 +230,13 @@
           "name": "Escalation tests",
           "layer": "primary",
           "description": "Tests: (a) local fails all attempts → escalation to frontier succeeds → returns frontier result, (b) no frontier available → error with remediation hint, (c) escalation tracking writes to memory on escalation, (d) escalation tracking writes success on local pass, (e) hex inference escalation-report reads tracking data. Use MockInferencePort for both local (fails) and frontier (succeeds).",
-          "deps": ["P4.1", "P4.2"],
-          "files": ["hex-nexus/tests/scaffolding.rs"],
+          "deps": [
+            "P4.1",
+            "P4.2"
+          ],
+          "files": [
+            "hex-nexus/tests/scaffolding.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         }
@@ -226,7 +259,9 @@
           "layer": "primary",
           "description": "In the workplan executor's dispatch path, wrap the IInferencePort adapter in ScaffoldedDispatch when the task tier is T1, T2, or T2.5. T3 tasks bypass scaffolding and go directly to frontier. The scaffolding layer is transparent to the executor — it just sees IInferencePort::complete() returning a result (which may have been the 5th attempt internally).",
           "deps": [],
-          "files": ["hex-nexus/src/orchestration/workplan_executor.rs"],
+          "files": [
+            "hex-nexus/src/orchestration/workplan_executor.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -235,8 +270,12 @@
           "name": "End-to-end test: T2 task with mock Ollama",
           "layer": "primary",
           "description": "Integration test: construct a T2 workplan task, boot ScaffoldedDispatch with MockInferencePort that fails on first attempt, succeeds on second. Assert: (a) two attempts made, (b) compile gate checked both, (c) second attempt's code returned, (d) escalation NOT triggered, (e) HexFlo memory records success.",
-          "deps": ["P5.1"],
-          "files": ["hex-nexus/tests/tiered_routing_e2e.rs"],
+          "deps": [
+            "P5.1"
+          ],
+          "files": [
+            "hex-nexus/tests/tiered_routing_e2e.rs"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         },
@@ -245,8 +284,13 @@
           "name": "Document tiered routing in CLAUDE.md + README.md",
           "layer": "primary",
           "description": "Add section on tiered inference routing to CLAUDE.md (under Inference) and README.md (under Running hex Standalone). Cover: tier mapping, how to configure via .hex/project.json, how to check escalation rates, how to override tier for a specific task. Keep it 10-15 lines per file.",
-          "deps": ["P5.2"],
-          "files": ["CLAUDE.md", "README.md"],
+          "deps": [
+            "P5.2"
+          ],
+          "files": [
+            "CLAUDE.md",
+            "README.md"
+          ],
           "status": "todo",
           "agent": "hex-coder"
         }
