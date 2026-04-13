@@ -70,3 +70,5 @@ spacetime-modules/*/Cargo.lock
 
 # SpacetimeDB claude config
 spacetime-modules/.claude/
+tla2tools.jar
+hexflo_TTrace_*.tla

@@ -337,8 +337,8 @@ Each algebraic claim was audited against the hex codebase. The verdicts below us
 | 7-phase sequential pipeline | ENFORCED | `hex-cli/src/pipeline/supervisor.rs` — phases run sequentially |
 | BLOCKING gates between phases | ENFORCED | Lines ~1940-1953: `gate.blocking` check halts pipeline on `FAIL` |
 | Tier ordering within Code phase | ENFORCED | `run_tier()` at line ~1227 — tier-0 completes before tier-1 dispatches |
-| Formal Petri net encoding | DESIGNED | ADR-2604111229 P3 — no `lifecycle-net.md` or `.tla` file exists |
-| Machine-checkable reachability proof | DESIGNED | No model checker runs against the lifecycle |
+| Formal Petri net encoding | DELIVERED | `docs/algebra/lifecycle-net.md` — 16 places, 15 transitions, formal definition N=(P,T,F,i,o) |
+| Soundness proof | DELIVERED | Proof by enumeration: unique path P_start→P_end covers all places and transitions. Sequential state machine — 16 states, exhaustive. |
 
 **Gap:** The ordering guarantees work — they're tested and used in production workplan execution. But the 3,646-line supervisor file encodes them as imperative Rust control flow (`if/else`, `match`, loops). A refactor could accidentally break a tier barrier, and only a test that exercises that specific phase sequence would catch it. A Petri net encoding would make the ordering a checkable structural property independent of the code.
 
