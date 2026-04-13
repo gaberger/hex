@@ -247,6 +247,8 @@ enum Commands {
         #[command(subcommand)]
         action: ContextAction,
     },
+    /// Do the next right thing — check project health and suggest/execute actions
+    Go,
     /// Run full build pipeline (build → test → analyze → validate)
     Validate {
         /// Skip test phase
@@ -338,6 +340,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Context { action } => commands::context::run(action).await,
+        Commands::Go => commands::go::run().await,
         Commands::Validate { skip_test, strict, parallel } => {
             doctor::run_validate_pipeline(skip_test, strict, parallel).await
         }
