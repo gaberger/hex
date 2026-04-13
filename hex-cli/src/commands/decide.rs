@@ -19,7 +19,7 @@ pub enum DecideAction {
         /// Action: approve, reject, override
         action: String,
         /// Value for override action
-        #[arg(long, short)]
+        #[arg(long)]
         value: Option<String>,
     },
     /// Approve all pending decisions (use defaults)
