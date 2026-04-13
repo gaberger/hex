@@ -21,10 +21,8 @@ use commands::{
     adr::AdrAction,
     agent::AgentAction,
     brain::BrainAction,
-    brief::BriefAction,
     chat::ChatArgs,
     context::ContextAction,
-    decide::DecideAction,
     spec::SpecAction,
     analyze,
     dev::DevAction,
@@ -44,11 +42,8 @@ use commands::{
     skill::SkillAction,
     stdb::StdbAction,
     status,
-    steer::SteerAction,
     swarm::SwarmAction,
-    taste::TasteAction,
     task::TaskAction,
-    trust::TrustAction,
 };
 
 #[derive(Parser)]
@@ -208,6 +203,8 @@ enum Commands {
         #[command(subcommand)]
         action: GitAction,
     },
+    /// Developer briefing — compact summary of recent events
+    Brief(commands::brief::BriefArgs),
     /// Project status
     Status,
     /// Inject hex context into opencode (ADR-2603231800)
@@ -270,35 +267,6 @@ enum Commands {
         #[arg(long)]
         standalone_gate: bool,
     },
-    /// Register a new project (ADR-2604131500 §2)
-    New {
-        /// Path to the project directory (created if missing)
-        path: String,
-
-        /// Optional project name (defaults to directory name)
-        #[arg(short, long)]
-        name: Option<String>,
-
-        /// Optional project description
-        #[arg(short, long)]
-        description: Option<String>,
-
-        /// Copy taste preferences from an existing project
-        #[arg(long, value_name = "PROJECT")]
-        taste_from: Option<String>,
-    },
-    /// Pause the active workplan (emergency brake, ADR-2604131500 §1 Layer 4)
-    Pause,
-    /// Resume a paused workplan (ADR-2604131500 §1 Layer 4)
-    Resume,
-    /// Send an emergency override to all agents in a project (ADR-2604131500 §1 Layer 4)
-    Override {
-        /// Target project ID or name
-        project: String,
-
-        /// Override instruction sent to all agents
-        instruction: String,
-    },
     /// Update hex to the latest release (ADR-2604080929)
     #[command(name = "self-update")]
     SelfUpdate {
@@ -311,31 +279,6 @@ enum Commands {
         /// Skip confirmation prompt
         #[arg(long, short)]
         yes: bool,
-    },
-    /// Project briefing — what happened, what needs attention (ADR-2604131500)
-    Brief {
-        #[command(subcommand)]
-        action: BriefAction,
-    },
-    /// Resolve pending decisions (ADR-2604131500)
-    Decide {
-        #[command(subcommand)]
-        action: DecideAction,
-    },
-    /// Manage delegation trust levels (ADR-2604131500)
-    Trust {
-        #[command(subcommand)]
-        action: TrustAction,
-    },
-    /// Steer project priorities and approach (ADR-2604131500)
-    Steer {
-        #[command(subcommand)]
-        action: SteerAction,
-    },
-    /// Manage developer taste preferences (ADR-2604131500)
-    Taste {
-        #[command(subcommand)]
-        action: TasteAction,
     },
 }
 
@@ -382,6 +325,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Enforce { action } => commands::enforce::run(action).await,
         Commands::Git { action } => commands::git_cmd::run(action).await,
         Commands::Assets { action } => commands::assets_cmd::run(action).await,
+        Commands::Brief(args) => commands::brief::run(args).await,
         Commands::Status => status::run().await,
         Commands::Opencode { action } => commands::opencode::run(action),
         Commands::Dev { action } => commands::dev::run(action).await,
@@ -407,21 +351,8 @@ async fn main() -> anyhow::Result<()> {
                 commands::ci::run().await
             }
         }
-        Commands::New { path, name, description, taste_from } => {
-            commands::new::run(&path, name, description, taste_from).await
-        }
-        Commands::Pause => commands::pause::run_pause().await,
-        Commands::Resume => commands::pause::run_resume().await,
-        Commands::Override { project, instruction } => {
-            commands::override_cmd::run(&project, &instruction).await
-        }
         Commands::SelfUpdate { check, version, yes } => {
             commands::update::run(check, version, yes).await
         }
-        Commands::Brief { action } => commands::brief::run(action).await,
-        Commands::Decide { action } => commands::decide::run(action).await,
-        Commands::Trust { action } => commands::trust::run(action).await,
-        Commands::Steer { action } => commands::steer::run(action).await,
-        Commands::Taste { action } => commands::taste::run(action).await,
     }
 }
