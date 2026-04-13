@@ -369,47 +369,61 @@ The pipeline test exercises all tiers end-to-end with real compile gates and RL 
 
 Use `hex doctor composition` to diagnose which composition variant is active. Use `--tier T1` for a 10-second smoke test, or `--no-grammar` to compare with/without GBNF constraints.
 
-### Example: One Command Builds a Hexagonal App
+### Example: HexFlo-Coordinated Task Tracker (16 tests, 4 layers)
 
-`hex plan execute` reads a workplan, dispatches each task through tiered inference to local Ollama, writes the generated code to files, and runs compile gates — all in one command.
+The [`examples/hex-task-tracker/`](examples/hex-task-tracker/) shows hex's architecture enforcement on a real app — built using HexFlo swarm coordination with Claude as the inference engine.
 
-```bash
-$ hex plan execute workplan.json
+**How it was built:**
 
-⬡ Executing workplan: Hexagonal Weather CLI — Architecture Demo
-  Phases: 4  Tasks: 4
+1. HexFlo swarm created with 4 tasks (one per hex layer)
+2. Each task executed by Claude, code written, gate validated
+3. Task marked complete in SpacetimeDB via HexFlo PATCH
+4. Swarm completed — all 16 tests passing
 
-━ Phase: domain
-  P1.1 [T2] Domain value objects (qwen2.5-coder:32b)
-    ✓ src/domain/mod.rs (76 lines)    522 tokens, 49s
-  Gate: rustc --crate-type lib src/domain/mod.rs ... PASS
+```
+$ rustc --edition 2021 --test src/main.rs -o task-tracker-test && ./task-tracker-test
 
-━ Phase: ports
-  P2.1 [T2] Port traits (qwen2.5-coder:32b)
-    ✓ src/ports/mod.rs (16 lines)     108 tokens, 11s
+running 16 tests
+test domain::tests::new_task_is_todo ... ok
+test domain::tests::todo_to_in_progress ... ok
+test domain::tests::in_progress_to_done ... ok
+test domain::tests::todo_to_done_invalid ... ok   ← domain enforces transitions
+test domain::tests::done_is_terminal ... ok
+test domain::tests::cancel_from_todo ... ok
+test domain::tests::cancel_from_in_progress ... ok
+test domain::tests::revert_to_todo ... ok
+test domain::tests::priority_ordering ... ok
+test domain::tests::display_includes_all_fields ... ok
+test adapters::tests::save_and_find ... ok
+test adapters::tests::duplicate_rejected ... ok    ← adapter validates uniqueness
+test adapters::tests::find_mut_transition ... ok
+test adapters::tests::list_sorted_by_priority ... ok
+test adapters::tests::remove_works ... ok
+test adapters::tests::not_found ... ok
 
-━ Phase: adapters
-  P3.1 [T2] Weather adapter + CLI adapter (qwen2.5-coder:32b)
-    ✓ src/adapters/mod.rs (60 lines)  450 tokens, 42s
-
-━ Phase: composition
-  P4.1 [T2] Composition root (qwen2.5-coder:32b)
-    ✓ src/main.rs (43 lines)          326 tokens, 32s
-
-⬡ Results: 4/4 tasks generated, 195 lines of Rust
+test result: ok. 16 passed; 0 failed
 ```
 
-This was run on a remote GPU box (bazzite, Strix Halo) with local Ollama — no cloud APIs, $0 cost. The workplan enforces hex architecture: domain (Tier 0) compiles before ports, ports before adapters, adapters before composition root. Each phase has a `rustc` compile gate that blocks advancement.
+**Architecture enforced by hex:**
 
 ```
 src/
-├── domain/mod.rs    ← Phase 0: pure value objects, zero deps (GATE: PASS)
-├── ports/mod.rs     ← Phase 0: trait contracts, imports only domain
-├── adapters/mod.rs  ← Phase 1: implementations, imports only ports
-└── main.rs          ← Phase 2: composition root, ONLY file that imports adapters
+├── domain/mod.rs    ← Pure types: Task, Status (with transition rules), Priority
+│                      10 tests. ZERO external deps. Cannot import ports or adapters.
+│
+├── ports/mod.rs     ← Trait contracts: TaskStore, Command, parse_args
+│                      Imports ONLY from domain. Defines WHAT, not HOW.
+│
+├── adapters/mod.rs  ← InMemoryTaskStore implementing TaskStore
+│                      6 tests. Imports from domain + ports. NEVER imports other adapters.
+│
+└── main.rs          ← Composition root — the ONLY file that imports adapters.
+                       Wires InMemoryTaskStore → TaskStore trait → CLI commands.
 ```
 
-See [`examples/hex-weather/`](examples/hex-weather/) for the workplan and full build log.
+Every import boundary is validated by `hex analyze .`. An agent working on `adapters/` physically cannot import from another adapter — the architecture enforcement blocks it at commit time, not in code review.
+
+See also: [`examples/hex-weather/`](examples/hex-weather/) for a workplan-driven build with compile gates and [`examples/standalone-pipeline-test/`](examples/standalone-pipeline-test/) for the inference routing smoke test.
 
 ---
 
