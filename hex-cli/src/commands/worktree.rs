@@ -461,6 +461,88 @@ async fn merge(
         }
     }
 
+    // ── Merge Integrity Check (ADR-2604131800) ─────────────────────────
+    // Verify every worktree's added lines are present on main after merge.
+    // This catches the "last write wins" problem where git checkout from
+    // one branch silently drops additions from another branch.
+    println!("\n  Verifying merge integrity...");
+    let mut integrity_failures: Vec<(String, String, usize)> = Vec::new(); // (branch, file, missing_lines)
+
+    for (_, branch) in &ordered_branches {
+        // Get what this branch added vs main (before our merge)
+        let diff_output = Command::new("git")
+            .args(["diff", &format!("{}...{}", main, branch), "--unified=0"])
+            .current_dir(root_path)
+            .output();
+
+        let diff_text = match diff_output {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => continue,
+        };
+
+        // Parse added lines from the diff (lines starting with + but not +++)
+        let mut current_file = String::new();
+        let mut missing_count = 0usize;
+
+        for line in diff_text.lines() {
+            if line.starts_with("+++ b/") {
+                // Check previous file's missing lines
+                if missing_count > 0 {
+                    integrity_failures.push((branch.clone(), current_file.clone(), missing_count));
+                }
+                current_file = line.strip_prefix("+++ b/").unwrap_or("").to_string();
+                missing_count = 0;
+            } else if line.starts_with('+') && !line.starts_with("+++") {
+                // This is an added line — verify it exists in the working tree
+                let added_content = &line[1..]; // strip the leading +
+                if added_content.trim().is_empty() {
+                    continue; // skip blank lines
+                }
+                // Read the file from working tree and check if the line is present
+                let file_path = root_path.join(&current_file);
+                if let Ok(contents) = std::fs::read_to_string(&file_path) {
+                    if !contents.contains(added_content.trim()) {
+                        missing_count += 1;
+                    }
+                }
+            }
+        }
+        // Check last file
+        if missing_count > 0 {
+            integrity_failures.push((branch.clone(), current_file, missing_count));
+        }
+    }
+
+    if !integrity_failures.is_empty() {
+        println!(
+            "\n  {} MERGE INCOMPLETE — code from worktree agents was dropped:",
+            "\u{2717}".red().bold()
+        );
+        for (branch, file, count) in &integrity_failures {
+            println!(
+                "    {} {} lines from {} missing in {}",
+                "\u{2717}".red(),
+                count,
+                branch.cyan(),
+                file.yellow()
+            );
+        }
+        println!(
+            "\n  Fix: use {} on the affected files to manually merge both branches' changes.",
+            "git merge <branch>".bold()
+        );
+        // Don't proceed to cargo check — merge is incomplete
+        anyhow::bail!(
+            "Merge integrity check failed: {} file(s) have missing lines from worktree agents",
+            integrity_failures.len()
+        );
+    } else {
+        println!(
+            "  {} All worktree additions verified on main",
+            "\u{2713}".green()
+        );
+    }
+
     // Run cargo check as gate
     println!("\n  Running cargo check --workspace ...");
     let check = Command::new("cargo")
