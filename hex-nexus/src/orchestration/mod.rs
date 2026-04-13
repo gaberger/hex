@@ -5,6 +5,7 @@ pub mod context_pressure;
 pub mod directive;
 pub mod errors;
 pub mod grammars;
+pub mod regression;
 pub mod scaffolding;
 pub mod skill_selector;
 pub mod workplan_executor;
