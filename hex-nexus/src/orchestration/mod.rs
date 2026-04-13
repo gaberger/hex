@@ -10,6 +10,8 @@ pub mod scaffolding;
 pub mod skill_selector;
 pub mod workplan_executor;
 
+use crate::ports::state::IHexFloMemoryStatePort;
+
 /// Returns the role-specific system prompt preamble to inject at the top of an agent's
 /// task prompt. The preamble is the opening identity sentence from each role's
 /// `hex-cli/assets/context-templates/roles/<role>/system.md` template — the static
@@ -68,6 +70,87 @@ pub fn is_claude_code_session() -> bool {
         || std::env::var("CLAUDE_CODE_ENTRYPOINT").is_ok()
 }
 
+/// Maximum number of taste preferences injected into an agent preamble.
+const MAX_TASTE_PREFERENCES: usize = 10;
+
+/// Minimum confidence threshold for a taste preference to be included.
+const MIN_TASTE_CONFIDENCE: f64 = 0.5;
+
+/// Builds a "Developer Preferences" section from taste entries stored in HexFlo memory.
+///
+/// Taste preferences are stored with keys like `taste:universal:naming:snake_case`.
+/// Each value is a JSON object with at least `category`, `description`, and `confidence`
+/// fields.  Tombstoned entries (`"deleted": true`) and low-confidence entries (below
+/// [`MIN_TASTE_CONFIDENCE`]) are filtered out.  Results are sorted by confidence
+/// descending and capped at [`MAX_TASTE_PREFERENCES`].
+///
+/// Returns an empty string when no qualifying preferences are found or when the
+/// memory query fails (taste injection is best-effort — it must never block agent
+/// spawning).
+pub async fn build_taste_section(
+    memory: &dyn IHexFloMemoryStatePort,
+) -> String {
+    let entries = match memory.hexflo_memory_search("taste:").await {
+        Ok(v) => v,
+        Err(_) => return String::new(),
+    };
+
+    // Parse each value as JSON and extract qualifying preferences.
+    let mut prefs: Vec<(f64, String, String)> = entries
+        .into_iter()
+        .filter_map(|(_key, value)| {
+            let obj: serde_json::Value = serde_json::from_str(&value).ok()?;
+
+            // Skip tombstoned entries.
+            if obj.get("deleted").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return None;
+            }
+
+            let confidence = obj.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            if confidence < MIN_TASTE_CONFIDENCE {
+                return None;
+            }
+
+            let category = obj
+                .get("category")
+                .and_then(|v| v.as_str())
+                .unwrap_or("general")
+                .to_string();
+            let description = obj
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            if description.is_empty() {
+                return None;
+            }
+
+            Some((confidence, category, description))
+        })
+        .collect();
+
+    if prefs.is_empty() {
+        return String::new();
+    }
+
+    // Sort by confidence descending, then cap.
+    prefs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    prefs.truncate(MAX_TASTE_PREFERENCES);
+
+    let mut section = String::from(
+        "## Developer Preferences\n\
+         These preferences have been set by the project developer. \
+         Follow them unless they conflict with explicit task instructions.\n",
+    );
+    for (_confidence, category, description) in &prefs {
+        section.push_str(&format!("- [{}] {}\n", category, description));
+    }
+    section.push('\n');
+
+    section
+}
+
 #[cfg(test)]
 mod role_preamble_tests {
     use super::*;
@@ -114,6 +197,150 @@ mod role_preamble_tests {
     #[test]
     fn empty_role_returns_empty_string() {
         assert_eq!(build_role_preamble(""), "");
+    }
+}
+
+#[cfg(test)]
+mod taste_tests {
+    use super::*;
+    use crate::ports::state::{IHexFloMemoryStatePort, StateError};
+    use async_trait::async_trait;
+
+    /// Stub memory port that returns pre-configured search results.
+    struct StubMemory {
+        entries: Vec<(String, String)>,
+    }
+
+    #[async_trait]
+    impl IHexFloMemoryStatePort for StubMemory {
+        async fn hexflo_memory_store(&self, _k: &str, _v: &str, _s: &str) -> Result<(), StateError> {
+            Ok(())
+        }
+        async fn hexflo_memory_retrieve(&self, _k: &str) -> Result<Option<String>, StateError> {
+            Ok(None)
+        }
+        async fn hexflo_memory_search(&self, _q: &str) -> Result<Vec<(String, String)>, StateError> {
+            Ok(self.entries.clone())
+        }
+        async fn hexflo_memory_delete(&self, _k: &str) -> Result<(), StateError> {
+            Ok(())
+        }
+    }
+
+    /// Stub that always errors — verifies graceful degradation.
+    struct FailingMemory;
+
+    #[async_trait]
+    impl IHexFloMemoryStatePort for FailingMemory {
+        async fn hexflo_memory_store(&self, _k: &str, _v: &str, _s: &str) -> Result<(), StateError> {
+            Err(StateError::Connection("offline".into()))
+        }
+        async fn hexflo_memory_retrieve(&self, _k: &str) -> Result<Option<String>, StateError> {
+            Err(StateError::Connection("offline".into()))
+        }
+        async fn hexflo_memory_search(&self, _q: &str) -> Result<Vec<(String, String)>, StateError> {
+            Err(StateError::Connection("offline".into()))
+        }
+        async fn hexflo_memory_delete(&self, _k: &str) -> Result<(), StateError> {
+            Err(StateError::Connection("offline".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn returns_empty_on_no_entries() {
+        let mem = StubMemory { entries: vec![] };
+        assert_eq!(build_taste_section(&mem).await, "");
+    }
+
+    #[tokio::test]
+    async fn returns_empty_on_memory_failure() {
+        let mem = FailingMemory;
+        assert_eq!(build_taste_section(&mem).await, "");
+    }
+
+    #[tokio::test]
+    async fn filters_tombstoned_entries() {
+        let mem = StubMemory {
+            entries: vec![(
+                "taste:naming".into(),
+                r#"{"category":"naming","description":"Use snake_case","confidence":0.9,"deleted":true}"#.into(),
+            )],
+        };
+        assert_eq!(build_taste_section(&mem).await, "");
+    }
+
+    #[tokio::test]
+    async fn filters_low_confidence() {
+        let mem = StubMemory {
+            entries: vec![(
+                "taste:naming".into(),
+                r#"{"category":"naming","description":"Use snake_case","confidence":0.3}"#.into(),
+            )],
+        };
+        assert_eq!(build_taste_section(&mem).await, "");
+    }
+
+    #[tokio::test]
+    async fn includes_qualifying_preference() {
+        let mem = StubMemory {
+            entries: vec![(
+                "taste:naming".into(),
+                r#"{"category":"naming","description":"Prefer snake_case for Rust function names","confidence":0.8}"#.into(),
+            )],
+        };
+        let section = build_taste_section(&mem).await;
+        assert!(section.contains("## Developer Preferences"));
+        assert!(section.contains("- [naming] Prefer snake_case for Rust function names"));
+    }
+
+    #[tokio::test]
+    async fn sorts_by_confidence_descending() {
+        let mem = StubMemory {
+            entries: vec![
+                (
+                    "taste:style".into(),
+                    r#"{"category":"style","description":"Low prio","confidence":0.6}"#.into(),
+                ),
+                (
+                    "taste:naming".into(),
+                    r#"{"category":"naming","description":"High prio","confidence":0.95}"#.into(),
+                ),
+            ],
+        };
+        let section = build_taste_section(&mem).await;
+        let high_pos = section.find("High prio").unwrap();
+        let low_pos = section.find("Low prio").unwrap();
+        assert!(high_pos < low_pos, "Higher confidence should come first");
+    }
+
+    #[tokio::test]
+    async fn caps_at_max_preferences() {
+        let entries: Vec<(String, String)> = (0..15)
+            .map(|i| {
+                let conf = 0.5 + (i as f64) * 0.03;
+                (
+                    format!("taste:pref{i}"),
+                    format!(
+                        r#"{{"category":"cat{i}","description":"Pref {i}","confidence":{conf}}}"#
+                    ),
+                )
+            })
+            .collect();
+        let mem = StubMemory { entries };
+        let section = build_taste_section(&mem).await;
+        let count = section.matches("\n- [").count();
+        assert_eq!(count, MAX_TASTE_PREFERENCES);
+    }
+
+    #[tokio::test]
+    async fn skips_empty_description() {
+        let mem = StubMemory {
+            entries: vec![(
+                "taste:empty".into(),
+                r#"{"category":"naming","description":"","confidence":0.9}"#.into(),
+            )],
+        };
+        assert_eq!(build_taste_section(&mem).await, "");
     }
 }
 
