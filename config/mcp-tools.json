@@ -482,6 +482,21 @@
       }
     },
     {
+      "name": "hex_inference_bench",
+      "category": "inference",
+      "description": "Benchmark a model with hex-specific prompts (code-gen, reasoning, identity). Returns quality score, tok/s, and recommended hex agent tier.",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": { "type": "string", "description": "Provider ID, model name, or URL to benchmark" },
+          "model": { "type": "string", "description": "Override the provider's registered model" },
+          "quick": { "type": "boolean", "description": "Skip code-gen prompt (identity + reasoning only)" }
+        },
+        "required": ["target"]
+      }
+    },
+    {
       "name": "hex_inference_discover",
       "category": "inference",
       "description": "Discover inference endpoints on the local network (LAN scan)",
@@ -1405,6 +1420,89 @@
       "category": "environment",
       "description": "List all container environments",
       "route": { "method": "GET", "path": "/api/environments" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "hex_brief",
+      "category": "aios",
+      "description": "Developer briefing: pending decisions, recent activity, project health (ADR-2604131500)",
+      "route": { "method": "GET", "path": "/api/briefing" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": { "type": "string", "description": "Filter to a specific project ID" },
+          "decisions_only": { "type": "boolean", "description": "Return only pending decisions" },
+          "since": { "type": "string", "description": "ISO-8601 timestamp filter" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_decide",
+      "category": "aios",
+      "description": "Respond to a pending decision (approve/reject/defer/override)",
+      "route": { "method": "POST", "path": "/api/decisions/{decision_id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "decision_id": { "type": "integer", "description": "ID of the pending decision" },
+          "action": { "type": "string", "enum": ["approve", "reject", "defer", "override"], "description": "Action to take" },
+          "value": { "type": "string", "description": "Override value" }
+        },
+        "required": ["decision_id"]
+      }
+    },
+    {
+      "name": "hex_trust_show",
+      "category": "aios",
+      "description": "Show delegation trust levels per project and scope",
+      "route": { "method": "GET", "path": "/api/trust" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": { "type": "string", "description": "Filter to a specific project ID" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_trust_set",
+      "category": "aios",
+      "description": "Set delegation trust level for a project scope",
+      "route": { "method": "PATCH", "path": "/api/trust" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": { "type": "string", "description": "Project ID" },
+          "scope": { "type": "string", "description": "Trust scope" },
+          "level": { "type": "string", "enum": ["suggest", "auto", "block"], "description": "Trust level" }
+        },
+        "required": ["project", "scope"]
+      }
+    },
+    {
+      "name": "hex_steer",
+      "category": "aios",
+      "description": "Send a steering directive to adjust agent behavior",
+      "route": { "method": "POST", "path": "/api/steer" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": { "type": "string", "description": "Project ID" },
+          "directive": { "type": "string", "description": "Steering directive text" }
+        },
+        "required": ["project", "directive"]
+      }
+    },
+    {
+      "name": "hex_pulse",
+      "category": "aios",
+      "description": "One-glance system pulse: agents, decisions, completions, health",
+      "route": { "method": "GET", "path": "/api/pulse" },
       "inputSchema": {
         "type": "object",
         "properties": {},

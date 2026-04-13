@@ -481,6 +481,22 @@
       }
     },
     {
+      "name": "hex_inference_bench",
+      "category": "inference",
+      "cli": "hex inference bench <target>",
+      "description": "Benchmark a model with hex-specific prompts (code-gen, reasoning, identity). Returns quality score, tok/s, and recommended hex agent tier.",
+      "route": null,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": { "type": "string", "description": "Provider ID, model name, or URL to benchmark" },
+          "model": { "type": "string", "description": "Override the provider's registered model" },
+          "quick": { "type": "boolean", "description": "Skip code-gen prompt (identity + reasoning only)" }
+        },
+        "required": ["target"]
+      }
+    },
+    {
       "name": "hex_inference_discover",
       "category": "inference",
       "cli": "hex inference discover",
@@ -504,6 +520,95 @@
           "provider_id": { "type": "string", "description": "Provider ID to remove" }
         },
         "required": ["provider_id"]
+      }
+    },
+    {
+      "name": "hex_brief",
+      "category": "aios",
+      "cli": "hex brief",
+      "description": "Get a developer briefing: pending decisions, recent activity, and project health summary. Ambient-first AIOS layer (ADR-2604131500).",
+      "route": { "method": "GET", "path": "/api/briefing" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": { "type": "string", "description": "Filter to a specific project ID" },
+          "decisions_only": { "type": "boolean", "description": "Return only pending decisions (default: false)" },
+          "since": { "type": "string", "description": "ISO-8601 timestamp — only include activity after this time" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_decide",
+      "category": "aios",
+      "cli": "hex decide <decision_id> <action>",
+      "description": "Respond to a pending decision (approve, reject, defer, or override with a value). Part of the AIOS Console layer (ADR-2604131500).",
+      "route": { "method": "POST", "path": "/api/decisions/{decision_id}" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "decision_id": { "type": "integer", "description": "ID of the pending decision" },
+          "action": { "type": "string", "enum": ["approve", "reject", "defer", "override"], "description": "Action to take (default: approve)" },
+          "value": { "type": "string", "description": "Override value (required when action is 'override')" }
+        },
+        "required": ["decision_id"]
+      }
+    },
+    {
+      "name": "hex_trust_show",
+      "category": "aios",
+      "cli": "hex trust show",
+      "description": "Show current delegation trust levels per project and scope. Part of the AIOS delegation layer (ADR-2604131500).",
+      "route": { "method": "GET", "path": "/api/trust" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": { "type": "string", "description": "Filter to a specific project ID" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "hex_trust_set",
+      "category": "aios",
+      "cli": "hex trust set <project> <scope> <level>",
+      "description": "Set delegation trust level for a project scope (suggest, auto, or block). Controls how much autonomy agents have (ADR-2604131500).",
+      "route": { "method": "PATCH", "path": "/api/trust" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": { "type": "string", "description": "Project ID" },
+          "scope": { "type": "string", "description": "Trust scope (e.g., 'dependencies', 'refactor', 'deploy')" },
+          "level": { "type": "string", "enum": ["suggest", "auto", "block"], "description": "Trust level (default: suggest)" }
+        },
+        "required": ["project", "scope"]
+      }
+    },
+    {
+      "name": "hex_steer",
+      "category": "aios",
+      "cli": "hex steer <project> <directive>",
+      "description": "Send a steering directive to a project — adjusts agent behavior without interrupting work. Part of the AIOS Override layer (ADR-2604131500).",
+      "route": { "method": "POST", "path": "/api/steer" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": { "type": "string", "description": "Project ID" },
+          "directive": { "type": "string", "description": "Free-text steering directive (e.g., 'focus on tests', 'stop adding new deps')" }
+        },
+        "required": ["project", "directive"]
+      }
+    },
+    {
+      "name": "hex_pulse",
+      "category": "aios",
+      "cli": "hex pulse",
+      "description": "One-glance system pulse: active agents, pending decisions, recent completions, health. The ambient heartbeat of the AIOS (ADR-2604131500).",
+      "route": { "method": "GET", "path": "/api/pulse" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
       }
     }
   ]
